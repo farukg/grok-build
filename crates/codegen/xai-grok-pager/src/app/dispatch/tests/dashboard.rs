@@ -2303,6 +2303,7 @@ fn workspace_grouping_toggle_emits_sqlite_layout_write_not_config_write() {
 #[test]
 fn v1_grouping_toggle_emits_config_write_not_sqlite_layout_write() {
     let mut app = test_app_with_agent();
+    app.dashboard_persisted = Some(crate::views::dashboard::PersistedDashboard::defaults());
     app.workspace_dashboard_enabled = false;
     ensure_dashboard_state(&mut app);
     let effects = dispatch(Action::DashboardToggleGrouping, &mut app);
@@ -6881,6 +6882,7 @@ fn dashboard_up_arrow_on_button_is_noop() {
 #[test]
 fn dashboard_down_arrow_on_button_selects_first_focusable() {
     let mut app = test_app_with_agent();
+    app.dashboard_persisted = Some(crate::views::dashboard::PersistedDashboard::defaults());
     let id = AgentId(0);
     mark_agent_nonempty(&mut app, id);
     open_dashboard(&mut app);
@@ -6908,6 +6910,7 @@ fn dashboard_down_arrow_on_button_selects_first_focusable() {
 #[test]
 fn dashboard_down_arrow_from_open_session_selects_first_focusable() {
     let mut app = test_app_with_agent();
+    app.dashboard_persisted = Some(crate::views::dashboard::PersistedDashboard::defaults());
     let id = AgentId(0);
     mark_agent_nonempty(&mut app, id);
     open_dashboard(&mut app);

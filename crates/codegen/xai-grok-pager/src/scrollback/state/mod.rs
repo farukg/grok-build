@@ -596,7 +596,7 @@ impl ScrollbackState {
         let Some(index) = self.entries.get_index_of(&anchor) else {
             return self.push_block(block);
         };
-        debug_assert!(
+        assert!(
             !self.committed.contains(&anchor),
             "insert_block_before: anchor {anchor:?} is already committed — the inserted \
              block would print out of order in native scrollback"
