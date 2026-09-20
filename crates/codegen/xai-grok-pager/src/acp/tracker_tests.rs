@@ -178,6 +178,15 @@ fn thought_chunk_dropped_when_flag_off() {
     assert!(tracker.current_thinking.is_some());
 }
 #[test]
+fn whitespace_thought_chunk_does_not_create_visible_entry() {
+    crate::appearance::cache::set_show_thinking_blocks(true);
+    let mut sb = ScrollbackState::new();
+    let mut tracker = AcpUpdateTracker::new();
+    assert!(!tracker.handle_update(thought_chunk(" \t\n"), &meta(), &mut sb));
+    assert_eq!(sb.len(), 0);
+    assert!(tracker.current_thinking.is_none());
+}
+#[test]
 fn pre_create_thinking_creates_when_flag_on() {
     crate::appearance::cache::set_show_thinking_blocks(true);
     let mut sb = ScrollbackState::new();
@@ -1941,7 +1950,11 @@ fn pinned_thinking_keeps_user_mode_across_finish_triggers() {
         &meta(),
         &mut sb,
     );
-    assert_kept(&sb, "tool call");
+    let entry = sb.get(0).unwrap();
+    assert!(entry.is_running, "tool call keeps the logical thought open");
+    assert_eq!(entry.display_mode, DisplayMode::Expanded);
+    tracker.finish_turn(&mut sb);
+    assert_kept(&sb, "tool call then turn finish");
     let (mut tracker, mut sb) = setup();
     tracker.finish_turn(&mut sb);
     assert_kept(&sb, "finish_turn");
@@ -1952,7 +1965,14 @@ fn pinned_thinking_keeps_user_mode_across_finish_triggers() {
     sb.set_selected(Some(0));
     sb.expand_selected();
     tracker.handle_update(thought_chunk("new stream"), &meta_stream(2000), &mut sb);
-    assert_kept(&sb, "stream restart");
+    let entry = sb.get(0).unwrap();
+    assert!(
+        entry.is_running,
+        "stream restart keeps the logical thought open"
+    );
+    assert_eq!(entry.display_mode, DisplayMode::Expanded);
+    tracker.finish_turn(&mut sb);
+    assert_kept(&sb, "stream restart then turn finish");
     let mut sb = scrollback_with_respect_manual_folds();
     let mut tracker = AcpUpdateTracker::new();
     tracker.handle_update(thought_chunk("deep thought"), &meta(), &mut sb);
@@ -2083,22 +2103,50 @@ fn same_stream_start_appends_normally() {
     tracker.handle_update(agent_chunk("world!"), &stream, &mut sb);
     assert_eq!(sb.len(), 1, "Same stream should append to one entry");
 }
-/// stream_start_ms change breaks thinking entries too.
+/// Provider stream restarts are transport boundaries, not visible thought boundaries.
 #[test]
-fn stream_start_breaks_thinking_across_streams() {
+fn stream_start_keeps_thinking_in_one_logical_turn() {
     crate::appearance::cache::set_show_thinking_blocks(true);
     let mut sb = ScrollbackState::new();
     let mut tracker = AcpUpdateTracker::new();
     let stream_a = meta_stream(1000);
-    let stream_b = meta_stream(2000);
+    let stream_b = NotificationMeta {
+        stream_start_ms: Some(2000),
+        agent_timestamp_ms: Some(2031),
+        ..NotificationMeta::default()
+    };
     tracker.handle_update(thought_chunk("thinking A"), &stream_a, &mut sb);
-    assert!(tracker.current_thinking.is_some());
-    tracker.handle_update(thought_chunk("thinking B"), &stream_b, &mut sb);
-    assert_eq!(sb.len(), 2, "Each stream should get its own thinking entry");
-    assert!(
-        !sb.get(0).unwrap().is_running,
-        "stream A thinking should be finished"
+    tracker.handle_update(
+        tool_call("tc1", acp::ToolKind::Read, "src/main.rs"),
+        &stream_a,
+        &mut sb,
     );
+    tracker.handle_update(thought_chunk(" thinking B"), &stream_b, &mut sb);
+    let thinking_ids: Vec<_> = sb
+        .entries_in_range(0..sb.len())
+        .into_iter()
+        .filter(|entry| matches!(entry.block, RenderBlock::Thinking(_)))
+        .map(|entry| entry.id)
+        .collect();
+    assert_eq!(
+        thinking_ids.len(),
+        1,
+        "one logical turn owns one thought history"
+    );
+    let RenderBlock::Thinking(thinking) = &sb.get_by_id(thinking_ids[0]).unwrap().block else {
+        panic!("filtered entry must be thinking");
+    };
+    assert_eq!(thinking.text(), "thinking A thinking B");
+    tracker.finish_turn(&mut sb);
+    let RenderBlock::Thinking(thinking) = &sb.get_by_id(thinking_ids[0]).unwrap().block else {
+        panic!("thinking entry must survive turn completion");
+    };
+    assert_eq!(thinking.elapsed_time_ms(), Some(131));
+    assert!(
+        !sb.get_by_id(thinking_ids[0]).unwrap().is_running,
+        "turn completion, not stream B, finishes the thought history"
+    );
+    assert_ne!(thinking.elapsed_time_ms(), Some(31));
 }
 /// Agent message in stream A, then agent message in stream B (no thinking between).
 #[test]

@@ -1146,12 +1146,8 @@ impl ScrollbackState {
             match &mut entry.block {
                 RenderBlock::AgentMessage(msg) => msg.finish(),
                 RenderBlock::Thinking(thinking) => {
-                    // finish() freezes the local started_at timer into elapsed_time_ms
-                    // Only use server time as a fallback when no local timer exists (e.g., during replay)
                     thinking.finish();
-                    if thinking.elapsed_time_ms().is_none()
-                        && let Some(time_ms) = thinking_time_ms
-                    {
+                    if let Some(time_ms) = thinking_time_ms {
                         thinking.set_elapsed_time_ms(Some(time_ms));
                     }
                 }

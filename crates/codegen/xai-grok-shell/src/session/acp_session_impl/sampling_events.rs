@@ -211,6 +211,9 @@ impl SessionActor {
                     .await;
                 }
                 SamplingChannel::Reasoning => {
+                    if text.trim().is_empty() {
+                        return;
+                    }
                     self.bump_stream_apply_span(&request_id, text.len());
                     // Append to the out-of-band trace accumulator; it never enters chat_state
                     {

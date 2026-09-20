@@ -94,6 +94,36 @@ async fn channel_tokens_accumulate_into_streaming_capture() {
         .await;
 }
 
+/// Whitespace reasoning is transport noise: it must not enter the capture or
+/// produce an ACP thought update.
+#[tokio::test(flavor = "current_thread")]
+async fn whitespace_reasoning_token_is_dropped_before_session_updates() {
+    use xai_grok_sampler::{RequestId, SamplingChannel, SamplingEvent};
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let mut fixture = make_replay_send_update_fixture().await;
+            let actor = Arc::new(fixture.actor);
+            let req = RequestId::random();
+            own_request(&actor, &req);
+            actor
+                .handle_sampling_event(SamplingEvent::ChannelToken {
+                    request_id: req,
+                    channel: SamplingChannel::Reasoning,
+                    text: " \t\n".to_string(),
+                    chunk_index: 0,
+                })
+                .await;
+
+            let cap = actor.streaming_turn_capture.lock().clone();
+            assert!(cap.reasoning_text.is_empty());
+            assert_eq!(cap.reasoning_chunks, 0);
+            tokio::task::yield_now().await;
+            assert!(fixture.sent.lock().await.is_empty());
+        })
+        .await;
+}
+
 /// A same-prompt `StreamStarted` restart (a doomloop retry) must accumulate a second generation rather than wipe the first.
 /// This guards the `if cap.prompt_id != prompt_id` branch in the `StreamStarted` arm, which the pure-struct tests bypass.
 #[tokio::test(flavor = "current_thread")]
