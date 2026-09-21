@@ -16,6 +16,7 @@ pub mod attribution;
 pub mod client;
 pub mod commands;
 pub mod config;
+pub mod counting_loop;
 pub mod doom_loop;
 mod doom_loop_recovery;
 pub mod events;

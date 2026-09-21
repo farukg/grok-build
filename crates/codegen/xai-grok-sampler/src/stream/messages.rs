@@ -117,6 +117,7 @@ pub fn stream_messages<'a>(
         let mut message_chunk_count: u64 = 0;
         let mut first_token_emitted = false;
         let mut last_content_chunk_at = Instant::now();
+        let mut loop_detector = crate::counting_loop::CountingLoopDetector::new();
 
         // Tool-call index counter for per-tool deltas (separate from the block index, which can be interleaved with text/thinking blocks)
         let mut next_tool_index: u32 = 0;
@@ -295,6 +296,20 @@ pub fn stream_messages<'a>(
                                     chunk_timestamps.push(Instant::now());
                                     chunk_index += 1;
                                     message_chunk_count += 1;
+                                    if crate::counting_loop::CountingLoopObservation::Abort
+                                        == loop_detector.observe(&text)
+                                    {
+                                        let err = SamplingError::StreamError {
+                                            error_type: "counting_loop".to_owned(),
+                                            message: "counting loop aborted".to_owned(),
+                                            code: None,
+                                        };
+                                        yield SamplingEvent::Failed {
+                                            request_id: request_id.clone(),
+                                            error: SamplingErrorInfo::from(&err),
+                                        };
+                                        return;
+                                    }
                                     yield SamplingEvent::ChannelToken {
                                         request_id: request_id.clone(),
                                         channel: SamplingChannel::Text,
