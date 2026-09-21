@@ -1264,10 +1264,19 @@ impl SamplingClient {
             }
         }
 
-        // Include encrypted reasoning content if not specified
-        let includes = request.inner.include.get_or_insert_with(Vec::new);
-        if !includes.contains(&rs::IncludeEnum::ReasoningEncryptedContent) {
-            includes.push(rs::IncludeEnum::ReasoningEncryptedContent);
+        // Encrypted reasoning replay is xAI/Codex-origin only. Custom
+        // endpoints (including sigma-gateway on loopback) reject unknown
+        // include values; opt in via extra_response_includes instead.
+        if self
+            .defaults
+            .extra_response_includes
+            .iter()
+            .any(|include| include == "reasoning.encrypted_content")
+        {
+            let includes = request.inner.include.get_or_insert_with(Vec::new);
+            if !includes.contains(&rs::IncludeEnum::ReasoningEncryptedContent) {
+                includes.push(rs::IncludeEnum::ReasoningEncryptedContent);
+            }
         }
 
         Ok(())
