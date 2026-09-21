@@ -635,7 +635,9 @@ pub(crate) async fn spawn_session_actor(
             snap.prompt_index = initial_prompt_texts.len();
             snap.prompt_texts = initial_prompt_texts;
             if initial_total_tokens > 0 {
-                snap.total_tokens = initial_total_tokens;
+                snap.total_tokens = xai_chat_state::TokenCount::Fresh {
+                    tokens: initial_total_tokens,
+                };
             }
             snap.last_compaction_prompt_index = initial_last_compaction;
             chat_state_handle.restore_snapshot(snap);

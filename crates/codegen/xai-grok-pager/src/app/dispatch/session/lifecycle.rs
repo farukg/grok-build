@@ -1893,10 +1893,17 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                 let prev_effort = agent.session.models.reasoning_effort;
                 agent.session.models.set_current(model_id.clone(), effort);
                 let resolved_effort = agent.session.models.reasoning_effort;
-                if let Some(used) = agent.context_state.as_ref().map(|c| c.used)
-                    && let Some(window) = agent.session.models.get_context_window()
+                if let Some(window) = agent.session.models.get_context_window()
+                    && let Some(snap) = agent.context_state.as_mut()
                 {
-                    agent.apply_context_used(used, window);
+                    if window > 0 {
+                        snap.total = window;
+                    }
+                    snap.used_stale = true;
+                    snap.usage_pct =
+                        xai_token_estimation::usage_percentage_u8(snap.used, snap.total);
+                    snap.free_tokens =
+                        xai_token_estimation::free_tokens(snap.total, snap.used);
                 }
                 let unchanged =
                     prev_model.as_ref() == Some(&model_id) && prev_effort == resolved_effort;

@@ -1263,6 +1263,14 @@ impl AgentView {
         }
         self.context_state = Some(next);
     }
+
+    /// Keep the last used count after a model switch; mark it stale until the
+    /// next provider usage. Never reset to 0.
+    pub fn mark_context_used_stale(&mut self) {
+        if let Some(snap) = self.context_state.as_mut() {
+            snap.used_stale = true;
+        }
+    }
     /// Update context state from a streaming notification carrying only `used` and `total` fields.
     ///
     /// No-op for gateway/chat-kind sessions (same policy as [`Self::apply_full_context_info`]).
@@ -1279,6 +1287,7 @@ impl AgentView {
         match self.context_state.as_mut() {
             Some(snap) => {
                 snap.used = used;
+                snap.used_stale = false;
                 if total > 0 {
                     snap.total = total;
                 }

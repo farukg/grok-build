@@ -101,7 +101,7 @@ impl ChatStateActor {
         mut items: Vec<ConversationItem>,
     ) -> Vec<ConversationItem> {
         if should_prune(
-            self.state.total_tokens,
+            self.state.total_tokens.tokens(),
             self.state.sampling_config.context_window,
         ) {
             prune_conversation(&mut items, &self.pruning_config);

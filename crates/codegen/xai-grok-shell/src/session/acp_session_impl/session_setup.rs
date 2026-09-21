@@ -640,6 +640,7 @@ impl SessionActor {
             turn_index,
             context: ContextInfo {
                 used: total_tokens,
+                used_stale: false,
                 total: context_window,
                 system_prompt_tokens,
                 tool_definitions_count: tool_definitions_count as u64,

@@ -235,8 +235,9 @@ impl ChatStateActor {
             tracing::debug!(
                 item_kind = item_kind_str(&item),
                 estimated_tokens_delta = estimated_tokens,
-                estimated_total = self.state.total_tokens + self.state.estimated_tokens_since_model,
-                model_reported_total = self.state.total_tokens,
+                estimated_total = self.state.total_tokens.tokens()
+                    + self.state.estimated_tokens_since_model,
+                model_reported_total = self.state.total_tokens.tokens(),
                 "ChatState: push_message updated estimated_tokens_since_model"
             );
         }
@@ -298,8 +299,9 @@ impl ChatStateActor {
         tracing::debug!(
             item_kind = item_kind_str(&item),
             estimated_tokens_delta = estimated_tokens,
-            estimated_total = self.state.total_tokens + self.state.estimated_tokens_since_model,
-            model_reported_total = self.state.total_tokens,
+            estimated_total = self.state.total_tokens.tokens()
+                + self.state.estimated_tokens_since_model,
+            model_reported_total = self.state.total_tokens.tokens(),
             "ChatState: push_user_message updated estimated_tokens_since_model"
         );
         self.persistence.persist_message(&item);
@@ -410,8 +412,12 @@ impl ChatStateActor {
         self.state.estimated_tokens_since_model = 0;
         self.state.estimate_at_last_response =
             super::state::estimate_conversation_tokens(&self.state.conversation);
-        self.state.total_tokens = total_tokens;
-        self.send_event(ChatStateEvent::TokensUpdated { total_tokens });
+        self.state.total_tokens = crate::types::TokenCount::Fresh {
+            tokens: total_tokens,
+        };
+        self.send_event(ChatStateEvent::TokensUpdated {
+            total_tokens: self.state.total_tokens,
+        });
     }
 
     /// Stash the per-turn `TokenUsage` from the most recent model response.
@@ -490,7 +496,7 @@ impl ChatStateActor {
     /// Reseed `total_tokens` after a conversation rewrite.
     /// Scales `base_estimate` by the provider-confirmed ratio, capped at the pre-rewrite total.
     pub(super) fn reseed_total_tokens(&self, base_estimate: u64) -> u64 {
-        let pre_replace_total = self.state.total_tokens;
+        let pre_replace_total = self.state.total_tokens.tokens();
         let mut estimated_tokens =
             if pre_replace_total > 0 && self.state.estimate_at_last_response > 0 {
                 let ratio = pre_replace_total as f64 / self.state.estimate_at_last_response as f64;
@@ -525,14 +531,16 @@ impl ChatStateActor {
         let estimated_tokens = self.reseed_total_tokens(base_estimate);
         self.state.conversation = items;
         self.state.estimated_tokens_since_model = 0;
-        self.state.total_tokens = estimated_tokens;
+        self.state.total_tokens = crate::types::TokenCount::Fresh {
+            tokens: estimated_tokens,
+        };
         self.state.estimate_at_last_response = base_estimate;
         self.rebase_turn_capture_offset();
         self.send_event(ChatStateEvent::ConversationReset {
             new_len: self.state.conversation.len(),
         });
         self.send_event(ChatStateEvent::TokensUpdated {
-            total_tokens: estimated_tokens,
+            total_tokens: self.state.total_tokens,
         });
     }
 

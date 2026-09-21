@@ -499,7 +499,9 @@ async fn record_token_usage_emits_event() {
     let event = h.next_event().await;
     assert!(matches!(
         event,
-        ChatStateEvent::TokensUpdated { total_tokens: 1000 }
+        ChatStateEvent::TokensUpdated {
+            total_tokens: crate::types::TokenCount::Fresh { tokens: 1000 },
+        }
     ));
 
     let tokens = h.handle.get_total_tokens().await;
@@ -1578,7 +1580,10 @@ async fn snapshot_restore_preserves_all_fields() {
         h.handle.get_conversation().await.len(),
         snapshot.conversation.len()
     );
-    assert_eq!(h.handle.get_total_tokens().await, snapshot.total_tokens);
+    assert_eq!(
+        h.handle.get_total_tokens().await,
+        snapshot.total_tokens.tokens()
+    );
     assert_eq!(h.handle.get_prompt_index().await, snapshot.prompt_index);
     assert_eq!(
         h.handle.get_agent_edited_paths().await,
@@ -4649,10 +4654,16 @@ async fn context_window_downgrade_triggers_auto_compact() {
         ..Default::default()
     };
 
-    let h = TestHarness::with_config(vec![], config);
+    let mut h = TestHarness::with_config(vec![], config);
 
     // Simulate 217k tokens of conversation (matching turn 587's total_tokens)
     h.handle.record_token_usage(217_000);
+    assert!(matches!(
+        h.next_event().await,
+        ChatStateEvent::TokensUpdated {
+            total_tokens: crate::types::TokenCount::Fresh { tokens: 217_000 },
+        }
+    ));
 
     // Pre-downgrade: 217k / 500k = 43% — well under auto-compact threshold
     let pre = h.handle.get_sampling_config().await.unwrap();
@@ -4693,6 +4704,13 @@ async fn context_window_downgrade_triggers_auto_compact() {
     let info = trigger.unwrap();
     assert_eq!(info.context_window, NonZeroU64::new(128_000).unwrap());
     assert_eq!(info.total_tokens, 217_000);
+    let event = h.next_event().await;
+    assert!(matches!(
+        event,
+        ChatStateEvent::TokensUpdated {
+            total_tokens: crate::types::TokenCount::Stale { tokens: 217_000 },
+        }
+    ));
     // utilization_percent is u8 so it caps at 255, but we just need >85
     assert!(
         info.utilization_percent > 85,
@@ -5537,7 +5555,7 @@ async fn restore_snapshot_restores_all_fields() {
 
     let snapshot = h.handle.snapshot().await.unwrap();
     assert_eq!(snapshot.prompt_index, 1);
-    assert_eq!(snapshot.total_tokens, 500);
+    assert_eq!(snapshot.total_tokens.tokens(), 500);
     assert_eq!(snapshot.conversation.len(), 1);
 
     // Replace state

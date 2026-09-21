@@ -464,6 +464,10 @@ pub fn count_detail(count: u64, noun: &str) -> String {
 #[serde(default, rename_all = "camelCase")]
 pub struct ContextInfo {
     pub used: u64,
+    /// Last known used count belongs to a previous model/window until the next
+    /// provider usage lands. Keep `used`; do not zero it.
+    #[serde(default)]
+    pub used_stale: bool,
     pub total: u64,
     pub system_prompt_tokens: u64,
     pub tool_definitions_count: u64,
