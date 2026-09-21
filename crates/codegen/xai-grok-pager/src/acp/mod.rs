@@ -380,9 +380,6 @@ fn unsupported_leader_flags(flags: &ConnectFlags) -> Vec<&'static str> {
     if flags.storage_mode.is_some() {
         out.push("--storage-mode");
     }
-    if flags.subagents {
-        out.push("--subagents");
-    }
     if !flags.permission_rules.is_empty() {
         out.push("--allow/--deny permission rules");
     }
@@ -940,15 +937,25 @@ mod tests {
             memory_override_flag: Some("--experimental-memory"),
             disable_web_search: true,
             storage_mode: Some("writeback".into()),
-            subagents: true,
             ..Default::default()
         };
         let detected = unsupported_leader_flags(&flags);
-        assert_eq!(detected.len(), 4);
+        assert_eq!(detected.len(), 3);
         assert!(detected.contains(&"--experimental-memory"));
         assert!(detected.contains(&"--disable-web-search"));
         assert!(detected.contains(&"--storage-mode"));
-        assert!(detected.contains(&"--subagents"));
+    }
+
+    /// `ConnectFlags.subagents` defaults to true (subagents are on unless
+    /// `--no-subagents`); it does not prove an explicit `--subagents` pass and
+    /// must not warn in leader mode.
+    #[test]
+    fn unsupported_leader_flags_never_warns_for_default_subagents() {
+        let flags = ConnectFlags {
+            subagents: true,
+            ..Default::default()
+        };
+        assert!(unsupported_leader_flags(&flags).is_empty());
     }
     #[test]
     fn unsupported_leader_flags_preserves_no_memory_spelling() {
