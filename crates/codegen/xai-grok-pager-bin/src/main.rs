@@ -1349,7 +1349,7 @@ async fn run_agent_command(
         cli_session_summary_model: None,
         memory_enabled_override: None,
         disable_web_search,
-        todo_gate: false,
+        todo_gate: agent_args.todo_gate,
         laziness_debug_log: None,
         storage_mode: None,
     });

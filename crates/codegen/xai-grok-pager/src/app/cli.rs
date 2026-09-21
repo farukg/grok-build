@@ -274,6 +274,12 @@ pub struct AgentArgs {
     /// Auto-approve all tool executions
     #[arg(long = "always-approve", alias = "yolo")]
     pub yolo: bool,
+    /// Enable the runtime turn-end TodoGate for every session this process
+    /// owns. The only leader-mode activation path: remote settings own the
+    /// default (off), the TUI-level `--todo-gate` flag never reaches leader
+    /// agent config.
+    #[arg(long = "todo-gate", hide = true)]
+    pub todo_gate: bool,
     /// Path to an agent profile file.
     #[arg(long = "agent-profile", value_name = "PATH")]
     pub agent_profile: Option<PathBuf>,
