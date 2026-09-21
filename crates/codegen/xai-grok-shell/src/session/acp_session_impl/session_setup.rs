@@ -391,7 +391,10 @@ impl SessionActor {
         };
         let current_model = &current_config.model;
         let base_url = &current_config.base_url;
-        if !crate::util::is_cli_chat_proxy_url(base_url) {
+        // Loopback is `is_cli_chat_proxy_url` (local mock / sigma-gateway) but
+        // is not the official proxy. `/models-v2` 404s there and must not
+        // brick idle-resume. Trusted HTTPS cli-chat-proxy only.
+        if !crate::util::is_trusted_cli_chat_proxy_url(base_url) {
             return;
         }
         tracing::info!(
