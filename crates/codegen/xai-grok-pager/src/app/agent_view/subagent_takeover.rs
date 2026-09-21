@@ -16,7 +16,7 @@ use crate::scrollback::render::ScratchBuffer;
 use crate::theme::Theme;
 use crate::views::agent;
 use crate::views::shortcuts_bar::PendingHint;
-use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -29,7 +29,45 @@ pub(super) struct InheritedOverlay<'a> {
     pub(super) header: OverlayHeader<'a>,
     pub(super) stop_label: &'static str,
 }
+/// Sibling switch direction for the Ctrl+Alt+Left/Right chords.
+#[derive(Clone, Copy)]
+enum Direction {
+    Prev,
+    Next,
+}
 impl AgentView {
+    /// Switch the takeover to the previous/next sibling of `child_sid` (same
+    /// parent). Returns the new child sid when a switch happened. HashMap
+    /// iteration order stands in for a spawn order in this first cut.
+    fn switch_sibling(&mut self, child_sid: &str, dir: Direction) -> Option<String> {
+        let parent_sid = self
+            .subagent_views
+            .get(child_sid)?
+            .child_link()?
+            .parent_session_id()
+            .0
+            .to_string();
+        let mut siblings: Vec<String> = self
+            .subagent_views
+            .iter()
+            .filter(|(_, v)| {
+                v.child_link()
+                    .is_some_and(|l| l.parent_session_id().0.to_string() == parent_sid)
+            })
+            .map(|(sid, _)| sid.clone())
+            .collect();
+        if siblings.len() < 2 {
+            return None;
+        }
+        let idx = siblings.iter().position(|sid| sid == child_sid)?;
+        let next = match dir {
+            Direction::Prev => (idx + siblings.len() - 1) % siblings.len(),
+            Direction::Next => (idx + 1) % siblings.len(),
+        };
+        let next = siblings.swap_remove(next);
+        self.open_subagent_fullscreen(next.clone());
+        Some(next)
+    }
     /// Open the fullscreen subagent view for `child_sid`, replaying child `updates.jsonl` when the child scrollback is still empty (or the child finished).
     pub(crate) fn open_subagent_fullscreen(&mut self, child_sid: String) {
         let Some(child) = self.subagent_views.get(&child_sid) else {
@@ -357,6 +395,71 @@ impl AgentView {
         };
         if key.is_some_and(|key| key!('q', CONTROL).matches(key)) {
             return Some(InputOutcome::Unchanged);
+        }
+        // Tree navigation chords, handled raw before any child routing.
+        // Ctrl+Alt+Up: parent (close at the root's direct children);
+        // Ctrl+Alt+Down: first child of this subagent; Left/Right: previous/next
+        // sibling sharing the same parent. HashMap order decides the sibling
+        // pick; a stable spawn order can replace it later.
+        if let Some(key) = key
+            && key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && !key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right)
+        {
+            return match key.code {
+                KeyCode::Up => {
+                    let parent_sid = self
+                        .subagent_views
+                        .get(&child_sid)
+                        .and_then(|c| c.child_link())
+                        .map(|link| link.parent_session_id().0.to_string());
+                    match parent_sid
+                        .filter(|p| self.subagent_views.contains_key(p))
+                    {
+                        Some(parent) => {
+                            self.open_subagent_fullscreen(parent);
+                            Some(InputOutcome::Changed)
+                        }
+                        // Direct child of the root: leave the takeover.
+                        None => {
+                            self.close_subagent_fullscreen();
+                            Some(InputOutcome::Changed)
+                        }
+                    }
+                }
+                KeyCode::Down => {
+                    // Every child view, at any depth, is registered on the ROOT
+                    // view with its real parent link; find the first child of
+                    // this subagent there. HashMap order picks which; a stable
+                    // spawn order can replace it later.
+                    let child_of_child = self
+                        .subagent_views
+                        .iter()
+                        .filter(|(_, v)| {
+                            v.child_link()
+                                .is_some_and(|l| l.parent_session_id().0.to_string() == child_sid)
+                        })
+                        .map(|(sid, _)| sid.clone())
+                        .next();
+                    if let Some(next) = child_of_child {
+                        self.open_subagent_fullscreen(next);
+                        Some(InputOutcome::Changed)
+                    } else {
+                        Some(InputOutcome::Unchanged) // leaf: no child to enter
+                    }
+                }
+                KeyCode::Left => {
+                    self.switch_sibling(&child_sid, Direction::Prev)
+                        .map(|_| InputOutcome::Changed)
+                        .or(Some(InputOutcome::Unchanged))
+                }
+                KeyCode::Right => {
+                    self.switch_sibling(&child_sid, Direction::Next)
+                        .map(|_| InputOutcome::Changed)
+                        .or(Some(InputOutcome::Unchanged))
+                }
+                _ => unreachable!("guarded by the matches! above"),
+            };
         }
         if let Event::Mouse(mouse) = ev
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
