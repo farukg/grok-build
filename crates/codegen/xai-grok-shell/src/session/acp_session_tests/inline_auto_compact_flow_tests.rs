@@ -387,9 +387,11 @@ async fn test_context_window_override_to_smaller_triggers_compact() {
         })
         .await;
 }
-/// `handle_model_metadata_update` must reject a smaller context_window from a response header and accept a larger one.
+/// `handle_model_metadata_update` must apply a smaller context_window from a
+/// response header so auto-compact uses the live SKU (k3-256k = 262144), not
+/// a leftover 500k Grok window.
 #[tokio::test(flavor = "current_thread")]
-async fn test_response_header_context_window_downgrade_rejected() {
+async fn test_response_header_context_window_downgrade_applied() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -401,7 +403,7 @@ async fn test_response_header_context_window_downgrade_rejected() {
             assert_eq!(cfg_before.context_window.get(), 500_000);
             actor
                 .handle_model_metadata_update(crate::sampling::ResponseModelMetadata {
-                    context_window: Some(256_000),
+                    context_window: Some(262_144),
                     max_completion_tokens: None,
                     models_etag: None,
                 })
@@ -409,8 +411,8 @@ async fn test_response_header_context_window_downgrade_rejected() {
             let cfg_after = actor.chat_state_handle.get_sampling_config().await.unwrap();
             assert_eq!(
                 cfg_after.context_window.get(),
-                500_000,
-                "context_window must NOT be downgraded by response header"
+                262_144,
+                "context_window must follow the live SKU from the response header"
             );
             actor
                 .handle_model_metadata_update(crate::sampling::ResponseModelMetadata {
@@ -959,19 +961,20 @@ async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
         })
         .await;
 }
-/// If the proxy hasn't been updated yet, model_metadata is None, and the check must be a no-op for backwards compatibility.
+/// Size-worded 400 without model_metadata compact-and-resubmits against the
+/// named SKU cap in the body, not a leftover session window.
 #[tokio::test(flavor = "current_thread")]
-async fn test_compact_on_error_noop_without_model_metadata() {
+async fn test_compact_on_error_kimi_token_limit_without_model_metadata() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let (gateway_tx, _) = mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let (persistence_tx, _) = mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_test_actor(500_000, 200_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_test_actor(80_000, 500_000, 85, gateway_tx, persistence_tx).await;
             let err = xai_grok_sampler::SamplingErrorInfo {
                 kind: xai_grok_sampler::SamplingErrorKind::Api,
                 status_code: Some(400),
-                message: "prompt is too long".into(),
+                message: "Your request exceeded k3-256k model token limit: 262144".into(),
                 is_retryable: false,
                 retry_after_secs: None,
                 should_retry: None,
@@ -982,7 +985,28 @@ async fn test_compact_on_error_noop_without_model_metadata() {
                 doom_loop_aborted_at_chunk: None,
                 credential: xai_grok_sampling_types::SentCredential::Unknown,
             };
-            assert!(!actor.should_compact_on_error(&err).await);
+            assert!(actor.should_compact_on_error(&err).await);
+            assert_eq!(
+                actor.compact_on_error_window(&err).await,
+                Some(262_144),
+                "named Kimi cap is the compact window even when session leftover is 500k"
+            );
+            let unrelated = xai_grok_sampler::SamplingErrorInfo {
+                kind: xai_grok_sampler::SamplingErrorKind::Api,
+                status_code: Some(400),
+                message: "invalid_request_error: field description says request too large sometimes"
+                    .into(),
+                is_retryable: false,
+                retry_after_secs: None,
+                should_retry: None,
+                error_code: None,
+                model_metadata: None,
+                empty_response_context: None,
+                doom_loop_triggers: None,
+                doom_loop_aborted_at_chunk: None,
+                credential: xai_grok_sampling_types::SentCredential::Unknown,
+            };
+            assert!(!actor.should_compact_on_error(&unrelated).await);
         })
         .await;
 }

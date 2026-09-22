@@ -528,21 +528,13 @@ impl SessionActor {
             && current_config.context_window != new_cw
             && self.compaction.context_window_override.is_none()
         {
-            if new_cw < current_config.context_window {
-                tracing::warn!(
-                    current_context_window = current_config.context_window.get(),
-                    header_context_window = new_cw.get(),
-                    "Ignoring context_window downgrade from response header"
-                );
-            } else {
-                tracing::info!(
-                    old_context_window = current_config.context_window.get(),
-                    new_context_window = new_cw.get(),
-                    "Model context_window upgraded via response header"
-                );
-                new_context_window = new_cw;
-                config_changed = true;
-            }
+            tracing::info!(
+                old_context_window = current_config.context_window.get(),
+                new_context_window = new_cw.get(),
+                "Model context_window updated via response header"
+            );
+            new_context_window = new_cw;
+            config_changed = true;
         }
         if let Some(new_mct) = metadata.max_completion_tokens
             && current_config.max_completion_tokens != Some(new_mct)
