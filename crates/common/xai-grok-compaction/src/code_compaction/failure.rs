@@ -20,6 +20,7 @@ pub fn is_context_length_error(message: &str) -> bool {
         || has_size_slug(&m)
         || has_rendered_413_phrase(&m)
         || has_input_length_pair(&m)
+        || has_model_token_limit(&m)
 }
 
 /// `needle` at message start or right after a ": " separator — where
@@ -58,6 +59,24 @@ fn has_input_length_pair(m: &str) -> bool {
     m.contains("input length") && m.contains("exceeds the maximum allowed length")
 }
 
+/// Kimi Coding (`k3-256k` and siblings) returns 400
+/// `invalid_authentication_error` with this prose. The type name is a
+/// misnomer; the body is a hard token-window reject.
+fn has_model_token_limit(m: &str) -> bool {
+    named_model_token_limit(m).is_some()
+        || (m.contains("exceeded") && m.contains("model token limit"))
+}
+
+/// Named SKU cap from Kimi prose (`… model token limit: 262144`).
+/// The trailing integer is the window the provider just enforced.
+pub fn named_model_token_limit(message: &str) -> Option<u64> {
+    let m = message.to_ascii_lowercase();
+    let rest = m.rsplit_once("model token limit:")?.1.trim();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let window = digits.parse::<u64>().ok()?;
+    (window > 0).then_some(window)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +108,8 @@ mod tests {
             "compact failed: 413: Request too large",
             "API error (status 429 Too Many Requests): Request too large for model",
             "request_too_large: request rejected",
+            "Your request exceeded k3-256k model token limit: 262144",
+            r#"{"error":{"message":"Your request exceeded k3-256k model token limit: 262144","type":"invalid_authentication_error"}}"#,
         ] {
             assert!(is_context_length_error(msg), "should match: {msg}");
         }
@@ -117,5 +138,25 @@ mod tests {
         ] {
             assert!(!is_context_length_error(msg), "should not match: {msg}");
         }
+    }
+
+    #[test]
+    fn named_model_token_limit_reads_kimi_cap() {
+        assert_eq!(
+            named_model_token_limit(
+                "Your request exceeded k3-256k model token limit: 262144"
+            ),
+            Some(262144)
+        );
+        assert_eq!(
+            named_model_token_limit(
+                r#"{"error":{"message":"Your request exceeded k3-256k model token limit: 262144","type":"invalid_authentication_error"}}"#
+            ),
+            Some(262144)
+        );
+        assert_eq!(
+            named_model_token_limit("invalid_request_error: field description says request too large sometimes"),
+            None
+        );
     }
 }
