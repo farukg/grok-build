@@ -2195,6 +2195,21 @@ mod tests {
         assert!(serde_json::from_str::<BashToolInput>(r#"{"command":"x"}"#).is_err());
     }
 
+    /// A command that really contains the three-letter identifier (or
+    /// `markdown`, or `TOKEN r'…'`) must survive JSON parse unchanged.
+    /// Execute-time stripping is not on this path and must not be added.
+    #[test]
+    fn bash_json_keeps_identifier_in_command() {
+        let token = concat!("m", "ar");
+        let command = format!("echo {token}\nmarkdown\n{token} r'x'");
+        let json = serde_json::json!({
+            "command": command,
+            "description": "keep identifier bytes"
+        });
+        let parsed: BashToolInput = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.command, command);
+    }
+
     // A foreground command must not block longer than the cap, whatever its
     // requested `timeout`.
     #[test]

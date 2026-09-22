@@ -2642,4 +2642,51 @@ neutTest_set);
             other => panic!("Expected EditsApplied, got {:?}", other),
         }
     }
+
+    /// Execute-time stripping of a three-letter identifier would destroy real
+    /// content (`markdown`, a line that is the identifier, `TOKEN r'…'`).
+    /// Apply must write the parsed arguments 1:1.
+    #[tokio::test]
+    async fn apply_keeps_identifier_markdown_and_regex_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let token = concat!("m", "ar");
+        let original = format!("{token}\nmarkdown\n{token} r'abc'\n");
+        std::fs::write(tmp.path().join("f.txt"), &original).unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            skip_read_before_edit: true,
+            empty_old_string_does_not_override: false,
+            ..Default::default()
+        }));
+        let input = make_input("f.txt", "markdown", "markdown docs");
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::EditsApplied(_) => {
+                let written = std::fs::read_to_string(tmp.path().join("f.txt")).unwrap();
+                assert_eq!(
+                    written,
+                    format!("{token}\nmarkdown docs\n{token} r'abc'\n")
+                );
+            }
+            other => panic!("Expected EditsApplied, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn search_replace_json_keeps_identifier_bytes() {
+        let token = concat!("m", "ar");
+        let new_string = format!("markdown\n{token} r'x'");
+        let value = serde_json::json!({
+            "file_path": "f.txt",
+            "old_string": token,
+            "new_string": new_string,
+            "replace_all": false
+        });
+        let parsed: SearchReplaceInput = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.old_string, token);
+        assert_eq!(parsed.new_string, new_string);
+    }
 }
