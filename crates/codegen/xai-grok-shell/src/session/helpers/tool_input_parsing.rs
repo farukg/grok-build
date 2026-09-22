@@ -143,6 +143,28 @@ mod tests {
         );
     }
 
+    /// Production parse in `handle_tool_call`: `normalize_empty_arguments` then
+    /// `serde_json::from_str`. A clean multi-line Apply payload must stay
+    /// byte-equal; this path must not insert a line-start token.
+    #[test]
+    fn multiline_search_replace_json_unchanged_after_normalize_and_parse() {
+        let json = r#"{"file_path":"a.rs","old_string":"fn foo() {\n    let x = 1;\n}","new_string":"fn foo() {\n    let x = 2;\n}","replace_all":false}"#;
+        let parsed = normalize_and_parse(json);
+        assert_eq!(
+            parsed.get("old_string").and_then(|v| v.as_str()),
+            Some("fn foo() {\n    let x = 1;\n}")
+        );
+        assert_eq!(
+            parsed.get("new_string").and_then(|v| v.as_str()),
+            Some("fn foo() {\n    let x = 2;\n}")
+        );
+        let roundtrip = serde_json::to_string(&parsed).unwrap();
+        assert!(
+            !roundtrip.contains(concat!("m", "ar")),
+            "parse must not insert the token: {roundtrip}"
+        );
+    }
+
     #[test]
     fn empty_object_string_unchanged() {
         assert_eq!(normalize_and_parse("{}"), serde_json::json!({}));
