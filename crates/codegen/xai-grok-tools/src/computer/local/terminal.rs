@@ -216,6 +216,12 @@ enum TerminalCommand {
     /// Sent on turn cancellation.
     KillForegroundCommands,
 
+    /// Test-only probe: whether any task has entered the post-exit drain window
+    /// (`ProcessState::draining`), the exact flag the kill paths gate on via
+    /// `is_running()`.
+    #[cfg(test)]
+    AnyTaskDraining { reply: oneshot::Sender<bool> },
+
     /// Unblocks the foreground waiter with signal="backgrounded".
     BackgroundForeground {
         tool_call_id: String,
@@ -1103,6 +1109,11 @@ impl LocalTerminalActor {
             }
             TerminalCommand::KillForegroundCommands => {
                 self.kill_foreground_commands().await;
+            }
+            #[cfg(test)]
+            TerminalCommand::AnyTaskDraining { reply } => {
+                let draining = self.processes.values().any(|process| process.draining);
+                let _ = reply.send(draining);
             }
             TerminalCommand::BackgroundForeground {
                 tool_call_id,
@@ -2520,6 +2531,23 @@ impl LocalTerminalBackend {
     pub fn cancel(&self) {
         self.cancel_token.cancel();
     }
+
+    /// Test-only probe: whether any task has entered the post-exit drain
+    /// window. Lets tests wait for that state transition without racing a
+    /// wall-clock sleep.
+    #[cfg(test)]
+    async fn any_task_draining(&self) -> bool {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(TerminalCommand::AnyTaskDraining { reply: reply_tx })
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        reply_rx.await.unwrap_or(false)
+    }
 }
 
 impl Default for LocalTerminalBackend {
@@ -2672,6 +2700,8 @@ impl TerminalBackend for LocalTerminalBackend {
             .send(TerminalCommand::KillForegroundCommands)
             .await;
     }
+
+
 
     async fn kill_all_background_tasks(&self) {
         let tasks = self.list_tasks().await;
@@ -4465,17 +4495,36 @@ mod tests {
         );
     }
 
+    /// The command exits (`echo done` returns) while a backgrounded child keeps
+    /// the pipes open: the task enters the post-exit drain window. A turn
+    /// cancellation during that window must not tear the drained output away,
+    /// so the kill path only touches tasks that are still running. The test
+    /// waits for that exact state transition instead of racing a wall-clock
+    /// sleep: polling the same `is_running` predicate the kill path filters on
+    /// makes the kill provably land inside the drain window.
     #[tokio::test]
     async fn draining_foreground_command_survives_a_kill() {
         let backend = std::sync::Arc::new(LocalTerminalBackend::new_with_tick_interval(
             Duration::from_millis(20),
         ));
+        let request = make_request("sleep 5 &\necho done");
         let run = tokio::spawn({
             let backend = backend.clone();
-            async move { backend.run(make_request("sleep 5 &\necho done")).await }
+            async move { backend.run(request).await }
         });
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait until the task enters the post-exit drain window, with a hard
+        // ceiling so a regression fails fast instead of hanging. The drainer
+        // sleeps DRAIN_TIMEOUT (100ms) before it would reset the flag, so the
+        // window is comfortably observable.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !backend.any_task_draining().await {
+            assert!(
+                Instant::now() < deadline,
+                "task never entered the post-exit drain window"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         backend.kill_foreground_commands().await;
 
         let result = run.await.unwrap().expect("run returns a result");
