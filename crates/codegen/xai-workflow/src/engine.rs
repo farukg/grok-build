@@ -901,10 +901,10 @@ mod tests {
                         let _ = reply.send(Ok(()));
                     }
                     WorkflowHostRequest::ReleaseAgentCalls { count, reply } => {
-                        let _ = agents_used.fetch_update(
+                        agents_used.update(
                             std::sync::atomic::Ordering::SeqCst,
                             std::sync::atomic::Ordering::SeqCst,
-                            |used| Some(used.saturating_sub(count)),
+                            |used| used.saturating_sub(count),
                         );
                         let _ = reply.send(Ok(()));
                     }
