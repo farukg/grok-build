@@ -149,11 +149,10 @@ impl ModeTracker {
                         .and_then(parse_decimal)
                         .filter(|&n| n > 0)
                         .unwrap_or(1);
-                    let _ = self.kitty_depth.fetch_update(
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                        |depth| Some(depth.saturating_sub(n)),
-                    );
+                    self.kitty_depth
+                        .update(Ordering::SeqCst, Ordering::SeqCst, |depth| {
+                            depth.saturating_sub(n)
+                        });
                 }
                 // `CSI u` restores the cursor, `CSI ? u` queries, and `CSI = .. u` sets flags without pushing; none are stack operations.
                 _ => {}

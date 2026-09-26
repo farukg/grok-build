@@ -66,11 +66,8 @@ impl ActivityGauge {
     }
 
     fn dec(&self) {
-        let _ = self
-            .value
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                Some(v.saturating_sub(1))
-            });
+        self.value
+            .update(Ordering::Relaxed, Ordering::Relaxed, |v| v.saturating_sub(1));
     }
 
     pub fn enter(&'static self) -> ActivityGaugeGuard {
