@@ -22,6 +22,7 @@ use crate::theme::ThemeKind;
 static SYNTECT_GROKNIGHT: OnceLock<Syntect> = OnceLock::new();
 static SYNTECT_TOKYONIGHT: OnceLock<Syntect> = OnceLock::new();
 static SYNTECT_GROKDAY: OnceLock<Syntect> = OnceLock::new();
+static SYNTECT_COLORDNA: OnceLock<Syntect> = OnceLock::new();
 
 /// Convert syntect style to ratatui foreground-only style, quantized for terminal color support (or polarity-safe under the terminal-native lock).
 pub fn syntect_to_ratatui_fg(style: syntect::highlighting::Style) -> Style {
@@ -130,6 +131,8 @@ pub fn get_syntect() -> &'static Syntect {
             .get_or_init(|| Syntect::new(include_bytes!("../assets/tokyo-night.tmTheme"))),
         ThemeKind::GrokDay => SYNTECT_GROKDAY
             .get_or_init(|| Syntect::new(include_bytes!("../assets/grok-day.tmTheme"))),
+        ThemeKind::ColorDna => SYNTECT_COLORDNA
+            .get_or_init(|| Syntect::new(include_bytes!("../assets/color-dna.tmTheme"))),
     }
 }
 
