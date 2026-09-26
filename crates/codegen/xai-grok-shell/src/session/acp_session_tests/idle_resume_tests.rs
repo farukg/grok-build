@@ -385,15 +385,15 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
             actor.maybe_refresh_model_metadata_on_resume().await;
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             let cfg_after = actor.chat_state_handle.get_sampling_config().await.unwrap();
+            // Loopback is is_cli_chat_proxy_url but not trusted HTTPS
+            // cli-chat-proxy; idle-resume must not hit /models-v2 there.
             assert_eq!(
-                cfg_after.context_window,
-                std::num::NonZeroU64::new(300_000).unwrap(),
-                "context_window should be updated to 300K from /models-v2"
+                cfg_after.context_window, cfg_before.context_window,
+                "loopback must not refresh /models-v2"
             );
             assert_eq!(
-                cfg_after.max_completion_tokens,
-                Some(16384),
-                "max_completion_tokens should be updated to 16384 from /models-v2"
+                cfg_after.max_completion_tokens, cfg_before.max_completion_tokens,
+                "loopback must not refresh /models-v2"
             );
         })
         .await;

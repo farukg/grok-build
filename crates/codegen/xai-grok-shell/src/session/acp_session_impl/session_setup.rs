@@ -391,7 +391,10 @@ impl SessionActor {
         };
         let current_model = &current_config.model;
         let base_url = &current_config.base_url;
-        if !crate::util::is_cli_chat_proxy_url(base_url) {
+        // Loopback is `is_cli_chat_proxy_url` (local mock / sigma-gateway) but
+        // is not the official proxy. `/models-v2` 404s there and must not
+        // brick idle-resume. Trusted HTTPS cli-chat-proxy only.
+        if !crate::util::is_trusted_cli_chat_proxy_url(base_url) {
             return;
         }
         tracing::info!(
@@ -525,21 +528,13 @@ impl SessionActor {
             && current_config.context_window != new_cw
             && self.compaction.context_window_override.is_none()
         {
-            if new_cw < current_config.context_window {
-                tracing::warn!(
-                    current_context_window = current_config.context_window.get(),
-                    header_context_window = new_cw.get(),
-                    "Ignoring context_window downgrade from response header"
-                );
-            } else {
-                tracing::info!(
-                    old_context_window = current_config.context_window.get(),
-                    new_context_window = new_cw.get(),
-                    "Model context_window upgraded via response header"
-                );
-                new_context_window = new_cw;
-                config_changed = true;
-            }
+            tracing::info!(
+                old_context_window = current_config.context_window.get(),
+                new_context_window = new_cw.get(),
+                "Model context_window updated via response header"
+            );
+            new_context_window = new_cw;
+            config_changed = true;
         }
         if let Some(new_mct) = metadata.max_completion_tokens
             && current_config.max_completion_tokens != Some(new_mct)
@@ -640,6 +635,7 @@ impl SessionActor {
             turn_index,
             context: ContextInfo {
                 used: total_tokens,
+                used_stale: false,
                 total: context_window,
                 system_prompt_tokens,
                 tool_definitions_count: tool_definitions_count as u64,

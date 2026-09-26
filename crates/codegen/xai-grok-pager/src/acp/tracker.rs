@@ -357,10 +357,12 @@ pub struct AcpUpdateTracker {
     /// ToolCallUpdates that arrived before their ToolCall (race condition).
     /// When the ToolCall arrives, we merge and create the entry immediately as completed.
     orphan_updates: HashMap<String, acp::ToolCallUpdate>,
-    /// Last computed thinking elapsed (ms) from server timestamps.
-    /// Updated on every thought chunk as `agentTimestampMs - streamStartMs`.
-    /// Frozen when thinking ends (passed to `finish_running_with_time`).
+    /// Accumulated server-reported reasoning time for the logical turn.
     last_thinking_elapsed_ms: Option<i64>,
+    /// Transport stream currently contributing to the logical thought history.
+    thinking_stream_start_ms: Option<i64>,
+    /// Latest server timestamp counted for that transport stream.
+    thinking_last_timestamp_ms: Option<i64>,
     /// When true, the next UserMessageChunk is silently ignored because we already pushed the user prompt entry from `dispatch_send_prompt`.
     /// Reset after one skip.
     skip_next_user_echo: bool,
@@ -385,9 +387,8 @@ pub struct AcpUpdateTracker {
     /// suppresses further output streaming. `handle_task_backgrounded` demotes the existing block. Value is the
     /// optional description from `raw_input.description`.
     pub(crate) bg_deferred_tools: std::collections::HashMap<String, Option<String>>,
-    /// Last seen `stream_start_ms` from notification meta.
-    /// When this changes, a new LLM streaming response has started.
-    /// We finish any in-flight thinking/agent-message entries so the next chunks create fresh ones instead of appending to stale entries.
+    /// Last seen transport stream start. A change closes streamed assistant text
+    /// but does not split the logical turn's thinking history.
     last_stream_start_ms: Option<i64>,
     /// Monotonic count of live parent-agent updates that changed scrollback.
     agent_output_epoch: u64,
@@ -954,27 +955,11 @@ impl AcpUpdateTracker {
                 .last_stream_start_ms
                 .is_some_and(|prev| prev != new_start)
             {
-                let thinking_has_content = self
-                    .current_thinking
-                    .and_then(|id| scrollback.get_by_id(id))
-                    .is_some_and(|e| {
-                        if let RenderBlock::Thinking(t) = &e.block {
-                            !t.text().is_empty()
-                        } else {
-                            false
-                        }
-                    });
-                if thinking_has_content {
-                    self.finish_thinking(scrollback);
-                }
+                // Transport streams can restart after every tool action, retry, or
+                // provider handoff within one logical turn. A stream boundary ends
+                // visible assistant text, but reasoning remains one turn-owned history.
                 if let Some(agent_id) = self.current_agent_msg.take() {
                     scrollback.finish_running(agent_id);
-                }
-                if !meta.is_replay
-                    && self.current_thinking.is_none()
-                    && self.activity_known_blocking_wait().is_none()
-                {
-                    self.pre_create_thinking(scrollback);
                 }
             }
             self.last_stream_start_ms = Some(new_start);
@@ -1040,6 +1025,8 @@ impl AcpUpdateTracker {
             ));
         }
         self.last_thinking_elapsed_ms = None;
+        self.thinking_stream_start_ms = None;
+        self.thinking_last_timestamp_ms = None;
         self.last_stream_start_ms = None;
         self.compaction_activity = None;
         self.retry_activity = None;
@@ -1065,6 +1052,8 @@ impl AcpUpdateTracker {
                 scrollback.finish_running_with_time(thinking_id, self.last_thinking_elapsed_ms);
             }
             self.last_thinking_elapsed_ms = None;
+            self.thinking_stream_start_ms = None;
+            self.thinking_last_timestamp_ms = None;
         }
     }
     /// Pre-create a thinking block so "Thinking…" appears immediately when the turn starts, before the first ThinkingDelta arrives.
@@ -1149,7 +1138,7 @@ impl AcpUpdateTracker {
             acp::ContentBlock::Text(t) => &t.text,
             _ => return false,
         };
-        if text.is_empty() {
+        if text.trim().is_empty() {
             return false;
         }
         let is_replay = meta.is_replay;
@@ -1166,7 +1155,27 @@ impl AcpUpdateTracker {
         if let (Some(agent_ts), Some(stream_start)) =
             (meta.agent_timestamp_ms, meta.stream_start_ms)
         {
-            self.last_thinking_elapsed_ms = Some(agent_ts - stream_start);
+            let elapsed = match (
+                self.thinking_stream_start_ms,
+                self.thinking_last_timestamp_ms,
+            ) {
+                (Some(previous_start), Some(previous_ts)) if previous_start == stream_start => {
+                    match self.last_thinking_elapsed_ms {
+                        Some(elapsed) => {
+                            elapsed.saturating_add(agent_ts.saturating_sub(previous_ts))
+                        }
+                        None => agent_ts.saturating_sub(previous_ts),
+                    }
+                }
+                (Some(_), _) => match self.last_thinking_elapsed_ms {
+                    Some(elapsed) => elapsed.saturating_add(agent_ts.saturating_sub(stream_start)),
+                    None => agent_ts.saturating_sub(stream_start),
+                },
+                (None, _) => agent_ts.saturating_sub(stream_start),
+            };
+            self.last_thinking_elapsed_ms = Some(elapsed);
+            self.thinking_stream_start_ms = Some(stream_start);
+            self.thinking_last_timestamp_ms = Some(agent_ts);
         }
         if meta.is_replay {
             scrollback.push_chunk_to_thinking_deferred(id, text)
@@ -1181,7 +1190,6 @@ impl AcpUpdateTracker {
         scrollback: &mut ScrollbackState,
         is_replay: bool,
     ) -> bool {
-        self.finish_thinking(scrollback);
         self.current_agent_msg = None;
         if is_todo_tool(&tc)
             || is_bg_plumbing_tool(&tc)

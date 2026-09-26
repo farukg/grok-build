@@ -1,6 +1,35 @@
 use super::*;
 use serde_json::json;
 
+/// Anthropic rejects tool input schemas whose top level uses `oneOf`/`anyOf`/`allOf`
+/// (400: "input_schema does not support oneOf, allOf, or anyOf at the top level").
+/// The file-input variant must therefore stay a flat object that lists all four
+/// properties; the exclusive call-form rule is enforced at runtime, not on the wire.
+#[test]
+fn file_input_schema_has_no_top_level_composition_and_lists_all_properties() {
+    for supports_file_input in [false, true] {
+        let schema = serde_json::to_value(UseToolInput::input_schema(supports_file_input)).unwrap();
+        for keyword in ["oneOf", "anyOf", "allOf", "not"] {
+            assert!(
+                schema.get(keyword).is_none(),
+                "top-level {keyword} in input_schema({supports_file_input})"
+            );
+        }
+        let properties = schema["properties"].as_object().unwrap();
+        for property in ["tool_name", "tool_input"] {
+            assert!(properties.contains_key(property), "missing {property}");
+        }
+        if supports_file_input {
+            for property in ["tool_input_file", "file"] {
+                assert!(properties.contains_key(property), "missing {property}");
+            }
+        } else {
+            assert!(!properties.contains_key("tool_input_file"));
+            assert!(!properties.contains_key("file"));
+        }
+    }
+}
+
 #[test]
 fn all_known_field_presence_combinations_are_exclusive() {
     for mask in 0..16 {

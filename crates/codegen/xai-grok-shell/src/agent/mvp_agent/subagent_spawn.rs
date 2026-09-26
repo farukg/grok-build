@@ -252,11 +252,11 @@ impl MvpAgent {
             process_scope: parent_process_scope,
             client_hooks: Default::default(),
             sampling_config: self.sampling_config.borrow().clone(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             setup_failure: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             run_shell_child_harness: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             fail_start_metadata_write: false,
             managed_mcp_proxy_base_url: parent_managed_mcp_proxy_base_url
                 .unwrap_or_else(|| self.cli_chat_proxy_base_url()),

@@ -59,7 +59,9 @@ impl ChatStateActor {
         self.state.prompt_texts.truncate(target_prompt_index);
         self.state.prompt_index = target_prompt_index;
         let base_estimate = super::state::estimate_conversation_tokens(&self.state.conversation);
-        self.state.total_tokens = self.reseed_total_tokens(base_estimate);
+        self.state.total_tokens = crate::types::TokenCount::Fresh {
+            tokens: self.reseed_total_tokens(base_estimate),
+        };
         self.state.estimated_tokens_since_model = 0;
         self.state.estimate_at_last_response = base_estimate;
 
@@ -79,11 +81,12 @@ impl ChatStateActor {
         let context_window = self.state.sampling_config.context_window;
         let cw = context_window.get();
 
-        if xai_token_estimation::exceeds_threshold(self.state.total_tokens, cw, threshold_percent) {
+        let tokens = self.state.total_tokens.tokens();
+        if xai_token_estimation::exceeds_threshold(tokens, cw, threshold_percent) {
             let utilization_percent =
-                xai_token_estimation::usage_percentage_truncated_u8(self.state.total_tokens, cw);
+                xai_token_estimation::usage_percentage_truncated_u8(tokens, cw);
             Some(AutoCompactTrigger {
-                total_tokens: self.state.total_tokens,
+                total_tokens: tokens,
                 context_window,
                 utilization_percent,
             })

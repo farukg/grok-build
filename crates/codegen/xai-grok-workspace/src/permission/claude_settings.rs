@@ -432,14 +432,29 @@ pub fn load_claude_env_with_project(cwd: &Path, project_trusted: bool) -> HashMa
     merged
 }
 
-// Phase 2 cutoff marker. Reader is local because gate consumers cannot depend on shell (cycle); caching omitted until this is a hotspot.
+// Phase 2 cutoff. Reader is local because gate consumers cannot depend on
+// shell (cycle); caching omitted until this is a hotspot.
+//
+// SSOT for vendor-compat cells is `[compat.<vendor>.<surface>]` in
+// `~/.grok/config.toml` (`xai_grok_tools::types::compat`). Permission
+// rules from `.claude/settings.json` are the `rules` surface; MCP
+// servers from `.claude.json` are the `mcps` surface. Either cell set
+// to false (or GROK_CLAUDE_RULES_ENABLED / GROK_CLAUDE_MCPS_ENABLED=0)
+// skips importing `.claude/` permissions. The legacy
+// `[claude_compat].imported = true` marker still skips, so `/import-claude`
+// keeps working.
 
-/// True when the user marked Claude settings imported (`[claude_compat].imported` in config.toml, or the test override).
+/// True when Claude `.claude/settings.json` permissions must not be imported.
 /// Public so callers that mirror this gate elsewhere use the same check.
 pub fn is_claude_import_marked() -> bool {
     // Test escape hatch: shell tests call `refresh_marker_cache(true)`, which lives in xai-grok-shell (inaccessible from here at runtime)
     // They also set this env var so the gate in this crate honours the override without a cross-crate dependency
     if std::env::var("_GROK_CLAUDE_MARKER_OVERRIDE").as_deref() == Ok("1") {
+        return true;
+    }
+    if xai_grok_config::env_bool("GROK_CLAUDE_RULES_ENABLED") == Some(false)
+        || xai_grok_config::env_bool("GROK_CLAUDE_MCPS_ENABLED") == Some(false)
+    {
         return true;
     }
     let Some(config_path) = xai_grok_config::user_grok_home().map(|g| g.join("config.toml")) else {
@@ -451,11 +466,24 @@ pub fn is_claude_import_marked() -> bool {
     let Ok(value) = toml::from_str::<toml::Value>(&contents) else {
         return false;
     };
-    value
+    if value
         .get("claude_compat")
         .and_then(|v| v.get("imported"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+    {
+        return true;
+    }
+    let claude = value.get("compat").and_then(|v| v.get("claude"));
+    let rules_off = claude
+        .and_then(|v| v.get("rules"))
+        .and_then(|v| v.as_bool())
+        == Some(false);
+    let mcps_off = claude
+        .and_then(|v| v.get("mcps"))
+        .and_then(|v| v.as_bool())
+        == Some(false);
+    rules_off || mcps_off
 }
 
 /// Logs a single info line the first time the gate is hit (per process) so we can confirm the cutoff is taking effect without flooding logs.

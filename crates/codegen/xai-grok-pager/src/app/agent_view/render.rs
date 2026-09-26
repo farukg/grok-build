@@ -1300,12 +1300,14 @@ impl AgentView {
             .as_ref()
             .and_then(|c| (c.total > 0).then_some(c.total))
             .or(model_window);
+        let ctx_stale = self.context_state.as_ref().is_some_and(|c| c.used_stale);
         if let Some(ctx_line) = context_bar::context_bar_line_for_session(
             ctx_used,
             ctx_total,
             self.hit_context.hovered,
             &theme,
             self.chat_kind,
+            ctx_stale,
         ) {
             status.push("context", ctx_line);
         }

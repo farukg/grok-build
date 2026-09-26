@@ -479,6 +479,12 @@ pub(crate) fn is_claude_import_marked() -> bool {
     if let Some(v) = *MARKER_CACHE.read().expect("MARKER_CACHE poisoned") {
         return v;
     }
+    if xai_grok_config::env_bool("GROK_CLAUDE_RULES_ENABLED") == Some(false)
+        || xai_grok_config::env_bool("GROK_CLAUDE_MCPS_ENABLED") == Some(false)
+    {
+        *MARKER_CACHE.write().expect("MARKER_CACHE poisoned") = Some(true);
+        return true;
+    }
     let config_path = crate::util::grok_home::grok_home().join("config.toml");
     let v = is_claude_import_marked_at(&config_path);
     *MARKER_CACHE.write().expect("MARKER_CACHE poisoned") = Some(v);
@@ -515,6 +521,11 @@ pub(crate) fn is_claude_import_marked_with_log(gate_name: &'static str) -> bool 
 }
 
 /// Testable variant of [`is_claude_import_marked`] that reads from the given path.
+///
+/// SSOT is `[compat.claude.rules]` / `[compat.claude.mcps]` (see
+/// `xai_grok_tools::types::compat`). Either cell `false` skips `.claude/`
+/// fallbacks. The legacy `[claude_compat].imported = true` marker still
+/// skips so `/import-claude` keeps working.
 pub(crate) fn is_claude_import_marked_at(config_path: &Path) -> bool {
     let content = match std::fs::read_to_string(config_path) {
         Ok(s) => s,
@@ -524,11 +535,24 @@ pub(crate) fn is_claude_import_marked_at(config_path: &Path) -> bool {
         Ok(v) => v,
         Err(_) => return false,
     };
-    value
+    if value
         .get("claude_compat")
         .and_then(|v| v.get("imported"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+    {
+        return true;
+    }
+    let claude = value.get("compat").and_then(|v| v.get("claude"));
+    let rules_off = claude
+        .and_then(|v| v.get("rules"))
+        .and_then(|v| v.as_bool())
+        == Some(false);
+    let mcps_off = claude
+        .and_then(|v| v.get("mcps"))
+        .and_then(|v| v.as_bool())
+        == Some(false);
+    rules_off || mcps_off
 }
 
 /// Write `[claude_compat] imported = true` to `~/.grok/config.toml`.
@@ -1288,6 +1312,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[claude_compat]\nimported = true\n").unwrap();
+        assert!(is_claude_import_marked_at(&path));
+    }
+
+    #[test]
+    fn is_claude_import_marked_at_compat_claude_rules_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[compat.claude]\nrules = false\nmcps = true\n").unwrap();
+        assert!(is_claude_import_marked_at(&path));
+    }
+
+    #[test]
+    fn is_claude_import_marked_at_compat_claude_mcps_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[compat.claude]\nrules = true\nmcps = false\n").unwrap();
         assert!(is_claude_import_marked_at(&path));
     }
 

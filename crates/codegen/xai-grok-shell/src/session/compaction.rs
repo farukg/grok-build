@@ -2111,7 +2111,10 @@ impl SessionActor {
         }
     }
     /// Returns true if the error response indicates tokens exceed the model's context window.
-    /// Inspects only the model-metadata portion of the [`SamplingErrorInfo`] (the `context_window` field) against the tracked token estimate.
+    /// Uses the failed response's `context_window` when present; otherwise the
+    /// session sampling-config window. A size-worded 400 (Kimi token-limit
+    /// prose, `prompt is too long`, …) still compact-and-resubmits when the
+    /// estimate exceeds that window even if the proxy omitted model metadata.
     /// Called from `handle_sampling_failure` with the `SamplingErrorInfo` the sampler hands back.
     pub(crate) async fn should_compact_on_error(
         &self,
@@ -2122,6 +2125,31 @@ impl SessionActor {
         }
         self.estimate_exceeds_error_context_window(err).await
     }
+    /// Window used to decide compact-and-resubmit for a failed sample.
+    /// Prefers the failed response's reported window, then a named SKU cap
+    /// in the error body (Kimi `model token limit: N`), then the in-session
+    /// sampling config. `None` when none of those is a usable non-zero window.
+    pub(crate) async fn compact_on_error_window(
+        &self,
+        err: &xai_grok_sampler::SamplingErrorInfo,
+    ) -> Option<u64> {
+        if let Some(context_window) = err
+            .model_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.context_window)
+            .filter(|window| *window > 0)
+        {
+            return Some(context_window);
+        }
+        if let Some(named) = xai_grok_compaction::named_model_token_limit(&err.message) {
+            return Some(named);
+        }
+        self.chat_state_handle
+            .get_sampling_config()
+            .await
+            .map(|cfg| cfg.context_window.get())
+            .filter(|window| *window > 0)
+    }
     /// The request's token estimate exceeds the failed response's reported context window.
     /// This probable-overflow signal is shared by compact-and-resubmit and the mid-salvage truncated-complete arm.
     /// The latter must see overflows even while compaction is suppressed.
@@ -2129,17 +2157,25 @@ impl SessionActor {
         &self,
         err: &xai_grok_sampler::SamplingErrorInfo,
     ) -> bool {
-        let Some(ref metadata) = err.model_metadata else {
+        let Some(context_window) = self.compact_on_error_window(err).await else {
             return false;
         };
-        let Some(context_window) = metadata.context_window else {
-            return false;
-        };
-        if context_window == 0 {
+        let estimated_total = self.chat_state_handle.get_estimated_total_tokens().await;
+        if estimated_total > context_window {
+            return true;
+        }
+        if !xai_grok_sampling_types::is_context_length_error(&err.message) {
             return false;
         }
-        let estimated_total = self.chat_state_handle.get_estimated_total_tokens().await;
-        estimated_total > context_window
+        // Kimi names the SKU cap in the 400 body. The local chars/4 estimate
+        // can sit far below that cap; the provider is the authority.
+        if xai_grok_compaction::named_model_token_limit(&err.message).is_some() {
+            return true;
+        }
+        let Some(window) = std::num::NonZeroU64::new(context_window) else {
+            return false;
+        };
+        self.should_auto_compact(estimated_total, window).is_some()
     }
     /// Pre-sampling compaction check.
     /// Uses `get_estimated_total_tokens()` (exact prior count plus a byte-estimate of items since last response) so tool results are accounted for.

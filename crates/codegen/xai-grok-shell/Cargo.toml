@@ -16,7 +16,7 @@ test-support = [
     "xai-grok-login/test-support",
     "xai-grok-sampler/test-support",
     "xai-grok-workspace/test-support",
-]
+    "xai-grok-shell-base/test-support",]
 test-util = []
 # Local Computer Hub workspace_server (own/attach + crash-restart). Requires
 local-workspace = []
@@ -263,6 +263,54 @@ harness = false
 # is the package wildcard). Process-isolated suites stay as implicit
 # `tests/*.rs` binaries.
 [[test]]
+name = "config_write_flock"
+required-features = ["test-support"]
+
+[[test]]
+name = "e2e_grove_worktree"
+required-features = ["test-support"]
+
+[[test]]
+name = "mcp_toggle_gateway_persist"
+required-features = ["test-support"]
+
+[[test]]
+name = "plugin_install_lock_order"
+required-features = ["test-support"]
+
+[[test]]
+name = "plugins_action_policy_gate"
+required-features = ["test-support"]
+
+[[test]]
+name = "plugins_action_uninstall_data"
+required-features = ["test-support"]
+
+[[test]]
+name = "session_create_hook_deferral"
+required-features = ["test-support"]
+
+[[test]]
+name = "session_create_subphase_timers"
+required-features = ["test-support"]
+
+[[test]]
+name = "sessions_active_gauge"
+required-features = ["test-support"]
+
+[[test]]
+name = "subagent_bootstrap_regression"
+required-features = ["test-support"]
+
+[[test]]
+name = "test_image_strip_recovery"
+required-features = ["test-support"]
+
+[[test]]
+name = "test_startup_boot_current_thread"
+required-features = ["test-support"]
+
+[[test]]
 name = "test_startup_prefetch_fallback"
 required-features = ["test-support"]
 
@@ -283,46 +331,7 @@ name = "test_startup_prefetch_repair_skip"
 required-features = ["test-support"]
 
 [[test]]
-name = "mcp_toggle_gateway_persist"
-required-features = ["test-support"]
-
-[[test]]
-name = "plugins_action_policy_gate"
-required-features = ["test-support"]
-
-[[test]]
-name = "session_create_hook_deferral"
-required-features = ["test-support"]
-
-[[test]]
-name = "e2e_grove_worktree"
-required-features = ["test-support"]
-
-[[test]]
-name = "plugins_action_uninstall_data"
-required-features = ["test-support"]
-
-[[test]]
-name = "session_create_subphase_timers"
-required-features = ["test-support"]
-
-[[test]]
-name = "sessions_active_gauge"
-required-features = ["test-support"]
-[[test]]
 name = "spawn_actor_timers"
-required-features = ["test-support"]
-
-[[test]]
-name = "subagent_bootstrap_regression"
-required-features = ["test-support"]
-
-[[test]]
-name = "test_image_strip_recovery"
-required-features = ["test-support"]
-
-[[test]]
-name = "test_startup_boot_current_thread"
 required-features = ["test-support"]
 
 [[test]]

@@ -11,7 +11,7 @@ pub enum ChatStateEvent {
 
     /// Token count updated (session uses this for notification meta,
     /// auto-compact threshold checks).
-    TokensUpdated { total_tokens: u64 },
+    TokensUpdated { total_tokens: crate::types::TokenCount },
 
     /// Conversation was replaced (compaction/rewind) — session may need to
     /// reset idle-flush counters, memory injection flags, etc.

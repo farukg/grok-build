@@ -76,6 +76,7 @@ pub fn stream_chat_completions<'a>(
         // This second timer catches the model emitting keepalive or empty-delta SSE events: they satisfy the outer timer but make no real progress
         // Some inference engines do exactly that
         let mut last_content_chunk_at = Instant::now();
+        let mut loop_detector = crate::counting_loop::CountingLoopDetector::new();
 
         let mut stream = raw_stream;
         loop {
@@ -151,6 +152,20 @@ pub fn stream_chat_completions<'a>(
                     chunk_index += 1;
                     message_chunk_count += 1;
                     content_acc.push_str(&text);
+                    if crate::counting_loop::CountingLoopObservation::Abort
+                        == loop_detector.observe(&text)
+                    {
+                        let err = SamplingError::StreamError {
+                            error_type: "counting_loop".to_owned(),
+                            message: "counting loop aborted".to_owned(),
+                            code: None,
+                        };
+                        yield SamplingEvent::Failed {
+                            request_id: request_id.clone(),
+                            error: SamplingErrorInfo::from(&err),
+                        };
+                        return;
+                    }
                     yield SamplingEvent::ChannelToken {
                         request_id: request_id.clone(),
                         channel: SamplingChannel::Text,

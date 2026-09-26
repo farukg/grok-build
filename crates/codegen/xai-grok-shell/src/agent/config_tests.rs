@@ -3684,6 +3684,33 @@ fn e2e_models_endpoint_serde_alias_parses_as_models_list_url() {
     );
     assert!(cfg.endpoints.has_custom_endpoint());
 }
+
+#[test]
+fn official_xai_switch_clears_gateway_endpoint_pins() {
+    let mut endpoints = EndpointsConfig {
+        cli_chat_proxy_base_url: Some("http://127.0.0.1:6790/v1".to_owned()),
+        models_base_url: Some("http://127.0.0.1:6790/v1".to_owned()),
+        models_list_url: Some("http://127.0.0.1:6790/v1/models".to_owned()),
+        ..Default::default()
+    };
+    assert_eq!(endpoints.proxy_url(), "http://127.0.0.1:6790/v1");
+    assert!(endpoints.has_custom_endpoint());
+    endpoints.apply_official_xai_endpoints();
+    assert!(!endpoints.has_custom_endpoint());
+    assert_eq!(
+        endpoints.proxy_url(),
+        CLI_CHAT_PROXY_BASE_URL_DEFAULT
+    );
+    let mut cfg = Config {
+        models: ModelsConfig {
+            default: Some("sigma/default".to_owned()),
+            ..Default::default()
+        },
+        ..Config::default()
+    };
+    cfg.apply_official_xai_default_model();
+    assert_eq!(cfg.models.default.as_deref(), Some("grok-4.6"));
+}
 #[test]
 fn e2e_config_models_parsed_directly_not_via_deep_merge() {
     let raw: toml::Value = toml::from_str(

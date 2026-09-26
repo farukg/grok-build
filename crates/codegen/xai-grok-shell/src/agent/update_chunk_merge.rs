@@ -1028,4 +1028,52 @@ mod tests {
         assert!(matches!(rest, Some(SessionNotification::Xai(_))));
         assert!(buf.pending.is_none());
     }
+
+    /// Concatenating streamed `arguments_delta` fragments must equal the model
+    /// JSON. The merge path is only `push_str`; it must not insert a line-start
+    /// token at a newline inside a multi-line `old_string` / `new_string`.
+    #[test]
+    fn tool_call_delta_merge_does_not_insert_line_start_token() {
+        let full = r#"{"file_path":"a.rs","old_string":"fn foo() {\n    let x = 1;\n}","new_string":"fn foo() {\n    let x = 2;\n}","replace_all":false}"#;
+        let split_at = full
+            .find(r#"\n    let x = 1;"#)
+            .expect("newline escape in payload");
+        let (first, second) = full.split_at(split_at);
+        assert!(
+            !first.contains(concat!("m", "ar")) && !second.contains(concat!("m", "ar")),
+            "fixture must not already contain the token"
+        );
+
+        let mut buf = ReplayBuffer::new(Some(settings(100, 1_000_000)));
+        let init = delta_chunk("s", Some("call_1"), 0, Some("search_replace"), None);
+        let d1 = delta_chunk("s", None, 0, None, Some(first));
+        let d2 = delta_chunk("s", None, 0, None, Some(second));
+
+        assert!(buf.consume_chunk(init).is_none());
+        assert!(buf.consume_chunk(d1).is_none());
+        assert!(buf.consume_chunk(d2).is_none());
+
+        let flushed = buf.flush().expect("should have pending");
+        let n = match flushed {
+            SessionNotification::Xai(n) => *n,
+            other => panic!("expected Xai, got {other:?}"),
+        };
+        let crate::extensions::notification::SessionUpdate::ToolCallDeltaChunk {
+            arguments_delta: Some(merged),
+            ..
+        } = n.update
+        else {
+            panic!("expected merged arguments_delta");
+        };
+        assert_eq!(merged, full);
+        let parsed: serde_json::Value = serde_json::from_str(&merged).expect("valid JSON after merge");
+        assert_eq!(
+            parsed.get("old_string").and_then(|v| v.as_str()),
+            Some("fn foo() {\n    let x = 1;\n}")
+        );
+        assert_eq!(
+            parsed.get("new_string").and_then(|v| v.as_str()),
+            Some("fn foo() {\n    let x = 2;\n}")
+        );
+    }
 }

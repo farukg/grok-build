@@ -354,6 +354,7 @@ mod tests {
             turn_index: 0,
             context: ContextInfo {
                 used: 40_000,
+                used_stale: false,
                 total: 1_000_000,
                 system_prompt_tokens: 8_000,
                 tool_definitions_count: 12,
