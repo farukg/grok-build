@@ -243,6 +243,14 @@ impl TraceUploadEndpoints for EndpointsConfig {
             auth.is_data_collection_disabled()
         }
     }
+    /// Drop the three gateway `[endpoints]` pins so compiled
+    /// `https://cli-chat-proxy.grok.com/v1` and bundled `grok-4.6` apply.
+    /// Env alone cannot do this while those TOML keys are set.
+    pub fn apply_official_xai_endpoints(&mut self) {
+        self.cli_chat_proxy_base_url = None;
+        self.models_base_url = None;
+        self.models_list_url = None;
+    }
 }
 pub use xai_grok_config::AllowlistPin;
 pub use xai_grok_config_types::{
@@ -1621,6 +1629,12 @@ impl Config {
         config.apply_env_overrides();
         Ok(config)
     }
+
+    /// Pin `[models].default` to the bundled official model after clearing
+    /// gateway endpoint keys. Env cannot do this while the TOML pins exist.
+    pub fn apply_official_xai_default_model(&mut self) {
+        self.models.default = Some("grok-4.6".to_owned());
+    }
     /// Populate trust-independent `#[serde(skip)]` subagent base fields.
     /// Must be called after `new_from_toml_cfg` on the **primary startup path** before the config is handed to `MvpAgent`.
     /// Project definitions are overlaid per cwd after that cwd's authoritative folder-trust resolve.
@@ -2861,7 +2875,10 @@ pub(crate) fn resolve_model_list(
                     entry.info.agent_type.clone_from(&donor.info.agent_type);
                 }
                 if entry.info.api_backend == ApiBackend::default() {
-                    entry.info.api_backend.clone_from(&donor.info.api_backend);
+                    tracing::debug!(
+                        model_key = %key,
+                        "prefetched model left api_backend at default (not inheriting donor)"
+                    );
                 }
             }
             if resolved.contains_key(key) {
@@ -3002,7 +3019,10 @@ pub(crate) fn resolve_model_list(
                     && entry.info.api_backend == ApiBackend::default()
                     && *donor_backend != ApiBackend::default()
                 {
-                    entry.info.api_backend.clone_from(donor_backend);
+                    tracing::debug!(
+                        model_key = %key,
+                        "slug-match left api_backend at default (not inheriting sibling)"
+                    );
                 }
             }
             if entry.info.reasoning_efforts.is_empty()
@@ -4368,7 +4388,7 @@ pub(crate) fn enforce_disable_api_key_auth(
 ) {
     if disable_api_key_auth
         && creds.auth_type == xai_chat_state::AuthType::ApiKey
-        && crate::util::is_xai_api_url(&creds.base_url)
+        && crate::util::is_xai_api_bearer_url(&creds.base_url)
     {
         creds.auth_type = xai_chat_state::AuthType::SessionToken;
         creds.api_key = session_key.map(str::to_owned);
@@ -4655,11 +4675,15 @@ pub(crate) fn response_include_extensions(
 ) -> Vec<String> {
     let is_trusted_route = crate::util::is_trusted_cli_chat_proxy_url(base_url)
         || crate::util::is_trusted_xai_https_url(base_url);
-    if supports_backend_search && api_backend == &ApiBackend::Responses && is_trusted_route {
-        vec![NO_INLINE_CITATIONS_RESPONSE_INCLUDE.to_owned()]
-    } else {
-        Vec::new()
+    if api_backend != &ApiBackend::Responses || !is_trusted_route {
+        return Vec::new();
     }
+    let mut includes = Vec::new();
+    includes.push("reasoning.encrypted_content".to_owned());
+    if supports_backend_search {
+        includes.push(NO_INLINE_CITATIONS_RESPONSE_INCLUDE.to_owned());
+    }
+    includes
 }
 pub(crate) fn sampling_config_for_model(
     model: &ModelEntry,

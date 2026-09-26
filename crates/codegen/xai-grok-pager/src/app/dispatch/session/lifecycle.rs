@@ -1916,6 +1916,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     agent.session.models.context_window_selection = Some(selection.get());
                 }
                 agent.refresh_context_total();
+                agent.mark_context_used_stale();
                 let unchanged =
                     prev_model.as_ref() == Some(&model_id) && prev_effort == resolved_effort;
                 if !unchanged {

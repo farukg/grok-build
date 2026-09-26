@@ -114,7 +114,7 @@ impl AutoCompactThresholdTiers {
 pub(crate) struct SpawnerAddressTarget {
     pub session_id: String,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub(crate) enum SubagentSetupFailure {
     SamplingClient {
@@ -125,7 +125,7 @@ pub(crate) enum SubagentSetupFailure {
         persistence_dir: std::path::PathBuf,
     },
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl SubagentSetupFailure {
     fn meta_dir(&self) -> &Path {
         match self {
@@ -141,13 +141,13 @@ impl SubagentSetupFailure {
         }
     }
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitialAttemptBehavior {
     Normal,
     CompleteBeforeAdmission,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub(crate) struct RunShellChildHarnessConfig {
     meta_dir: std::path::PathBuf,
@@ -156,7 +156,7 @@ pub(crate) struct RunShellChildHarnessConfig {
     hold_wake_abort_flush_ack: bool,
     reject_deferred_start_commit: bool,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl RunShellChildHarnessConfig {
     fn new(meta_dir: std::path::PathBuf, initial_attempt_behavior: InitialAttemptBehavior) -> Self {
         Self {
@@ -190,11 +190,11 @@ pub(crate) struct SubagentSpawnContext {
     /// Filled by the coordinator after the context is built (an async snapshot from the parent session actor).
     pub client_hooks: crate::extensions::hooks::ClientHooks,
     pub sampling_config: xai_grok_sampler::SamplerConfig,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub setup_failure: Option<SubagentSetupFailure>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub run_shell_child_harness: Option<RunShellChildHarnessConfig>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fail_start_metadata_write: bool,
     pub managed_mcp_proxy_base_url: String,
     /// The staging auth header value propagated from the parent.

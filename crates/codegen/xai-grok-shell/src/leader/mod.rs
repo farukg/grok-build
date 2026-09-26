@@ -1382,6 +1382,30 @@ pub async fn connect_or_spawn(
     if let Some(profile) = xai_grok_sandbox::requested_confinement_profile() {
         return Err(ConnectionError::SandboxConfinement(profile));
     }
+    // Managed-leader deployments: the client must never spawn a leader itself;
+    // it reconnects until the managed leader takes the socket. Prevents the
+    // restart race where a client-spawned leader wins the lock against a
+    // systemd unit and starts without its environment/flags.
+    if std::env::var("GROK_NO_LEADER_SPAWN").as_deref() == Ok("1") {
+        let lock = LeaderLock::new(&env_urls.grok_ws_url);
+        let sock_path = lock.socket_path().clone();
+        loop {
+            match wait_for_socket_connectable(
+                &sock_path,
+                client_type,
+                mode,
+                capabilities.clone(),
+            )
+            .await
+            {
+                Ok(conn) => return Ok(conn),
+                Err(e) => {
+                    debug!(error = %e, "Managed leader not up yet; retrying");
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        }
+    }
     let start = std::time::Instant::now();
     let mut lock = LeaderLock::new(&env_urls.grok_ws_url);
     let sock_path = lock.socket_path().clone();

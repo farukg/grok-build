@@ -20,8 +20,13 @@ fn execute_hook(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(sid) = session_id {
-        cmd.env("GROK_SESSION_ID", sid);
+    match session_id {
+        Some(sid) => {
+            cmd.env("GROK_SESSION_ID", sid);
+        }
+        None => {
+            cmd.env_remove("GROK_SESSION_ID");
+        }
     }
 
     xai_tty_utils::detach_std_command(&mut cmd);

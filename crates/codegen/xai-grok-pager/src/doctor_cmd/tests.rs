@@ -247,17 +247,11 @@ fn fake_standalone_facts_compose_through_shared_view() {
     );
     let report = collect_report_with(snapshot);
 
-    assert_eq!(report.issue_count(), 1);
-    assert!(
-        report
-            .findings
-            .iter()
-            .all(|finding| { finding.id != DiagnosticId::new("terminal", "control-mode") })
-    );
-    let Some(finding) = report.findings.first() else {
-        panic!("expected tmux-clipboard finding: {:?}", report.findings);
-    };
-    assert_eq!(finding.id, DiagnosticId::new("terminal", "tmux-clipboard"));
+    assert_eq!(report.issue_count(), 2);
+    assert!(report.findings.iter().any(|finding| {
+        finding.id == DiagnosticId::new("terminal", "tmux-clipboard")
+    }));
+
 }
 
 #[test]

@@ -226,6 +226,12 @@ impl ChatStateActor {
             }
             ChatStateCommand::UpdateSamplingConfig { config } => {
                 self.state.sampling_config = *config;
+                self.state.total_tokens = crate::types::TokenCount::Stale {
+                    tokens: self.state.total_tokens.tokens(),
+                };
+                self.send_event(ChatStateEvent::TokensUpdated {
+                    total_tokens: self.state.total_tokens,
+                });
             }
             ChatStateCommand::RecordAgentEditedPath { path } => {
                 self.state.agent_edited_paths.insert(path);
@@ -357,7 +363,7 @@ impl ChatStateActor {
                 let _ = reply.send(self.state.last_compaction_prompt_index);
             }
             ChatStateCommand::GetTotalTokens { reply } => {
-                let _ = reply.send(self.state.total_tokens);
+                let _ = reply.send(self.state.total_tokens.tokens());
             }
             ChatStateCommand::GetLastTurnUsage { reply } => {
                 let _ = reply.send(self.state.last_turn_usage.clone());
@@ -370,7 +376,9 @@ impl ChatStateActor {
             }
             ChatStateCommand::GetEstimatedTotalTokens { reply } => {
                 let _ =
-                    reply.send(self.state.total_tokens + self.state.estimated_tokens_since_model);
+                    reply.send(
+                        self.state.total_tokens.tokens() + self.state.estimated_tokens_since_model,
+                    );
             }
             ChatStateCommand::GetSamplingConfig { reply } => {
                 let _ = reply.send(self.state.sampling_config.clone());

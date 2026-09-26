@@ -1089,7 +1089,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
         );
         let mut shell = std::process::Command::new(bash);
         shell
-            .args(["-ic", &command])
+            .args(["--noprofile", "--norc", "-ic", &command])
             .env(
                 "PATH",
                 format!(
@@ -1102,7 +1102,6 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .envs(xai_tty_utils::pager_env());
-        xai_tty_utils::detach_std_command(&mut shell);
         let status = shell.status().unwrap();
         assert!(status.success());
         assert_eq!(
@@ -1133,7 +1132,6 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .envs(xai_tty_utils::pager_env());
-        xai_tty_utils::detach_std_command(&mut shell);
         let status = shell.status().unwrap();
         assert!(status.success());
         assert_eq!(
@@ -1152,7 +1150,12 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     };
     let mut shell = std::process::Command::new(bash);
     shell
-        .args(["-ic", "alias ssh='grok wrap ssh'; command ssh host"])
+        .args([
+            "--noprofile",
+            "--norc",
+            "-ic",
+            "alias ssh='grok wrap ssh'; command ssh host",
+        ])
         .env("CAPTURE", &capture)
         .env(
             "PATH",

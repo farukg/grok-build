@@ -41,11 +41,8 @@ fn spawn_ctx(parent_cwd: PathBuf) -> SubagentSpawnContext {
             context_window: 256_000,
             ..Default::default()
         },
-        #[cfg(test)]
         setup_failure: None,
-        #[cfg(test)]
         run_shell_child_harness: None,
-        #[cfg(test)]
         fail_start_metadata_write: false,
         alpha_test_key: None,
         auth_method_id: acp::AuthMethodId::new("test"),

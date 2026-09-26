@@ -144,7 +144,7 @@ pub fn context_bar_line(
     hovered: bool,
     theme: &Theme,
 ) -> Option<Line<'static>> {
-    context_bar_line_for_session(used_tokens, total_tokens, hovered, theme, false)
+    context_bar_line_for_session(used_tokens, total_tokens, hovered, theme, false, false)
 }
 
 /// Like [`context_bar_line`], but omits the bar for gateway/chat-kind sessions.
@@ -154,6 +154,7 @@ pub fn context_bar_line_for_session(
     hovered: bool,
     theme: &Theme,
     gateway_chat: bool,
+    used_stale: bool,
 ) -> Option<Line<'static>> {
     if gateway_chat {
         return None;
@@ -173,7 +174,10 @@ pub fn context_bar_line_for_session(
 
     // Urgency color shared by both branches so the default still shows high-usage warnings without requiring the user to hover
     let breakpoints = default_breakpoints(theme);
-    let color = crate::theme::quantize(blend_color(pct, &breakpoints));
+    let mut color = crate::theme::quantize(blend_color(pct, &breakpoints));
+    if used_stale {
+        color = theme.text_secondary;
+    }
 
     if hovered {
         // Bar fills the space the default tokens would occupy, minus the gap and the percentage
@@ -188,10 +192,11 @@ pub fn context_bar_line_for_session(
         ));
         Some(Line::from(spans))
     } else {
-        Some(Line::from(Span::styled(
-            token_str,
-            Style::default().fg(color).bg(theme.bg_base),
-        )))
+        let mut style = Style::default().fg(color).bg(theme.bg_base);
+        if used_stale {
+            style = style.add_modifier(ratatui::style::Modifier::DIM);
+        }
+        Some(Line::from(Span::styled(token_str, style)))
     }
 }
 
@@ -390,12 +395,26 @@ mod tests {
     fn gateway_chat_suppresses_context_bar_even_with_tokens() {
         let theme = Theme::default();
         assert!(
-            context_bar_line_for_session(Some(1_000), Some(1_000_000), false, &theme, true)
-                .is_none()
+            context_bar_line_for_session(
+                Some(1_000),
+                Some(1_000_000),
+                false,
+                &theme,
+                true,
+                false,
+            )
+            .is_none()
         );
         assert!(
-            context_bar_line_for_session(Some(1_000), Some(1_000_000), false, &theme, false)
-                .is_some()
+            context_bar_line_for_session(
+                Some(1_000),
+                Some(1_000_000),
+                false,
+                &theme,
+                false,
+                false,
+            )
+            .is_some()
         );
     }
 }

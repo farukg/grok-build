@@ -498,7 +498,7 @@ pub fn resolve_compat_config(
     resolve_compat_cells(|cell| config.value(cell), env, remote)
 }
 
-fn resolve_compat_cells(
+pub(crate) fn resolve_compat_cells(
     configured: impl Fn(CompatCell) -> Option<bool>,
     env: &CompatEnv,
     remote: Option<&RemoteSettings>,

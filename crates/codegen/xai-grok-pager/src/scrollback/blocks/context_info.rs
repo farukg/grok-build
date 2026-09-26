@@ -594,6 +594,7 @@ mod tests {
     fn snapshot() -> ContextInfo {
         ContextInfo {
             used: 36_700,
+            used_stale: false,
             total: 1_000_000,
             system_prompt_tokens: 1_200,
             tool_definitions_count: 12,
@@ -966,6 +967,7 @@ mod tests {
     fn bar_and_legend_reconcile_used_with_overhead_excluding_tools() {
         let snap = ContextInfo {
             used: 100_000,
+            used_stale: false,
             total: 500_000,
             system_prompt_tokens: 5_000,
             tool_definitions_count: 190,

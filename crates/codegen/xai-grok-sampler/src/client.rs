@@ -208,16 +208,29 @@ fn extract_should_retry(headers: &reqwest::header::HeaderMap) -> Option<bool> {
         })
 }
 
-fn extract_model_metadata(headers: &reqwest::header::HeaderMap) -> Option<ResponseModelMetadata> {
-    let context_window = headers
-        .get("x-grok-context-window")
+fn header_u64(headers: &reqwest::header::HeaderMap, name: &str) -> Option<u64> {
+    headers
+        .get(name)
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok());
+        .and_then(|s| s.parse::<u64>().ok())
+}
 
-    let max_completion_tokens = headers
-        .get("x-grok-max-completion-tokens")
+fn header_u32(headers: &reqwest::header::HeaderMap, name: &str) -> Option<u32> {
+    headers
+        .get(name)
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u32>().ok());
+        .and_then(|s| s.parse::<u32>().ok())
+}
+
+fn extract_model_metadata(headers: &reqwest::header::HeaderMap) -> Option<ResponseModelMetadata> {
+    // Official Grok proxy stamps `x-grok-*`. Sigma gateway stamps `x-sigma-*`
+    // with the same numbers. Prefer Grok, then Sigma, so a dual-header
+    // response still follows the native proxy.
+    let context_window = header_u64(headers, "x-grok-context-window")
+        .or_else(|| header_u64(headers, "x-sigma-context-window"));
+
+    let max_completion_tokens = header_u32(headers, "x-grok-max-completion-tokens")
+        .or_else(|| header_u32(headers, "x-sigma-max-output-tokens"));
 
     let models_etag = headers
         .get("x-models-etag")
@@ -1264,10 +1277,19 @@ impl SamplingClient {
             }
         }
 
-        // Include encrypted reasoning content if not specified
-        let includes = request.inner.include.get_or_insert_with(Vec::new);
-        if !includes.contains(&rs::IncludeEnum::ReasoningEncryptedContent) {
-            includes.push(rs::IncludeEnum::ReasoningEncryptedContent);
+        // Encrypted reasoning replay is xAI/Codex-origin only. Custom
+        // endpoints (including sigma-gateway on loopback) reject unknown
+        // include values; opt in via extra_response_includes instead.
+        if self
+            .defaults
+            .extra_response_includes
+            .iter()
+            .any(|include| include == "reasoning.encrypted_content")
+        {
+            let includes = request.inner.include.get_or_insert_with(Vec::new);
+            if !includes.contains(&rs::IncludeEnum::ReasoningEncryptedContent) {
+                includes.push(rs::IncludeEnum::ReasoningEncryptedContent);
+            }
         }
 
         Ok(())
@@ -2274,6 +2296,37 @@ mod tests {
             body.get("tools"),
             Some(&serde_json::json!([{ "type": "web_search" }]))
         );
+    }
+
+    #[test]
+    fn extract_model_metadata_reads_sigma_headers_when_grok_absent() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-sigma-context-window", HeaderValue::from_static("262144"));
+        headers.insert(
+            "x-sigma-max-output-tokens",
+            HeaderValue::from_static("32768"),
+        );
+        let metadata = extract_model_metadata(&headers).expect("sigma headers");
+        assert_eq!(metadata.context_window, Some(262144));
+        assert_eq!(metadata.max_completion_tokens, Some(32768));
+    }
+
+    #[test]
+    fn extract_model_metadata_prefers_grok_headers_over_sigma() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-grok-context-window", HeaderValue::from_static("500000"));
+        headers.insert("x-sigma-context-window", HeaderValue::from_static("262144"));
+        headers.insert(
+            "x-grok-max-completion-tokens",
+            HeaderValue::from_static("8192"),
+        );
+        headers.insert(
+            "x-sigma-max-output-tokens",
+            HeaderValue::from_static("32768"),
+        );
+        let metadata = extract_model_metadata(&headers).expect("grok headers");
+        assert_eq!(metadata.context_window, Some(500000));
+        assert_eq!(metadata.max_completion_tokens, Some(8192));
     }
 
     #[test]
