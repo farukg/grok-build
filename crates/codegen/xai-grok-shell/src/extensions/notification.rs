@@ -936,6 +936,11 @@ pub enum SessionUpdate {
         /// The served model's display name as the backend reports it (e.g. "Grok 4.7 Fast"), which may match no catalog row.
         display_name: String,
     },
+    /// A routing gateway served the session's latest response through a different route than the previous one.
+    /// Emitted only on change; cleared by the client on a model switch.
+    ModelServed {
+        route: xai_grok_sampling_types::ServedRoute,
+    },
     /// Streaming chunk of a tool call's arguments. Behaves like `acp::SessionUpdate::AgentMessageChunk` / `AgentThoughtChunk`. It flows through the replay buffer and merges with adjacent chunks for the same `tool_call_id`.
     /// It is debounced at the session's buffering interval. Only persisted as a full `acp::SessionUpdate::ToolCall`.
     ToolCallDeltaChunk {

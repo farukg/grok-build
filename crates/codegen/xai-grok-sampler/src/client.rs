@@ -34,6 +34,10 @@ use xai_grok_sampling_types::{
     ResponseModelMetadata, Result, SamplingError, SentCredential, build_messages_request,
     is_check_event, messages, rs,
 };
+use xai_grok_sampling_types::{
+    FallbackCount, RouteCandidate, RouteIdentity, RouteModel, RouteProfile, RouteProvider,
+    ServedRoute,
+};
 
 use crate::config::{AuthScheme, OriginClientInfo, RequestCompression, SamplerConfig};
 use crate::events::SamplingErrorInfo;
@@ -237,15 +241,35 @@ fn extract_model_metadata(headers: &reqwest::header::HeaderMap) -> Option<Respon
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    if context_window.is_some() || max_completion_tokens.is_some() || models_etag.is_some() {
+    let served_route = extract_served_route(headers);
+
+    if context_window.is_some()
+        || max_completion_tokens.is_some()
+        || models_etag.is_some()
+        || served_route.is_some()
+    {
         Some(ResponseModelMetadata {
             context_window,
             max_completion_tokens,
             models_etag,
+            served_route,
         })
     } else {
         None
     }
+}
+
+/// Sigma gateway route headers; provider and model are required, the rest optional.
+fn extract_served_route(headers: &reqwest::header::HeaderMap) -> Option<ServedRoute> {
+    let text = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    Some(ServedRoute {
+        provider: RouteProvider::parse(text("x-sigma-routed-provider")?)?,
+        model: RouteModel::parse(text("x-sigma-routed-model")?)?,
+        candidate: text("x-sigma-candidate").and_then(RouteCandidate::parse),
+        identity: text("x-sigma-identity").and_then(RouteIdentity::parse),
+        profile: text("x-sigma-profile").and_then(RouteProfile::parse),
+        fallback_count: FallbackCount(header_u32(headers, "x-sigma-fallback-count").unwrap_or(0)),
+    })
 }
 
 /// Wrapper for streaming chat completion requests that adds `stream` and `stream_options` without modifying the original `ChatCompletionRequest`.
@@ -2327,6 +2351,54 @@ mod tests {
         let metadata = extract_model_metadata(&headers).expect("grok headers");
         assert_eq!(metadata.context_window, Some(500000));
         assert_eq!(metadata.max_completion_tokens, Some(8192));
+    }
+
+    #[test]
+    fn extract_model_metadata_reads_served_route() {
+        let mut headers = HeaderMap::new();
+        for (name, value) in [
+            ("x-sigma-routed-provider", "openai"),
+            ("x-sigma-routed-model", "gpt-5.6-sol"),
+            ("x-sigma-candidate", "openai-gpt-5.6-sol"),
+            ("x-sigma-identity", "team-a"),
+            ("x-sigma-profile", "sigma/smart"),
+            ("x-sigma-fallback-count", "1"),
+        ] {
+            headers.insert(name, HeaderValue::from_static(value));
+        }
+        let route = extract_model_metadata(&headers)
+            .and_then(|m| m.served_route)
+            .expect("route headers alone yield metadata");
+        assert_eq!(route.provider.as_str(), "openai");
+        assert_eq!(route.model.as_str(), "gpt-5.6-sol");
+        assert_eq!(
+            route.candidate.as_ref().map(RouteCandidate::as_str),
+            Some("openai-gpt-5.6-sol")
+        );
+        assert_eq!(
+            route.identity.as_ref().map(RouteIdentity::as_str),
+            Some("team-a")
+        );
+        assert_eq!(
+            route.profile.as_ref().map(RouteProfile::as_str),
+            Some("sigma/smart")
+        );
+        assert_eq!(route.fallback_count, FallbackCount(1));
+    }
+
+    #[test]
+    fn missing_route_headers_leave_route_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-sigma-context-window", HeaderValue::from_static("262144"));
+        headers.insert("x-sigma-routed-model", HeaderValue::from_static("gpt-5.6-sol"));
+        headers.insert("x-sigma-identity", HeaderValue::from_static("team-a"));
+        let metadata = extract_model_metadata(&headers).expect("window header");
+        assert_eq!(metadata.context_window, Some(262144));
+        assert!(
+            metadata.served_route.is_none(),
+            "a route without its provider is not a served route"
+        );
+        assert!(extract_model_metadata(&HeaderMap::new()).is_none());
     }
 
     #[test]

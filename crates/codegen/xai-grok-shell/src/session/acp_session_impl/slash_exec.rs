@@ -326,6 +326,11 @@ impl SessionActor {
                 } else {
                     String::new()
                 };
+                let served_line = info
+                    .served_route
+                    .as_ref()
+                    .map(|route| format!("\n\n**Served:** {}", route.detail()))
+                    .unwrap_or_default();
 
                 let ctx = &info.context;
                 let context_pct = xai_token_estimation::usage_percentage(ctx.used, ctx.total);
@@ -353,13 +358,14 @@ impl SessionActor {
                 let text = format!(
                     "{}**Session ID:** {}\n\n\
                      **Working directory:** {}\n\n\
-                     {}{}\n\n\
+                     {}{}{}\n\n\
                      **Turn:** {}\n\n\
                      **Context:** {} / {} tokens ({:.0}%)",
                     title_line,
                     self.session_info.id.0,
                     self.session_info.cwd,
                     model_line,
+                    served_line,
                     model_hash_line,
                     info.turn_index,
                     ctx.used,

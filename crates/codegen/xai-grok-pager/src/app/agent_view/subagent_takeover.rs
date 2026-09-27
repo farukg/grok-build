@@ -223,11 +223,15 @@ impl AgentView {
         let model = info
             .and_then(|s| s.attempt.model.as_deref())
             .map(str::trim)
-            .filter(|s| !s.is_empty());
+            .filter(|s| !s.is_empty())
+            .map(|requested| match self.subagent_views.get(child_sid) {
+                Some(child) => child.session.models.served_label_for(requested),
+                None => requested.to_owned(),
+            });
         let tokens = info.and_then(|s| s.attempt.token_usage_label());
         let meta = match (model, tokens) {
             (Some(model), Some(tokens)) => format!("{model} \u{b7} {tokens}"),
-            (Some(model), None) => model.to_string(),
+            (Some(model), None) => model,
             (None, Some(tokens)) => tokens,
             (None, None) => String::new(),
         };

@@ -66,6 +66,9 @@ pub struct ResponseModelMetadata {
     pub max_completion_tokens: Option<u32>,
     /// `x-models-etag`: triggers model catalog refresh when changed.
     pub models_etag: Option<String>,
+    /// Sigma gateway `x-sigma-*` routing headers.
+    #[serde(default)]
+    pub served_route: Option<crate::ServedRoute>,
 }
 
 /// Wire-credential provenance of a request that failed authentication. A 401 for a request that went out with no

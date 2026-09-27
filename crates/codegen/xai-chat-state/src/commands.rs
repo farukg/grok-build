@@ -17,6 +17,15 @@ use crate::types::{
 pub struct ModelMetadata {
     pub resolved_model_id: Option<String>,
     pub model_fingerprint: Option<String>,
+    /// Gateway route of the latest response for the current model.
+    pub served_route: Option<xai_grok_sampling_types::ServedRoute>,
+}
+
+/// Whether a recorded route differs from the one already held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServedRouteChange {
+    Changed,
+    Unchanged,
 }
 
 /// Refusal reply for [`ChatStateCommand::RepairHistory`]: a turn was in
@@ -308,6 +317,12 @@ pub enum ChatStateCommand {
 
     GetLastModelMetadata {
         reply: oneshot::Sender<ModelMetadata>,
+    },
+
+    /// Record the gateway route that served the latest response.
+    RecordServedRoute {
+        route: Box<xai_grok_sampling_types::ServedRoute>,
+        reply: oneshot::Sender<ServedRouteChange>,
     },
 
     /// Take the accumulated turn messages and end the capture.

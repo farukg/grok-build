@@ -1834,6 +1834,7 @@ fn context_info_response() -> xai_grok_shell::session::SessionInfoResponse {
             resolved_model_id: None,
             model_fingerprint: None,
             show_model_fingerprint: false,
+            served_route: None,
             api_backend: None,
             conversation_id: None,
             turns: 0,
