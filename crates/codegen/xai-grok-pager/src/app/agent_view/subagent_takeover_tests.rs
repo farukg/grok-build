@@ -462,3 +462,184 @@ fn child_ctrl_r_keeps_scrollback_precedence() {
     assert!(child.active_modal.is_none());
     assert!(child.is_bare_scrollback());
 }
+fn ctrl_alt(code: KeyCode) -> Event {
+    Event::Key(KeyEvent::new(
+        code,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ))
+}
+/// Registers `child_sid` under `parent_sid` (the root's own session is `"parent"`), started `age` ago.
+fn add_child(root: &mut AgentView, parent_sid: &str, child_sid: &str, age: Duration) {
+    let mut info = crate::app::agent_view::test_fixtures::running_subagent_info(child_sid);
+    info.attempt.started_at = Instant::now() - age;
+    root.subagent_sessions.insert(child_sid.to_owned(), info);
+    root.insert_subagent_view(
+        child_sid.to_owned(),
+        Box::new(make_agent()),
+        crate::app::agent_view::ChildLink::unaddressable(agent_client_protocol::SessionId::new(
+            parent_sid,
+        )),
+    );
+}
+fn toast(view: &AgentView) -> Option<&str> {
+    view.toast.as_ref().map(|(msg, _)| msg.as_str())
+}
+#[test]
+fn ctrl_alt_down_from_root_opens_latest_started_child() {
+    let registry = ActionRegistry::defaults();
+    let mut root = make_agent();
+    add_child(&mut root, "parent", "old", Duration::from_secs(30));
+    add_child(&mut root, "parent", "newest", Duration::from_secs(1));
+    add_child(&mut root, "parent", "middle", Duration::from_secs(10));
+    add_child(&mut root, "newest", "grandchild-new", Duration::ZERO);
+    add_child(
+        &mut root,
+        "newest",
+        "grandchild-old",
+        Duration::from_millis(500),
+    );
+    let outcome = root.handle_input(&ctrl_alt(KeyCode::Down), &registry);
+    assert!(matches!(outcome, InputOutcome::Changed), "{outcome:?}");
+    assert_eq!(Some("newest"), root.active_subagent.as_deref());
+    root.handle_input(&ctrl_alt(KeyCode::Down), &registry);
+    assert_eq!(Some("grandchild-new"), root.active_subagent.as_deref());
+    root.handle_input(&ctrl_alt(KeyCode::Up), &registry);
+    assert_eq!(Some("newest"), root.active_subagent.as_deref());
+    root.handle_input(&ctrl_alt(KeyCode::Up), &registry);
+    assert_eq!(None, root.active_subagent, "Up from a root child leaves");
+}
+#[test]
+fn ctrl_alt_left_right_follow_start_order() {
+    let registry = ActionRegistry::defaults();
+    let mut root = make_agent();
+    add_child(&mut root, "parent", "second", Duration::from_secs(20));
+    add_child(&mut root, "parent", "third", Duration::from_secs(10));
+    add_child(&mut root, "parent", "first", Duration::from_secs(30));
+    add_child(&mut root, "third", "nested", Duration::from_secs(40));
+    root.open_subagent_fullscreen("first".to_owned());
+    let mut visited = Vec::new();
+    for _ in 0..3 {
+        root.handle_input(&ctrl_alt(KeyCode::Right), &registry);
+        visited.extend(root.active_subagent.clone());
+    }
+    assert_eq!(vec!["second", "third", "first"], visited);
+    visited.clear();
+    for _ in 0..3 {
+        root.handle_input(&ctrl_alt(KeyCode::Left), &registry);
+        visited.extend(root.active_subagent.clone());
+    }
+    assert_eq!(vec!["third", "second", "first"], visited);
+}
+#[test]
+fn ctrl_alt_down_on_leaf_shows_toast() {
+    let registry = ActionRegistry::defaults();
+    let mut root = make_agent();
+    let outcome = root.handle_input(&ctrl_alt(KeyCode::Down), &registry);
+    assert!(matches!(outcome, InputOutcome::Changed), "{outcome:?}");
+    assert_eq!(None, root.active_subagent);
+    assert!(toast(&root).is_some(), "a root without children says so");
+    add_child(&mut root, "parent", "leaf", Duration::ZERO);
+    root.open_subagent_fullscreen("leaf".to_owned());
+    root.handle_input(&ctrl_alt(KeyCode::Down), &registry);
+    assert_eq!(Some("leaf"), root.active_subagent.as_deref());
+    assert!(
+        toast(root.subagent_view("leaf").expect("leaf view")).is_some(),
+        "the hint shows on the view being looked at"
+    );
+}
+/// A root whose laid-out scrollback shows `row` for its finished child `child_sid`; returns the row's screen line.
+fn root_with_subagent_row(child_sid: &str, row: SubagentBlock) -> (AgentView, u16) {
+    let mut root = make_agent();
+    add_child(&mut root, "parent", child_sid, Duration::ZERO);
+    root.subagent_sessions
+        .get_mut(child_sid)
+        .expect("info")
+        .set_finished_for_test(true);
+    root.scrollback.push_block(RenderBlock::user_prompt("go"));
+    root.scrollback.push_block(RenderBlock::Subagent(row));
+    let area = Rect::new(0, 0, 80, 40);
+    root.scrollback.prepare_layout(area.width, area.height);
+    root.pane_areas.scrollback = area;
+    let row = root
+        .scrollback
+        .entry_screen_area(1, area)
+        .map(|(rect, _, _)| rect.y)
+        .expect("subagent row on screen");
+    (root, row)
+}
+fn ctrl_alt_press(row: u16) -> Event {
+    Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: 10,
+        row,
+        modifiers: KeyModifiers::CONTROL | KeyModifiers::ALT,
+    })
+}
+#[test]
+fn ctrl_alt_click_opens_completed_child() {
+    let registry = ActionRegistry::defaults();
+    let (mut root, row) = root_with_subagent_row(
+        "done",
+        SubagentBlock::completed("child task", "done", Duration::from_secs(3)),
+    );
+    let info = root.subagent_sessions.get_mut("done").expect("info");
+    info.attempt.status = Some("completed".into());
+    info.transcript = crate::app::subagent::ChildTranscript::DiskBacked;
+    root.subagent_view_mut("done")
+        .expect("child view")
+        .scrollback
+        .push_block(RenderBlock::user_prompt("retained transcript"));
+    let outcome = root.handle_input(&ctrl_alt_press(row), &registry);
+    assert!(matches!(outcome, InputOutcome::Changed), "{outcome:?}");
+    assert_eq!(Some("done"), root.active_subagent.as_deref());
+}
+/// A failed child whose view was evicted opens on the transcript replayed from disk.
+#[test]
+fn ctrl_alt_click_opens_failed_evicted_child_from_disk() {
+    let registry = ActionRegistry::defaults();
+    let child_sid = "failed-evicted";
+    let home = tempfile::tempdir().expect("tempdir");
+    let session_dir = home
+        .path()
+        .join("sessions")
+        .join(urlencoding::encode("/tmp").as_ref())
+        .join(child_sid);
+    std::fs::create_dir_all(&session_dir).expect("session dir");
+    std::fs::write(session_dir.join("summary.json"), "{}").expect("summary");
+    let echo = format!(
+        r#"{{"method":"session/update","params":{{"sessionId":"{child_sid}","update":{{"sessionUpdate":"user_message_chunk","content":{{"type":"text","text":"from disk"}}}}}}}}"#
+    );
+    std::fs::write(session_dir.join("updates.jsonl"), echo + "\n").expect("updates");
+    crate::app::subagent::set_replay_grok_home_for_tests(Some(home.path().to_path_buf()));
+    let (mut root, row) = root_with_subagent_row(
+        child_sid,
+        SubagentBlock::failed(
+            "child task",
+            child_sid,
+            Duration::from_secs(3),
+            Some("boom".to_owned()),
+        ),
+    );
+    root.subagent_sessions
+        .get_mut(child_sid)
+        .expect("info")
+        .attempt
+        .status = Some("failed".into());
+    assert!(
+        root.subagent_view(child_sid)
+            .expect("view")
+            .scrollback
+            .is_empty()
+    );
+    root.handle_input(&ctrl_alt_press(row), &registry);
+    crate::app::subagent::set_replay_grok_home_for_tests(None);
+    assert_eq!(Some(child_sid), root.active_subagent.as_deref());
+    let child = root.subagent_view(child_sid).expect("child view");
+    assert!(
+        (0..child.scrollback.len()).any(|idx| child
+            .scrollback
+            .entry(idx)
+            .is_some_and(|entry| matches!(entry.block, RenderBlock::UserPrompt(_)))),
+        "the evicted transcript is replayed on open"
+    );
+}

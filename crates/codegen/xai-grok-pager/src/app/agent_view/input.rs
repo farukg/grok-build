@@ -941,6 +941,9 @@ impl AgentView {
                 _ => InputOutcome::Unchanged,
             };
         }
+        if let Some(outcome) = self.intercept_root_tree_input(ev) {
+            return outcome;
+        }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
             && registry.matches_id(ActionId::SendToBackground, key)

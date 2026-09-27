@@ -29,43 +29,111 @@ pub(super) struct InheritedOverlay<'a> {
     pub(super) header: OverlayHeader<'a>,
     pub(super) stop_label: Option<&'static str>,
 }
-/// Ctrl+Alt+Arrow: subagent tree navigation while a takeover is open. Outside one, Ctrl+Alt+Left/Right cycle sessions,
-/// so `AppView` defers to the takeover for exactly these keys.
-pub(in crate::app) fn is_tree_chord(key: &crossterm::event::KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        && !key.modifiers.contains(KeyModifiers::SHIFT)
-        && matches!(
-            key.code,
-            KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
-        )
-}
 /// Sibling switch direction for the Ctrl+Alt+Left/Right chords.
 #[derive(Clone, Copy)]
-enum Direction {
+pub(in crate::app) enum Direction {
     Prev,
     Next,
 }
+/// A Ctrl+Alt+Arrow subagent-tree navigation chord.
+#[derive(Clone, Copy)]
+pub(in crate::app) enum TreeChord {
+    Parent,
+    LatestChild,
+    Sibling(Direction),
+}
+/// Ctrl+Alt+Arrow: subagent tree navigation while a takeover is open. Outside one, Ctrl+Alt+Left/Right cycle sessions,
+/// so `AppView` defers to the takeover for exactly these keys.
+pub(in crate::app) fn tree_chord(ev: &Event) -> Option<TreeChord> {
+    let Event::Key(key) = ev else {
+        return None;
+    };
+    if key.kind == KeyEventKind::Release
+        || !key
+            .modifiers
+            .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        || key.modifiers.contains(KeyModifiers::SHIFT)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Up => Some(TreeChord::Parent),
+        KeyCode::Down => Some(TreeChord::LatestChild),
+        KeyCode::Left => Some(TreeChord::Sibling(Direction::Prev)),
+        KeyCode::Right => Some(TreeChord::Sibling(Direction::Next)),
+        _ => None,
+    }
+}
+const NO_CHILD_TOAST: &str = "No child subagent to open";
+/// A node of the subagent tree this root view owns. Every child view, at any depth, is registered on the root with
+/// its real parent link; a child whose parent has no view here hangs off the root session.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TreeNode<'a> {
+    Root,
+    Child(&'a str),
+}
 impl AgentView {
-    /// Switch the takeover to the previous/next sibling of `child_sid` (same
-    /// parent). Returns the new child sid when a switch happened. HashMap
-    /// iteration order stands in for a spawn order in this first cut.
-    fn switch_sibling(&mut self, child_sid: &str, dir: Direction) -> Option<String> {
+    fn tree_parent(&self, child_sid: &str) -> Option<TreeNode<'_>> {
         let parent_sid = self
             .subagent_views
             .get(child_sid)?
             .child_link()?
             .parent_session_id()
             .0
-            .to_string();
-        let mut siblings: Vec<String> = self
+            .as_ref();
+        Some(
+            self.subagent_views
+                .get_key_value(parent_sid)
+                .map_or(TreeNode::Root, |(sid, _)| TreeNode::Child(sid.as_str())),
+        )
+    }
+    /// Direct children of `node`, earliest started first.
+    fn children_of(&self, node: TreeNode<'_>) -> Vec<String> {
+        let mut children: Vec<&str> = self
             .subagent_views
-            .iter()
-            .filter(|(_, v)| {
-                v.child_link()
-                    .is_some_and(|l| l.parent_session_id().0.to_string() == parent_sid)
-            })
-            .map(|(sid, _)| sid.clone())
+            .keys()
+            .map(String::as_str)
+            .filter(|sid| self.tree_parent(sid) == Some(node))
             .collect();
+        children.sort_by_key(|sid| {
+            (
+                self.subagent_sessions
+                    .get(*sid)
+                    .map(|info| info.attempt.started_at),
+                *sid,
+            )
+        });
+        children.into_iter().map(str::to_owned).collect()
+    }
+    /// Open the most recently started child of `node`; on a leaf, tell the user on the view they are looking at.
+    fn open_latest_child(&mut self, node: TreeNode<'_>) -> InputOutcome {
+        if let Some(latest) = self.children_of(node).pop() {
+            self.open_subagent_fullscreen(latest);
+            return InputOutcome::Changed;
+        }
+        match node {
+            TreeNode::Root => self.show_toast(NO_CHILD_TOAST),
+            TreeNode::Child(sid) => {
+                if let Some(child) = self.subagent_views.get_mut(sid) {
+                    child.show_toast(NO_CHILD_TOAST);
+                }
+            }
+        }
+        InputOutcome::Changed
+    }
+    /// Ctrl+Alt+Down with nothing blocking the keyboard and no open takeover enters the root's latest child. Up has no
+    /// parent here, and Left/Right stay free for session cycling, so neither is claimed.
+    pub(super) fn intercept_root_tree_input(&mut self, ev: &Event) -> Option<InputOutcome> {
+        match tree_chord(ev)? {
+            TreeChord::LatestChild => Some(self.open_latest_child(TreeNode::Root)),
+            TreeChord::Parent | TreeChord::Sibling(_) => None,
+        }
+    }
+    /// Switch the takeover to the previous/next sibling of `child_sid` (same
+    /// parent, start order, wrapping). Returns the new child sid when a switch happened.
+    fn switch_sibling(&mut self, child_sid: &str, dir: Direction) -> Option<String> {
+        let parent = self.tree_parent(child_sid)?;
+        let mut siblings = self.children_of(parent);
         if siblings.len() < 2 {
             return None;
         }
@@ -115,6 +183,31 @@ impl AgentView {
         else {
             return false;
         };
+        self.open_subagent_fullscreen(child_sid);
+        true
+    }
+    /// Select the scrollback row at screen `row` and name the child it links to, owned here or not (a row replayed
+    /// inside a child transcript links a child the root owns).
+    pub(crate) fn linked_child_at_scrollback_row(&mut self, row: u16) -> Option<String> {
+        let idx = self
+            .scrollback
+            .entry_index_at_screen_row(row, self.pane_areas.scrollback)?;
+        self.scrollback.set_selected(Some(idx));
+        if self.scrollback.is_selected_group_header() {
+            return None;
+        }
+        self.scrollback
+            .entry(idx)
+            .and_then(|entry| entry.block.child_session_id())
+            .map(str::to_owned)
+    }
+    /// Ctrl+Alt+Click: open the owned child `child_sid` whatever its state (running, finished, evicted → replay).
+    /// The press hands the pointer to the takeover, so this view's click gesture ends here.
+    pub(crate) fn open_child_from_click(&mut self, child_sid: Option<String>) -> bool {
+        let Some(child_sid) = child_sid.filter(|sid| self.subagent_views.contains_key(sid)) else {
+            return false;
+        };
+        self.left_mouse_down = false;
         self.open_subagent_fullscreen(child_sid);
         true
     }
@@ -414,67 +507,25 @@ impl AgentView {
             return Some(InputOutcome::Unchanged);
         }
         // Tree navigation chords, handled raw before any child routing.
-        // Ctrl+Alt+Up: parent (close at the root's direct children);
-        // Ctrl+Alt+Down: first child of this subagent; Left/Right: previous/next
-        // sibling sharing the same parent. HashMap order decides the sibling
-        // pick; a stable spawn order can replace it later.
-        if let Some(key) = key
-            && is_tree_chord(key)
-        {
-            return match key.code {
-                KeyCode::Up => {
-                    let parent_sid = self
-                        .subagent_views
-                        .get(&child_sid)
-                        .and_then(|c| c.child_link())
-                        .map(|link| link.parent_session_id().0.to_string());
-                    match parent_sid
-                        .filter(|p| self.subagent_views.contains_key(p))
-                    {
-                        Some(parent) => {
-                            self.open_subagent_fullscreen(parent);
-                            Some(InputOutcome::Changed)
-                        }
-                        // Direct child of the root: leave the takeover.
-                        None => {
-                            self.close_subagent_fullscreen();
-                            Some(InputOutcome::Changed)
-                        }
+        if let Some(chord) = tree_chord(ev) {
+            return Some(match chord {
+                TreeChord::Parent => match self.tree_parent(&child_sid) {
+                    Some(TreeNode::Child(parent)) => {
+                        let parent = parent.to_owned();
+                        self.open_subagent_fullscreen(parent);
+                        InputOutcome::Changed
                     }
-                }
-                KeyCode::Down => {
-                    // Every child view, at any depth, is registered on the ROOT
-                    // view with its real parent link; find the first child of
-                    // this subagent there. HashMap order picks which; a stable
-                    // spawn order can replace it later.
-                    let child_of_child = self
-                        .subagent_views
-                        .iter()
-                        .filter(|(_, v)| {
-                            v.child_link()
-                                .is_some_and(|l| l.parent_session_id().0.to_string() == child_sid)
-                        })
-                        .map(|(sid, _)| sid.clone())
-                        .next();
-                    if let Some(next) = child_of_child {
-                        self.open_subagent_fullscreen(next);
-                        Some(InputOutcome::Changed)
-                    } else {
-                        Some(InputOutcome::Unchanged) // leaf: no child to enter
+                    // Direct child of the root: leave the takeover.
+                    Some(TreeNode::Root) | None => {
+                        self.close_subagent_fullscreen();
+                        InputOutcome::Changed
                     }
-                }
-                KeyCode::Left => {
-                    self.switch_sibling(&child_sid, Direction::Prev)
-                        .map(|_| InputOutcome::Changed)
-                        .or(Some(InputOutcome::Unchanged))
-                }
-                KeyCode::Right => {
-                    self.switch_sibling(&child_sid, Direction::Next)
-                        .map(|_| InputOutcome::Changed)
-                        .or(Some(InputOutcome::Unchanged))
-                }
-                _ => unreachable!("guarded by the matches! above"),
-            };
+                },
+                TreeChord::LatestChild => self.open_latest_child(TreeNode::Child(&child_sid)),
+                TreeChord::Sibling(dir) => self
+                    .switch_sibling(&child_sid, dir)
+                    .map_or(InputOutcome::Unchanged, |_| InputOutcome::Changed),
+            });
         }
         if let Event::Mouse(mouse) = ev
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -492,6 +543,23 @@ impl AgentView {
                 .update_hover(mouse.column, mouse.row)
         {
             return Some(InputOutcome::Changed);
+        }
+        // A subagent row inside the child's transcript links a grandchild, which only this root view owns.
+        if let Event::Mouse(mouse) = ev
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && super::is_open_child_click(mouse.modifiers)
+        {
+            let linked = self.subagent_views.get_mut(&child_sid).and_then(|child| {
+                child
+                    .pane_areas
+                    .scrollback
+                    .contains((mouse.column, mouse.row).into())
+                    .then(|| child.linked_child_at_scrollback_row(mouse.row))
+                    .flatten()
+            });
+            if self.open_child_from_click(linked) {
+                return Some(InputOutcome::Changed);
+            }
         }
         let child_in_scrollback = self
             .subagent_views
