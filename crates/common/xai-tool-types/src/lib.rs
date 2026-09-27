@@ -1,5 +1,7 @@
 //! Canonical, extensible tool types.
 pub mod definition;
+mod subagent_state;
+pub use subagent_state::{InterruptionCause, SubagentActor, SubagentState};
 mod ext;
 mod glob;
 mod grep;
