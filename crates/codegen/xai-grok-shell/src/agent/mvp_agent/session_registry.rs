@@ -286,11 +286,33 @@ impl SessionPresence {
         matches!(self, Self::Evicted { thread: None })
     }
 }
+/// Root sessions and children share ACP addressing; the host identifies parent accounting only.
+#[derive(Clone)]
+pub(crate) enum SessionHost {
+    Root,
+    Child(ChildHost),
+}
+
+#[derive(Clone)]
+pub(crate) struct ChildHost {
+    pub(crate) parent_session_id: acp::SessionId,
+    pub(crate) subagent_id: String,
+    pub(crate) turns: tokio::sync::mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+}
+
+pub(crate) enum ChildPromptAdmission {
+    Live,
+    Woken,
+    ContinuedAs(acp::SessionId),
+    Refused(xai_grok_tools::implementations::grok_build::task::types::SubagentResumeError),
+}
+
 /// The per-session state this registry owns: retained, resident resources, presence (thread and liveness), unavailable model, and bridge.
 /// Load guards, rewind snapshots, local workspaces, and the handle map are owned elsewhere.
 /// A new field belongs here only if `release` should drop it with the rest.
 #[derive(Default)]
 struct SessionResources {
+    host: Option<SessionHost>,
     retained: Option<RetainedResources>,
     /// Cleared at idle-unload; survives a reload rebuild.
     resident: Option<ResidentResources>,
@@ -337,6 +359,7 @@ impl SessionRegistry {
             entries.insert(
                 id.clone(),
                 SessionResources {
+                    host: None,
                     presence: Some(SessionPresence::Evicted { thread: running }),
                     retired_threads,
                     retained: None,
@@ -481,6 +504,15 @@ impl SessionRegistry {
     }
     /// Hosted actor handle, if any.
     /// Mid-attach registration counts: the handle lands before the attach finishes, and callers already treat that as resident for lookup and sweep.
+    pub(super) fn host(&self, id: &acp::SessionId) -> Option<SessionHost> {
+        self.with(id, |entry| entry.host.clone()).flatten()
+    }
+    pub(super) fn set_host(&self, id: &acp::SessionId, host: SessionHost) {
+        self.edit(id, |entry| entry.host = Some(host));
+    }
+    pub(super) fn clear_host(&self, id: &acp::SessionId) {
+        self.clear(id, |entry| entry.host = None);
+    }
     pub(super) fn resident_handle(&self, id: &acp::SessionId) -> Option<SessionHandle> {
         self.with(id, |e| {
             e.presence
@@ -1176,6 +1208,7 @@ impl SessionRegistry {
         for entry in self.sessions.borrow().values() {
             counts.entries += 1;
             let SessionResources {
+                host: _,
                 retained,
                 resident,
                 presence,
@@ -1250,6 +1283,7 @@ impl SessionResources {
             presence,
             retired_threads,
             unavailable_model,
+            host,
         } = self;
         let chat_vacant = true;
         let presence_vacant = match presence {
@@ -1261,6 +1295,7 @@ impl SessionResources {
             && presence_vacant
             && retired_threads.is_empty()
             && unavailable_model.is_none()
+            && host.is_none()
             && chat_vacant
     }
 }

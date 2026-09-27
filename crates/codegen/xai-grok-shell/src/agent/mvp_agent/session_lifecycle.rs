@@ -152,6 +152,23 @@ impl MvpAgent {
     pub(crate) fn resident_handle(&self, id: &acp::SessionId) -> Option<SessionHandle> {
         self.session_registry.resident_handle(id)
     }
+    pub(crate) fn session_host(&self, id: &acp::SessionId) -> Option<SessionHost> {
+        self.session_registry.host(id)
+    }
+    pub(crate) fn set_session_host(&self, id: &acp::SessionId, host: SessionHost) {
+        self.session_registry.set_host(id, host);
+    }
+    pub(crate) fn clear_session_host(&self, id: &acp::SessionId) {
+        self.session_registry.clear_host(id);
+    }
+    pub(crate) fn register_child_session(&self, id: &acp::SessionId, handle: SessionHandle, host: ChildHost) {
+        self.session_registry.put_resident(id, handle, None);
+        self.session_registry.set_host(id, SessionHost::Child(host));
+    }
+    pub(crate) fn release_child_session(&self, id: &acp::SessionId) {
+        self.session_registry.take_resident(id);
+        self.session_registry.release(id);
+    }
     pub(crate) fn is_resident(&self, id: &acp::SessionId) -> bool {
         self.session_registry.is_resident(id)
     }
@@ -170,6 +187,7 @@ impl MvpAgent {
         handle: SessionHandle,
         identity: Option<super::agent_directory::PendingRootIdentity>,
     ) -> Option<SessionHandle> {
+        self.session_registry.set_host(id, SessionHost::Root);
         self.session_registry.put_resident(id, handle, identity)
     }
     pub(crate) fn resident_count(&self) -> usize {
