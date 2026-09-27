@@ -14,8 +14,8 @@ pub(crate) struct ChildLink {
     pub(crate) parent: AgentId,
     pub(crate) parent_session_id: acp::SessionId,
     pub(crate) subagent_id: String,
+    pub(crate) started_at: std::time::Instant,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionKindLabel<'a> {
