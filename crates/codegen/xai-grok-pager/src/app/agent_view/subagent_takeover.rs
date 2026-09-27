@@ -170,17 +170,23 @@ impl AgentView {
     /// caller keeps its routing, on a group header, an unlinked row, or a child this view does not own (a row
     /// replayed inside a child transcript).
     pub(crate) fn try_open_child_from_selected_row(&mut self) -> bool {
+        let child_sid = self.selected_linked_child();
+        self.open_owned_child(child_sid)
+    }
+    /// The child the selected row links to, owned here or not; `None` on a group header or an unlinked row.
+    fn selected_linked_child(&self) -> Option<String> {
         if self.scrollback.is_selected_group_header() {
-            return false;
+            return None;
         }
-        let Some(child_sid) = self
-            .scrollback
+        self.scrollback
             .selected()
             .and_then(|idx| self.scrollback.entry(idx))
             .and_then(|entry| entry.block.child_session_id())
-            .filter(|child_sid| self.subagent_views.contains_key(*child_sid))
             .map(str::to_owned)
-        else {
+    }
+    /// Open the takeover for `child_sid` when this view owns it, whatever its state (running, finished, evicted → replay).
+    fn open_owned_child(&mut self, child_sid: Option<String>) -> bool {
+        let Some(child_sid) = child_sid.filter(|sid| self.subagent_views.contains_key(sid)) else {
             return false;
         };
         self.open_subagent_fullscreen(child_sid);
@@ -193,22 +199,15 @@ impl AgentView {
             .scrollback
             .entry_index_at_screen_row(row, self.pane_areas.scrollback)?;
         self.scrollback.set_selected(Some(idx));
-        if self.scrollback.is_selected_group_header() {
-            return None;
-        }
-        self.scrollback
-            .entry(idx)
-            .and_then(|entry| entry.block.child_session_id())
-            .map(str::to_owned)
+        self.selected_linked_child()
     }
-    /// Ctrl+Alt+Click: open the owned child `child_sid` whatever its state (running, finished, evicted → replay).
-    /// The press hands the pointer to the takeover, so this view's click gesture ends here.
+    /// Ctrl+Alt+Click: open the owned child `child_sid`. The press hands the pointer to the takeover, so this view's
+    /// click gesture ends here.
     pub(crate) fn open_child_from_click(&mut self, child_sid: Option<String>) -> bool {
-        let Some(child_sid) = child_sid.filter(|sid| self.subagent_views.contains_key(sid)) else {
+        if !self.open_owned_child(child_sid) {
             return false;
-        };
+        }
         self.left_mouse_down = false;
-        self.open_subagent_fullscreen(child_sid);
         true
     }
     /// Close the fullscreen subagent takeover (if any), evicting the closed child when finished.
