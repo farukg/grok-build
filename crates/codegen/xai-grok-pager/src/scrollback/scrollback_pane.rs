@@ -589,7 +589,7 @@ impl ScrollbackPane {
         let vpad_rows = if has_vpad { 2 } else { 0 };
         let content_lines = render_height.saturating_sub(vpad_rows);
 
-        // User prompts use their actual display mode so collapsed prompts stay truncated (3 lines and an ellipsis) in sticky headers
+        // User prompts use their actual display mode so collapsed prompts stay truncated in sticky headers
         // Other blocks use Expanded with a max_lines budget
         let mode = if entry.block.is_user_prompt() {
             entry.display_mode()
