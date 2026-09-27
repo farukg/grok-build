@@ -179,7 +179,7 @@ mod dock_input_tests;
 mod header_tests;
 mod rewind;
 mod role;
-pub(crate) use role::{AgentRole, ChildLink, ComposerRoute, ViewSurface};
+pub(crate) use role::{AgentRole, ChildLink, SessionKindLabel};
 mod selection;
 mod session;
 mod session_mode;
@@ -1397,21 +1397,8 @@ pub struct AgentView {
     pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
-    /// Map of child session IDs to subagent metadata. Populated on `SubagentSpawned` notifications, used for permission routing (which agent owns a session) and provenance display.
-    /// `SubagentSpawned` notifications, used for permission routing
-    /// (which agent owns a session) and provenance display.
     pub subagent_sessions: HashMap<String, SubagentInfo>,
-    /// Child subagent views. Keyed by child_session_id.
-    /// Created eagerly on SubagentSpawned so updates are tracked from the start.
-    /// Insert only through [`Self::insert_subagent_view`], which stamps the child's role.
-    pub(super) subagent_views: HashMap<String, Box<AgentView>>,
-    /// Currently open subagent view (child_session_id). When Some, the scrollback area is replaced by the subagent's framed view.
-    /// scrollback area is replaced by the subagent's framed view.
-    pub active_subagent: Option<String>,
-    /// Root of its session, or a child mirrored under a parent's takeover; every child-specific gate derives from it.
-    role: AgentRole,
-    /// Hit area for the [✗] close button in the subagent frame title bar.
-    pub hit_subagent_frame_close: HitArea,
+    pub(crate) role: AgentRole,
     /// Whether the `/share` slash command is available (mirrors
     /// `AppView::sharing_enabled`). Used to gate palette entries.
     pub sharing_enabled: bool,

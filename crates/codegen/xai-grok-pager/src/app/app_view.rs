@@ -19,7 +19,6 @@ use crate::views::prompt_widget::PromptWidget;
 use crate::views::welcome::WelcomePromptFocus;
 use agent_client_protocol as acp;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
-use indexmap::IndexMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -571,7 +570,7 @@ pub struct AppView {
     /// `Some` only while a `/login` (or 401-triggered re-auth) initiated from an active session is in progress.
     /// `None` at startup so the normal login-then-load flow is preserved.
     pub auth_return_view: Option<ActiveView>,
-    pub agents: IndexMap<AgentId, AgentView>,
+    pub agents: super::session_views::SessionViews,
     /// Monotonically increasing counter for agent ID allocation.
     /// IDs are never reused after `shift_remove`, to avoid collisions.
     pub next_agent_id: usize,
@@ -1362,7 +1361,7 @@ impl AppView {
     pub(crate) fn sync_billing_surface_to_agents(&mut self) {
         let billing = self.usage_visible;
         let usage_cmd = !self.has_external_auth_provider;
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent.set_billing_surface_visible(billing);
             agent.set_usage_command_visible(usage_cmd);
         }
@@ -1415,7 +1414,7 @@ impl AppView {
             pending_startup: None,
             active_view: ActiveView::Welcome,
             auth_return_view: None,
-            agents: IndexMap::new(),
+            agents: super::session_views::SessionViews::new(),
             next_agent_id: 0,
             models,
             registry: ActionRegistry::defaults(),
@@ -1688,7 +1687,7 @@ impl AppView {
     pub fn apply_voice_mode_enabled(&mut self, enabled: bool) {
         self.voice_mode_enabled = enabled;
         crate::app::VOICE_MODE_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent.set_voice_mode_available(enabled);
             match agent.active_modal.as_mut() {
                 Some(crate::views::modal::ActiveModal::Settings { state }) => {
@@ -1713,7 +1712,7 @@ impl AppView {
     /// Call after gate flips, startup, reconnect, and session create/switch (so new agents inherit the gate).
     pub fn sync_permission_mode_slash_gate(&mut self) {
         let available = self.auto_mode_gate;
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent.prompt.set_auto_mode_available(available);
         }
         self.welcome_prompt.set_auto_mode_available(available);
@@ -1736,7 +1735,7 @@ impl AppView {
         } else {
             Vec::new()
         };
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent.set_restricted_commands(&names);
         }
         self.welcome_prompt.set_restricted_commands(&names);
@@ -1773,14 +1772,11 @@ impl AppView {
     pub fn sync_session_announcement_slash_gate(&mut self) {
         let has =
             crate::views::announcements::has_session_announcements(&self.active_announcements);
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent
                 .prompt
                 .slash_controller
                 .set_has_session_announcements(has);
-            for child in agent.subagent_views.values_mut() {
-                child.set_has_session_announcements(has);
-            }
         }
     }
     /// Mic is live (the [`VoiceState::Recording`] state).
@@ -1990,25 +1986,13 @@ impl AppView {
         match self.active_view {
             ActiveView::Agent(id) => {
                 if let Some(agent) = self.agents.get_mut(&id) {
-                    if let Some(child_sid) = agent.active_subagent.clone()
-                        && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-                    {
-                        if reconnect_success_hides_mismatch(
-                            child.toast.as_ref().map(|(m, _)| m.as_str()),
-                            msg,
-                        ) {
-                            return;
-                        }
-                        child.show_toast(msg);
-                    } else {
-                        if reconnect_success_hides_mismatch(
-                            agent.toast.as_ref().map(|(m, _)| m.as_str()),
-                            msg,
-                        ) {
-                            return;
-                        }
-                        agent.show_toast(msg);
+                    if reconnect_success_hides_mismatch(
+                        agent.toast.as_ref().map(|(m, _)| m.as_str()),
+                        msg,
+                    ) {
+                        return;
                     }
+                    agent.show_toast(msg);
                 }
             }
             ActiveView::AgentDashboard => {
@@ -2170,7 +2154,7 @@ impl AppView {
     /// Apply a (possibly hot-reloaded) appearance config to all agents.
     pub fn set_appearance(&mut self, config: AppearanceConfig) {
         crate::render::bidi::set_enabled(config.scrollback.display.rtl_bidi);
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent.scrollback.set_appearance(config.clone());
             for child in agent.subagent_views.values_mut() {
                 child.scrollback.set_appearance(config.clone());
@@ -2200,7 +2184,7 @@ impl AppView {
         let mut config = self.appearance.clone();
         config.prompt.compact = derived;
         self.set_appearance(config);
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent.prompt.set_compact(derived);
         }
     }
@@ -2374,7 +2358,7 @@ impl AppView {
             _ => None,
         };
         if let Event::Resize(_, rows) = ev {
-            for agent in self.agents.values_mut() {
+            for agent in self.agents.all_mut().map(|(_, agent)| agent) {
                 agent.note_terminal_resize();
                 for child in agent.subagent_views.values_mut() {
                     child.note_terminal_resize();
@@ -4252,7 +4236,7 @@ impl AppView {
     /// Placement id 1 is cleared only when no popup agent is drawn; a popup owns and reuses that slot across consecutive dashboard frames.
     /// (A one-shot sweep per transition, not a per-frame cost.)
     fn dashboard_stale_image_clears(
-        agents: &mut IndexMap<AgentId, AgentView>,
+        agents: &mut super::session_views::SessionViews,
         drawn_agent: Option<AgentId>,
     ) -> Option<crate::terminal::overlay::PostFlush> {
         if crate::terminal::image::prompt_preview_graphics_protocol()
@@ -4262,7 +4246,7 @@ impl AppView {
         }
         let mut clears = crate::terminal::overlay::PostFlush::default();
         let mut has_escapes = false;
-        for (id, agent) in agents.iter_mut() {
+        for (id, agent) in agents.all_mut() {
             if Some(*id) == drawn_agent {
                 continue;
             }
@@ -4354,7 +4338,7 @@ impl AppView {
                 let _ = crossterm::execute!(stderr, crossterm::event::EnableMouseCapture);
             });
             super::MOUSE_CAPTURE_ENABLED.store(true, std::sync::atomic::Ordering::Release);
-            for agent in self.agents.values_mut() {
+            for agent in self.agents.all_mut().map(|(_, agent)| agent) {
                 agent.set_sticky_toast_recursive(None);
             }
         }
@@ -5180,7 +5164,7 @@ impl AppView {
         resolved: xai_grok_shell::util::config::ResolvedContextualHints,
     ) {
         self.contextual_hints = resolved;
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             agent
                 .prompt
                 .set_contextual_hints(resolved.undo, resolved.plan_mode);
@@ -5374,7 +5358,7 @@ impl AppView {
         }
         let mut bootstrap_commands_update: Option<Vec<agent_client_protocol::AvailableCommand>> =
             None;
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             needs_redraw |= agent.edit_hl_tick();
             for child in agent.subagent_views.values_mut() {
                 needs_redraw |= child.edit_hl_tick();
@@ -5582,7 +5566,7 @@ impl AppView {
     /// In release-aware (Kitty) mode a key stays latched until its release event arrives.
     /// On window focus loss the active game's release may be dropped, so clear all games' holds to stop runaway motion.
     pub(crate) fn gboom_release_all_games(&mut self) {
-        for agent in self.agents.values_mut() {
+        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
             if let Some(gboom) = agent.gboom.as_mut() {
                 gboom.release_all();
             }
@@ -5596,7 +5580,7 @@ impl AppView {
             ActiveView::Agent(id) => Some(id),
             _ => None,
         };
-        for (id, agent) in self.agents.iter_mut() {
+        for (id, agent) in self.agents.all_mut() {
             if Some(*id) != active
                 && let Some(gboom) = agent.gboom.as_mut()
             {
