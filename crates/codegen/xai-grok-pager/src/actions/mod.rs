@@ -97,6 +97,8 @@ pub enum ActionId {
     OpenSessions,
     OpenExtensions,
     SendToBackground,
+    /// Expand the timeline rail into the navigable outline panel (F6), or fold it back.
+    ToggleTimelinePanel,
 
     // Prompt
     EditPromptExternal,

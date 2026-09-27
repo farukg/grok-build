@@ -1246,6 +1246,9 @@ impl AgentView {
             }
             return;
         }
+        if self.scroll_timeline_panel(lines, col, row) {
+            return;
+        }
         let target = self
             .pane_areas
             .hit_test(col, row)

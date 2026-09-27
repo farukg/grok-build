@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 
 use crate::app::agent_view::ViewSurface;
 use crate::theme::Theme;
+use crate::views::timeline_panel::{TimelineMode, panel_width};
 
 /// Columns reserved for the rail (widest tick).
 pub const RAIL_WIDTH: u16 = 2;
@@ -56,14 +57,23 @@ pub enum TimelineHit {
     Down,
 }
 
-/// Columns to reserve for the rail this frame: the single eligibility policy (setting, view kind, terminal width, turn count).
+/// Columns to reserve for the timeline column this frame: the single eligibility policy (setting, view kind, terminal width, turn count).
+/// The expanded panel reuses the same column at panel width, independent of the setting and the turn minimum.
 /// Geometry feasibility (enough rows) stays in [`compute_rail`].
 pub(crate) fn rail_width(
     show_timeline: bool,
+    mode: &TimelineMode,
     surface: ViewSurface,
     area_width: u16,
     turn_count: usize,
 ) -> u16 {
+    match (mode, surface) {
+        (TimelineMode::Expanded(_), ViewSurface::Root) if area_width >= MIN_TERMINAL_WIDTH => {
+            return panel_width(area_width);
+        }
+        (TimelineMode::Expanded(_), ViewSurface::Root | ViewSurface::ChildTakeover) => return 0,
+        (TimelineMode::Rail, ViewSurface::Root | ViewSurface::ChildTakeover) => {}
+    }
     if show_timeline
         && surface == ViewSurface::Root
         && area_width >= MIN_TERMINAL_WIDTH
@@ -509,15 +519,35 @@ mod tests {
 
     #[test]
     fn rail_width_gates_eligibility() {
+        let rail = TimelineMode::Rail;
         // All conditions met reserves the rail columns
-        assert_eq!(RAIL_WIDTH, rail_width(true, ViewSurface::Root, 80, 5));
+        assert_eq!(RAIL_WIDTH, rail_width(true, &rail, ViewSurface::Root, 80, 5));
         // Setting off / child surface / narrow terminal / too few turns.
-        assert_eq!(0, rail_width(false, ViewSurface::Root, 80, 5));
-        assert_eq!(0, rail_width(true, ViewSurface::ChildTakeover, 80, 5));
+        assert_eq!(0, rail_width(false, &rail, ViewSurface::Root, 80, 5));
+        assert_eq!(0, rail_width(true, &rail, ViewSurface::ChildTakeover, 80, 5));
         assert_eq!(
             0,
-            rail_width(true, ViewSurface::Root, MIN_TERMINAL_WIDTH - 1, 5)
+            rail_width(true, &rail, ViewSurface::Root, MIN_TERMINAL_WIDTH - 1, 5)
         );
-        assert_eq!(0, rail_width(true, ViewSurface::Root, 80, 1));
+        assert_eq!(0, rail_width(true, &rail, ViewSurface::Root, 80, 1));
+    }
+
+    #[test]
+    fn expanded_mode_uses_panel_width_without_min_turns() {
+        let panel = TimelineMode::Expanded(
+            crate::views::timeline_panel::TimelinePanelState::open(
+                &crate::scrollback::state::ScrollbackState::new(),
+                None,
+            ),
+        );
+        // Neither the setting nor the two-turn minimum gate the panel
+        let width = rail_width(false, &panel, ViewSurface::Root, 120, 0);
+        assert!(width > RAIL_WIDTH, "panel is wider than the rail: {width}");
+        assert!(width <= 60, "panel leaves the chat at least half: {width}");
+        assert_eq!(0, rail_width(false, &panel, ViewSurface::ChildTakeover, 120, 5));
+        assert_eq!(
+            0,
+            rail_width(false, &panel, ViewSurface::Root, MIN_TERMINAL_WIDTH - 1, 5)
+        );
     }
 }

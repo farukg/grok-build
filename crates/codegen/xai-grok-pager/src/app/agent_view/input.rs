@@ -929,6 +929,9 @@ impl AgentView {
                 _ => InputOutcome::Unchanged,
             };
         }
+        if let Some(outcome) = self.route_timeline_panel_input(ev) {
+            return outcome;
+        }
         if self.focused_card() == Some(BlockingCard::CancelTurn) {
             return match ev {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
@@ -1309,6 +1312,7 @@ impl AgentView {
             }
             ActionId::OpenSettings => InputOutcome::Action(Action::OpenSettings),
             ActionId::OpenSessions => self.open_session_picker(),
+            ActionId::ToggleTimelinePanel => self.toggle_timeline_panel(),
             ActionId::ToggleMouseCapture => {
                 crate::unified_log::info(
                     "mouse_reporting_toggle.handle_agent_action",
