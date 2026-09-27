@@ -2559,8 +2559,9 @@ impl AppView {
                         .agents
                         .get(&id)
                         .is_some_and(|a| a.active_subagent.is_some());
-                let cycle_action = match ev {
-                    Event::Key(key) if key.kind != KeyEventKind::Release => self
+                if let Event::Key(key) = ev
+                    && key.kind != KeyEventKind::Release
+                    && let Some(action) = self
                         .registry
                         .lookup(key, crate::actions::When::DashboardOverlay)
                         .and_then(|action| match action {
@@ -2571,23 +2572,7 @@ impl AppView {
                                 Some(Action::DashboardOverlayNext)
                             }
                             _ => None,
-                        }),
-                    Event::Mouse(mouse)
-                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) =>
-                    {
-                        self.agents.get(&id).and_then(|agent| {
-                            if agent.hit_overlay_prev.contains(mouse.column, mouse.row) {
-                                Some(Action::DashboardOverlayPrev)
-                            } else if agent.hit_overlay_next.contains(mouse.column, mouse.row) {
-                                Some(Action::DashboardOverlayNext)
-                            } else {
-                                None
-                            }
                         })
-                    }
-                    _ => None,
-                };
-                if let Some(action) = cycle_action
                 {
                     return InputOutcome::Action(action);
                 }

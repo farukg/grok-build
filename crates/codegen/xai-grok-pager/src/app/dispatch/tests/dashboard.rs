@@ -1,5 +1,6 @@
 //! Tests for dashboard dispatchers: attach, overlays, rows, and permissions.
 use super::*;
+use crate::app::agent_view::Direction;
 use crate::app::app_view::InputOutcome;
 use crate::app::dispatch::queue::maybe_drain_queue;
 use crate::app::workspace_test_fixtures::{
@@ -2868,12 +2869,12 @@ fn workspace_overlay_cycle_reaches_provisional_but_not_hidden_live_agents() {
             data_version: 1,
         });
     app.active_view = ActiveView::Agent(AgentId(0));
-    assert!(dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next).is_empty());
+    assert!(dispatch_dashboard_overlay_cycle(&mut app, Direction::Next).is_empty());
     assert_eq!(app.active_view, ActiveView::Agent(second));
     app.workspace_membership
         .suppress_for_test(xai_grok_dashboard_store::SessionId::new("second").unwrap());
     app.active_view = ActiveView::Agent(AgentId(0));
-    assert!(dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next).is_empty());
+    assert!(dispatch_dashboard_overlay_cycle(&mut app, Direction::Next).is_empty());
     assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
 }
 /// In leader mode the live FleetView roster is the source, so opening must
@@ -4887,7 +4888,7 @@ fn dashboard_overlay_mouse_exit_and_cycle_disarm_pending_stop() {
         crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0)),
     );
     arm(&mut app);
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         app.pending_action.is_none(),
         "cycling to another agent must disarm the pending stop",
@@ -4929,10 +4930,10 @@ fn dashboard_overlay_cycle_wraps_through_agents() {
         crate::views::dashboard::DashboardRowId::TopLevel(id1),
     );
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id1));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == id2));
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id2));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id1));
     let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Prev);
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id2));
@@ -4956,7 +4957,7 @@ fn dashboard_overlay_cycle_respects_filter() {
         d.filter =
             crate::views::dashboard::Filter::State(crate::views::dashboard::RowState::Working);
     }
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert_eq!(
         app.dashboard.as_ref().unwrap().attached_agent,
         Some(id1),
@@ -5042,7 +5043,7 @@ fn dashboard_overlay_cycle_anchors_on_visible_agent_not_stale_attach() {
         "precondition: external switch leaves attached_agent stale on the first row",
     );
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == third));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     let landed = match app.active_view {
         ActiveView::Agent(a) => a,
         other => panic!("active_view not an agent: {other:?}"),
@@ -5070,7 +5071,7 @@ fn dashboard_overlay_cycle_noop_with_single_agent() {
         &mut app,
         crate::views::dashboard::DashboardRowId::TopLevel(id),
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id));
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == id));
 }
@@ -5090,7 +5091,7 @@ fn dashboard_overlay_cycle_from_non_overlay_agent_attaches_and_switches() {
         app.dashboard.is_none(),
         "precondition: no dashboard / overlay attached yet",
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id2),
         "next from a non-overlay agent must switch active_view to the next agent, got {:?}",
@@ -5189,7 +5190,7 @@ fn dashboard_overlay_cycle_from_unopened_dashboard_configures_state() {
         app.dashboard.is_none(),
         "precondition: dashboard never opened"
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     let d = app
         .dashboard
         .as_ref()
@@ -5224,7 +5225,7 @@ fn dashboard_overlay_cycle_unopened_respects_auth_gate() {
     app.active_view = ActiveView::Agent(id1);
     app.auth_state = AuthState::Pending { error: None };
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id1),
         "unauthenticated cycle must not switch agents, got {:?}",
@@ -5243,7 +5244,7 @@ fn dashboard_overlay_cycle_non_overlay_single_agent_is_noop() {
     mark_agent_nonempty(&mut app, id);
     app.active_view = ActiveView::Agent(id);
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id),
         "single-agent next must not switch views, got {:?}",
@@ -5279,7 +5280,7 @@ fn dashboard_overlay_cycle_non_agent_active_view_is_noop() {
     app.agents.insert(id2, agent2);
     app.active_view = ActiveView::Welcome;
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Welcome),
         "cycle with a non-agent active_view must not switch views, got {:?}",
@@ -5305,7 +5306,7 @@ fn dashboard_overlay_cycle_non_overlay_noop_when_dashboard_disabled() {
     app.agents.insert(id2, agent2);
     app.active_view = ActiveView::Agent(id1);
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id1),
         "cycle must be a no-op when the dashboard is disabled, got {:?}",
@@ -5340,7 +5341,7 @@ fn dashboard_overlay_cycle_non_overlay_noop_when_current_agent_hidden() {
         vec![id2, id1],
         "precondition: the empty current agent is hidden from the visible order",
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == current),
         "cycle must not jump to a random row when the current agent is filtered out, got {:?}",
@@ -5483,7 +5484,43 @@ fn ctrl_alt_right_in_takeover_switches_sibling_not_session() {
         "Ctrl+Alt+Right moves the takeover to the sibling",
     );
 }
-/// `DashboardToggleAutoApprove` flips `yolo_mode` on the selected row's owning agent. Reuses `set_yolo_mode` by temporarily switching `active_view`, so the existing toast
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn ctrl_bracket_in_takeover_switches_sibling_not_session() {
+    let mut app = three_sessions_opened_directly();
+    let children = ["child-a", "child-b"].map(|sid| {
+        let session = make_test_agent_session(&app, AgentId(9), sid);
+        (sid, AgentView::new(session, ScrollbackState::new()))
+    });
+    let parent = app.agents.get_mut(&AgentId(0)).unwrap();
+    for (sid, child) in children {
+        parent.insert_test_child(sid.to_owned(), Box::new(child));
+    }
+    parent.open_subagent_fullscreen("child-a".to_owned());
+    press(&mut app, KeyCode::Char(']'), KeyModifiers::CONTROL);
+    assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
+    assert_eq!(app.agents[&AgentId(0)].active_subagent.as_deref(), Some("child-b"));
+    press(&mut app, KeyCode::Char('['), KeyModifiers::CONTROL);
+    assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
+    assert_eq!(app.agents[&AgentId(0)].active_subagent.as_deref(), Some("child-a"));
+}
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn sibling_cycle_on_only_child_shows_toast() {
+    let mut app = three_sessions_opened_directly();
+    let child = AgentView::new(
+        make_test_agent_session(&app, AgentId(9), "child"),
+        ScrollbackState::new(),
+    );
+    let parent = app.agents.get_mut(&AgentId(0)).unwrap();
+    parent.insert_test_child("child".to_owned(), Box::new(child));
+    parent.open_subagent_fullscreen("child".to_owned());
+    press(&mut app, KeyCode::Char(']'), KeyModifiers::CONTROL);
+    let parent = &app.agents[&AgentId(0)];
+    assert_eq!(parent.active_subagent.as_deref(), Some("child"));
+    assert_eq!(parent.subagent_views["child"].toast.as_ref().map(|(text, _)| text.as_str()), Some(crate::app::agent_view::NO_SIBLING_TOAST));
+}
+/// `DashboardToggleAutoApprove` flips `yolo_mode` on the selected row's owning agent. Reuses `set_yolo_mode` by temporarily switching `active_view`, so the toast
 /// / persist / queue-drain logic all apply.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]

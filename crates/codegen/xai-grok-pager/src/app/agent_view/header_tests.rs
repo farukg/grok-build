@@ -3,7 +3,7 @@
 use super::{AgentView, AppRenderParams, BannerSlotParams, OverlayHeader, test_fixtures};
 use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
-use crate::app::app_view::InputOutcome;
+use crate::app::app_view::{ActiveView, AppView, InputOutcome};
 use crate::scrollback::render::ScratchBuffer;
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
