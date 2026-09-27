@@ -26,7 +26,8 @@ use std::time::Instant;
 use indexmap::IndexMap;
 use ratatui::layout::Rect;
 
-use super::block::{BlockContent, RenderBlock};
+use super::block::{BlockContent, DisplayDefaults, EntryForm, MessageKind, RenderBlock};
+use super::types::DisplayForm;
 use super::blocks::tool::{EditToolCallBlock, ToolCallBlock};
 use super::entry::{EntryId, ScrollbackEntry};
 use super::layout::HorizontalLayout;
@@ -220,6 +221,8 @@ pub struct ScrollbackState {
 
     /// Session/worktree cwd (`AgentSession.cwd`) for Expanded tool paths.
     cwd: Option<std::path::PathBuf>,
+
+    display_defaults: DisplayDefaults,
 }
 
 impl Default for ScrollbackState {
@@ -275,6 +278,7 @@ impl ScrollbackState {
             #[cfg(test)]
             layout_rebuilds: 0,
             cwd: None,
+            display_defaults: DisplayDefaults::default(),
         }
     }
 
@@ -308,6 +312,7 @@ impl ScrollbackState {
         fresh.view_mode = self.view_mode;
         fresh.follow_mode = self.follow_mode;
         fresh.cwd = self.cwd.clone();
+        fresh.display_defaults = self.display_defaults.clone();
         fresh.generation = self.generation.wrapping_add(1);
         fresh.content_generation = self.content_generation.wrapping_add(1);
         fresh.outline_generation = self.outline_generation.wrapping_add(1);
@@ -405,6 +410,27 @@ impl ScrollbackState {
     pub fn mark_structurally_dirty(&mut self, id: EntryId) {
         self.dirty_heights.insert(id);
         self.gaps_may_be_dirty = true;
+    }
+
+    pub fn display_defaults(&self) -> &DisplayDefaults {
+        &self.display_defaults
+    }
+
+    pub fn set_kind_default(&mut self, kind: MessageKind, form: DisplayForm) {
+        if self.display_defaults.get(kind) == Some(form) {
+            return;
+        }
+        self.display_defaults.set(kind, form);
+        let mode = DisplayMode::from(form);
+        for entry in self.entries.values_mut() {
+            if MessageKind::from(&entry.block) == kind
+                && entry.form == EntryForm::FollowingKind
+            {
+                entry.display_mode = mode;
+                entry.invalidate_cache();
+            }
+        }
+        self.invalidate_heights();
     }
 
     /// Get current appearance config.
@@ -542,6 +568,9 @@ impl ScrollbackState {
         entry.id = id;
 
         self.apply_edit_default_display_mode(&mut entry);
+        if let Some(form) = self.display_defaults.get(MessageKind::from(&entry.block)) {
+            entry.display_mode = DisplayMode::from(form);
+        }
 
         // Track if this entry is running
         if entry.is_running {
@@ -610,6 +639,9 @@ impl ScrollbackState {
         let mut entry = ScrollbackEntry::new(block);
         entry.id = id;
         self.apply_edit_default_display_mode(&mut entry);
+        if let Some(form) = self.display_defaults.get(MessageKind::from(&entry.block)) {
+            entry.display_mode = DisplayMode::from(form);
+        }
         if entry.is_running {
             self.running.insert(id);
         }
