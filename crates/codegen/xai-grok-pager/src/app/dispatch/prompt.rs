@@ -5,7 +5,7 @@ use super::auth::{
     scrollback_has_recent_reauth_prompt, scrollback_has_recent_request_failed,
 };
 use super::billing::is_credit_limit_error;
-use super::ctx::{get_active_agent_mut, visible_agent_mut, with_active_agent};
+use super::ctx::{get_active_agent_mut, with_active_agent};
 use super::interject;
 use super::queue::{
     apply_turn_start_shim, attach_prompt_state_to_last_queued, immediate_server_send_eligible,
@@ -503,7 +503,7 @@ pub(super) fn dispatch_show_word_select_tip(app: &mut AppView) -> Vec<Effect> {
     if crate::appearance::cache::load_keep_text_selection().selects_word() {
         return vec![];
     }
-    let Some(agent) = visible_agent_mut(&mut app.agents, app.active_view) else {
+    let Some(agent) = get_active_agent_mut(app) else {
         return vec![];
     };
     if agent.show_ephemeral_tip(
