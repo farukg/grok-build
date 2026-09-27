@@ -6,6 +6,7 @@ pub mod types;
 // The two have identical method sets, so call sites compile unchanged
 pub use self::conversation::*;
 pub use self::error::{ResponseModelMetadata, Result, SamplingError};
+pub use xai_grok_sampling_types::ServedRoute;
 pub use self::types::*;
 pub use xai_grok_sampler::ApiBackend;
 pub use xai_grok_sampler::SamplingClient as Client;

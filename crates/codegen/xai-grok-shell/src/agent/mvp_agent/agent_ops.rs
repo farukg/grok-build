@@ -3376,14 +3376,11 @@ impl MvpAgent {
             .models_manager
             .model_supports_reasoning_effort(model_id.0.as_ref());
         let effort_options: Vec<ReasoningEffortOption> = if supports_effort {
-            let options = self
-                .models_manager
-                .model_reasoning_efforts(model_id.0.as_ref());
-            if options.is_empty() {
-                session_config::legacy_session_effort_options()
-            } else {
-                options
-            }
+            xai_grok_sampling_types::reasoning_effort_menu(
+                &self
+                    .models_manager
+                    .model_reasoning_efforts(model_id.0.as_ref()),
+            )
         } else {
             Vec::new()
         };

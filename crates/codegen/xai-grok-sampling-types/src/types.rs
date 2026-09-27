@@ -760,18 +760,23 @@ pub enum ReasoningEffort {
     High,
     Xhigh,
     Max,
+    /// Sigma/Codex catalog level; unsupported by async-openai's Responses enum.
+    Ultra,
 }
 
 impl ReasoningEffort {
-    pub fn to_responses_api(self) -> crate::rs::ReasoningEffort {
+    /// `None` for catalog levels the current Responses client cannot encode; Messages still sends `ultra` by name.
+    pub fn to_responses_api(self) -> Option<crate::rs::ReasoningEffort> {
         match self {
-            Self::None => crate::rs::ReasoningEffort::None,
-            Self::Minimal => crate::rs::ReasoningEffort::Minimal,
-            Self::Low => crate::rs::ReasoningEffort::Low,
-            Self::Medium => crate::rs::ReasoningEffort::Medium,
-            Self::High => crate::rs::ReasoningEffort::High,
-            Self::Xhigh => crate::rs::ReasoningEffort::Xhigh,
-            Self::Max => crate::rs::ReasoningEffort::Max,
+            Self::None => Some(crate::rs::ReasoningEffort::None),
+            Self::Minimal => Some(crate::rs::ReasoningEffort::Minimal),
+            Self::Low => Some(crate::rs::ReasoningEffort::Low),
+            Self::Medium => Some(crate::rs::ReasoningEffort::Medium),
+            Self::High => Some(crate::rs::ReasoningEffort::High),
+            Self::Xhigh => Some(crate::rs::ReasoningEffort::Xhigh),
+            Self::Max => Some(crate::rs::ReasoningEffort::Max),
+            // The Responses wire vocabulary has no `ultra`; Sigma's highest ladder entry is encoded as max.
+            Self::Ultra => Some(crate::rs::ReasoningEffort::Max),
         }
     }
 
@@ -814,8 +819,9 @@ impl std::str::FromStr for ReasoningEffort {
             "high" => Ok(Self::High),
             "xhigh" => Ok(Self::Xhigh),
             "max" => Ok(Self::Max),
+            "ultra" => Ok(Self::Ultra),
             _ => Err(format!(
-                "invalid reasoning effort: {s:?} (expected one of: none, minimal, low, medium, high, xhigh, max)"
+                "invalid reasoning effort: {s:?} (expected one of: none, minimal, low, medium, high, xhigh, max, ultra)"
             )),
         }
     }
@@ -944,6 +950,7 @@ pub fn effort_label(effort: ReasoningEffort) -> String {
         ReasoningEffort::High => "High",
         ReasoningEffort::Xhigh => "X-High",
         ReasoningEffort::Max => "Max",
+        ReasoningEffort::Ultra => "Ultra",
     }
     .to_string()
 }
@@ -1039,6 +1046,47 @@ pub fn parse_reasoning_efforts_meta(
 
 pub fn reasoning_efforts_meta_value(opts: &[ReasoningEffortOption]) -> serde_json::Value {
     serde_json::to_value(opts).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()))
+}
+
+/// The one menu for an effort-capable model whose provider reports no levels.
+pub const FALLBACK_REASONING_EFFORTS: [ReasoningEffort; 4] = [
+    ReasoningEffort::Low,
+    ReasoningEffort::Medium,
+    ReasoningEffort::High,
+    ReasoningEffort::Xhigh,
+];
+
+pub fn fallback_reasoning_effort_options() -> Vec<ReasoningEffortOption> {
+    FALLBACK_REASONING_EFFORTS
+        .iter()
+        .map(|&value| ReasoningEffortOption {
+            id: value.as_ref().to_string(),
+            value,
+            label: effort_label(value),
+            description: None,
+            default: false,
+        })
+        .collect()
+}
+
+/// The menu a model offers: the provider's levels, or the fallback when it reported none.
+pub fn reasoning_effort_menu(provider: &[ReasoningEffortOption]) -> Vec<ReasoningEffortOption> {
+    if provider.is_empty() {
+        fallback_reasoning_effort_options()
+    } else {
+        provider.to_vec()
+    }
+}
+
+pub fn menu_offers_reasoning_effort(
+    provider: &[ReasoningEffortOption],
+    effort: ReasoningEffort,
+) -> bool {
+    if provider.is_empty() {
+        FALLBACK_REASONING_EFFORTS.contains(&effort)
+    } else {
+        provider.iter().any(|option| option.value == effort)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1334,6 +1382,7 @@ mod tests {
             ReasoningEffort::High,
             ReasoningEffort::Xhigh,
             ReasoningEffort::Max,
+            ReasoningEffort::Ultra,
         ] {
             let json = serde_json::to_string(&v).unwrap();
             assert_eq!(json, format!("\"{}\"", v.as_ref()), "serialize {v:?}");

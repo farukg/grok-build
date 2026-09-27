@@ -378,20 +378,8 @@ fn stamp_effort(info: &mut config::ModelInfo, effort: ReasoningEffort) {
 
 /// Whether `effort` is a value this model will accept on the wire.
 fn model_offers_reasoning_effort(info: &config::ModelInfo, effort: ReasoningEffort) -> bool {
-    if !info.supports_reasoning_effort {
-        return false;
-    }
-    if info.reasoning_efforts.is_empty() {
-        matches!(
-            effort,
-            ReasoningEffort::Low
-                | ReasoningEffort::Medium
-                | ReasoningEffort::High
-                | ReasoningEffort::Xhigh
-        )
-    } else {
-        info.reasoning_efforts.iter().any(|opt| opt.value == effort)
-    }
+    info.supports_reasoning_effort
+        && xai_grok_sampling_types::menu_offers_reasoning_effort(&info.reasoning_efforts, effort)
 }
 
 /// True when an active `allowed_models` allowlist leaves no selectable model.

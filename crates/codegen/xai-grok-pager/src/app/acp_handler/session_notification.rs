@@ -1153,6 +1153,10 @@ pub(super) fn handle_session_notification_with_origin(
             }
             actually_changed
         }
+        XaiSessionUpdate::ModelServed { route } => {
+            agent.session.models.served_route = Some(route);
+            true
+        }
         XaiSessionUpdate::MemoryFiles {
             files,
             enabled,
@@ -1545,6 +1549,13 @@ pub(super) fn handle_child_session_notification(
                 sync_subagent_activity(agent, child_sid, label);
             }
             finished
+        }
+        XaiSessionUpdate::ModelServed { route } => {
+            let Some(child_view) = agent.subagent_views.get_mut(child_sid) else {
+                return false;
+            };
+            child_view.session.models.served_route = Some(route);
+            true
         }
         _ => false,
     }

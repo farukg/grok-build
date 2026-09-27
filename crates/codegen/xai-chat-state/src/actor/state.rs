@@ -176,6 +176,8 @@ pub(crate) struct ChatState {
     /// Uploaded as sibling `turn_{N}` artifacts so orchestrators can discover harness subagents.
     /// Drained by `TakeHarnessTraceTurns` at the end of the user-facing turn.
     pub(super) harness_trace_turns: Vec<Vec<ConversationItem>>,
+    /// Gateway route of the latest response; cleared when the model changes (not persisted).
+    pub served_route: Option<xai_grok_sampling_types::ServedRoute>,
 }
 
 /// Tracks which conversation items belong to the current turn without cloning each push.
@@ -236,6 +238,7 @@ impl ChatState {
             turn_capture: None,
             harness_trace_buffer: Vec::new(),
             harness_trace_turns: Vec::new(),
+            served_route: None,
         }
     }
 

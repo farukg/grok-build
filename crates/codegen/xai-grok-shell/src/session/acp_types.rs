@@ -529,6 +529,9 @@ pub struct SessionInfoData {
     /// Sole control: the client keeps no built-in per-slug default, so turning this off in the catalog hides both.
     #[serde(default)]
     pub show_model_fingerprint: bool,
+    /// Gateway route that served the latest response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_route: Option<xai_grok_sampling_types::ServedRoute>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
     /// Gateway chat conversation id when this session is gateway-proxied.

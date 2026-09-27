@@ -225,6 +225,9 @@ impl ChatStateActor {
                 self.increment_prompt_index();
             }
             ChatStateCommand::UpdateSamplingConfig { config } => {
+                if config.model != self.state.sampling_config.model {
+                    self.state.served_route = None;
+                }
                 self.state.sampling_config = *config;
                 self.state.total_tokens = crate::types::TokenCount::Stale {
                     tokens: self.state.total_tokens.tokens(),
@@ -422,6 +425,9 @@ impl ChatStateActor {
             }
             ChatStateCommand::GetLastModelMetadata { reply } => {
                 let _ = reply.send(self.get_last_model_metadata());
+            }
+            ChatStateCommand::RecordServedRoute { route, reply } => {
+                let _ = reply.send(self.record_served_route(*route));
             }
             ChatStateCommand::TakeTurnMessages { reply } => {
                 let result = self.state.turn_capture.take().map(|cap| {

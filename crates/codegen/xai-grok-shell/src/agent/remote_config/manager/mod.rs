@@ -534,18 +534,11 @@ impl ModelsManager {
         model_id: &str,
         effort: ReasoningEffort,
     ) -> bool {
-        let options = self.model_reasoning_efforts(model_id);
-        if options.is_empty() {
-            return self.model_supports_reasoning_effort(model_id)
-                && matches!(
-                    effort,
-                    ReasoningEffort::Low
-                        | ReasoningEffort::Medium
-                        | ReasoningEffort::High
-                        | ReasoningEffort::Xhigh
-                );
-        }
-        options.iter().any(|option| option.value == effort)
+        self.model_supports_reasoning_effort(model_id)
+            && xai_grok_sampling_types::menu_offers_reasoning_effort(
+                &self.model_reasoning_efforts(model_id),
+                effort,
+            )
     }
 
     pub(crate) fn model_supports_backend_search(&self, model_id: &str) -> bool {

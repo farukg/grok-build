@@ -410,6 +410,72 @@ fn parse_reads_reasoning_efforts_list() {
     let result = parse_remote_model_value(&value, "https://default.url").unwrap();
     assert!(result.reasoning_efforts.is_empty());
 }
+/// Sigma gateway `/v1/models` row: the ladder arrives as bare `reasoning_levels`, unknown tokens are skipped.
+#[test]
+fn catalog_reads_reasoning_levels_alias() {
+    use xai_grok_sampling_types::ReasoningEffort;
+    let value = serde_json::json!({
+        "id": "sigma/cg/sigstratege",
+        "object": "model",
+        "supports_reasoning_effort": true,
+        "reasoning_levels": ["low", "high", "max", "ultra"],
+    });
+    let result = parse_remote_model_value(&value, "https://default.url").unwrap();
+    let values: Vec<_> = result.reasoning_efforts.iter().map(|o| o.value).collect();
+    assert_eq!(
+        values,
+        vec![
+            ReasoningEffort::Low,
+            ReasoningEffort::High,
+            ReasoningEffort::Max,
+            ReasoningEffort::Ultra,
+        ]
+    );
+    assert!(
+        result.reasoning_effort_server_default,
+        "the gateway marks no default, so the request leaves the effort to it"
+    );
+    let menu = xai_grok_sampling_types::reasoning_effort_menu(&result.reasoning_efforts);
+    assert_eq!(menu, result.reasoning_efforts);
+    assert!(!xai_grok_sampling_types::menu_offers_reasoning_effort(
+        &result.reasoning_efforts,
+        ReasoningEffort::Medium
+    ));
+}
+/// Without a provider ladder every consumer falls back to the same single menu.
+#[test]
+fn catalog_without_levels_uses_single_fallback() {
+    use xai_grok_sampling_types::{
+        FALLBACK_REASONING_EFFORTS, ReasoningEffort, menu_offers_reasoning_effort,
+        reasoning_effort_menu,
+    };
+    let value = serde_json::json!({
+        "id": "sigma/fast",
+        "supports_reasoning_effort": true,
+    });
+    let result = parse_remote_model_value(&value, "https://default.url").unwrap();
+    assert!(result.reasoning_efforts.is_empty());
+    let menu: Vec<_> = reasoning_effort_menu(&result.reasoning_efforts)
+        .iter()
+        .map(|o| o.value)
+        .collect();
+    assert_eq!(menu, FALLBACK_REASONING_EFFORTS);
+    for effort in [
+        ReasoningEffort::None,
+        ReasoningEffort::Minimal,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::Xhigh,
+        ReasoningEffort::Max,
+    ] {
+        assert_eq!(
+            menu_offers_reasoning_effort(&result.reasoning_efforts, effort),
+            menu.contains(&effort),
+            "validation and menu disagree on {effort}"
+        );
+    }
+}
 /// A public `/v1/models` row carries the menu under `capabilities`; labels come from the shared `effort_label` table.
 #[test]
 fn parse_reads_reasoning_efforts_from_capabilities() {

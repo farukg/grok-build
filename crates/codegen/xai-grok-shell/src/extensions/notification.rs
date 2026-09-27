@@ -911,6 +911,11 @@ pub enum SessionUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reasoning_effort: Option<String>,
     },
+    /// A routing gateway served the session's latest response through a different route than the previous one.
+    /// Emitted only on change; cleared by the client on a model switch.
+    ModelServed {
+        route: xai_grok_sampling_types::ServedRoute,
+    },
     /// Streaming chunk of a tool call's arguments. Behaves like `acp::SessionUpdate::AgentMessageChunk` / `AgentThoughtChunk`. It flows through the replay buffer and merges with adjacent chunks for the same `tool_call_id`.
     /// It is debounced at the session's buffering interval. Only persisted as a full `acp::SessionUpdate::ToolCall`.
     ToolCallDeltaChunk {

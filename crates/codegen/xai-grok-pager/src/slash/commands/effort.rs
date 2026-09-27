@@ -76,10 +76,9 @@ impl SlashCommand for EffortCommand {
 mod tests {
     use super::*;
     use crate::acp::model_state::ModelState;
-    use crate::slash::commands::effort_levels::EFFORT_LEVELS;
     use agent_client_protocol as acp;
     use std::sync::Arc;
-    use xai_grok_shell::sampling::types::ReasoningEffort;
+    use xai_grok_shell::sampling::types::{FALLBACK_REASONING_EFFORTS, ReasoningEffort};
 
     fn model_with_reasoning(id: &str, name: &str) -> (acp::ModelId, acp::ModelInfo) {
         let id = acp::ModelId::new(Arc::from(id));
@@ -332,6 +331,42 @@ mod tests {
     }
 
     #[test]
+    fn effort_menu_uses_provider_ladder() {
+        let mut state = ModelState::default();
+        let id = acp::ModelId::new(Arc::from("sigma/cg/sigstratege"));
+        let info = acp::ModelInfo::new(id.clone(), "sigstratege".to_string()).meta(
+            serde_json::json!({
+                "supportsReasoningEffort": true,
+                "reasoningEfforts": ["low", "high", "max"],
+            })
+            .as_object()
+            .cloned(),
+        );
+        state.available.insert(id.clone(), info);
+        state.current = Some(id);
+
+        let ctx = AppCtx {
+            models: &state,
+            cwd: std::path::Path::new("."),
+            has_session_announcements: false,
+            billing_surface_visible: true,
+            usage_command_visible: true,
+            workflows_available: true,
+            saved_workflows: &[],
+            workflow_runs: &[],
+            screen_mode: crate::app::ScreenMode::Fullscreen,
+            current_title: None,
+        };
+        let offered: Vec<_> = EffortCommand
+            .suggest_args(&ctx, "")
+            .unwrap()
+            .into_iter()
+            .map(|item| item.insert_text)
+            .collect();
+        assert_eq!(offered, ["low", "high", "max"]);
+    }
+
+    #[test]
     fn suggest_args_lists_levels_with_active_marker() {
         let mut state = ModelState::default();
         let (id, info) = model_with_reasoning("reasoning-x", "Reasoning X");
@@ -353,7 +388,7 @@ mod tests {
             current_title: None,
         };
         let items = cmd.suggest_args(&ctx, "").unwrap();
-        assert_eq!(items.len(), EFFORT_LEVELS.len());
+        assert_eq!(items.len(), FALLBACK_REASONING_EFFORTS.len());
         let [a, b, c, d] = items.as_slice() else {
             panic!("expected 4 items: {items:?}");
         };

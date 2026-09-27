@@ -1,17 +1,10 @@
 //! Shared reasoning-effort dropdown levels for `/model` and `/effort`.
 
-use xai_grok_shell::sampling::types::{ReasoningEffort, ReasoningEffortOption};
+use xai_grok_shell::sampling::types::{
+    FALLBACK_REASONING_EFFORTS, ReasoningEffort, ReasoningEffortOption,
+};
 
 use crate::slash::command::ArgItem;
-
-/// Effort levels in the built-in fallback menu (strongest first).
-/// `none`/`minimal` are still accepted by `ReasoningEffort::from_str` for power users.
-pub(crate) const EFFORT_LEVELS: &[ReasoningEffort] = &[
-    ReasoningEffort::Xhigh,
-    ReasoningEffort::High,
-    ReasoningEffort::Medium,
-    ReasoningEffort::Low,
-];
 
 pub(crate) fn effort_description(level: ReasoningEffort) -> &'static str {
     match level {
@@ -22,15 +15,17 @@ pub(crate) fn effort_description(level: ReasoningEffort) -> &'static str {
         ReasoningEffort::High => "Heavy reasoning",
         ReasoningEffort::Xhigh => "Extended reasoning",
         ReasoningEffort::Max => "Maximum reasoning",
+        ReasoningEffort::Ultra => "Maximum reasoning (ultra)",
     }
 }
 
-/// The built-in menu used when the server sends no `reasoningEfforts`.
-/// Reproduces the historical rows: labels are the lowercase level (via `Display`), descriptions from `effort_description`.
+/// The shared fallback menu for a model whose provider sends no levels, shown strongest first.
+/// Labels are the lowercase level (via `Display`), descriptions from `effort_description`.
 /// The active row is matched by value against the session effort at render time, so `default` is left unset here.
 pub(crate) fn legacy_effort_options() -> Vec<ReasoningEffortOption> {
-    EFFORT_LEVELS
+    FALLBACK_REASONING_EFFORTS
         .iter()
+        .rev()
         .map(|&level| ReasoningEffortOption {
             id: level.as_ref().to_string(),
             value: level,

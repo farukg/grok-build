@@ -5387,6 +5387,9 @@ fn session_info_fields(
         show_resolved_model,
     );
     push("Model", model_display.to_string(), true);
+    if let Some(route) = &info.data.served_route {
+        push("Served", route.detail().to_string(), true);
+    }
     if info.data.show_model_fingerprint
         && let Some(fp) = info.data.model_fingerprint.as_deref()
     {

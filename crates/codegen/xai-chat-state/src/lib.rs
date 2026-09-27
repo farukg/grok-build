@@ -45,7 +45,7 @@ pub use actor::state::{
     estimate_system_message_tokens, estimate_tool_definition_tokens,
     estimate_tool_definitions_tokens, estimate_tool_specs_tokens,
 };
-pub use commands::{ModelMetadata, StrictAppendAck, StrictAppendError};
+pub use commands::{ModelMetadata, ServedRouteChange, StrictAppendAck, StrictAppendError};
 pub use compaction_mode::CompactionMode;
 pub use events::ChatStateEvent;
 pub use handle::{ChatStateHandle, ChatStateMailboxClosed};

@@ -620,6 +620,20 @@ impl ChatStateHandle {
         .unwrap_or_default()
     }
 
+    /// `None` when the actor is gone.
+    pub async fn record_served_route(
+        &self,
+        route: xai_grok_sampling_types::ServedRoute,
+    ) -> Option<crate::commands::ServedRouteChange> {
+        self.query("RecordServedRoute", |reply| {
+            ChatStateCommand::RecordServedRoute {
+                route: Box::new(route),
+                reply,
+            }
+        })
+        .await
+    }
+
     /// Take the accumulated turn messages and end the capture.
     /// Returns `None` if no capture was active.
     pub async fn take_turn_messages(&self) -> Option<TurnCapture> {

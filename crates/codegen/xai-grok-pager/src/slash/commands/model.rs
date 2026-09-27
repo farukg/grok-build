@@ -323,7 +323,7 @@ mod tests {
             current_title: None,
         };
         // The args query has a trailing space, so this is the effort phase
-        // Items come out ordered xhigh to low (strongest first) per EFFORT_LEVELS
+        // Fallback items come out ordered xhigh to low (strongest first)
         let items = cmd.suggest_args(&ctx, "Reasoning X ").unwrap();
         assert_eq!(items.len(), 4);
         let [a, b, c, d] = items.as_slice() else {
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(d.insert_text, "Reasoning X low");
         // Display is just the level so the user sees a clean column.
         assert_eq!(a.display, "xhigh");
-        // match_text carries the sort-key prefix that forces the matcher's alphabetical tiebreak to render rows in EFFORT_LEVELS order
+        // match_text carries the sort-key prefix that forces the matcher's alphabetical tiebreak to render rows in menu order
         assert!(a.match_text.starts_with("a "));
         assert!(d.match_text.starts_with("d "));
     }

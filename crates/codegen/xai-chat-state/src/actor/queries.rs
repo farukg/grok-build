@@ -96,7 +96,8 @@ impl ChatStateActor {
     }
 
     pub(super) fn get_last_model_metadata(&self) -> crate::commands::ModelMetadata {
-        self.state
+        let mut metadata = self
+            .state
             .conversation
             .iter()
             .rev()
@@ -105,12 +106,15 @@ impl ChatStateActor {
                     Some(crate::commands::ModelMetadata {
                         resolved_model_id: a.model_id.clone(),
                         model_fingerprint: a.model_fingerprint.clone(),
+                        served_route: None,
                     })
                 } else {
                     None
                 }
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        metadata.served_route = self.state.served_route.clone();
+        metadata
     }
 
     // ─── Narrow targeted queries ─────────────────────────────────────────────

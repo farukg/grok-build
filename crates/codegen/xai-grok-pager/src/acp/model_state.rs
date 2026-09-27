@@ -5,6 +5,8 @@ use xai_grok_shell::sampling::types::{
     parse_reasoning_effort_meta, parse_reasoning_efforts_meta, supports_reasoning_effort_meta,
 };
 
+use xai_grok_shell::sampling::ServedRoute;
+
 use crate::slash::commands::effort_levels::legacy_effort_options;
 
 fn canonical_effort_if_offered(
@@ -59,6 +61,8 @@ pub struct ModelState {
     /// When set, `get_context_window()` returns this instead of reading from the current model's metadata.
     /// Used for subagent views where SubagentProgress reports the actual window size.
     context_window_override: Option<u64>,
+    /// Gateway route that served the latest response of `current`.
+    pub served_route: Option<ServedRoute>,
 }
 
 impl ModelState {
@@ -73,6 +77,19 @@ impl ModelState {
             Some(model_info.name.clone())
         } else {
             Some(current.0.to_string())
+        }
+    }
+
+    /// `requested → served` once a gateway reported the serving route, else just the requested name.
+    pub fn requested_to_served_label(&self) -> Option<String> {
+        Some(self.served_label_for(&self.current_model_name()?))
+    }
+
+    /// `requested → served` for a caller-supplied requested label.
+    pub fn served_label_for(&self, requested: &str) -> String {
+        match &self.served_route {
+            Some(route) => format!("{requested} \u{2192} {route}"),
+            None => requested.to_owned(),
         }
     }
 
@@ -137,6 +154,9 @@ impl ModelState {
         model_id: acp::ModelId,
         effort_override: Option<ReasoningEffort>,
     ) {
+        if self.current.as_ref() != Some(&model_id) {
+            self.served_route = None;
+        }
         self.current = Some(model_id.clone());
         self.reasoning_effort = effort_override.or_else(|| {
             self.available
@@ -320,6 +340,7 @@ impl From<Option<acp::SessionModelState>> for ModelState {
                     current: current_model,
                     reasoning_effort,
                     context_window_override: None,
+                    served_route: None,
                 }
             })
             .unwrap_or_default()

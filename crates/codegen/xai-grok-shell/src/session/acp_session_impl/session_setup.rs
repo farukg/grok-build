@@ -517,6 +517,9 @@ impl SessionActor {
         if let Some(ref etag) = metadata.models_etag {
             self.models_manager.refresh_if_new_etag(etag.clone()).await;
         }
+        if let Some(route) = metadata.served_route {
+            self.publish_served_route(route).await;
+        }
         let current_config = match self.chat_state_handle.get_sampling_config().await {
             Some(cfg) => cfg,
             None => return,
@@ -558,6 +561,17 @@ impl SessionActor {
         self.chat_state_handle
             .update_sampling_config(updated_config);
     }
+    async fn publish_served_route(&self, route: xai_grok_sampling_types::ServedRoute) {
+        match self.chat_state_handle.record_served_route(route.clone()).await {
+            Some(xai_chat_state::ServedRouteChange::Changed) => {
+                self.send_xai_notification(
+                    crate::extensions::notification::SessionUpdate::ModelServed { route },
+                )
+                .await;
+            }
+            Some(xai_chat_state::ServedRouteChange::Unchanged) | None => {}
+        }
+    }
     /// Inject the actor's managed Read-deny globs into the current ToolBridge so the Grep tool excludes policy-forbidden paths.
     /// No-op when empty.
     /// Called on session setup and re-called after an agent rebuild (the rebuilt bridge
@@ -587,6 +601,7 @@ impl SessionActor {
         let turn_index = self.chat_state_handle.get_prompt_index().await as u64;
         tracing::info!(turn_index, turns, resolved_model_id = ?model_metadata.resolved_model_id, model_fingerprint = ?model_metadata.model_fingerprint, "build_session_info");
         let model_fingerprint = model_metadata.model_fingerprint;
+        let served_route = model_metadata.served_route;
         let show_model_fingerprint = model
             .as_deref()
             .map(|id| self.models_manager.model_show_model_fingerprint(id))
@@ -628,6 +643,7 @@ impl SessionActor {
             resolved_model_id,
             model_fingerprint,
             show_model_fingerprint,
+            served_route,
             api_backend,
             conversation_id,
             agent_name: Some(agent_name),

@@ -586,6 +586,17 @@ impl ChatStateActor {
         changed
     }
 
+    pub(super) fn record_served_route(
+        &mut self,
+        route: xai_grok_sampling_types::ServedRoute,
+    ) -> crate::commands::ServedRouteChange {
+        if self.state.served_route.as_ref() == Some(&route) {
+            return crate::commands::ServedRouteChange::Unchanged;
+        }
+        self.state.served_route = Some(route);
+        crate::commands::ServedRouteChange::Changed
+    }
+
     /// Restore all state fields from a snapshot.
     pub(super) fn restore_snapshot(&mut self, snap: ChatStateSnapshot) {
         self.snapshot_turn_slice();

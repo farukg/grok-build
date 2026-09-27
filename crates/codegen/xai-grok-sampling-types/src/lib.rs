@@ -12,6 +12,7 @@ pub mod error;
 pub mod messages;
 pub mod provider_error;
 pub mod serde_helpers;
+pub mod served_route;
 pub mod tool_overrides;
 pub mod types;
 
@@ -26,6 +27,10 @@ pub use self::error::{
     ResponseModelMetadata, Result, SamplingError, SentCredential, is_context_length_error,
     is_retryable_api_status, is_size_overflow_error_code, parse_error_code, status_user_message,
     user_facing_api_error_message,
+};
+pub use self::served_route::{
+    EmptyRouteLabel, FallbackCount, RouteCandidate, RouteIdentity, RouteModel, RouteProfile,
+    RouteProvider, ServedRoute,
 };
 pub use self::tool_overrides::{
     ClearableField, MAX_WEB_SEARCH_DOMAINS, SearchDateBound, SearchDateBoundError, ToolOverrides,

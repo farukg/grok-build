@@ -1989,6 +1989,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
             context_window: Some(context_window),
             max_completion_tokens: None,
             models_etag: None,
+            served_route: None,
         }),
         empty_response_context: None,
         doom_loop_triggers: None,

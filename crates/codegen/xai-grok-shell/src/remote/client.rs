@@ -681,6 +681,7 @@ pub(crate) fn parse_remote_model_value(
         .map(|arr| xai_grok_sampling_types::parse_reasoning_effort_options(arr, "reasoningEfforts"))
         .filter(|options| !options.is_empty())
         .map(|options| (options, false))
+        .or_else(|| parse_reasoning_levels(obj))
         .or_else(|| {
             obj.get("capabilities")
                 .and_then(|v| v.as_object())
@@ -861,6 +862,14 @@ fn parse_capabilities_reasoning_efforts(
         }
     }
     Some((options, !marked))
+}
+/// Sigma gateway ladder: bare canonical levels with no default, so the server keeps choosing the effort until the user picks one.
+fn parse_reasoning_levels(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Option<(Vec<xai_grok_sampling_types::ReasoningEffortOption>, bool)> {
+    let arr = obj.get("reasoning_levels")?.as_array()?;
+    let options = xai_grok_sampling_types::parse_reasoning_effort_options(arr, "reasoning_levels");
+    (!options.is_empty()).then_some((options, true))
 }
 /// Parse `env_key` / `envKey` as a single string or a string array.
 fn get_env_keys(

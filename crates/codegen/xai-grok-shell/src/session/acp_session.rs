@@ -1500,6 +1500,9 @@ mod managed_hooks_tests;
 #[path = "acp_session_tests/model_switch_label_tests.rs"]
 mod model_switch_label_tests;
 #[cfg(test)]
+#[path = "acp_session_tests/served_route_tests.rs"]
+mod served_route_tests;
+#[cfg(test)]
 #[path = "acp_session_tests/replace_system_prompt_tests.rs"]
 mod replace_system_prompt_tests;
 #[cfg(test)]
