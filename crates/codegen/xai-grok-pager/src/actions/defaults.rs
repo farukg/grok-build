@@ -545,6 +545,21 @@ pub(super) fn default_actions(
             ),
         },
         ActionDef {
+            id: ActionId::ToggleTimelinePanel,
+            label: "timeline",
+            description: "Expand the timeline into a navigable outline",
+            default_key: key!(F(6)),
+            alt_keys: vec![],
+            category: Category::Panels,
+            context: When::AgentScreen,
+            hint_priority: None,
+            hint_key_display: None,
+            requires_confirmation: false,
+            long_help: Some(
+                "Opens the timeline as a side outline of every conversation entry, grouped by turn and tool run.\nUp/Down (j/k) move the cursor and scroll the chat along; Left/Right fold groups; Enter/f jumps.\ne folds, y/Y copy content/meta, v opens the viewer, R rewinds to the cursor's turn. F6 or Esc returns to the rail.",
+            ),
+        },
+        ActionDef {
             id: ActionId::ToggleQueue,
             label: "queue",
             description: "Toggle prompt queue",

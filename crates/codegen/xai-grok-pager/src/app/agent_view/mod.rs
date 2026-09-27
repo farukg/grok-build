@@ -189,6 +189,7 @@ pub(in crate::app) use subagent_takeover::tree_chord;
 mod task_icon_mouse_tests;
 #[cfg(test)]
 mod task_status_tests;
+mod timeline_panel;
 mod viewer;
 mod workflows_overlay;
 use super::actions;
@@ -1389,6 +1390,8 @@ pub struct AgentView {
     /// lands on a tick; borrowed during render so streaming redraws don't
     /// rescan/allocate the prompt every frame.
     pub(crate) timeline_hover_preview: Option<(usize, String)>,
+    /// Rail, or the expanded outline panel occupying the rail's layout column.
+    pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
     /// Map of child session IDs to subagent metadata. Populated on `SubagentSpawned` notifications, used for permission routing (which agent owns a session) and provenance display.
@@ -1966,6 +1969,7 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         ActionId::OpenSettings => return None,
         ActionId::ToggleTodos
         | ActionId::ToggleTasks
+        | ActionId::ToggleTimelinePanel
         | ActionId::EditPromptExternal
         | ActionId::ToggleQueue
         | ActionId::OpenSessions

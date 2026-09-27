@@ -719,6 +719,13 @@ impl AgentView {
                             if self.open_child_from_click(linked) {
                                 return InputOutcome::Changed;
                             }
+                        } else if mouse
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::ALT)
+                            && let Some(outcome) = self.open_timeline_panel_on_click(mouse.row)
+                        {
+                            self.pending_scrollback_click = None;
+                            return outcome;
                         }
                         if is_link_modifier_held(mouse.modifiers)
                             && self.try_arm_link_click(mouse.column, mouse.row)

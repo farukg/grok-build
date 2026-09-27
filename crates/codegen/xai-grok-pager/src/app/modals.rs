@@ -846,6 +846,12 @@ impl AgentView {
                                 self.active_modal = None;
                                 InputOutcome::Action(Action::OpenConfigAgentsModal(None))
                             }
+                            PaletteCommand::TimelinePanel => {
+                                self.active_modal = None;
+                                let at = self.scrollback.timeline_follow_index();
+                                let _ = self.open_timeline_panel_at(at);
+                                InputOutcome::Changed
+                            }
                             PaletteCommand::OpenFeedbackModal => {
                                 self.active_modal = None;
                                 InputOutcome::Action(Action::OpenFeedbackModal(Default::default()))
