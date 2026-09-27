@@ -231,7 +231,7 @@ fn an_empty_read_of_a_running_resumed_child_stays_needs_replay_and_retries() {
     parent.insert_test_child(child_sid.to_string(), Box::new(make_min_child_view()));
     let mut info = make_info();
     info.child_session_id = child_sid.into();
-    info.attempt.context_source = Some("resumed".into());
+    info.attempt.context = xai_grok_shell::extensions::subagent_context::SubagentContext::Resumed;
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     assert_eq!(
         ensure_subagent_child_replayed(&mut parent, child_sid),
@@ -599,7 +599,7 @@ fn child_view_for_live_update_hydrates_a_resumed_child_before_returning_it() {
     parent.insert_test_child(child_sid.to_string(), Box::new(make_min_child_view()));
     let mut info = make_info();
     info.child_session_id = child_sid.into();
-    info.attempt.context_source = Some("resumed".into());
+    info.attempt.context = xai_grok_shell::extensions::subagent_context::SubagentContext::Resumed;
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     {
         let view = parent.child_view_for_live_update_mut(child_sid).unwrap();

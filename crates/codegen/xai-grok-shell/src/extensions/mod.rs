@@ -41,6 +41,7 @@ pub(crate) mod session_state;
 pub mod session_updates;
 pub mod share;
 pub mod skills;
+pub mod subagent_context;
 pub mod subagent_message;
 pub mod suggest;
 pub mod task;

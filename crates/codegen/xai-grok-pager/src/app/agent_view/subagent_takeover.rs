@@ -231,7 +231,7 @@ impl AgentView {
             (None, Some(tokens)) => tokens,
             (None, None) => String::new(),
         };
-        let badge = info.map(format_context_badge).unwrap_or("");
+        let badge = info.map(format_context_badge).unwrap_or_default();
         let activity_label: Option<String> = if is_running {
             self.subagent_views.get(child_sid).and_then(|cv| {
                 cv.resolve_turn_activity()
@@ -351,7 +351,7 @@ impl AgentView {
             buf.set_span_safe(
                 rx,
                 title_y,
-                &Span::styled(badge, Style::default().fg(theme.gray_dim)),
+                &Span::styled(badge.as_ref(), Style::default().fg(theme.gray_dim)),
                 badge.width() as u16,
             );
         }
