@@ -21,6 +21,142 @@ use super::types::{
     Selectable, SelectionBoundaries, derive_selection_text,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum MessageKind {
+    UserPrompt,
+    AgentMessage,
+    Execute,
+    Read,
+    Edit,
+    ListDir,
+    Search,
+    WebFetch,
+    WebSearch,
+    IntegrationSearch,
+    UseTool,
+    MemorySearch,
+    SentMessage,
+    Skill,
+    OtherTool,
+    Thinking,
+    System,
+    SessionEvent,
+    BgTask,
+    Subagent,
+    Workflow,
+    Btw,
+    ContextInfo,
+    MemoryCapture,
+    Stub,
+}
+
+impl From<&RenderBlock> for MessageKind {
+    fn from(block: &RenderBlock) -> Self {
+        match block {
+            RenderBlock::Stub(_) => Self::Stub,
+            RenderBlock::UserPrompt(_) => Self::UserPrompt,
+            RenderBlock::AgentMessage(_) => Self::AgentMessage,
+            RenderBlock::ToolCall(tool) => match tool {
+                ToolCallBlock::Execute(_) => Self::Execute,
+                ToolCallBlock::Read(_) => Self::Read,
+                ToolCallBlock::Edit(_) => Self::Edit,
+                ToolCallBlock::ListDir(_) => Self::ListDir,
+                ToolCallBlock::Search(_) => Self::Search,
+                ToolCallBlock::WebFetch(_) => Self::WebFetch,
+                ToolCallBlock::WebSearch(_) => Self::WebSearch,
+                ToolCallBlock::IntegrationSearch(_) => Self::IntegrationSearch,
+                ToolCallBlock::UseTool(_) => Self::UseTool,
+                ToolCallBlock::MemorySearch(_) => Self::MemorySearch,
+                ToolCallBlock::SentMessage(_) => Self::SentMessage,
+                ToolCallBlock::Skill(_) => Self::Skill,
+                ToolCallBlock::Other(_) => Self::OtherTool,
+            },
+            RenderBlock::Thinking(_) => Self::Thinking,
+            RenderBlock::System(_) => Self::System,
+            RenderBlock::SessionEvent(_) => Self::SessionEvent,
+            RenderBlock::BgTask(_) => Self::BgTask,
+            RenderBlock::Subagent(_) => Self::Subagent,
+            RenderBlock::Workflow(_) => Self::Workflow,
+            RenderBlock::Btw(_) => Self::Btw,
+            RenderBlock::ContextInfo(_) => Self::ContextInfo,
+            RenderBlock::MemoryCapture(_) => Self::MemoryCapture,
+        }
+    }
+}
+
+impl MessageKind {
+    pub fn settings_kinds() -> &'static [Self] {
+        &[
+            Self::UserPrompt,
+            Self::AgentMessage,
+            Self::Execute,
+            Self::Read,
+            Self::Edit,
+            Self::ListDir,
+            Self::Search,
+            Self::WebFetch,
+            Self::WebSearch,
+            Self::IntegrationSearch,
+            Self::UseTool,
+            Self::MemorySearch,
+            Self::SentMessage,
+            Self::Skill,
+            Self::OtherTool,
+            Self::Thinking,
+            Self::System,
+            Self::SessionEvent,
+            Self::BgTask,
+            Self::Subagent,
+            Self::Workflow,
+            Self::Btw,
+            Self::ContextInfo,
+            Self::MemoryCapture,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EntryForm {
+    FollowingKind,
+    Override(super::types::DisplayForm),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DisplayDefaults {
+    forms: Vec<(MessageKind, super::types::DisplayForm)>,
+}
+
+impl Default for DisplayDefaults {
+    fn default() -> Self {
+        Self {
+            forms: MessageKind::settings_kinds()
+                .iter()
+                .copied()
+                .map(|kind| (kind, super::types::DisplayForm::Collapsed))
+                .collect(),
+        }
+    }
+}
+
+impl DisplayDefaults {
+    pub fn get(&self, kind: MessageKind) -> Option<super::types::DisplayForm> {
+        self.forms
+            .iter()
+            .find_map(|(candidate, form)| (*candidate == kind).then_some(*form))
+    }
+
+    pub fn set(&mut self, kind: MessageKind, form: super::types::DisplayForm) {
+        if let Some((_, current)) = self
+            .forms
+            .iter_mut()
+            .find(|(candidate, _)| *candidate == kind)
+        {
+            *current = form;
+        }
+    }
+}
+
+
 /// The trailing inline image anchored within a block's rendered output. Mermaid diagrams do not use this path; they
 /// render as a code block plus a text affordance row instead.
 #[derive(Debug, Clone)]

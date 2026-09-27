@@ -73,6 +73,8 @@ pub struct ScrollbackEntry {
 
     pub display_mode: DisplayMode,
 
+    pub form: super::block::EntryForm,
+
     pub display_mode_pinned: bool,
 
     /// Raw mode: if true and block has_raw_mode(), render markdown as raw.
@@ -155,6 +157,7 @@ impl ScrollbackEntry {
             is_running: false,
             is_pending_user_input: false,
             display_mode,
+            form: super::block::EntryForm::FollowingKind,
             display_mode_pinned: false,
             raw: false,
             created_at: Some(Local::now()),
@@ -184,6 +187,7 @@ impl ScrollbackEntry {
             is_running: true,
             is_pending_user_input: false,
             display_mode,
+            form: super::block::EntryForm::FollowingKind,
             display_mode_pinned: false,
             raw: false,
             created_at: Some(Local::now()),
