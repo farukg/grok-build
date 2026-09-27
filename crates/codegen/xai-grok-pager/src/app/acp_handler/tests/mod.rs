@@ -1463,6 +1463,7 @@ pub(super) fn test_subagent_spawned_for_workflow(
         model: None,
         resumed_from: None,
         agent_address: None,
+        resume_fallback: None,
     }
 }
 pub(super) fn test_subagent_finished(child_sid: &str) -> XaiSessionUpdate {

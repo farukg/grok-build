@@ -943,6 +943,23 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             None => vec![],
         },
+        TaskResult::ResumeSubagentComplete {
+            subagent_id,
+            outcome,
+        } => {
+            use xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome;
+            match outcome {
+                Some(ResumeSubagentOutcome::Queued { .. }) => {
+                    app.show_toast(&format!("Queued the prompt to running subagent {subagent_id}"));
+                }
+                Some(ResumeSubagentOutcome::Resumed { .. }) => {}
+                Some(ResumeSubagentOutcome::Refused { reason }) => {
+                    app.show_toast(&reason.to_string());
+                }
+                None => app.show_toast(&format!("Could not resume subagent {subagent_id}")),
+            }
+            vec![]
+        }
         TaskResult::KillSubagentComplete {
             session_id,
             subagent_id,
