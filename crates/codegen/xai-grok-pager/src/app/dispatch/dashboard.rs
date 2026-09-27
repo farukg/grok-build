@@ -27,19 +27,21 @@ use agent_client_protocol as acp;
 use xai_grok_telemetry::events::CancellationScope;
 /// Keeps v1 config layout separate from v2 workspace layout.
 fn dashboard_state_for_mode(app: &mut AppView) -> crate::views::dashboard::DashboardState {
-    use crate::views::dashboard::{DashboardState, load_persisted};
+    use crate::views::dashboard::DashboardState;
     if app.workspace_dashboard_enabled {
         return DashboardState::new();
     }
-    if app.dashboard_persisted.is_none() {
-        app.dashboard_persisted = load_persisted();
-    }
-    let persisted = app
-        .dashboard_persisted
-        .clone()
-        .unwrap_or_else(crate::views::dashboard::PersistedDashboard::defaults);
     let resolver = crate::views::dashboard::SessionIdResolver::from_agents(&app.agents);
-    DashboardState::from_persisted(&persisted, &resolver)
+    DashboardState::from_persisted(persisted_dashboard(&mut app.dashboard_persisted), &resolver)
+}
+/// The `[dashboard]` config, read from disk on first use only; a missing section caches the defaults.
+fn persisted_dashboard(
+    slot: &mut Option<crate::views::dashboard::PersistedDashboard>,
+) -> &crate::views::dashboard::PersistedDashboard {
+    slot.get_or_insert_with(|| {
+        crate::views::dashboard::load_persisted()
+            .unwrap_or_else(crate::views::dashboard::PersistedDashboard::defaults)
+    })
 }
 pub(super) fn rebind_workspace_identities(
     app: &mut AppView,
@@ -968,43 +970,13 @@ pub(super) fn dispatch_dashboard_confirm_worktree(
 /// Cycle the dashboard overlay to the prev (-1) / next (+1) agent in the visible row order, wrapping at the ends.
 /// Attaches overlay chrome on the first cycle from a session not opened via the dashboard.
 pub(super) fn dispatch_dashboard_overlay_cycle(app: &mut AppView, delta: i32) -> Vec<Effect> {
-    use crate::views::dashboard::DashboardRowId;
+    use crate::views::dashboard::{DashboardRowId, SessionCycle};
     let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
-    if app.agents.len() <= 1 {
+    let SessionCycle::Order(order) = session_cycle(app) else {
         return vec![];
-    }
-    let order = if app.workspace_dashboard_enabled {
-        let filter = app
-            .dashboard
-            .as_ref()
-            .map_or(&crate::views::dashboard::Filter::None, |d| &d.filter);
-        workspace_rows(app, filter)
-            .0
-            .into_iter()
-            .filter_map(|row| match row.id {
-                DashboardRowId::TopLevel(id) => Some(id),
-                _ => None,
-            })
-            .collect()
-    } else {
-        match app.dashboard.as_ref() {
-            Some(d) => crate::views::dashboard::overlay_cycle_order(d, &app.agents),
-            None => {
-                if !crate::views::dashboard::dashboard_enabled()
-                    || !matches!(app.auth_state, crate::app::app_view::AuthState::Done)
-                {
-                    return vec![];
-                }
-                let transient = dashboard_state_for_mode(app);
-                crate::views::dashboard::overlay_cycle_order(&transient, &app.agents)
-            }
-        }
     };
-    if order.len() <= 1 {
-        return vec![];
-    }
     let Some(idx) = order.iter().position(|id| *id == current) else {
         return vec![];
     };
@@ -1032,6 +1004,52 @@ pub(super) fn dispatch_dashboard_overlay_cycle(app: &mut AppView, delta: i32) ->
     app.active_view = ActiveView::Agent(next_id);
     surface_yolo_launch_block_notice(app, next_id);
     vec![]
+}
+/// The one session order behind both the prev/next dispatch and the header's `‹ i/n ›`: the rows the dashboard would
+/// paint (v2 workspace rows or v1 rows), so the switcher never disagrees with the list.
+/// A never-opened dashboard is gated like opening it and uses the persisted layout without a filter.
+fn session_cycle(app: &mut AppView) -> crate::views::dashboard::SessionCycle {
+    use crate::views::dashboard::{Filter, SessionCycle, SessionIdResolver};
+    if app.agents.len() < 2 {
+        return SessionCycle::Unavailable;
+    }
+    if app.dashboard.is_none()
+        && !(matches!(app.auth_state, crate::app::app_view::AuthState::Done)
+            && crate::views::dashboard::dashboard_enabled_by(
+                persisted_dashboard(&mut app.dashboard_persisted).enabled,
+            ))
+    {
+        return SessionCycle::Unavailable;
+    }
+    let order = if app.workspace_dashboard_enabled {
+        let filter = app.dashboard.as_ref().map_or(&Filter::None, |d| &d.filter);
+        crate::views::dashboard::top_level_ids(&workspace_rows(app, filter).0)
+    } else if let Some(d) = app.dashboard.as_ref() {
+        crate::views::dashboard::overlay_cycle_order(d, &app.agents)
+    } else {
+        let resolver = SessionIdResolver::from_agents(&app.agents);
+        let persisted = persisted_dashboard(&mut app.dashboard_persisted);
+        let (pinned, reorder) = persisted.resolve_layout(&resolver);
+        crate::views::dashboard::cycle_order(
+            &app.agents,
+            &pinned,
+            &reorder,
+            persisted.grouping,
+            &Filter::None,
+        )
+    };
+    SessionCycle::from_order(order)
+}
+/// `current`'s `i/n` in [`session_cycle`] for the header switcher, memoized on `app.session_cycle` until it is marked stale.
+pub(crate) fn session_cycle_position(app: &mut AppView, current: AgentId) -> Option<(usize, usize)> {
+    use crate::views::dashboard::SessionCycleCache;
+    if let SessionCycleCache::Fresh(cycle) = &app.session_cycle {
+        return cycle.position(current);
+    }
+    let cycle = session_cycle(app);
+    let position = cycle.position(current);
+    app.session_cycle = SessionCycleCache::Fresh(cycle);
+    position
 }
 pub(super) fn dispatch_dashboard_dispatch(
     app: &mut AppView,

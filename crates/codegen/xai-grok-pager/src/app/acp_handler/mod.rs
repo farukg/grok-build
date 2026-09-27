@@ -147,9 +147,33 @@ fn ack_prompt_from_update(view: &mut AgentView, meta: &NotificationMeta) {
     }
 }
 pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
+    if !is_streaming_output(&msg) {
+        app.invalidate_session_cycle();
+    }
     let state_changed = handle_inner(msg, app);
     let flushed = app.flush_image_notices_if_root();
     state_changed || flushed
+}
+/// Message and thought chunks only grow the transcript; the session order keys on turn state, titles, and activity
+/// anchors, so the streaming firehose keeps the header switcher's cached order. Tool calls are excluded: one that asks
+/// the user moves its session into NeedsInput.
+fn is_streaming_output(msg: &AcpClientMessage) -> bool {
+    match msg {
+        AcpClientMessage::SessionNotification(notif) => matches!(
+            notif.request.update,
+            acp::SessionUpdate::AgentMessageChunk(_) | acp::SessionUpdate::AgentThoughtChunk(_)
+        ),
+        AcpClientMessage::RequestPermission(_)
+        | AcpClientMessage::ReadTextFile(_)
+        | AcpClientMessage::WriteTextFile(_)
+        | AcpClientMessage::CreateTerminal(_)
+        | AcpClientMessage::TerminalOutput(_)
+        | AcpClientMessage::ReleaseTerminal(_)
+        | AcpClientMessage::WaitForTerminalExit(_)
+        | AcpClientMessage::KillTerminalCommand(_)
+        | AcpClientMessage::ExtMethod(_)
+        | AcpClientMessage::ExtNotification(_) => false,
+    }
 }
 fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
@@ -387,6 +411,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         {
                             agent.session.state = AgentState::TurnRunning;
                             agent.turn_started_at = Some(viewer_turn_anchor(agent.turn_start_ms));
+                            app.session_cycle = crate::views::dashboard::SessionCycleCache::Stale;
                         }
                         advance_reconnect_cursor(agent, &mut meta);
                         !meta.is_replay && !agent.session.loading_replay

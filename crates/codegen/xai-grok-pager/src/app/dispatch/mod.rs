@@ -42,6 +42,7 @@ pub(crate) use billing::{
 #[cfg(test)]
 pub(crate) use ctx::{SwitchCause, switch_to_agent};
 pub(crate) use dashboard::{DashboardStopReadiness, dashboard_stop_readiness};
+pub(in crate::app) use dashboard::session_cycle_position;
 pub(crate) use modes::{downgrade_displayed_auto_if_gated, effective_auto};
 pub(crate) use notes::FEEDBACK_TRACE_UPLOAD_TIMEOUT_MS;
 pub(crate) use notes::{recap_unavailable_toast, scrollback_has_user_messages};

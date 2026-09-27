@@ -1151,7 +1151,8 @@ pub(super) fn default_actions(
             label: "prev session",
             description: "Previous session",
             default_key: key!('[', CONTROL),
-            alt_keys: vec![],
+            // Ctrl+[ is Esc without the kitty protocol; the arrow chord works everywhere. A subagent takeover claims it for siblings.
+            alt_keys: vec![key!(Left, CONTROL | ALT)],
             category: Category::Dashboard,
             context: When::DashboardOverlay,
             hint_priority: None,
@@ -1164,7 +1165,7 @@ pub(super) fn default_actions(
             label: "next session",
             description: "Next session",
             default_key: key!(']', CONTROL),
-            alt_keys: vec![],
+            alt_keys: vec![key!(Right, CONTROL | ALT)],
             category: Category::Dashboard,
             context: When::DashboardOverlay,
             hint_priority: None,
