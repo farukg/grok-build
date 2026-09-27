@@ -2,6 +2,7 @@ use super::*;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
+use super::layout::part;
 
 struct TestHosted {
     height: u16,
@@ -186,8 +187,11 @@ fn cursor_remains_visible_when_moving_in_both_directions() {
     }];
     let mut state = SidebarState::default();
     state.rebuild_layout(&sections);
+    state.move_cursor(1, 2);
+    assert_eq!(state.cursor, Some(SidebarLine::SectionTitle(SectionIdx(0))));
     state.move_cursor(3, 2);
     assert_eq!(state.scroll, 2);
+    assert_eq!(state.cursor, Some(SidebarLine::Row(SectionIdx(0), RowIdx(2))));
     state.move_cursor(-2, 2);
     assert_eq!(state.scroll, 1);
 }
@@ -267,7 +271,7 @@ fn fixed_rows_stay_put_and_scrollbar_tracks_overflow() {
         no_overflow
             .content()
             .iter()
-            .all(|cell| cell.symbol() != "│")
+            .all(|cell| cell.symbol() != "█")
     );
 }
 

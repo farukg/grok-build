@@ -55,6 +55,6 @@ pub fn screen_columns(area: Rect, open: SidebarsOpen) -> ScreenColumns {
     }
 }
 
-fn part(width: u16, percent: u16) -> u16 {
+pub(super) fn part(width: u16, percent: u16) -> u16 {
     ((u32::from(width) * u32::from(percent) + 50) / 100) as u16
 }
