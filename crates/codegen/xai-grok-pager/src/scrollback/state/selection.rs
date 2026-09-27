@@ -11,6 +11,33 @@ struct FoldAnchor {
     preserve_before: bool,
 }
 
+/// Height direction of a fold-shaped change. An expansion carries the entries forming the grown block.
+enum FoldChange {
+    Expand {
+        block: Range<usize>,
+    },
+    /// Same or smaller display mode.
+    Collapse,
+}
+
+impl FoldChange {
+    fn between(before: DisplayMode, after: DisplayMode, block: Range<usize>) -> Self {
+        if display_rank(after) > display_rank(before) {
+            Self::Expand { block }
+        } else {
+            Self::Collapse
+        }
+    }
+}
+
+/// A grown block against the viewport. `header_scroll` is the offset that puts the block's first row at the content top.
+enum GrownBlockView {
+    /// Nothing more can be revealed without scrolling the block's first row out.
+    Visible { header_scroll: usize },
+    /// Rows hang below the viewport; `scroll` reveals them and never exceeds `header_scroll`.
+    Overflowing { scroll: usize, header_scroll: usize },
+}
+
 impl ScrollbackState {
     // View Mode
 
@@ -267,11 +294,11 @@ impl ScrollbackState {
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
 
         // 2. Apply the fold mutation
-        let mut grew = false;
+        let mut change = FoldChange::Collapse;
         if let Some((id, entry)) = self.entries.get_index_mut(i) {
             let mode_before = entry.display_mode;
             mutate(entry);
-            grew = display_rank(entry.display_mode) > display_rank(mode_before);
+            change = FoldChange::between(mode_before, entry.display_mode, i..i + 1);
             if respect_manual_folds {
                 entry.display_mode_pinned = true;
                 tracing::debug!(
@@ -279,7 +306,7 @@ impl ScrollbackState {
                     mode = ?entry.display_mode,
                     "scrollback.fold.pinned"
                 );
-                if grew && anchor.follow_before {
+                if matches!(change, FoldChange::Expand { .. }) && anchor.follow_before {
                     tracing::debug!(entry_id = id.value(), "scrollback.follow.dropped_on_expand");
                 }
             }
@@ -288,7 +315,7 @@ impl ScrollbackState {
 
         // Re-key BEFORE the rebuild so the refold sees the migrated id.
         self.rekey_verb_group_expansion(i);
-        self.rebuild_with_fold_anchor(i, grew, anchor);
+        self.rebuild_with_fold_anchor(i, change, anchor);
         // Anything newly revealed further out is measured by the next prepare_layout.
         self.bump_generation();
     }
@@ -355,9 +382,10 @@ impl ScrollbackState {
     }
 
     /// Rebuild the layout after a fold-shaped change to entry `i` (display mode or group expansion).
-    /// Restore the captured scroll/follow state so the change doesn't move the viewport.
-    /// `grew` means the change made the entry/group taller (reading intent).
-    fn rebuild_with_fold_anchor(&mut self, i: usize, grew: bool, anchor: FoldAnchor) {
+    /// Restore the captured scroll/follow state so the change doesn't move the viewport, then scroll an expansion's
+    /// newly revealed rows into view. A grown entry/group is reading intent.
+    fn rebuild_with_fold_anchor(&mut self, i: usize, change: FoldChange, anchor: FoldAnchor) {
+        let grew = matches!(change, FoldChange::Expand { .. });
         let drop_follow =
             self.appearance.scrollback.scroll.respect_manual_folds && grew && anchor.follow_before;
 
@@ -417,6 +445,58 @@ impl ScrollbackState {
                 self.follow_preserve_scroll = false;
             }
         }
+
+        // A page-flip pin keeps its prompt at the top; the grown block already fills the viewport below it
+        if let FoldChange::Expand { block } = change
+            && !anchor.preserve_before
+        {
+            self.reveal_grown_block(&block);
+        }
+    }
+
+    /// Scroll down so rows a fold just revealed below the viewport come into view, keeping the block's first row visible.
+    /// Tail-following would re-pin the viewport past that row, so follow yields to the reveal in that case.
+    fn reveal_grown_block(&mut self, block: &Range<usize>) {
+        let header_scroll = match self.grown_block_view(block) {
+            Some(GrownBlockView::Overflowing {
+                scroll,
+                header_scroll,
+            }) => {
+                self.scroll_offset = scroll;
+                header_scroll
+            }
+            Some(GrownBlockView::Visible { header_scroll }) => header_scroll,
+            None => return,
+        };
+        if self.follow_mode && self.max_scroll_offset() > header_scroll {
+            self.follow_mode = false;
+        }
+    }
+
+    /// Classify a grown block against the current viewport from the layout cache. `None` without a layout or viewport.
+    fn grown_block_view(&self, block: &Range<usize>) -> Option<GrownBlockView> {
+        if self.viewport_height == 0 {
+            return None;
+        }
+        let cache = self.layout_cache.as_ref()?;
+        let visible_range = self.visible_entry_range();
+        let base_y = *cache.virtual_y.get(visible_range.start)?;
+        let last = block.end.checked_sub(1)?;
+        let top = cache.virtual_y.get(block.start)?.checked_sub(base_y)?;
+        let bottom = cache.virtual_y.get(last)?.checked_sub(base_y)?
+            + cache.entries.get(last)?.height as usize;
+        let header_scroll = self.sticky_adjusted_entry_top(cache, &visible_range, top);
+        let scroll = bottom
+            .saturating_sub(self.viewport_height as usize)
+            .min(header_scroll);
+        Some(if scroll > self.scroll_offset {
+            GrownBlockView::Overflowing {
+                scroll,
+                header_scroll,
+            }
+        } else {
+            GrownBlockView::Visible { header_scroll }
+        })
     }
 
     pub fn toggle_raw_selected(&mut self) {
@@ -683,13 +763,16 @@ impl ScrollbackState {
         };
         let anchor = self.capture_fold_anchor(sel);
         let expanding = !self.expanded_groups.contains(&id);
-        if expanding {
+        let change = if expanding {
+            let block = self.group_range_of(sel, true);
             self.expanded_groups.insert(id);
+            FoldChange::Expand { block }
         } else {
             self.expanded_groups.remove(&id);
-        }
+            FoldChange::Collapse
+        };
         // Rebuild so truncation is recomputed, keeping the header's screen row put (same anchoring as entry-level folds)
-        self.rebuild_with_fold_anchor(sel, expanding, anchor);
+        self.rebuild_with_fold_anchor(sel, change, anchor);
         // When expanding an N-more group, clear selection so the first entry doesn't appear "active" with the collapse
         // header.
         if expanding && !is_verb_header {
@@ -722,7 +805,7 @@ impl ScrollbackState {
             return false;
         }
         // Rebuild so truncation is re-applied, keeping the header's screen row put (same anchoring as entry-level folds)
-        self.rebuild_with_fold_anchor(group.start, false, anchor);
+        self.rebuild_with_fold_anchor(group.start, FoldChange::Collapse, anchor);
         self.fixup_hidden_selection();
         self.bump_generation();
         true
