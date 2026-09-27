@@ -2426,7 +2426,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
                 .expect("read meta"),
         )
         .expect("parse meta");
-    assert_eq!(meta.status, "cancelled");
+    assert_eq!(meta.status, SubagentMetaStatus::Cancelled);
     assert!(meta.completed_at.is_some());
     assert_eq!(meta.error.as_deref(), Some("Subagent was cancelled"));
     drop(hold_tx);
@@ -2475,7 +2475,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
                 .expect("read meta"),
         )
         .expect("parse meta");
-    assert_eq!(meta.status, "failed");
+    assert_eq!(meta.status, SubagentMetaStatus::Failed);
     let completion_data = ShellCompletionData::from_context(
         &ctx,
         xai_message_delivery_core::AttemptId::mint(1),
@@ -2756,6 +2756,7 @@ fn spawn_test_parent_chat_state(model_slug: &str) -> xai_chat_state::ChatStateHa
     )
 }
 mod rest;
+mod resume;
 mod wake;
 #[tokio::test]
 async fn panicked_announced_foreground_child_emits_one_typed_finish() {

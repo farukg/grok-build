@@ -38,6 +38,7 @@ pub use super::active_message::{
 pub use super::agent_message_sender::{
     AgentMessageHolder, AgentMessageSender, AgentMessageSenderResource,
 };
+pub use super::resume::{SubagentResumeError, SubagentResumeTarget};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SubagentOwner {
@@ -457,6 +458,7 @@ pub struct SubagentResult {
     /// auto-background). Not a completion — `success` stays false so `status()` is not `"completed"`; branch on this before
     /// `success`. Task `run_in_background` start is a separate registration signal, not this flag on `spawn()`.
     pub backgrounded: bool,
+    pub resume_fallback: Option<xai_tool_types::SubagentResumeFallback>,
 }
 
 impl Default for SubagentResult {
@@ -478,6 +480,7 @@ impl Default for SubagentResult {
             worktree_path: None,
             subagent_type: String::new(),
             backgrounded: false,
+            resume_fallback: None,
         }
     }
 }
@@ -691,6 +694,7 @@ pub struct SubagentCompletionSummary {
     pub output: Arc<str>,
     /// `SubagentResult.output.len()` before any cap; `output.len()` below it means a poll has more.
     pub full_output_bytes: usize,
+    pub resume_fallback: Option<xai_tool_types::SubagentResumeFallback>,
 }
 
 impl SubagentCompletionSummary {
@@ -993,6 +997,17 @@ pub enum SubagentEvent {
     ValidateType(SubagentValidateTypeRequest),
     DescribeType(SubagentDescribeRequest),
     LoopUnitActive(SubagentLoopUnitActiveRequest),
+    ResolveResume(SubagentResolveResumeRequest),
+}
+
+/// Resolve a `resume_from` reference (id, child session id, or unique prefix) for one parent.
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentResolveResumeRequest {
+    pub reference: String,
+    pub parent_session_id: String,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<Result<SubagentResumeTarget, SubagentResumeError>>,
 }
 
 // Resource types
@@ -1549,6 +1564,7 @@ mod tests {
             tool_calls: 7,
             output: std::sync::Arc::from("subagent answer"),
             full_output_bytes: "subagent answer".len(),
+            resume_fallback: None,
         }];
         req.respond_to.send(summaries).unwrap();
 

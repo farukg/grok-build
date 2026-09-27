@@ -37,6 +37,7 @@ fn spawned(
         resumed_from: resumed_from.map(str::to_owned),
         workflow_run_id: None,
         agent_address: None,
+        resume_fallback: None,
     }
 }
 

@@ -764,6 +764,9 @@ pub enum SessionUpdate {
             skip_serializing_if = "Option::is_none"
         )]
         agent_address: Option<String>,
+        /// Set when a resumed child could not run where its source ran.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_fallback: Option<xai_tool_types::SubagentResumeFallback>,
     },
     /// Periodic progress update for a running subagent. Sent on the PARENT session's notification channel, rate-limited (every ~2s while the subagent is active). Stops automatically when the subagent completes or is cancelled.
     /// The TUI merges these into the same state path used by ACP poll responses.
@@ -1718,6 +1721,7 @@ mod tests {
             resumed_from: None,
             workflow_run_id: None,
             agent_address: None,
+            resume_fallback: None,
         })
         .unwrap();
         let progress = serde_json::to_value(SessionUpdate::SubagentProgress {
@@ -1806,6 +1810,7 @@ mod tests {
             resumed_from: None,
             workflow_run_id: None,
             agent_address: Some("opaque-address".into()),
+            resume_fallback: None,
         };
         let json = serde_json::to_value(&update).unwrap();
         assert_eq!(

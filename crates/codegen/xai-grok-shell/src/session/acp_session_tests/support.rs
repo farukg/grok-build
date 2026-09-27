@@ -1043,6 +1043,7 @@ pub(crate) fn subagent_summary(id: &str) -> SubagentCompletionSummary {
         tool_calls: 3,
         output: std::sync::Arc::from("done"),
         full_output_bytes: "done".len(),
+        resume_fallback: None,
     }
 }
 pub(crate) struct FakeCoordinator {

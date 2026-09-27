@@ -446,24 +446,22 @@ pub(crate) async fn run_shell_child(
             .await
         {
             SubagentResumeLookup::Active => {
-                let error = format!(
-                    "Cannot resume from subagent '{resume_id}': it is still running. \
-                     Wait for it to complete before resuming."
+                let error = SubagentResumeError::StillRunning {
+                    subagent_id: resume_id.to_owned(),
+                };
+                return child_run_output(
+                    failure_result(&request, &error.to_string()),
+                    completion_data,
+                    None,
                 );
-                return child_run_output(failure_result(&request, &error), completion_data, None);
             }
             SubagentResumeLookup::Completed(info) => Some(ResumeSourceData::from(*info)),
             SubagentResumeLookup::Missing => {
-                match durable_resume_source_for(resume_id, &ctx.parent_session_id, &ctx.parent_cwd)
-                {
-                    Some(info) => Some(info),
-                    None => {
-                        let error = format!(
-                            "Cannot resume from subagent '{resume_id}': not found. \
-                             The subagent may have been evicted or the ID is invalid."
-                        );
+                match durable_resume_source(resume_id, &ctx.parent_session_id, &ctx.parent_cwd) {
+                    Ok(info) => Some(info),
+                    Err(error) => {
                         return child_run_output(
-                            failure_result(&request, &error),
+                            failure_result(&request, &error.to_string()),
                             completion_data,
                             None,
                         );
@@ -591,6 +589,7 @@ pub(crate) async fn run_shell_child(
         };
         return child_run_output(failure_result(&request, &message), completion_data, None);
     }
+    let mut resume_fallback = resume_cwd_fallback(resume_source.as_ref());
     let worktree_path = if let Some(ref source) = resume_source {
         if effective_runtime.isolation != xai_tool_types::SubagentIsolationMode::None
             && source.worktree_path.is_none()
@@ -631,6 +630,13 @@ pub(crate) async fn run_shell_child(
                                     error = %e,
                                     "Failed to rehydrate subagent worktree, falling back to shared workspace"
                                 );
+                                resume_fallback =
+                                    Some(xai_tool_types::SubagentResumeFallback::WorktreeLost {
+                                        worktree_path: dest.to_string_lossy().into_owned(),
+                                        loss: xai_tool_types::WorktreeLoss::RehydrateFailed {
+                                            error: e.to_string(),
+                                        },
+                                    });
                                 None
                             }
                         }
@@ -641,6 +647,11 @@ pub(crate) async fn run_shell_child(
                             worktree = %dest.display(),
                             "Resumed subagent worktree dir missing with no snapshot; using shared workspace"
                         );
+                        resume_fallback =
+                            Some(xai_tool_types::SubagentResumeFallback::WorktreeLost {
+                                worktree_path: dest.to_string_lossy().into_owned(),
+                                loss: xai_tool_types::WorktreeLoss::NoSnapshot,
+                            });
                         None
                     }
                 }
@@ -996,7 +1007,6 @@ pub(crate) async fn run_shell_child(
         subagent_type: request.subagent_type.clone(),
         description: request.description.clone(),
         prompt: request.prompt.clone(),
-        status: "running".to_string(),
         started_at: chrono::Utc::now(),
         completed_at: None,
         duration_ms: None,
@@ -1012,6 +1022,9 @@ pub(crate) async fn run_shell_child(
             .map(|p| p.to_string_lossy().to_string()),
         snapshot_ref: None,
         effective_model_id: Some(effective_model_id.0.to_string()),
+        status: SubagentMetaStatus::Running,
+        effective_context_source: Some(effective_source_str.to_string()),
+        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
     };
     let gcs_upload_ctx = GcsUploadContext {
         bucket_url: ctx.gcs_bucket_url.clone(),
@@ -1053,6 +1066,9 @@ pub(crate) async fn run_shell_child(
         resumed_from: request.resume_from.clone(),
         workflow_run_id: request.owner.workflow_run_id().map(str::to_string),
         agent_address: advertised_address.clone(),
+        effective_context_source: Some(effective_source_str.to_string()),
+        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
+        resume_fallback: resume_fallback.clone(),
     };
     let publication_boundary = if is_wake {
         PublicationBoundary::Started
@@ -2196,7 +2212,7 @@ pub(crate) async fn run_shell_child(
             .set_persisted_output_dir(persist_subagent_output(&subagent_meta_dir, &result));
         persist_subagent_completion(&subagent_meta_dir, &result, &gcs_upload_ctx);
     }
-    let final_status = result.status().to_string();
+    let final_status = SubagentMetaStatus::of_result(&result);
     let snapshot_dispose_enabled =
         terminal_persistence_allowed && ctx.resolve_subagent_worktree_snapshot_enabled();
     let telemetry_tokens = if result.tool_calls > 0 || result.success {
@@ -2344,7 +2360,7 @@ pub(crate) async fn run_shell_child(
                 wt_path,
                 &resolve_subagent_source_repo(&ctx),
                 &subagent_meta_dir,
-                &final_status,
+                final_status,
                 &request.id,
             )
             .await;
@@ -2389,6 +2405,7 @@ pub(crate) async fn run_shell_child(
         })),
     );
     crate::waterfall::mark(&request.id, crate::waterfall::stage::CHILD_DONE);
+    result.resume_fallback = resume_fallback;
     child_run_output(result, completion_data, disposed_snapshot_ref)
 }
 pub(crate) enum Disposal {
@@ -2420,7 +2437,7 @@ pub(crate) async fn dispose_worktree_after_completion(
     worktree: &std::path::Path,
     source_repo: &std::path::Path,
     meta_dir: &std::path::Path,
-    final_status: &str,
+    final_status: SubagentMetaStatus,
     subagent_id: &str,
 ) -> Disposal {
     let ref_name = format!("refs/grok/subagents/{subagent_id}");

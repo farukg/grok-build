@@ -108,6 +108,62 @@ impl MvpAgent {
             .send_active_message(request)
             .await
     }
+    /// Human resume (`x.ai/subagent/resume`): the same routing as `task(resume_from)`. A running
+    /// target gets the prompt queued; a finished one (in memory or on disk, including children
+    /// interrupted by a restart) continues through the normal `resume_from` spawn.
+    pub(crate) async fn resume_subagent(
+        &self,
+        parent_session_id: &str,
+        reference: &str,
+        prompt: String,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::resume::SubagentResumeRoute,
+        xai_grok_tools::implementations::grok_build::task::resume::SubagentResumeError,
+    > {
+        use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend;
+        use xai_grok_tools::implementations::grok_build::task::resume::{
+            SubagentResumeError, SubagentResumeRoute, human_resume_request, route_subagent_resume,
+        };
+        if self
+            .session_handle_waiting_for_load(&acp::SessionId::new(parent_session_id))
+            .await
+            .is_none()
+        {
+            return Err(SubagentResumeError::ParentSessionUnavailable {
+                session_id: parent_session_id.to_owned(),
+            });
+        }
+        let backend =
+            xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::for_coordinator_session(
+                self.subagent_event_tx.clone(),
+                parent_session_id,
+            );
+        let source_id =
+            match route_subagent_resume(&backend, reference, &prompt, parent_session_id).await? {
+                SubagentResumeRoute::Spawn { source_id } => source_id,
+                delivered @ SubagentResumeRoute::Delivered { .. } => return Ok(delivered),
+            };
+        let route = SubagentResumeRoute::Spawn {
+            source_id: source_id.clone(),
+        };
+        let request = human_resume_request(source_id, prompt, parent_session_id.to_owned());
+        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+        let spawn_backend = backend.clone();
+        let spawn = tokio::spawn(async move {
+            spawn_backend.spawn(request, Some(registered_tx)).await
+        });
+        if registered_rx.await.is_ok() {
+            return Ok(route);
+        }
+        let reason = match spawn.await {
+            Ok(Ok(result)) => result
+                .error
+                .unwrap_or_else(|| "the coordinator did not register the spawn".to_owned()),
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        };
+        Err(SubagentResumeError::SpawnRejected { reason })
+    }
     /// Test-only infallible wrapper; production uses the fallible variant.
     #[cfg(test)]
     pub(super) fn build_subagent_spawn_context(

@@ -806,7 +806,7 @@ impl SessionActor {
 #[cfg(test)]
 mod live_orphan_hook_tests {
     use super::*;
-    use crate::agent::subagent::{LIVE_ORPHAN_RECONCILE_REASON, SubagentMeta};
+    use crate::agent::subagent::{LIVE_ORPHAN_RECONCILE_REASON, SubagentMeta, SubagentMetaStatus};
     use crate::extensions::notification::SessionUpdate;
     use crate::session::persistence::PersistenceMsg;
     use xai_grok_tools::implementations::grok_build::task::types::{
@@ -822,7 +822,7 @@ mod live_orphan_hook_tests {
             subagent_type: "explore".into(),
             description: "task".into(),
             prompt: "do work".into(),
-            status: "running".into(),
+            status: SubagentMetaStatus::Running,
             started_at: chrono::Utc::now(),
             completed_at: None,
             duration_ms: None,
@@ -979,7 +979,7 @@ mod live_orphan_hook_tests {
                     )
                 });
                 let reread: SubagentMeta = serde_json::from_str(&data).unwrap();
-                assert_eq!(reread.status, "cancelled");
+                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
@@ -1000,7 +1000,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "running");
+                assert_eq!(reread.status, SubagentMetaStatus::Running);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
@@ -1021,7 +1021,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "running");
+                assert_eq!(reread.status, SubagentMetaStatus::Running);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
@@ -1055,7 +1055,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "cancelled");
+                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
@@ -1080,7 +1080,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "running");
+                assert_eq!(reread.status, SubagentMetaStatus::Running);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
             })
@@ -1103,7 +1103,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "cancelled");
+                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
                 assert!(actor.last_live_orphan_reconcile.get().is_some());
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
@@ -1140,7 +1140,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "running");
+                assert_eq!(reread.status, SubagentMetaStatus::Running);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 0);
 
                 actor
@@ -1151,7 +1151,7 @@ mod live_orphan_hook_tests {
                     &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
                 )
                 .unwrap();
-                assert_eq!(reread.status, "cancelled");
+                assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
                 assert_eq!(persisted_cancelled_finishes(&mut persistence_rx, id), 1);
                 assert_ne!(actor.last_live_orphan_reconcile.get(), Some(first));
                 let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());

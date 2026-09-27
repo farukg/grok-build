@@ -24,6 +24,7 @@ mod coordinator_state;
 pub use coordinator_state::{cap_completion_output, completion_summary, terminal_snapshot};
 pub mod model_policy;
 pub use model_policy::TaskParams;
+pub mod resume;
 pub mod root_control;
 pub mod types;
 
@@ -450,11 +451,43 @@ impl xai_tool_runtime::Tool for TaskTool {
         )?;
         let id = agent_id.to_string();
 
-        // Treat blank/empty/"null" resume_from as absent (models sometimes emit these).
-        let resume_from = input.resume_from.and_then(|s| {
-            let trimmed = s.trim();
-            xai_tool_types::is_not_sentinel(trimmed).then(|| trimmed.to_string())
-        });
+        // A present resume_from must name a subagent; a placeholder never starts a fresh child.
+        let resume_from = match input.resume_from {
+            None => None,
+            Some(raw) if xai_tool_types::is_not_sentinel(&raw) => Some(raw.trim().to_owned()),
+            Some(raw) => {
+                return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+                    "resume_from {raw:?} names no subagent. Omit resume_from to start a new \
+                     subagent, or pass the subagent_id of the one to continue."
+                )));
+            }
+        };
+        let resume_from = match resume_from {
+            None => None,
+            Some(reference) => match resume::route_subagent_resume(
+                backend.backend(),
+                &reference,
+                &input.prompt,
+                &parent_session_id,
+            )
+            .await
+            {
+                Ok(resume::SubagentResumeRoute::Delivered {
+                    subagent_id,
+                    message_id,
+                }) => {
+                    return Ok(ToolOutput::Text(
+                        resume::format_resume_delivered(&subagent_id, &message_id).into(),
+                    ));
+                }
+                Ok(resume::SubagentResumeRoute::Spawn { source_id }) => Some(source_id),
+                Err(error) => {
+                    return Err(xai_tool_runtime::ToolError::invalid_arguments(
+                        error.to_string(),
+                    ));
+                }
+            },
+        };
 
         // Model overrides are soft-ignored on resume (source model is always pinned).
         let model = xai_tool_types::sanitize_optional_arg(input.model);
@@ -767,6 +800,7 @@ impl xai_tool_runtime::Tool for TaskTool {
                 persona: None,
                 resume_from_hint,
                 persona_hint,
+                resume_fallback: result.resume_fallback,
             }))
         } else {
             Err(xai_tool_runtime::ToolError::invalid_arguments(
@@ -892,6 +926,11 @@ mod tests {
                     SubagentEvent::ValidateType(req) => {
                         let outcome = outcome_fn(&req.subagent_type, &req.parent_session_id);
                         let _ = req.respond_to.send(outcome);
+                    }
+                    SubagentEvent::ResolveResume(req) => {
+                        let _ = req.respond_to.send(Ok(SubagentResumeTarget::Finished {
+                            subagent_id: req.reference,
+                        }));
                     }
                     other => {
                         if proxy_tx.send(other).is_err() {
@@ -2654,7 +2693,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_from_sentinel_values_treated_as_none() {
+    async fn resume_blank_or_null_is_rejected() {
         for sentinel in [
             "",
             "  ",
@@ -2666,59 +2705,26 @@ mod tests {
             "undefined",
         ] {
             let (backend, mut rx) = make_backend();
-            let mut resources = Resources::new();
-            resources.insert(backend);
-            resources.insert(SubagentDepthCounter(0));
-            resources.insert(SessionIdResource("parent".to_string()));
-            resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
-
-            let shared = resources.into_shared();
-            let handle = tokio::spawn(async move {
-                let request = unwrap_spawn(rx.recv().await.unwrap());
-                assert!(
-                    request.resume_from.is_none(),
-                    "sentinel {sentinel:?} must normalize to None, got {:?}",
-                    request.resume_from
-                );
-                request
-                    .respond_with(|request| SubagentResult {
-                        success: true,
-                        output: "fresh".into(),
-                        subagent_id: request.id.clone(),
-                        child_session_id: request.id.clone(),
-                        ..Default::default()
-                    })
-                    .unwrap();
-            });
+            let mut input = task_input("general-purpose", false);
+            input.resume_from = Some(sentinel.into());
 
             let result = xai_tool_runtime::Tool::run(
                 &TaskTool,
-                test_ctx(shared),
-                TaskToolInput {
-                    description: "test sentinel".into(),
-                    prompt: "work".into(),
-                    subagent_type: "general-purpose".into(),
-                    subagent_type_specified: false,
-                    run_in_background: false,
-                    capability_mode: None,
-                    isolation: None,
-                    resume_from: Some(sentinel.into()),
-                    cwd: None,
-                    model: None,
-                    workspace: None,
-                    task_id: None,
-                },
+                test_ctx(resources_for_task(backend).into_shared()),
+                input,
             )
-            .await
-            .unwrap_or_else(|e| panic!("sentinel {sentinel:?} should not fail: {e}"));
+            .await;
 
-            handle.await.unwrap();
-            match result {
-                ToolOutput::SubagentCompleted(sub) => {
-                    assert!(sub.output.contains("fresh"), "sentinel {sentinel:?}");
-                }
-                other => panic!("sentinel {sentinel:?}: expected SubagentCompleted, got {other:?}"),
-            }
+            let error = result.expect_err("a placeholder resume_from must not start a subagent");
+            assert_eq!(
+                error.kind,
+                xai_tool_runtime::ToolErrorKind::InvalidArguments,
+                "sentinel {sentinel:?}"
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "sentinel {sentinel:?} must not reach the coordinator"
+            );
         }
     }
 

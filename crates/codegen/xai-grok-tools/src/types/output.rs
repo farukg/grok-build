@@ -844,6 +844,9 @@ impl ToolOutput {
                 }
                 text.push_str("\n\n");
                 text.push_str(&sub.resume_footer());
+                if let Some(fallback) = &sub.resume_fallback {
+                    text.push_str(&format!("\n\n{fallback}"));
+                }
                 text
             }
             ToolOutput::EnterPlanMode(EnterPlanModeOutput::Entered {
@@ -2188,6 +2191,7 @@ mod tests {
             persona: None,
             resume_from_hint: "019e0000-0000-7000-8000-0000000000bb".into(),
             persona_hint: None,
+            resume_fallback: None,
         });
         let rendered = output.to_prompt_format();
         assert!(
@@ -2228,6 +2232,7 @@ mod tests {
             persona: Some("implementer".into()),
             resume_from_hint: "abc-123".into(),
             persona_hint: Some("implementer".into()),
+            resume_fallback: None,
         });
         let rendered = output.to_prompt_format();
         assert!(
@@ -2252,6 +2257,7 @@ mod tests {
             persona: None,
             resume_from_hint: "wt-agent".into(),
             persona_hint: None,
+            resume_fallback: None,
         });
         let rendered = output.to_prompt_format();
         assert!(
@@ -2276,6 +2282,7 @@ mod tests {
             persona: Some("implementer".into()),
             resume_from_hint: "sub-abc-123".into(),
             persona_hint: Some("implementer".into()),
+            resume_fallback: None,
         };
         let json = serde_json::to_value(&output).unwrap();
         assert_eq!(
@@ -2575,6 +2582,7 @@ mod tests {
             persona: None,
             resume_from_hint: "sub-xyz".into(),
             persona_hint: None,
+            resume_fallback: None,
         };
         let json = serde_json::to_value(&output).unwrap();
         assert_eq!(

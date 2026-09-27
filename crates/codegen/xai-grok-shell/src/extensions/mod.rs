@@ -43,6 +43,7 @@ pub mod share;
 pub mod skills;
 pub mod subagent_context;
 pub mod subagent_message;
+pub mod subagent_resume;
 pub mod suggest;
 pub mod task;
 pub mod terminal;
