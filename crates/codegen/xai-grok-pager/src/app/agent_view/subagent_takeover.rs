@@ -220,12 +220,17 @@ impl AgentView {
         } else {
             theme.accent_error
         };
-        let meta = info
+        let model = info
             .and_then(|s| s.attempt.model.as_deref())
             .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("")
-            .to_string();
+            .filter(|s| !s.is_empty());
+        let tokens = info.and_then(|s| s.attempt.token_usage_label());
+        let meta = match (model, tokens) {
+            (Some(model), Some(tokens)) => format!("{model} \u{b7} {tokens}"),
+            (Some(model), None) => model.to_string(),
+            (None, Some(tokens)) => tokens,
+            (None, None) => String::new(),
+        };
         let badge = info.map(format_context_badge).unwrap_or("");
         let activity_label: Option<String> = if is_running {
             self.subagent_views.get(child_sid).and_then(|cv| {
