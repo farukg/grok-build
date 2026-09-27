@@ -2430,6 +2430,7 @@ pub(crate) async fn run(
                 if let Some(effs) =
                     dispatch::reconcile_overdue_prompt_acks(&mut app, &ack_deadlines)
                 {
+                    app.invalidate_session_cycle();
                     if process_effects(effs, &mut tasks, &mut app, &progress_tx) {
                         break;
                     }
@@ -2441,6 +2442,7 @@ pub(crate) async fn run(
                 // The reconcile drains queues outside any dispatched action; its image notices show now.
                 let notice_shown = app.flush_image_notices_if_root();
                 if let Some(effs) = reconciled {
+                    app.invalidate_session_cycle();
                     if process_effects(effs, &mut tasks, &mut app, &progress_tx) {
                         break;
                     }

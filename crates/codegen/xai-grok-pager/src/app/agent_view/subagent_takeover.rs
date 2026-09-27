@@ -21,13 +21,23 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Span;
-/// What a subagent's fullscreen takeover inherits from a parent that sits in the dashboard overlay. The header and footer
-/// keep describing the parent, so its title, switcher, and `Ctrl+X` action come from it (its pending confirmation already
-/// arrives as `pending_hint`).
+/// What a subagent's fullscreen takeover inherits from its parent. The header keeps describing the parent, so its session
+/// switcher (and, in the dashboard overlay, its title) come from it. `stop_label` is the parent's `Ctrl+X` action and is
+/// `Some` exactly when the parent sits in the dashboard overlay (its pending confirmation already arrives as `pending_hint`).
 #[derive(Clone, Copy)]
 pub(super) struct InheritedOverlay<'a> {
     pub(super) header: OverlayHeader<'a>,
-    pub(super) stop_label: &'static str,
+    pub(super) stop_label: Option<&'static str>,
+}
+/// Ctrl+Alt+Arrow: subagent tree navigation while a takeover is open. Outside one, Ctrl+Alt+Left/Right cycle sessions,
+/// so `AppView` defers to the takeover for exactly these keys.
+pub(in crate::app) fn is_tree_chord(key: &crossterm::event::KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && !key.modifiers.contains(KeyModifiers::SHIFT)
+        && matches!(
+            key.code,
+            KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
+        )
 }
 /// Sibling switch direction for the Ctrl+Alt+Left/Right chords.
 #[derive(Clone, Copy)]
@@ -138,7 +148,7 @@ impl AgentView {
         scratch: &mut ScratchBuffer,
         pending_hint: Option<PendingHint>,
         theme: &Theme,
-        overlay: Option<InheritedOverlay<'_>>,
+        overlay: InheritedOverlay<'_>,
     ) -> (
         Option<(u16, u16)>,
         Option<crate::terminal::overlay::PostFlush>,
@@ -373,11 +383,11 @@ impl AgentView {
                 pending_hint,
                 false,
                 crate::app::agent_view::BannerSlotParams::none(),
-                overlay.is_some(),
+                overlay.stop_label.is_some(),
                 &mut Vec::new(),
                 AppRenderParams {
-                    overlay_header: overlay.map(|o| o.header).unwrap_or_default(),
-                    overlay_stop_label: overlay.map(|o| o.stop_label),
+                    overlay_header: overlay.header,
+                    overlay_stop_label: overlay.stop_label,
                     ..AppRenderParams::default()
                 },
             );
@@ -409,9 +419,7 @@ impl AgentView {
         // sibling sharing the same parent. HashMap order decides the sibling
         // pick; a stable spawn order can replace it later.
         if let Some(key) = key
-            && key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            && !key.modifiers.contains(KeyModifiers::SHIFT)
-            && matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right)
+            && is_tree_chord(key)
         {
             return match key.code {
                 KeyCode::Up => {

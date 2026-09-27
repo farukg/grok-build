@@ -184,6 +184,7 @@ mod session;
 mod session_mode;
 mod shell_completion;
 mod subagent_takeover;
+pub(in crate::app) use subagent_takeover::is_tree_chord;
 #[cfg(test)]
 mod task_icon_mouse_tests;
 #[cfg(test)]

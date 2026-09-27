@@ -501,12 +501,14 @@ impl AgentView {
                     self.overlay_stop_label(),
                 ),
             );
-            if self.overlay_can_cycle {
-                hints.insert(
-                    0,
-                    HintItem::paired(key!('[', CONTROL), key!(']', CONTROL), "prev/next agent"),
-                );
-            }
+        }
+        if self.overlay_can_cycle {
+            hints.insert(
+                0,
+                HintItem::paired(key!('[', CONTROL), key!(']', CONTROL), "prev/next agent"),
+            );
+        }
+        if self.in_dashboard_overlay {
             hints.insert(0, HintItem::new(key!('\\', CONTROL), "dashboard"));
         }
         hints
@@ -664,10 +666,10 @@ impl AgentView {
                 scratch,
                 pending_hint,
                 &theme,
-                in_dashboard_overlay.then(|| super::subagent_takeover::InheritedOverlay {
+                super::subagent_takeover::InheritedOverlay {
                     header: overlay_header,
-                    stop_label: self.overlay_stop_label(),
-                }),
+                    stop_label: in_dashboard_overlay.then(|| self.overlay_stop_label()),
+                },
             );
         }
         if let Some(esc) = self.take_subagent_inline_media_clear_escapes() {
@@ -4584,6 +4586,40 @@ mod overlay_cycle_hint_tests {
         assert!(
             text.contains("prev/next agent"),
             "footer must advertise cycle keys when can_cycle:\n{text}"
+        );
+    }
+    /// A directly opened session advertises the same cycle keys, but not the overlay-only `Ctrl+\` / `Ctrl+X` chips.
+    #[test]
+    fn prev_next_hint_shown_without_overlay_when_sessions_can_cycle() {
+        let mut agent = make_agent();
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+        agent.draw(
+            area,
+            &mut buf,
+            &ActionRegistry::defaults(),
+            &mut ScratchBuffer::new(),
+            None,
+            false,
+            crate::app::agent_view::BannerSlotParams::none(),
+            false,
+            &mut Vec::new(),
+            super::AppRenderParams {
+                overlay_header: super::OverlayHeader {
+                    title: None,
+                    position: Some((1, 2)),
+                },
+                ..Default::default()
+            },
+        );
+        let text: String = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .filter_map(|pos| buf.cell(pos).map(|c| c.symbol().to_string()))
+            .collect();
+        assert!(text.contains("prev/next agent"), "{text}");
+        assert!(
+            !text.contains("Ctrl+x:stop") && !text.contains(":dashboard"),
+            "{text}"
         );
     }
     #[test]

@@ -315,6 +315,7 @@ pub(crate) fn test_app() -> AppView {
         dashboard: None,
         dashboard_return: None,
         dashboard_persisted: None,
+        session_cycle: Default::default(),
         keyboard_normalizer: KeyboardNormalizer::from_terminal_context(),
         voice_mode_enabled: false,
         voice_ui_active: false,

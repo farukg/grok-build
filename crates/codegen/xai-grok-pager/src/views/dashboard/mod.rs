@@ -61,35 +61,93 @@ pub fn overlay_cycle_order(
     state: &DashboardState,
     agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
 ) -> Vec<crate::app::agent::AgentId> {
-    let home = render::cached_home();
-    let rows = build_rows_with_roster(
+    cycle_order(
         agents,
         &state.pinned,
         &state.reorder,
         state.grouping,
         &state.filter,
-        home,
-        &[],
-    );
+    )
+}
+
+/// [`overlay_cycle_order`] from the v1 layout inputs alone, for a dashboard that has not been materialized.
+pub(crate) fn cycle_order(
+    agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+    pinned: &std::collections::BTreeSet<DashboardRowId>,
+    reorder: &[DashboardRowId],
+    grouping: Grouping,
+    filter: &Filter,
+) -> Vec<crate::app::agent::AgentId> {
+    let home = render::cached_home();
+    let rows = build_rows_with_roster(agents, pinned, reorder, grouping, filter, home, &[]);
+    top_level_ids(&rows)
+}
+
+/// The locally loaded agents among `rows`, in row order.
+pub(crate) fn top_level_ids(rows: &[DashboardRow]) -> Vec<crate::app::agent::AgentId> {
     rows.iter()
         .filter_map(|r| match &r.id {
             DashboardRowId::TopLevel(id) => Some(*id),
-            _ => None,
+            DashboardRowId::Roster { .. } | DashboardRowId::Workspace { .. } => None,
         })
         .collect()
 }
 
+/// What the session switcher (`‹ i/n ›`, prev/next keys) walks through, whether or not the dashboard was ever opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SessionCycle {
+    /// Fewer than two visible sessions, or the dashboard is disabled / not signed in and was never materialized.
+    Unavailable,
+    /// Two or more top-level agents in dashboard row order.
+    Order(Vec<crate::app::agent::AgentId>),
+}
+
+impl SessionCycle {
+    pub(crate) fn from_order(order: Vec<crate::app::agent::AgentId>) -> Self {
+        if order.len() < 2 {
+            Self::Unavailable
+        } else {
+            Self::Order(order)
+        }
+    }
+
+    /// `current`'s 1-based position and the cycle length, when `current` is in the cycle.
+    pub(crate) fn position(&self, current: crate::app::agent::AgentId) -> Option<(usize, usize)> {
+        match self {
+            Self::Unavailable => None,
+            Self::Order(order) => order
+                .iter()
+                .position(|id| *id == current)
+                .map(|idx| (idx + 1, order.len())),
+        }
+    }
+}
+
+/// Render-side memo of [`SessionCycle`]. Dispatch and non-streaming ACP updates mark it stale, so a frame rebuilds the
+/// rows at most once after a state change instead of on every paint.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum SessionCycleCache {
+    #[default]
+    Stale,
+    Fresh(SessionCycle),
+}
+
 /// The env override wins (`GROK_AGENT_DASHBOARD=0` turns the dashboard off), else the persisted `[dashboard].enabled` flag (default `true`).
 /// The slash command and CLI subcommand check this before opening; on `false` they print a toast and stay where they are.
-/// `var_os` avoids the per-call allocation of `var`.
 pub fn dashboard_enabled() -> bool {
+    dashboard_enabled_by(state::load_persisted_enabled().unwrap_or(true))
+}
+
+/// [`dashboard_enabled`] against an already loaded `[dashboard].enabled`, so a hot path skips the config read.
+/// `var_os` avoids the per-call allocation of `var`.
+pub(crate) fn dashboard_enabled_by(persisted_enabled: bool) -> bool {
     if std::env::var_os("GROK_AGENT_DASHBOARD")
         .as_deref()
         .is_some_and(|v| v == std::ffi::OsStr::new("0"))
     {
         return false;
     }
-    state::load_persisted_enabled().unwrap_or(true)
+    persisted_enabled
 }
 
 /// `None` when it is off: the tip would name a refused command, so callers fall back to a plain

@@ -349,6 +349,23 @@ impl PersistedDashboard {
             reorder: Vec::new(),
         }
     }
+
+    /// The pinned set and manual order mapped onto live row ids; entries for sessions not loaded here drop out.
+    pub(crate) fn resolve_layout(
+        &self,
+        resolver: &SessionIdResolver,
+    ) -> (BTreeSet<DashboardRowId>, Vec<DashboardRowId>) {
+        (
+            self.pinned
+                .iter()
+                .filter_map(|pid| resolver.resolve(pid))
+                .collect(),
+            self.reorder
+                .iter()
+                .filter_map(|pid| resolver.resolve(pid))
+                .collect(),
+        )
+    }
 }
 
 /// In-memory dashboard state. Refreshed every render frame off `app.agents`. Selection is keyed by
@@ -1450,16 +1467,7 @@ impl DashboardState {
 
     pub(crate) fn apply_persisted(&mut self, p: &PersistedDashboard, resolver: &SessionIdResolver) {
         self.grouping = p.grouping;
-        self.pinned = p
-            .pinned
-            .iter()
-            .filter_map(|pid| resolver.resolve(pid))
-            .collect();
-        self.reorder = p
-            .reorder
-            .iter()
-            .filter_map(|pid| resolver.resolve(pid))
-            .collect();
+        (self.pinned, self.reorder) = p.resolve_layout(resolver);
     }
 
     /// Snapshot back to a persistable form.

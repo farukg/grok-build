@@ -5352,6 +5352,137 @@ fn dashboard_overlay_cycle_non_overlay_noop_when_current_agent_hidden() {
         "a filtered-out current agent must not attach overlay chrome",
     );
 }
+/// Three non-empty sessions, `AgentId(0)` opened directly the way start/resume/picker do (never through the dashboard).
+fn three_sessions_opened_directly() -> AppView {
+    let mut app = test_app_with_agent();
+    mark_agent_nonempty(&mut app, AgentId(0));
+    for (n, sid) in [(1, "second"), (2, "third")] {
+        let id = AgentId(n);
+        let mut agent = AgentView::new(make_test_agent_session(&app, id, sid), ScrollbackState::new());
+        agent.generated_session_title = Some(format!("Session {n}"));
+        app.agents.insert(id, agent);
+    }
+    switch_to_agent(&mut app, AgentId(0), SwitchCause::Picker);
+    app
+}
+/// The painted header row holding the `‹ i/n ›` switcher, if any.
+fn painted_switcher_row(app: &mut AppView) -> Option<String> {
+    let (mut terminal, _frames) = crate::test_util::test_terminal();
+    terminal
+        .resize(ratatui::layout::Rect::new(0, 0, 140, 30))
+        .expect("channel-backed terminal resizes");
+    app.draw(&mut terminal);
+    let buf = terminal.completed_buffer();
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
+                .collect::<String>()
+        })
+        .find(|row| row.contains(crate::glyphs::chevron_left()))
+}
+fn press(app: &mut AppView, code: KeyCode, modifiers: KeyModifiers) {
+    if let InputOutcome::Action(action) = app.handle_input(&Event::Key(KeyEvent::new(code, modifiers)))
+    {
+        let _ = dispatch(action, app);
+    }
+}
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn direct_open_session_renders_cycle_switcher_like_dashboard_open() {
+    let mut direct = three_sessions_opened_directly();
+    assert_eq!(direct.dashboard.as_ref().and_then(|d| d.attached_agent), None);
+    let direct_row = painted_switcher_row(&mut direct);
+    let mut via_dashboard = three_sessions_opened_directly();
+    let _ = dispatch(Action::OpenDashboard, &mut via_dashboard);
+    let _ = dispatch(
+        Action::DashboardAttach(crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0))),
+        &mut via_dashboard,
+    );
+    assert_eq!(via_dashboard.active_view, ActiveView::Agent(AgentId(0)));
+    let dashboard_row = painted_switcher_row(&mut via_dashboard);
+    let switcher = |row: &Option<String>| {
+        row.as_deref().and_then(|row| {
+            let start = row.find(crate::glyphs::chevron_left())?;
+            let end = row[start..].find(crate::glyphs::chevron())? + start;
+            Some(row[start..end].trim().to_owned())
+        })
+    };
+    assert!(switcher(&dashboard_row).is_some(), "dashboard-opened session paints a switcher: {dashboard_row:?}");
+    assert_eq!(
+        switcher(&direct_row),
+        switcher(&dashboard_row),
+        "a directly opened session paints the same `‹ i/n ›` as one opened via the dashboard",
+    );
+}
+/// With workspace dashboards on, the header position and the prev/next keys walk the same rows the dashboard paints.
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn session_cycle_order_matches_dispatch_with_workspace_rows() {
+    let mut app = three_sessions_opened_directly();
+    app.workspace_dashboard_enabled = true;
+    let mut pinned_in_store = member("second", "Stored second");
+    pinned_in_store.pin_rank = Some(1);
+    app.workspace_membership
+        .set_snapshot_for_test(workspace_snapshot(vec![pinned_in_store]));
+    let order = crate::views::dashboard::top_level_ids(
+        &super::super::dashboard::workspace_rows(&app, &crate::views::dashboard::Filter::None).0,
+    );
+    assert_eq!(order.len(), 3, "precondition: all three sessions are rows: {order:?}");
+    assert_eq!(order.first(), Some(&AgentId(1)), "precondition: the store pin leads the workspace rows");
+    let mut walked = Vec::new();
+    for _ in 0..order.len() {
+        let ActiveView::Agent(current) = app.active_view else {
+            panic!("an agent stays on screen");
+        };
+        let position = super::super::dashboard::session_cycle_position(&mut app, current);
+        walked.push((current, position));
+        press(&mut app, KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    }
+    let start = order.iter().position(|id| *id == AgentId(0)).unwrap();
+    let expected: Vec<_> = (0..order.len())
+        .map(|step| {
+            let idx = (start + step) % order.len();
+            (order[idx], Some((idx + 1, order.len())))
+        })
+        .collect();
+    assert_eq!(walked, expected, "header `i/n` and Ctrl+Alt+Right follow the workspace row order");
+}
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn ctrl_alt_right_cycles_sessions_without_takeover() {
+    let mut app = three_sessions_opened_directly();
+    ensure_dashboard_state(&mut app);
+    let order =
+        crate::views::dashboard::overlay_cycle_order(app.dashboard.as_ref().unwrap(), &app.agents);
+    app.dashboard = None;
+    let start = order.iter().position(|id| *id == AgentId(0)).unwrap();
+    press(&mut app, KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    assert_eq!(app.active_view, ActiveView::Agent(order[(start + 1) % order.len()]));
+    press(&mut app, KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
+}
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn ctrl_alt_right_in_takeover_switches_sibling_not_session() {
+    let mut app = three_sessions_opened_directly();
+    let children = ["child-a", "child-b"].map(|sid| {
+        let session = make_test_agent_session(&app, AgentId(9), sid);
+        (sid, AgentView::new(session, ScrollbackState::new()))
+    });
+    let parent = app.agents.get_mut(&AgentId(0)).unwrap();
+    for (sid, child) in children {
+        parent.insert_test_child(sid.to_owned(), Box::new(child));
+    }
+    parent.open_subagent_fullscreen("child-a".to_owned());
+    press(&mut app, KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)), "the session stays put");
+    assert_eq!(
+        app.agents[&AgentId(0)].active_subagent.as_deref(),
+        Some("child-b"),
+        "Ctrl+Alt+Right moves the takeover to the sibling",
+    );
+}
 /// `DashboardToggleAutoApprove` flips `yolo_mode` on the selected row's owning agent. Reuses `set_yolo_mode` by temporarily switching `active_view`, so the existing toast
 /// / persist / queue-drain logic all apply.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]

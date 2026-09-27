@@ -1127,9 +1127,10 @@ pub struct AppView {
     /// Where to return when leaving the dashboard. See [`DashboardReturn`].
     pub dashboard_return: Option<DashboardReturn>,
     /// Persisted dashboard configuration (pinned rows, reorderings, grouping).
-    /// Loaded once on startup from `~/.grok/config.toml`.
-    /// `None` when the file/section is absent or contained malformed data; falls back to in-memory defaults.
+    /// Read from `~/.grok/config.toml` on first use; `None` until then. An absent or unreadable section caches the defaults.
     pub dashboard_persisted: Option<crate::views::dashboard::PersistedDashboard>,
+    /// The header switcher's session order, rebuilt on the first frame after it goes stale (see [`Self::invalidate_session_cycle`]).
+    pub(crate) session_cycle: crate::views::dashboard::SessionCycleCache,
     /// Per-platform key event normalizer.
     ///
     /// New event consumers that bypass `AppView::handle_input` will not get rescued modifiers unless they also normalize.
@@ -1193,6 +1194,11 @@ impl AppView {
     pub(crate) fn alloc_picker_generation(&mut self) -> u64 {
         self.picker_generation_counter += 1;
         self.picker_generation_counter
+    }
+    /// Marks the header switcher's session order stale. Dispatch, non-streaming ACP handling, and the tick reconcilers
+    /// call it, since they own every change to an agent, the dashboard layout, or workspace membership.
+    pub(crate) fn invalidate_session_cycle(&mut self) {
+        self.session_cycle = crate::views::dashboard::SessionCycleCache::Stale;
     }
     pub fn is_zdr_blocked(&self) -> bool {
         self.is_zdr && !self.zdr_access_enabled
@@ -1645,6 +1651,7 @@ impl AppView {
             dashboard: None,
             dashboard_return: None,
             dashboard_persisted: None,
+            session_cycle: Default::default(),
             keyboard_normalizer: KeyboardNormalizer::from_terminal_context(),
             voice_mode_enabled: false,
             voice_ui_active: false,
@@ -2546,7 +2553,15 @@ impl AppView {
                     .dashboard
                     .as_ref()
                     .is_some_and(|d| d.attached_agent == Some(id));
+                let takeover_owns_key = matches!(
+                    ev,
+                    Event::Key(key) if super::agent_view::is_tree_chord(key)
+                ) && self
+                        .agents
+                        .get(&id)
+                        .is_some_and(|a| a.active_subagent.is_some());
                 if !overlay_active
+                    && !takeover_owns_key
                     && let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
                 {
@@ -2564,6 +2579,7 @@ impl AppView {
                     }
                 }
                 if overlay_active
+                    && !takeover_owns_key
                     && let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
                 {
@@ -4419,6 +4435,10 @@ impl AppView {
         });
         let welcome_default_yolo = self.default_yolo;
         let welcome_auto_gate = self.auto_mode_gate;
+        let session_cycle_position = self
+            .active_view
+            .agent_id()
+            .and_then(|id| super::dispatch::session_cycle_position(self, id));
         let Self {
             active_view,
             agents,
@@ -4764,17 +4784,7 @@ impl AppView {
                                 .dashboard
                                 .as_ref()
                                 .is_some_and(|d| d.attached_agent == Some(id));
-                            let position: Option<(usize, usize)> = if overlay_active
-                                && let Some(d) = self.dashboard.as_ref()
-                            {
-                                let order = crate::views::dashboard::overlay_cycle_order(d, agents);
-                                order
-                                    .iter()
-                                    .position(|i| *i == id)
-                                    .map(|idx| (idx + 1, order.len()))
-                            } else {
-                                None
-                            };
+                            let position = session_cycle_position;
                             let overlay_title = overlay_active
                                 .then(|| {
                                     agents

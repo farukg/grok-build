@@ -327,6 +327,7 @@ fn test_app() -> AppView {
         dashboard: None,
         dashboard_return: None,
         dashboard_persisted: None,
+        session_cycle: Default::default(),
         keyboard_normalizer: crate::input::KeyboardNormalizer::from_terminal_context(),
         has_claude_import: false,
         voice_mode_enabled: false,
