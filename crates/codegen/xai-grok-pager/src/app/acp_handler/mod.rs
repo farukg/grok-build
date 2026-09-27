@@ -180,7 +180,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
         AcpClientMessage::SessionNotification(notif) => {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
             let affected = match find_session_match(app, &notif.request.session_id) {
-                Some(SessionMatch::Root(id)) => {
+                Some(SessionMatch(id)) => {
                     let is_active = is_matched_agent_active(app, id);
                     let stashed_adoption_pid = app
                         .pending_running_adoptions
@@ -435,71 +435,62 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     }
                     mutated && is_active
                 }
-                Some(SessionMatch::Child(parent_id)) => {
-                    let is_active = is_matched_agent_active(app, parent_id);
-                    let parent = app
+                Some(SessionMatch(child_id)) => {
+                    let is_active = is_matched_agent_active(app, child_id);
+                    let child_view = app
                         .agents
-                        .get_mut(&parent_id)
+                        .get_mut(&child_id)
                         .expect("find_session_match returned an existing AgentId");
-                    let child_key: &str = notif.request.session_id.0.as_ref();
-                    let activity_label = {
-                        let child_view = parent
-                            .child_view_for_live_update_mut(child_key)
-                            .expect("find_session_match returned an existing subagent_views key");
-                        ack_prompt_from_update(child_view, &meta);
-                        if let Some(tokens) = meta.total_tokens {
-                            confirm_context_used(child_view, tokens);
-                        }
-                        if let acp::SessionUpdate::UsageUpdate(ref usage) = notif.request.update {
-                            child_view.apply_context_used(usage.used, usage.size);
-                        }
-                        let ended = !meta.is_replay
-                            && meta.prompt_id.as_deref().is_some_and(|pid| {
-                                child_view.ended_child_prompt_ids.contains(pid)
-                                    || child_view.superseded_child_prompt_ids.contains(pid)
-                            });
-                        if !ended {
-                            let is_live = !meta.is_replay && !child_view.session.loading_replay;
-                            let apply = !is_live
-                                || note_child_live_prompt(
-                                    child_view,
-                                    meta.prompt_id.as_deref(),
-                                    meta.turn_start_ms,
-                                    meta.is_replay,
-                                );
-                            if apply {
-                                if is_live {
-                                    if let Some(ts) = meta.turn_start_ms {
-                                        let named = meta
-                                            .prompt_id
-                                            .as_deref()
-                                            .is_some_and(|pid| !pid.is_empty());
-                                        if named
-                                            || child_view.turn_start_ms_prompt.is_none()
-                                            || child_view.turn_start_ms == Some(ts)
-                                        {
-                                            child_view.turn_start_ms = Some(ts);
-                                            if named {
-                                                child_view.turn_start_ms_prompt =
-                                                    meta.prompt_id.clone();
-                                            }
+                    ack_prompt_from_update(child_view, &meta);
+                    if let Some(tokens) = meta.total_tokens {
+                        confirm_context_used(child_view, tokens);
+                    }
+                    if let acp::SessionUpdate::UsageUpdate(ref usage) = notif.request.update {
+                        child_view.apply_context_used(usage.used, usage.size);
+                    }
+                    let ended = !meta.is_replay
+                        && meta.prompt_id.as_deref().is_some_and(|pid| {
+                            child_view.ended_child_prompt_ids.contains(pid)
+                                || child_view.superseded_child_prompt_ids.contains(pid)
+                        });
+                    if !ended {
+                        let is_live = !meta.is_replay && !child_view.session.loading_replay;
+                        let apply = !is_live
+                            || note_child_live_prompt(
+                                child_view,
+                                meta.prompt_id.as_deref(),
+                                meta.turn_start_ms,
+                                meta.is_replay,
+                            );
+                        if apply {
+                            if is_live {
+                                if let Some(ts) = meta.turn_start_ms {
+                                    let named = meta
+                                        .prompt_id
+                                        .as_deref()
+                                        .is_some_and(|pid| !pid.is_empty());
+                                    if named
+                                        || child_view.turn_start_ms_prompt.is_none()
+                                        || child_view.turn_start_ms == Some(ts)
+                                    {
+                                        child_view.turn_start_ms = Some(ts);
+                                        if named {
+                                            child_view.turn_start_ms_prompt = meta.prompt_id.clone();
                                         }
                                     }
-                                    backdate_child_turn_clock(child_view);
                                 }
-                                child_view.session.handle_update(
-                                    notif.request.update,
-                                    &meta,
-                                    &mut child_view.scrollback,
-                                );
-                                for entry_id in child_view.session.tracker.take_pending_edit_hl() {
-                                    child_view.submit_edit_highlight(entry_id);
-                                }
+                                backdate_child_turn_clock(child_view);
+                            }
+                            child_view.session.handle_update(
+                                notif.request.update,
+                                &meta,
+                                &mut child_view.scrollback,
+                            );
+                            for entry_id in child_view.session.tracker.take_pending_edit_hl() {
+                                child_view.submit_edit_highlight(entry_id);
                             }
                         }
-                        subagent_activity_label(child_view)
-                    };
-                    sync_subagent_activity(parent, child_key, activity_label);
+                    }
                     is_active
                 }
                 None => {
@@ -723,7 +714,7 @@ fn handle_interjection(notif: &acp::ExtNotification, app: &mut AppView) -> bool 
     };
     let interjection_id = parsed.get("interjectionId").and_then(|v| v.as_str());
     let sid = acp::SessionId::new(session_id.to_string());
-    let Some(SessionMatch::Root(id)) = find_session_match(app, &sid) else {
+    let Some(SessionMatch(id)) = find_session_match(app, &sid) else {
         return false;
     };
     let is_active = is_matched_agent_active(app, id);
