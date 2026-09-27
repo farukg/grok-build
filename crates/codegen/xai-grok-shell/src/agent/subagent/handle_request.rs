@@ -1023,8 +1023,6 @@ pub(crate) async fn run_shell_child(
         snapshot_ref: None,
         effective_model_id: Some(effective_model_id.0.to_string()),
         status: SubagentMetaStatus::Running,
-        effective_context_source: Some(effective_source_str.to_string()),
-        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
     };
     let gcs_upload_ctx = GcsUploadContext {
         bucket_url: ctx.gcs_bucket_url.clone(),
@@ -1066,8 +1064,6 @@ pub(crate) async fn run_shell_child(
         resumed_from: request.resume_from.clone(),
         workflow_run_id: request.owner.workflow_run_id().map(str::to_string),
         agent_address: advertised_address.clone(),
-        effective_context_source: Some(effective_source_str.to_string()),
-        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
         resume_fallback: resume_fallback.clone(),
     };
     let publication_boundary = if is_wake {

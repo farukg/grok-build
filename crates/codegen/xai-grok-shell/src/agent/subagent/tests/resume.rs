@@ -38,9 +38,7 @@ fn child_meta(id: &str, parent: &str, status: SubagentMetaStatus) -> SubagentMet
         tool_calls: None,
         turns: None,
         error: None,
-        effective_context_source: None,
-        context_normalized: false,
-        fork_copy_error: None,
+        context: SubagentContext::Unreported,
         persona: None,
         resumed_from: None,
         child_cwd: Some(parent_cwd().to_string_lossy().into_owned()),
@@ -114,7 +112,7 @@ async fn resume_after_reload_restores_history_from_disk() {
     else {
         panic!("resume bootstrap must load the persisted transcript");
     };
-    assert_eq!(initial.source, InitialContextSource::Resumed);
+    assert_eq!(initial.context, SubagentContext::Resumed);
     assert!(
         initial
             .conversation
