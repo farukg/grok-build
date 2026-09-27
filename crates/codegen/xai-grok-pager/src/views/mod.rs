@@ -47,6 +47,7 @@ pub mod scroll_debug_hud;
 pub mod session_picker;
 pub mod session_picker_surface;
 pub mod session_title;
+pub mod sidebar;
 pub mod settings_modal;
 pub mod shortcuts_bar;
 pub mod shortcuts_help;

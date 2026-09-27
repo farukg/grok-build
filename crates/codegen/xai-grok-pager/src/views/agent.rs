@@ -81,6 +81,9 @@ impl PaneAreas {
         None
     }
 }
+/// The session header top row and the sidebar's fixed header share this height.
+pub const SESSION_HEADER_ROW_HEIGHT: u16 = 1;
+
 /// Terminals at or below this height suppress the optional rows above the prompt (plugin CTA, follow-ups, banner/tip).
 /// This keeps the prompt and the scrollback from being starved.
 pub const SHORT_TERMINAL_ROWS: u16 = 16;
@@ -218,7 +221,7 @@ impl AgentViewLayout {
         ));
         let inner_area = outer_block.inner(area);
         let mut constraints = vec![
-            Constraint::Length(1), // StatusBar
+            Constraint::Length(SESSION_HEADER_ROW_HEIGHT), // StatusBar
         ];
         let pane_gap = if top_vpad == 0 { 0u16 } else { 1 };
         if tasks_height > 0 {
