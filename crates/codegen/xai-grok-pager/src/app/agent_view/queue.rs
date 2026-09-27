@@ -9,6 +9,42 @@ use crate::app::app_view::InputOutcome;
 use crate::views::queue_mutation::ServerRowCapabilities;
 use crossterm::event::KeyEvent;
 
+/// What Send now does with one queue row while a turn runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum QueueRowSendNow {
+    /// Plain prompt or raw skill row: its display text is its wire payload.
+    Prompt,
+    /// Agent slash command (`/compact`, `/flush`, `/dream`): the shell runs it as the replacing turn, after
+    /// backgrounding foreground subagents and commands and answering their tool calls.
+    AgentCommand,
+    Deferred(SendNowDeferral),
+}
+
+/// Why a queue row keeps waiting for the current turn to end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum SendNowDeferral {
+    /// Protected server row (pinned parent message or read-only pane).
+    Protected,
+    BashCommand,
+    /// Client-expanded payload: sending now would send the display text instead.
+    ExpandedPayload,
+    /// An active goal absorbs send-now as steering text, so a command would reach the model verbatim.
+    GoalActive,
+}
+
+impl SendNowDeferral {
+    pub(in crate::app) fn notice(self) -> &'static str {
+        match self {
+            Self::Protected | Self::BashCommand | Self::ExpandedPayload => {
+                "Can't send this now: it runs when the current turn ends"
+            }
+            Self::GoalActive => {
+                "Can't run a queued command during an active goal: stop the goal turn to run it now"
+            }
+        }
+    }
+}
+
 impl AgentView {
     /// Remove a local queue row: fix selection, drop the entry, hide the pane if the merged view emptied.
     /// Returns the removed prompt, if any.
@@ -214,7 +250,7 @@ impl AgentView {
 
     /// Whether bare Enter on the empty composer would actually send the top visible held row, the "Enter to send now" half of the inline hint.
     /// A server top row sends only when its wire-kind capabilities allow it.
-    /// A local top row sends only when its capabilities allow it and it is prompt-like (`force_interject_queue_row` refuses bash and client-expanded rows with a toast).
+    /// A local top row sends only when its capabilities allow it and [`Self::queue_row_send_now`] does not defer it.
     pub(crate) fn held_queue_top_sendable(&self) -> bool {
         let running = self.session.current_prompt_id.as_deref();
         let send_now = self.expect_send_now_cancel.as_deref();
@@ -232,7 +268,10 @@ impl AgentView {
         }
         ServerRowCapabilities::for_local(mutation).can_send_now()
             && self.session.pending_prompts.front().is_some_and(|p| {
-                p.kind == crate::app::agent::QueueEntryKind::Prompt && p.wire_matches_display()
+                matches!(
+                    self.local_row_send_now(p),
+                    QueueRowSendNow::Prompt | QueueRowSendNow::AgentCommand
+                )
             })
     }
 
@@ -336,26 +375,47 @@ impl AgentView {
             .map(|entry| ServerRowCapabilities::for_pane(&entry.kind, mutation))
     }
 
-    /// `Some(is_prompt_like)` for a resolvable merged-queue row; `None` when it can't be resolved.
-    /// Prompt-like rows may interject: plain prompts, plus raw skill slash rows (`/find-session args`) whose wire payload equals the display text.
-    /// Interjecting them would send the display text, not the payload.
-    pub(in crate::app) fn queue_row_prompt_like(&self, id: u64) -> Option<bool> {
-        use crate::app::agent::QueueEntryKind;
+    /// Send-now disposition of a resolvable merged-queue row; `None` when it can't be resolved.
+    pub(in crate::app) fn queue_row_send_now(&self, id: u64) -> Option<QueueRowSendNow> {
         use crate::views::queue_pane::{QueueRowOrigin, kind_from_wire};
 
         if let Some(local) = self.session.pending_prompts.iter().find(|p| p.id == id) {
-            return Some(local.kind == QueueEntryKind::Prompt && local.wire_matches_display());
+            return Some(self.local_row_send_now(local));
         }
         let row = self.queue.row_ref(id)?;
         if row.origin != QueueRowOrigin::Server {
             return None;
         }
         if !self.server_row_capabilities(&row)?.can_send_now() {
-            return Some(false);
+            return Some(QueueRowSendNow::Deferred(SendNowDeferral::Protected));
         }
         let server_id = row.server_id?;
         let wire = self.shared_queue.iter().find(|e| e.id == server_id)?;
-        Some(kind_from_wire(&wire.kind) == QueueEntryKind::Prompt)
+        Some(self.entry_kind_send_now(kind_from_wire(&wire.kind)))
+    }
+
+    /// Only raw rows (wire payload == display text) can be re-sent by their text.
+    fn local_row_send_now(&self, row: &crate::app::agent::QueuedPrompt) -> QueueRowSendNow {
+        if !row.wire_matches_display() {
+            return QueueRowSendNow::Deferred(SendNowDeferral::ExpandedPayload);
+        }
+        self.entry_kind_send_now(row.kind)
+    }
+
+    fn entry_kind_send_now(&self, kind: crate::app::agent::QueueEntryKind) -> QueueRowSendNow {
+        use crate::app::agent::{GoalDisplayStatus, QueueEntryKind};
+        match kind {
+            QueueEntryKind::Prompt => QueueRowSendNow::Prompt,
+            QueueEntryKind::BashCommand => QueueRowSendNow::Deferred(SendNowDeferral::BashCommand),
+            QueueEntryKind::Command => {
+                let goal_status = self.goal_state.as_ref().map(|g| &g.status);
+                if matches!(goal_status, Some(GoalDisplayStatus::Active)) {
+                    QueueRowSendNow::Deferred(SendNowDeferral::GoalActive)
+                } else {
+                    QueueRowSendNow::AgentCommand
+                }
+            }
+        }
     }
 
     /// Send one merged-queue row now (cancel-and-send), by selection id. The shell cancels the running turn and runs this row as the next turn.
@@ -390,9 +450,14 @@ impl AgentView {
             }
             return InputOutcome::Changed;
         }
-        // Local rows: only plain prompts and raw skill rows can re-send (others would send display text, not payload)
-        if self.queue_row_prompt_like(id) != Some(true) {
-            self.show_toast("Can't send this now: it runs when the current turn ends");
+        // Local rows re-send by their text; `AgentCommand` rows run as the replacing turn.
+        let deferral = match self.queue_row_send_now(id) {
+            Some(QueueRowSendNow::Prompt | QueueRowSendNow::AgentCommand) => None,
+            Some(QueueRowSendNow::Deferred(deferral)) => Some(deferral),
+            None => Some(SendNowDeferral::Protected),
+        };
+        if let Some(deferral) = deferral {
+            self.show_toast(deferral.notice());
             return InputOutcome::Changed;
         }
         if let Some(prompt) = self.remove_local_queue_row(id) {
@@ -1455,6 +1520,67 @@ mod queue_edit_routing_tests {
             1,
             "bash row must stay queued"
         );
+    }
+
+    /// A running agent (e.g. parked on a foreground subagent await) whose only queued row is `/compact`.
+    fn running_agent_with_queued_compact() -> AgentView {
+        let mut agent = running_agent_local_only();
+        agent.session.pending_prompts.clear();
+        agent.session.enqueue_command("/compact".into());
+        agent.sync_queue_pane();
+        agent
+    }
+
+    /// Send now on a queued agent command must not wait for turn end: it replaces the turn with the command,
+    /// so the shell backgrounds the foreground wait and compacts next. Covers the pane key and empty-composer Enter.
+    #[test]
+    fn send_now_on_queued_compact_replaces_the_turn_with_the_command() {
+        let mut agent = running_agent_with_queued_compact();
+        assert!(agent.held_queue_top_sendable());
+        let registry = non_vscode_registry();
+        let ids = agent.queue.entry_ids();
+        agent.queue.list_state.select_by_id(
+            ids.first()
+                .copied()
+                .unwrap_or_else(|| panic!("missing index")),
+        );
+        match agent.handle_queue_key(&force_interject_key(), &registry) {
+            InputOutcome::Action(Action::SendPromptNow { text, .. }) => assert_eq!(text, "/compact"),
+            other => panic!("expected SendPromptNow for /compact, got {other:?}"),
+        }
+        assert!(agent.session.pending_prompts.is_empty());
+        assert!(agent.toast.is_none());
+
+        let mut agent = running_agent_with_queued_compact();
+        agent.active_pane = AgentPane::Prompt;
+        agent.queue.overlay.focused = false;
+        agent.prompt.set_text("");
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        match agent.handle_prompt_key_for_test(&enter) {
+            InputOutcome::Action(Action::SendPromptNow { text, .. }) => assert_eq!(text, "/compact"),
+            other => panic!("expected SendPromptNow for /compact, got {other:?}"),
+        }
+        assert!(agent.session.pending_prompts.is_empty());
+    }
+
+    /// An active goal would absorb the command as steering text, so it stays queued and the toast names the way out.
+    #[test]
+    fn send_now_on_queued_compact_during_active_goal_stays_queued() {
+        let mut agent = running_agent_with_queued_compact();
+        agent.goal_state = Some(crate::app::agent::GoalDisplayState::test_stub());
+        assert!(!agent.held_queue_top_sendable());
+        let ids = agent.queue.entry_ids();
+        let id = ids
+            .first()
+            .copied()
+            .unwrap_or_else(|| panic!("missing index"));
+        assert!(matches!(
+            agent.force_interject_queue_row(id),
+            InputOutcome::Changed
+        ));
+        assert_eq!(agent.session.pending_prompts.len(), 1, "row must stay");
+        let toast = agent.toast.as_ref().map(|(m, _)| m.as_str()).unwrap_or("");
+        assert!(toast.contains("stop the goal turn"), "{toast:?}");
     }
 
     /// A running agent whose only queued row is a local skill-injected row (kind Prompt with wire_blocks), mirroring the `InjectSkill` enqueue.
