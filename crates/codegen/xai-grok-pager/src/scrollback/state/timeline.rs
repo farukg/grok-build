@@ -21,7 +21,7 @@ pub struct TimelineEntry {
 /// First non-empty line, capped in chars with a `…` marker.
 /// Bounded single pass: the length probe stops one char past the cap, so a huge one-line prompt costs O(cap), not O(line length).
 /// The cap counts chars (not display width) on purpose: it bounds the stored snapshot, and render paths re-truncate to their width.
-fn prompt_preview(text: &str) -> String {
+pub(crate) fn prompt_preview(text: &str) -> String {
     let line = text
         .lines()
         .map(str::trim)
@@ -125,6 +125,150 @@ impl ScrollbackState {
     }
 }
 
+/// One row of the expanded timeline outline: a turn, a fold group, or a single entry.
+/// Rows reference entries by stable [`EntryId`]; the outline never copies content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimelineRow {
+    pub kind: TimelineRowKind,
+    /// Nesting level: turn children sit one level deeper, group members one more.
+    pub depth: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelineRowKind {
+    /// A turn, represented by its user prompt entry.
+    Turn { turn_idx: usize, prompt_id: EntryId },
+    /// A fold span (verb run or "N more" truncation); its members follow as nested entry rows.
+    /// The span's live shape (kind, expansion) is read from the fold pass, not stored here.
+    Group { first_id: EntryId },
+    Entry { id: EntryId },
+}
+
+/// Identity of an outline row. A group row and its first member share an entry, so the kind is part of the identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TimelineRowKey {
+    Turn(EntryId),
+    Group(EntryId),
+    Entry(EntryId),
+}
+
+impl TimelineRow {
+    pub fn key(&self) -> TimelineRowKey {
+        match self.kind {
+            TimelineRowKind::Turn { prompt_id, .. } => TimelineRowKey::Turn(prompt_id),
+            TimelineRowKind::Group { first_id, .. } => TimelineRowKey::Group(first_id),
+            TimelineRowKind::Entry { id } => TimelineRowKey::Entry(id),
+        }
+    }
+
+    /// The entry an action on this row targets: the prompt, the group's first member, or the entry itself.
+    pub fn entry_id(&self) -> EntryId {
+        match self.kind {
+            TimelineRowKind::Turn { prompt_id, .. } => prompt_id,
+            TimelineRowKind::Group { first_id, .. } => first_id,
+            TimelineRowKind::Entry { id } => id,
+        }
+    }
+}
+
+impl ScrollbackState {
+    /// Moves whenever [`Self::timeline_outline`] may change shape (entry set, turns, or fold spans).
+    /// Streaming content and scrolling leave it alone, so an open panel rebuilds its outline only on structural change.
+    pub fn outline_generation(&self) -> u64 {
+        self.outline_generation
+    }
+
+    /// Every entry exactly once, in order, nested as turn → fold group → entry.
+    /// Entries before the first prompt have no turn parent.
+    /// Group rows come from the last fold pass, so call after `prepare_layout()`.
+    pub fn timeline_outline(&self) -> Vec<TimelineRow> {
+        let spans = self.group_spans();
+        let mut rows = Vec::with_capacity(self.entries.len() + spans.len());
+        let mut turns = self.turns.iter().enumerate().peekable();
+        let mut spans = spans.iter().peekable();
+        let mut in_turn = false;
+        let mut group_end = 0usize;
+        for (idx, &id) in self.entries.keys().enumerate() {
+            if let Some((turn_idx, _)) = turns.next_if(|(_, turn)| turn.prompt_index == idx) {
+                in_turn = true;
+                rows.push(TimelineRow {
+                    kind: TimelineRowKind::Turn {
+                        turn_idx,
+                        prompt_id: id,
+                    },
+                    depth: 0,
+                });
+                continue;
+            }
+            let base = u8::from(in_turn);
+            while spans.next_if(|span| span.range.start < idx).is_some() {}
+            if let Some(span) = spans.next_if(|span| span.range.start == idx) {
+                group_end = span.range.end;
+                rows.push(TimelineRow {
+                    kind: TimelineRowKind::Group { first_id: id },
+                    depth: base,
+                });
+            }
+            rows.push(TimelineRow {
+                kind: TimelineRowKind::Entry { id },
+                depth: base + u8::from(idx < group_end),
+            });
+        }
+        rows
+    }
+
+    /// Outline key of the entry at `idx`: its turn row for a prompt, else its entry row.
+    pub fn timeline_row_key(&self, idx: usize) -> Option<TimelineRowKey> {
+        let (&id, _) = self.entries.get_index(idx)?;
+        Some(
+            match self.turns.binary_search_by_key(&idx, |turn| turn.prompt_index) {
+                Ok(_) => TimelineRowKey::Turn(id),
+                Err(_) => TimelineRowKey::Entry(id),
+            },
+        )
+    }
+
+    /// The entry owning the viewport top row, the per-entry analog of [`Self::active_turn_for_viewport`].
+    /// A partition search over cached `virtual_y`; folded (zero-height) members resolve to the row that shows them.
+    pub fn active_entry_for_viewport(&self) -> Option<usize> {
+        let cache = self.layout_cache.as_ref()?;
+        let range = self.visible_entry_range();
+        let base = *cache.virtual_y.get(range.start)?;
+        let top = base + self.scroll_offset;
+        let slice = cache.virtual_y.get(range.clone())?;
+        let mut idx = range.start + slice.partition_point(|&y| y <= top).checked_sub(1)?;
+        while idx > range.start && self.is_entry_hidden(idx) {
+            idx -= 1;
+        }
+        Some(idx)
+    }
+
+    /// The entry an unfocused timeline panel tracks: the selection while it is on screen, else the viewport-top entry.
+    pub fn timeline_follow_index(&self) -> Option<usize> {
+        self.selected
+            .filter(|&idx| self.entry_overlaps_viewport(idx))
+            .or_else(|| self.active_entry_for_viewport())
+    }
+
+    /// The header row of the fold group containing `idx`.
+    pub fn group_header_index(&self, idx: usize) -> Option<usize> {
+        let span = self.span_at(idx)?;
+        let cache = self.layout_cache.as_ref()?;
+        span.range
+            .clone()
+            .find(|&i| cache.entries.get(i).is_some_and(|info| info.is_group_header()))
+    }
+
+    /// The on-screen row that stands for `idx`: the entry itself, or its group header while a fold hides it.
+    pub fn timeline_anchor(&self, idx: usize) -> usize {
+        if self.is_entry_hidden(idx) {
+            self.group_header_index(idx).unwrap_or(idx)
+        } else {
+            idx
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_util::*;
@@ -152,6 +296,104 @@ mod tests {
         assert_eq!(second.turn_idx, 1);
         assert_eq!(state.index_of_id(second.prompt_entry_id), Some(3));
         assert_eq!(second.preview, "second question");
+    }
+
+    fn outline_entry_ids(state: &ScrollbackState) -> Vec<EntryId> {
+        state
+            .timeline_outline()
+            .iter()
+            .filter_map(|row| match row.kind {
+                TimelineRowKind::Turn { prompt_id, .. } => Some(prompt_id),
+                TimelineRowKind::Entry { id } => Some(id),
+                TimelineRowKind::Group { .. } => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn outline_lists_every_entry_once_in_order() {
+        let mut state = ScrollbackState::new();
+        state.push_block(stub_block("banner"));
+        state.push_block(user_block("Q1"));
+        push_tool_calls(&mut state, 12);
+        state.push_block(agent_block("a1"));
+        state.push_block(user_block("Q2"));
+        state.push_block(agent_block("a2"));
+        state.prepare_layout(80, 10);
+
+        let expected: Vec<EntryId> = state.iter_entries().map(|(id, _)| id).collect();
+        assert_eq!(outline_entry_ids(&state), expected);
+    }
+
+    #[test]
+    fn outline_nests_group_members_under_turn() {
+        crate::appearance::cache::set_group_tool_verbs(true);
+        let mut state = ScrollbackState::new();
+        state.push_block(user_block("Q1"));
+        for path in ["a.rs", "b.rs", "c.rs"] {
+            state.push_block(RenderBlock::read(path, None));
+        }
+        state.push_block(agent_block("done"));
+        state.prepare_layout(80, 10);
+        let span = state.group_spans().first().cloned().expect("read run folds");
+
+        let outline = state.timeline_outline();
+        let group_pos = outline
+            .iter()
+            .position(|row| matches!(row.kind, TimelineRowKind::Group { .. }))
+            .expect("group row");
+        let group = outline[group_pos];
+        assert_eq!(group.depth, 1, "group sits under its turn");
+        let members = &outline[group_pos + 1..group_pos + 1 + span.range.len()];
+        assert!(members.iter().all(|row| row.depth == 2), "{members:?}");
+    }
+
+    #[test]
+    fn outline_prefix_before_first_turn_has_no_turn_parent() {
+        let mut state = ScrollbackState::new();
+        state.push_block(stub_block("banner"));
+        state.push_block(user_block("Q1"));
+        state.push_block(agent_block("a1"));
+        state.prepare_layout(80, 10);
+
+        let outline = state.timeline_outline();
+        let [banner, turn, answer] = outline.as_slice() else {
+            panic!("three rows: {outline:?}");
+        };
+        assert!(matches!(banner.kind, TimelineRowKind::Entry { .. }));
+        assert_eq!(banner.depth, 0);
+        assert!(matches!(turn.kind, TimelineRowKind::Turn { turn_idx: 0, .. }));
+        assert_eq!(answer.depth, 1);
+    }
+
+    #[test]
+    fn active_entry_for_viewport_matches_top_entry() {
+        let mut state = ScrollbackState::new();
+        state.push_block(user_block("Q1"));
+        state.push_block(tall_agent_block());
+        state.push_block(tall_agent_block());
+        state.push_block(user_block("Q2"));
+        state.prepare_layout(80, 6);
+
+        state.goto_top();
+        assert_eq!(state.active_entry_for_viewport(), Some(0));
+        state.goto_bottom();
+        let max = state.scroll_offset();
+        assert!(max > 0);
+        state.goto_top();
+        let mut seen = Vec::new();
+        for offset in 0..=max {
+            state.set_scroll_offset(offset);
+            let idx = state.active_entry_for_viewport().expect("an entry owns the top");
+            let ys = state.get_cached_virtual_y().expect("layout");
+            assert!(ys[idx] <= offset, "entry {idx} starts at or above the top");
+            assert!(
+                ys.get(idx + 1).is_none_or(|&next| next > offset),
+                "no later entry starts at or above the top (offset {offset})"
+            );
+            seen.push(idx);
+        }
+        assert!(seen.contains(&1) && seen.contains(&2), "{seen:?}");
     }
 
     #[test]
