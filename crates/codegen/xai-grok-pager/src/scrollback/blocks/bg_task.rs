@@ -217,7 +217,7 @@ impl BlockContent for BgTaskBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        false
+        true
     }
 
     fn default_display_mode(&self) -> DisplayMode {

@@ -539,6 +539,9 @@ impl RenderBlock {
 impl BlockContent for RenderBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let mut output = delegate_block!(self, output(ctx));
+        if ctx.mode == DisplayMode::Collapsed && output.lines.len() > 1 {
+            output.lines.truncate(1);
+        }
         if delegate_block!(self, has_bullet(ctx)) {
             let bullet = delegate_block!(self, bullet(ctx));
             prepend_bullet(&mut output, ctx, bullet);
