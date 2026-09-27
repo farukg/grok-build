@@ -140,7 +140,6 @@ use ratatui::text::Line;
 use ratatui::widgets::Widget;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-mod child_action_filter;
 mod cta;
 mod elicitation;
 mod input;
@@ -184,10 +183,6 @@ mod selection;
 mod session;
 mod session_mode;
 mod shell_completion;
-mod subagent_takeover;
-pub(in crate::app) use subagent_takeover::{
-    Direction, TreeChord, NO_SIBLING_TOAST, tree_chord,
-};
 #[cfg(test)]
 mod task_icon_mouse_tests;
 #[cfg(test)]
