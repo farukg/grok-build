@@ -410,6 +410,8 @@ pub enum Action {
     KillBgTask(String),
     /// Kill (cancel) a subagent by subagent_id.
     KillSubagent(String),
+    /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
+    ResumeSubagent { subagent_id: String, prompt: String },
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
     DemoteToBackground,
@@ -1589,6 +1591,12 @@ pub enum Effect {
         task_id: String,
         source: xai_grok_shell::extensions::task::TaskKillSource,
     },
+    /// Continue a subagent with a user prompt via `x.ai/subagent/resume`.
+    ResumeSubagent {
+        session_id: acp::SessionId,
+        subagent_id: String,
+        prompt: String,
+    },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
     KillSubagent {
         session_id: acp::SessionId,
@@ -2627,6 +2635,11 @@ pub enum TaskResult {
     /// The answer stands for this run, but nothing on disk holds it, so the notice returns at the next launch.
     ConsentPersistFailed {
         error: String,
+    },
+    /// Response to `x.ai/subagent/resume`; `None` when the RPC itself failed.
+    ResumeSubagentComplete {
+        subagent_id: String,
+        outcome: Option<xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome>,
     },
     /// Response to `x.ai/subagent/cancel`; see [`SubagentKillOutcome`].
     KillSubagentComplete {

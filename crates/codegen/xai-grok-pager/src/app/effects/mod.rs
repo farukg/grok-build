@@ -1907,6 +1907,34 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::ResumeSubagent { session_id, subagent_id, prompt } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let params = xai_grok_shell::extensions::subagent_resume::ResumeSubagentRequest {
+                        session_id: session_id.0.to_string(),
+                        subagent_id: subagent_id.clone(),
+                        prompt,
+                    };
+                    let outcome = match serde_json::value::to_raw_value(&params) {
+                        Ok(raw) => {
+                            let req = acp::ExtRequest::new("x.ai/subagent/resume", raw.into());
+                            match acp_send(req, &tx).await {
+                                Ok(resp) => parse_subagent_resume_outcome(resp.0.get()),
+                                Err(e) => {
+                                    tracing::warn!("Failed to resume subagent: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to encode subagent resume: {e}");
+                            None
+                        }
+                    };
+                    TaskResult::ResumeSubagentComplete { subagent_id, outcome }
+                });
+        }
         Effect::DeleteScheduledTask { session_id, task_id } => {
             let tx = acp_tx.clone();
             tasks

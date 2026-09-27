@@ -763,6 +763,29 @@ pub(super) fn dispatch_kill_subagent(app: &mut AppView, subagent_id: String) -> 
     }]
 }
 
+/// Resume a subagent of the active root session with `prompt` (`x.ai/subagent/resume`).
+pub(super) fn dispatch_resume_subagent(
+    app: &mut AppView,
+    subagent_id: String,
+    prompt: String,
+) -> Vec<Effect> {
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(session_id) = app
+        .agents
+        .get(&id)
+        .and_then(|agent| agent.session.session_id.clone())
+    else {
+        return vec![];
+    };
+    vec![Effect::ResumeSubagent {
+        session_id,
+        subagent_id,
+        prompt,
+    }]
+}
+
 pub(super) fn dispatch_demote_to_background(app: &mut AppView) -> Vec<Effect> {
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];

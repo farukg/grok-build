@@ -469,6 +469,7 @@ pub(super) fn handle_session_notification_with_origin(
             parent_prompt_id,
             parent_session_id,
             workflow_run_id,
+            resume_fallback,
             ..
         } => {
             tracing::info!(
@@ -698,6 +699,11 @@ pub(super) fn handle_session_notification_with_origin(
                     model_display,
                     is_background,
                 );
+                if let Some(fallback) = resume_fallback {
+                    agent
+                        .scrollback
+                        .push_block(RenderBlock::system(fallback.to_string()));
+                }
                 let entry_id = agent.scrollback.push_block(RenderBlock::Subagent(block));
                 agent.scrollback.set_last_running(true);
                 if let Some(info) = agent.subagent_sessions.get_mut(&child_session_id) {
