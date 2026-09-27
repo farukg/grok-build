@@ -736,12 +736,9 @@ pub enum SessionUpdate {
         subagent_type: String,
         /// Short human-readable description of the task.
         description: String,
-        /// Effective context source after bootstrap: "new" or "resumed".
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        effective_context_source: Option<String>,
-        /// Whether the forked context was normalized into <background_context>.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        context_normalized: bool,
+        /// Context the child actually started with, including why a requested fork fell back to fresh.
+        #[serde(flatten)]
+        context: crate::extensions::subagent_context::SubagentContext,
         /// Capability mode applied to this subagent (e.g. "read-only").
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capability_mode: Option<String>,
@@ -1708,8 +1705,7 @@ mod tests {
             child_session_id: "c".into(),
             subagent_type: "explore".into(),
             description: "d".into(),
-            effective_context_source: None,
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Unreported,
             capability_mode: None,
             persona: None,
             role: None,
@@ -1764,6 +1760,30 @@ mod tests {
     }
 
     #[test]
+    fn subagent_spawned_carries_fork_copy_error() {
+        use crate::extensions::subagent_context::{ForkFailure, SubagentContext};
+        let persisted = serde_json::json!({
+            "sessionUpdate": "subagent_spawned",
+            "subagent_id": "s",
+            "parent_session_id": "p",
+            "child_session_id": "c",
+            "subagent_type": "general-purpose",
+            "description": "goal plan writer",
+            "effective_context_source": "new",
+            "fork_copy_error": "no inheritable parent content after filtering"
+        });
+        let update: SessionUpdate = serde_json::from_value(persisted.clone()).expect("replays");
+        let SessionUpdate::SubagentSpawned { ref context, .. } = update else {
+            panic!("expected SubagentSpawned: {update:?}");
+        };
+        assert_eq!(
+            *context,
+            SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
+        );
+        assert_eq!(serde_json::to_value(&update).expect("serializes"), persisted);
+    }
+
+    #[test]
     fn subagent_spawned_agent_address_serializes_as_typed_camel_case() {
         let update = SessionUpdate::SubagentSpawned {
             attempt_id: None,
@@ -1773,8 +1793,7 @@ mod tests {
             child_session_id: "c".into(),
             subagent_type: "explore".into(),
             description: "d".into(),
-            effective_context_source: None,
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Unreported,
             capability_mode: None,
             persona: None,
             role: None,

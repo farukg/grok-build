@@ -606,8 +606,7 @@ async fn test_subagent_notifications_round_trip() {
             child_session_id: "child-001".to_string(),
             subagent_type: "general-purpose".to_string(),
             description: "Read README.md".to_string(),
-            effective_context_source: None,
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Unreported,
             capability_mode: None,
             persona: None,
             role: None,
@@ -761,8 +760,7 @@ async fn test_subagent_spawned_resumed_roundtrip() {
             child_session_id: "child-resumed".to_string(),
             subagent_type: "general-purpose".to_string(),
             description: "fix review feedback".to_string(),
-            effective_context_source: Some("resumed".to_string()),
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Resumed,
             capability_mode: None,
             persona: Some("implementer".to_string()),
             role: None,
@@ -784,13 +782,16 @@ async fn test_subagent_spawned_resumed_roundtrip() {
             match &notification.update {
                 XaiSessionUpdateType::SubagentSpawned {
                     subagent_id,
-                    effective_context_source,
+                    context,
                     persona,
                     resumed_from,
                     ..
                 } => {
                     assert_eq!(subagent_id, "child-resumed");
-                    assert_eq!(effective_context_source.as_deref(), Some("resumed"),);
+                    assert_eq!(
+                        *context,
+                        crate::extensions::subagent_context::SubagentContext::Resumed
+                    );
                     assert_eq!(persona.as_deref(), Some("implementer"));
                     assert_eq!(
                         resumed_from.as_deref(),

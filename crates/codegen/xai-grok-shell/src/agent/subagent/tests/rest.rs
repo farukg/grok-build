@@ -443,9 +443,7 @@ fn base_meta() -> SubagentMeta {
         tool_calls: None,
         turns: None,
         error: None,
-        effective_context_source: None,
-        context_normalized: false,
-        fork_copy_error: None,
+        context: crate::extensions::subagent_context::SubagentContext::Unreported,
         persona: None,
         resumed_from: None,
         child_cwd: None,
@@ -713,7 +711,7 @@ fn subagent_session_metadata_roundtrip() {
         duration_ms: Some(1234),
         tool_calls: Some(5),
         turns: Some(2),
-        effective_context_source: Some("new".into()),
+        context: crate::extensions::subagent_context::SubagentContext::Fresh,
         persona: Some("reviewer".into()),
         ..base_meta()
     };
@@ -760,7 +758,7 @@ fn subagent_session_metadata_non_forked() {
         subagent_type: "explore".into(),
         description: "search code".into(),
         prompt: "find auth".into(),
-        effective_context_source: Some("new".into()),
+        context: crate::extensions::subagent_context::SubagentContext::Fresh,
         persona: Some("implementer".into()),
         ..base_meta()
     };
@@ -810,8 +808,7 @@ fn upload_lifecycle_spawn_then_completion_preserves_fields() {
         child_session_id: "child-1".into(),
         description: "test task".into(),
         prompt: "do something".into(),
-        effective_context_source: Some("forked".into()),
-        context_normalized: true,
+        context: crate::extensions::subagent_context::SubagentContext::Forked(crate::extensions::subagent_context::ForkMode::Summarized),
         persona: Some("implementer".into()),
         ..base_meta()
     };
@@ -887,7 +884,7 @@ fn upload_lifecycle_failure_preserves_error() {
         tool_calls: Some(0),
         turns: Some(0),
         error: Some("session spawn error".into()),
-        effective_context_source: Some("new".into()),
+        context: crate::extensions::subagent_context::SubagentContext::Fresh,
         ..base_meta()
     };
     let gcs = SubagentSessionMetadata::from_meta(
@@ -907,12 +904,6 @@ fn upload_lifecycle_failure_preserves_error() {
     assert_eq!(gcs.session_kind, "subagent");
 }
 #[test]
-fn initial_context_source_resumed_variant() {
-    let source = InitialContextSource::Resumed;
-    assert!(matches!(source, InitialContextSource::Resumed));
-    assert_ne!(source, InitialContextSource::New);
-}
-#[test]
 fn session_metadata_session_kind_for_resumed() {
     let meta = SubagentMeta {
         subagent_id: "sa-resume".into(),
@@ -920,7 +911,7 @@ fn session_metadata_session_kind_for_resumed() {
         child_session_id: "c".into(),
         description: "d".into(),
         prompt: "p".into(),
-        effective_context_source: Some("resumed".into()),
+        context: crate::extensions::subagent_context::SubagentContext::Resumed,
         resumed_from: Some("prev-id".into()),
         ..base_meta()
     };
@@ -954,9 +945,8 @@ fn resume_initial_context_preserves_head_only() {
     }
     let original_len = conversation.len();
     let ctx = resume_initial_context(conversation, false);
-    assert_eq!(ctx.source, InitialContextSource::Resumed);
+    assert_eq!(ctx.context, SubagentContext::Resumed);
     assert!(!ctx.force_compact);
-    assert!(ctx.copy_error.is_none());
     assert_eq!(
             ctx.prefix_len,
             Some(1),
@@ -2029,8 +2019,7 @@ fn notification_subagent_spawned_includes_resumed_from() {
         child_session_id: "child-resumed".into(),
         subagent_type: "general-purpose".into(),
         description: "fix review feedback".into(),
-        effective_context_source: Some("resumed".into()),
-        context_normalized: false,
+        context: crate::extensions::subagent_context::SubagentContext::Resumed,
         capability_mode: None,
         persona: Some("implementer".into()),
         role: None,
@@ -2058,8 +2047,7 @@ fn notification_subagent_spawned_includes_resumed_from() {
         child_session_id: "c".into(),
         subagent_type: "explore".into(),
         description: "d".into(),
-        effective_context_source: Some("new".into()),
-        context_normalized: false,
+        context: crate::extensions::subagent_context::SubagentContext::Fresh,
         capability_mode: None,
         persona: None,
         role: None,
@@ -2866,14 +2854,14 @@ fn non_cursor_persona_injected_as_system_reminder() {
 fn persona_injection_skipped_for_resumed() {
     use xai_grok_sampling_types::conversation::ConversationItem;
     let persona_instructions = Some("Be thorough.".to_string());
-    let context_source = InitialContextSource::Resumed;
+    let context_source = SubagentContext::Resumed;
     let mut conv = vec![
             ConversationItem::system("sys"),
             ConversationItem::user("old turn"),
         ];
     let original_len = conv.len();
     let mut prefix_len = original_len;
-    if context_source != InitialContextSource::Resumed
+    if context_source != SubagentContext::Resumed
         && let Some(ref pi) = persona_instructions
     {
         let reminder = ConversationItem::system_reminder(

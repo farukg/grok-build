@@ -942,14 +942,7 @@ pub(crate) async fn run_shell_child(
         "subagent_spawn.context_bootstrap",
         Parent::Explicit(spawn_prepare_span.span())
     );
-    let InitialContext {
-        source: context_source,
-        copy_error: fork_copy_error,
-        prefix_len: inherited_prefix_len,
-        conversation: forked_conversation,
-        force_compact: force_compact_on_first_turn,
-        verbatim_fork: context_verbatim_fork,
-    } = match bootstrap_initial_context(
+    let initial_context = match bootstrap_initial_context(
         &request,
         resume_source.as_ref(),
         &ctx,
@@ -974,12 +967,17 @@ pub(crate) async fn run_shell_child(
         }
     };
     context_bootstrap_span.close();
-    let verbatim_mirror_fork =
-        context_source == InitialContextSource::Forked && context_verbatim_fork;
+    let verbatim_mirror_fork = initial_context.is_verbatim_fork();
+    let InitialContext {
+        context: context_source,
+        prefix_len: inherited_prefix_len,
+        conversation: forked_conversation,
+        force_compact: force_compact_on_first_turn,
+    } = initial_context;
     let task_prompt_text = prompt.clone();
     let (mut forked_conversation, mut inherited_prefix_len) =
         (forked_conversation, inherited_prefix_len.unwrap_or(0));
-    if context_source != InitialContextSource::Resumed
+    if context_source != SubagentContext::Resumed
         && !verbatim_mirror_fork
         && let Some(ref pi) = effective_runtime.persona_instructions
     {
@@ -990,11 +988,6 @@ pub(crate) async fn run_shell_child(
         forked_conversation.insert(insert_at, reminder);
         inherited_prefix_len += 1;
     }
-    let effective_source_str = match &context_source {
-        InitialContextSource::New => "new",
-        InitialContextSource::Forked => "forked",
-        InitialContextSource::Resumed => "resumed",
-    };
     let subagent_meta = SubagentMeta {
         subagent_id: subagent_id.clone(),
         attempt_id: attempt_id.clone(),
@@ -1010,9 +1003,7 @@ pub(crate) async fn run_shell_child(
         tool_calls: None,
         turns: None,
         error: None,
-        effective_context_source: Some(effective_source_str.to_string()),
-        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
-        fork_copy_error: fork_copy_error.clone(),
+        context: context_source.clone(),
         persona: effective_runtime.persona.clone(),
         resumed_from: request.resume_from.clone(),
         child_cwd: Some(child_session_info.cwd.clone()),
@@ -1051,8 +1042,7 @@ pub(crate) async fn run_shell_child(
         parent_prompt_id: request.parent_prompt_id.clone(),
         subagent_type: request.subagent_type.clone(),
         description: request.description.clone(),
-        effective_context_source: Some(effective_source_str.to_string()),
-        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
+        context: context_source.clone(),
         capability_mode: effective_runtime
             .capability_mode
             .and_then(|m| serde_json::to_value(m).ok())
@@ -1449,7 +1439,7 @@ pub(crate) async fn run_shell_child(
         queued_ms: queued_for.map(|queued| u64::try_from(queued.as_millis()).unwrap_or(u64::MAX)),
         session_running: u32::try_from(session_running).unwrap_or(u32::MAX),
         persona: request.runtime_overrides.persona.clone(),
-        fork_context: matches!(context_source, InitialContextSource::Forked),
+        fork_context: matches!(context_source, SubagentContext::Forked(_)),
         resume_from: request.resume_from.clone(),
         isolated_worktree: worktree_path.is_some(),
         mcp_inherited_count,

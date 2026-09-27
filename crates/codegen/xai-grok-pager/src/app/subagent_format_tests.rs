@@ -61,19 +61,50 @@ fn subagent_meta_line_joins_present_fields() {
     }
 }
 
+/// Badges for `SubagentSpawned` context fields as persisted in `updates.jsonl`.
+fn badge_for_wire(fields: serde_json::Value) -> String {
+    let mut info = make_info();
+    info.attempt.context = serde_json::from_value(fields).expect("wire context");
+    format_context_badge(&info).into_owned()
+}
+
 #[test]
 fn context_badge_shown_only_for_resumed_and_forked() {
     let cases = [
-        (Some("resumed"), "resumed"),
-        (Some("forked"), "forked"),
-        (Some("new"), ""),
-        (None, ""),
+        (serde_json::json!({"effective_context_source": "resumed"}), "resumed"),
+        (serde_json::json!({"effective_context_source": "forked"}), "forked"),
+        (serde_json::json!({"effective_context_source": "new"}), ""),
+        (serde_json::json!({}), ""),
     ];
-    for (source, expected) in cases {
-        let mut info = make_info();
-        info.attempt.context_source = source.map(Into::into);
-        assert_eq!(format_context_badge(&info), expected, "source={source:?}");
+    for (fields, expected) in cases {
+        assert_eq!(badge_for_wire(fields.clone()), expected, "{fields}");
     }
+}
+
+#[test]
+fn badge_shows_fork_failed_for_new_with_error() {
+    let failed = badge_for_wire(serde_json::json!({
+        "effective_context_source": "new",
+        "fork_copy_error": "no inheritable parent content after filtering"
+    }));
+    assert!(failed.starts_with("fresh (fork failed:"), "{failed}");
+    assert!(failed.contains("no inheritable parent content"), "{failed}");
+    assert_ne!(
+        failed,
+        badge_for_wire(serde_json::json!({"effective_context_source": "new"})),
+        "a failed fork must not look like a plain fresh spawn"
+    );
+}
+
+#[test]
+fn badge_shows_summarized_fork() {
+    let summarized = badge_for_wire(serde_json::json!({
+        "effective_context_source": "forked",
+        "context_normalized": true
+    }));
+    let verbatim = badge_for_wire(serde_json::json!({"effective_context_source": "forked"}));
+    assert!(summarized.contains("summarized"), "{summarized}");
+    assert_ne!(summarized, verbatim);
 }
 
 #[test]

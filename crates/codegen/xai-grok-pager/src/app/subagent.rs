@@ -20,11 +20,13 @@
 //! The spawn path itself never reads the child transcript (the MB-scale `updates.jsonl`), so a burst of spawns cannot block the UI thread.
 //! The small `meta.json` enrichment ([`enrich_from_meta`]) is a separate, bounded read.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde::Deserialize;
+use xai_grok_shell::extensions::subagent_context::{ForkMode, SubagentContext};
 use xai_grok_shell::session::storage::{
     ReplayEmission, ReplayLookupFallback, ReplayPathHint, ReplayedUpdate, replay_would_emit,
     stream_replay_updates_at_hinted,
@@ -47,14 +49,11 @@ pub struct SubagentAttemptInfo {
     pub persona: Option<Arc<str>>,
     pub role: Option<Arc<str>>,
     pub model: Option<Arc<str>>,
-    /// "new" or "resumed".
-    pub context_source: Option<Arc<str>>,
+    pub context: SubagentContext,
     pub resumed_from: Option<Arc<str>>,
     /// "read-only", "read-write", "execute", or "all".
     pub capability_mode: Option<Arc<str>>,
     pub workflow_run_id: Option<Arc<str>>,
-    /// Whether the context was normalized into `<background_context>`.
-    pub context_normalized: bool,
     pub parent_prompt_id: Option<Arc<str>>,
     pub started_at: Instant,
     /// Latest progress/finish update, else `started_at`; the dashboard's "last activity" sort key.
@@ -371,6 +370,14 @@ fn effective_grok_home() -> std::path::PathBuf {
 }
 
 #[cfg(test)]
+fn effective_grok_home() -> std::path::PathBuf {
+    if let Some(home) = REPLAY_GROK_HOME.with(|h| h.borrow().clone()) {
+        return home;
+    }
+    xai_grok_shell::util::grok_home::grok_home()
+}
+
+#[cfg(test)]
 thread_local! {
     static REPLAY_GROK_HOME: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
@@ -380,14 +387,6 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn set_replay_grok_home_for_tests(home: Option<std::path::PathBuf>) {
     REPLAY_GROK_HOME.with(|h| *h.borrow_mut() = home);
-}
-
-#[cfg(test)]
-fn effective_grok_home() -> std::path::PathBuf {
-    if let Some(home) = REPLAY_GROK_HOME.with(|h| h.borrow().clone()) {
-        return home;
-    }
-    xai_grok_shell::util::grok_home::grok_home()
 }
 
 /// Best-effort enrichment from the shell's on-disk `meta.json`.
@@ -521,11 +520,10 @@ pub(crate) mod test_support {
                 persona: None,
                 role: None,
                 model: None,
-                context_source: None,
+                context: super::SubagentContext::Unreported,
                 resumed_from: None,
                 capability_mode: None,
                 workflow_run_id: None,
-                context_normalized: false,
                 parent_prompt_id: None,
                 started_at: now,
                 last_progress_at: now,
@@ -719,7 +717,7 @@ fn restore_or_finalize_after_replay(
 }
 
 fn is_resumed_child(info: &SubagentInfo) -> bool {
-    info.attempt.resumed_from.is_some() || info.attempt.context_source.as_deref() == Some("resumed")
+    info.attempt.resumed_from.is_some() || info.attempt.context == SubagentContext::Resumed
 }
 
 /// A resumed child's source transcript is copied into its session dir, and the live stream never repeats it.
@@ -920,11 +918,16 @@ fn dedup_persona_role<'a, 'b>(
     }
 }
 
-pub(crate) fn format_context_badge(info: &SubagentInfo) -> &str {
-    match info.attempt.context_source.as_deref() {
-        Some("resumed") => "resumed",
-        Some("forked") => "forked",
-        _ => "",
+/// A plain fresh spawn stays unbadged; a fork that fell back to fresh names its reason so it never looks like one.
+pub(crate) fn format_context_badge(info: &SubagentInfo) -> Cow<'static, str> {
+    match &info.attempt.context {
+        SubagentContext::Unreported | SubagentContext::Fresh => Cow::Borrowed(""),
+        SubagentContext::Resumed => Cow::Borrowed("resumed"),
+        SubagentContext::Forked(ForkMode::Verbatim) => Cow::Borrowed("forked"),
+        SubagentContext::Forked(ForkMode::Summarized) => Cow::Borrowed("forked·summarized"),
+        SubagentContext::ForkFailed(failure) => {
+            Cow::Owned(format!("fresh (fork failed: {failure})"))
+        }
     }
 }
 

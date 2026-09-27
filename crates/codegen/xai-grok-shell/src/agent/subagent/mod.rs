@@ -14,6 +14,7 @@
 use crate::agent::config::{resolve_credentials, sampling_config_for_model};
 use crate::agent::remote_config::resolve_catalog_key;
 use crate::extensions::notification::{SessionNotification, SessionUpdate};
+use crate::extensions::subagent_context::{ForkFailure, ForkMode, SubagentContext};
 use crate::session::{
     self, SessionCommand, SessionHandle, commands::PromptTurnResult as SubagentPromptTurnResult,
     fs_watch::FsWatchCapabilities, info::Info as SessionInfo,
@@ -67,17 +68,6 @@ pub(crate) use prompt_turn_receipt::PromptTurnReceipt;
 /// See [`SubagentsConfig::resolve_sampling_limit`].
 /// [`SubagentsConfig::resolve_sampling_limit`]: crate::config::SubagentsConfig::resolve_sampling_limit
 pub(crate) const MAX_SUBAGENT_SAMPLING_LIMIT: usize = 512;
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum InitialContextSource {
-    /// Fresh session: no inherited history.
-    New,
-    /// Parent history as `<background_context>` (harness-only chat-prefix fork).
-    Forked,
-    /// Resumed from a previously completed peer subagent.
-    /// The child inherits the source's raw transcript, tool state, and model.
-    /// System prompt and prompt context are freshly rendered from the current agent definition.
-    Resumed,
-}
 /// Captured parent-side tier inputs for resolving `auto_compact_threshold_percent` once the subagent's actual model id is known.
 /// Stored on [`SubagentSpawnContext`] so the resolver can run at spawn time and the per-model lookup honors the SUBAGENT's model, not the parent's.
 #[derive(Debug, Clone, Default)]
@@ -971,15 +961,39 @@ fn resolve_model_override_to_config(
     Some((config, canonical_model_id))
 }
 struct InitialContext {
-    source: InitialContextSource,
-    copy_error: Option<String>,
+    context: SubagentContext,
     prefix_len: Option<usize>,
     conversation: Vec<xai_grok_sampling_types::conversation::ConversationItem>,
     force_compact: bool,
-    /// True only for a verbatim mirror-fork (parent items copied byte-for-byte).
-    /// Gates sending the parent tool snapshot so the child's full request prefix matches the parent.
-    /// A summarized-fork fallback leaves this false.
-    verbatim_fork: bool,
+}
+impl InitialContext {
+    fn fresh(context: SubagentContext) -> Self {
+        Self {
+            context,
+            prefix_len: None,
+            conversation: vec![],
+            force_compact: false,
+        }
+    }
+    fn fork_failed(failure: ForkFailure) -> Self {
+        Self::fresh(SubagentContext::ForkFailed(failure))
+    }
+    fn forked(
+        mode: ForkMode,
+        conversation: Vec<xai_grok_sampling_types::conversation::ConversationItem>,
+        prefix_len: usize,
+    ) -> Self {
+        Self {
+            context: SubagentContext::Forked(mode),
+            prefix_len: Some(prefix_len),
+            conversation,
+            force_compact: false,
+        }
+    }
+    /// Only a verbatim mirror-fork sends the parent tool snapshot, so the child's full request prefix matches the parent.
+    fn is_verbatim_fork(&self) -> bool {
+        matches!(self.context, SubagentContext::Forked(ForkMode::Verbatim))
+    }
 }
 /// Resume bootstrap: preserve only the System head (see `resume_inherited_prefix_len`).
 fn resume_initial_context(
@@ -987,49 +1001,26 @@ fn resume_initial_context(
     force_compact: bool,
 ) -> InitialContext {
     InitialContext {
-        source: InitialContextSource::Resumed,
-        copy_error: None,
+        context: SubagentContext::Resumed,
         prefix_len: Some(resume_window::resume_inherited_prefix_len(&conversation)),
         conversation,
         force_compact,
-        verbatim_fork: false,
     }
 }
-/// Apply `fork_filter_chat` then normalize; empty or System-only input (no `<background_context>` produced) fails open to `New`.
+/// Apply `fork_filter_chat` then normalize; empty or System-only input (no `<background_context>` produced) fails open to a fresh child.
 fn forked_initial_context(
     mut items: Vec<xai_grok_sampling_types::conversation::ConversationItem>,
 ) -> InitialContext {
     crate::sampling::fork_filter_chat(&mut items);
     if items.is_empty() {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("empty parent conversation".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::EmptyParent);
     }
     let (conversation, prefix_len) =
         xai_grok_subagent_resolution::context::normalize_forked_context(items);
     if prefix_len < 2 {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("no inheritable parent content".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::NoInheritableContent);
     }
-    InitialContext {
-        source: InitialContextSource::Forked,
-        copy_error: None,
-        prefix_len: Some(prefix_len),
-        conversation,
-        force_compact: false,
-        verbatim_fork: false,
-    }
+    InitialContext::forked(ForkMode::Summarized, conversation, prefix_len)
 }
 /// A verbatim mirror requires a coherent tail: the conversation must end on a plain assistant text response (a clean turn boundary).
 /// A dangling assistant (unanswered tool calls), a trailing ToolResult (mid-turn), or a trailing user/reasoning means the prefix would be incoherent.
@@ -1053,28 +1044,14 @@ fn verbatim_or_normalize_fork(
         .iter()
         .any(|i| !matches!(i, ConversationItem::System(_)))
     {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("forked parent conversation has no inheritable content".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::NoInheritableContent);
     }
     let estimated_tokens = xai_chat_state::estimate_conversation_tokens(&items);
     const SAFE_FORK_PERCENT: u64 = 80;
     let threshold = child_context_window * SAFE_FORK_PERCENT / 100;
     if estimated_tokens <= threshold && conversation_tail_is_complete(&items) {
         let prefix_len = items.len();
-        return InitialContext {
-            source: InitialContextSource::Forked,
-            copy_error: None,
-            prefix_len: Some(prefix_len),
-            conversation: items,
-            force_compact: false,
-            verbatim_fork: true,
-        };
+        return InitialContext::forked(ForkMode::Verbatim, items, prefix_len);
     }
     let mut filtered = items;
     crate::sampling::fork_filter_chat(&mut filtered);
@@ -1082,30 +1059,11 @@ fn verbatim_or_normalize_fork(
         .iter()
         .any(|i| !matches!(i, ConversationItem::System(_)))
     {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("no inheritable parent content after filtering".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::NoInheritableContent);
     }
     let (conversation, prefix_len) =
         xai_grok_subagent_resolution::context::normalize_forked_context(filtered);
-    InitialContext {
-        source: InitialContextSource::Forked,
-        copy_error: None,
-        prefix_len: Some(prefix_len),
-        conversation,
-        force_compact: false,
-        verbatim_fork: false,
-    }
-}
-/// `true` only when the fork actually summarized (ran `normalize_forked_context`).
-/// A verbatim mirror-fork inherits items as-is and never normalizes, so it reports `false` even though its source is `Forked`.
-fn fork_context_normalized(source: &InitialContextSource, verbatim_fork: bool) -> bool {
-    matches!(source, InitialContextSource::Forked) && !verbatim_fork
+    InitialContext::forked(ForkMode::Summarized, conversation, prefix_len)
 }
 /// Stamp `subagent_fork` / `forked` on the child summary (live path; disk copy already stamps).
 fn stamp_live_fork_session_metadata(
@@ -1276,14 +1234,7 @@ async fn bootstrap_initial_context(
         return BootstrapInitialContext::Ready(resume_initial_context(conversation, force_compact));
     }
     if !request.fork_context {
-        return BootstrapInitialContext::Ready(InitialContext {
-            source: InitialContextSource::New,
-            copy_error: None,
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        });
+        return BootstrapInitialContext::Ready(InitialContext::fresh(SubagentContext::Fresh));
     }
     let live_items = match ctx.parent_chat_state.as_ref() {
         Some(chat_state) => {
@@ -1298,15 +1249,13 @@ async fn bootstrap_initial_context(
             subagent_id = %request.id,
             subagent_type = %request.subagent_type,
             loaded_items = ctx_out.conversation.len(),
-            source = ?ctx_out.source,
-            verbatim = ctx_out.verbatim_fork,
+            context = ?ctx_out.context,
             "Forked context from live parent_chat_state"
         );
-        if matches!(ctx_out.source, InitialContextSource::Forked) {
-            let marker = if ctx_out.verbatim_fork {
-                "forked_verbatim"
-            } else {
-                "forked_summarized"
+        if let SubagentContext::Forked(mode) = ctx_out.context {
+            let marker = match mode {
+                ForkMode::Verbatim => "forked_verbatim",
+                ForkMode::Summarized => "forked_summarized",
             };
             stamp_live_fork_session_metadata(
                 child_session_info,
@@ -1369,14 +1318,9 @@ async fn bootstrap_initial_context(
                     error = %e,
                     "Failed to fork-copy parent session, falling back to fresh"
                 );
-                BootstrapInitialContext::Ready(InitialContext {
-                    source: InitialContextSource::New,
-                    copy_error: Some(err_msg),
-                    prefix_len: None,
-                    conversation: vec![],
-                    force_compact: false,
-                    verbatim_fork: false,
-                })
+                BootstrapInitialContext::Ready(InitialContext::fork_failed(
+                    ForkFailure::CopyFailed(err_msg),
+                ))
             }
         };
     }
@@ -1385,14 +1329,7 @@ async fn bootstrap_initial_context(
         subagent_type = %request.subagent_type,
         "fork_context=true but no live parent conversation or parent_session_info; falling back to fresh"
     );
-    BootstrapInitialContext::Ready(InitialContext {
-        source: InitialContextSource::New,
-        copy_error: Some("parent conversation unavailable".to_string()),
-        prefix_len: None,
-        conversation: vec![],
-        force_compact: false,
-        verbatim_fork: false,
-    })
+    BootstrapInitialContext::Ready(InitialContext::fork_failed(ForkFailure::ParentUnavailable))
 }
 /// Resolve the effective working directory for a child session.
 /// Precedence: worktree path > `override_cwd` (non-empty) > parent cwd.
@@ -2120,15 +2057,9 @@ pub(crate) struct SubagentMeta {
     pub turns: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Effective context source after bootstrap: "new" or "resumed".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effective_context_source: Option<String>,
-    /// True only for a summarized (normalized) fork; false for verbatim mirror-forks, resume, and new sessions.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub context_normalized: bool,
-    /// Error message if fork-copy failed and fell back to fresh.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fork_copy_error: Option<String>,
+    /// Context the child actually started with (wire: `effective_context_source` / `context_normalized` / `fork_copy_error`).
+    #[serde(flatten)]
+    pub context: SubagentContext,
     /// Named persona applied to this subagent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona: Option<String>,
@@ -2241,7 +2172,7 @@ impl SubagentSessionMetadata {
             description: meta.description.clone(),
             role: role.map(str::to_string),
             persona: meta.persona.clone(),
-            context_normalized: meta.context_normalized,
+            context_normalized: meta.context.is_summarized_fork(),
             capability_mode: capability_mode.map(str::to_string),
             reasoning_effort: reasoning_effort.map(str::to_string),
             model_id: model_id.map(str::to_string),
@@ -2256,7 +2187,7 @@ impl SubagentSessionMetadata {
             tool_calls: meta.tool_calls,
             turns: meta.turns,
             error: meta.error.clone(),
-            fork_copy_error: meta.fork_copy_error.clone(),
+            fork_copy_error: meta.context.fork_failure().map(ToString::to_string),
             resumed_from: meta.resumed_from.clone(),
         }
     }

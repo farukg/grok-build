@@ -1300,8 +1300,7 @@ fn forked_initial_context_normalizes_parent_history() {
             ConversationItem::assistant("noted"),
         ];
     let ctx = forked_initial_context(items);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
-    assert!(ctx.copy_error.is_none());
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert_eq!(ctx.prefix_len, Some(2));
     assert_eq!(ctx.conversation.len(), 2);
     if let Some(ConversationItem::User(u)) = ctx.conversation.get(1) {
@@ -1336,7 +1335,7 @@ fn forked_initial_context_inherits_parent_across_reasoning() {
             ConversationItem::assistant("ack"),
         ];
     let ctx = forked_initial_context(items);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert_eq!(ctx.prefix_len, Some(2));
     assert_eq!(ctx.conversation.len(), 2);
     if let Some(ConversationItem::User(u)) = ctx.conversation.get(1) {
@@ -1365,9 +1364,8 @@ fn forked_initial_context_inherits_parent_across_reasoning() {
 #[test]
 fn forked_initial_context_empty_fails_open_to_new() {
     let ctx = forked_initial_context(vec![]);
-    assert_eq!(ctx.source, InitialContextSource::New);
+    assert_eq!(ctx.context, SubagentContext::ForkFailed(ForkFailure::EmptyParent));
     assert!(ctx.conversation.is_empty());
-    assert!(ctx.copy_error.is_some());
 }
 #[test]
 fn resume_vs_fork_helper_shapes_differ() {
@@ -1379,8 +1377,8 @@ fn resume_vs_fork_helper_shapes_differ() {
         ];
     let resumed = resume_initial_context(resume_items.clone(), false);
     let forked = forked_initial_context(resume_items);
-    assert_eq!(resumed.source, InitialContextSource::Resumed);
-    assert_eq!(forked.source, InitialContextSource::Forked);
+    assert_eq!(resumed.context, SubagentContext::Resumed);
+    assert_eq!(forked.context, SubagentContext::Forked(ForkMode::Summarized));
     assert!(resumed.conversation.len() > forked.conversation.len());
     assert!(!matches!(
             resumed.conversation.get(1),
@@ -1402,7 +1400,7 @@ fn forked_initial_context_applies_fork_filter_before_normalize() {
             ConversationItem::user("INCOMPLETE_TRAILING"),
         ];
     let ctx = forked_initial_context(items);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     if let Some(ConversationItem::User(u)) = ctx.conversation.get(1) {
         let text: String = u
             .content
@@ -1444,9 +1442,8 @@ fn verbatim_fork_keeps_items_byte_for_byte_when_small() {
             ConversationItem::assistant("ack"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
     assert!(
-            ctx.verbatim_fork,
+            ctx.is_verbatim_fork(),
             "a small, complete-tail parent must mirror verbatim"
         );
     assert_eq!(ctx.prefix_len, Some(5));
@@ -1511,9 +1508,9 @@ fn verbatim_fork_falls_back_to_summary_on_incomplete_tail() {
             }),
         ];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert!(
-            !ctx.verbatim_fork,
+            !ctx.is_verbatim_fork(),
             "an incomplete (dangling tool call) tail must fall back to summary"
         );
     assert_eq!(ctx.prefix_len, Some(2));
@@ -1535,10 +1532,8 @@ fn summarized_fork_is_not_a_verbatim_mirror() {
             ConversationItem::assistant("ack"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 1);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
-    assert!(!ctx.verbatim_fork);
-    let verbatim_mirror_fork = ctx.source == InitialContextSource::Forked
-        && ctx.verbatim_fork;
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
+    let verbatim_mirror_fork = ctx.is_verbatim_fork();
     assert!(
             !verbatim_mirror_fork,
             "a summarized fork must NOT be treated as a verbatim mirror"
@@ -1553,9 +1548,9 @@ fn verbatim_fork_falls_back_to_summary_when_oversize() {
             ConversationItem::assistant("ack one"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 1);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert!(
-            !ctx.verbatim_fork,
+            !ctx.is_verbatim_fork(),
             "oversize parent must fall back to summary"
         );
     assert_eq!(ctx.prefix_len, Some(2));
@@ -1577,34 +1572,24 @@ fn verbatim_fork_empty_after_filter_fails_open_to_new() {
     use xai_grok_sampling_types::conversation::ConversationItem;
     let items = vec![ConversationItem::user("/goal do the thing")];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
-    assert_eq!(ctx.source, InitialContextSource::New);
-    assert!(!ctx.verbatim_fork);
+    assert_eq!(
+        ctx.context,
+        SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
+    );
     assert!(ctx.conversation.is_empty());
 }
 #[test]
 fn forked_initial_context_system_only_fails_open_to_new() {
     use xai_grok_sampling_types::conversation::ConversationItem;
     let ctx = forked_initial_context(vec![ConversationItem::system("sys")]);
-    assert_eq!(ctx.source, InitialContextSource::New);
-    assert!(!ctx.verbatim_fork);
+    assert_eq!(
+        ctx.context,
+        SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
+    );
     assert!(ctx.conversation.is_empty());
-    assert!(ctx.copy_error.is_some());
 }
 #[test]
 fn fork_context_normalized_only_for_summarized() {
-    assert!(!fork_context_normalized(
-            &InitialContextSource::Forked,
-            true
-        ));
-    assert!(fork_context_normalized(
-            &InitialContextSource::Forked,
-            false
-        ));
-    assert!(!fork_context_normalized(&InitialContextSource::New, false));
-    assert!(!fork_context_normalized(
-            &InitialContextSource::Resumed,
-            false
-        ));
     use xai_grok_sampling_types::conversation::ConversationItem;
     let verbatim = verbatim_or_normalize_fork(
         vec![
@@ -1614,11 +1599,8 @@ fn fork_context_normalized_only_for_summarized() {
             ],
         256_000,
     );
-    assert!(verbatim.verbatim_fork);
-    assert!(!fork_context_normalized(
-            &verbatim.source,
-            verbatim.verbatim_fork
-        ));
+    assert_eq!(verbatim.context, SubagentContext::Forked(ForkMode::Verbatim));
+    assert!(!verbatim.context.is_summarized_fork());
     let summarized = verbatim_or_normalize_fork(
         vec![
                 ConversationItem::system("sys"),
@@ -1627,11 +1609,7 @@ fn fork_context_normalized_only_for_summarized() {
             ],
         1,
     );
-    assert!(!summarized.verbatim_fork);
-    assert!(fork_context_normalized(
-            &summarized.source,
-            summarized.verbatim_fork
-        ));
+    assert!(summarized.context.is_summarized_fork());
 }
 fn bootstrap_test_request(fork_context: bool) -> SubagentRequest {
     SubagentRequest {
@@ -1701,7 +1679,7 @@ async fn bootstrap_in_place_resume_reads_existing_transcript() {
         .await;
     match out {
         BootstrapInitialContext::Ready(initial) => {
-            assert_eq!(initial.source, InitialContextSource::Resumed);
+            assert_eq!(initial.context, SubagentContext::Resumed);
             assert_eq!(initial.conversation.len(), 2);
         }
         BootstrapInitialContext::ResumeAbort(message) => {
@@ -1732,9 +1710,8 @@ async fn bootstrap_no_fork_is_new() {
         .await;
     match out {
         BootstrapInitialContext::Ready(ic) => {
-            assert_eq!(ic.source, InitialContextSource::New);
+            assert_eq!(ic.context, SubagentContext::Fresh);
             assert!(ic.conversation.is_empty());
-            assert!(ic.copy_error.is_none());
         }
         BootstrapInitialContext::ResumeAbort(m) => panic!("unexpected abort: {m}"),
     }
@@ -1764,8 +1741,10 @@ async fn bootstrap_fork_without_parent_fails_open() {
         .await;
     match out {
         BootstrapInitialContext::Ready(ic) => {
-            assert_eq!(ic.source, InitialContextSource::New);
-            assert!(ic.copy_error.is_some());
+            assert_eq!(
+                ic.context,
+                SubagentContext::ForkFailed(ForkFailure::ParentUnavailable)
+            );
         }
         BootstrapInitialContext::ResumeAbort(m) => {
             panic!("fork must fail open, not abort: {m}")
@@ -1807,10 +1786,8 @@ async fn bootstrap_fork_live_parent_chat_state_is_forked_with_marker() {
         .await;
     match out {
         BootstrapInitialContext::Ready(ic) => {
-            assert_eq!(ic.source, InitialContextSource::Forked);
-            assert!(ic.copy_error.is_none());
             assert!(
-                    ic.verbatim_fork,
+                    ic.is_verbatim_fork(),
                     "small complete-tail parent must mirror verbatim"
                 );
             assert_eq!(ic.conversation.len(), 3);
