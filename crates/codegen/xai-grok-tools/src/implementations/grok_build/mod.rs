@@ -65,6 +65,8 @@ pub use scheduler::delete::{SCHEDULER_DELETE_TOOL_NAME, SchedulerDeleteTool};
 pub use scheduler::list::SchedulerListTool;
 pub use search_replace::SearchReplaceTool;
 pub use send_feedback::{SEND_FEEDBACK_TOOL_NAME, SendFeedbackTool};
+pub mod control_subagent;
+pub use task::ControlSubagentTool;
 pub use send_subagent_message::{
     SEND_SUBAGENT_MESSAGE_TOOL_NAME, SendSubagentMessageDisposition, SendSubagentMessageTool,
 };

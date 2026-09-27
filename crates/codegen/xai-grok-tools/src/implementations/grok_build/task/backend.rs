@@ -15,10 +15,11 @@ use tokio::sync::{mpsc, oneshot};
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
     HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest,
-    SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
-    SubagentDescribeRequest, SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest,
-    SubagentInspectRequest, SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest,
-    SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest,
+    SubagentActor, SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest,
+    SubagentCancelTarget, SubagentDescribeOutcome, SubagentDescribeRequest, SubagentEvent,
+    SubagentEventSender, SubagentHandOffForegroundRequest, SubagentInspectRequest,
+    SubagentInspection, SubagentListOwnedRequest, SubagentListRunningRequest,
+    SubagentQueryRequest, SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest,
     SubagentResolveResumeRequest, SubagentResult, SubagentResumeError, SubagentResumeTarget,
     SubagentSnapshot, SubagentSpawnRequest, SubagentSpawnedRefsRequest,
     SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
@@ -69,7 +70,11 @@ pub trait SubagentBackend: Send + Sync + 'static {
     }
 
     /// Request cancellation of a subagent by ID.
-    async fn cancel(&self, id: &str) -> SubagentCancelOutcome;
+    async fn cancel_with_disposition(&self, id: &str, actor: SubagentActor, disposition: SubagentCancelDisposition) -> SubagentCancelOutcome;
+
+    async fn cancel(&self, id: &str) -> SubagentCancelOutcome {
+        self.cancel_with_disposition(id, SubagentActor::ParentModel { session_id: String::new() }, SubagentCancelDisposition::Stop).await
+    }
 
     /// Validate a subagent type synchronously before spawning.
     /// Returns `CoordinatorGone` on channel close and `ValidationUnavailable`
@@ -312,6 +317,8 @@ impl ChannelBackend {
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: self.parent_session_id(),
                 target: SubagentCancelTarget::ParentPromptId(parent_prompt_id.to_owned()),
+                actor: SubagentActor::ParentTurn { prompt_id: parent_prompt_id.to_owned() },
+                disposition: SubagentCancelDisposition::Stop,
                 respond_to,
             }))
             .is_err()
@@ -344,8 +351,10 @@ impl ChannelBackend {
         self.tx
             .event_sender()
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
-                parent_session_id: Some(parent_session_id),
+                parent_session_id: Some(parent_session_id.clone()),
                 target: SubagentCancelTarget::ParentSession,
+                actor: SubagentActor::SessionStop { session_id: parent_session_id.clone() },
+                disposition: SubagentCancelDisposition::Stop,
                 respond_to,
             }))
             .is_ok()
@@ -415,6 +424,17 @@ impl ChannelBackend {
             }))
             .is_err()
         {
+            return Vec::new();
+        }
+        response_rx.await.unwrap_or_default()
+    }
+
+    pub async fn list_owned(&self, parent_session_id: &str) -> Vec<SubagentInspection> {
+        let (respond_to, response_rx) = oneshot::channel();
+        if self.tx.send(SubagentEvent::ListOwned(SubagentListOwnedRequest {
+            parent_session_id: parent_session_id.to_owned(),
+            respond_to,
+        })).is_err() {
             return Vec::new();
         }
         response_rx.await.unwrap_or_default()
@@ -652,7 +672,7 @@ impl SubagentBackend for ChannelBackend {
             .unwrap_or(Err(SubagentResumeError::CoordinatorUnavailable))
     }
 
-    async fn cancel(&self, id: &str) -> SubagentCancelOutcome {
+    async fn cancel_with_disposition(&self, id: &str, actor: SubagentActor, disposition: SubagentCancelDisposition) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
         let sent = self
             .tx
@@ -660,6 +680,8 @@ impl SubagentBackend for ChannelBackend {
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: self.parent_session_id(),
                 target: SubagentCancelTarget::SubagentId(id.to_string()),
+                actor,
+                disposition,
                 respond_to,
             }));
         if sent.is_err() {

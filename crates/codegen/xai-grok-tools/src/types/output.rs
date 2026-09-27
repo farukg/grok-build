@@ -591,6 +591,7 @@ pub enum ToolOutput {
     AskUserQuestion(AskUserQuestionOutput),
     #[serde(alias = "SendAgentMessage")]
     SendSubagentMessage(SendSubagentMessageOutput),
+    ControlSubagent(crate::implementations::grok_build::control_subagent::ControlSubagentOutput),
     Monitor(crate::implementations::grok_build::monitor::types::MonitorOutput),
     SchedulerCreate(crate::implementations::grok_build::scheduler::create::SchedulerCreateOutput),
     SchedulerDelete(crate::implementations::grok_build::scheduler::delete::SchedulerDeleteOutput),
@@ -638,6 +639,8 @@ impl ToolOutput {
             ToolOutput::ApplyPatch(ApplyPatchOutput::Success { .. }) => false,
             ToolOutput::ApplyPatch(_) => true,
             ToolOutput::CodexGrepFiles(CodexGrepFilesOutput::Error(_)) => true,
+            ToolOutput::ControlSubagent(crate::implementations::grok_build::control_subagent::ControlSubagentOutput::NotFound { .. }) => true,
+            ToolOutput::ControlSubagent(_) => false,
             ToolOutput::SendSubagentMessage(output) => {
                 matches!(
                 output.disposition(),
@@ -912,6 +915,7 @@ impl ToolOutput {
                 | AskUserQuestionOutput::UserAnswered { message },
             ) => message.clone(),
             ToolOutput::SendSubagentMessage(output) => output.to_string(),
+            ToolOutput::ControlSubagent(output) => serde_json::to_string(output).unwrap_or_else(|_| "Subagent control result unavailable".to_owned()),
             ToolOutput::Monitor(o) => {
                 if o.persistent {
                     format!(

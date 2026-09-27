@@ -485,15 +485,18 @@ fn format_subagent_task_output(c: &SubagentCompletionSummary, poll_tool: Option<
     let output = format_subagent_snapshot(&snapshot, WaitHint::NotRequested);
     ToolOutput::TaskOutput(output).to_prompt_format()
 }
-fn outcome_words(c: &SubagentCompletionSummary) -> (&'static str, &'static str) {
+fn outcome_words(c: &SubagentCompletionSummary) -> (String, String) {
     match c.snapshot.status {
         SubagentSnapshotStatus::Completed { .. } => {
-            ("completed successfully", "completed successfully")
+            ("completed successfully".to_owned(), "completed successfully".to_owned())
         }
-        SubagentSnapshotStatus::Failed { .. } => ("completed with failure", "failed"),
-        SubagentSnapshotStatus::Cancelled { .. } => ("was cancelled", "cancelled"),
+        SubagentSnapshotStatus::Failed { .. } => ("completed with failure".to_owned(), "failed".to_owned()),
+        SubagentSnapshotStatus::Cancelled { cause, .. } => match cause {
+            Some(cause) => ("was interrupted".to_owned(), format!("interrupted: {cause}")),
+            None => ("was cancelled".to_owned(), "cancelled".to_owned()),
+        },
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
-            ("is still running", "running")
+            ("is still running".to_owned(), "running".to_owned())
         }
     }
 }
@@ -679,6 +682,7 @@ pub fn consumed_completion_ids(output: &ToolOutput) -> Vec<&str> {
         | ToolOutput::ExitPlanMode(_)
         | ToolOutput::AskUserQuestion(_)
         | ToolOutput::SendSubagentMessage(_)
+        | ToolOutput::ControlSubagent(_)
         | ToolOutput::Monitor(_)
         | ToolOutput::SchedulerCreate(_)
         | ToolOutput::SchedulerDelete(_)

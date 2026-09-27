@@ -149,6 +149,28 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             })
     }
 
+    pub(super) fn handle_list_owned(
+        &mut self,
+        parent_session_id: String,
+        respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+    ) {
+        let mut inspections: Vec<_> = self.active.values()
+            .filter(|child| self.graph.is_reachable_from(&child.request.id, &parent_session_id) && !child.request.owner.is_workflow())
+            .map(|child| running_inspection(running_seed(child), SubagentProgress::default()))
+            .collect();
+        inspections.extend(self.pending.values()
+            .filter(|child| self.graph.is_reachable_from(&child.request.id, &parent_session_id) && !child.request.owner.is_workflow())
+            .map(pending_inspection));
+        inspections.extend(self.queued.iter()
+            .filter(|child| self.graph.is_reachable_from(&child.request.id, &parent_session_id) && !child.request.owner.is_workflow())
+            .map(|child| queued_inspection(&child.request, child.queued_at.into_std())));
+        inspections.extend(self.completed.values()
+            .filter(|child| self.graph.is_reachable_from(&child.request.id, &parent_session_id) && !child.request.owner.is_workflow())
+            .map(|child| self.completed_inspection_for_query(child)));
+        inspections.sort_by(|a, b| a.snapshot.started_at_epoch_ms.cmp(&b.snapshot.started_at_epoch_ms));
+        let _ = respond_to.send(inspections);
+    }
+
     pub(super) fn handle_list_running(
         &mut self,
         parent_session_id: String,

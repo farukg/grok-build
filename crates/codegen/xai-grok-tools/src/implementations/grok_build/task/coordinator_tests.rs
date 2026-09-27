@@ -1566,6 +1566,8 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::WorkflowRunId("workflow-run".to_owned()),
+            actor: SubagentActor::Runtime,
+            disposition: SubagentCancelDisposition::Stop,
             respond_to: cancel_respond_to,
         }))
         .expect("actor command channel open");
@@ -2035,6 +2037,8 @@ async fn queued_resume_inherits_the_source_type_before_admission() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued-resume".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
@@ -2104,6 +2108,8 @@ async fn queued_resume_inherits_a_durable_source_type_before_admission() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued-resume".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
@@ -2189,6 +2195,8 @@ async fn resolved_subagent_type_updates_a_queued_record() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued-resume".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
@@ -4385,6 +4393,8 @@ async fn a_cancel_command_by_id_resolves_a_queued_spawn() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");

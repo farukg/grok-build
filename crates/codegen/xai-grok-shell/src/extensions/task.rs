@@ -131,6 +131,14 @@ struct ListRunningSubagentsRequest {
     session_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListSubagentsRequest { session_id: String }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListSubagentsResponse { subagents: Vec<SubagentSnapshotDto> }
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ListRunningSubagentsResponse {
@@ -227,6 +235,7 @@ struct SubagentSnapshotDto {
     started_at_epoch_ms: u64,
     duration_ms: u64,
     status: String,
+    state: xai_tool_types::SubagentState,
     // ── Running fields (present only when status == "running") ────
     #[serde(skip_serializing_if = "Option::is_none")]
     turn_count: Option<u32>,
@@ -281,7 +290,8 @@ impl SubagentSnapshotDto {
             description: snap.description,
             started_at_epoch_ms: snap.started_at_epoch_ms,
             duration_ms: snap.duration_ms,
-            status: String::new(),
+            status: snap.legacy_status,
+            state: snap.state.clone(),
             turn_count: None,
             tool_call_count: None,
             tokens_used: None,
@@ -337,8 +347,7 @@ impl SubagentSnapshotDto {
                 dto.status = "failed".into();
                 dto.failure_error = Some(error);
             }
-            SubagentSnapshotStatus::Cancelled { reason } => {
-                dto.status = "cancelled".into();
+            SubagentSnapshotStatus::Cancelled { reason, .. } => {
                 dto.cancel_reason = reason;
             }
         }
@@ -466,6 +475,14 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
                     )
                 }),
             }))
+        }
+        "x.ai/subagent/list" => {
+            let req: ListSubagentsRequest = parse(args)?;
+            let subagents = agent.list_owned_subagents(&req.session_id).await.into_iter().map(|inspection| {
+                let SubagentInspection { snapshot, parent_session_id, child_session_id, .. } = inspection;
+                SubagentSnapshotDto::from_snapshot(snapshot, parent_session_id, child_session_id, SubagentProvenance::default())
+            }).collect();
+            respond(Ok::<_, String>(ListSubagentsResponse { subagents }))
         }
         "x.ai/subagent/list_running" => {
             let req: ListRunningSubagentsRequest = parse(args)?;

@@ -26,6 +26,7 @@ use crate::implementations::grok_build::read_file::ReadFileInput;
 use crate::implementations::grok_build::search_replace::SearchReplaceInput;
 use crate::implementations::grok_build::send_feedback::SendFeedbackInput;
 use crate::implementations::grok_build::send_subagent_message::SendSubagentMessageInput;
+use crate::implementations::grok_build::control_subagent::ControlSubagentInput;
 use crate::implementations::grok_build::todo::TodoWriteInput;
 use crate::implementations::grok_build::update_goal::UpdateGoalInput;
 use crate::implementations::grok_build::video_gen::{ImageToVideoInput, ReferenceToVideoInput};
@@ -87,6 +88,7 @@ pub enum ToolInput {
     AskUserQuestion(AskUserQuestionInput),
     #[serde(alias = "SendAgentMessage")]
     SendSubagentMessage(SendSubagentMessageInput),
+    ControlSubagent(ControlSubagentInput),
     SendFeedback(SendFeedbackInput),
     Lsp(LspToolInput),
     Monitor(crate::implementations::grok_build::monitor::types::MonitorInput),

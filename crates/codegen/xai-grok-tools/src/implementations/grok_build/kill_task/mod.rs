@@ -224,7 +224,13 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                         .cloned()
                 };
                 if let Some(backend) = backend {
-                    let outcome = backend.backend().cancel(&input.task_id).await;
+                    let outcome = backend.backend().cancel_with_disposition(
+                        &input.task_id,
+                        crate::implementations::grok_build::task::types::SubagentActor::ParentModel {
+                            session_id: my_owner.clone().unwrap_or_default(),
+                        },
+                        crate::implementations::grok_build::task::types::SubagentCancelDisposition::Stop,
+                    ).await;
                     return Ok(match outcome {
                         SubagentCancelOutcome::Cancelled => {
                             KillTaskOutput::Result(KillTaskResult {

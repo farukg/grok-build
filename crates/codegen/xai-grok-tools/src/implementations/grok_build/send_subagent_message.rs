@@ -8,18 +8,18 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 
 pub const SEND_SUBAGENT_MESSAGE_TOOL_NAME: &str = "send_subagent_message";
 
-/// How the message reaches an active subagent. An inactive subagent always
-/// wakes and runs the text as its next turn.
+/// Delivery to an owned subagent. Choose `queue` to wait for its current turn to finish;
+/// choose `steer` to inject at its next tool/model step. Omitted delivery defaults to `steer`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SendSubagentMessageDelivery {
-    /// Join the current turn at its next safe point (default).
+    /// Deliver during the current turn at its next tool/model step.
     Steer,
-    /// Wait as a later turn.
+    /// Deliver after the current turn completes, as a later turn.
     Queue,
-    /// Arrives before a pending steer. It interrupts a subagent waiting on background work.
+    /// Deliver before a pending steer and interrupt background waiting.
     Interject,
 }
 
