@@ -170,6 +170,7 @@ mod prompt_stash;
 pub(in crate::app) use prompt_stash::prompt_history_text;
 pub use prompt_stash::{PromptStashEntry, StashCause};
 mod queue;
+pub(in crate::app) use queue::QueueRowSendNow;
 mod render;
 pub use render::{AppRenderParams, OverlayHeader};
 #[cfg(test)]

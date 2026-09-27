@@ -15,7 +15,7 @@ use crate::views::modal::{ActiveModal, EditConfirmResult, ModalConfirmation};
 use crate::views::queue_pane::QueueRowRef;
 
 use super::actions::Action;
-use super::agent_view::{AgentPane, AgentView, PromptInputMode};
+use super::agent_view::{AgentPane, AgentView, PromptInputMode, QueueRowSendNow};
 use super::app_view::InputOutcome;
 
 /// Toast for an edit attempted on an optimistic queue row whose enqueue RPC has not confirmed.
@@ -479,13 +479,20 @@ impl AgentView {
         if !self.session.state.is_turn_running() {
             return self.save_edited_queued_row(id, server_id, true);
         }
-        // Non-prompt rows stay queued (see `queue_row_prompt_like`): save the edit.
-        let row_prompt_like = self.queue_row_prompt_like(id);
-        if row_prompt_like == Some(false) {
-            self.show_toast("Can't send this mid-turn: it runs when the current turn ends");
-            return self.save_edited_queued_row(id, server_id, true);
+        // Only prompt rows interject their edited text; every other row keeps its edit and stays queued.
+        let row_send_now = self.queue_row_send_now(id);
+        match row_send_now {
+            Some(QueueRowSendNow::Prompt) | None => {}
+            Some(QueueRowSendNow::AgentCommand) => {
+                self.show_toast("Command edit saved: use Send now on the row to run it now");
+                return self.save_edited_queued_row(id, server_id, true);
+            }
+            Some(QueueRowSendNow::Deferred(deferral)) => {
+                self.show_toast(deferral.notice());
+                return self.save_edited_queued_row(id, server_id, true);
+            }
         }
-        if row_prompt_like.is_none() && kind != crate::app::agent::QueueEntryKind::Prompt {
+        if row_send_now.is_none() && kind != crate::app::agent::QueueEntryKind::Prompt {
             self.show_toast("Queued prompt is no longer in the queue");
             return self.save_edited_queued_row(id, server_id, true);
         }
