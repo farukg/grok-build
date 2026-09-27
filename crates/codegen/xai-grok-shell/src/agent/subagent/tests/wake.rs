@@ -111,7 +111,7 @@ fn prior_wake_meta(id: &str, model_id: &str) -> SubagentMeta {
         subagent_type: "general-purpose".to_owned(),
         description: "prior description".to_owned(),
         prompt: "prior prompt".to_owned(),
-        status: "completed".to_owned(),
+        status: SubagentMetaStatus::Completed,
         started_at: chrono::Utc::now(),
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(7),
@@ -519,7 +519,7 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
                 &std::fs::read_to_string(meta_dir.join("meta.json")).expect("completion meta"),
             )
             .expect("metadata");
-            assert_eq!(persisted.status, "completed");
+            assert_eq!(persisted.status, SubagentMetaStatus::Completed);
             let worktree = persisted.worktree_path.as_deref().expect("worktree path");
             assert!(!std::path::Path::new(worktree).exists());
             assert!(persisted.snapshot_ref.is_some());
@@ -588,7 +588,7 @@ async fn ordinary_spawn_disposes_worktree_when_only_remote_settings_enable_snaps
                 &std::fs::read_to_string(meta_dir.join("meta.json")).expect("completion meta"),
             )
             .expect("metadata");
-            assert_eq!(persisted.status, "completed");
+            assert_eq!(persisted.status, SubagentMetaStatus::Completed);
             let worktree = persisted.worktree_path.as_deref().expect("worktree path");
             assert!(
                 !std::path::Path::new(worktree).exists(),

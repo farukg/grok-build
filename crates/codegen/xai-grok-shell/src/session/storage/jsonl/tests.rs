@@ -619,6 +619,7 @@ async fn test_subagent_notifications_round_trip() {
             resumed_from: None,
             workflow_run_id: None,
             agent_address: None,
+            resume_fallback: None,
         },
         meta: None,
     };
@@ -773,6 +774,7 @@ async fn test_subagent_spawned_resumed_roundtrip() {
             resumed_from: Some("source-agent-id".to_string()),
             workflow_run_id: None,
             agent_address: None,
+            resume_fallback: None,
         },
         meta: None,
     };

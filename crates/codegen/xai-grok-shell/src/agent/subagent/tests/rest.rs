@@ -393,7 +393,7 @@ fn snapshot_ref_field_in_meta_roundtrips() {
     let meta = SubagentMeta {
         subagent_id: "sa-snap".into(),
         description: "snapshot task".into(),
-        status: "completed".into(),
+        status: SubagentMetaStatus::Completed,
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(10),
         tool_calls: Some(1),
@@ -436,7 +436,7 @@ fn base_meta() -> SubagentMeta {
         subagent_type: "general-purpose".into(),
         description: "task".into(),
         prompt: "do work".into(),
-        status: "running".into(),
+        status: SubagentMetaStatus::Running,
         started_at: chrono::Utc::now(),
         completed_at: None,
         duration_ms: None,
@@ -458,7 +458,7 @@ fn snapshot_test_meta(id: &str) -> SubagentMeta {
         subagent_id: id.into(),
         parent_session_id: "session-A".into(),
         child_session_id: format!("child-{id}"),
-        status: "completed".into(),
+        status: SubagentMetaStatus::Completed,
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(1),
         tool_calls: Some(0),
@@ -480,7 +480,7 @@ fn update_subagent_meta_snapshot_ref_persists_to_disk() {
             update_subagent_meta_snapshot_ref(
                 dir.path(),
                 "refs/grok/subagents/sa-write",
-                "completed"
+                SubagentMetaStatus::Completed
             ),
             "persisting the ref into an existing meta.json must report success"
         );
@@ -490,7 +490,7 @@ fn update_subagent_meta_snapshot_ref_persists_to_disk() {
             reread.snapshot_ref.as_deref(),
             Some("refs/grok/subagents/sa-write")
         );
-    assert_eq!(reread.status, "completed");
+    assert_eq!(reread.status, SubagentMetaStatus::Completed);
     assert_eq!(
             reread.worktree_path.as_deref(),
             Some("/tmp/grok-wt/subagent-x")
@@ -504,7 +504,7 @@ fn update_subagent_meta_snapshot_ref_reports_failure_when_meta_missing() {
     assert!(!update_subagent_meta_snapshot_ref(
             dir.path(),
             "refs/grok/subagents/sa-missing",
-            "completed"
+            SubagentMetaStatus::Completed
         ));
 }
 /// A stale non-terminal record (e.g. the completed-status write failed) is promoted to terminal alongside the snapshot_ref.
@@ -513,12 +513,12 @@ fn update_subagent_meta_snapshot_ref_reports_failure_when_meta_missing() {
 fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
     let dir = tempfile::TempDir::new().unwrap();
     let mut meta = snapshot_test_meta("sa-promote");
-    meta.status = "running".into();
+    meta.status = SubagentMetaStatus::Running;
     assert!(write_subagent_meta(dir.path(), &meta));
     assert!(update_subagent_meta_snapshot_ref(
             dir.path(),
             "refs/grok/subagents/x",
-            "completed"
+            SubagentMetaStatus::Completed
         ));
     let data = std::fs::read_to_string(dir.path().join("meta.json")).unwrap();
     let reread: SubagentMeta = serde_json::from_str(&data).unwrap();
@@ -526,7 +526,7 @@ fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
             Some("refs/grok/subagents/x"),
             reread.snapshot_ref.as_deref()
         );
-    assert_eq!("completed", reread.status);
+    assert_eq!(SubagentMetaStatus::Completed, reread.status);
 }
 /// With no config and no remote value, the gate defaults OFF and snapshotting is disabled.
 /// The completion path keeps the worktree (no production change).
@@ -603,7 +603,7 @@ async fn kept_worktree_leaves_no_resume_pointer() {
             &wt,
             &repo,
             &meta_dir,
-            "completed",
+            SubagentMetaStatus::Completed,
             "keeps-1",
         )
         .await;
@@ -645,7 +645,7 @@ async fn disposed_linked_worktree_persists_the_pointer_then_removes_the_director
             &wt,
             &repo,
             &meta_dir,
-            "completed",
+            SubagentMetaStatus::Completed,
             "reclaim-1",
         )
         .await;
@@ -683,7 +683,7 @@ async fn disposal_names_a_reflog_only_commit_before_removing_the_worktree() {
             &wt,
             &repo,
             &meta_dir,
-            "completed",
+            SubagentMetaStatus::Completed,
             "reclaim-2",
         )
         .await;
@@ -706,7 +706,7 @@ fn subagent_session_metadata_roundtrip() {
         child_session_id: "child-1".into(),
         description: "test task".into(),
         prompt: "do something".into(),
-        status: "completed".into(),
+        status: SubagentMetaStatus::Completed,
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(1234),
         tool_calls: Some(5),
@@ -833,7 +833,7 @@ fn upload_lifecycle_spawn_then_completion_preserves_fields() {
     assert_eq!(spawn_gcs.parent_prompt_id.as_deref(), Some("prompt-42"));
     assert_eq!(spawn_gcs.depth, 1);
     let mut completed_meta = spawn_meta.clone();
-    completed_meta.status = "completed".to_string();
+    completed_meta.status = SubagentMetaStatus::Completed;
     completed_meta.completed_at = Some(chrono::Utc::now());
     completed_meta.duration_ms = Some(5000);
     completed_meta.tool_calls = Some(12);
@@ -878,7 +878,7 @@ fn upload_lifecycle_failure_preserves_error() {
         subagent_type: "explore".into(),
         description: "d".into(),
         prompt: "p".into(),
-        status: "failed".to_string(),
+        status: SubagentMetaStatus::Failed,
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(100),
         tool_calls: Some(0),
@@ -1190,7 +1190,7 @@ fn durable_fallback_roundtrips_child_cwd_and_worktree() {
         child_session_id: "child-dur".into(),
         description: "d".into(),
         prompt: "p".into(),
-        status: "completed".into(),
+        status: SubagentMetaStatus::Completed,
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(100),
         tool_calls: Some(1),
@@ -1206,7 +1206,7 @@ fn durable_fallback_roundtrips_child_cwd_and_worktree() {
     let loaded: SubagentMeta = serde_json::from_str(&data).unwrap();
     assert_eq!(loaded.child_cwd.as_deref(), Some("/workspace/project"));
     assert_eq!(loaded.worktree_path.as_deref(), Some("/tmp/grok-wt/sa-dur"));
-    assert_eq!(loaded.status, "completed");
+    assert_eq!(loaded.status, SubagentMetaStatus::Completed);
     let _ = std::fs::remove_dir_all(&dir);
 }
 #[test]
@@ -1229,7 +1229,7 @@ fn durable_fallback_rejects_running_status() {
     write_subagent_meta(&parent_dir, &meta);
     let data = std::fs::read_to_string(parent_dir.join("meta.json")).unwrap();
     let loaded: SubagentMeta = serde_json::from_str(&data).unwrap();
-    let is_terminal = matches!(loaded.status.as_str(), "completed" | "failed" | "cancelled");
+    let is_terminal = loaded.status != SubagentMetaStatus::Running;
     assert!(
             !is_terminal,
             "status=running should NOT be considered terminal/resumable"
@@ -1427,7 +1427,7 @@ async fn reconcile_orphan_flips_running_meta_to_cancelled() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "cancelled");
+    assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
     assert_eq!(reread.tool_calls, Some(0));
     assert_eq!(reread.turns, Some(0));
     assert_eq!(
@@ -1462,7 +1462,7 @@ async fn reconcile_orphan_skips_shared_actor_live_child() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "running");
+    assert_eq!(reread.status, SubagentMetaStatus::Running);
 }
 #[tokio::test]
 async fn reconcile_reemits_shared_actor_terminal_outcome() {
@@ -1516,7 +1516,7 @@ async fn reconcile_reemits_shared_actor_terminal_outcome() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "completed");
+    assert_eq!(reread.status, SubagentMetaStatus::Completed);
     assert_eq!(reread.tool_calls, Some(7));
     assert_eq!(reread.turns, Some(2));
 }
@@ -1540,7 +1540,7 @@ async fn live_reconcile_finalizes_running_meta_not_in_coordinator() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "cancelled");
+    assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
     assert_eq!(reread.tool_calls, Some(0));
     assert_eq!(reread.turns, Some(0));
     assert_eq!(
@@ -1587,7 +1587,7 @@ async fn live_reconcile_skips_live_coordinator_child() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "running");
+    assert_eq!(reread.status, SubagentMetaStatus::Running);
 }
 #[tokio::test]
 async fn live_reconcile_reemitted_finish_has_will_wake_false() {
@@ -1634,7 +1634,7 @@ async fn live_reconcile_reemitted_finish_has_will_wake_false() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "completed");
+    assert_eq!(reread.status, SubagentMetaStatus::Completed);
     assert_eq!(reread.tool_calls, Some(3));
     assert_eq!(reread.turns, Some(1));
 }
@@ -1679,7 +1679,7 @@ async fn live_reconcile_persists_terminal_meta_so_second_tick_is_noop() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "completed");
+    assert_eq!(reread.status, SubagentMetaStatus::Completed);
     assert_eq!(reread.tool_calls, Some(4));
     live_reconcile_with_inspections(
             HashMap::from([(id.to_string(), Some(completed))]),
@@ -1700,7 +1700,7 @@ async fn live_reconcile_persists_terminal_meta_so_second_tick_is_noop() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "completed");
+    assert_eq!(reread.status, SubagentMetaStatus::Completed);
     assert_eq!(reread.tool_calls, Some(4));
     assert!(cmd_rx.try_recv().is_err());
 }
@@ -1775,17 +1775,21 @@ async fn live_reconcile_overlapping_ticks_emit_once() {
             &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
         )
         .unwrap();
-    assert_eq!(reread.status, "completed");
+    assert_eq!(reread.status, SubagentMetaStatus::Completed);
     assert_eq!(reread.tool_calls, Some(4));
 }
 #[tokio::test]
 async fn live_reconcile_ignores_terminal_on_disk_meta() {
-    for status in ["completed", "failed", "cancelled"] {
+    for status in [
+        SubagentMetaStatus::Completed,
+        SubagentMetaStatus::Failed,
+        SubagentMetaStatus::Cancelled,
+    ] {
         let session_dir = tempfile::TempDir::new().unwrap();
         let id = format!("sa-term-{status}");
         let sub_dir = session_dir.path().join("subagents").join(&id);
         let mut meta = running_test_meta(&id, "parent-x");
-        meta.status = status.to_string();
+        meta.status = status;
         write_subagent_meta(&sub_dir, &meta);
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         live_reconcile_with_inspections(
@@ -1852,7 +1856,7 @@ async fn live_reconcile_persists_failed_and_cancelled_inspection() {
                 &std::fs::read_to_string(sub_dir.join("meta.json")).unwrap(),
             )
             .unwrap();
-        assert_eq!(reread.status, expected);
+        assert_eq!(reread.status.to_string(), expected);
     }
 }
 #[tokio::test]
@@ -1967,7 +1971,7 @@ fn durable_meta_roundtrips_effective_model_id() {
         subagent_id: "sa-model".into(),
         description: "d".into(),
         prompt: "p".into(),
-        status: "completed".into(),
+        status: SubagentMetaStatus::Completed,
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(100),
         tool_calls: Some(1),
@@ -2027,6 +2031,7 @@ fn notification_subagent_spawned_includes_resumed_from() {
         resumed_from: Some("prev-agent-id".into()),
         workflow_run_id: None,
         agent_address: None,
+        resume_fallback: None,
     };
     let json = serde_json::to_value(&notification).unwrap();
     assert_eq!(
@@ -2055,6 +2060,7 @@ fn notification_subagent_spawned_includes_resumed_from() {
         resumed_from: None,
         workflow_run_id: None,
         agent_address: None,
+        resume_fallback: None,
     };
     let json = serde_json::to_value(&fresh).unwrap();
     assert!(json.get("resumed_from").is_none());

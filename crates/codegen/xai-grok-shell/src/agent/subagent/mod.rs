@@ -1362,6 +1362,18 @@ fn resume_inherited_cwd(source: Option<&ResumeSourceData>) -> Option<&str> {
     }
     Some(source.child_cwd.as_str())
 }
+/// The source cwd a resumed child could not inherit because the directory is gone.
+fn resume_cwd_fallback(
+    source: Option<&ResumeSourceData>,
+) -> Option<xai_tool_types::SubagentResumeFallback> {
+    let source = source?;
+    (source.worktree_path.is_none()
+        && !source.child_cwd.is_empty()
+        && resume_inherited_cwd(Some(source)).is_none())
+    .then(|| xai_tool_types::SubagentResumeFallback::SourceCwdMissing {
+        source_cwd: source.child_cwd.clone(),
+    })
+}
 /// Select the cwd override for a child: a resume inherits the source's cwd (never its own `request.cwd`); a fresh spawn uses `request.cwd`.
 fn select_override_cwd<'a>(
     resume_source: Option<&'a ResumeSourceData>,
@@ -1373,33 +1385,89 @@ fn select_override_cwd<'a>(
         request_cwd
     }
 }
+fn parent_subagents_dir(parent_session_id: &str, parent_cwd: &Path) -> PathBuf {
+    let parent_info = SessionInfo {
+        id: acp::SessionId::new(parent_session_id),
+        cwd: parent_cwd.to_string_lossy().into_owned(),
+    };
+    session::persistence::session_dir(&parent_info).join("subagents")
+}
+/// Subagent directory names under the parent that equal `reference` or start with it.
+/// Reads directory names only; no `meta.json` is opened.
+pub(crate) fn durable_resume_candidates(
+    reference: &str,
+    parent_session_id: &str,
+    parent_cwd: &Path,
+) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(parent_subagents_dir(parent_session_id, parent_cwd)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with(reference))
+        .collect()
+}
 fn durable_resume_source_for(
     id: &str,
     parent_session_id: &str,
     parent_cwd: &Path,
 ) -> Option<ResumeSourceData> {
-    let parent_info = SessionInfo {
-        id: acp::SessionId::new(parent_session_id),
-        cwd: parent_cwd.to_string_lossy().into_owned(),
-    };
-    let meta_path = session::persistence::session_dir(&parent_info)
-        .join("subagents")
+    durable_resume_source(id, parent_session_id, parent_cwd).ok()
+}
+pub(crate) fn durable_resume_source(
+    id: &str,
+    parent_session_id: &str,
+    parent_cwd: &Path,
+) -> Result<ResumeSourceData, SubagentResumeError> {
+    let meta_path = parent_subagents_dir(parent_session_id, parent_cwd)
         .join(id)
         .join("meta.json");
-    durable_resume_source_from_meta(&meta_path, parent_session_id)
+    durable_resume_source_at(&meta_path, id, parent_session_id)
 }
+#[cfg(test)]
 fn durable_resume_source_from_meta(
     meta_path: &Path,
     parent_session_id: &str,
 ) -> Option<ResumeSourceData> {
-    let data = std::fs::read_to_string(meta_path).ok()?;
-    let meta: SubagentMeta = serde_json::from_str(&data).ok()?;
-    if meta.parent_session_id != parent_session_id
-        || !matches!(meta.status.as_str(), "completed" | "failed" | "cancelled")
-    {
-        return None;
+    durable_resume_source_at(meta_path, "", parent_session_id).ok()
+}
+fn durable_resume_source_at(
+    meta_path: &Path,
+    id: &str,
+    parent_session_id: &str,
+) -> Result<ResumeSourceData, SubagentResumeError> {
+    let unreadable = |reason: String| SubagentResumeError::MetaUnreadable {
+        subagent_id: id.to_owned(),
+        reason,
+    };
+    let data = match std::fs::read_to_string(meta_path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SubagentResumeError::NotFound {
+                reference: id.to_owned(),
+            });
+        }
+        Err(error) => return Err(unreadable(error.to_string())),
+    };
+    let meta: SubagentMeta =
+        serde_json::from_str(&data).map_err(|error| unreadable(error.to_string()))?;
+    if meta.parent_session_id != parent_session_id {
+        return Err(SubagentResumeError::ForeignParent {
+            subagent_id: meta.subagent_id,
+        });
     }
-    Some(ResumeSourceData {
+    match meta.status {
+        SubagentMetaStatus::Running => {
+            return Err(SubagentResumeError::NotTerminal {
+                subagent_id: meta.subagent_id,
+            });
+        }
+        SubagentMetaStatus::Completed
+        | SubagentMetaStatus::Failed
+        | SubagentMetaStatus::Cancelled => {}
+    }
+    Ok(ResumeSourceData {
         subagent_id: meta.subagent_id,
         child_session_id: meta.child_session_id,
         child_cwd: meta.child_cwd.unwrap_or_default(),
@@ -2031,6 +2099,37 @@ mod progress_publisher_tests {
         assert!(progress_tick_should_emit(BASE, BASE, true));
     }
 }
+/// Lifecycle status persisted in `meta.json`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum SubagentMetaStatus {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+impl SubagentMetaStatus {
+    pub(crate) fn of_result(result: &SubagentResult) -> Self {
+        if result.cancelled {
+            Self::Cancelled
+        } else if result.success {
+            Self::Completed
+        } else {
+            Self::Failed
+        }
+    }
+}
 /// Metadata stored as `meta.json` in the child session directory.
 /// Links the child session back to its parent.
 /// For the GCS-persisted artifact (`subagent.json`), see [`SubagentSessionMetadata`].
@@ -2044,8 +2143,7 @@ pub(crate) struct SubagentMeta {
     pub subagent_type: String,
     pub description: String,
     pub prompt: String,
-    /// "running" | "completed" | "failed" | "cancelled"
-    pub status: String,
+    pub status: SubagentMetaStatus,
     pub started_at: chrono::DateTime<chrono::Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -2182,7 +2280,7 @@ impl SubagentSessionMetadata {
             depth,
             started_at: meta.started_at.to_rfc3339(),
             completed_at: meta.completed_at.map(|t| t.to_rfc3339()),
-            status: meta.status.clone(),
+            status: meta.status.to_string(),
             duration_ms: meta.duration_ms,
             tool_calls: meta.tool_calls,
             turns: meta.turns,
@@ -2273,7 +2371,11 @@ struct GcsUploadContext {
 /// Persist the durable worktree `snapshot_ref` into the on-disk `meta.json` after completion. `resumable_source_for` can then rehydrate the disposed worktree on resume. Returns `true` only when the ref is persisted to disk.
 /// Any read/parse/write failure is `warn!`-logged (this is the critical resume pointer). The caller then keeps the worktree rather than removing it without a recoverable ref. Also re-asserts the terminal `status`.
 /// A failed `persist_subagent_completion` write otherwise leaves a non-terminal record that `resumable_source_for` rejects once the worktree is gone.
-fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str, status: &str) -> bool {
+fn update_subagent_meta_snapshot_ref(
+    dir: &Path,
+    snapshot_ref: &str,
+    status: SubagentMetaStatus,
+) -> bool {
     let meta_path = dir.join("meta.json");
     let mut meta = match std::fs::read_to_string(&meta_path) {
         Ok(data) => match serde_json::from_str::<SubagentMeta>(&data) {
@@ -2289,7 +2391,7 @@ fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str, status: &st
         }
     };
     meta.snapshot_ref = Some(snapshot_ref.to_string());
-    meta.status = status.to_string();
+    meta.status = status;
     write_subagent_meta(dir, &meta)
 }
 #[must_use]
@@ -2302,7 +2404,7 @@ fn persist_subagent_completion(dir: &Path, result: &SubagentResult, gcs_ctx: &Gc
     if let Ok(data) = std::fs::read_to_string(&meta_path)
         && let Ok(mut meta) = serde_json::from_str::<SubagentMeta>(&data)
     {
-        meta.status = result.status().to_string();
+        meta.status = SubagentMetaStatus::of_result(result);
         meta.completed_at = Some(chrono::Utc::now());
         meta.duration_ms = Some(result.duration_ms);
         meta.tool_calls = Some(result.tool_calls);
@@ -2369,7 +2471,7 @@ fn finalize_orphaned_subagent(
     }
     let completed_at = chrono::Utc::now();
     let duration_ms = (completed_at - meta.started_at).num_milliseconds().max(0) as u64;
-    meta.status = "cancelled".to_string();
+    meta.status = SubagentMetaStatus::Cancelled;
     meta.completed_at = Some(completed_at);
     meta.duration_ms = Some(duration_ms);
     meta.tool_calls = Some(0);
@@ -2410,10 +2512,13 @@ fn persist_running_meta_as_finish(
     else {
         return false;
     };
+    let Ok(status) = status.parse::<SubagentMetaStatus>() else {
+        return false;
+    };
     if !is_on_disk_meta_running(subagent_meta_dir) {
         return false;
     }
-    meta.status = status.clone();
+    meta.status = status;
     meta.completed_at = Some(chrono::Utc::now());
     meta.duration_ms = Some(*duration_ms);
     meta.tool_calls = Some(*tool_calls);
@@ -2425,14 +2530,15 @@ fn is_on_disk_meta_running(subagent_meta_dir: &Path) -> bool {
     let Ok(data) = std::fs::read_to_string(subagent_meta_dir.join("meta.json")) else {
         return false;
     };
-    serde_json::from_str::<SubagentMeta>(&data).is_ok_and(|meta| meta.status == "running")
+    serde_json::from_str::<SubagentMeta>(&data)
+        .is_ok_and(|meta| meta.status == SubagentMetaStatus::Running)
 }
 /// Parse `meta_path` and return it only when it is a stale `running` orphan owned by `parent_session_id` and not tracked live.
 /// Malformed metas yield `None`.
 fn running_orphan_meta(meta_path: &Path, parent_session_id: &str) -> Option<SubagentMeta> {
     let data = std::fs::read_to_string(meta_path).ok()?;
     let meta: SubagentMeta = serde_json::from_str(&data).ok()?;
-    if meta.status != "running" || meta.parent_session_id != parent_session_id {
+    if meta.status != SubagentMetaStatus::Running || meta.parent_session_id != parent_session_id {
         return None;
     }
     Some(meta)
@@ -2514,7 +2620,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
             .and_then(|data| serde_json::from_str::<SubagentMeta>(&data).ok());
         match meta {
             Some(m) if m.parent_session_id != parent_session_id => {}
-            Some(m) if m.status == "running" => {
+            Some(m) if m.status == SubagentMetaStatus::Running => {
                 if let Some(finish) = inspection.as_ref().and_then(|inspection| {
                     completed_finish_from_inspection(inspection, m.attempt_id.clone())
                 }) {
@@ -2563,7 +2669,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
                         attempt_id: m.attempt_id,
                         subagent_id,
                         child_session_id: m.child_session_id,
-                        status: m.status,
+                        status: m.status.to_string(),
                         error: m.error,
                         tool_calls: m.tool_calls.unwrap_or(0),
                         turns: m.turns.unwrap_or(0),

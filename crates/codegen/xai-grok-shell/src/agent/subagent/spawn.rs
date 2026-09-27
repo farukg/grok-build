@@ -20,7 +20,7 @@ use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
 use xai_grok_telemetry::region::Region;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{self, ChildCompletion};
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentRequest, SubagentResult, SubagentSnapshot,
+    SubagentRequest, SubagentResult, SubagentResumeError, SubagentSnapshot,
 };
 /// Floor keeps the pool responsive when `available_parallelism` is tiny.
 const MIN_WORKER_THREADS: usize = 2;
@@ -106,6 +106,30 @@ impl coordinator::ChildRunner for ShellChildRunner {
             .get_session_cwd(&acp::SessionId::new(parent_session_id))?;
         super::durable_resume_source_for(resume_id, parent_session_id, &cwd)
             .map(|source| source.subagent_type)
+    }
+    fn durable_resume_candidates(&self, reference: &str, parent_session_id: &str) -> Vec<String> {
+        let Some(cwd) = self
+            .agent_ref
+            .get()
+            .get_session_cwd(&acp::SessionId::new(parent_session_id))
+        else {
+            return Vec::new();
+        };
+        super::durable_resume_candidates(reference, parent_session_id, &cwd)
+    }
+    fn durable_resume_check(
+        &self,
+        subagent_id: &str,
+        parent_session_id: &str,
+    ) -> Result<(), SubagentResumeError> {
+        let cwd = self
+            .agent_ref
+            .get()
+            .get_session_cwd(&acp::SessionId::new(parent_session_id))
+            .ok_or_else(|| SubagentResumeError::ParentSessionUnavailable {
+                session_id: parent_session_id.to_owned(),
+            })?;
+        super::durable_resume_source(subagent_id, parent_session_id, &cwd).map(|_| ())
     }
     fn run(&self, mut run: coordinator::ChildRunRequest<Self::Control>) -> Self::RunFuture {
         let agent_ref = self.agent_ref.clone();
@@ -622,6 +646,7 @@ mod address_tests {
             resumed_from: None,
             workflow_run_id: None,
             agent_address,
+            resume_fallback: None,
         }
     }
     #[tokio::test]

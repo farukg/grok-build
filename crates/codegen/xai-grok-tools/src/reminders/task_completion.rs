@@ -522,6 +522,9 @@ pub fn format_subagent_completion(
         c.snapshot.description,
         format_subagent_task_output(c, task_output_name),
     );
+    if let Some(fallback) = &c.resume_fallback {
+        out.push_str(&format!("\n{fallback}"));
+    }
     append_scheduled_wakeup_footer(
         &mut out,
         c,

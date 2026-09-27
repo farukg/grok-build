@@ -189,6 +189,26 @@ pub trait ChildRunner: 'static {
         None
     }
 
+    /// On-disk subagent ids of `parent_session_id` that equal `reference` or start with it.
+    fn durable_resume_candidates(
+        &self,
+        _reference: &str,
+        _parent_session_id: &str,
+    ) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Whether the on-disk record of `subagent_id` can be resumed.
+    fn durable_resume_check(
+        &self,
+        subagent_id: &str,
+        _parent_session_id: &str,
+    ) -> Result<(), super::types::SubagentResumeError> {
+        Err(super::types::SubagentResumeError::NotFound {
+            reference: subagent_id.to_owned(),
+        })
+    }
+
     fn resolve_root(
         &self,
         _agent_id: &xai_message_delivery_core::AgentId,
@@ -1097,6 +1117,7 @@ pub fn completion_summary(
         tool_calls: result.tool_calls,
         output,
         full_output_bytes: result.output.len(),
+        resume_fallback: result.resume_fallback.clone(),
     }
 }
 

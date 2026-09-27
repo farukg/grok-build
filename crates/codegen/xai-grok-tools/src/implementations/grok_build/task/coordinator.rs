@@ -16,6 +16,7 @@ mod completion;
 mod graph;
 mod query;
 mod queue;
+mod resume;
 mod root_targets;
 mod spawn;
 mod wake;
@@ -625,6 +626,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         == Some(&request.task_id)
                 });
                 let _ = request.respond_to.send(is_active);
+            }
+            SubagentEvent::ResolveResume(request) => {
+                let target = self.resolve_resume(&request.reference, &request.parent_session_id);
+                let _ = request.respond_to.send(target);
             }
         }
     }

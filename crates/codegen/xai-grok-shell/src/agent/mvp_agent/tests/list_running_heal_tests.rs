@@ -2,7 +2,7 @@
 //! Deleting that hook leaves the tray showing a dead subagent as Responding for 10-12 hours.
 
 use super::{build_minimal_agent_for_tests, make_live_session_handle};
-use crate::agent::subagent::{LIVE_ORPHAN_RECONCILE_REASON, SubagentMeta};
+use crate::agent::subagent::{LIVE_ORPHAN_RECONCILE_REASON, SubagentMeta, SubagentMetaStatus};
 use crate::extensions::notification::SessionUpdate;
 use crate::session::SessionCommand;
 use agent_client_protocol as acp;
@@ -19,7 +19,7 @@ fn running_meta(id: &str, parent: &str) -> SubagentMeta {
         subagent_type: "explore".into(),
         description: "task".into(),
         prompt: "do work".into(),
-        status: "running".into(),
+        status: SubagentMetaStatus::Running,
         started_at: chrono::Utc::now(),
         completed_at: None,
         duration_ms: None,
@@ -178,7 +178,7 @@ async fn list_running_subagents_finalizes_orphan_on_live_session() {
             let reread: SubagentMeta =
                 serde_json::from_str(&std::fs::read_to_string(sub_dir.join("meta.json")).unwrap())
                     .unwrap();
-            assert_eq!(reread.status, "cancelled");
+            assert_eq!(reread.status, SubagentMetaStatus::Cancelled);
             assert_eq!(drain_cancelled_finishes(&mut cmd_rx, id), 1);
             let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
         })
@@ -204,7 +204,7 @@ async fn list_running_subagents_skips_live_coordinator_child() {
             let reread: SubagentMeta =
                 serde_json::from_str(&std::fs::read_to_string(sub_dir.join("meta.json")).unwrap())
                     .unwrap();
-            assert_eq!(reread.status, "running");
+            assert_eq!(reread.status, SubagentMetaStatus::Running);
             assert_eq!(drain_cancelled_finishes(&mut cmd_rx, id), 0);
             let _ = std::fs::remove_dir_all(sub_dir.parent().unwrap());
         })
