@@ -33,6 +33,7 @@ impl ScrollbackState {
     // Turn Navigation
 
     pub(super) fn rebuild_turns(&mut self) {
+        self.outline_generation = self.outline_generation.wrapping_add(1);
         self.turns.clear();
         let mut current_start: Option<usize> = None;
 

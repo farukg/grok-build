@@ -13,7 +13,8 @@ pub mod verb_group;
 
 pub(crate) use layout::ScrollAnchor;
 pub use layout::compute_paint_window;
-pub use timeline::TimelineEntry;
+pub use timeline::{TimelineEntry, TimelineRow, TimelineRowKey, TimelineRowKind};
+pub(crate) use timeline::prompt_preview;
 pub use types::*;
 
 use layout::{LayoutCache, StructuralScrollAnchor};
@@ -200,6 +201,9 @@ pub struct ScrollbackState {
     /// When a group's first entry ID is in this set, the fold pass (`groups::apply`) marks its span expanded instead of hiding entries.
     expanded_groups: HashSet<EntryId>,
 
+    /// Bumped when the turn structure is rebuilt or a fold pass yields different group spans; keys the timeline outline rebuild.
+    outline_generation: u64,
+
     // Link map
     /// Monotonically increasing counter, bumped when visible link positions or policy inputs change.
     /// Used by `VisibleLinkMap::is_stale()` to skip rebuilds.
@@ -265,6 +269,7 @@ impl ScrollbackState {
             warm_above: DeferredWarmAbove::Idle,
             ffmpeg_available_snapshot: false,
             expanded_groups: HashSet::new(),
+            outline_generation: 0,
             generation: 0,
             content_generation: 0,
             #[cfg(test)]
@@ -305,6 +310,7 @@ impl ScrollbackState {
         fresh.cwd = self.cwd.clone();
         fresh.generation = self.generation.wrapping_add(1);
         fresh.content_generation = self.content_generation.wrapping_add(1);
+        fresh.outline_generation = self.outline_generation.wrapping_add(1);
         fresh
     }
 
@@ -326,6 +332,7 @@ impl ScrollbackState {
         self.generation = self.generation.max(sibling.0);
         self.content_generation = self.content_generation.max(sibling.1);
         self.bump_content_generation();
+        self.outline_generation = self.outline_generation.wrapping_add(1);
     }
 
     /// The invalidation-generation pair, for [`Self::raise_invalidation_floor`].
@@ -838,6 +845,7 @@ impl ScrollbackState {
         // Note: we don't reset next_id to avoid ID reuse
         self.selected = None;
         self.turns.clear();
+        self.outline_generation = self.outline_generation.wrapping_add(1);
         self.current_turn = None;
         self.scroll_offset = 0;
         self.pin_reserve_active = false;

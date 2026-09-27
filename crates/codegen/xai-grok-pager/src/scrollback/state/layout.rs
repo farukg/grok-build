@@ -1040,12 +1040,16 @@ impl ScrollbackState {
 
         // Re-apply verb-group folding and group truncation after gap recomputation
         let max_visible = self.appearance.scrollback.display.group_max_visible as usize;
-        cache.groups = groups::apply(
+        let spans = groups::apply(
             &self.entries,
             &mut cache.entries,
             max_visible,
             &self.expanded_groups,
         );
+        if spans != cache.groups {
+            self.outline_generation = self.outline_generation.wrapping_add(1);
+        }
+        cache.groups = spans;
 
         cache.virtual_y.clear();
         cache.prompt_descriptors.clear();
@@ -1312,6 +1316,7 @@ impl ScrollbackState {
             max_visible,
             &self.expanded_groups,
         );
+        self.outline_generation = self.outline_generation.wrapping_add(1);
 
         // Pass 3: Build virtual_y and prompt descriptors from heights and gaps
         let mut y: usize = 0;

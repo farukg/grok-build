@@ -156,6 +156,11 @@ impl MarkdownContent {
         self.state.borrow().renderer.source().to_string()
     }
 
+    /// Capped first non-empty source line, without cloning the whole source like `text()`.
+    pub fn preview(&self) -> String {
+        crate::scrollback::state::prompt_preview(self.state.borrow().renderer.source())
+    }
+
     /// Whether the source markdown is empty (zero-alloc, unlike `text()`).
     pub fn is_empty(&self) -> bool {
         self.state.borrow().renderer.source().is_empty()
