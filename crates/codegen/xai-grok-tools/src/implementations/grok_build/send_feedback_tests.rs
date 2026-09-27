@@ -249,6 +249,18 @@ fn schema_has_canonical_fields() {
 }
 
 #[test]
+fn description_never_invites_unsolicited_drafting_or_send_prompts() {
+    let template = super::build_description_template();
+    for forbidden in ["implicitly", "# Confirmation", "review and send it"] {
+        assert!(
+            !template.contains(forbidden),
+            "description must not contain {forbidden:?}: {template}"
+        );
+    }
+    assert!(template.contains("only when the user explicitly asks"));
+}
+
+#[test]
 fn leaked_one_brace_peel_is_stripped() {
     let peeled = "use the ${ params.feedback.draft_id } field\n${- if tools.by_kind.ask_user %}";
     let stripped = super::strip_leaked_template_syntax(peeled);

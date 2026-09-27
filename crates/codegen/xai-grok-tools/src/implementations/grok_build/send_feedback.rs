@@ -115,7 +115,7 @@ Save or update user feedback for later review. Feedback is stored as local draft
 # Invocation\n\n\
 When the user types `/feedback` bare into the prompt bar, the form opens with the Write and Drafts tabs. The Write tab is only for the user to hand-write feedback.\n\
 `/feedback <text>` sends the user's report immediately without involving you. Use ${{ params.feedback.draft_id }} only when the user explicitly asks you to update an existing feedback draft. Do not duplicate drafts. ${{ params.feedback.draft_id }} is only a tool argument. Never write it into ${{ params.feedback.title }}, ${{ params.feedback.details }}, or ${{ params.feedback.product_area }}.\n\n\
-When the user wants to share feedback implicitly, draft it with this tool, whether it is a product or model-behavior issue.\n\n\
+Call this tool only when the user explicitly asks you to draft or update feedback. Never draft feedback on your own initiative.\n\n\
 # Usage\n\n\
 Write ${{ params.feedback.details }} as short lines under these headings. Put a blank line between them.\n\
 \n\
@@ -130,8 +130,6 @@ Set ${{ params.feedback.failure_mode }} only for model-behavior feedback; omit i
 ${%- if tools.by_kind.ask_user %}\n\
 If mapping feedback is incredibly unclear, only then may you use ${{ tools.by_kind.ask_user }} to confirm ambiguity with the user. Use this sparingly.\n\
 ${%- endif %}\n\n\
-# Confirmation\n\n\
-After drafting feedback and ending your turn, tell the user the draft is saved locally for this session. In the Grok CLI they review and send it by typing `/feedback` and opening the Drafts tab; from any other client, have them resume this session in the Grok CLI first.\n\n\
 # Misc\n\n\
 ${%- if feedback_drafts_path %}\n\
 This session's drafts file is ${{ feedback_drafts_path }}.\n\
