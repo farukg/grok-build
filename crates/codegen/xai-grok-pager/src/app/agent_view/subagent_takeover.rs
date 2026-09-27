@@ -35,15 +35,18 @@ pub(in crate::app) enum Direction {
     Prev,
     Next,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum CycleOutcome {
+    Switched,
+    NoSibling,
+}
 /// A Ctrl+Alt+Arrow subagent-tree navigation chord.
 #[derive(Clone, Copy)]
 pub(in crate::app) enum TreeChord {
     Parent,
     LatestChild,
-    Sibling(Direction),
 }
-/// Ctrl+Alt+Arrow: subagent tree navigation while a takeover is open. Outside one, Ctrl+Alt+Left/Right cycle sessions,
-/// so `AppView` defers to the takeover for exactly these keys.
+/// Ctrl+Alt+Up/Down stay raw for tree navigation while a takeover is open; Left/Right resolve as cycle actions.
 pub(in crate::app) fn tree_chord(ev: &Event) -> Option<TreeChord> {
     let Event::Key(key) = ev else {
         return None;
@@ -59,12 +62,11 @@ pub(in crate::app) fn tree_chord(ev: &Event) -> Option<TreeChord> {
     match key.code {
         KeyCode::Up => Some(TreeChord::Parent),
         KeyCode::Down => Some(TreeChord::LatestChild),
-        KeyCode::Left => Some(TreeChord::Sibling(Direction::Prev)),
-        KeyCode::Right => Some(TreeChord::Sibling(Direction::Next)),
         _ => None,
     }
 }
 const NO_CHILD_TOAST: &str = "No child subagent to open";
+pub(in crate::app) const NO_SIBLING_TOAST: &str = "No sibling subagent";
 /// A node of the subagent tree this root view owns. Every child view, at any depth, is registered on the root with
 /// its real parent link; a child whose parent has no view here hangs off the root session.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -88,6 +90,14 @@ impl AgentView {
         )
     }
     /// Direct children of `node`, earliest started first.
+    fn child_order_key(&self, sid: &str) -> (Option<std::time::Instant>, &str) {
+        (
+            self.subagent_sessions
+                .get(sid)
+                .map(|info| info.attempt.started_at),
+            sid,
+        )
+    }
     fn children_of(&self, node: TreeNode<'_>) -> Vec<String> {
         let mut children: Vec<&str> = self
             .subagent_views
@@ -95,15 +105,25 @@ impl AgentView {
             .map(String::as_str)
             .filter(|sid| self.tree_parent(sid) == Some(node))
             .collect();
-        children.sort_by_key(|sid| {
-            (
-                self.subagent_sessions
-                    .get(*sid)
-                    .map(|info| info.attempt.started_at),
-                *sid,
-            )
-        });
+        children.sort_by_key(|sid| self.child_order_key(sid));
         children.into_iter().map(str::to_owned).collect()
+    }
+    pub(in crate::app) fn sibling_position(&self, child_sid: &str) -> Option<(usize, usize)> {
+        let Some(parent) = self.tree_parent(child_sid) else {
+            return None;
+        };
+        let target_key = self.child_order_key(child_sid);
+        let mut sibling_count = 0;
+        let mut sibling_rank = 0;
+        for sid in self.subagent_views.keys().map(String::as_str) {
+            if self.tree_parent(sid) == Some(parent) {
+                sibling_count += 1;
+                if self.child_order_key(sid) < target_key {
+                    sibling_rank += 1;
+                }
+            }
+        }
+        (sibling_count > 1).then_some((sibling_rank + 1, sibling_count))
     }
     /// Open the most recently started child of `node`; on a leaf, tell the user on the view they are looking at.
     fn open_latest_child(&mut self, node: TreeNode<'_>) -> InputOutcome {
@@ -126,25 +146,33 @@ impl AgentView {
     pub(super) fn intercept_root_tree_input(&mut self, ev: &Event) -> Option<InputOutcome> {
         match tree_chord(ev)? {
             TreeChord::LatestChild => Some(self.open_latest_child(TreeNode::Root)),
-            TreeChord::Parent | TreeChord::Sibling(_) => None,
+            TreeChord::Parent => None,
         }
     }
     /// Switch the takeover to the previous/next sibling of `child_sid` (same
     /// parent, start order, wrapping). Returns the new child sid when a switch happened.
-    fn switch_sibling(&mut self, child_sid: &str, dir: Direction) -> Option<String> {
-        let parent = self.tree_parent(child_sid)?;
-        let mut siblings = self.children_of(parent);
-        if siblings.len() < 2 {
-            return None;
+    pub(in crate::app) fn cycle_sibling(
+        &mut self,
+        child_sid: &str,
+        order: &[String],
+        dir: Direction,
+    ) -> CycleOutcome {
+        if order.len() < 2 {
+            return CycleOutcome::NoSibling;
         }
-        let idx = siblings.iter().position(|sid| sid == child_sid)?;
-        let next = match dir {
-            Direction::Prev => (idx + siblings.len() - 1) % siblings.len(),
-            Direction::Next => (idx + 1) % siblings.len(),
+        let Some(idx) = order.iter().position(|sid| sid == child_sid) else {
+            return CycleOutcome::NoSibling;
         };
-        let next = siblings.swap_remove(next);
-        self.open_subagent_fullscreen(next.clone());
-        Some(next)
+        let next = match dir {
+            Direction::Prev => (idx + order.len() - 1) % order.len(),
+            Direction::Next => (idx + 1) % order.len(),
+        };
+        if let Some(next) = order.get(next) {
+            self.open_subagent_fullscreen(next.clone());
+            CycleOutcome::Switched
+        } else {
+            CycleOutcome::NoSibling
+        }
     }
     /// Open the fullscreen subagent view for `child_sid`, replaying child `updates.jsonl` when the child scrollback is still empty (or the child finished).
     pub(crate) fn open_subagent_fullscreen(&mut self, child_sid: String) {
@@ -521,9 +549,6 @@ impl AgentView {
                     }
                 },
                 TreeChord::LatestChild => self.open_latest_child(TreeNode::Child(&child_sid)),
-                TreeChord::Sibling(dir) => self
-                    .switch_sibling(&child_sid, dir)
-                    .map_or(InputOutcome::Unchanged, |_| InputOutcome::Changed),
             });
         }
         if let Event::Mouse(mouse) = ev
