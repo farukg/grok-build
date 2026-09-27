@@ -4268,3 +4268,108 @@ async fn goal_yield_runs_queued_row_next_then_resumes_goal() {
         })
         .await;
 }
+
+/// Goal turn parked in the planner's foreground wait, with Steer on and an empty held queue: the auto-send-now window.
+async fn actor_waiting_on_goal_planner() -> (
+    std::sync::Arc<SessionActor>,
+    tokio_util::sync::CancellationToken,
+) {
+    crate::util::config::set_follow_up_steer_cache(true);
+    let (actor, _rx) = build_actor().await;
+    {
+        let mut state = actor.state.lock().await;
+        state.pending_inputs.push_back(user_item("goal-turn", "A"));
+        state.running_task = Some(running_task_stub("goal-turn"));
+        state.front_message_committed = true;
+    }
+    *actor
+        .current_prompt_id
+        .lock()
+        .expect("current_prompt_id mutex poisoned") = Some("goal-turn".into());
+    let planner_cancel = tokio_util::sync::CancellationToken::new();
+    {
+        let mut tracker = actor.goal_tracker.lock();
+        tracker.create_goal(
+            "goal".into(),
+            "objective".into(),
+            None,
+            0,
+            "2026-01-01T00:00:00Z".into(),
+            None,
+        );
+        tracker.start_planner_run(planner_cancel.clone());
+    }
+    actor.tool_context.blocking_wait_depth.set_depth_for_test(1);
+    (actor, planner_cancel)
+}
+
+#[tokio::test]
+#[serial_test::serial(follow_up_steer_cache)]
+async fn message_during_planning_queues_without_cancel() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, planner_cancel) = actor_waiting_on_goal_planner().await;
+
+            let _ = prompt_queue::take_queued_commit_count();
+            let (respond_to, _p) = oneshot::channel();
+            let cancel = actor
+                .queue_input(queue_input_request(
+                    vec![acp::ContentBlock::Text(acp::TextContent::new("later"))],
+                    "during-planning",
+                    respond_to,
+                ))
+                .await;
+
+            assert!(!cancel, "a message during planning must not cancel the turn");
+            assert!(
+                !planner_cancel.is_cancelled(),
+                "a message during planning must not restart the planner"
+            );
+            assert_eq!(prompt_queue::take_queued_commit_count(), 1);
+            assert!(actor.pending_interjections.is_empty());
+            let state = actor.state.lock().await;
+            assert_eq!(
+                ids(&actor.build_queue_wire(&state)),
+                vec!["during-planning"],
+                "the message waits as a queue row until the planner is done"
+            );
+            drop(state);
+            let run = actor.goal_tracker.lock().take_planner_run();
+            assert!(run.is_some_and(|run| run.steering.is_empty()));
+        })
+        .await;
+}
+
+#[tokio::test]
+#[serial_test::serial(follow_up_steer_cache)]
+async fn send_now_during_planning_still_restarts_with_steering() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, planner_cancel) = actor_waiting_on_goal_planner().await;
+            actor
+                .state
+                .lock()
+                .await
+                .pending_inputs
+                .push_back(user_item("queued-steer", "A"));
+
+            let _ = actor
+                .handle_interject_queued_prompt("queued-steer", 0, None, None)
+                .await;
+
+            assert!(
+                planner_cancel.is_cancelled(),
+                "explicit send-now restarts the planner"
+            );
+            let run = actor.goal_tracker.lock().take_planner_run();
+            assert_eq!(
+                run.map(|run| run.steering),
+                Some(vec!["text for queued-steer".to_string()])
+            );
+            let state = actor.state.lock().await;
+            assert!(ids(&actor.build_queue_wire(&state)).is_empty());
+        })
+        .await;
+}
