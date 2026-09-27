@@ -184,7 +184,7 @@ mod session;
 mod session_mode;
 mod shell_completion;
 mod subagent_takeover;
-pub(in crate::app) use subagent_takeover::is_tree_chord;
+pub(in crate::app) use subagent_takeover::tree_chord;
 #[cfg(test)]
 mod task_icon_mouse_tests;
 #[cfg(test)]
@@ -449,6 +449,10 @@ pub(super) fn is_link_modifier_held(_mouse_modifiers: KeyModifiers) -> bool {
 #[cfg(not(target_os = "macos"))]
 pub(super) fn is_link_modifier_held(mouse_modifiers: KeyModifiers) -> bool {
     mouse_modifiers.contains(KeyModifiers::CONTROL)
+}
+/// Ctrl+Alt+Click on a subagent row opens exactly that child; callers check it before the Ctrl link click.
+pub(super) fn is_open_child_click(mouse_modifiers: KeyModifiers) -> bool {
+    mouse_modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 /// Determine whether the link modifier is held during a key event.
 /// On macOS, polls CoreGraphics directly (independent of the event's modifier bits).

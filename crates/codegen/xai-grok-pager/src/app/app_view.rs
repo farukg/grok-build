@@ -2553,10 +2553,8 @@ impl AppView {
                     .dashboard
                     .as_ref()
                     .is_some_and(|d| d.attached_agent == Some(id));
-                let takeover_owns_key = matches!(
-                    ev,
-                    Event::Key(key) if super::agent_view::is_tree_chord(key)
-                ) && self
+                let takeover_owns_key = super::agent_view::tree_chord(ev).is_some()
+                    && self
                         .agents
                         .get(&id)
                         .is_some_and(|a| a.active_subagent.is_some());

@@ -5,7 +5,7 @@
 use super::actions::Action;
 use super::agent_view::{
     AgentPane, AgentView, CONTEXT_CLICK_DEBOUNCE_MS, CtaPhase, MULTI_CLICK_TIMEOUT_MS, PromptMode,
-    TextClickState, is_link_modifier_held, is_text_selection_on_double_click,
+    TextClickState, is_link_modifier_held, is_open_child_click, is_text_selection_on_double_click,
 };
 use super::app_view::InputOutcome;
 use crate::scrollback::block::BlockContent;
@@ -661,6 +661,14 @@ impl AgentView {
                             mouse.row,
                             self.pane_areas.tasks,
                         );
+                        if is_open_child_click(mouse.modifiers) {
+                            let selected =
+                                self.tasks.selected_child_session_id().map(str::to_owned);
+                            if self.open_child_from_click(selected) {
+                                self.last_bg_click = None;
+                                return InputOutcome::Changed;
+                            }
+                        }
                         if let Some(group) = self.tasks.selected_header_group() {
                             self.tasks.toggle_group(group);
                             return InputOutcome::Changed;
@@ -706,6 +714,12 @@ impl AgentView {
                         self.persistent_text_selection = None;
                         self.table_selection_geometry = None;
                         self.selection_created_at = None;
+                        if is_open_child_click(mouse.modifiers) {
+                            let linked = self.linked_child_at_scrollback_row(mouse.row);
+                            if self.open_child_from_click(linked) {
+                                return InputOutcome::Changed;
+                            }
+                        }
                         if is_link_modifier_held(mouse.modifiers)
                             && self.try_arm_link_click(mouse.column, mouse.row)
                         {
