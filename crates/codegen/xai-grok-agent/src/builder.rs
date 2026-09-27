@@ -77,6 +77,7 @@ pub struct AgentBuilder {
     subagents_enabled: bool,
     background_workflows_enabled: bool,
     ask_user_question_enabled: bool,
+    feedback_enabled: bool,
     subagent_toggle: HashMap<String, bool>,
     task_model_slugs: Vec<String>,
     task_model_selection: TaskModelSelection,
@@ -248,6 +249,18 @@ fn apply_workflow_tool_gates(
             .retain(|tool| tool.kind != Some(ToolKind::Workflow));
     }
 }
+/// Matches by kind, registry id, and wire name so kindless or renamed entries cannot slip through.
+fn strip_feedback_tools(tool_config: &mut xai_grok_tools::registry::types::ToolServerConfig) {
+    use xai_grok_tools::implementations::grok_build::{SEND_FEEDBACK_TOOL_NAME, SendFeedbackTool};
+    let feedback_id =
+        xai_grok_tools::registry::types::ToolConfig::for_tool::<SendFeedbackTool>().id;
+    tool_config.tools.retain(|tool| {
+        tool.kind != Some(ToolKind::Feedback)
+            && tool.id != feedback_id
+            && tool.id != SEND_FEEDBACK_TOOL_NAME
+            && tool.name_override.as_deref() != Some(SEND_FEEDBACK_TOOL_NAME)
+    });
+}
 impl AgentBuilder {
     pub fn new(
         working_directory: PathBuf,
@@ -301,6 +314,7 @@ impl AgentBuilder {
             subagents_enabled: false,
             background_workflows_enabled: false,
             ask_user_question_enabled: true,
+            feedback_enabled: true,
             subagent_toggle: HashMap::new(),
             task_model_slugs: Vec::new(),
             task_model_selection: TaskModelSelection::default(),
@@ -589,6 +603,11 @@ impl AgentBuilder {
         self.ask_user_question_enabled = enabled;
         self
     }
+    /// Gated by the shell-resolved `features.feedback`; disabled strips `send_feedback` even from toolsets that list it.
+    pub fn with_feedback_enabled(mut self, enabled: bool) -> Self {
+        self.feedback_enabled = enabled;
+        self
+    }
     /// `[subagents.toggle]`: omitted agents default to enabled; controls Task-description listing and spawn-time acceptance.
     pub fn with_subagent_toggle(mut self, toggle: HashMap<String, bool>) -> Self {
         self.subagent_toggle = toggle;
@@ -741,7 +760,9 @@ impl AgentBuilder {
                     | BuiltinAgentName::GrokBuildAskUser
             )
         );
-        if self.prompt_audience == PromptAudience::Primary
+        let feedback_advertised =
+            self.feedback_enabled && self.prompt_audience == PromptAudience::Primary;
+        if feedback_advertised
             && is_parent_grok_build
             && !tool_config
                 .tools
@@ -847,24 +868,13 @@ impl AgentBuilder {
                 .tools
                 .retain(|tc| tc.id != mem_search_id && tc.id != mem_get_id);
         }
+        if !feedback_advertised {
+            strip_feedback_tools(&mut tool_config);
+        }
         if self.prompt_audience == crate::prompt::context::PromptAudience::Subagent {
-            let feedback_id = xai_grok_tools::registry::types::ToolConfig::for_tool::<
-                xai_grok_tools::implementations::grok_build::SendFeedbackTool,
-            >()
-            .id;
-            let feedback_name =
-                xai_grok_tools::implementations::grok_build::SEND_FEEDBACK_TOOL_NAME;
-            tool_config.tools.retain(|tool| {
-                !matches!(
-                    tool.kind,
-                    Some(
-                        xai_grok_tools::types::tool::ToolKind::AskUser
-                            | xai_grok_tools::types::tool::ToolKind::Feedback
-                    )
-                ) && tool.id != feedback_id
-                    && tool.id != feedback_name
-                    && tool.name_override.as_deref() != Some(feedback_name)
-            });
+            tool_config
+                .tools
+                .retain(|tool| tool.kind != Some(ToolKind::AskUser));
         } else if !self.ask_user_question_enabled {
             let ask_user_id = format!(
                 "{}:ask_user_question",
@@ -2136,6 +2146,50 @@ mod tests {
                     "subagents must not receive {parent_only}: {names:?}"
                 );
             }
+        }
+    }
+    #[tokio::test]
+    async fn disabled_feedback_hides_send_feedback_from_primary_sessions() {
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::notification::ToolNotificationHandle;
+        use xai_grok_tools::registry::types::ToolConfig;
+        let mut listed_by_name = crate::config::AgentDefinition::default_grok_build();
+        listed_by_name.tool_config.tools.push(
+            ToolConfig::from_id("custom:tool")
+                .with_name(xai_grok_tools::implementations::grok_build::SEND_FEEDBACK_TOOL_NAME),
+        );
+        for definition in [
+            crate::config::AgentDefinition::default_grok_build(),
+            crate::config::AgentDefinition::grok_build_plan(),
+            crate::config::AgentDefinition::grok_build_ask_user(),
+            listed_by_name,
+        ] {
+            let label = definition.name.clone();
+            let agent = AgentBuilder::new(
+                std::env::temp_dir(),
+                Arc::new(LocalTerminalBackend::new()),
+                ToolNotificationHandle::noop(),
+            )
+            .from_definition(definition)
+            .with_feedback_enabled(false)
+            .build()
+            .await
+            .expect("primary agent should build with feedback disabled");
+            let names: Vec<String> = agent
+                .tool_definitions()
+                .await
+                .into_iter()
+                .map(|definition| definition.function.name)
+                .collect();
+            assert!(
+                !names.iter().any(|name| name == "send_feedback"),
+                "[{label}] disabled feedback must not advertise send_feedback: {names:?}"
+            );
+            let bridge = agent.tool_bridge();
+            assert!(
+                bridge.tool_for_kind(ToolKind::Feedback).await.is_none(),
+                "[{label}] disabled feedback must not register a feedback tool"
+            );
         }
     }
     async fn workflow_tool_names(
