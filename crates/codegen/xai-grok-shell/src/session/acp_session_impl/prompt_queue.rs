@@ -321,7 +321,13 @@ impl SessionActor {
             queued.input_origin.policy().shutdown == ShutdownPolicy::Drain
                 && Some(queued.prompt_id.as_str()) != running_front_id.as_deref()
         });
-        let auto_send_now = follow_up_steer && turn_running && blocked_in_wait && !held_user_queue;
+        // The planner's foreground wait is not a steer window: auto-steering would cancel and restart the planner
+        let planner_running = self.goal_tracker.lock().planner_running();
+        let auto_send_now = follow_up_steer
+            && turn_running
+            && blocked_in_wait
+            && !held_user_queue
+            && !planner_running;
         let send_now = item.is_queue_editable() && (send_now || auto_send_now);
         let front_awaiting_commit_now = Self::front_awaiting_commit(&state);
         let cancel_running_turn =
