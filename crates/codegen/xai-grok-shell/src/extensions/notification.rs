@@ -806,8 +806,10 @@ pub enum SessionUpdate {
         attempt_id: Option<String>,
         /// The child session's ACP session ID.
         child_session_id: String,
-        /// Outcome: "completed", "failed", or "cancelled".
+        /// Legacy status string retained for replay and older clients.
         status: String,
+        #[serde(default = "xai_tool_types::SubagentState::legacy_running")]
+        state: xai_tool_types::SubagentState,
         /// Error message if the subagent failed.
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,

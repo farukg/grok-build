@@ -88,6 +88,8 @@ impl SessionActor {
             let _ = event_tx.send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: Some(self.session_id_string()),
                 target: SubagentCancelTarget::ParentPromptId(parent_prompt_id.to_string()),
+                actor: xai_grok_tools::implementations::grok_build::task::types::SubagentActor::ParentTurn { prompt_id: parent_prompt_id.to_string() },
+                disposition: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition::Stop,
                 respond_to: tokio::sync::oneshot::channel().0,
             }));
         }

@@ -2844,6 +2844,11 @@ impl MvpAgent {
             .cancel(subagent_id)
             .await
     }
+    pub(crate) async fn list_owned_subagents(&self, parent_session_id: &str) -> Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection> {
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::for_coordinator_session(
+            self.subagent_event_tx.clone(), parent_session_id,
+        ).list_owned(parent_session_id).await
+    }
     pub(crate) async fn list_running_subagents(
         &self,
         parent_session_id: &str,

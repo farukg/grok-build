@@ -2121,14 +2121,17 @@ pub(crate) enum SubagentMetaStatus {
 }
 impl SubagentMetaStatus {
     pub(crate) fn of_result(result: &SubagentResult) -> Self {
-        if result.cancelled {
-            Self::Cancelled
-        } else if result.success {
-            Self::Completed
-        } else {
-            Self::Failed
+        match &result.state {
+            xai_tool_types::SubagentState::Running => Self::Running,
+            xai_tool_types::SubagentState::Completed => Self::Completed,
+            xai_tool_types::SubagentState::Failed { .. } => Self::Failed,
+            xai_tool_types::SubagentState::Interrupted { .. } => Self::Cancelled,
         }
     }
+}
+
+fn legacy_state_for_meta() -> xai_tool_types::SubagentState {
+    xai_tool_types::SubagentState::Running
 }
 /// Metadata stored as `meta.json` in the child session directory.
 /// Links the child session back to its parent.
@@ -2143,6 +2146,8 @@ pub(crate) struct SubagentMeta {
     pub subagent_type: String,
     pub description: String,
     pub prompt: String,
+    #[serde(default = "legacy_state_for_meta")]
+    pub state: xai_tool_types::SubagentState,
     pub status: SubagentMetaStatus,
     pub started_at: chrono::DateTime<chrono::Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2472,6 +2477,13 @@ fn finalize_orphaned_subagent(
     let completed_at = chrono::Utc::now();
     let duration_ms = (completed_at - meta.started_at).num_milliseconds().max(0) as u64;
     meta.status = SubagentMetaStatus::Cancelled;
+    meta.state = xai_tool_types::SubagentState::Interrupted {
+        cause: if reason == ORPHAN_RECONCILE_REASON {
+            xai_tool_types::InterruptionCause::ProcessRestart
+        } else {
+            xai_tool_types::InterruptionCause::LiveParentOrphan
+        },
+    };
     meta.completed_at = Some(completed_at);
     meta.duration_ms = Some(duration_ms);
     meta.tool_calls = Some(0);

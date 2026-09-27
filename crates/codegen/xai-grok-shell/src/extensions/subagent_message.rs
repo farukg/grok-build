@@ -2,7 +2,7 @@
 
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
-use xai_grok_tools::implementations::grok_build::send_subagent_message::resolve_delivery;
+use xai_grok_tools::implementations::grok_build::send_subagent_message::{SendSubagentMessageDelivery, resolve_delivery};
 use xai_grok_tools::implementations::grok_build::task::types::{
     ActiveAgentMessageOutcome, MAX_ACTIVE_AGENT_MESSAGE_BYTES,
 };
@@ -19,6 +19,8 @@ pub struct SendSubagentMessageRequest {
     pub agent_address: String,
     #[serde(default)]
     pub queue: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<SendSubagentMessageDelivery>,
     pub content: Vec<acp::ContentBlock>,
 }
 
@@ -108,7 +110,7 @@ pub(crate) async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResul
         Ok(text) => text,
         Err(outcome) => return respond(Ok::<_, String>(outcome)),
     };
-    let operation = resolve_delivery(/*delivery*/ None, req.queue);
+    let operation = resolve_delivery(req.delivery, req.queue);
     let outcome = agent
         .send_human_subagent_message(&req.session_id, req.agent_address, text, operation)
         .await;
