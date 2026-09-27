@@ -91,6 +91,38 @@ pub fn normalize_forked_context(items: Vec<ConversationItem>) -> (Vec<Conversati
     (conversation, 2)
 }
 
+/// Return the end of one complete Assistant run, including consecutive Assistant siblings and
+/// interleaved reasoning/backend items. `None` means at least one tool call remains unanswered.
+/// This is the single turn-completeness definition shared by fork filtering and normalization.
+pub fn complete_assistant_run_end(items: &[&ConversationItem], start: usize) -> Option<usize> {
+    let mut expected = std::collections::HashSet::new();
+    let mut i = start;
+    while let Some(item) = items.get(i) {
+        match item {
+            ConversationItem::Assistant(asst) => {
+                expected.extend(asst.tool_calls.iter().map(|call| call.id.as_ref()));
+                i += 1;
+            }
+            ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_) => i += 1,
+            _ => break,
+        }
+    }
+    let mut found = std::collections::HashSet::new();
+    while let Some(item) = items.get(i) {
+        match item {
+            ConversationItem::ToolResult(result) => {
+                if expected.contains(result.tool_call_id.as_str()) {
+                    found.insert(result.tool_call_id.as_str());
+                }
+                i += 1;
+            }
+            ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_) => i += 1,
+            _ => break,
+        }
+    }
+    (found == expected).then_some(i)
+}
+
 /// The scan skips those, both before the Assistant and inside the ToolResult run that follows it. Otherwise long forked
 /// histories would register zero turns and never summarize, blowing up token usage. NOTE: two scanners walk turn
 /// boundaries while skipping `Reasoning` items, and they must move together.
@@ -122,25 +154,17 @@ fn count_complete_turns(items: &[&ConversationItem]) -> Vec<usize> {
         }) {
             i += 1;
         }
-        // Expect Assistant.
+        // Expect one complete Assistant run, including split parallel calls.
         if !items
             .get(i)
             .is_some_and(|item| matches!(item, ConversationItem::Assistant(_)))
         {
             break;
         }
-        i += 1; // skip past Assistant
-        // Consume the post-assistant run: ToolResults plus interleaved Reasoning / BackendToolCall siblings, until the next User/Assistant
-        while items.get(i).is_some_and(|item| {
-            matches!(
-                item,
-                ConversationItem::ToolResult(_)
-                    | ConversationItem::Reasoning(_)
-                    | ConversationItem::BackendToolCall(_)
-            )
-        }) {
-            i += 1;
-        }
+        let Some(end) = complete_assistant_run_end(items, i) else {
+            break;
+        };
+        i = end;
         turn_ends.push(i);
     }
     turn_ends

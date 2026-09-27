@@ -1,7 +1,5 @@
 //! Conversation types: re-exports the canonical set from `xai_grok_sampling_types` plus grok-shell-specific additions.
 
-use std::collections::HashSet;
-
 pub use xai_grok_sampling_types::conversation::*;
 
 #[cfg(test)]
@@ -20,16 +18,21 @@ pub struct ConversationRequestTrace {
     pub(crate) artifact_tracker: Option<crate::upload::manifest::ArtifactTracker>,
 }
 
-/// Filters chat history copied into a fork. Drops synthetic user messages, then truncates at the last complete turn so the child never sees a partial one.
-/// A turn is complete when the Assistant's tool calls are all answered; Reasoning and BackendToolCall items are transparent to the scan.
+/// Filters chat history copied into a fork. Drops runtime-synthetic user messages, then cuts only the unfinished tail so the child never sees a partial exchange.
+/// A turn is complete when the tool calls of its Assistant run (parallel calls may span consecutive Assistant items) are all answered; Reasoning and BackendToolCall items are transparent to the scan.
+/// The compacted head (`CompactionMeta`, incl. the compaction summary) is the parent's only history right after a compaction, so it survives and closes like System.
+/// An unfinished Assistant run is cut together with everything after it, but the user messages it was answering stay; trailing users nobody answered yet (e.g. the `/goal` prompt itself) are dropped.
 /// Keep the "complete turn" definition in sync with `count_complete_turns` in `xai-grok-subagent-resolution/src/context.rs`.
 pub(crate) fn fork_filter_chat(items: &mut Vec<ConversationItem>) {
     items.retain(|item| match item {
-        ConversationItem::User(u) => u.synthetic_reason.is_human(),
+        ConversationItem::User(u) => {
+            u.synthetic_reason.is_human() || u.synthetic_reason == SyntheticReason::CompactionMeta
+        }
         _ => true,
     });
 
-    // Only Assistant advances the boundary; everything else is transparent.
+    // Only a complete Assistant run, System, or the compacted head advances the boundary; everything else is transparent.
+    let refs: Vec<&ConversationItem> = items.iter().collect();
     let mut last_complete_end = 0;
     let mut i = 0;
     while let Some(item) = items.get(i) {
@@ -38,30 +41,19 @@ pub(crate) fn fork_filter_chat(items: &mut Vec<ConversationItem>) {
                 last_complete_end = i + 1;
                 i += 1;
             }
-            ConversationItem::Assistant(asst) => {
-                let expected: HashSet<&str> =
-                    asst.tool_calls.iter().map(|tc| tc.id.as_ref()).collect();
-                let mut found = HashSet::new();
-                let mut j = i + 1;
-                while let Some(next) = items.get(j) {
-                    match next {
-                        ConversationItem::ToolResult(tr) => {
-                            if expected.contains(tr.tool_call_id.as_str()) {
-                                found.insert(tr.tool_call_id.as_str());
-                            }
-                            j += 1;
-                        }
-                        ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_) => {
-                            j += 1;
-                        }
-                        _ => break,
-                    }
-                }
-                if found == expected {
-                    last_complete_end = j;
-                    i = j;
+            ConversationItem::User(u) if u.synthetic_reason == SyntheticReason::CompactionMeta => {
+                last_complete_end = i + 1;
+                i += 1;
+            }
+            ConversationItem::Assistant(_) => {
+                if let Some(end) =
+                    xai_grok_subagent_resolution::context::complete_assistant_run_end(&refs, i)
+                {
+                    last_complete_end = end;
+                    i = end;
                 } else {
-                    break; // Dangling tool calls: stop at the last complete boundary
+                    last_complete_end = i;
+                    break;
                 }
             }
             _ => {
