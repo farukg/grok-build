@@ -173,6 +173,21 @@ impl BlockContent for SubagentBlock {
             theme.muted().add_modifier(Modifier::BOLD)
         };
         let muted = theme.muted();
+        if ctx.mode == DisplayMode::Collapsed {
+            let (status, detail) = match &self.kind {
+                SubagentBlockKind::Started => ("running", None),
+                SubagentBlockKind::Completed { .. } => ("completed", None),
+                SubagentBlockKind::Failed { error, .. } => ("failed", error.as_deref()),
+                SubagentBlockKind::Cancelled { .. } => ("cancelled", None),
+            };
+            let suffix = detail.map(|message| format!(": {message}")).unwrap_or_default();
+            return BlockOutput {
+                lines: vec![Line::from(vec![
+                    Span::styled("Subagent ", bold),
+                    Span::styled(format!("{status}{suffix}"), muted),
+                ]).into()],
+            };
+        }
         let w = ctx.width as usize;
 
         let line = match (&self.kind, self.is_background) {
@@ -288,7 +303,7 @@ impl BlockContent for SubagentBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        false
+        true
     }
 
     fn default_display_mode(&self) -> DisplayMode {
