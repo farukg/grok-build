@@ -2868,12 +2868,12 @@ fn workspace_overlay_cycle_reaches_provisional_but_not_hidden_live_agents() {
             data_version: 1,
         });
     app.active_view = ActiveView::Agent(AgentId(0));
-    assert!(dispatch_dashboard_overlay_cycle(&mut app, 1).is_empty());
+    assert!(dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next).is_empty());
     assert_eq!(app.active_view, ActiveView::Agent(second));
     app.workspace_membership
         .suppress_for_test(xai_grok_dashboard_store::SessionId::new("second").unwrap());
     app.active_view = ActiveView::Agent(AgentId(0));
-    assert!(dispatch_dashboard_overlay_cycle(&mut app, 1).is_empty());
+    assert!(dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next).is_empty());
     assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
 }
 /// In leader mode the live FleetView roster is the source, so opening must
@@ -4887,7 +4887,7 @@ fn dashboard_overlay_mouse_exit_and_cycle_disarm_pending_stop() {
         crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0)),
     );
     arm(&mut app);
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         app.pending_action.is_none(),
         "cycling to another agent must disarm the pending stop",
@@ -4929,12 +4929,12 @@ fn dashboard_overlay_cycle_wraps_through_agents() {
         crate::views::dashboard::DashboardRowId::TopLevel(id1),
     );
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id1));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == id2));
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id2));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id1));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, -1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Prev);
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id2));
 }
 /// Cycle respects the dashboard's filter. With a state filter that hides one of two agents, the cycle becomes a no-op (only one visible row to walk through); the user can clear the filter to reach the other agent.
@@ -4956,7 +4956,7 @@ fn dashboard_overlay_cycle_respects_filter() {
         d.filter =
             crate::views::dashboard::Filter::State(crate::views::dashboard::RowState::Working);
     }
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert_eq!(
         app.dashboard.as_ref().unwrap().attached_agent,
         Some(id1),
@@ -5042,7 +5042,7 @@ fn dashboard_overlay_cycle_anchors_on_visible_agent_not_stale_attach() {
         "precondition: external switch leaves attached_agent stale on the first row",
     );
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == third));
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     let landed = match app.active_view {
         ActiveView::Agent(a) => a,
         other => panic!("active_view not an agent: {other:?}"),
@@ -5070,7 +5070,7 @@ fn dashboard_overlay_cycle_noop_with_single_agent() {
         &mut app,
         crate::views::dashboard::DashboardRowId::TopLevel(id),
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id));
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == id));
 }
@@ -5090,7 +5090,7 @@ fn dashboard_overlay_cycle_from_non_overlay_agent_attaches_and_switches() {
         app.dashboard.is_none(),
         "precondition: no dashboard / overlay attached yet",
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id2),
         "next from a non-overlay agent must switch active_view to the next agent, got {:?}",
@@ -5101,7 +5101,7 @@ fn dashboard_overlay_cycle_from_non_overlay_agent_attaches_and_switches() {
         Some(id2),
         "cycling from a non-overlay agent must attach the overlay chrome to the next agent",
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, -1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Prev);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id1),
         "prev must switch back to the first agent, got {:?}",
@@ -5189,7 +5189,7 @@ fn dashboard_overlay_cycle_from_unopened_dashboard_configures_state() {
         app.dashboard.is_none(),
         "precondition: dashboard never opened"
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     let d = app
         .dashboard
         .as_ref()
@@ -5224,7 +5224,7 @@ fn dashboard_overlay_cycle_unopened_respects_auth_gate() {
     app.active_view = ActiveView::Agent(id1);
     app.auth_state = AuthState::Pending { error: None };
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id1),
         "unauthenticated cycle must not switch agents, got {:?}",
@@ -5243,7 +5243,7 @@ fn dashboard_overlay_cycle_non_overlay_single_agent_is_noop() {
     mark_agent_nonempty(&mut app, id);
     app.active_view = ActiveView::Agent(id);
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id),
         "single-agent next must not switch views, got {:?}",
@@ -5254,7 +5254,7 @@ fn dashboard_overlay_cycle_non_overlay_single_agent_is_noop() {
         None,
         "single-agent cycle must not attach overlay chrome",
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, -1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Prev);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id),
         "single-agent prev must not switch views, got {:?}",
@@ -5279,7 +5279,7 @@ fn dashboard_overlay_cycle_non_agent_active_view_is_noop() {
     app.agents.insert(id2, agent2);
     app.active_view = ActiveView::Welcome;
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Welcome),
         "cycle with a non-agent active_view must not switch views, got {:?}",
@@ -5305,7 +5305,7 @@ fn dashboard_overlay_cycle_non_overlay_noop_when_dashboard_disabled() {
     app.agents.insert(id2, agent2);
     app.active_view = ActiveView::Agent(id1);
     assert!(app.dashboard.is_none());
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == id1),
         "cycle must be a no-op when the dashboard is disabled, got {:?}",
@@ -5340,7 +5340,7 @@ fn dashboard_overlay_cycle_non_overlay_noop_when_current_agent_hidden() {
         vec![id2, id1],
         "precondition: the empty current agent is hidden from the visible order",
     );
-    let _ = dispatch_dashboard_overlay_cycle(&mut app, 1);
+    let _ = dispatch_dashboard_overlay_cycle(&mut app, crate::app::agent_view::Direction::Next);
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == current),
         "cycle must not jump to a random row when the current agent is filtered out, got {:?}",

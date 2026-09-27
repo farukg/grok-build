@@ -117,7 +117,7 @@ use super::turn::{
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
 use crate::app::actions::{Action, Effect};
-use crate::app::agent_view::ActivePane;
+use crate::app::agent_view::{ActivePane, Direction};
 use crate::app::app_view::{ActiveView, AppView, AuthState};
 use crate::app::consent::ConsentState;
 use crate::scrollback::types::DisplayMode;
@@ -1512,8 +1512,8 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::DashboardReorderUp => dispatch_dashboard_reorder(app, true),
         Action::DashboardReorderDown => dispatch_dashboard_reorder(app, false),
         Action::DashboardOverlayExit => dispatch_dashboard_overlay_exit(app),
-        Action::DashboardOverlayPrev => dispatch_dashboard_overlay_cycle(app, -1),
-        Action::DashboardOverlayNext => dispatch_dashboard_overlay_cycle(app, 1),
+        Action::DashboardOverlayPrev => dispatch_dashboard_overlay_cycle(app, Direction::Prev),
+        Action::DashboardOverlayNext => dispatch_dashboard_overlay_cycle(app, Direction::Next),
         Action::DashboardOverlayStop => dispatch_dashboard_overlay_stop(app),
         Action::DashboardToggleAutoApprove => dispatch_dashboard_toggle_auto_approve(app),
         Action::DashboardToggleWorktree => dispatch_dashboard_toggle_worktree(app),

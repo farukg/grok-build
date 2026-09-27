@@ -2553,28 +2553,43 @@ impl AppView {
                     .dashboard
                     .as_ref()
                     .is_some_and(|d| d.attached_agent == Some(id));
+                // Only Ctrl+Alt+Up/Down remain raw takeover navigation.
                 let takeover_owns_key = super::agent_view::tree_chord(ev).is_some()
                     && self
                         .agents
                         .get(&id)
                         .is_some_and(|a| a.active_subagent.is_some());
-                if !overlay_active
-                    && !takeover_owns_key
-                    && let Event::Key(key) = ev
-                    && key.kind != KeyEventKind::Release
-                {
-                    match self
+                let cycle_action = match ev {
+                    Event::Key(key) if key.kind != KeyEventKind::Release => self
                         .registry
                         .lookup(key, crate::actions::When::DashboardOverlay)
+                        .and_then(|action| match action {
+                            crate::actions::ActionId::DashboardOverlayPrev => {
+                                Some(Action::DashboardOverlayPrev)
+                            }
+                            crate::actions::ActionId::DashboardOverlayNext => {
+                                Some(Action::DashboardOverlayNext)
+                            }
+                            _ => None,
+                        }),
+                    Event::Mouse(mouse)
+                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) =>
                     {
-                        Some(crate::actions::ActionId::DashboardOverlayPrev) => {
-                            return InputOutcome::Action(Action::DashboardOverlayPrev);
-                        }
-                        Some(crate::actions::ActionId::DashboardOverlayNext) => {
-                            return InputOutcome::Action(Action::DashboardOverlayNext);
-                        }
-                        _ => {}
+                        self.agents.get(&id).and_then(|agent| {
+                            if agent.hit_overlay_prev.contains(mouse.column, mouse.row) {
+                                Some(Action::DashboardOverlayPrev)
+                            } else if agent.hit_overlay_next.contains(mouse.column, mouse.row) {
+                                Some(Action::DashboardOverlayNext)
+                            } else {
+                                None
+                            }
+                        })
                     }
+                    _ => None,
+                };
+                if let Some(action) = cycle_action
+                {
+                    return InputOutcome::Action(action);
                 }
                 if overlay_active
                     && !takeover_owns_key
@@ -2589,12 +2604,6 @@ impl AppView {
                         Some(crate::actions::ActionId::OpenDashboard)
                         | Some(crate::actions::ActionId::DashboardOverlayExit) => {
                             return InputOutcome::Action(Action::DashboardOverlayExit);
-                        }
-                        Some(crate::actions::ActionId::DashboardOverlayPrev) => {
-                            return InputOutcome::Action(Action::DashboardOverlayPrev);
-                        }
-                        Some(crate::actions::ActionId::DashboardOverlayNext) => {
-                            return InputOutcome::Action(Action::DashboardOverlayNext);
                         }
                         Some(crate::actions::ActionId::DashboardOverlayStop) => {
                             let confirmation_label = if self.workspace_dashboard_enabled {

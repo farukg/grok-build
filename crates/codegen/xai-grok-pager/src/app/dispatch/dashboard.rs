@@ -20,7 +20,9 @@ use super::turn::dispatch_cancel_turn;
 use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, Effect, PermissionModeKind};
 use crate::app::agent::{AgentId, DeferredModelSwitch};
-use crate::app::agent_view::AgentView;
+use crate::app::agent_view::{
+    AgentView, CycleOutcome, Direction, NO_SIBLING_TOAST,
+};
 use crate::app::app_view::{ActiveView, AppView, DashboardReturn, TrustState};
 use crate::app::cancel_latency::CancelOrigin;
 use agent_client_protocol as acp;
@@ -967,18 +969,70 @@ pub(super) fn dispatch_dashboard_confirm_worktree(
     );
     effects
 }
-/// Cycle the dashboard overlay to the prev (-1) / next (+1) agent in the visible row order, wrapping at the ends.
-/// Attaches overlay chrome on the first cycle from a session not opened via the dashboard.
-pub(super) fn dispatch_dashboard_overlay_cycle(app: &mut AppView, delta: i32) -> Vec<Effect> {
-    use crate::views::dashboard::{DashboardRowId, SessionCycle};
+/// The action-level session-cycle scope shared by dispatch and the visible header.
+pub(crate) enum CycleScope {
+    Roots(crate::views::dashboard::SessionCycle),
+    Siblings { current: String },
+}
+
+pub(crate) fn cycle_scope(app: &mut AppView, current: AgentId) -> CycleScope {
+    match app.agents.get(&current).and_then(|agent| agent.active_subagent.clone()) {
+        Some(child) => CycleScope::Siblings { current: child },
+        None => CycleScope::Roots(session_cycle(app)),
+    }
+}
+
+/// Applies the session-cycle action to its classified scope.
+pub(super) fn dispatch_dashboard_overlay_cycle(
+    app: &mut AppView,
+    direction: Direction,
+) -> Vec<Effect> {
     let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
-    let SessionCycle::Order(order) = session_cycle(app) else {
+    match cycle_scope(app, current) {
+        CycleScope::Siblings { current: child } => {
+            let order = app.agents.get(&current).map_or_else(Vec::new, |agent| {
+                agent.sibling_order(&child)
+            });
+            let outcome = app.agents.get_mut(&current).map_or(
+                CycleOutcome::NoSibling,
+                |agent| agent.cycle_sibling(&child, &order, direction),
+            );
+            match outcome {
+                CycleOutcome::Switched => {}
+                CycleOutcome::NoSibling => {
+                    if let Some(agent) = app.agents.get_mut(&current) {
+                        if let Some(child) = agent.active_subagent.as_deref()
+                            && let Some(child) = agent.subagent_views.get_mut(child)
+                        {
+                            child.show_toast(NO_SIBLING_TOAST);
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+        CycleScope::Roots(cycle) => dispatch_root_cycle(app, current, direction, cycle),
+    }
+}
+
+fn dispatch_root_cycle(
+    app: &mut AppView,
+    current: AgentId,
+    direction: Direction,
+    cycle: crate::views::dashboard::SessionCycle,
+) -> Vec<Effect> {
+    use crate::views::dashboard::{DashboardRowId, SessionCycle};
+    let SessionCycle::Order(order) = cycle else {
         return vec![];
     };
     let Some(idx) = order.iter().position(|id| *id == current) else {
         return vec![];
+    };
+    let delta = match direction {
+        Direction::Prev => -1,
+        Direction::Next => 1,
     };
     let n = order.len() as i32;
     let next_idx = (((idx as i32) + delta).rem_euclid(n)) as usize;
@@ -1043,13 +1097,23 @@ fn session_cycle(app: &mut AppView) -> crate::views::dashboard::SessionCycle {
 /// `current`'s `i/n` in [`session_cycle`] for the header switcher, memoized on `app.session_cycle` until it is marked stale.
 pub(crate) fn session_cycle_position(app: &mut AppView, current: AgentId) -> Option<(usize, usize)> {
     use crate::views::dashboard::SessionCycleCache;
-    if let SessionCycleCache::Fresh(cycle) = &app.session_cycle {
-        return cycle.position(current);
+    match app.agents.get(&current).and_then(|agent| agent.active_subagent.as_deref()) {
+        Some(child_sid) => app
+            .agents
+            .get(&current)
+            .and_then(|agent| agent.sibling_position(child_sid)),
+        None => match &app.session_cycle {
+            SessionCycleCache::Fresh(cycle) => cycle.position(current),
+            SessionCycleCache::Stale => {
+                let CycleScope::Roots(cycle) = cycle_scope(app, current) else {
+                    return None;
+                };
+                let position = cycle.position(current);
+                app.session_cycle = SessionCycleCache::Fresh(cycle);
+                position
+            }
+        },
     }
-    let cycle = session_cycle(app);
-    let position = cycle.position(current);
-    app.session_cycle = SessionCycleCache::Fresh(cycle);
-    position
 }
 pub(super) fn dispatch_dashboard_dispatch(
     app: &mut AppView,
