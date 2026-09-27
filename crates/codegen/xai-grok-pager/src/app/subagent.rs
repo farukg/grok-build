@@ -30,6 +30,8 @@ use xai_grok_shell::session::storage::{
     stream_replay_updates_at_hinted,
 };
 
+use crate::views::context_bar::fmt_tokens;
+
 mod lifecycle;
 
 #[cfg(test)]
@@ -103,6 +105,15 @@ impl SubagentAttemptInfo {
         self.tools_used.clone_from(&prior.tools_used);
         self.error_count = prior.error_count;
         self.activity_label.clone_from(&prior.activity_label);
+    }
+
+    /// Context tokens as `used/window`, or `used` alone while the window is unknown; `None` before any report.
+    pub(crate) fn token_usage_label(&self) -> Option<String> {
+        let used = fmt_tokens(self.tokens_used?);
+        Some(match self.context_window_tokens.filter(|&window| window > 0) {
+            Some(window) => format!("{used}/{}", fmt_tokens(window)),
+            None => used,
+        })
     }
 
     pub(crate) fn terminal_update(

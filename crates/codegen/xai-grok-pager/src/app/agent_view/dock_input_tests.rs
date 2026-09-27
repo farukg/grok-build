@@ -295,6 +295,28 @@ fn dock_h_toggles_show_done() {
 }
 
 #[test]
+fn dock_row_meta_includes_tokens() {
+    let mut agent = dock_with_subagents(&["child-known", "child-unknown"], &[]);
+    let known = agent.subagent_sessions.get_mut("child-known").unwrap();
+    known.attempt.tokens_used = Some(14_200);
+    known.attempt.context_window_tokens = Some(200_000);
+    let unknown = agent.subagent_sessions.get_mut("child-unknown").unwrap();
+    unknown.attempt.context_window_tokens = Some(200_000);
+    let meta = |child: &str| {
+        agent
+            .dock_subagent_rows()
+            .into_iter()
+            .find(|(id, _, _)| id == child)
+            .map(|(_, _, row)| row.meta)
+            .unwrap()
+    };
+    let known = meta("child-known");
+    assert!(known.ends_with(" \u{b7} 14K/200K"), "{known}");
+    let unknown = meta("child-unknown");
+    assert!(!unknown.contains("200K"), "{unknown}");
+}
+
+#[test]
 fn finished_only_subagents_do_not_paint_a_done_summary() {
     let mut agent = dock_with_subagents(&[], &["child-done"]);
     assert!(agent.dock_subagent_rows().is_empty());

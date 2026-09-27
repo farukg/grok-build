@@ -328,6 +328,10 @@ impl AgentView {
                 meta.push_str(&crate::views::dock::fmt_elapsed(
                     info.display_elapsed().as_secs(),
                 ));
+                if let Some(tokens) = info.attempt.token_usage_label() {
+                    meta.push_str(" \u{b7} ");
+                    meta.push_str(&tokens);
+                }
                 (
                     info.child_session_id.to_string(),
                     info.subagent_id.to_string(),

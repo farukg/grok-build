@@ -311,6 +311,50 @@ fn takeover_shows_dashboard_button_only_inside_the_overlay() {
         );
     }
 }
+/// Title row of the takeover frame for `child` after one draw.
+fn takeover_title_row(parent: &mut AgentView, child: &str) -> String {
+    let registry = ActionRegistry::defaults();
+    parent.open_subagent_fullscreen(child.to_owned());
+    let area = Rect::new(0, 0, 100, 30);
+    let mut buf = Buffer::empty(area);
+    let mut scratch = ScratchBuffer::new();
+    let _ = parent.draw(
+        area,
+        &mut buf,
+        &registry,
+        &mut scratch,
+        None,
+        false,
+        crate::app::agent_view::BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        crate::app::agent_view::AppRenderParams::default(),
+    );
+    buffer_text(&buf, area)
+        .lines()
+        .find(|line| line.contains("gpt-5.6-sol"))
+        .map(str::to_owned)
+        .unwrap_or_else(|| panic!("takeover title row not rendered"))
+}
+#[test]
+fn takeover_header_meta_includes_tokens() {
+    for (tokens, expected) in [
+        (Some(14_200), Some("gpt-5.6-sol \u{b7} 14K/200K")),
+        (None, None),
+    ] {
+        let mut parent = parent_with_child("child");
+        let mut info = crate::app::agent_view::test_fixtures::running_subagent_info("child");
+        info.attempt.model = Some("gpt-5.6-sol".into());
+        info.attempt.tokens_used = tokens;
+        info.attempt.context_window_tokens = Some(200_000);
+        parent.subagent_sessions.insert("child".to_owned(), info);
+        let title = takeover_title_row(&mut parent, "child");
+        match expected {
+            Some(meta) => assert!(title.contains(meta), "{title}"),
+            None => assert!(!title.contains("200K"), "{title}"),
+        }
+    }
+}
 /// A parent whose child, with a transcript, sits on bare scrollback under an open takeover. `vim_mode` is pinned on
 /// both views: `AgentView::new` reads it from the user's config, which CI does not have.
 fn open_takeover(child_sid: &str, vim_mode: bool) -> AgentView {
