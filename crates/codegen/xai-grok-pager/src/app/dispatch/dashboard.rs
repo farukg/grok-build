@@ -20,9 +20,7 @@ use super::turn::dispatch_cancel_turn;
 use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, Effect, PermissionModeKind};
 use crate::app::agent::{AgentId, DeferredModelSwitch};
-use crate::app::agent_view::{
-    AgentView, CycleOutcome, Direction, NO_SIBLING_TOAST,
-};
+use crate::app::agent_view::{AgentView, Direction};
 use crate::app::app_view::{ActiveView, AppView, DashboardReturn, TrustState};
 use crate::app::cancel_latency::CancelOrigin;
 use agent_client_protocol as acp;
@@ -992,25 +990,10 @@ pub(super) fn dispatch_dashboard_overlay_cycle(
     };
     match cycle_scope(app, current) {
         CycleScope::Siblings { current: child } => {
-            let order = app.agents.get(&current).map_or_else(Vec::new, |agent| {
-                agent.sibling_order(&child)
-            });
-            let outcome = app.agents.get_mut(&current).map_or(
-                CycleOutcome::NoSibling,
-                |agent| agent.cycle_sibling(&child, &order, direction),
-            );
-            match outcome {
-                CycleOutcome::Switched => {}
-                CycleOutcome::NoSibling => {
-                    if let Some(agent) = app.agents.get_mut(&current) {
-                        if let Some(child) = agent.active_subagent.as_deref()
-                            && let Some(child) = agent.subagent_views.get_mut(child)
-                        {
-                            child.show_toast(NO_SIBLING_TOAST);
-                        }
-                    }
-                }
+            if let Some(agent) = app.agents.get_mut(&current) {
+                agent.cycle_sibling(&child, direction);
             }
+            clear_pending_overlay_stop(app);
             vec![]
         }
         CycleScope::Roots(cycle) => dispatch_root_cycle(app, current, direction, cycle),

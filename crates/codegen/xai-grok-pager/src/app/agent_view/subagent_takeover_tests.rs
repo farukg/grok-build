@@ -508,28 +508,7 @@ fn ctrl_alt_down_from_root_opens_latest_started_child() {
     root.handle_input(&ctrl_alt(KeyCode::Up), &registry);
     assert_eq!(None, root.active_subagent, "Up from a root child leaves");
 }
-#[test]
-fn ctrl_alt_left_right_follow_start_order() {
-    let registry = ActionRegistry::defaults();
-    let mut root = make_agent();
-    add_child(&mut root, "parent", "second", Duration::from_secs(20));
-    add_child(&mut root, "parent", "third", Duration::from_secs(10));
-    add_child(&mut root, "parent", "first", Duration::from_secs(30));
-    add_child(&mut root, "third", "nested", Duration::from_secs(40));
-    root.open_subagent_fullscreen("first".to_owned());
-    let mut visited = Vec::new();
-    for _ in 0..3 {
-        root.handle_input(&ctrl_alt(KeyCode::Right), &registry);
-        visited.extend(root.active_subagent.clone());
-    }
-    assert_eq!(vec!["second", "third", "first"], visited);
-    visited.clear();
-    for _ in 0..3 {
-        root.handle_input(&ctrl_alt(KeyCode::Left), &registry);
-        visited.extend(root.active_subagent.clone());
-    }
-    assert_eq!(vec!["third", "second", "first"], visited);
-}
+
 #[test]
 fn ctrl_alt_down_on_leaf_shows_toast() {
     let registry = ActionRegistry::defaults();

@@ -35,11 +35,6 @@ pub(in crate::app) enum Direction {
     Prev,
     Next,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::app) enum CycleOutcome {
-    Switched,
-    NoSibling,
-}
 /// A Ctrl+Alt+Arrow subagent-tree navigation chord.
 #[derive(Clone, Copy)]
 pub(in crate::app) enum TreeChord {
@@ -90,7 +85,7 @@ impl AgentView {
         )
     }
     /// Direct children of `node`, earliest started first.
-    fn child_order_key(&self, sid: &str) -> (Option<std::time::Instant>, &str) {
+    fn child_order_key<'s>(&self, sid: &'s str) -> (Option<std::time::Instant>, &'s str) {
         (
             self.subagent_sessions
                 .get(sid)
@@ -149,19 +144,20 @@ impl AgentView {
             TreeChord::Parent => None,
         }
     }
-    /// Switch the takeover to the previous/next sibling of `child_sid` (same
-    /// parent, start order, wrapping). Returns the new child sid when a switch happened.
-    pub(in crate::app) fn cycle_sibling(
-        &mut self,
-        child_sid: &str,
-        order: &[String],
-        dir: Direction,
-    ) -> CycleOutcome {
+    /// Switch the takeover to the previous/next sibling in start order, wrapping at either end.
+    pub(in crate::app) fn cycle_sibling(&mut self, child_sid: &str, dir: Direction) {
+        let Some(parent) = self.tree_parent(child_sid) else {
+            return;
+        };
+        let order = self.children_of(parent);
         if order.len() < 2 {
-            return CycleOutcome::NoSibling;
+            if let Some(child) = self.subagent_views.get_mut(child_sid) {
+                child.show_toast(NO_SIBLING_TOAST);
+            }
+            return;
         }
         let Some(idx) = order.iter().position(|sid| sid == child_sid) else {
-            return CycleOutcome::NoSibling;
+            return;
         };
         let next = match dir {
             Direction::Prev => (idx + order.len() - 1) % order.len(),
@@ -169,9 +165,6 @@ impl AgentView {
         };
         if let Some(next) = order.get(next) {
             self.open_subagent_fullscreen(next.clone());
-            CycleOutcome::Switched
-        } else {
-            CycleOutcome::NoSibling
         }
     }
     /// Open the fullscreen subagent view for `child_sid`, replaying child `updates.jsonl` when the child scrollback is still empty (or the child finished).

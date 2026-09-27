@@ -1166,7 +1166,7 @@ pub(super) fn default_actions(
             label: "prev session",
             description: "Previous session",
             default_key: key!('[', CONTROL),
-            // Ctrl+[ is Esc without the kitty protocol; the arrow chord works everywhere. A subagent takeover claims it for siblings.
+            // Ctrl+[ can arrive as Esc without the kitty protocol; while a subagent view is open, this action cycles siblings.
             alt_keys: vec![key!(Left, CONTROL | ALT)],
             category: Category::Dashboard,
             context: When::DashboardOverlay,
