@@ -1361,7 +1361,7 @@ impl AppView {
     pub(crate) fn sync_billing_surface_to_agents(&mut self) {
         let billing = self.usage_visible;
         let usage_cmd = !self.has_external_auth_provider;
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             agent.set_billing_surface_visible(billing);
             agent.set_usage_command_visible(usage_cmd);
         }
@@ -1687,7 +1687,7 @@ impl AppView {
     pub fn apply_voice_mode_enabled(&mut self, enabled: bool) {
         self.voice_mode_enabled = enabled;
         crate::app::VOICE_MODE_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             agent.set_voice_mode_available(enabled);
             match agent.active_modal.as_mut() {
                 Some(crate::views::modal::ActiveModal::Settings { state }) => {
@@ -1712,7 +1712,7 @@ impl AppView {
     /// Call after gate flips, startup, reconnect, and session create/switch (so new agents inherit the gate).
     pub fn sync_permission_mode_slash_gate(&mut self) {
         let available = self.auto_mode_gate;
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             agent.prompt.set_auto_mode_available(available);
         }
         self.welcome_prompt.set_auto_mode_available(available);
@@ -1735,7 +1735,7 @@ impl AppView {
         } else {
             Vec::new()
         };
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             agent.set_restricted_commands(&names);
         }
         self.welcome_prompt.set_restricted_commands(&names);
@@ -1772,7 +1772,7 @@ impl AppView {
     pub fn sync_session_announcement_slash_gate(&mut self) {
         let has =
             crate::views::announcements::has_session_announcements(&self.active_announcements);
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             agent
                 .prompt
                 .slash_controller
@@ -4206,8 +4206,8 @@ impl AppView {
         }
         let mut clears = crate::terminal::overlay::PostFlush::default();
         let mut has_escapes = false;
-        for (id, agent) in agents.all_mut() {
-            if Some(*id) == drawn_agent {
+        for (id, agent) in agents.roots_mut() {
+            if Some(id) == drawn_agent {
                 continue;
             }
             if let Some(esc) = agent.take_inline_media_clear_escapes() {
@@ -4298,7 +4298,7 @@ impl AppView {
                 let _ = crossterm::execute!(stderr, crossterm::event::EnableMouseCapture);
             });
             super::MOUSE_CAPTURE_ENABLED.store(true, std::sync::atomic::Ordering::Release);
-            for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+            for (_, agent) in self.agents.all_mut() {
                 agent.set_sticky_toast_recursive(None);
             }
         }
@@ -5116,7 +5116,7 @@ impl AppView {
         resolved: xai_grok_shell::util::config::ResolvedContextualHints,
     ) {
         self.contextual_hints = resolved;
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             agent
                 .prompt
                 .set_contextual_hints(resolved.undo, resolved.plan_mode);
@@ -5491,7 +5491,7 @@ impl AppView {
     /// In release-aware (Kitty) mode a key stays latched until its release event arrives.
     /// On window focus loss the active game's release may be dropped, so clear all games' holds to stop runaway motion.
     pub(crate) fn gboom_release_all_games(&mut self) {
-        for agent in self.agents.all_mut().map(|(_, agent)| agent) {
+        for (_, agent) in self.agents.all_mut() {
             if let Some(gboom) = agent.gboom.as_mut() {
                 gboom.release_all();
             }
@@ -5506,7 +5506,7 @@ impl AppView {
             _ => None,
         };
         for (id, agent) in self.agents.all_mut() {
-            if Some(*id) != active
+            if Some(id) != active
                 && let Some(gboom) = agent.gboom.as_mut()
             {
                 gboom.release_all();

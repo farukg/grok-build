@@ -19,9 +19,12 @@ impl SessionViews {
     pub(crate) fn is_empty(&self) -> bool { self.views.is_empty() }
     pub(crate) fn len(&self) -> usize { self.views.len() }
 
-    pub(crate) fn values(&self) -> impl Iterator<Item = &AgentView> { self.views.values() }
-    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut AgentView> { self.views.values_mut() }
-    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (AgentId, &mut AgentView)> { self.all_mut() }
+    pub(crate) fn roots_mut(&mut self) -> impl Iterator<Item = (AgentId, &mut AgentView)> {
+        self.views.iter_mut().filter_map(|(id, view)| match view.role {
+            AgentRole::Root => Some((*id, view)),
+            AgentRole::Child(_) => None,
+        })
+    }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = (AgentId, &AgentView)> {
         self.views.iter().filter_map(|(id, view)| match view.role {
