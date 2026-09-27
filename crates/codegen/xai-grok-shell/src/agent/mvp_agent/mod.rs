@@ -1244,7 +1244,7 @@ mod subagent_spawn;
 pub(crate) mod test_hooks;
 mod turn_end;
 use session_registry::{
-    IdentityStamp, SessionRegistry, StampResolution, WithdrawnInstall,
+    ChildHost, IdentityStamp, SessionHost, SessionRegistry, StampResolution, WithdrawnInstall,
 };
 pub(crate) use session_lifecycle::RegistrySnapshot;
 pub(super) use super::ext_parsers;
