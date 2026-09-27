@@ -112,16 +112,12 @@ fn fork_filter_strips_incomplete_tool_turn() {
         }),
     ];
     fork_filter_chat(&mut items);
-    assert_eq!(
-        items.len(),
-        2,
-        "should truncate before incomplete tool turn (trailing user(q2) also dropped)"
-    );
-    let [user, asst] = items.as_slice() else {
-        panic!("expected user + assistant: {items:?}");
+    let [_, _, open_request] = items.as_slice() else {
+        panic!("only the unfinished assistant run is cut; the request it answers stays: {items:?}");
     };
-    assert!(matches!(user, ConversationItem::User(_)));
-    assert!(matches!(asst, ConversationItem::Assistant(_)));
+    assert!(
+        matches!(open_request, ConversationItem::User(u) if u.content.iter().any(|p| matches!(p, ContentPart::Text { text } if text.as_ref() == "q2")))
+    );
 }
 #[test]
 fn fork_filter_keeps_turn_with_reasoning_between_user_and_assistant() {
@@ -215,4 +211,44 @@ fn fork_filter_drops_trailing_incomplete_goal_turn_after_reasoning() {
         Some(ConversationItem::Assistant(a)) => assert_eq!(a.content.as_ref(), "a"),
         other => panic!("expected trailing assistant, got {other:?}"),
     }
+}
+#[test]
+fn fork_filter_keeps_earlier_turns_with_dangling_tail() {
+    use xai_grok_sampling_types::conversation::*;
+
+    let call = |id: &str| ToolCall {
+        id: id.into(),
+        name: "bash".into(),
+        arguments: "{}".into(),
+    };
+    let asst = |calls: Vec<ToolCall>| {
+        ConversationItem::Assistant(AssistantItem {
+            content: String::new().into(),
+            tool_calls: calls,
+            model_id: None,
+            model_fingerprint: None,
+            reasoning_effort: None,
+        })
+    };
+    // Parallel calls split over two assistant items with late results, then a still-running call
+    let mut items = vec![
+        ConversationItem::system("sys"),
+        ConversationItem::user("q1"),
+        asst(vec![call("p1"), call("p2")]),
+        asst(vec![call("p3")]),
+        ConversationItem::tool_result("p2", "out2"),
+        ConversationItem::tool_result("p1", "out1"),
+        ConversationItem::tool_result("p3", "out3"),
+        ConversationItem::assistant("a1"),
+        ConversationItem::user("q2"),
+        asst(vec![call("running")]),
+        ConversationItem::tool_result("unrelated", "x"),
+    ];
+    fork_filter_chat(&mut items);
+    assert_eq!(
+        items.len(),
+        9,
+        "the parallel turn and q2 survive; only the running call is cut: {items:?}"
+    );
+    assert!(matches!(items.last(), Some(ConversationItem::User(_))));
 }

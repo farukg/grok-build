@@ -1611,6 +1611,79 @@ fn fork_context_normalized_only_for_summarized() {
     );
     assert!(summarized.context.is_summarized_fork());
 }
+fn background_text(ctx: &InitialContext) -> String {
+    use xai_grok_sampling_types::conversation::{ContentPart, ConversationItem};
+    ctx.conversation
+        .iter()
+        .filter_map(|item| match item {
+            ConversationItem::User(u) => Some(u.content.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+#[test]
+fn planner_fork_with_dangling_tool_call_stays_forked() {
+    use xai_grok_sampling_types::conversation::{AssistantItem, ConversationItem, ToolCall};
+    let items = vec![
+        ConversationItem::system("parent system"),
+        ConversationItem::user("UNIQUE_RUNNING_TURN_MARKER migrate the clean planner"),
+        ConversationItem::Assistant(AssistantItem {
+            content: "checking the build".into(),
+            tool_calls: vec![ToolCall {
+                id: "tc-running".into(),
+                name: "run_terminal_command".into(),
+                arguments: "{}".into(),
+            }],
+            model_id: None,
+            model_fingerprint: None,
+            reasoning_effort: None,
+        }),
+    ];
+    let ctx = verbatim_or_normalize_fork(items, 256_000);
+    assert!(
+        ctx.context.is_summarized_fork(),
+        "an unfinished tool call must not cost the whole fork: {:?}",
+        ctx.context
+    );
+    assert!(background_text(&ctx).contains("UNIQUE_RUNNING_TURN_MARKER"));
+}
+#[test]
+fn planner_fork_right_after_compaction_stays_forked() {
+    use xai_grok_sampling_types::conversation::{
+        ContentPart, ConversationItem, SyntheticReason, UserItem,
+    };
+    let synthetic = |text: &str, reason: SyntheticReason| {
+        ConversationItem::User(UserItem {
+            content: vec![ContentPart::Text { text: text.into() }],
+            synthetic_reason: reason,
+            ..Default::default()
+        })
+    };
+    let items = vec![
+        ConversationItem::system("parent system"),
+        synthetic("<user_info>os</user_info>", SyntheticReason::CompactionMeta),
+        ConversationItem::user("latest build result"),
+        synthetic(
+            "This session is being continued. UNIQUE_COMPACTION_SUMMARY_MARKER",
+            SyntheticReason::CompactionMeta,
+        ),
+        synthetic("<system-reminder>skills</system-reminder>", SyntheticReason::SystemReminder),
+    ];
+    let ctx = verbatim_or_normalize_fork(items, 256_000);
+    assert!(
+        ctx.context.is_summarized_fork(),
+        "a freshly compacted parent must still fork its summary: {:?}",
+        ctx.context
+    );
+    let text = background_text(&ctx);
+    assert!(text.contains("UNIQUE_COMPACTION_SUMMARY_MARKER"), "{text}");
+    assert!(!text.contains("skills"), "runtime reminders stay out: {text}");
+}
 fn bootstrap_test_request(fork_context: bool) -> SubagentRequest {
     SubagentRequest {
         id: "bootstrap-test".into(),
