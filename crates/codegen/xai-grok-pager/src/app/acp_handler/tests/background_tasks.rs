@@ -256,7 +256,7 @@
         );
 
         // Child view must have the bg task.
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(child.scrollback.len(), 1);
         assert!(child.session.bg_tasks.contains_key("task-child-1"));
         assert!(
@@ -279,7 +279,7 @@
         assert_eq!(agent.scrollback.len(), 1);
         assert!(agent.session.bg_tasks.contains_key("task-root-1"));
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(
             child.scrollback.len(),
             0,
@@ -406,7 +406,7 @@
         );
 
         // Child must have both the started and completed blocks.
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(child.scrollback.len(), 2, "child: started + completed");
         let bg = child.session.bg_tasks.get("task-child-2").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Done));
@@ -433,7 +433,7 @@
         let bg = agent.session.bg_tasks.get("task-root-2").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Done));
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(
             child.scrollback.len(),
             0,
@@ -459,7 +459,7 @@
             "parent scrollback must not have failure block"
         );
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(child.scrollback.len(), 2, "child: started + failed");
         let bg = child.session.bg_tasks.get("task-fail").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Failed));
@@ -485,7 +485,7 @@
             "parent must not have the bg task"
         );
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         let task = child.session.bg_tasks.get("task-child-3").unwrap();
         assert_eq!(task.stdout, "new log line");
     }
@@ -507,7 +507,7 @@
         let task = agent.session.bg_tasks.get("task-root-3").unwrap();
         assert_eq!(task.stdout, "root event");
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert!(
             child.session.bg_tasks.is_empty(),
             "child must not have the bg task"
@@ -535,7 +535,7 @@
 
         // But the bg task state must still land in the child view.
         let agent = app.agents.get(&AgentId(0)).unwrap();
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert!(child.session.bg_tasks.contains_key("task-bg-inact"));
         assert_eq!(child.scrollback.len(), 1);
     }
@@ -567,7 +567,7 @@
         assert!(!changed);
 
         let agent = app.agents.get(&AgentId(0)).unwrap();
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         let bg = child.session.bg_tasks.get("task-compl-inact").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Done));
         assert_eq!(child.scrollback.len(), 2);
