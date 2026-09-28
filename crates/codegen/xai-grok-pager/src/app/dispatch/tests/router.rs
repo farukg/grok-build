@@ -724,7 +724,6 @@ fn cta_impressions_respect_slot_gate_and_paint() {
     assert!(app.announcement_cta_impressions_logged.is_empty());
     {
         let agent = app.agents.get_mut(&id).unwrap();
-        agent.active_subagent = Some("child-sid".into());
         agent.hit_announcement_cta.clear();
         agent.hit_upgrade_cta.clear();
     }
@@ -982,6 +981,25 @@ fn switch_model_dispatch_produces_effect_and_sets_pending() {
     );
     assert!(agent_ref(&app, id).session.model_switch_pending);
     assert!(agent_ref(&app, id).session.state.is_idle());
+}
+#[test]
+fn child_model_switch_targets_child_sid() {
+    use crate::app::session_views::test_support::link_child;
+    let mut app = test_app_with_agent();
+    let parent = AgentId(0);
+    let child = AgentId(1);
+    let child_view = AgentView::new(make_test_agent_session(&app, child, "child-model"), ScrollbackState::new());
+    link_child(
+        &mut app.agents,
+        parent,
+        child,
+        child_view,
+        std::time::Instant::now(),
+    );
+    app.active_view = ActiveView::Agent(child);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
+    let effects = dispatch(Action::SwitchModel { model_id: model_id.clone(), effort: None }, &mut app);
+    assert!(matches!(effects.as_slice(), [Effect::SwitchModel { session_id, model_id: selected, .. }] if session_id.0 == "child-model" && selected == &model_id));
 }
 #[test]
 fn switch_model_allowed_when_agent_chat_kind() {

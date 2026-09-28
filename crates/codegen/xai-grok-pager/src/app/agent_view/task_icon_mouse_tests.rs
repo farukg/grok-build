@@ -6,6 +6,9 @@
 //! and drives hover and click through `handle_mouse` at those exact cells. This
 //! is the paint-vs-hit-test agreement the user exercises.
 use super::test_fixtures::make_agent;
+use crate::app::agent::AgentId;
+use crate::app::app_view::{ActiveView, AppView};
+use crate::app::session_views::SessionViews;
 use super::{AgentView, BannerSlotParams};
 use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
@@ -103,7 +106,7 @@ fn tasks_pane_icons_hover_and_click_where_painted() {
     let mut agent = make_agent();
     insert_running_task(&mut agent, "bg-1");
     let area = Rect::new(0, 0, 80, 30);
-    let _ = draw_frame(&mut agent, area);
+    let _ = draw_frame(agent, area);
     let buf = draw_frame(&mut agent, area);
     let kill = *find_symbol(&buf, "\u{2717}")
         .first()
@@ -154,7 +157,7 @@ fn tasks_pane_view_click_opens_viewer_without_scrollback_entry() {
     let mut agent = make_agent();
     insert_running_task_with_entry(&mut agent, "bg-1", None);
     let area = Rect::new(0, 0, 80, 30);
-    let _ = draw_frame(&mut agent, area);
+    let _ = draw_frame(agent, area);
     let buf = draw_frame(&mut agent, area);
     let view = *find_symbol(&buf, "\u{2197}")
         .first()
@@ -192,25 +195,45 @@ fn tasks_pane_view_click_opens_viewer_without_scrollback_entry() {
         "the viewer header must show the task command: {painted}"
     );
 }
-fn insert_running_subagent(agent: &mut AgentView, child_session_id: &str) {
-    let info = super::test_fixtures::running_subagent_info(child_session_id);
-    agent
-        .subagent_sessions
-        .insert(child_session_id.to_string(), info);
-    agent.insert_test_child(
-        child_session_id.to_string(),
-        Box::new(super::test_fixtures::make_agent()),
+fn app_with_running_subagent(child_session_id: &str) -> AppView {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = AppView::new(
+        tx,
+        crate::acp::model_state::ModelState::default(),
+        Vec::new(),
+        crate::render::draw::EscapeWriter::disconnected(),
     );
+    let parent_id = AgentId(0);
+    let child_id = AgentId(1);
+    let mut parent = make_agent();
+    parent.session.id = parent_id;
+    parent.session.session_id = Some(agent_client_protocol::SessionId::new("parent"));
+    parent.subagent_sessions.insert(
+        child_session_id.to_owned(),
+        super::test_fixtures::running_subagent_info(child_session_id),
+    );
+    app.agents.insert(parent_id, parent);
+    app.active_view = ActiveView::Agent(parent_id);
+    let mut child = super::test_fixtures::make_agent();
+    child.session.session_id = Some(agent_client_protocol::SessionId::new(child_session_id));
+    crate::app::session_views::test_support::link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
+    app
 }
 /// Dock subagent row: hovering reveals `[↗][stop]`; the painted `[stop]` must
 /// kill the subagent and the painted `[↗]` must open it fullscreen.
 #[test]
 fn dock_subagent_icons_hover_and_click_where_painted() {
     crate::views::dock::set_enabled_for_test(true);
-    let mut agent = make_agent();
-    insert_running_subagent(&mut agent, "child-1");
+    let mut app = app_with_running_subagent("child-1");
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
     let area = Rect::new(0, 0, 80, 30);
-    let buf = draw_frame(&mut agent, area);
+    let buf = draw_frame(agent, area);
     assert!(agent.dock_on, "dock must be on for this test");
     let dock = agent.pane_areas.dock;
     assert!(dock.height >= 2, "dock painted: {dock:?}");
@@ -224,7 +247,7 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
         "subagent row painted: {row:?}"
     );
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, dock.x + 5, row_y));
-    let buf = draw_frame(&mut agent, area);
+    let buf = draw_frame(agent, area);
     let row: String = (0..area.width)
         .map(|x| cell_symbol(&buf, x, row_y))
         .collect::<Vec<_>>()
@@ -241,8 +264,8 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
         .find(|x| cell_symbol(&buf, *x, row_y) == "s")
         .expect("[stop] painted on hovered subagent row");
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, kill_x, row_y));
-    let _ = draw_frame(&mut agent, area);
-    let outcome = agent.handle_mouse(&mouse(
+    let _ = draw_frame(agent, area);
+    let outcome = app.agents.get_mut(&AgentId(0)).unwrap().handle_mouse(&mouse(
         MouseEventKind::Down(MouseButton::Left),
         kill_x,
         row_y,
@@ -252,20 +275,15 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
         "clicking the painted [stop] must kill the subagent, got {outcome:?}"
     );
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, view_x, row_y));
-    let _ = draw_frame(&mut agent, area);
-    let outcome = agent.handle_mouse(&mouse(
+    let _ = draw_frame(agent, area);
+    let outcome = app.agents.get_mut(&AgentId(0)).unwrap().handle_mouse(&mouse(
         MouseEventKind::Down(MouseButton::Left),
         view_x,
         row_y,
     ));
     assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "clicking the painted [↗] must open the subagent, got {outcome:?}"
-    );
-    assert_eq!(
-        agent.active_subagent.as_deref(),
-        Some("child-1"),
-        "the [↗] click must open the subagent fullscreen"
+        matches!(outcome, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1"),
+        "clicking the painted [↗] must request the child session, got {outcome:?}"
     );
 }
 /// Dock (remote `dock_enabled`): hovering a task row reveals `[↗][stop]`;
@@ -276,7 +294,7 @@ fn dock_icons_hover_and_click_where_painted() {
     let mut agent = make_agent();
     insert_running_task(&mut agent, "bg-1");
     let area = Rect::new(0, 0, 80, 30);
-    let buf = draw_frame(&mut agent, area);
+    let buf = draw_frame(agent, area);
     assert!(agent.dock_on, "dock must be on for this test");
     let dock = agent.pane_areas.dock;
     let row_y = (dock.y..dock.bottom())
@@ -306,7 +324,7 @@ fn dock_icons_hover_and_click_where_painted() {
         .find(|x| cell_symbol(&buf, *x, row_y) == "s")
         .expect("[stop] cell");
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, stop_x, row_y));
-    let _ = draw_frame(&mut agent, area);
+    let _ = draw_frame(agent, area);
     let outcome = agent.handle_mouse(&mouse(
         MouseEventKind::Down(MouseButton::Left),
         stop_x,
@@ -317,7 +335,7 @@ fn dock_icons_hover_and_click_where_painted() {
         "clicking the painted [stop] must kill the task, got {outcome:?}"
     );
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, view_x, row_y));
-    let _ = draw_frame(&mut agent, area);
+    let _ = draw_frame(agent, area);
     let outcome = agent.handle_mouse(&mouse(
         MouseEventKind::Down(MouseButton::Left),
         view_x,

@@ -1182,13 +1182,6 @@ fn resume_focuses_existing_agent_for_open_session() {
         }),
         &mut app,
     );
-    {
-        let agent = app.agents.get_mut(&agent_0).unwrap();
-        agent
-            .subagent_sessions
-            .insert("child-1".into(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
     dispatch(Action::NewSession, &mut app);
     let agent_1 = AgentId(1);
     dispatch(
@@ -1208,7 +1201,6 @@ fn resume_focuses_existing_agent_for_open_session() {
     assert!(matches!(app.active_view, ActiveView::Agent(id) if id == agent_0));
     assert_eq!(app.agents.len(), count_before);
     assert!(effects.is_empty());
-    assert!(expect_agent(&app, agent_0).active_subagent.is_none());
     assert_eq!(
         expect_agent(&app, agent_0).session.session_id,
         Some(acp::SessionId::new("wt-sess-1"))

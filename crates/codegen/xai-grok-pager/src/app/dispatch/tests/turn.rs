@@ -225,92 +225,8 @@ fn cancel_turn_without_subagents_cancels_immediately() {
     assert!(get_agent(&app, id).session.state.is_cancelling());
 }
 
-/// Cancel inside a subagent drill-in view kills the focused running subagent instead of resolving the root turn.
-/// The root is idle here, so only the kill path reaches the coordinator-run child.
-#[test]
-fn cancel_turn_in_subagent_view_kills_focused_subagent() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    {
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent.session.state = AgentState::Idle;
-        agent
-            .subagent_sessions
-            .insert("child-1".to_string(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
 
-    let effects = dispatch(Action::CancelTurn, &mut app);
 
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::KillSubagent { subagent_id, .. }] if subagent_id == "sa-1"
-        ),
-        "stop in a subagent view must kill the focused subagent, got {effects:?}"
-    );
-    assert!(
-        get_agent(&app, id)
-            .subagent_sessions
-            .get("child-1")
-            .unwrap_or_else(|| panic!("missing child-1"))
-            .attempt
-            .pending_kill
-    );
-}
-
-/// The kill routing keys off the focused running subagent, not root idleness.
-/// With the root turn running, cancel still kills the child and leaves the root turn running (never cancelling).
-#[test]
-fn cancel_turn_in_subagent_view_kills_child_even_with_running_root() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    {
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent.session.state = AgentState::TurnRunning;
-        agent
-            .subagent_sessions
-            .insert("child-1".to_string(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::KillSubagent { subagent_id, .. }] if subagent_id == "sa-1"
-        ),
-        "a running focused subagent must be killed even while the root turn runs, got {effects:?}"
-    );
-    assert!(
-        get_agent(&app, id).session.state.is_turn_running(),
-        "the root turn must keep running"
-    );
-    assert!(!get_agent(&app, id).session.state.is_cancelling());
-}
-
-/// A finished focused subagent must NOT swallow the cancel into a kill: the stop falls through to normal root-turn cancellation.
-#[test]
-fn cancel_turn_in_finished_subagent_view_falls_through_to_root() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    {
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent.session.state = AgentState::TurnRunning;
-        let mut info = make_test_subagent("child-1", "sa-1");
-        info.set_finished_for_test(true);
-        agent.subagent_sessions.insert("child-1".to_string(), info);
-        agent.active_subagent = Some("child-1".into());
-    }
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(
-        matches!(effects.as_slice(), [Effect::CancelTurn { .. }]),
-        "a finished subagent must not intercept cancel, got {effects:?}"
-    );
-}
 
 #[test]
 fn cancel_turn_forwards_trigger_hint_to_effect() {
@@ -1083,22 +999,20 @@ fn cancel_turn_keeps_a_post_turn_plan_review() {
     );
 }
 
-/// An Idle parent with a TurnRunning overlay child must cancel the child session.
+/// An Idle parent with a TurnRunning child must cancel the child session.
 #[test]
-fn cancel_turn_in_subagent_overlay_cancels_child_while_parent_idle() {
+fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-overlay-idle-parent";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-        assert!(parent.session.state.is_idle());
-    }
-
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
+    assert!(app.agents[&parent_id].session.state.is_idle());
     let effects = dispatch(Action::CancelTurn, &mut app);
 
     assert!(
@@ -1113,37 +1027,25 @@ fn cancel_turn_in_subagent_overlay_cancels_child_while_parent_idle() {
         ),
         "overlay stop must emit CancelTurn for the child session, got {effects:?}"
     );
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(
-        parent.session.state.is_idle(),
-        "parent stays Idle; overlay stop is not a parent cancel"
-    );
-    assert!(parent.cancel_turn_view.is_none());
-    let child = parent.subagent_views.get(child_sid).unwrap();
-    assert!(
-        child.session.state.is_cancelling(),
-        "child overlay must show Cancelling"
-    );
+    assert!(app.agents[&parent_id].session.state.is_idle());
+    assert!(app.agents[&parent_id].cancel_turn_view.is_none());
+    assert!(app.agents[&child_id].session.state.is_cancelling());
 }
 
-/// Overlay stop cancels the running child and must not open the parent ask panel.
+/// Esc on a running child cancels that session without opening the parent's ask panel.
 #[test]
-fn cancel_turn_in_subagent_overlay_does_not_open_parent_ask_panel() {
+fn child_esc_emits_session_cancel_for_child() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-overlay-running-parent";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.session.state = AgentState::TurnRunning;
-        parent
-            .subagent_sessions
-            .insert(child_sid.into(), make_test_subagent(child_sid, "sa-1"));
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.agents.get_mut(&parent_id).unwrap().session.state = AgentState::TurnRunning;
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = dispatch(Action::CancelTurn, &mut app);
 
@@ -1158,143 +1060,26 @@ fn cancel_turn_in_subagent_overlay_does_not_open_parent_ask_panel() {
         ),
         "overlay stop must target the child session, got {effects:?}"
     );
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(
-        parent.cancel_turn_view.is_none(),
-        "ask panel on the parent is unreachable under the overlay"
-    );
-    assert!(
-        parent.session.state.is_turn_running(),
-        "parent turn is not the cancel target"
-    );
-    assert!(
-        parent
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
-            .session
-            .state
-            .is_cancelling()
-    );
+    assert!(app.agents[&parent_id].cancel_turn_view.is_none());
+    assert!(app.agents[&parent_id].session.state.is_turn_running());
+    assert!(app.agents[&child_id].session.state.is_cancelling());
 }
 
-/// No overlay: a running subagent still opens the parent ask panel.
+
+/// Any cancelling resident session keeps the resend tick demand active.
 #[test]
-fn cancel_turn_without_overlay_still_shows_subagent_ask_panel() {
-    let mut app = test_app_with_agent();
-    let parent_id = AgentId(0);
-    let child_sid = "child-not-focused";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
-    child_session.state = AgentState::TurnRunning;
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.session.state = AgentState::TurnRunning;
-        parent
-            .subagent_sessions
-            .insert(child_sid.into(), make_test_subagent(child_sid, "sa-1"));
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = None;
-    }
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(parent.cancel_turn_view.is_some());
-    assert!(parent.session.state.is_turn_running());
-    assert!(
-        parent
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
-            .session
-            .state
-            .is_turn_running(),
-        "unfocused child must not be cancelled"
-    );
-}
-
-/// Second `[stop]` while the overlay child is already Cancelling must re-send.
-#[test]
-fn cancel_turn_in_subagent_overlay_retries_when_child_already_cancelling() {
-    let mut app = test_app_with_agent();
-    let parent_id = AgentId(0);
-    let child_sid = "child-overlay-retry";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
-    child_session.state = AgentState::TurnRunning;
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
-
-    let first = dispatch(Action::CancelTurn, &mut app);
-    assert!(
-        matches!(
-            first.as_slice(),
-            [Effect::CancelTurn { session_id, .. }] if session_id.0.as_ref() == child_sid
-        ),
-        "first overlay stop must cancel the child, got {first:?}"
-    );
-
-    let retry = dispatch(Action::CancelTurn, &mut app);
-    assert!(
-        matches!(
-            retry.as_slice(),
-            [Effect::CancelTurn {
-                session_id,
-                cancel_subagents: true,
-                rewind_prompt_id: None,
-                ..
-            }] if session_id.0.as_ref() == child_sid
-        ),
-        "second overlay stop must re-send child CancelTurn, got {retry:?}"
-    );
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(parent.session.state.is_idle());
-    assert!(
-        parent
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
-            .session
-            .state
-            .is_cancelling()
-    );
-}
-
-/// An Idle parent with a cancelling overlay child must keep Fast ticks for resend.
-#[test]
-fn tick_demand_fast_for_idle_parent_with_cancelling_overlay_child() {
+fn tick_demand_fast_while_any_session_is_cancelling() {
     use crate::app::app_view::TickDemand;
-
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let child_sid = "child-overlay-tick-demand";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
-    child_session.state = AgentState::TurnRunning;
-    let mut child = AgentView::new(child_session, ScrollbackState::new());
-    child.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::Mouse);
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-        assert!(parent.session.state.is_idle());
-    }
-    assert_eq!(app.tick_demand(), TickDemand::None, "idle overlay parks");
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-    assert!(
-        matches!(effects.as_slice(), [Effect::CancelTurn { .. }]),
-        "overlay stop must cancel the child, got {effects:?}"
-    );
-    assert_eq!(
-        app.tick_demand(),
-        TickDemand::Fast,
-        "idle parent with a cancelling child must not park before resend grace"
-    );
+    let child_id = AgentId(1);
+    let child_sid = "child-tick-demand";
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
+    child_session.state = AgentState::TurnCancelling;
+    let child = AgentView::new(child_session, ScrollbackState::new());
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    assert_eq!(app.tick_demand(), TickDemand::Fast);
 }
 
 /// Overlay stop sends cancel_subagents true even when always_continue is set.
@@ -1330,27 +1115,6 @@ fn cancel_turn_in_subagent_overlay_ignores_always_continue_pref() {
     );
 }
 
-/// Dangling active_subagent is not an overlay; parent ask-panel still opens.
-#[test]
-fn cancel_turn_with_stale_active_subagent_still_shows_ask_panel() {
-    let mut app = test_app_with_agent();
-    let parent_id = AgentId(0);
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.session.state = AgentState::TurnRunning;
-        parent
-            .subagent_sessions
-            .insert("child-1".into(), make_test_subagent("child-1", "sa-1"));
-        parent.active_subagent = Some("stale-sid".into());
-    }
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(parent.cancel_turn_view.is_some());
-    assert!(parent.session.state.is_turn_running());
-}
 
 /// Overlay child with no session_id: no wire cancel and no local Cancelling.
 #[test]
@@ -2546,45 +2310,25 @@ fn bg_task_kill_failed_clears_pending_kill_on_inactive_agent() {
 /// Sticky must land on parent and subagent, and remain on the parent after leaving the subagent view (Esc clears `active_subagent` only).
 #[serial_test::serial(MOUSE_CAPTURE_ENABLED)]
 #[test]
-fn mouse_reporting_toggle_sticky_survives_subagent_esc_to_parent() {
+fn mouse_reporting_toggle_sticky_survives_child_navigation() {
+    use crate::app::session_views::test_support::link_child;
     reset_mouse_capture_enabled(true);
     assert!(mouse_capture_is_enabled());
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let child_sid = "child-mouse-toggle".to_string();
-
-    let child_session = make_test_agent_session(&app, AgentId(1), &child_sid);
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.clone(), Box::new(child));
-        parent.active_subagent = Some(child_sid.clone());
-    }
+    let child_id = AgentId(1);
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-mouse-toggle"),
+        ScrollbackState::new(),
+    );
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     app.registry = crate::actions::ActionRegistry::defaults_with_config(true);
-
-    // Toggle while subagent is "focused" (active_subagent set).
     let _ = dispatch(Action::ToggleMouseCapture, &mut app);
-
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert_eq!(parent.sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
-    let child = parent.subagent_views.get(&child_sid).unwrap();
-    assert_eq!(
-        child.sticky_toast.as_deref(),
-        Some(MOUSE_OFF_STICKY),
-        "child gets sticky recursively even if toast path targeted active view only"
-    );
-
-    // Simulate Esc: leave subagent, return to parent agent view.
-    app.agents.get_mut(&parent_id).unwrap().active_subagent = None;
-
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert_eq!(
-        parent.sticky_toast.as_deref(),
-        Some(MOUSE_OFF_STICKY),
-        "parent keeps sticky after leaving subagent fullscreen"
-    );
-    assert!(parent.toast.is_none() || parent.sticky_toast.is_some());
-
+    assert_eq!(app.agents[&parent_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(app.agents[&child_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    app.active_view = crate::app::app_view::ActiveView::Agent(parent_id);
+    assert_eq!(app.agents[&parent_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
     reset_mouse_capture_enabled(true);
 }
 

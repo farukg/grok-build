@@ -4599,65 +4599,23 @@ fn dashboard_overlay_exit_then_exit_returns_to_attached_agent() {
         Some(id2)
     );
 }
-/// Leaving the dashboard back into an overlay keeps a live subagent takeover and selects the
-/// parent's top-level row.
+/// Returning from the dashboard selects the attached root row without changing the active session tree.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
-fn dashboard_overlay_return_keeps_takeover_on_top_level_row() {
+fn dashboard_return_selects_attached_root_row() {
     let mut app = test_app_with_agent();
     open_dashboard(&mut app);
     let parent = AgentId(0);
     mark_agent_nonempty(&mut app, parent);
-    let child_sid = "child-return".to_string();
-    {
-        let agent = app.agents.get_mut(&parent).unwrap();
-        agent
-            .subagent_sessions
-            .insert(child_sid.clone(), make_test_subagent(&child_sid, "sa-ret"));
-        agent.active_subagent = Some(child_sid.clone());
-    }
     app.active_view = ActiveView::Agent(parent);
-    if let Some(d) = app.dashboard.as_mut() {
-        d.attached_agent = Some(parent);
+    if let Some(dashboard) = app.dashboard.as_mut() {
+        dashboard.attached_agent = Some(parent);
     }
     let _ = dispatch_dashboard_overlay_exit(&mut app);
     let _ = dispatch_exit_dashboard(&mut app);
     assert_eq!(app.active_view, ActiveView::Agent(parent));
     assert_eq!(
-        app.dashboard.as_ref().and_then(|d| d.attached_agent),
-        Some(parent)
-    );
-    assert_eq!(
-        test_agent(&app, parent).active_subagent.as_deref(),
-        Some(child_sid.as_str())
-    );
-    assert_eq!(
-        app.dashboard.as_ref().and_then(|d| d.selected.clone()),
-        Some(crate::views::dashboard::DashboardRowId::TopLevel(parent))
-    );
-}
-/// A stale takeover (child id absent from `subagent_sessions`) is cleared on the same overlay
-/// return, and the dashboard selection is still the parent's top-level row.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_overlay_return_clears_stale_takeover_on_top_level_row() {
-    let mut app = test_app_with_agent();
-    open_dashboard(&mut app);
-    let parent = AgentId(0);
-    mark_agent_nonempty(&mut app, parent);
-    {
-        let agent = app.agents.get_mut(&parent).unwrap();
-        agent.active_subagent = Some("missing-child".to_string());
-    }
-    app.active_view = ActiveView::Agent(parent);
-    if let Some(d) = app.dashboard.as_mut() {
-        d.attached_agent = Some(parent);
-    }
-    let _ = dispatch_dashboard_overlay_exit(&mut app);
-    let _ = dispatch_exit_dashboard(&mut app);
-    assert!(test_agent(&app, parent).active_subagent.is_none());
-    assert_eq!(
-        app.dashboard.as_ref().and_then(|d| d.selected.clone()),
+        app.dashboard.as_ref().and_then(|dashboard| dashboard.selected.clone()),
         Some(crate::views::dashboard::DashboardRowId::TopLevel(parent))
     );
 }
@@ -5466,21 +5424,23 @@ fn ctrl_alt_right_cycles_sessions_without_takeover() {
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn cycle_in_child_is_siblings_in_root_is_roots() {
-    use crate::app::agent_view::{AgentRole, ChildLink};
+    use crate::app::session_views::test_support::link_child;
     let mut app = three_sessions_opened_directly();
     let parent_id = AgentId(0);
     let children = ["child-a", "child-b"].map(|sid| {
         let id = AgentId(app.next_agent_id);
         app.next_agent_id += 1;
-        let session = make_test_agent_session(&app, id, sid);
-        let mut child = AgentView::new(session, ScrollbackState::new());
-        child.role = AgentRole::Child(ChildLink {
-            parent: parent_id,
-            parent_session_id: app.agents[&parent_id].session.session_id.clone().unwrap(),
-            subagent_id: sid.to_owned(),
-            started_at: std::time::Instant::now(),
-        });
-        app.agents.insert(id, child);
+        let child = AgentView::new(
+            make_test_agent_session(&app, id, sid),
+            ScrollbackState::new(),
+        );
+        link_child(
+            &mut app.agents,
+            parent_id,
+            id,
+            child,
+            std::time::Instant::now(),
+        );
         id
     });
     app.active_view = ActiveView::Agent(children[0]);
@@ -5495,21 +5455,21 @@ fn cycle_in_child_is_siblings_in_root_is_roots() {
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn ctrl_alt_up_from_child_opens_parent() {
-    use crate::app::agent_view::{AgentRole, ChildLink};
+    use crate::app::session_views::test_support::link_child;
     let mut app = three_sessions_opened_directly();
     let parent = AgentId(0);
     let child = AgentId(app.next_agent_id);
-    let mut view = AgentView::new(
+    let view = AgentView::new(
         make_test_agent_session(&app, child, "child"),
         ScrollbackState::new(),
     );
-    view.role = AgentRole::Child(ChildLink {
+    link_child(
+        &mut app.agents,
         parent,
-        parent_session_id: app.agents[&parent].session.session_id.clone().unwrap(),
-        subagent_id: "child".to_owned(),
-        started_at: std::time::Instant::now(),
-    });
-    app.agents.insert(child, view);
+        child,
+        view,
+        std::time::Instant::now(),
+    );
     app.active_view = ActiveView::Agent(child);
     press(&mut app, KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT);
     assert_eq!(app.active_view, ActiveView::Agent(parent));
@@ -8144,13 +8104,6 @@ fn dashboard_attach_roster_focuses_existing_local_agent() {
         }),
         &mut app,
     );
-    {
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent
-            .subagent_sessions
-            .insert("child-1".into(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
     app.active_view = ActiveView::AgentDashboard;
     ensure_dashboard_state(&mut app);
     let count_before = app.agents.len();
@@ -8163,7 +8116,6 @@ fn dashboard_attach_roster_focuses_existing_local_agent() {
     assert!(effects.is_empty());
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == id));
     assert_eq!(app.agents.len(), count_before);
-    assert!(test_agent(&app, id).active_subagent.is_none());
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id));
 }
 /// A conversation-origin roster row attaches via the direct chat load,

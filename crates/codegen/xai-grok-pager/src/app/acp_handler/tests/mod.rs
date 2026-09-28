@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
+use crate::app::session_views::test_support::link_child;
 use crate::acp::model_state::ModelState;
 use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::agent::{AgentId, AgentSession, AgentState, InFlightPrompt};
@@ -17,11 +18,18 @@ pub(super) fn test_agent(app: &AppView, id: AgentId) -> &AgentView {
     };
     agent
 }
-pub(super) fn test_subagent<'a>(parent: &'a AgentView, sid: &str) -> &'a AgentView {
-    let Some(child) = parent.subagent_views.get(sid) else {
+pub(super) fn test_subagent<'a>(app: &'a AppView, sid: &str) -> &'a AgentView {
+    let child = app.agents.roots().find_map(|(parent_id, _)| {
+        app.agents.children_of(parent_id).into_iter().find_map(|id| {
+            app.agents.get(&id).filter(|view| {
+                view.session.session_id.as_ref().is_some_and(|session| session.0.as_ref() == sid)
+            })
+        })
+    });
+    let Some(child) = child else {
         panic!("expected subagent {sid}");
     };
-    child.as_ref()
+    child
 }
 pub(super) fn json_set(
     value: &mut serde_json::Value,
@@ -1623,7 +1631,9 @@ pub(super) fn snapshot_after_subagent_spawn(
     SubagentSpawnSnapshot {
         description: info.description.to_string(),
         subagent_type: info.subagent_type.to_string(),
-        has_child_view: agent.subagent_views.contains_key(child_sid),
+        has_child_view: app.agents.children_of(AgentId(0)).iter().any(|id| {
+            app.agents.get(id).is_some_and(|view| view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == child_sid))
+        }),
         scrollback_len: agent.scrollback.len(),
         child_session_id: sb.child_session_id.clone(),
         block_kind: sb.kind.clone(),
@@ -1735,7 +1745,7 @@ pub(super) fn child_scrollback_tool_call_count(
     agent: &AgentView,
     child_sid: &str,
 ) -> usize {
-    let child = agent.subagent_views.get(child_sid).expect("child subagent view");
+    let child = agent;
     (0..child.scrollback.len())
         .filter(|i| {
             child
@@ -1750,7 +1760,7 @@ pub(super) fn child_scrollback_session_event_count(
     agent: &AgentView,
     child_sid: &str,
 ) -> usize {
-    let child = agent.subagent_views.get(child_sid).expect("child subagent view");
+    let child = agent;
     (0..child.scrollback.len())
         .filter(|i| {
             child
@@ -1796,7 +1806,7 @@ pub(super) fn child_scrollback_matching_prompt_count(
     child_sid: &str,
     prompt: &str,
 ) -> usize {
-    let child = agent.subagent_views.get(child_sid).expect("child subagent view");
+    let child = agent;
     if prompt.trim().is_empty() {
         return 0;
     }
@@ -1815,17 +1825,8 @@ pub(super) fn child_scrollback_matching_prompt_count(
         })
         .count()
 }
-pub(super) fn child_tracker_expects_user_echo(
-    agent: &AgentView,
-    child_sid: &str,
-) -> bool {
-    agent
-        .subagent_views
-        .get(child_sid)
-        .expect("child subagent view")
-        .session
-        .tracker
-        .expects_user_echo()
+pub(super) fn child_tracker_expects_user_echo(agent: &AgentView, _child_sid: &str) -> bool {
+    agent.session.tracker.expects_user_echo()
 }
 pub(super) fn spawn_subagent_with_optional_updates(
     app: &mut AppView,
@@ -2065,10 +2066,8 @@ pub(super) fn make_app_with_parent_and_child(
     child_sid: &str,
 ) -> AppView {
     let mut app = make_app_with_agent(parent_sid);
-    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    agent.subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
-    let child_view = make_agent(Some(child_sid));
-    agent.insert_test_child(child_sid.into(), Box::new(child_view));
+    app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+    link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), Instant::now());
     app
 }
 pub(super) fn make_task_completed_notif(

@@ -786,30 +786,25 @@ fn focus_prompt_switches_pane() {
     assert_eq!(agent_ref(&app, id).active_pane, ActivePane::Prompt);
 }
 
-/// `FocusPrompt` resolves to the child under a takeover, whose hidden composer refuses the pane; the root keeps its focus too.
+/// Prompt focus targets a child session's own pane.
 #[test]
-fn focus_prompt_under_takeover_is_refused_on_the_child() {
+fn focus_prompt_targets_child_session() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let child_sid = "child-overlay-focus";
+    let child_id = AgentId(1);
     let child = AgentView::new(
-        make_test_agent_session(&app, AgentId(1), child_sid),
+        make_test_agent_session(&app, child_id, "child-overlay-focus"),
         ScrollbackState::new(),
     );
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.set_active_pane(ActivePane::Scrollback, true);
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
-
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.agents.get_mut(&parent_id).unwrap().set_active_pane(ActivePane::Scrollback, true);
+    app.agents.insert(child_id, child);
+    app.active_view = ActiveView::Agent(child_id);
     let effects = dispatch(Action::FocusPrompt, &mut app);
-
     assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert_eq!(ActivePane::Scrollback, parent.active_pane);
-    let child = parent.subagent_view(child_sid).unwrap();
-    assert_eq!(ActivePane::Scrollback, child.active_pane);
+    assert_eq!(ActivePane::Prompt, app.agents[&child_id].active_pane);
+    assert_eq!(ActivePane::Scrollback, app.agents[&parent_id].active_pane);
 }
 
 #[test]
@@ -832,6 +827,23 @@ fn send_prompt_produces_effect_and_clears_input() {
     assert!(agent_ref(&app, id).session.state.is_turn_running());
     assert_eq!(agent_ref(&app, id).scrollback.len(), 1);
     assert_eq!(agent_ref(&app, id).session.queue_len(), 0);
+}
+
+#[test]
+fn child_enter_emits_session_prompt_for_child_sid() {
+    use crate::app::session_views::test_support::link_child;
+    let mut app = test_app_with_agent();
+    let parent_id = AgentId(0);
+    let child_id = AgentId(1);
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-prompt"),
+        ScrollbackState::new(),
+    );
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = ActiveView::Agent(child_id);
+    app.agents.get_mut(&child_id).unwrap().prompt.set_text("hello child");
+    let effects = dispatch(Action::SendPrompt("hello child".into()), &mut app);
+    assert!(matches!(effects.as_slice(), [Effect::SendPrompt { session_id, text, .. }] if session_id.0 == "child-prompt" && text == "hello child"));
 }
 
 /// Register `pr-workflow` as an ACP-advertised skill on the agent's slash registry, mirroring the shell's available-commands sync.
@@ -3514,6 +3526,22 @@ fn slash_compact_enqueues_command() {
         })
     ));
     assert!(agent_ref(&app, id).prompt.text().is_empty());
+}
+
+#[test]
+fn child_slash_compact_emits_compact_for_child() {
+    use crate::app::session_views::test_support::link_child;
+    let mut app = test_app_with_agent();
+    let parent_id = AgentId(0);
+    let child_id = AgentId(1);
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-compact"),
+        ScrollbackState::new(),
+    );
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = ActiveView::Agent(child_id);
+    let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
+    assert!(matches!(effects.as_slice(), [Effect::Compact { session_id, .. }] if session_id.0 == "child-compact"));
 }
 
 #[test]

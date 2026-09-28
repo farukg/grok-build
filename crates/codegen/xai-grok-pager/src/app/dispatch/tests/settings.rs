@@ -103,34 +103,30 @@ fn agent_vim_tab_focuses_scrollback_then_j_navigates() {
     );
     crate::appearance::cache::set_vim_mode(false);
 }
-/// `/vim-mode` (ToggleVimMode) must propagate to OPEN subagent views, not just top-level agents.
-/// Otherwise a user inside a subagent view toggles vim, presses Tab then j, and the keystroke forwards to the prompt (vim-OFF fallback).
-/// The subagent view kept its stale `vim_mode = false`.
+/// `/vim-mode` applies to every resident session view.
 #[test]
-fn toggle_vim_mode_propagates_to_open_subagent_views() {
+fn toggle_vim_mode_propagates_to_resident_child_sessions() {
+    use crate::app::agent_view::{AgentRole, ChildLink};
     crate::appearance::cache::set_vim_mode(false);
     let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    let child_session = make_test_agent_session(&app, AgentId(0), "child-session");
-    let mut child = AgentView::new(child_session, ScrollbackState::new());
+    let parent_id = AgentId(0);
+    let child_id = AgentId(1);
+    let mut child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-session"),
+        ScrollbackState::new(),
+    );
     child.vim_mode = false;
-    {
-        let parent = app.agents.get_mut(&id).unwrap();
-        parent.vim_mode = false;
-        parent.insert_test_child("child-1".to_string(), Box::new(child));
-    }
+    child.role = AgentRole::Child(ChildLink {
+        parent: parent_id,
+        parent_session_id: app.agents[&parent_id].session.session_id.clone().unwrap(),
+        subagent_id: "child-1".to_owned(),
+        started_at: std::time::Instant::now(),
+    });
+    app.agents.insert(child_id, child);
+    app.agents.get_mut(&parent_id).unwrap().vim_mode = false;
     let _ = dispatch(Action::ToggleVimMode, &mut app);
-    assert!(
-        expect_agent(&app, id).vim_mode,
-        "parent picks up the toggle"
-    );
-    assert!(
-        expect_agent(&app, id)
-            .subagent_views
-            .get("child-1")
-            .is_some_and(|v| v.vim_mode),
-        "an open subagent view must also pick up the vim toggle",
-    );
+    assert!(expect_agent(&app, parent_id).vim_mode);
+    assert!(expect_agent(&app, child_id).vim_mode);
 }
 /// `/vim-mode` must toggle vim from the DASHBOARD too, not just an agent view.
 /// It used to early-return unless an agent was active, a silent no-op that left the overview's j/k off.
