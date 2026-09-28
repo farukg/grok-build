@@ -1,6 +1,6 @@
 use crate::{ContextCategory, ConversationItem, RuntimeNotice, SyntheticReason};
 
-pub fn classify_legacy_item(item: &ConversationItem) -> ContextCategory {
+pub fn classify_item(item: &ConversationItem) -> ContextCategory {
     match item {
         ConversationItem::System(system) => match system.synthetic_reason {
             SyntheticReason::Primary => ContextCategory::CoreInstructions,
