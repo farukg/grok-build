@@ -517,7 +517,7 @@ impl AgentView {
             CancellationScope::Turn => self.session.cancel_turn(&mut self.scrollback),
             CancellationScope::Compaction => self.session.cancel_compact_command(),
         }
-        if origin == CancelOrigin::UserGesture && self.surface() == ViewSurface::Root {
+        if origin == CancelOrigin::UserGesture {
             self.cancel_latency
                 .get_or_insert_with(|| CancelLatency::new(now, scope));
         }
