@@ -69,16 +69,17 @@ Path shorthands used in the docs (all under `crates/codegen/`): `P/` = `xai-grok
   conventional subjects (`feat(pager): …`, `fix(shell): …`, `test(pager): …`, `refactor(…): …`)
   and a 1–4 line body saying what and why.
 - **No AI attribution anywhere**: no `Co-Authored-By`, no "Generated with …" line, no `Review:`
-  trailer, in commits and in PR descriptions.
+  trailer, in commits or anywhere else.
 - Never rewrite published history and never force-push. Never delete branches or other agents'
   work; commit work in progress before you switch context.
 - Push only to this fork (`farukg/grok-build`). **Never push to, or open a pull request against,
-  `xai-org/grok-build`.** When you open a PR, pass `--repo farukg/grok-build` explicitly, because
-  GitHub defaults a fork's PRs to the upstream repository.
-- If your environment only lets you push to a `claude/…` branch, push there and open a PR into
-  your stream branch in `farukg/grok-build`.
-- Integration into `main` happens by PR into `main` of `farukg/grok-build` once the stream's
-  build and tests are green; Faruk merges.
+  `xai-org/grok-build`.** Check the target repository of every push.
+- A stream is finished only when `main` contains its progress. Integrating means: once the
+  stream's build and tests are green, bring its work onto `main` yourself (a squash of the stream
+  into a few clean commits on top of `main`, pushed as a fast-forward) and update
+  `docs/fork/STATUS.md`. No pull request, no waiting for a merge.
+- If your environment only lets you push to a `claude/…` branch, push the work there and say so;
+  `main` still has to receive it before the stream counts as done.
 
 ## Reporting
 
