@@ -724,7 +724,6 @@ fn cta_impressions_respect_slot_gate_and_paint() {
     assert!(app.announcement_cta_impressions_logged.is_empty());
     {
         let agent = app.agents.get_mut(&id).unwrap();
-        agent.active_subagent = Some("child-sid".into());
         agent.hit_announcement_cta.clear();
         agent.hit_upgrade_cta.clear();
     }
