@@ -14,10 +14,10 @@ impl SessionViews {
         }
     }
 
-    pub(crate) fn get(&self, id: &AgentId) -> Option<&AgentView> {
+    pub fn get(&self, id: &AgentId) -> Option<&AgentView> {
         self.views.get(id)
     }
-    pub(crate) fn get_mut(&mut self, id: &AgentId) -> Option<&mut AgentView> {
+    pub fn get_mut(&mut self, id: &AgentId) -> Option<&mut AgentView> {
         self.views.get_mut(id)
     }
     pub(crate) fn insert(&mut self, id: AgentId, view: AgentView) -> Option<AgentView> {
