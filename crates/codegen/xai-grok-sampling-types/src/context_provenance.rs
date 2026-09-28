@@ -2,57 +2,15 @@ use crate::{ContextCategory, ConversationItem, RuntimeNotice, SyntheticReason};
 
 pub fn classify_item(item: &ConversationItem) -> ContextCategory {
     match item {
-        ConversationItem::System(system) => match system.synthetic_reason {
+        ConversationItem::System(system) => match &system.synthetic_reason {
             SyntheticReason::Primary => ContextCategory::CoreInstructions,
-            SyntheticReason::ProjectInstructions => ContextCategory::ProjectInstructions,
-            SyntheticReason::CompactionMeta => ContextCategory::CompactionSummary,
-            SyntheticReason::Human
-            | SyntheticReason::Unknown
-            | SyntheticReason::SessionPrefix
-            | SyntheticReason::DirectBash
-            | SyntheticReason::GoalSetup => ContextCategory::OtherRuntime,
-            SyntheticReason::SystemReminder => notice(RuntimeNotice::SystemReminder),
-            SyntheticReason::LengthContinue => notice(RuntimeNotice::LengthContinue),
-            SyntheticReason::AutoContinue => notice(RuntimeNotice::AutoContinue),
-            SyntheticReason::AutoRecovery => notice(RuntimeNotice::AutoRecovery),
-            SyntheticReason::Interjection => notice(RuntimeNotice::Interjection),
-            SyntheticReason::AgentMessage | SyntheticReason::ParentHumanMessage => {
-                notice(RuntimeNotice::AgentMessage)
-            }
-            SyntheticReason::TaskCompleted => notice(RuntimeNotice::TaskCompleted),
-            SyntheticReason::SubagentCompleted => notice(RuntimeNotice::SubagentCompleted),
-            SyntheticReason::NotificationDrain => notice(RuntimeNotice::NotificationDrain),
-            SyntheticReason::GoalSummary => notice(RuntimeNotice::GoalSummary),
-            SyntheticReason::GoalClassifierNudge => notice(RuntimeNotice::GoalClassifierNudge),
-            SyntheticReason::SchedulerFired => notice(RuntimeNotice::SchedulerFired),
-            SyntheticReason::StopHookFeedback => notice(RuntimeNotice::StopHookFeedback),
-            SyntheticReason::WorkingDirectorySwitch => notice(RuntimeNotice::WorkingDirectorySwitch),
+            SyntheticReason::Human | SyntheticReason::Unknown => ContextCategory::OtherRuntime,
+            reason => category_of(reason),
         },
         ConversationItem::User(user) => match user.synthetic_reason {
-            SyntheticReason::Human | SyntheticReason::DirectBash | SyntheticReason::GoalSetup => {
-                ContextCategory::UserTurns
-            }
-            SyntheticReason::ProjectInstructions => ContextCategory::ProjectInstructions,
-            SyntheticReason::SessionPrefix => ContextCategory::Environment,
-            SyntheticReason::AgentMessage | SyntheticReason::ParentHumanMessage => {
-                notice(RuntimeNotice::AgentMessage)
-            }
-            SyntheticReason::CompactionMeta => ContextCategory::CompactionSummary,
-            SyntheticReason::SystemReminder => notice(RuntimeNotice::SystemReminder),
-            SyntheticReason::LengthContinue => notice(RuntimeNotice::LengthContinue),
-            SyntheticReason::AutoContinue => notice(RuntimeNotice::AutoContinue),
-            SyntheticReason::AutoRecovery => notice(RuntimeNotice::AutoRecovery),
-            SyntheticReason::Interjection => notice(RuntimeNotice::Interjection),
-            SyntheticReason::TaskCompleted => notice(RuntimeNotice::TaskCompleted),
-            SyntheticReason::SubagentCompleted => notice(RuntimeNotice::SubagentCompleted),
-            SyntheticReason::NotificationDrain => notice(RuntimeNotice::NotificationDrain),
-            SyntheticReason::GoalSummary => notice(RuntimeNotice::GoalSummary),
-            SyntheticReason::GoalClassifierNudge => notice(RuntimeNotice::GoalClassifierNudge),
-            SyntheticReason::SchedulerFired => notice(RuntimeNotice::SchedulerFired),
-            SyntheticReason::StopHookFeedback => notice(RuntimeNotice::StopHookFeedback),
-            SyntheticReason::WorkingDirectorySwitch => notice(RuntimeNotice::WorkingDirectorySwitch),
-            SyntheticReason::Primary => ContextCategory::CoreInstructions,
+            SyntheticReason::Human => ContextCategory::UserTurns,
             SyntheticReason::Unknown => ContextCategory::OtherRuntime,
+            reason => category_of(reason),
         },
         ConversationItem::Assistant(_) => ContextCategory::AssistantTurns,
         ConversationItem::ToolResult(_) | ConversationItem::BackendToolCall(_) => {
@@ -62,6 +20,29 @@ pub fn classify_item(item: &ConversationItem) -> ContextCategory {
     }
 }
 
-fn notice(reason: RuntimeNotice) -> ContextCategory {
-    ContextCategory::RuntimeNotices(reason)
+fn category_of(reason: SyntheticReason) -> ContextCategory {
+    match reason {
+        SyntheticReason::CompactionMeta => ContextCategory::CompactionSummary,
+        SyntheticReason::ProjectInstructions => ContextCategory::ProjectInstructions,
+        SyntheticReason::SessionPrefix => ContextCategory::Environment,
+        SyntheticReason::DirectBash | SyntheticReason::GoalSetup => ContextCategory::UserTurns,
+        SyntheticReason::SystemReminder => ContextCategory::RuntimeNotices(RuntimeNotice::SystemReminder),
+        SyntheticReason::LengthContinue => ContextCategory::RuntimeNotices(RuntimeNotice::LengthContinue),
+        SyntheticReason::AutoContinue => ContextCategory::RuntimeNotices(RuntimeNotice::AutoContinue),
+        SyntheticReason::AutoRecovery => ContextCategory::RuntimeNotices(RuntimeNotice::AutoRecovery),
+        SyntheticReason::Interjection => ContextCategory::RuntimeNotices(RuntimeNotice::Interjection),
+        SyntheticReason::AgentMessage | SyntheticReason::ParentHumanMessage => {
+            ContextCategory::RuntimeNotices(RuntimeNotice::AgentMessage)
+        }
+        SyntheticReason::TaskCompleted => ContextCategory::RuntimeNotices(RuntimeNotice::TaskCompleted),
+        SyntheticReason::SubagentCompleted => ContextCategory::RuntimeNotices(RuntimeNotice::SubagentCompleted),
+        SyntheticReason::NotificationDrain => ContextCategory::RuntimeNotices(RuntimeNotice::NotificationDrain),
+        SyntheticReason::GoalSummary => ContextCategory::RuntimeNotices(RuntimeNotice::GoalSummary),
+        SyntheticReason::GoalClassifierNudge => ContextCategory::RuntimeNotices(RuntimeNotice::GoalClassifierNudge),
+        SyntheticReason::SchedulerFired => ContextCategory::RuntimeNotices(RuntimeNotice::SchedulerFired),
+        SyntheticReason::StopHookFeedback => ContextCategory::RuntimeNotices(RuntimeNotice::StopHookFeedback),
+        SyntheticReason::WorkingDirectorySwitch => ContextCategory::RuntimeNotices(RuntimeNotice::WorkingDirectorySwitch),
+        SyntheticReason::Primary => ContextCategory::CoreInstructions,
+        SyntheticReason::Human | SyntheticReason::Unknown => ContextCategory::OtherRuntime
+    }
 }
