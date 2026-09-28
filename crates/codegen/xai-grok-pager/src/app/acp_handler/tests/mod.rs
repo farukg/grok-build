@@ -2066,10 +2066,8 @@ pub(super) fn make_app_with_parent_and_child(
     child_sid: &str,
 ) -> AppView {
     let mut app = make_app_with_agent(parent_sid);
-    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    agent.subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
-    let child_view = make_agent(Some(child_sid));
-    agent.insert_test_child(child_sid.into(), Box::new(child_view));
+    app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+    link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), Instant::now());
     app
 }
 pub(super) fn make_task_completed_notif(
