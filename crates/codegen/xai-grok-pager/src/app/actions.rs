@@ -27,6 +27,16 @@ pub enum SwitchModelError {
     /// Any other failure (network, auth, server error, etc.).
     Other(String),
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeStep {
+    Parent,
+    LatestChild,
+}
 /// Synchronous, side-effect-free user intent.
 /// Produced by [`super::input`] from key/mouse events.
 /// Consumed by [`super::dispatch::dispatch`] to mutate state and return effects.
@@ -845,10 +855,12 @@ pub enum Action {
     /// Returns to the dashboard with the cursor on the previously attached row.
     /// Bound to Esc, Ctrl+\\, and `[Dashboard]` click inside the overlay.
     DashboardOverlayExit,
-    /// Cycle the dashboard's session-overlay to the previous top-level agent in the row list (`‹` click or Ctrl+\[).
-    DashboardOverlayPrev,
-    /// Cycle the dashboard's session-overlay to the next top-level agent in the row list (`›` click or Ctrl+\]).
-    DashboardOverlayNext,
+    /// Previous/next session: the top-level sessions in dashboard row order from a root, the siblings from a child.
+    CycleSessions(Direction),
+    /// Open the parent session, or the most recently started child.
+    NavigateTree(TreeStep),
+    /// Open the session view with this session id.
+    OpenSession(String),
     /// Confirmed stop from inside the dashboard's session-overlay: close the attached session and return to the dashboard.
     /// State machine documented at `dispatch_dashboard_overlay_stop`.
     DashboardOverlayStop,

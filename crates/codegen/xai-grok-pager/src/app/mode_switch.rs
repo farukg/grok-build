@@ -37,7 +37,7 @@ pub(crate) fn reseed_screen_mode(app: &mut AppView, mode: ScreenMode) {
     app.welcome_prompt.set_screen_mode(mode);
     // Minimal turns mouse capture off; without a motion event the last hover would stick.
     app.last_mouse_pos = None;
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         reseed_agent_screen_mode(agent, mode);
     }
 }
@@ -47,9 +47,6 @@ fn reseed_agent_screen_mode(agent: &mut AgentView, mode: ScreenMode) {
     agent.clear_pointer_hover();
     if !mode.is_minimal() {
         agent.scrollback.reapply_thinking_fold_policy();
-    }
-    for child in agent.subagent_views.values_mut() {
-        reseed_agent_screen_mode(child, mode);
     }
 }
 
@@ -221,7 +218,7 @@ pub(crate) fn push_block_behind_live_stream(
 /// Close user-opened overlays minimal never paints (they would keep owning input while invisible); agent-initiated prompts are left alone.
 pub(crate) fn dismiss_fullscreen_only_surfaces(app: &mut AppView) {
     let writer = app.escape_writer.clone();
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         dismiss_agent_surfaces(agent, &writer);
     }
 }
@@ -238,9 +235,6 @@ fn dismiss_agent_surfaces(agent: &mut AgentView, writer: &crate::render::draw::E
     agent.persona_detail = None;
     agent.agents_modal = None;
     agent.show_goal_detail = false;
-    for child in agent.subagent_views.values_mut() {
-        dismiss_agent_surfaces(child, writer);
-    }
 }
 
 #[cfg(test)]
@@ -255,13 +249,17 @@ mod tests {
         mark_theme_resolved();
 
         let mut app = crate::app::app_view::tests::test_app_with_agent();
-        let agent_id = *app.agents.keys().next().expect("agent present");
-        let child =
+        let agent_id = app.agents.all().next().expect("agent present").0;
+        let child_id = crate::app::agent::AgentId(1);
+        let mut child =
             crate::app::agent_view::test_agent_view(Some("sess-1"), std::path::PathBuf::from("."));
-        app.agents
-            .get_mut(&agent_id)
-            .expect("agent present")
-            .insert_test_child("sub-1".to_string(), Box::new(child));
+        child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
+            parent: agent_id,
+            parent_session_id: "parent".into(),
+            subagent_id: "sub-1".into(),
+            started_at: std::time::Instant::now(),
+        });
+        app.agents.insert(child_id, child);
 
         for &(mode, minimal) in &[
             (ScreenMode::Minimal, true),
@@ -285,16 +283,22 @@ mod tests {
                 mode,
                 "welcome prompt slash gate"
             );
-            let Some(agent) = app.agents.get(&agent_id) else {
-                panic!("missing agent {agent_id:?}");
-            };
-            assert_eq!(agent.is_minimal_mode(), minimal, "agent gate");
-            let child = agent
-                .subagent_views
-                .values()
-                .next()
-                .expect("subagent present");
-            assert_eq!(child.is_minimal_mode(), minimal, "subagent gate");
+            assert_eq!(
+                app.agents
+                    .get(&agent_id)
+                    .expect("agent present")
+                    .is_minimal_mode(),
+                minimal,
+                "agent gate"
+            );
+            assert_eq!(
+                app.agents
+                    .get(&child_id)
+                    .expect("subagent present")
+                    .is_minimal_mode(),
+                minimal,
+                "subagent gate"
+            );
         }
 
         // Leave the fullscreen baseline other tests expect.
@@ -313,7 +317,7 @@ mod tests {
         mark_theme_resolved();
 
         let mut app = crate::app::app_view::tests::test_app_with_agent();
-        let agent_id = *app.agents.keys().next().expect("agent present");
+        let agent_id = app.agents.all().next().expect("agent present").0;
         let agent = app.agents.get_mut(&agent_id).expect("agent present");
 
         let thought = agent

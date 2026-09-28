@@ -510,7 +510,7 @@ fn resume_after_reveal_then_load_abandons_empty() {
     assert!(
         !app.agents.contains_key(&home),
         "LoadSession after /resume reveal must drop the unused empty, got agents {:?}",
-        app.agents.keys().collect::<Vec<_>>()
+        app.agents.all().map(|(id, _)| id).collect::<Vec<_>>()
     );
     assert!(
         effects.iter().any(|e| matches!(
@@ -1074,7 +1074,7 @@ fn session_scoped_slash_from_home_works_once_bound() {
         effects
             .iter()
             .any(|e| matches!(e, Effect::ShowContextInfo { .. }))
-            || app.agents.values().any(|a| matches!(
+            || app.agents.all().any(|(_, a)| matches!(
                 a.active_modal,
                 Some(crate::views::modal::ActiveModal::UsageInfo { .. })
             )),
@@ -1127,7 +1127,7 @@ fn session_info_and_rename_from_home_after_bind() {
     assert!(
         info.iter()
             .any(|e| matches!(e, Effect::ShowSessionInfo { .. }))
-            || app.agents.values().any(|a| matches!(
+            || app.agents.all().any(|(_, a)| matches!(
                 a.active_modal,
                 Some(crate::views::modal::ActiveModal::UsageInfo { .. })
             )),

@@ -75,8 +75,8 @@ pub(super) fn unregister_session_effect(session_id: Option<acp::SessionId>) -> V
 }
 pub(super) fn unregister_all_active_sessions(app: &AppView) -> Vec<Effect> {
     app.agents
-        .values()
-        .filter_map(|a| {
+        .roots()
+        .filter_map(|(_, a)| {
             a.session
                 .session_id
                 .as_ref()
@@ -112,7 +112,7 @@ pub(super) enum LiveSessionKind {
 }
 pub(super) fn live_session_kind(app: &AppView, session_id: &str) -> LiveSessionKind {
     let mut found = false;
-    for agent in app.agents.values().filter(|agent| {
+    for (_, agent) in app.agents.all().filter(|(_, agent)| {
         agent
             .session
             .session_id
@@ -441,7 +441,7 @@ pub(crate) fn deliver_doctor_message(app: &mut AppView, preferred: AgentId, mess
         .then_some(preferred)
         .or_else(|| match app.active_view {
             ActiveView::Agent(id) if app.agents.contains_key(&id) => Some(id),
-            _ => app.agents.keys().next().copied(),
+            _ => app.agents.roots().next().map(|(id, _)| id),
         });
     if let Some(destination) = destination
         && let Some(agent) = app.agents.get_mut(&destination)
@@ -1579,9 +1579,9 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             let sid = acp::SessionId::new(session_id.clone());
             let to_remove: Vec<_> = app
                 .agents
-                .iter()
+                .roots()
                 .filter(|(_, agent)| agent.session.session_id.as_ref() == Some(&sid))
-                .map(|(id, _)| *id)
+                .map(|(id, _)| id)
                 .collect();
             let foreground =
                 matches!(app.active_view, ActiveView::Agent(id) if to_remove.contains(&id));

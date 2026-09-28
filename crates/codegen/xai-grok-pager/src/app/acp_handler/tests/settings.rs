@@ -327,7 +327,7 @@
         // The old code gated this fan-out on `current_ui.permission_mode == "auto"`, so it skipped background agents
         let mut app = make_app_two_agents();
         app.auto_mode_gate = true;
-        for agent in app.agents.values_mut() {
+        for (_, agent) in app.agents.all_mut() {
             agent.session.auto_mode = true;
         }
         // Active tab's mirror is NOT "auto", the old bug's skip condition
@@ -344,7 +344,7 @@
         let _ = handle_ext_notification(&killswitch, &mut app);
 
         assert!(!app.auto_mode_gate, "gate must be off after kill-switch");
-        for (id, agent) in &app.agents {
+        for (id, agent) in app.agents.all() {
             assert!(
                 !agent.session.auto_mode,
                 "agent {id:?} auto_mode must be cleared by the kill-switch"
@@ -457,7 +457,7 @@
     fn settings_update_sharing_enabled_true_stays_forced_off() {
         let mut app = make_app_with_agent("sess-share-kill");
         app.sharing_enabled = true;
-        for agent in app.agents.values_mut() {
+        for (_, agent) in app.agents.all_mut() {
             agent.set_sharing_enabled(true);
         }
 
@@ -475,7 +475,7 @@
             !app.sharing_enabled,
             "remote true must not lift the temporary kill switch"
         );
-        for agent in app.agents.values() {
+        for (_, agent) in app.agents.all() {
             assert!(!agent.sharing_enabled);
             let reg = agent.prompt.slash_controller.registry();
             assert!(

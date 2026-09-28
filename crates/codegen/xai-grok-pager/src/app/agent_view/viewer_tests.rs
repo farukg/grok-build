@@ -743,33 +743,6 @@ fn block_viewer_esc_clears_sticky_then_closes() {
 }
 
 #[test]
-fn block_viewer_enter_from_fullscreen_child_quotes_into_parent() {
-    let mut child = agent_with_markdown_viewer("hello world");
-    child.prompt.set_text("child-draft");
-    let mut parent = make_agent();
-    parent.prompt.set_text("parent-draft");
-    parent.prompt.set_cursor(parent.prompt.text().len());
-    parent.insert_test_child("child-sid".into(), Box::new(child));
-    parent.open_subagent_fullscreen("child-sid".into());
-    let registry = ActionRegistry::defaults();
-    let outcome = parent.handle_input(&Event::Key(enter_key()), &registry);
-    assert!(matches!(
-        outcome,
-        crate::app::app_view::InputOutcome::Changed
-    ));
-    assert!(parent.active_subagent.is_none());
-    assert_eq!(parent.prompt.text(), "parent-draft\n> hello world\n\n");
-    assert_eq!(
-        parent.active_pane,
-        crate::app::agent_view::AgentPane::Prompt
-    );
-    if let Some(child) = parent.subagent_views.get("child-sid") {
-        assert!(child.block_viewer.is_none());
-        assert_eq!(child.prompt.text(), "child-draft");
-    }
-}
-
-#[test]
 fn install_block_viewer_ignores_missing_resume_id() {
     use crate::app::agent_view::BlockViewerResume;
     use crate::scrollback::block::RenderBlock;

@@ -2,9 +2,9 @@
 #[cfg(test)]
 use super::test_agent_view;
 use super::{
-    ActivePane, AgentRole, AgentView, ChildLink, InlineMediaHitAreas, InputMode, PaneAreas,
-    PluginCtaState, PromptInputMode, PromptMode, REWOUND_PROMPT_ID_CAP, ReplayRebuiltState,
-    SELF_ORIGINATED_PROMPT_CAP, SessionReload, ViewSurface,
+    ActivePane, AgentRole, AgentView, InlineMediaHitAreas, InputMode, PaneAreas, PluginCtaState,
+    PromptInputMode, PromptMode, REWOUND_PROMPT_ID_CAP, ReplayRebuiltState,
+    SELF_ORIGINATED_PROMPT_CAP, SessionReload,
 };
 use crate::app::agent::{AgentSession, GoalDisplayStatus};
 use crate::app::app_view::InputOutcome;
@@ -406,10 +406,7 @@ impl AgentView {
             timeline_mode: crate::views::timeline_panel::TimelineMode::Rail,
             session_agent_name: None,
             subagent_sessions: HashMap::new(),
-            subagent_views: HashMap::new(),
-            active_subagent: None,
             role: AgentRole::Root,
-            hit_subagent_frame_close: Default::default(),
             sharing_enabled: false,
             memory_mode: None,
             billing_surface_visible: false,
@@ -460,28 +457,6 @@ impl AgentView {
         };
         view.set_input_mode(mode);
         view
-    }
-    /// Register a child view; the sole path that turns a view into a child, so the role is stamped exactly once.
-    /// A child always opens on its transcript, whatever `AgentView::new` chose: `q`/`Esc` close from bare scrollback.
-    /// Its composer stays hidden until a role gives it a route, and its queue pane is a read-only mirror.
-    pub(crate) fn insert_subagent_view(
-        &mut self,
-        child_sid: String,
-        mut child_view: Box<AgentView>,
-        link: ChildLink,
-    ) {
-        child_view.role = AgentRole::Child(link);
-        child_view.active_pane = ActivePane::Scrollback;
-        child_view.queue.set_mutation(QueueMutation::ReadOnly);
-        self.subagent_views.insert(child_sid, child_view);
-    }
-    #[cfg(test)]
-    pub(crate) fn subagent_view(&self, child_sid: &str) -> Option<&AgentView> {
-        self.subagent_views.get(child_sid).map(|v| &**v)
-    }
-    #[cfg(test)]
-    pub(crate) fn subagent_view_mut(&mut self, child_sid: &str) -> Option<&mut AgentView> {
-        self.subagent_views.get_mut(child_sid).map(|v| &mut **v)
     }
     /// Called at every turn-termination site; clears the wall anchor so a turn that reuses a prompt id cannot report the prior attempt's wall span.
     pub(crate) fn mark_turn_finished(&mut self, end: TurnEnd) {
@@ -543,7 +518,7 @@ impl AgentView {
             CancellationScope::Turn => self.session.cancel_turn(&mut self.scrollback),
             CancellationScope::Compaction => self.session.cancel_compact_command(),
         }
-        if origin == CancelOrigin::UserGesture && self.surface() == ViewSurface::Root {
+        if origin == CancelOrigin::UserGesture {
             self.cancel_latency
                 .get_or_insert_with(|| CancelLatency::new(now, scope));
         }

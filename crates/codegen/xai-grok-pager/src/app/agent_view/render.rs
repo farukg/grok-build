@@ -1,9 +1,9 @@
 //! Frame rendering for [`AgentView`]: the `draw` entry point plus shortcut hints.
 use super::{
-    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, ComposerRoute, CtaPhase,
-    EscStep, InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, ViewSurface,
-    collect_citation_links, dropdown_content_inset, dropdown_items_width, record_dot_pulse,
-    render_dropdown_chrome, supports_osc22,
+    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase, EscStep,
+    InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links,
+    dropdown_content_inset, dropdown_items_width, record_dot_pulse, render_dropdown_chrome,
+    supports_osc22,
 };
 use crate::actions::{ActionId, ActionRegistry};
 use crate::key;
@@ -46,12 +46,9 @@ pub struct AppRenderParams<'a> {
     /// The status row this frame paints, or `Off` when this frame has none.
     pub status_line: crate::views::status_line::StatusLineFrame,
     pub workspace_dashboard_enabled: bool,
-    /// Header chrome the dashboard adds when this view is its session overlay: the agent's title (omitted when the session is
-    /// unnamed) and its `i/n` position in the overlay's cycle order. `position` is `None` outside the overlay or for an agent the
-    /// dashboard filter hid; a lone agent gets `Some((1, 1))`, so the switcher gates on [`OverlayHeader::can_cycle`], not `is_some`.
+    /// Dashboard attachment data, including the session title and cycle position.
     pub overlay_header: OverlayHeader<'a>,
-    /// The footer's `Ctrl+X` label when this view stands in for another agent (a subagent's fullscreen takeover): the
-    /// parent's resolved stop/archive/close action, which the child cannot compute from its own state.
+    /// The footer's `Ctrl+X` label when this view is attached to the dashboard.
     pub overlay_stop_label: Option<&'static str>,
 }
 /// What the dashboard overlay contributes to the header row (see [`AppRenderParams::overlay_header`]).
@@ -59,6 +56,8 @@ pub struct AppRenderParams<'a> {
 pub struct OverlayHeader<'a> {
     pub title: Option<&'a str>,
     pub position: Option<(usize, usize)>,
+    /// A child session's kind ("Explorer", "General", …), shown before the title.
+    pub kind: Option<&'a str>,
 }
 impl OverlayHeader<'_> {
     /// The `i/n` position when `‹`/`›` have anything to cycle through.
@@ -380,11 +379,7 @@ impl AgentView {
                     (has_stdout, None, true)
                 } else {
                     let is_viewable_subagent = selected_entry.is_some_and(|e| {
-                        if let crate::scrollback::block::RenderBlock::Subagent(ref sb) = e.block {
-                            self.subagent_views.contains_key(&sb.child_session_id)
-                        } else {
-                            false
-                        }
+                        matches!(e.block, crate::scrollback::block::RenderBlock::Subagent(_))
                     });
                     (
                         !selected_is_group_header
@@ -406,15 +401,12 @@ impl AgentView {
                     selected_entry.is_some_and(|e| e.block.supports_fullscreen()),
                 )
             };
-        let can_demote = self.surface() == ViewSurface::Root
-            && self
-                .session
-                .tracker
-                .running_execute_tool_call_id()
-                .is_some();
-        let selected_can_kill = if self.surface() == ViewSurface::ChildTakeover {
-            false
-        } else if self.active_pane == ActivePane::Dock {
+        let can_demote = self
+            .session
+            .tracker
+            .running_execute_tool_call_id()
+            .is_some();
+        let selected_can_kill = if self.active_pane == ActivePane::Dock {
             self.dock_items()
                 .get(self.dock_cursor)
                 .copied()
@@ -473,7 +465,6 @@ impl AgentView {
             selected_can_kill,
             self.multiline_mode,
             self.vim_mode,
-            self.surface(),
             (self.session.state.is_turn_running() || self.wake_turn_active())
                 && !self.renders_parked(),
             !self.visible_queue_is_empty(),
@@ -513,8 +504,7 @@ impl AgentView {
         }
         hints
     }
-    /// The overlay footer's `Ctrl+X` label: the parent's resolved action when this view is a takeover, else this agent's own
-    /// readiness under workspace dashboards, else the v1 `stop`.
+    /// The overlay footer's `Ctrl+X` label for this session.
     fn overlay_stop_label(&self) -> &'static str {
         self.overlay_stop_label.unwrap_or_else(|| {
             if self.workspace_dashboard_enabled {
@@ -643,39 +633,6 @@ impl AgentView {
             });
             self.inline_media_ids.clear();
             self.inline_media_iterm_emitted.clear();
-        }
-        if let Some(ref child_sid) = self.active_subagent.clone() {
-            if let Some(esc) = self.take_own_inline_media_clear_escapes() {
-                xai_grok_shell::util::with_locked_stderr(|stderr| {
-                    let _ = std::io::Write::write_all(stderr, esc.as_bytes());
-                });
-            }
-            self.hit_announcement_hide.clear();
-            self.hit_announcement_cta.clear();
-            self.hit_upgrade_cta.clear();
-            self.hit_dashboard.clear();
-            self.hit_overlay_prev.clear();
-            self.hit_overlay_next.clear();
-            self.privacy_banner.clear_hits();
-            self.take_dock_row_request();
-            return self.draw_subagent_fullscreen(
-                &child_sid.clone(),
-                area,
-                buf,
-                registry,
-                scratch,
-                pending_hint,
-                &theme,
-                super::subagent_takeover::InheritedOverlay {
-                    header: overlay_header,
-                    stop_label: in_dashboard_overlay.then(|| self.overlay_stop_label()),
-                },
-            );
-        }
-        if let Some(esc) = self.take_subagent_inline_media_clear_escapes() {
-            xai_grok_shell::util::with_locked_stderr(|stderr| {
-                let _ = std::io::Write::write_all(stderr, esc.as_bytes());
-            });
         }
         let appearance = self.scrollback.appearance().clone();
         let layout_cfg = &appearance.scrollback.layout;
@@ -960,11 +917,6 @@ impl AgentView {
         };
         let prompt_height =
             prompt_height.max(prompt_style.vpad_top + 1 + prompt_style.info_block(true));
-        let prompt_height = if self.composer_route() == ComposerRoute::Hidden {
-            0
-        } else {
-            prompt_height
-        };
         {
             use crate::app::agent::PENDING_KILL_TIMEOUT_SECS;
             let now = Instant::now();
@@ -994,21 +946,14 @@ impl AgentView {
         if self.active_pane == ActivePane::Tasks && !self.tasks.is_visible() {
             self.active_pane = ActivePane::Scrollback;
         }
-        let viewer_open = self.active_subagent.is_some();
-        let dock_on = crate::views::dock::enabled()
-            && !viewer_open
-            && area.height > agent::SHORT_TERMINAL_ROWS;
+        let dock_on = crate::views::dock::enabled() && area.height > agent::SHORT_TERMINAL_ROWS;
         self.dock_on = dock_on;
-        let tasks_height = if viewer_open || dock_on {
+        let tasks_height = if dock_on {
             0
         } else {
             self.tasks.desired_height(area.height)
         };
-        let todo_height = if viewer_open {
-            0
-        } else {
-            self.todo.desired_height(area.height)
-        };
+        let todo_height = self.todo.desired_height(area.height);
         self.sync_queue_pane();
         if dock_on {
             self.queue.overlay.visible =
@@ -1090,7 +1035,6 @@ impl AgentView {
         let timeline_width = crate::views::timeline::rail_width(
             appearance.show_timeline,
             &self.timeline_mode,
-            self.surface(),
             area.width,
             self.scrollback.turn_count(),
         );
@@ -1355,12 +1299,11 @@ impl AgentView {
             );
         }
         let dashboard_available = in_dashboard_overlay
-            || (self.child_link().is_none()
-                && self
-                    .prompt
-                    .slash_controller
-                    .registry()
-                    .dashboard_dispatchable());
+            || self
+                .prompt
+                .slash_controller
+                .registry()
+                .dashboard_dispatchable();
         if dashboard_available {
             status.push(
                 "dashboard",
@@ -1460,6 +1403,10 @@ impl AgentView {
         location.push(Span::styled(short, path_style));
         let mut parts: Vec<Span> = Vec::new();
         let mut path_offset: u16 = prefix_width;
+        if let Some(kind) = overlay_header.kind {
+            parts.push(Span::styled(kind.to_owned(), bg.fg(theme.gray)));
+            parts.push(Span::styled(" ", bg));
+        }
         if let Some(title) = title {
             let sep = crate::views::agent_status::separator(&theme);
             path_offset += (title.width() + sep.width()) as u16;
@@ -2054,8 +2001,7 @@ impl AgentView {
                 self.hit_bg_button.rect = None;
                 self.hit_watching_cue.rect = None;
             } else {
-                let has_running_execute = self.surface() == ViewSurface::Root
-                    && wake_display_state.is_none()
+                let has_running_execute = wake_display_state.is_none()
                     && self
                         .session
                         .tracker
@@ -4592,6 +4538,7 @@ mod overlay_cycle_hint_tests {
                 overlay_header: super::OverlayHeader {
                     title: None,
                     position: Some((1, if can_cycle { 2 } else { 1 })),
+                    kind: None,
                 },
                 ..Default::default()
             },
@@ -4633,6 +4580,7 @@ mod overlay_cycle_hint_tests {
                 overlay_header: super::OverlayHeader {
                     title: None,
                     position: Some((1, 2)),
+                    kind: None,
                 },
                 ..Default::default()
             },
@@ -4692,55 +4640,6 @@ mod overlay_cycle_hint_tests {
         agent.session.session_id = Some("workspace-session".into());
         assert_eq!(ctrl_x_label(&agent).as_deref(), Some("archive"));
     }
-    /// A subagent's fullscreen takeover keeps the parent's footer contract: an idle persisted parent reads `archive`, not the
-    /// child's own `stop`, and the parent's pending confirmation shows through.
-    #[test]
-    fn nested_takeover_footer_uses_the_parent_stop_action_and_confirmation() {
-        let reg = ActionRegistry::defaults();
-        let area = Rect::new(0, 0, 100, 30);
-        let render = |pending: Option<crate::views::shortcuts_bar::PendingHint>| {
-            let mut parent = make_agent();
-            parent.session.session_id = Some("overlay-session".into());
-            parent.insert_test_child("child-sid".into(), Box::new(make_agent()));
-            parent.active_subagent = Some("child-sid".into());
-            let mut buf = Buffer::empty(area);
-            let mut scratch = ScratchBuffer::new();
-            parent.draw(
-                area,
-                &mut buf,
-                &reg,
-                &mut scratch,
-                pending,
-                false,
-                crate::app::agent_view::BannerSlotParams::none(),
-                true,
-                &mut Vec::new(),
-                super::AppRenderParams {
-                    workspace_dashboard_enabled: true,
-                    ..Default::default()
-                },
-            );
-            (0..area.height)
-                .map(|y| {
-                    (0..area.width)
-                        .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let text = render(None);
-        assert!(text.contains("Ctrl+x:archive"), "{text}");
-        assert!(!text.contains("Ctrl+x:stop"), "{text}");
-        let confirming = render(Some(crate::views::shortcuts_bar::PendingHint {
-            shortcut: crate::key!('x', CONTROL),
-            label: "archive",
-        }));
-        assert!(
-            confirming.contains("press again to archive"),
-            "{confirming}"
-        );
-    }
     #[test]
     fn busy_workspace_overlay_and_v1_keep_stop_copy() {
         let busy_v2 = draw_overlay_footer(false, true, true, true);
@@ -4782,24 +4681,6 @@ mod overlay_post_flush_tests {
     }
     fn png() -> [u8; 8] {
         [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
-    }
-    #[test]
-    fn fullscreen_subagent_propagates_child_clear_to_emitter() {
-        let _guard = crate::terminal::image::set_protocol_for_test(
-            crate::terminal::image::GraphicsProtocol::Kitty,
-        );
-        crate::terminal::overlay::reset_owner();
-        seed_static_owner(41);
-        let mut parent = make_agent();
-        parent.insert_test_child("child".into(), Box::new(make_agent()));
-        parent.active_subagent = Some("child".into());
-        let post_flush = draw(&mut parent).expect("child clear propagates");
-        assert!(post_flush.as_str().contains("a=d"));
-        let before_emit = crate::terminal::overlay::static_image(&png(), 20, 10, 0, 0, 41).unwrap();
-        assert!(!before_emit.as_str().contains("a=T"));
-        post_flush.write_to(&mut Vec::new()).unwrap();
-        let after_emit = crate::terminal::overlay::static_image(&png(), 20, 10, 0, 0, 41).unwrap();
-        assert!(after_emit.as_str().contains("a=T"));
     }
     #[test]
     fn active_modal_returns_clear_without_committing_discarded_state() {

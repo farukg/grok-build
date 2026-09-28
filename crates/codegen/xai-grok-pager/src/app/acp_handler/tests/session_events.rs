@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     // ── apply_session_event ────────────────────────────────────────────
 
@@ -1033,35 +1034,28 @@
         assert!(!apply_session_event(&update, &mut session, &mut scrollback, false));
     }
 
-    // ── handle_child_session_notification ──────────────────────────────
+    // ── child observation projections ────────────────────────────────
 
     #[test]
     fn child_compact_completed_updates_subagent_info() {
-        let mut agent = make_agent(Some("root-sess"));
         let child_sid = "child-sess-1";
-        agent
-            .subagent_sessions
-            .insert(child_sid.into(), make_subagent_info(child_sid));
-        let child_view = make_agent(Some(child_sid));
-        agent
-            .insert_test_child(child_sid.into(), Box::new(child_view));
-
         let update = XaiSessionUpdate::AutoCompactCompleted {
             tokens_before: Some(90000),
             tokens_after: 25000,
             elapsed_ms: Some(300),
             summary_preview: None,
         };
-        let changed = handle_child_session_notification(update, child_sid, &mut agent, false, None);
-        assert!(changed);
+        let mut app = make_app_with_agent("root-sess");
+        app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+        link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), std::time::Instant::now());
+        let _ = handle(make_ext_session_notification(child_sid, update), &mut app);
 
-        let info = agent.subagent_sessions.get(child_sid).unwrap();
+        let info = app.agents.get(&AgentId(0)).unwrap().subagent_sessions.get(child_sid).unwrap();
         assert_eq!(info.attempt.tokens_used, Some(25000));
         // 25000 tokens of the default 131072 window rounds to 19 percent
         assert_eq!(info.attempt.context_usage_pct, Some(19));
 
-        // The child view's context_state.used (context-bar numerator) must also be reset; see handle_child_session_notification
-        let child_view = agent.subagent_views.get(child_sid).unwrap();
+        let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(
             child_view.context_state.as_ref().map(|c| c.used),
             Some(25000)
@@ -1070,28 +1064,24 @@
 
     #[test]
     fn child_compact_started_refreshes_context_used() {
-        // Started carries the count the trigger fired on; the child view must refresh like the root path so the subagent bar matches the banner
-        let mut agent = make_agent(Some("root-sess"));
+        // Started is applied to the child view by the normal session handler, independently of parent-row projection.
         let child_sid = "child-sess-3";
-        agent
-            .subagent_sessions
-            .insert(child_sid.into(), make_subagent_info(child_sid));
         let mut child_view = make_agent(Some(child_sid));
         child_view.context_state = Some(xai_grok_shell::session::ContextInfo::from_notification(
             90_000, 131_072,
         ));
-        agent
-            .insert_test_child(child_sid.into(), Box::new(child_view));
-
         let update = XaiSessionUpdate::AutoCompactStarted {
             tokens_used: 95_000,
             context_window: 131_072,
             percentage: 72,
             reason: "threshold".into(),
         };
-        let _ = handle_child_session_notification(update, child_sid, &mut agent, false, None);
+        let mut app = make_app_with_agent("root-sess");
+        app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+        link_child(&mut app.agents, AgentId(0), AgentId(1), child_view, std::time::Instant::now());
+        let _ = handle(make_ext_session_notification(child_sid, update), &mut app);
 
-        let child_view = agent.subagent_views.get(child_sid).unwrap();
+        let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(
             child_view.context_state.as_ref().map(|c| c.used),
             Some(95_000)
@@ -1100,7 +1090,7 @@
 
     #[test]
     fn child_notification_without_view_returns_false() {
-        let mut agent = make_agent(Some("root-sess"));
+        let mut app = make_app_with_agent("root-sess");
         // No child view is registered
         let update = XaiSessionUpdate::AutoCompactStarted {
             tokens_used: 90000,
@@ -1108,40 +1098,17 @@
             percentage: 85,
             reason: "threshold".into(),
         };
-        let changed = handle_child_session_notification(update, "unknown-child", &mut agent, false, None);
-        assert!(!changed);
-    }
-
-    #[test]
-    fn child_compact_completed_without_view_returns_false() {
-        let mut agent = make_agent(Some("root-sess"));
-        let child_sid = "child-sess-2";
-        // SubagentInfo exists but no child view (race between notification and spawn).
-        agent
-            .subagent_sessions
-            .insert(child_sid.into(), make_subagent_info(child_sid));
-
-        let update = XaiSessionUpdate::AutoCompactCompleted {
-            tokens_before: Some(90000),
-            tokens_after: 25000,
-            elapsed_ms: Some(300),
-            summary_preview: None,
-        };
-        let changed = handle_child_session_notification(update, child_sid, &mut agent, false, None);
-        // No child_view means nothing visible changed, so it must not trigger a redraw
-        assert!(!changed);
-        // SubagentInfo is still updated for data correctness even though nothing redraws
-        let info = agent.subagent_sessions.get(child_sid).unwrap();
-        assert_eq!(info.attempt.tokens_used, Some(25000));
-        assert_eq!(info.attempt.context_usage_pct, Some(19));
+        assert!(!handle(make_ext_session_notification("unknown-child", update), &mut app));
     }
 
     #[test]
     fn child_unknown_event_returns_false() {
-        let mut agent = make_agent(Some("root-sess"));
+        let child_sid = "child-1";
+        let mut app = make_app_with_agent("root-sess");
+        app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+        link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), std::time::Instant::now());
         let update = XaiSessionUpdate::MemoryFlushStarted;
-        let changed = handle_child_session_notification(update, "child-1", &mut agent, false, None);
-        assert!(!changed);
+        assert!(!handle(make_ext_session_notification(child_sid, update), &mut app));
     }
 
     #[test]

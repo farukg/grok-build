@@ -25,7 +25,7 @@ impl SessionActor {
             ContextItemRef::ToolExchange { .. } => None,
         }).collect::<Vec<_>>();
         remove_turn_starts.sort_unstable();
-        if remove_turn_starts.windows(2).any(|pair| pair[0] == pair[1]) {
+        if remove_turn_starts.windows(2).any(|pair| matches!(pair, [a, b] if a == b)) {
             return RemoveContextItemsOutcome::NotFound;
         }
         let removed_refs = request.items.iter().filter(|item| match item {

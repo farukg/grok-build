@@ -1,5 +1,7 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
+use crate::app::session_views::SessionViews;
+use crate::app::session_views::test_support::link_child;
 use crate::acp::model_state::ModelState;
 use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::agent::{AgentId, AgentSession, AgentState, InFlightPrompt};
@@ -17,11 +19,40 @@ pub(super) fn test_agent(app: &AppView, id: AgentId) -> &AgentView {
     };
     agent
 }
-pub(super) fn test_subagent<'a>(parent: &'a AgentView, sid: &str) -> &'a AgentView {
-    let Some(child) = parent.subagent_views.get(sid) else {
+pub(super) fn test_subagent<'a>(app: &'a AppView, sid: &str) -> &'a AgentView {
+    child_view(&app.agents, sid)
+}
+pub(super) fn child_view<'a>(views: &'a SessionViews, sid: &str) -> &'a AgentView {
+    let Some(child) = views.find_by_session_id(sid).and_then(|id| views.get(&id)) else {
         panic!("expected subagent {sid}");
     };
-    child.as_ref()
+    child
+}
+pub(super) fn child_view_mut<'a>(views: &'a mut SessionViews, sid: &str) -> &'a mut AgentView {
+    let Some(child) = views.find_by_session_id(sid).and_then(|id| views.get_mut(&id)) else {
+        panic!("expected subagent {sid}");
+    };
+    child
+}
+/// Register `view` as a child session of the root agent, under the session id it already carries.
+pub(super) fn insert_child_view(views: &mut SessionViews, sid: &str, mut view: AgentView) {
+    view.session.session_id = Some(acp::SessionId::new(sid));
+    let child = AgentId(views.all().map(|(id, _)| id.0 + 1).max().unwrap_or(1));
+    link_child(views, AgentId(0), child, view, Instant::now());
+}
+/// Open the child's session view through the one open path (a row click or Enter emits the same action).
+pub(super) fn open_child_view(app: &mut AppView, child_sid: &str) {
+    let _ = crate::app::dispatch::dispatch(
+        crate::app::actions::Action::OpenSession(child_sid.to_owned()),
+        app,
+    );
+}
+/// Leave the open child's view for its parent's (Ctrl+Alt+Up); leaving is where a finished child is evicted.
+pub(super) fn leave_child_view(app: &mut AppView) {
+    let _ = crate::app::dispatch::dispatch(
+        crate::app::actions::Action::NavigateTree(crate::app::actions::TreeStep::Parent),
+        app,
+    );
 }
 pub(super) fn json_set(
     value: &mut serde_json::Value,
@@ -217,6 +248,7 @@ pub(super) fn make_app_with_agent(session_id: &str) -> AppView {
     let id = AgentId(0);
     let agent = make_agent(Some(session_id));
     app.agents.insert(id, agent);
+    app.next_agent_id = 1;
     crate::app::dispatch::switch_to_agent(
         &mut app,
         id,
@@ -1623,7 +1655,7 @@ pub(super) fn snapshot_after_subagent_spawn(
     SubagentSpawnSnapshot {
         description: info.description.to_string(),
         subagent_type: info.subagent_type.to_string(),
-        has_child_view: agent.subagent_views.contains_key(child_sid),
+        has_child_view: app.agents.find_by_session_id(child_sid).is_some(),
         scrollback_len: agent.scrollback.len(),
         child_session_id: sb.child_session_id.clone(),
         block_kind: sb.kind.clone(),
@@ -1732,10 +1764,10 @@ pub(super) fn write_child_updates_jsonl_under_cwd(
     std::fs::write(sessions_dir.join("updates.jsonl"), content).unwrap();
 }
 pub(super) fn child_scrollback_tool_call_count(
-    agent: &AgentView,
+    app: &AppView,
     child_sid: &str,
 ) -> usize {
-    let child = agent.subagent_views.get(child_sid).expect("child subagent view");
+    let child = test_subagent(app, child_sid);
     (0..child.scrollback.len())
         .filter(|i| {
             child
@@ -1747,10 +1779,10 @@ pub(super) fn child_scrollback_tool_call_count(
 }
 /// `SessionEvent` blocks (the `TurnCompleted` footer) in a child scrollback.
 pub(super) fn child_scrollback_session_event_count(
-    agent: &AgentView,
+    app: &AppView,
     child_sid: &str,
 ) -> usize {
-    let child = agent.subagent_views.get(child_sid).expect("child subagent view");
+    let child = test_subagent(app, child_sid);
     (0..child.scrollback.len())
         .filter(|i| {
             child
@@ -1792,11 +1824,11 @@ fn subagent_prompt_text_eq(a: &str, b: &str) -> bool {
     a.split_whitespace().eq(b.split_whitespace())
 }
 pub(super) fn child_scrollback_matching_prompt_count(
-    agent: &AgentView,
+    app: &AppView,
     child_sid: &str,
     prompt: &str,
 ) -> usize {
-    let child = agent.subagent_views.get(child_sid).expect("child subagent view");
+    let child = test_subagent(app, child_sid);
     if prompt.trim().is_empty() {
         return 0;
     }
@@ -1815,17 +1847,8 @@ pub(super) fn child_scrollback_matching_prompt_count(
         })
         .count()
 }
-pub(super) fn child_tracker_expects_user_echo(
-    agent: &AgentView,
-    child_sid: &str,
-) -> bool {
-    agent
-        .subagent_views
-        .get(child_sid)
-        .expect("child subagent view")
-        .session
-        .tracker
-        .expects_user_echo()
+pub(super) fn child_tracker_expects_user_echo(app: &AppView, child_sid: &str) -> bool {
+    test_subagent(app, child_sid).session.tracker.expects_user_echo()
 }
 pub(super) fn spawn_subagent_with_optional_updates(
     app: &mut AppView,
@@ -2065,10 +2088,32 @@ pub(super) fn make_app_with_parent_and_child(
     child_sid: &str,
 ) -> AppView {
     let mut app = make_app_with_agent(parent_sid);
-    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    agent.subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
-    let child_view = make_agent(Some(child_sid));
-    agent.insert_test_child(child_sid.into(), Box::new(child_view));
+    app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+    link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), Instant::now());
+    app.next_agent_id = 2;
+    app
+}
+/// Paint one 80x30 frame of `view`, the point where its panes pick up session state.
+pub(super) fn draw_view(view: &mut AgentView) {
+    let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    view.draw(
+        area,
+        &mut buf,
+        &crate::actions::ActionRegistry::defaults(),
+        &mut crate::scrollback::render::ScratchBuffer::new(),
+        None,
+        false,
+        crate::app::agent_view::BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        crate::app::agent_view::AppRenderParams::default(),
+    );
+}
+/// A parent with one child session, the child's view on screen.
+pub(super) fn make_app_viewing_child(parent_sid: &str, child_sid: &str) -> AppView {
+    let mut app = make_app_with_parent_and_child(parent_sid, child_sid);
+    app.active_view = ActiveView::Agent(AgentId(1));
     app
 }
 pub(super) fn make_task_completed_notif(

@@ -1815,7 +1815,7 @@ fn chat_mode_new_session_creates_with_chat_kind() {
         )),
         "expected chat CreateSession under --chat, got {effects:?}"
     );
-    let agent = app.agents.values().next().expect("agent");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
     assert!(
         agent.conversation_entry,
         "sticky --chat NewSession must stamp conversation_entry for rename kind"
@@ -2304,26 +2304,27 @@ fn dispatch_new_session_keeps_stale_attach_on_other_agent() {
         "attach on a different agent must not be re-pointed to the new session",
     );
 }
-/// Re-point must use top-level `active_view` id, not `get_active_agent` (subagent child views use placeholder `AgentId(0)`).
+/// Re-point uses the root of the active child session, the id the dashboard attached.
 #[test]
-fn dispatch_new_session_repoints_attach_while_subagent_view_open() {
+fn dispatch_new_session_repoints_attach_while_child_view_open() {
+    use crate::app::session_views::test_support::link_child;
     use crate::views::dashboard::DashboardRowId;
     let mut app = test_app();
     let parent = AgentId(5);
-    let session = make_test_agent_session(&app, parent, "parent-session");
-    let mut parent_view = AgentView::new(session, ScrollbackState::new());
-    let child_session = make_test_agent_session(&app, AgentId(0), "child-session");
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    parent_view.insert_test_child("child-sid".into(), Box::new(child));
-    parent_view.active_subagent = Some("child-sid".into());
-    app.agents.insert(parent, parent_view);
-    app.next_agent_id = 6;
-    app.active_view = ActiveView::Agent(parent);
-    assert_eq!(
-        get_active_agent(&app).map(|a| a.session.id),
-        Some(AgentId(0)),
-        "precondition: get_active_agent resolves subagent AgentId(0)"
+    let child_id = AgentId(0);
+    let parent_view = AgentView::new(
+        make_test_agent_session(&app, parent, "parent-session"),
+        ScrollbackState::new(),
     );
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-session"),
+        ScrollbackState::new(),
+    );
+    app.agents.insert(parent, parent_view);
+    link_child(&mut app.agents, parent, child_id, child, std::time::Instant::now());
+    app.next_agent_id = 6;
+    app.active_view = ActiveView::Agent(child_id);
+    assert_eq!(get_active_agent(&app).map(|agent| agent.session.id), Some(child_id));
     ensure_dashboard_state(&mut app);
     app.dashboard.as_mut().unwrap().attached_agent = Some(parent);
     dispatch(Action::NewSession, &mut app);
@@ -2336,7 +2337,7 @@ fn dispatch_new_session_repoints_attach_while_subagent_view_open() {
     assert_eq!(
         d.attached_agent,
         Some(new_id),
-        "attach must re-point from top-level parent, not subagent AgentId(0)",
+        "attach must re-point from the child's root, not the child",
     );
     assert_eq!(
         d.selected,
@@ -3124,7 +3125,7 @@ fn dashboard_stop_with_peek_open_moves_selection_and_peek_down_one() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    for (i, agent) in app.agents.values_mut().enumerate() {
+    for (i, (_, agent)) in app.agents.all_mut().enumerate() {
         agent.display_name = Some(format!("agent-{i}"));
         agent.session.session_id = Some(acp::SessionId::new(format!("s{i}")));
     }
@@ -3222,7 +3223,7 @@ fn dashboard_stop_double_press_via_handle_key_deletes_top_level() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     open_dashboard(&mut app);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     app.agents.get_mut(&target).unwrap().session.session_id = Some(acp::SessionId::new("s-target"));
     if let Some(d) = app.dashboard.as_mut() {
         d.selected = Some(crate::views::dashboard::DashboardRowId::TopLevel(target));
@@ -3343,7 +3344,7 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "create must not consume history bypass (restore+load still owns it)"
         );
-        let agent = app.agents.values().next().expect("new agent");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("new agent");
         assert!(agent.chat_kind);
         assert_eq!(
             agent.workspace_mode,
@@ -3675,7 +3676,7 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "bypass stays until process_effects LoadSession"
         );
-        let agent = app.agents.values().next().expect("placeholder agent");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("placeholder agent");
         assert!(
             agent.chat_kind,
             "sticky --chat keeps agent.chat_kind for already-open focus matching"
@@ -3992,7 +3993,7 @@ mod welcome_workspace_mode {
             )),
             "conversation must still load: {effects:?}"
         );
-        let agent = app.agents.values().next().expect("agent");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
         assert_eq!(
             agent.workspace_mode,
             WelcomeWorkspaceMode::Sandbox,
@@ -4062,7 +4063,7 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "bypass kept until follow-up LoadSession"
         );
-        let agent = app.agents.values().next().expect("restore placeholder");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("restore placeholder");
         assert_eq!(
             agent.workspace_mode,
             WelcomeWorkspaceMode::LocalWorkspace,

@@ -58,7 +58,7 @@ pub(crate) struct PeekViewportLease {
 
 pub(crate) fn scrollback_mut_for_row<'a>(
     row: &DashboardRowId,
-    agents: &'a mut indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+    agents: &'a mut crate::app::session_views::SessionViews,
 ) -> Option<&'a mut crate::scrollback::state::ScrollbackState> {
     match row {
         DashboardRowId::TopLevel(id) => agents.get_mut(id).map(|a| &mut a.scrollback),
@@ -68,7 +68,7 @@ pub(crate) fn scrollback_mut_for_row<'a>(
 
 pub(crate) fn scrollback_available_for_row(
     row: &DashboardRowId,
-    agents: &indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+    agents: &crate::app::session_views::SessionViews,
 ) -> bool {
     match row {
         DashboardRowId::TopLevel(id) => agents.contains_key(id),
@@ -997,18 +997,18 @@ impl SessionIdResolver {
     /// Resolve queries for a collided id therefore return the first-seen `AgentId`, which is
     /// deterministic given the `IndexMap` iteration order.
     pub fn from_agents(
-        agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+        agents: &crate::app::session_views::SessionViews,
     ) -> Self {
         Self::from_agents_and_workspace(agents, None)
     }
 
     pub(crate) fn from_agents_and_workspace(
-        agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+        agents: &crate::app::session_views::SessionViews,
         workspace: Option<&crate::app::workspace_layout::WorkspaceView>,
     ) -> Self {
         let mut top = std::collections::HashMap::new();
         let mut top_rev = std::collections::HashMap::new();
-        for (id, agent) in agents {
+        for (id, agent) in agents.roots() {
             if let Some(sid) = agent.session.session_id.as_ref() {
                 let sid_str = sid.0.to_string();
                 if let Some(prev) = top.get(&sid_str) {
@@ -1019,8 +1019,8 @@ impl SessionIdResolver {
                         "SessionIdResolver: duplicate session_id; keeping first mapping"
                     );
                 } else {
-                    top.insert(sid_str.clone(), *id);
-                    top_rev.insert(*id, sid_str);
+                    top.insert(sid_str.clone(), id);
+                    top_rev.insert(id, sid_str);
                 }
             }
         }
@@ -1494,7 +1494,7 @@ impl DashboardState {
         &mut self,
         old: &SessionIdResolver,
         new: &SessionIdResolver,
-        agents: &mut indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+        agents: &mut crate::app::session_views::SessionViews,
     ) {
         let rebind = |id: &DashboardRowId| match old.to_persisted(id) {
             Some(persisted) => new.resolve(&persisted),
@@ -1545,7 +1545,7 @@ impl DashboardState {
     pub fn prepare_agent_unbind(
         &mut self,
         agent_ids: &std::collections::HashSet<AgentId>,
-        agents: &mut indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+        agents: &mut crate::app::session_views::SessionViews,
     ) {
         let targets_agent = |row: &DashboardRowId| {
             agent_ids
@@ -1577,7 +1577,7 @@ impl DashboardState {
         &mut self,
         before: &[Focusable],
         after: &[Focusable],
-        agents: &mut indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+        agents: &mut crate::app::session_views::SessionViews,
     ) {
         let after_rows = after
             .iter()
@@ -1827,7 +1827,7 @@ impl DashboardState {
 
     pub fn restore_peek_viewport(
         &mut self,
-        agents: &mut indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+        agents: &mut crate::app::session_views::SessionViews,
     ) {
         let Some(lease) = self.peek_viewport.take() else {
             return;
@@ -1853,7 +1853,7 @@ impl DashboardState {
     pub fn begin_peek_viewport(
         &mut self,
         row: DashboardRowId,
-        agents: &mut indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+        agents: &mut crate::app::session_views::SessionViews,
     ) {
         if self
             .peek_viewport
@@ -1880,7 +1880,7 @@ impl DashboardState {
         &mut self,
         agent_id: AgentId,
         entry_id: crate::scrollback::EntryId,
-        agents: &indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+        agents: &crate::app::session_views::SessionViews,
     ) {
         let Some(lease) = self.peek_viewport.as_mut() else {
             return;
@@ -4172,8 +4172,10 @@ fn dashboard_action_for_id(
         | ActionId::VoiceToggle
         // Overlay actions are intercepted at the AppView level before they reach the dashboard's own input loop; they can never arrive here
         | ActionId::DashboardOverlayExit
-        | ActionId::DashboardOverlayPrev
-        | ActionId::DashboardOverlayNext
+        | ActionId::SessionPrev
+        | ActionId::SessionNext
+        | ActionId::SessionParent
+        | ActionId::SessionLatestChild
         | ActionId::DashboardOverlayStop => None,
     }
 }

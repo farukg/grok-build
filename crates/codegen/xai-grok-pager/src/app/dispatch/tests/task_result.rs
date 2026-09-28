@@ -250,7 +250,7 @@ fn doctor_apply_completion_prefers_initiator_then_active_and_welcome_fallback() 
         "Could not apply the fix: stale plan"
     );
 
-    app.agents.shift_remove(&initiator);
+    app.agents.remove_tree(initiator);
     dispatch_task_result(
         TaskResult::DoctorFixApplied {
             target: target.clone(),
@@ -263,7 +263,7 @@ fn doctor_apply_completion_prefers_initiator_then_active_and_welcome_fallback() 
         "Could not apply the fix: apply failed"
     );
 
-    app.agents.clear();
+    app.agents = crate::app::session_views::SessionViews::new();
     app.active_view = ActiveView::Welcome;
     dispatch_task_result(
         TaskResult::DoctorFixApplied {

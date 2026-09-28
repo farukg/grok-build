@@ -64,15 +64,15 @@ pub(in crate::app::dispatch) fn clear_stale_session_id(
     let sid = acp::SessionId::new(session_id);
     let replaced_agents = app
         .agents
-        .iter()
+        .all()
         .filter_map(|(agent_id, agent)| {
-            (agent.session.session_id.as_ref() == Some(&sid)).then_some(*agent_id)
+            (agent.session.session_id.as_ref() == Some(&sid)).then_some(agent_id)
         })
         .collect::<std::collections::HashSet<_>>();
     if let Some(dashboard) = app.dashboard.as_mut() {
         dashboard.prepare_agent_unbind(&replaced_agents, &mut app.agents);
     }
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         if agent.session.session_id.as_ref() == Some(&sid) {
             agent.unbind_session_id();
         }
@@ -87,7 +87,7 @@ pub(in crate::app::dispatch) fn focus_if_session_already_open(
     use crate::app::app_view::ActiveView;
     use crate::views::dashboard::DashboardRowId;
     let expected_conversation_entry = session_opens_as_chat(app, chat_kind);
-    let existing_id = app.agents.iter().find_map(|(id, a)| {
+    let existing_id = app.agents.all().find_map(|(id, a)| {
         let sid_ok = a
             .session
             .session_id
@@ -99,11 +99,8 @@ pub(in crate::app::dispatch) fn focus_if_session_already_open(
         if a.loading_placeholder_id.is_some() && !a.session.loading_replay {
             return None;
         }
-        Some(*id)
+        Some(id)
     })?;
-    if let Some(agent) = app.agents.get_mut(&existing_id) {
-        agent.close_subagent_fullscreen();
-    }
     let retarget_overlay = match app.active_view {
         ActiveView::AgentDashboard => true,
         ActiveView::Agent(visible) => app.dashboard.as_ref().is_some_and(|d| {
@@ -1296,9 +1293,6 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
             agent.adopt_running_prompt(running_pid);
         } else {
             agent.scrollback.finish_all_running();
-            for child in agent.subagent_views.values_mut() {
-                child.scrollback.finish_all_running();
-            }
         }
         let mut effects = Vec::new();
         if let Some(directive) = agent.pending_first_prompt.take() {

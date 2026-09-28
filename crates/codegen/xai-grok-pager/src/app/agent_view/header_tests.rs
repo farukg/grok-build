@@ -3,12 +3,36 @@
 use super::{AgentView, AppRenderParams, BannerSlotParams, OverlayHeader, test_fixtures};
 use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
+use crate::app::agent::AgentId;
+use crate::app::agent_view::{AgentRole, ChildLink};
 use crate::app::app_view::{ActiveView, AppView, InputOutcome};
 use crate::scrollback::render::ScratchBuffer;
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 const PATH: &str = "/grok-header-marker";
+
+#[test]
+fn child_header_shows_kind_before_title() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut child = agent_at(120);
+    child.session.session_id = Some("child-session".into());
+    child.role = AgentRole::Child(ChildLink {
+        parent: AgentId(0),
+        parent_session_id: "parent".into(),
+        subagent_id: "explorer".into(),
+        started_at: std::time::Instant::now(),
+    });
+    let buf = draw(&mut child, &ActionRegistry::defaults(), false, OverlayHeader {
+        title: Some("Header target title"),
+        position: None,
+        kind: Some("Explorer"),
+    });
+    let row = header_row(&child, &buf);
+    let kind = row.find("Explorer").expect("session kind");
+    let title = row.find("Header target title").expect("existing session title");
+    assert!(kind < title, "kind precedes title: {row:?}");
+}
 /// `/dashboard` is pinned visible so the plain-session `[Dashboard]` gate does not read `GROK_AGENT_DASHBOARD` or the
 /// developer's config. `draw` re-measures the terminal from its area, so the width lives only in `last_terminal_size`.
 fn agent_at(width: u16) -> AgentView {
@@ -178,6 +202,7 @@ fn overlay_header_leads_with_title_and_paints_switcher() {
     let header = OverlayHeader {
         title: Some("Refactor the theme loader"),
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -208,11 +233,11 @@ fn overlay_header_leads_with_title_and_paints_switcher() {
     );
     assert!(matches!(
         agent.handle_input(&click(prev.x, prev.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayPrev)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Prev))
     ));
     assert!(matches!(
         agent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
     let dash = agent.hit_dashboard.rect.unwrap();
     assert!(matches!(
@@ -229,6 +254,7 @@ fn overlay_header_omits_title_when_unnamed_and_switcher_when_alone() {
     let header = OverlayHeader {
         title: None,
         position: Some((1, 1)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -258,6 +284,7 @@ fn narrow_overlay_header_caps_title_and_keeps_location_and_buttons() {
     let header = OverlayHeader {
         title: Some("A generated title long enough to need trimming here"),
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -291,6 +318,7 @@ fn long_title_and_long_branch_leave_the_path_visible() {
     let header = OverlayHeader {
         title: Some("A generated title long enough to need trimming here"),
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -321,6 +349,7 @@ fn hover_brightens_only_the_pointed_affordance() {
     let header = OverlayHeader {
         title: None,
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let prev = agent.hit_overlay_prev.rect.unwrap();
@@ -371,6 +400,7 @@ fn long_link_preview_yields_to_the_switcher_and_dashboard_button() {
     let header = OverlayHeader {
         title: None,
         position: Some((2, 5)),
+        kind: None,
     };
     let mut agent = agent_at(100);
     highlight(&mut agent);
@@ -411,6 +441,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
     let header = OverlayHeader {
         title: None,
         position: Some((2, 5)),
+        kind: None,
     };
     draw(&mut agent, &registry, true, header);
     let dash = agent.hit_dashboard.rect.expect("armed with no dropdown");
@@ -433,7 +464,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
     );
     assert!(!matches!(
         agent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
     agent.prompt.set_text("");
     agent.prompt.refresh_slash(&agent.session.models);
@@ -442,68 +473,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
     assert_eq!(agent.hit_dashboard.rect, Some(dash));
     assert!(matches!(
         agent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
 }
-/// A subagent's fullscreen takeover returns before the header is painted, so the header's hit rects from the previous
-/// frame must drop with the rest of the parent chrome.
-#[test]
-fn subagent_takeover_drops_the_header_hits() {
-    let _theme = crate::theme::cache::pin_theme();
-    let registry = ActionRegistry::defaults();
-    let mut agent = agent_at(120);
-    let header = OverlayHeader {
-        title: None,
-        position: Some((2, 5)),
-    };
-    draw(&mut agent, &registry, true, header);
-    assert!(agent.hit_dashboard.rect.is_some() && agent.hit_overlay_next.rect.is_some());
-    agent.active_subagent = Some("child-sid".into());
-    draw(&mut agent, &registry, true, header);
-    assert!(agent.hit_dashboard.rect.is_none());
-    assert!(agent.hit_overlay_prev.rect.is_none());
-    assert!(agent.hit_overlay_next.rect.is_none());
-}
-/// A subagent opened from a session in the dashboard overlay inherits the overlay chrome: the takeover row keeps the
-/// parent's title and `‹ i/n ›`, its `›` cycles, and its `[Dashboard]` goes back to the dashboard (`DashboardOverlayExit`)
-/// rather than re-opening it from scratch.
-#[test]
-fn nested_subagent_keeps_the_parent_header_and_routes_like_it() {
-    let _theme = crate::theme::cache::pin_theme();
-    let registry = ActionRegistry::defaults();
-    let mut parent = agent_at(120);
-    let child_sid = "child-sid".to_string();
-    parent.insert_test_child(child_sid.clone(), Box::new(agent_at(120)));
-    parent.active_subagent = Some(child_sid.clone());
-    let header = OverlayHeader {
-        title: Some("Parent title"),
-        position: Some((2, 5)),
-    };
-    let buf = draw(&mut parent, &registry, true, header);
-    let child = parent
-        .subagent_views
-        .get(&child_sid)
-        .expect("child view installed");
-    let dash = child
-        .hit_dashboard
-        .rect
-        .expect("the child paints [Dashboard]");
-    let next = child
-        .hit_overlay_next
-        .rect
-        .expect("the child keeps the parent's switcher");
-    assert!(child.overlay_can_cycle, "and the footer's prev/next hint");
-    let row = row_text(&buf, dash.y);
-    assert!(
-        row.contains("Parent title") && row.contains(&switcher_text(2, 5)),
-        "the takeover row still describes the parent, row = {row:?}"
-    );
-    assert!(matches!(
-        parent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
-    ));
-    assert!(matches!(
-        parent.handle_input(&click(dash.x, dash.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayExit)
-    ));
-}
+

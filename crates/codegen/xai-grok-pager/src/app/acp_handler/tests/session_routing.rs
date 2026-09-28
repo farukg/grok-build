@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     #[test]
     fn acp_chunk_for_inactive_agent_lands_in_its_scrollback() {
@@ -44,7 +45,7 @@
 
     #[test]
     fn acp_chunk_for_subagent_routes_through_parent() {
-        // Subagent (child) chunk must land in the parent's `subagent_views[child_sid]` even when a different agent is currently active
+        // A child session is independently routed even when a different agent is currently active
         let mut app = make_app_with_agent("sess-A");
         insert_agent(&mut app, AgentId(1), Some("sess-B"));
         switch_active_to(&mut app, AgentId(1));
@@ -55,8 +56,13 @@
             parent
                 .subagent_sessions
                 .insert(child_sid.into(), make_subagent_info(child_sid));
-            parent
-                .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+            link_child(
+                &mut app.agents,
+                AgentId(0),
+                AgentId(2),
+                make_agent(Some(child_sid)),
+                std::time::Instant::now(),
+            );
         }
 
         let affected = handle(
@@ -64,15 +70,11 @@
             &mut app,
         );
 
-        let parent = app.agents.get(&AgentId(0)).unwrap();
-        let child_view = parent
-            .subagent_views
-            .get(child_sid)
-            .expect("child view must still exist");
+        let child_view = app.agents.get(&AgentId(2)).unwrap();
         assert_eq!(
             agent_message_text(child_view),
             "hello from subagent",
-            "subagent chunk must land in subagent_views[child_sid]"
+            "subagent chunk must land in its top-level session view"
         );
         assert!(
             !affected,

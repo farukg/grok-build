@@ -197,13 +197,9 @@ fn insert_running_subagent(agent: &mut AgentView, child_session_id: &str) {
     agent
         .subagent_sessions
         .insert(child_session_id.to_string(), info);
-    agent.insert_test_child(
-        child_session_id.to_string(),
-        Box::new(super::test_fixtures::make_agent()),
-    );
 }
 /// Dock subagent row: hovering reveals `[↗][stop]`; the painted `[stop]` must
-/// kill the subagent and the painted `[↗]` must open it fullscreen.
+/// kill the subagent and the painted `[↗]` must open its session view.
 #[test]
 fn dock_subagent_icons_hover_and_click_where_painted() {
     crate::views::dock::set_enabled_for_test(true);
@@ -259,13 +255,8 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
         row_y,
     ));
     assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "clicking the painted [↗] must open the subagent, got {outcome:?}"
-    );
-    assert_eq!(
-        agent.active_subagent.as_deref(),
-        Some("child-1"),
-        "the [↗] click must open the subagent fullscreen"
+        matches!(outcome, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1"),
+        "clicking the painted [↗] must open the subagent's session, got {outcome:?}"
     );
 }
 /// Dock (remote `dock_enabled`): hovering a task row reveals `[↗][stop]`;

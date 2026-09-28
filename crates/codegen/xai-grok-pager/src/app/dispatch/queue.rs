@@ -1172,8 +1172,8 @@ fn preserve_queued_image_paths(
 ) {
     let retained = app
         .agents
-        .values()
-        .flat_map(|agent| agent.session.pending_prompts.iter())
+        .all()
+        .flat_map(|(_, agent)| agent.session.pending_prompts.iter())
         .flat_map(|prompt| prompt.images.iter())
         .map(|image| image.preview.identity())
         .collect::<std::collections::HashSet<_>>();

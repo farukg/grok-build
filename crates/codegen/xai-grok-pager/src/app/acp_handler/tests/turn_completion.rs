@@ -1261,7 +1261,7 @@
             work_status_lines(&agent.scrollback).is_empty(),
             "child-session completions must not spawn root status lines"
         );
-        let child = agent.subagent_views.get("child-1").unwrap();
+        let child = child_view(&app.agents, "child-1");
         assert!(
             work_status_lines(&child.scrollback).is_empty(),
             "and none in the child view either (chips only)"
@@ -2086,18 +2086,11 @@
             cancel_subagents: true,
             trigger: crate::app::actions::CancelTrigger::CtrlC,
         });
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
     }
 
     fn assert_child_idle_with_turn_cancelled(app: &AppView, child_sid: &str) {
-        let child = app.agents.get(&AgentId(0)).unwrap()
-            .subagent_views
-            .get(child_sid)
-            .expect("child view");
+        let child = child_view(&app.agents, child_sid);
         assert!(
             matches!(child.session.state, AgentState::Idle),
             "child terminal must clear the Cancelling spinner, not leave or restart a running turn, got {:?}",
@@ -2124,12 +2117,7 @@
         }
         let child_sid = "child-cancel";
         insert_cancelling_child(&mut app, child_sid);
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get_mut(child_sid)
-            .unwrap()
+        child_view_mut(&mut app.agents, child_sid)
             .session
             .current_prompt_id = Some("pid-child".into());
         let parent_len = app.agents.get(&AgentId(0)).unwrap().scrollback.len();
@@ -2158,19 +2146,19 @@
             "leaving TurnCancelling must stop the cancel resend"
         );
         assert!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap()
+            child_view(&app.agents, child_sid)
                 .pending_cancel_resend
                 .is_none()
         );
 
-        let len_before = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len();
+        let len_before = child_view(&app.agents, child_sid).scrollback.len();
         let affected = handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-child", "cancelled", false),
             &mut app,
         );
         assert!(!affected, "a duplicate child TurnCompleted must be a no-op");
         assert_eq!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len(),
+            child_view(&app.agents, child_sid).scrollback.len(),
             len_before,
             "a duplicate child TurnCompleted must not push another marker"
         );
@@ -2184,18 +2172,14 @@
         let child = make_agent(Some(child_sid));
         assert!(child.session.state.is_idle());
         assert!(child.session.current_prompt_id.is_none());
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let affected = handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-late", "cancelled", false),
             &mut app,
         );
         assert!(!affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         assert_eq!(child.scrollback.len(), 0);
         assert!(last_session_event(&child.scrollback).is_none());
@@ -2206,12 +2190,7 @@
         let mut app = make_app_with_agent("sess-parent");
         let child_sid = "child-replay";
         insert_cancelling_child(&mut app, child_sid);
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get_mut(child_sid)
-            .unwrap()
+        child_view_mut(&mut app.agents, child_sid)
             .session
             .loading_replay = true;
 
@@ -2220,7 +2199,7 @@
             &mut app,
         );
         assert!(!affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(
             matches!(child.session.state, AgentState::TurnCancelling),
             "replay must not apply a live child terminal"
@@ -2237,18 +2216,14 @@
             command: crate::app::agent::AgentCommand::Compact,
             started_at: std::time::Instant::now(),
         };
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let affected = handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-child", "cancelled", false),
             &mut app,
         );
         assert!(!affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.command_in_flight().is_some());
         assert_eq!(child.scrollback.len(), 0);
     }
@@ -2281,14 +2256,14 @@
         assert_child_idle_with_turn_cancelled(&app, child_sid);
         assert!(crate::app::dispatch::reconcile_overdue_cancels(&mut app).is_none());
 
-        let len_before = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len();
+        let len_before = child_view(&app.agents, child_sid).scrollback.len();
         let affected = handle_ext_notification(
             &prompt_complete_ext_with_reason(child_sid, "cancelled", None),
             &mut app,
         );
         assert!(!affected);
         assert_eq!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len(),
+            child_view(&app.agents, child_sid).scrollback.len(),
             len_before
         );
     }
@@ -2352,18 +2327,14 @@
         let child_sid = "child-end";
         let mut child = make_agent(Some(child_sid));
         child.session.state = AgentState::TurnRunning;
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let affected = handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-end", "end_turn", false),
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         assert!(!child.attached_as_viewer);
         assert_eq!(child.scrollback.len(), 1);
@@ -2381,18 +2352,14 @@
         let child_sid = "child-pc-end";
         let mut child = make_agent(Some(child_sid));
         child.session.state = AgentState::TurnRunning;
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let affected = handle_ext_notification(
             &prompt_complete_ext_with_reason(child_sid, "end_turn", None),
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         assert!(matches!(
             last_session_event(&child.scrollback),
@@ -2417,7 +2384,7 @@
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         assert!(
             last_session_event(&child.scrollback).is_none(),
@@ -2432,13 +2399,7 @@
         let child_sid = "child-hook";
         insert_cancelling_child(&mut app, child_sid);
         {
-            let child = app
-                .agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .subagent_views
-                .get_mut(child_sid)
-                .unwrap();
+            let child = child_view_mut(&mut app.agents, child_sid);
             child
                 .self_originated_prompt_ids
                 .push_back("pid-hook".into());
@@ -2464,7 +2425,7 @@
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         assert!(matches!(
             last_session_event(&child.scrollback),
@@ -2482,11 +2443,7 @@
         let child_sid = "child-fail";
         let mut child = make_agent(Some(child_sid));
         child.session.state = AgentState::TurnRunning;
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let affected = handle_ext_notification(
             &xai_turn_completed_failed_with_error_kind(
@@ -2499,7 +2456,7 @@
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         match last_session_event(&child.scrollback) {
             Some(SessionEvent::TurnFailed { error, .. }) => {
@@ -2528,7 +2485,7 @@
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         match last_session_event(&child.scrollback) {
             Some(ev @ SessionEvent::TurnCancelled { elapsed: Some(d), .. }) => {
                 assert_eq!(d, std::time::Duration::from_millis(4200));
@@ -2549,7 +2506,7 @@
             &mut app,
         );
         assert!(affected);
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         match last_session_event(&child.scrollback) {
             Some(ev @ SessionEvent::TurnCancelled { elapsed: None, .. }) => {
                 assert_eq!(ev.message(), "Turn cancelled.");
@@ -2566,18 +2523,14 @@
         let child_sid = "child-follow";
         let mut child = make_agent(Some(child_sid));
         child.session.state = AgentState::TurnRunning;
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         assert!(handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-1", "end_turn", false),
             &mut app,
         ));
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(child.session.state.is_idle());
             assert!(child.ended_child_prompt_ids.contains("pid-1"));
         }
@@ -2587,7 +2540,7 @@
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 child.session.state.is_idle(),
                 "a replayed chunk must not re-enter TurnRunning"
@@ -2599,7 +2552,7 @@
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 matches!(child.session.state, AgentState::TurnRunning),
                 "a parent-message follow-up must re-enter TurnRunning, got {:?}",
@@ -2613,7 +2566,7 @@
             assert!(!child.attached_as_viewer);
         }
 
-        let len = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len();
+        let len = child_view(&app.agents, child_sid).scrollback.len();
         assert!(!handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-1", "cancelled", false),
             &mut app,
@@ -2623,7 +2576,7 @@
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(matches!(child.session.state, AgentState::TurnRunning));
             assert_eq!(
                 child.session.current_prompt_id.as_deref(),
@@ -2636,7 +2589,7 @@
             &prompt_complete_ext_with_prompt_id(child_sid, "parent-message-msg-1", "cancelled"),
             &mut app,
         ));
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(child.session.state.is_idle());
         match last_session_event(&child.scrollback) {
             Some(SessionEvent::TurnCancelled { elapsed: Some(d), .. }) => {
@@ -2656,12 +2609,7 @@
         start_parent_turn(&mut app, "parent-pid");
         let child_sid = "child-cancel-same";
         insert_cancelling_child(&mut app, child_sid);
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get_mut(child_sid)
-            .unwrap()
+        child_view_mut(&mut app.agents, child_sid)
             .session
             .current_prompt_id = Some("pid-cancel".into());
 
@@ -2670,7 +2618,7 @@
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 matches!(child.session.state, AgentState::TurnCancelling),
                 "a live chunk of the cancelling prompt must stay TurnCancelling, got {:?}",
@@ -2687,7 +2635,7 @@
             "staying TurnCancelling must keep the cancel resend"
         );
         assert!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap()
+            child_view(&app.agents, child_sid)
                 .pending_cancel_resend
                 .is_some()
         );
@@ -2701,7 +2649,7 @@
         let child_sid = "child-cancel-none";
         insert_cancelling_child(&mut app, child_sid);
         assert!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap()
+            child_view(&app.agents, child_sid)
                 .session
                 .current_prompt_id
                 .is_none()
@@ -2712,7 +2660,7 @@
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 matches!(child.session.state, AgentState::TurnCancelling),
                 "adopting the first chunk's id must not leave TurnCancelling, got {:?}",
@@ -2729,7 +2677,7 @@
             "staying TurnCancelling must keep the cancel resend"
         );
         assert!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap()
+            child_view(&app.agents, child_sid)
                 .pending_cancel_resend
                 .is_some()
         );
@@ -2741,12 +2689,7 @@
         let mut app = make_app_with_agent("sess-parent");
         let child_sid = "child-cancel-replace";
         insert_cancelling_child(&mut app, child_sid);
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get_mut(child_sid)
-            .unwrap()
+        child_view_mut(&mut app.agents, child_sid)
             .session
             .current_prompt_id = Some("pid-old".into());
 
@@ -2754,7 +2697,7 @@
             make_viewer_chunk_with_turn_start(child_sid, "pid-new", 2_000),
             &mut app,
         );
-        let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(
             matches!(child.session.state, AgentState::TurnRunning),
             "a different not-yet-ended prompt must replace TurnCancelling, got {:?}",
@@ -2780,32 +2723,28 @@
         let mut child = make_agent(Some(child_sid));
         child.session.state = AgentState::TurnRunning;
         child.session.current_prompt_id = Some("pid-old".into());
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let _ = handle(
             make_viewer_chunk_with_turn_start(child_sid, "pid-new", 2_000),
             &mut app,
         );
         let started = {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(matches!(child.session.state, AgentState::TurnRunning));
             assert_eq!(child.session.current_prompt_id.as_deref(), Some("pid-new"));
             assert!(child.superseded_child_prompt_ids.contains("pid-old"));
             assert!(!child.ended_child_prompt_ids.contains("pid-old"));
             child.turn_started_at
         };
-        let len = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len();
+        let len = child_view(&app.agents, child_sid).scrollback.len();
 
         let _ = handle(
             make_viewer_chunk_with_turn_start(child_sid, "pid-old", 9_000),
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 matches!(child.session.state, AgentState::TurnRunning),
                 "the old chunk must not finish or replace the live turn, got {:?}",
@@ -2831,7 +2770,7 @@
         );
         assert!(affected, "the old terminal must still push its marker");
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 matches!(child.session.state, AgentState::TurnRunning),
                 "the old terminal must not finish the live turn, got {:?}",
@@ -2870,11 +2809,7 @@
             Some(crate::acp::tracker::TurnActivity::ToolRunning { .. })
         ));
         assert!(scrollback_has_running_tool_or_thinking(&child.scrollback));
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let _ = handle(
             make_viewer_chunk_with_turn_start(child_sid, "pid-new", 2_000),
@@ -2976,23 +2911,19 @@
         start_parent_turn(&mut app, "parent-pid");
         let child_sid = "child-reorder";
         let child = make_agent(Some(child_sid));
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let _ = handle(
             make_viewer_chunk_with_turn_start(child_sid, "pid-next", 2_000),
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(matches!(child.session.state, AgentState::TurnRunning));
             assert_eq!(child.session.current_prompt_id.as_deref(), Some("pid-next"));
             assert!(child.turn_started_at.is_some());
         }
-        let started = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().turn_started_at;
+        let started = child_view(&app.agents, child_sid).turn_started_at;
 
         let affected = handle_ext_notification(
             &live_child_turn_completed(
@@ -3008,7 +2939,7 @@
         );
         assert!(affected, "the previous prompt's terminal must still push its marker");
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(
                 matches!(child.session.state, AgentState::TurnRunning),
                 "a late terminal for the previous prompt must not finish the live turn, got {:?}",
@@ -3028,13 +2959,13 @@
             }
         }
 
-        let len = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len();
+        let len = child_view(&app.agents, child_sid).scrollback.len();
         assert!(!handle_ext_notification(
             &xai_turn_completed_notif(child_sid, "pid-prev", "end_turn", false),
             &mut app,
         ));
         assert_eq!(
-            app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap().scrollback.len(),
+            child_view(&app.agents, child_sid).scrollback.len(),
             len,
             "a duplicate terminal for the ended id must not mark again"
         );
@@ -3044,7 +2975,7 @@
             &mut app,
         );
         {
-            let child = app.agents.get(&AgentId(0)).unwrap().subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(matches!(child.session.state, AgentState::TurnRunning));
             assert_eq!(child.session.current_prompt_id.as_deref(), Some("pid-next"));
             assert_eq!(child.turn_started_at, started);
@@ -3075,7 +3006,7 @@
                 &mut app,
             );
             assert_eq!(
-                child_scrollback_tool_call_count(app.agents.get(&AgentId(0)).unwrap(), child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0
             );
 
@@ -3084,8 +3015,8 @@
                 &mut app,
             ));
             let agent = app.agents.get(&AgentId(0)).unwrap();
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sid), 1);
-            let child = agent.subagent_views.get(child_sid).unwrap();
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 1);
+            let child = child_view(&app.agents, child_sid);
             assert!(child.session.state.is_idle());
             let mut tool_idx = None;
             let mut marker_idx = None;
@@ -3137,11 +3068,11 @@
             ));
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
-                "prompt_complete must hydrate through child_view_for_live_update_mut"
+                "prompt_complete must hydrate the resumed child before its marker"
             );
-            let child = agent.subagent_views.get(child_sid).unwrap();
+            let child = child_view(&app.agents, child_sid);
             assert!(matches!(
                 last_session_event(&child.scrollback),
                 Some(SessionEvent::TurnCompleted { .. })
@@ -3170,23 +3101,13 @@
             started_at: std::time::Instant::now(),
         };
         child.session.current_prompt_id = Some("pid-cmd".into());
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
+        insert_child_view(&mut app.agents, child_sid, child);
 
         let _ = handle(
             make_viewer_chunk_with_turn_start(child_sid, "pid-chunk", 1_000),
             &mut app,
         );
-        let child = app
-            .agents
-            .get(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get(child_sid)
-            .unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(
             matches!(
                 child.session.state,
@@ -3212,13 +3133,7 @@
     ) {
         insert_cancelling_child(app, child_sid);
         {
-            let child = app
-                .agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .subagent_views
-                .get_mut(child_sid)
-                .unwrap();
+            let child = child_view_mut(&mut app.agents, child_sid);
             child.turn_start_ms = start_ms;
             child.turn_start_ms_prompt = prompt_id.map(ToOwned::to_owned);
         }
@@ -3256,12 +3171,7 @@
     }
 
     fn child_at<'a>(app: &'a AppView, child_sid: &str) -> &'a AgentView {
-        app.agents
-            .get(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
+        child_view(&app.agents, child_sid)
     }
 
     #[test]
@@ -3700,18 +3610,8 @@
         let mut child = make_agent(Some(child_sid));
         child.session.state = AgentState::TurnRunning;
         child.session.current_prompt_id = Some("parent-message-msg-2".into());
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
-        let len = app
-            .agents
-            .get(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
+        insert_child_view(&mut app.agents, child_sid, child);
+        let len = child_view(&app.agents, child_sid)
             .scrollback
             .len();
 
@@ -3719,13 +3619,7 @@
             &prompt_complete_ext(child_sid),
             &mut app,
         ));
-        let child = app
-            .agents
-            .get(&AgentId(0))
-            .unwrap()
-            .subagent_views
-            .get(child_sid)
-            .unwrap();
+        let child = child_view(&app.agents, child_sid);
         assert!(
             matches!(child.session.state, AgentState::TurnRunning),
             "a nameless prompt_complete must not finish a turn that already has an id, got {:?}",

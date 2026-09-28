@@ -140,7 +140,6 @@ use ratatui::text::Line;
 use ratatui::widgets::Widget;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-mod child_action_filter;
 mod cta;
 mod elicitation;
 mod input;
@@ -179,15 +178,11 @@ mod dock_input_tests;
 mod header_tests;
 mod rewind;
 mod role;
-pub(crate) use role::{AgentRole, ChildLink, ComposerRoute, ViewSurface};
+pub(crate) use role::{AgentRole, ChildLink};
 mod selection;
 mod session;
 mod session_mode;
 mod shell_completion;
-mod subagent_takeover;
-pub(in crate::app) use subagent_takeover::{
-    Direction, TreeChord, NO_SIBLING_TOAST, tree_chord,
-};
 #[cfg(test)]
 mod task_icon_mouse_tests;
 #[cfg(test)]
@@ -1227,7 +1222,7 @@ pub struct AgentView {
     pub(crate) export_copy_detector: crate::tips::export_copy::ExportCopyDetector,
     /// Persistent status line (e.g. mouse reporting off). Survives transient
     /// toasts, keypress dismissal, and subagent open/close when propagated
-    /// via [`Self::set_sticky_toast_recursive`].
+    /// via [`Self::set_sticky_toast`].
     pub(crate) sticky_toast: Option<String>,
     /// Transient "Switched to mode: X" banner shown above the prompt after Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then fades out over the final 0.3 s.
     /// Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then
@@ -1398,21 +1393,8 @@ pub struct AgentView {
     pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
-    /// Map of child session IDs to subagent metadata. Populated on `SubagentSpawned` notifications, used for permission routing (which agent owns a session) and provenance display.
-    /// `SubagentSpawned` notifications, used for permission routing
-    /// (which agent owns a session) and provenance display.
     pub subagent_sessions: HashMap<String, SubagentInfo>,
-    /// Child subagent views. Keyed by child_session_id.
-    /// Created eagerly on SubagentSpawned so updates are tracked from the start.
-    /// Insert only through [`Self::insert_subagent_view`], which stamps the child's role.
-    pub(super) subagent_views: HashMap<String, Box<AgentView>>,
-    /// Currently open subagent view (child_session_id). When Some, the scrollback area is replaced by the subagent's framed view.
-    /// scrollback area is replaced by the subagent's framed view.
-    pub active_subagent: Option<String>,
-    /// Root of its session, or a child mirrored under a parent's takeover; every child-specific gate derives from it.
-    role: AgentRole,
-    /// Hit area for the [✗] close button in the subagent frame title bar.
-    pub hit_subagent_frame_close: HitArea,
+    pub(crate) role: AgentRole,
     /// Whether the `/share` slash command is available (mirrors
     /// `AppView::sharing_enabled`). Used to gate palette entries.
     pub sharing_enabled: bool,
@@ -1999,8 +1981,10 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         | ActionId::DashboardShortcutsHelp
         | ActionId::DashboardExit
         | ActionId::DashboardOverlayExit
-        | ActionId::DashboardOverlayPrev
-        | ActionId::DashboardOverlayNext
+        | ActionId::SessionPrev
+        | ActionId::SessionNext
+        | ActionId::SessionParent
+        | ActionId::SessionLatestChild
         | ActionId::DashboardOverlayStop
         | ActionId::DashboardToggleAutoApprove
         | ActionId::DashboardOpenLocationPicker
@@ -2515,27 +2499,6 @@ pub(crate) mod test_fixtures {
             },
             ScrollbackState::new(),
         )
-    }
-    impl AgentView {
-        /// Insert `child` the way a spawn does, linked (unaddressable) to this view's own session id.
-        pub(crate) fn insert_test_child(&mut self, child_sid: String, child: Box<AgentView>) {
-            let parent_sid = self
-                .session
-                .session_id
-                .clone()
-                .unwrap_or_else(|| acp::SessionId::new("parent"));
-            self.insert_subagent_view(
-                child_sid,
-                child,
-                super::ChildLink::unaddressable(parent_sid),
-            );
-        }
-    }
-    /// An idle parent with one idle child inserted under `child_sid`.
-    pub(crate) fn parent_with_child(child_sid: &str) -> AgentView {
-        let mut parent = make_agent();
-        parent.insert_test_child(child_sid.to_owned(), Box::new(make_agent()));
-        parent
     }
     /// Interject chord for non–VS Code family tests (`Ctrl+Enter`).
     pub fn force_interject_key() -> KeyEvent {

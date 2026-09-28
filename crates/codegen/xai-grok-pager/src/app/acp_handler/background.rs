@@ -92,7 +92,7 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
     let restored_from_replay = meta.is_replay;
 
-    let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (_, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
@@ -104,10 +104,8 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
         "Background task started"
     );
 
-    let child_sid: &str = session_notif.session_id.0.as_ref();
-    let Some((session, scrollback)) = resolve_target_view(agent, matched, child_sid) else {
-        return false;
-    };
+    let session = &mut agent.session;
+    let scrollback = &mut agent.scrollback;
 
     // A demotion (foreground to background) means the execute block already exists in scrollback as a pending tool in the tracker
     let demotion_eid = session.tracker.pending_tool_entry_id(&tool_call_id);
@@ -243,20 +241,12 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
         } => (task_id, description, event_text),
         _ => return false,
     };
-    let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (_, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
 
-    let child_sid: &str = session_notif.session_id.0.as_ref();
-    let session = if matches!(matched, SessionMatch::Child(_)) {
-        match agent.subagent_views.get_mut(child_sid) {
-            Some(child_view) => &mut child_view.session,
-            None => return false,
-        }
-    } else {
-        &mut agent.session
-    };
+    let session = &mut agent.session;
 
     // Append the event text to the bg task's stdout buffer so the block viewer shows it (same as bash output chunks for bg tasks)
     // `append_stdout` handles the trim, flips `truncated` on overflow, and refreshes `stdout_line_count`
@@ -459,12 +449,9 @@ pub(super) fn handle_git_head_changed(notif: &acp::ExtNotification, app: &mut Ap
     };
 
     // Find the agent by ACP session id (not local AgentId) and update its git display cache
-    if let Some(agent) = app.agents.values_mut().find(|a| {
-        a.session
-            .session_id
-            .as_ref()
-            .is_some_and(|s| s.0.as_ref() == params.session_id.as_str())
-    }) {
+    if let Some(id) = app.agents.find_by_session_id(params.session_id.as_str())
+        && let Some(agent) = app.agents.get_mut(&id)
+    {
         // Refresh the shared per-cwd git cache so views keyed on this directory pick up the new branch without spawning subprocesses
         // (The header/top bar reads it when this is the process cwd; the agent's own fields below drive its status bar and dashboard row directly.)
         crate::git_info::update_from_notification(
@@ -477,27 +464,6 @@ pub(super) fn handle_git_head_changed(notif: &acp::ExtNotification, app: &mut Ap
         agent.is_worktree = params.is_worktree;
         agent.main_repo = params.main_repo;
         return true;
-    }
-
-    // Fallback: check child subagent views.
-    for agent in app.agents.values_mut() {
-        if let Some(child_view) = agent.subagent_views.values_mut().find(|cv| {
-            cv.session
-                .session_id
-                .as_ref()
-                .is_some_and(|s| s.0.as_ref() == params.session_id.as_str())
-        }) {
-            crate::git_info::update_from_notification(
-                &child_view.session.cwd,
-                params.branch.as_deref(),
-                params.main_repo.clone(),
-                params.is_worktree,
-            );
-            child_view.current_branch = params.branch;
-            child_view.is_worktree = params.is_worktree;
-            child_view.main_repo = params.main_repo;
-            return true;
-        }
     }
 
     false
@@ -518,7 +484,7 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     // Stamps `restored_from_replay` on tombstones inserted below.
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
 
-    let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (_, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
@@ -542,10 +508,8 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     // That block would repeat for every dead task on every resume, pure noise
     let stale_on_load = signal.as_deref() == Some(SESSION_RESTART_SIGNAL);
 
-    let child_sid: &str = session_notif.session_id.0.as_ref();
-    let Some((session, scrollback)) = resolve_target_view(agent, matched, child_sid) else {
-        return false;
-    };
+    let session = &mut agent.session;
+    let scrollback = &mut agent.scrollback;
 
     // Compute elapsed duration from the bg task state (if we have it).
     // Prefer the human description for "Task completed/failed: …" labels (same as "Task started")

@@ -333,19 +333,6 @@ impl AgentView {
     /// Kitty graphics are independent of the cell grid: they survive redraws until explicitly deleted.
     /// Every regular clear path lives inside [`AgentView::draw`].
     pub(crate) fn take_inline_media_clear_escapes(&mut self) -> Option<String> {
-        let mut clear_esc = self
-            .take_own_inline_media_clear_escapes()
-            .unwrap_or_default();
-        if let Some(esc) = self.take_subagent_inline_media_clear_escapes() {
-            clear_esc.push_str(&esc);
-        }
-        (!clear_esc.is_empty()).then_some(clear_esc)
-    }
-
-    /// This view's own placements only, leaving `subagent_views` untouched.
-    /// The parent's images must be deleted, but the child is about to draw and manages its own placements.
-    /// Draining it too would just force a re-transmit.
-    pub(super) fn take_own_inline_media_clear_escapes(&mut self) -> Option<String> {
         // Also proceed when only playback state remains (`inline_video` Some with no active placements)
         // That happens when frames finish loading after the media scrolled off
         // The drain must still stop the ticking video, or it keeps holding the animation gate open invisibly and its eventual drop is never purged
@@ -373,9 +360,6 @@ impl AgentView {
         self.inline_media_ids.clear();
         self.inline_media_iterm_emitted.clear();
         self.last_placed_ids.clear();
-        for child in self.subagent_views.values_mut() {
-            child.forget_transmitted_inline_media();
-        }
     }
 
     /// Stop inline video playback, dropping the pre-extracted frame set (~50-300 MB), and request a post-draw purge for it.
@@ -396,17 +380,6 @@ impl AgentView {
             // Switching videos: the previous frame set just dropped.
             crate::memory_release::request_release_after_draw("inline-video-replace");
         }
-    }
-
-    /// Subagent fullscreen views render inline media with their own ids; drain those (recursively), leaving this view's placements alone.
-    pub(super) fn take_subagent_inline_media_clear_escapes(&mut self) -> Option<String> {
-        let mut clear_esc = String::new();
-        for child in self.subagent_views.values_mut() {
-            if let Some(esc) = child.take_inline_media_clear_escapes() {
-                clear_esc.push_str(&esc);
-            }
-        }
-        (!clear_esc.is_empty()).then_some(clear_esc)
     }
 
     /// Refresh [`Self::media_link_paths`] (the absolute paths of media generated in this transcript) from scrollback.

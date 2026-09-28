@@ -1,7 +1,7 @@
 //! Expanded-timeline wiring for [`AgentView`]: open/close, key and mouse routing, scroll sync, and item/group actions.
 //! Every action reuses an existing scrollback operation or `Action` on the row's entry; the panel only chooses the target.
 
-use super::{AgentPane, AgentView, ViewSurface};
+use super::{AgentPane, AgentView};
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::scrollback::state::{TimelineRow, TimelineRowKind};
@@ -15,7 +15,7 @@ use ratatui::layout::Rect;
 impl AgentView {
     /// F6 / palette: open the panel on the viewport, focus an unfocused panel, or fold a focused one back to the rail.
     pub(crate) fn toggle_timeline_panel(&mut self) -> InputOutcome {
-        if self.surface() != ViewSurface::Root || self.is_minimal_mode() {
+        if self.is_minimal_mode() {
             return InputOutcome::Unchanged;
         }
         let focus = self.timeline_mode.panel().map(|panel| panel.focus);
@@ -39,7 +39,7 @@ impl AgentView {
 
     /// Open (or re-point) the panel with the cursor on the entry at `at`.
     pub(crate) fn open_timeline_panel_at(&mut self, at: Option<usize>) -> InputOutcome {
-        if self.surface() != ViewSurface::Root || self.is_minimal_mode() {
+        if self.is_minimal_mode() {
             return InputOutcome::Unchanged;
         }
         self.timeline_mode =

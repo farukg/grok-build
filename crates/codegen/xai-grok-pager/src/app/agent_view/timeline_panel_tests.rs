@@ -113,6 +113,26 @@ fn alt_click(agent: &mut AgentView, idx: usize) -> InputOutcome {
 }
 
 #[test]
+fn f6_opens_timeline_in_child() {
+    let mut child = conversation();
+    child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
+        parent: crate::app::agent::AgentId(0),
+        parent_session_id: "parent".into(),
+        subagent_id: "child".into(),
+        started_at: std::time::Instant::now(),
+    });
+    let area = AREA;
+    assert!(matches!(press(&mut child, KeyCode::F(6)), InputOutcome::Changed));
+    draw_frame(&mut child);
+    assert!(child.timeline_mode.panel().is_some());
+    let mut buffer = Buffer::empty(area);
+    let mut scratch = ScratchBuffer::new();
+    child.draw(area, &mut buffer, &ActionRegistry::defaults(), &mut scratch, None, false, BannerSlotParams::none(), false, &mut Vec::new(), AppRenderParams::default());
+    let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+    assert!(!text.trim().is_empty(), "timeline panel view is painted for child: {text}");
+}
+
+#[test]
 fn f6_toggles_timeline_panel() {
     let mut agent = conversation();
     let chat_width = agent.pane_areas.scrollback.width;

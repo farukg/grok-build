@@ -9,7 +9,6 @@
 //! The drawing itself happens in [`AgentView::draw()`](crate::app::agent_view::AgentView::draw).
 //! It renders the shared widgets (StatusBar, ScrollbackPane, PromptWidget, ShortcutsBar) and uses these helpers for the agent-specific glue.
 use crate::actions::{ActionId, ActionRegistry, When};
-use crate::app::agent_view::ViewSurface;
 use crate::appearance::{LayoutConfig, ScrollbarConfig};
 use crate::render::SafeBuf;
 use crate::render::scrollbar::render_scrollbar_styled;
@@ -689,7 +688,6 @@ pub(crate) fn build_hints(
     selected_can_kill: bool,
     multiline_mode: bool,
     vim_mode: bool,
-    surface: ViewSurface,
     is_turn_running: bool,
     has_queued_follow_up: bool,
     queue_mutation: QueueMutation,
@@ -802,9 +800,7 @@ pub(crate) fn build_hints(
                         .pinned(),
                 );
             }
-            if surface == ViewSurface::Root {
-                hints.push(HintItem::new(crate::key!(BackTab), "mode"));
-            }
+            hints.push(HintItem::new(crate::key!(BackTab), "mode"));
             for def in registry.hints(&[When::PromptFocused, When::AgentScreen, When::Always]) {
                 if def.id == ActionId::SendPrompt
                     || def.id == ActionId::CommandPalette
@@ -862,15 +858,11 @@ pub(crate) fn build_hints(
         }
         ActivePane::Scrollback => {
             let mut hints = Vec::new();
-            let focus_reachable = surface == ViewSurface::Root;
-            if focus_reachable && focus_hint.pinned {
+            if focus_hint.pinned {
                 hints.push(focus_hint.clone());
             }
-            if surface == ViewSurface::ChildTakeover {
-                hints.push(HintItem::paired(crate::key!('q'), crate::key!(Esc), "back").pinned());
-            }
             let offer_focus_hint = |hints: &mut Vec<HintItem>| {
-                if focus_reachable && !focus_hint.pinned {
+                if !focus_hint.pinned {
                     hints.push(focus_hint.clone());
                 }
             };
@@ -991,10 +983,7 @@ pub(crate) fn build_hints(
     {
         hints.push(def.hint());
     }
-    if can_demote
-        && surface == ViewSurface::Root
-        && let Some(key) = registry.key_for(ActionId::SendToBackground)
-    {
+    if can_demote && let Some(key) = registry.key_for(ActionId::SendToBackground) {
         hints.push(HintItem::new(key, "send to bg"));
     }
     hints
@@ -1051,7 +1040,6 @@ mod tests {
             false,
             false,
             vim_mode,
-            ViewSurface::Root,
             false,
             false,
             QueueMutation::PerRowKind,
@@ -1085,7 +1073,6 @@ mod tests {
             false,
             false,
             true,
-            ViewSurface::Root,
             false,
             false,
             QueueMutation::PerRowKind,
@@ -1120,7 +1107,6 @@ mod tests {
             false,
             false,
             false,
-            ViewSurface::Root,
             is_turn_running,
             true,
             queue_mutation,
@@ -1156,16 +1142,8 @@ mod tests {
             queue_hint_labels(QueueMutation::PerRowKind, true)
         );
     }
-    fn surface_hints(
-        pane: ActivePane,
-        surface: ViewSurface,
-        prompt: &PromptWidget,
-    ) -> Vec<HintItem> {
-        build_hints_with_focus(pane, surface, prompt, prompt_focus_hint())
-    }
     fn build_hints_with_focus(
         pane: ActivePane,
-        surface: ViewSurface,
         prompt: &PromptWidget,
         focus_hint: HintItem,
     ) -> Vec<HintItem> {
@@ -1187,7 +1165,6 @@ mod tests {
             false,
             false,
             false,
-            surface,
             false,
             false,
             QueueMutation::PerRowKind,
@@ -1196,38 +1173,6 @@ mod tests {
             false,
             None,
         )
-    }
-    /// The child surface adds `q/Esc back` and drops the demote chip and the `BackTab mode` hint; the root keeps all three.
-    #[test]
-    fn build_hints_child_surface_adds_back_and_hides_demote_and_mode() {
-        let has = |hints: &[HintItem], label: &str| hints.iter().any(|h| h.label == label);
-        let mut prompt = PromptWidget::default();
-        prompt.textarea.insert_str("draft");
-        let root = surface_hints(ActivePane::Scrollback, ViewSurface::Root, &prompt);
-        let child = surface_hints(ActivePane::Scrollback, ViewSurface::ChildTakeover, &prompt);
-        assert!(!has(&root, "back") && has(&root, "send to bg"));
-        assert!(has(&child, "back") && !has(&child, "send to bg"));
-        assert!(has(&root, "prompt") && !has(&child, "prompt"));
-        let pinned_focus = prompt_focus_hint().pinned();
-        let child_pinned = build_hints_with_focus(
-            ActivePane::Scrollback,
-            ViewSurface::ChildTakeover,
-            &prompt,
-            pinned_focus.clone(),
-        );
-        let root_pinned = build_hints_with_focus(
-            ActivePane::Scrollback,
-            ViewSurface::Root,
-            &prompt,
-            pinned_focus,
-        );
-        assert!(has(&root_pinned, "prompt") && !has(&child_pinned, "prompt"));
-        assert_eq!(Some("back"), child.first().map(|h| h.label.as_ref()));
-        assert!(child.iter().any(|h| h.label == "back" && h.pinned));
-        let root = surface_hints(ActivePane::Prompt, ViewSurface::Root, &prompt);
-        let child = surface_hints(ActivePane::Prompt, ViewSurface::ChildTakeover, &prompt);
-        assert!(has(&root, "mode") && !has(&child, "mode"));
-        assert!(has(&child, "send"));
     }
     #[test]
     fn group_header_shows_enter_toggle_hint_instead_of_open_and_fold() {
@@ -1250,7 +1195,6 @@ mod tests {
             false,
             false,
             true,
-            ViewSurface::Root,
             false,
             false,
             QueueMutation::PerRowKind,
@@ -1419,7 +1363,6 @@ mod tests {
             false,
             false,
             vim_mode,
-            ViewSurface::Root,
             false,
             false,
             QueueMutation::PerRowKind,
@@ -1524,7 +1467,6 @@ mod tests {
             false,
             false,
             true,
-            ViewSurface::Root,
             false,
             false,
             QueueMutation::PerRowKind,
@@ -1571,7 +1513,6 @@ mod tests {
             false,
             multiline_mode,
             true,
-            ViewSurface::Root,
             is_turn_running,
             false,
             QueueMutation::PerRowKind,
@@ -1632,7 +1573,6 @@ mod tests {
                 false,
                 multiline,
                 true,
-                ViewSurface::Root,
                 true,
                 true,
                 QueueMutation::PerRowKind,
@@ -1677,7 +1617,6 @@ mod tests {
                 false,
                 false,
                 vim_mode,
-                ViewSurface::Root,
                 true,
                 false,
                 QueueMutation::PerRowKind,
@@ -1728,7 +1667,6 @@ mod tests {
             false,
             false,
             false,
-            ViewSurface::Root,
             true,
             false,
             QueueMutation::PerRowKind,
@@ -1779,7 +1717,6 @@ mod tests {
             false,
             false,
             false,
-            ViewSurface::Root,
             true,
             false,
             QueueMutation::PerRowKind,

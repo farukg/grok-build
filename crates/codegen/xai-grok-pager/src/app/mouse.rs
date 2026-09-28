@@ -234,10 +234,14 @@ impl AgentView {
                     });
                 }
                 if self.hit_overlay_prev.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::DashboardOverlayPrev);
+                    return InputOutcome::Action(Action::CycleSessions(
+                        crate::app::actions::Direction::Prev,
+                    ));
                 }
                 if self.hit_overlay_next.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::DashboardOverlayNext);
+                    return InputOutcome::Action(Action::CycleSessions(
+                        crate::app::actions::Direction::Next,
+                    ));
                 }
                 if self.hit_cwd.contains(mouse.column, mouse.row) {
                     let path = self.session.cwd.display().to_string();
@@ -453,11 +457,19 @@ impl AgentView {
                                 } else if self.active_pane == AgentPane::Dock {
                                     self.set_active_pane(AgentPane::Prompt, false);
                                 }
-                                self.activate_dock_item(item);
+                                let outcome = self.activate_dock_item(item);
                                 self.dock_hovered =
                                     self.dock_item_at(self.pane_areas.dock, mouse.row);
                                 self.cache_dock_stop_button();
-                                InputOutcome::Changed
+                                match outcome {
+                                    InputOutcome::Changed | InputOutcome::Unchanged => {
+                                        InputOutcome::Changed
+                                    }
+                                    InputOutcome::Action(_)
+                                    | InputOutcome::ActionThenForward(_)
+                                    | InputOutcome::ActionPair(..)
+                                    | InputOutcome::ArmPending { .. } => outcome,
+                                }
                             }
                             None => {
                                 self.set_active_pane(AgentPane::Dock, false);
@@ -627,10 +639,11 @@ impl AgentView {
                                         .iter()
                                         .find(|(_, info)| info.subagent_id.as_ref() == sid.as_str())
                                         .map(|(k, _)| k.clone())
-                                        && self.subagent_views.contains_key(&child_sid)
+                                        && self.subagent_sessions.contains_key(&child_sid)
                                     {
-                                        self.open_subagent_fullscreen(child_sid);
-                                        return InputOutcome::Changed;
+                                        return InputOutcome::Action(Action::OpenSession(
+                                            child_sid,
+                                        ));
                                     }
                                 }
                                 TaskEntryId::Scheduled(tid) => {
@@ -646,10 +659,11 @@ impl AgentView {
                                                 info.subagent_id.as_ref() == sid.as_str()
                                             })
                                             .map(|(k, _)| k.clone())
-                                        && self.subagent_views.contains_key(&child_sid)
+                                        && self.subagent_sessions.contains_key(&child_sid)
                                     {
-                                        self.open_subagent_fullscreen(child_sid);
-                                        return InputOutcome::Changed;
+                                        return InputOutcome::Action(Action::OpenSession(
+                                            child_sid,
+                                        ));
                                     }
                                 }
                                 TaskEntryId::Workflow(_) => {}
@@ -661,13 +675,12 @@ impl AgentView {
                             mouse.row,
                             self.pane_areas.tasks,
                         );
-                        if is_open_child_click(mouse.modifiers) {
-                            let selected =
-                                self.tasks.selected_child_session_id().map(str::to_owned);
-                            if self.open_child_from_click(selected) {
-                                self.last_bg_click = None;
-                                return InputOutcome::Changed;
-                            }
+                        if is_open_child_click(mouse.modifiers)
+                            && let Some(child_sid) = self.tasks.selected_child_session_id()
+                            && self.subagent_sessions.contains_key(child_sid)
+                        {
+                            self.last_bg_click = None;
+                            return InputOutcome::Action(Action::OpenSession(child_sid.to_owned()));
                         }
                         if let Some(group) = self.tasks.selected_header_group() {
                             self.tasks.toggle_group(group);
@@ -685,11 +698,12 @@ impl AgentView {
                                 return InputOutcome::Changed;
                             }
                             if let Some(child_sid) = self.tasks.selected_child_session_id()
-                                && self.subagent_views.contains_key(child_sid)
+                                && self.subagent_sessions.contains_key(child_sid)
                             {
-                                self.open_subagent_fullscreen(child_sid.to_string());
                                 self.last_bg_click = None;
-                                return InputOutcome::Changed;
+                                return InputOutcome::Action(Action::OpenSession(
+                                    child_sid.to_string(),
+                                ));
                             }
                             if let Some(crate::views::tasks_pane::TaskEntry::Workflow {
                                 name,
@@ -714,11 +728,12 @@ impl AgentView {
                         self.persistent_text_selection = None;
                         self.table_selection_geometry = None;
                         self.selection_created_at = None;
-                        if is_open_child_click(mouse.modifiers) {
-                            let linked = self.linked_child_at_scrollback_row(mouse.row);
-                            if self.open_child_from_click(linked) {
-                                return InputOutcome::Changed;
-                            }
+                        if is_open_child_click(mouse.modifiers)
+                            && let Some(child_sid) = self.linked_child_at_scrollback_row(mouse.row)
+                        {
+                            // The press hands the pointer to the child's view, so this view's click gesture ends here
+                            self.left_mouse_down = false;
+                            return InputOutcome::Action(Action::OpenSession(child_sid));
                         } else if mouse
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::ALT)
@@ -894,11 +909,11 @@ impl AgentView {
                                         .scrollback
                                         .entry_screen_area(idx, self.pane_areas.scrollback)
                                         .is_some_and(|(a, _, _)| click_row == a.y);
-                                let (last_click, show_word_select_tip) =
+                                let (last_click, follow_up) =
                                     self.handle_scrollback_click(now, idx, header_row_click);
                                 self.last_click = last_click;
-                                if show_word_select_tip {
-                                    return InputOutcome::Action(Action::ShowWordSelectTip);
+                                if let Some(action) = follow_up {
+                                    return InputOutcome::Action(action);
                                 }
                                 return InputOutcome::Changed;
                             }
@@ -906,11 +921,11 @@ impl AgentView {
                             && now.duration_since(last_time).as_millis() < MULTI_CLICK_TIMEOUT_MS
                             && last_count >= 2
                         {
-                            let (last_click, show_word_select_tip) =
+                            let (last_click, follow_up) =
                                 self.handle_scrollback_click(now, last_idx, false);
                             self.last_click = last_click;
-                            if show_word_select_tip {
-                                return InputOutcome::Action(Action::ShowWordSelectTip);
+                            if let Some(action) = follow_up {
+                                return InputOutcome::Action(action);
                             }
                             return InputOutcome::Changed;
                         }

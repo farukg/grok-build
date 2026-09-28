@@ -14,15 +14,15 @@ use super::dashboard::{
     dispatch_dashboard_confirm_worktree, dispatch_dashboard_create_new_agent_with_detail,
     dispatch_dashboard_delete, dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
     dispatch_dashboard_open_location_picker, dispatch_dashboard_open_session_picker,
-    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_cycle,
-    dispatch_dashboard_overlay_exit, dispatch_dashboard_overlay_stop,
-    dispatch_dashboard_peek_cycle_mode, dispatch_dashboard_peek_reply,
-    dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
-    dispatch_dashboard_pick_session, dispatch_dashboard_question_answer,
-    dispatch_dashboard_reorder, dispatch_dashboard_select, dispatch_dashboard_stop,
-    dispatch_dashboard_toggle_auto_approve, dispatch_dashboard_toggle_grouping,
-    dispatch_dashboard_toggle_pin, dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard,
-    dispatch_open_dashboard,
+    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_exit,
+    dispatch_dashboard_overlay_stop, dispatch_dashboard_peek_cycle_mode,
+    dispatch_dashboard_peek_reply, dispatch_dashboard_permission_followup,
+    dispatch_dashboard_permission_select, dispatch_dashboard_pick_session,
+    dispatch_dashboard_question_answer, dispatch_dashboard_reorder, dispatch_dashboard_select,
+    dispatch_dashboard_stop, dispatch_dashboard_toggle_auto_approve,
+    dispatch_dashboard_toggle_grouping, dispatch_dashboard_toggle_pin,
+    dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard, dispatch_navigate_tree,
+    dispatch_open_dashboard, dispatch_session_cycle,
 };
 use super::import_claude::{
     dispatch_dismiss_claude_import, dispatch_import_claude, dispatch_import_claude_cancel,
@@ -117,7 +117,7 @@ use super::turn::{
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
 use crate::app::actions::{Action, Effect};
-use crate::app::agent_view::{ActivePane, Direction};
+use crate::app::agent_view::ActivePane;
 use crate::app::app_view::{ActiveView, AppView, AuthState};
 use crate::app::consent::ConsentState;
 use crate::scrollback::types::DisplayMode;
@@ -1518,8 +1518,15 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::DashboardReorderUp => dispatch_dashboard_reorder(app, true),
         Action::DashboardReorderDown => dispatch_dashboard_reorder(app, false),
         Action::DashboardOverlayExit => dispatch_dashboard_overlay_exit(app),
-        Action::DashboardOverlayPrev => dispatch_dashboard_overlay_cycle(app, Direction::Prev),
-        Action::DashboardOverlayNext => dispatch_dashboard_overlay_cycle(app, Direction::Next),
+        Action::CycleSessions(direction) => dispatch_session_cycle(app, direction),
+        Action::NavigateTree(step) => dispatch_navigate_tree(app, step),
+        Action::OpenSession(session_id) => {
+            let id = app.agents.find_by_session_id(&session_id);
+            if let Some(id) = id {
+                super::ctx::switch_to_agent(app, id, super::ctx::SwitchCause::Navigate);
+            }
+            vec![]
+        }
         Action::DashboardOverlayStop => dispatch_dashboard_overlay_stop(app),
         Action::DashboardToggleAutoApprove => dispatch_dashboard_toggle_auto_approve(app),
         Action::DashboardToggleWorktree => dispatch_dashboard_toggle_worktree(app),
@@ -1632,7 +1639,7 @@ pub(crate) fn flush_image_notices(app: &mut AppView) -> bool {
     }
     let target = match app.active_view {
         ActiveView::Agent(id) => app.agents.get_mut(&id),
-        _ => app.agents.values_mut().next(),
+        _ => app.agents.roots_mut().next().map(|(_, agent)| agent),
     };
     let Some(agent) = target else {
         return false;
@@ -1662,12 +1669,6 @@ fn restore_stash_where_the_draft_was_consumed(app: &mut AppView) {
     let Some(agent) = app.agents.get_mut(&id) else {
         return;
     };
-    if let Some(child_sid) = agent.active_subagent.clone()
-        && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-        && child.take_draft_consumed()
-    {
-        child.auto_restore_stash_after_send();
-    }
     if agent.take_draft_consumed() {
         agent.auto_restore_stash_after_send();
     }

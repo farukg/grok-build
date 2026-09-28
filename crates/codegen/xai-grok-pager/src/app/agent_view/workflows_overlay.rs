@@ -141,14 +141,14 @@ impl AgentView {
                         InputOutcome::Changed
                     }
                     KeyCode::Enter if in_detail => {
-                        if let Some(run) = view.detail_run(&runs)
-                            && let Some(agent_id) =
-                                transcript_target(run, view.selected_phase_name.as_deref())
-                        {
-                            self.open_subagent_fullscreen(agent_id);
-                        }
+                        let target = view.detail_run(&runs).and_then(|run| {
+                            transcript_target(run, view.selected_phase_name.as_deref())
+                        });
                         self.workflows_view = view;
-                        InputOutcome::Changed
+                        match target {
+                            Some(agent_id) => InputOutcome::Action(Action::OpenSession(agent_id)),
+                            None => InputOutcome::Changed,
+                        }
                     }
                     KeyCode::Enter | KeyCode::Right if !in_detail => {
                         if let Some(run) = runs.get(view.selected_run) {
@@ -256,7 +256,8 @@ impl AgentView {
                                 .find(|(r, _)| hit(r))
                                 .map(|(_, id)| id.clone())
                             {
-                                self.open_subagent_fullscreen(agent_id);
+                                self.workflows_view = view;
+                                return Some(InputOutcome::Action(Action::OpenSession(agent_id)));
                             } else if let Some(phase_name) = view
                                 .phase_hits
                                 .iter()
@@ -473,14 +474,12 @@ mod workflows_overlay_key_tests {
                 duration_ms: 0,
             },
         ];
-        agent.insert_test_child("child-running".to_owned(), Box::new(make_agent()));
         let reg = ActionRegistry::defaults();
 
         assert!(matches!(
             agent.handle_input(&key(KeyCode::Enter), &reg),
-            InputOutcome::Changed
+            InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-running"
         ));
-        assert_eq!(agent.active_subagent.as_deref(), Some("child-running"));
         assert!(agent.show_workflows);
     }
 
@@ -645,32 +644,16 @@ mod workflows_overlay_key_tests {
     fn click_on_roster_agent_opens_transcript_fullscreen_over_overlay() {
         let mut agent = workflows_agent(&["wf_run"]);
         agent.workflows_view.agent_hits = vec![(rect(10, 5, 30, 1), "child-1".to_string())];
-        agent.insert_test_child("child-1".to_string(), Box::new(make_agent()));
         let reg = ActionRegistry::defaults();
 
         let out = agent.handle_input(&mouse_down(12, 5), &reg);
-        assert!(matches!(out, InputOutcome::Changed));
-        assert_eq!(
-            agent.active_subagent.as_deref(),
-            Some("child-1"),
-            "roster click must open the child transcript fullscreen"
+        assert!(
+            matches!(out, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1")
         );
         assert!(
             agent.show_workflows,
             "the overlay stays open underneath so closing the transcript returns to it"
         );
-    }
-
-    #[test]
-    fn click_on_roster_agent_without_local_view_is_consumed_noop() {
-        let mut agent = workflows_agent(&["wf_run"]);
-        agent.workflows_view.agent_hits = vec![(rect(10, 5, 30, 1), "ghost".to_string())];
-        let reg = ActionRegistry::defaults();
-
-        let out = agent.handle_input(&mouse_down(12, 5), &reg);
-        assert!(matches!(out, InputOutcome::Changed));
-        assert_eq!(agent.active_subagent, None);
-        assert!(agent.show_workflows);
     }
 
     #[test]

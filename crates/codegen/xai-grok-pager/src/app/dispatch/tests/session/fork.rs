@@ -495,7 +495,7 @@ fn dispatch_fork_worktree_flag_skips_modal() {
         [Effect::CreateWorktreeSession { .. }]
     ));
     assert!(
-        app.agents.values().all(|a| a.question_view.is_none()),
+        app.agents.all().all(|(_, a)| a.question_view.is_none()),
         "--worktree must skip the modal"
     );
 }
@@ -506,7 +506,7 @@ fn dispatch_fork_no_worktree_flag_skips_modal() {
     let effects = dispatch(Action::Fork(fork_args(Some(false), None)), &mut app);
     assert!(matches!(effects.as_slice(), [Effect::ForkSession { .. }]));
     assert!(
-        app.agents.values().all(|a| a.question_view.is_none()),
+        app.agents.all().all(|(_, a)| a.question_view.is_none()),
         "--no-worktree must skip the modal"
     );
 }
@@ -549,7 +549,7 @@ fn dispatch_fork_no_flag_non_git_skips_modal_and_forks_without_worktree() {
         "non-git cwd must skip modal and emit ForkSession, got {effects:?}"
     );
     assert!(
-        app.agents.values().all(|a| a.question_view.is_none()),
+        app.agents.all().all(|(_, a)| a.question_view.is_none()),
         "non-git cwd must not open the modal"
     );
     // Directive must still reach the new agent.

@@ -175,7 +175,7 @@ impl PeekPanelState {
 /// to close the peek.
 pub fn compute_peek_fields(
     row: &DashboardRowId,
-    agents: &indexmap::IndexMap<crate::app::agent::AgentId, AgentView>,
+    agents: &crate::app::session_views::SessionViews,
 ) -> Option<PeekFields> {
     use crate::views::session_title::{entry_title, sanitize_display_text};
     match row {
@@ -307,7 +307,7 @@ pub struct PeekModeBadge {
 /// reflects a `/model` switch or a Shift+Tab mode change.
 pub fn peek_model_and_mode(
     row: &DashboardRowId,
-    agents: &indexmap::IndexMap<crate::app::agent::AgentId, AgentView>,
+    agents: &crate::app::session_views::SessionViews,
 ) -> PeekModeBadge {
     let default = || PeekModeBadge {
         model: None,

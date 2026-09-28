@@ -251,10 +251,10 @@
 
             let _ = replay(&mut app, test_subagent_spawned_for_attempt("sess-parent", child, Some("at1.one")), 1);
             assert!(replay(&mut app, test_subagent_finished_for_attempt(child, Some("at1.one")), 2));
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child.to_owned());
+            let _ = crate::app::dispatch::dispatch(crate::app::actions::Action::OpenSession(child.to_owned()), &mut app);
 
-            assert_eq!(child_scrollback_tool_call_count(agent, child), 1);
+            assert_eq!(child_scrollback_tool_call_count(&app, child), 1);
+            let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(agent.subagent_sessions.get(child).unwrap_or_else(|| panic!("missing map entry")).transcript, ChildTranscript::DiskBacked);
         });
     }
@@ -492,16 +492,16 @@
         assert!(spawn(&mut app, child, "at1.one", 1));
         assert!(handle(make_ext_session_notification(child, delta()), &mut app));
         assert!(finish(&mut app, child, "at1.one", 2));
-        let first_view = app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView;
+        let first_view = test_subagent(&app, child) as *const AgentView;
         assert!(spawn(&mut app, child, "at1.two", 3));
 
         let agent = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry"));
-        assert_eq!(agent.subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView, first_view);
+        assert_eq!(test_subagent(&app, child) as *const AgentView, first_view);
         let info = &agent.subagent_sessions.get(child).unwrap_or_else(|| panic!("missing map entry"));
         assert!(info.attempt.activity_label.is_none());
         assert!(handle(make_ext_session_notification(child, delta()), &mut app));
         assert!(matches!(
-            app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry"))
+            test_subagent(&app, child)
                 .session
                 .tracker
                 .activity(),
@@ -523,19 +523,20 @@
             info.transcript = ChildTranscript::MemoryOnly;
         }
         assert!(finish(&mut app, child, "at1.one", 2));
-        let first_view = app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView;
+        let first_view = test_subagent(&app, child) as *const AgentView;
         assert!(spawn(&mut app, child, "at1.two", 3));
         assert!(handle(make_agent_chunk_with_event(child, "second attempt", "p-child-2", None), &mut app));
 
         let agent = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry"));
-        assert_eq!(agent.subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView, first_view);
+        assert_eq!(test_subagent(&app, child) as *const AgentView, first_view);
         let info = &agent.subagent_sessions.get(child).unwrap_or_else(|| panic!("missing map entry"));
         assert_eq!(info.prompt.as_deref(), Some("preserved prompt"));
         assert_eq!(info.child_cwd.as_deref(), Some("/preserved/cwd"));
         assert_eq!(info.worktree_path.as_deref(), Some("/preserved/worktree"));
         assert_eq!(info.transcript, ChildTranscript::MemoryOnly);
-        let messages: Vec<_> = (0..agent.subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry")).scrollback.len()).filter_map(|index| {
-            let entry = agent.subagent_views.get(child).unwrap_or_else(|| panic!("missing map entry")).scrollback.entry(index)?;
+        let child_view = test_subagent(&app, child);
+        let messages: Vec<_> = (0..child_view.scrollback.len()).filter_map(|index| {
+            let entry = child_view.scrollback.entry(index)?;
             let RenderBlock::AgentMessage(message) = &entry.block else { return None };
             Some(message.text())
         }).collect();
