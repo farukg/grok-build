@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeNotice {
-    CompactionMeta,
     SystemReminder,
     LengthContinue,
     AutoContinue,
@@ -64,20 +63,16 @@ impl Default for ContextPolicy {
 
 impl ContextPolicy {
     pub fn switch(&self, category: ContextCategory) -> ContextSwitch {
-        self.switches
-            .iter()
-            .find_map(|(key, value)| match *key == category {
-                true => Some(*value),
-                false => None,
-            })
-            .unwrap_or(ContextSwitch::Included)
+        match self.switches.iter().find(|(key, _)| *key == category) {
+            Some((_, switch)) => *switch,
+            None => ContextSwitch::Included,
+        }
     }
 
     pub fn set(&mut self, category: ContextCategory, switch: ContextSwitch) {
-        if let Some((_, value)) = self.switches.iter_mut().find(|(key, _)| *key == category) {
-            *value = switch;
-        } else {
-            self.switches.push((category, switch));
+        match self.switches.iter_mut().find(|(key, _)| *key == category) {
+            Some((_, value)) => *value = switch,
+            None => self.switches.push((category, switch)),
         }
     }
 
@@ -99,7 +94,6 @@ pub fn all_categories() -> Vec<ContextCategory> {
         AssistantTurns,
         Reasoning,
         ToolExchanges,
-        RuntimeNotices(RuntimeNotice::CompactionMeta),
         RuntimeNotices(RuntimeNotice::SystemReminder),
         RuntimeNotices(RuntimeNotice::LengthContinue),
         RuntimeNotices(RuntimeNotice::AutoContinue),
