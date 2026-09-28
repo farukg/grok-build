@@ -627,7 +627,7 @@ impl Presenter {
                 if force {
                     let _ = terminal.clear();
                     crate::terminal::overlay::reset_owner();
-                    for agent in app.agents.values_mut() {
+                    for (_, agent) in app.agents.all_mut() {
                         agent.forget_transmitted_inline_media();
                     }
                 }

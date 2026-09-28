@@ -51,6 +51,10 @@ impl SessionViews {
         }
     }
 
+    pub(crate) fn all(&self) -> impl Iterator<Item = (AgentId, &AgentView)> {
+        self.views.iter().map(|(id, view)| (*id, view))
+    }
+
     pub(crate) fn all_mut(&mut self) -> impl Iterator<Item = (AgentId, &mut AgentView)> {
         self.views.iter_mut().map(|(id, view)| (*id, view))
     }
