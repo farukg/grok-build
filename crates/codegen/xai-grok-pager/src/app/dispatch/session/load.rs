@@ -1296,9 +1296,6 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
             agent.adopt_running_prompt(running_pid);
         } else {
             agent.scrollback.finish_all_running();
-            for child in agent.subagent_views.values_mut() {
-                child.scrollback.finish_all_running();
-            }
         }
         let mut effects = Vec::new();
         if let Some(directive) = agent.pending_first_prompt.take() {

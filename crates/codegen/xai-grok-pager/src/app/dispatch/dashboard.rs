@@ -283,18 +283,9 @@ pub(super) fn dispatch_exit_dashboard(app: &mut AppView) -> Vec<Effect> {
     }
     vec![]
 }
-/// Restore session-overlay chrome (`attached_agent` and the row cursor).
-/// A live subagent takeover stays open. A stale one is cleared. The cursor is the top-level row.
+/// Restore dashboard attachment and row selection.
 fn rearm_session_overlay(app: &mut AppView, id: AgentId) {
     use crate::views::dashboard::DashboardRowId;
-    let has_live_child = app.agents.get(&id).is_some_and(|a| {
-        a.active_subagent
-            .as_ref()
-            .is_some_and(|child| a.subagent_sessions.contains_key(child))
-    });
-    if !has_live_child && let Some(agent) = app.agents.get_mut(&id) {
-        agent.close_subagent_fullscreen();
-    }
     if let Some(d) = app.dashboard.as_mut() {
         d.focus_row(DashboardRowId::TopLevel(id));
         d.attached_agent = Some(id);

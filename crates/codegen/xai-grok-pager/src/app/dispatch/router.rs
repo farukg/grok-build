@@ -1663,12 +1663,6 @@ fn restore_stash_where_the_draft_was_consumed(app: &mut AppView) {
     let Some(agent) = app.agents.get_mut(&id) else {
         return;
     };
-    if let Some(child_sid) = agent.active_subagent.clone()
-        && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-        && child.take_draft_consumed()
-    {
-        child.auto_restore_stash_after_send();
-    }
     if agent.take_draft_consumed() {
         agent.auto_restore_stash_after_send();
     }
