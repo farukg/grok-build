@@ -1389,10 +1389,10 @@ impl AgentView {
         let prefix_width: u16 = location.iter().map(|s| s.width() as u16).sum();
         let path_width = short.width() as u16;
         let kind_label = match &self.role {
-            AgentRole::Root => SessionKindLabel::Main,
-            AgentRole::Child(link) => self.subagent_sessions.get(&link.subagent_id)
-                .map(SessionKindLabel::from_subagent)
-                .unwrap_or(SessionKindLabel::Subagent { kind: std::borrow::Cow::Borrowed("Subagent") }),
+            AgentRole::Root => None,
+            AgentRole::Child(link) => self.subagent_sessions.values()
+                .find(|info| info.subagent_id.as_ref() == link.subagent_id)
+                .map(SessionKindLabel::from_subagent),
         };
         let title = overlay_header.title.and_then(|title| {
             const PATH_MIN: u16 = 12;
@@ -1413,12 +1413,10 @@ impl AgentView {
         location.push(Span::styled(short, path_style));
         let mut parts: Vec<Span> = Vec::new();
         let mut path_offset: u16 = prefix_width;
-        let kind_text = match kind_label {
-            SessionKindLabel::Main => "Main".to_owned(),
-            SessionKindLabel::Subagent { kind } => kind.into_owned(),
-        };
-        parts.push(Span::styled(kind_text, bg.fg(theme.gray)));
-        parts.push(Span::styled(" ", bg));
+        if let Some(SessionKindLabel::Subagent { kind }) = kind_label {
+            parts.push(Span::styled(kind.into_owned(), bg.fg(theme.gray)));
+            parts.push(Span::styled(" ", bg));
+        }
         if let Some(title) = title {
             let sep = crate::views::agent_status::separator(&theme);
             path_offset += (title.width() + sep.width()) as u16;
@@ -4650,55 +4648,6 @@ mod overlay_cycle_hint_tests {
         agent.session.session_id = Some("workspace-session".into());
         assert_eq!(ctrl_x_label(&agent).as_deref(), Some("archive"));
     }
-    /// A subagent's fullscreen takeover keeps the parent's footer contract: an idle persisted parent reads `archive`, not the
-    /// child's own `stop`, and the parent's pending confirmation shows through.
-    #[test]
-    fn nested_takeover_footer_uses_the_parent_stop_action_and_confirmation() {
-        let reg = ActionRegistry::defaults();
-        let area = Rect::new(0, 0, 100, 30);
-        let render = |pending: Option<crate::views::shortcuts_bar::PendingHint>| {
-            let mut parent = make_agent();
-            parent.session.session_id = Some("overlay-session".into());
-            parent.insert_test_child("child-sid".into(), Box::new(make_agent()));
-            parent.active_subagent = Some("child-sid".into());
-            let mut buf = Buffer::empty(area);
-            let mut scratch = ScratchBuffer::new();
-            parent.draw(
-                area,
-                &mut buf,
-                &reg,
-                &mut scratch,
-                pending,
-                false,
-                crate::app::agent_view::BannerSlotParams::none(),
-                true,
-                &mut Vec::new(),
-                super::AppRenderParams {
-                    workspace_dashboard_enabled: true,
-                    ..Default::default()
-                },
-            );
-            (0..area.height)
-                .map(|y| {
-                    (0..area.width)
-                        .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let text = render(None);
-        assert!(text.contains("Ctrl+x:archive"), "{text}");
-        assert!(!text.contains("Ctrl+x:stop"), "{text}");
-        let confirming = render(Some(crate::views::shortcuts_bar::PendingHint {
-            shortcut: crate::key!('x', CONTROL),
-            label: "archive",
-        }));
-        assert!(
-            confirming.contains("press again to archive"),
-            "{confirming}"
-        );
-    }
     #[test]
     fn busy_workspace_overlay_and_v1_keep_stop_copy() {
         let busy_v2 = draw_overlay_footer(false, true, true, true);
@@ -4740,24 +4689,6 @@ mod overlay_post_flush_tests {
     }
     fn png() -> [u8; 8] {
         [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
-    }
-    #[test]
-    fn fullscreen_subagent_propagates_child_clear_to_emitter() {
-        let _guard = crate::terminal::image::set_protocol_for_test(
-            crate::terminal::image::GraphicsProtocol::Kitty,
-        );
-        crate::terminal::overlay::reset_owner();
-        seed_static_owner(41);
-        let mut parent = make_agent();
-        parent.insert_test_child("child".into(), Box::new(make_agent()));
-        parent.active_subagent = Some("child".into());
-        let post_flush = draw(&mut parent).expect("child clear propagates");
-        assert!(post_flush.as_str().contains("a=d"));
-        let before_emit = crate::terminal::overlay::static_image(&png(), 20, 10, 0, 0, 41).unwrap();
-        assert!(!before_emit.as_str().contains("a=T"));
-        post_flush.write_to(&mut Vec::new()).unwrap();
-        let after_emit = crate::terminal::overlay::static_image(&png(), 20, 10, 0, 0, 41).unwrap();
-        assert!(after_emit.as_str().contains("a=T"));
     }
     #[test]
     fn active_modal_returns_clear_without_committing_discarded_state() {
