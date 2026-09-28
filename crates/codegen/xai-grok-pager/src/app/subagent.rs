@@ -25,6 +25,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::app::agent::AgentId;
+use crate::app::session_views::SessionViews;
 use serde::Deserialize;
 use xai_grok_shell::extensions::subagent_context::{ForkMode, SubagentContext};
 use xai_grok_shell::session::storage::{
@@ -594,7 +596,101 @@ pub(crate) enum ChildReplayOutcome {
     UnknownChild,
 }
 
-/// Replay child `updates.jsonl` on fullscreen open (and dashboard attach) when not yet read.
+/// Replay child `updates.jsonl` when switching to its session view.
+pub(crate) fn replay_on_open(views: &mut SessionViews, child_id: AgentId) -> ChildReplayOutcome {
+    let Some(child_view) = views.get(&child_id) else {
+        return ChildReplayOutcome::UnknownChild;
+    };
+    let crate::app::agent_view::AgentRole::Child(link) = &child_view.role else {
+        return ChildReplayOutcome::UnknownChild;
+    };
+    let parent_id = link.parent;
+    let child_sid = link.subagent_id.clone();
+    let Some(parent) = views.get(&parent_id) else {
+        return ChildReplayOutcome::UnknownChild;
+    };
+    let Some(info) = parent.subagent_sessions.get(&child_sid).cloned() else {
+        return ChildReplayOutcome::UnknownChild;
+    };
+    replay_child_view(views, child_id, parent_id, &child_sid, info)
+}
+
+fn replay_child_view(
+    views: &mut SessionViews,
+    child_id: AgentId,
+    parent_id: AgentId,
+    child_sid: &str,
+    info: SubagentInfo,
+) -> ChildReplayOutcome {
+    if !info.transcript.needs_replay() {
+        return ChildReplayOutcome::NothingToRead;
+    }
+    let finished = info.is_finished();
+    let is_background = info.attempt.is_background;
+    let resumed = is_resumed_child(&info);
+    let Some(parent_cwd) = views.get(&parent_id).map(|parent| parent.session.cwd.clone()) else {
+        return ChildReplayOutcome::UnknownChild;
+    };
+    let Some(mut child_view) = views.shift_remove(&child_id) else {
+        return ChildReplayOutcome::UnknownChild;
+    };
+    let finished_elapsed = finished.then_some(info.attempt.duration_ms).flatten().map(std::time::Duration::from_millis);
+    if !finished && !child_view.scrollback.is_empty() {
+        tracing::debug!(child_session_id = %child_sid, finished, is_background, "skipping child transcript replay: the view already holds live blocks");
+        return ChildReplayOutcome::ViewHoldsLiveBlocks;
+    }
+    let detached_state = finished.then(|| child_view.take_replay_rebuilt_state());
+    if finished {
+        child_view.inline_media_cache = Default::default();
+        child_view.inline_media_load_failed = Default::default();
+    }
+    let fallback = if finished || resumed { ReplayLookupFallback::Relocation } else { ReplayLookupFallback::HintedOnly };
+    let child_cwd = info.child_cwd.clone();
+    let outcome = replay_inherited_updates(&mut child_view, child_sid, &parent_cwd, child_cwd.as_deref().map(std::path::Path::new), fallback);
+    let emission = outcome.as_ref().copied();
+    if let Some(parent) = views.get_mut(&parent_id) {
+        if let Some(info) = parent.subagent_sessions.get_mut(child_sid) {
+            let lifecycle = if info.is_finished() { ChildLifecycle::Finished } else { ChildLifecycle::Running };
+            let origin = if is_resumed_child(info) { ChildOrigin::Resumed } else { ChildOrigin::Fresh };
+            info.transcript.record_replay(&outcome, lifecycle, origin);
+        }
+    }
+    restore_or_finalize_child(&mut child_view, emission.as_ref(), detached_state, finished_elapsed);
+    views.insert(child_id, child_view);
+    match outcome {
+        Ok(ReplayEmission::Emitted) => ChildReplayOutcome::Replayed,
+        Ok(ReplayEmission::Empty) => ChildReplayOutcome::FoundNothingOnDisk,
+        Err(_) => ChildReplayOutcome::ReadFailed,
+    }
+}
+
+fn restore_or_finalize_child(
+    child_view: &mut crate::app::agent_view::AgentView,
+    outcome: Option<&ReplayEmission>,
+    detached_state: Option<crate::app::agent_view::ReplayRebuiltState>,
+    finished_elapsed: Option<std::time::Duration>,
+) {
+    let restore = match outcome {
+        Some(ReplayEmission::Emitted) => false,
+        Some(ReplayEmission::Empty) => detached_state
+            .as_ref()
+            .is_some_and(|state| !scrollback_is_footer_only(&state.scrollback)),
+        None => true,
+    };
+    let restored = restore && detached_state.is_some();
+    if restore && let Some(state) = detached_state {
+        child_view.restore_replay_rebuilt_state(state);
+    }
+    match finished_elapsed {
+        Some(elapsed) if outcome.is_some() && !restored => {
+            finalize_finished_child_view(child_view, elapsed)
+        }
+        Some(_) => {}
+        None => child_view.scrollback.finish_all_running(),
+    }
+}
+
+/// Replay child `updates.jsonl` on open when not yet read.
 /// A finished child always rebuilds from disk.
 /// A running view is filled only while it still shows nothing.
 pub(crate) fn ensure_subagent_child_replayed(
@@ -802,21 +898,26 @@ fn detach_child_view_content(
 pub(crate) enum EvictOutcome {
     /// The retained transcript was dropped; the first open rebuilds from disk.
     Evicted,
-    /// A guard applied (open fullscreen, unfinished or background, memory-only, or an unproven disk probe); the caller must finalize in place.
+    /// A guard applied (unfinished/background child, memory-only transcript, or unproven disk probe).
     Retained,
 }
 
 /// Returns [`EvictOutcome::Retained`] when a guard applies and the caller must finalize in place.
-/// The guards: the child open fullscreen, unfinished or background children, and memory-only transcripts.
+/// The guards: unfinished/background children and memory-only transcripts.
 /// A view holding content is dropped only once a disk probe proves the persisted transcript would emit.
-pub(crate) fn evict_finished_child_view(
-    parent: &mut crate::app::agent_view::AgentView,
-    child_sid: &str,
-) -> EvictOutcome {
-    if parent.active_subagent.as_deref() == Some(child_sid) {
+pub(crate) fn evict_on_leave(views: &mut SessionViews, child_id: AgentId) -> EvictOutcome {
+    let Some(child) = views.get(&child_id) else {
         return EvictOutcome::Retained;
-    }
-    let Some(info) = parent.subagent_sessions.get(child_sid) else {
+    };
+    let crate::app::agent_view::AgentRole::Child(link) = &child.role else {
+        return EvictOutcome::Retained;
+    };
+    let parent_id = link.parent;
+    let child_sid = link.subagent_id.clone();
+    let Some(parent_cwd) = views.get(&parent_id).map(|parent| parent.session.cwd.clone()) else {
+        return EvictOutcome::Retained;
+    };
+    let Some(info) = views.get(&parent_id).and_then(|parent| parent.subagent_sessions.get(&child_sid)).cloned() else {
         return EvictOutcome::Retained;
     };
     if info.is_running()
@@ -825,11 +926,8 @@ pub(crate) fn evict_finished_child_view(
     {
         return EvictOutcome::Retained;
     }
-    let Some(child_view) = parent.subagent_views.get(child_sid) else {
-        if let Some(info) = parent.subagent_sessions.get_mut(child_sid) {
-            info.transcript.evicted();
-        }
-        return EvictOutcome::Evicted;
+    let Some(child_view) = views.get(&child_id) else {
+        return EvictOutcome::Retained;
     };
     // Purge only after a real drop: re-evicting a bare view frees nothing.
     let had_content =
@@ -838,7 +936,7 @@ pub(crate) fn evict_finished_child_view(
         let child_cwd = info.child_cwd.clone();
         // Hinted-only: the probe stays cheap; a relocated copy the hints miss is found by the open-path rebuild
         let hint = ReplayPathHint {
-            parent_cwd: Some(&parent.session.cwd),
+            parent_cwd: Some(&parent_cwd),
             child_cwd: child_cwd.as_deref().map(std::path::Path::new),
             fallback: ReplayLookupFallback::HintedOnly,
         };
@@ -847,10 +945,12 @@ pub(crate) fn evict_finished_child_view(
             return EvictOutcome::Retained;
         }
     }
-    if let Some(info) = parent.subagent_sessions.get_mut(child_sid) {
+    if let Some(parent) = views.get_mut(&parent_id)
+        && let Some(info) = parent.subagent_sessions.get_mut(&child_sid)
+    {
         info.transcript.evicted();
     }
-    drop(detach_child_view_content(parent, child_sid));
+    let _ = views.shift_remove(&child_id);
     if had_content {
         // Deferred so the purge cost lands between frames, not inside this notification.
         crate::memory_release::request_release_after_draw("subagent-evict");
