@@ -284,6 +284,15 @@ impl AgentView {
                 self.scrollback.set_selected(Some(idx));
                 InputOutcome::Action(Action::Rewind)
             }
+            (TimelineItemAction::Remove, ActionTarget::Entry | ActionTarget::Group) => {
+                if let Some(panel) = self.timeline_mode.panel_mut() {
+                    panel.focus = PanelFocus::Chat;
+                }
+                self.run_timeline_item_remove(row, &crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('d'),
+                    crossterm::event::KeyModifiers::NONE,
+                ))
+            }
         }
     }
 }

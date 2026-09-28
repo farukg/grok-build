@@ -71,6 +71,7 @@ pub enum TimelineItemAction {
     CopyMeta,
     OpenViewer,
     Rewind,
+    Remove,
 }
 
 #[derive(Debug)]
@@ -223,6 +224,7 @@ pub fn timeline_panel_key(key: &KeyEvent) -> TimelinePanelInput {
         KeyCode::Char('Y') => TimelinePanelInput::Act(TimelineItemAction::CopyMeta),
         KeyCode::Char('v') => TimelinePanelInput::Act(TimelineItemAction::OpenViewer),
         KeyCode::Char('R') => TimelinePanelInput::Act(TimelineItemAction::Rewind),
+        KeyCode::Char('d') | KeyCode::Delete => TimelinePanelInput::Act(TimelineItemAction::Remove),
         KeyCode::Tab => TimelinePanelInput::FocusChat,
         KeyCode::Esc | KeyCode::F(6) => TimelinePanelInput::Close,
         _ => TimelinePanelInput::Consumed,
