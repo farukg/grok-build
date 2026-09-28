@@ -1084,20 +1084,19 @@ fn tick_demand_fast_while_any_session_is_cancelling() {
 
 /// Overlay stop sends cancel_subagents true even when always_continue is set.
 #[test]
-fn cancel_turn_in_subagent_overlay_ignores_always_continue_pref() {
+fn cancel_turn_in_child_session_ignores_always_continue_pref() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-overlay-always-continue";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let mut child = AgentView::new(child_session, ScrollbackState::new());
     child.cancel_subagents_preference = Some(false);
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.cancel_subagents_preference = Some(false);
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
+    app.agents.get_mut(&parent_id).unwrap().cancel_subagents_preference = Some(false);
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     app.current_ui.cancel_subagents_on_turn_cancel = Some("always_continue".into());
 
     let effects = dispatch(Action::CancelTurn, &mut app);
@@ -1118,64 +1117,49 @@ fn cancel_turn_in_subagent_overlay_ignores_always_continue_pref() {
 
 /// Overlay child with no session_id: no wire cancel and no local Cancelling.
 #[test]
-fn cancel_turn_in_subagent_overlay_without_session_id_is_noop() {
+fn cancel_turn_in_child_session_without_session_id_is_noop() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-overlay-no-sid";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     child_session.session_id = None;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = dispatch(Action::CancelTurn, &mut app);
 
     assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(
-        parent
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
-            .session
-            .state
-            .is_turn_running(),
-        "must not flip to Cancelling when there is no session to cancel"
-    );
+    assert!(app.agents[&child_id].session.state.is_turn_running());
 }
 
 #[test]
-fn reconcile_overdue_cancels_resends_for_overlay_child() {
+fn reconcile_overdue_cancels_resends_for_child_session() {
     use crate::app::actions::CancelTrigger;
     use crate::app::dispatch::CANCEL_RESEND_GRACE;
     use crate::app::dispatch::reconcile_overdue_cancels;
+    use crate::app::session_views::test_support::link_child;
 
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-overlay-resend";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let mut child = AgentView::new(child_session, ScrollbackState::new());
     child.cancel_trigger_hint = Some(CancelTrigger::Mouse);
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = dispatch(Action::CancelTurn, &mut app);
     assert!(matches!(effects.as_slice(), [Effect::CancelTurn { .. }]));
     assert!(reconcile_overdue_cancels(&mut app).is_none());
 
     app.agents
-        .get_mut(&parent_id)
-        .unwrap()
-        .subagent_views
-        .get_mut(child_sid)
+        .get_mut(&child_id)
         .unwrap()
         .pending_cancel_resend
         .as_mut()
@@ -1197,36 +1181,22 @@ fn reconcile_overdue_cancels_resends_for_overlay_child() {
     );
 }
 
-/// Idle parent with no overlay must not cancel a background running child view.
+/// An idle parent cancel leaves a running child session untouched.
 #[test]
-fn cancel_turn_without_overlay_while_idle_is_noop_even_with_running_child() {
+fn cancel_turn_on_idle_parent_does_not_cancel_background_child() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-background-running";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = None;
-        assert!(parent.session.state.is_idle());
-    }
-
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
     let effects = dispatch(Action::CancelTurn, &mut app);
-
     assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(parent.session.state.is_idle());
-    assert!(
-        parent
-            .subagent_views
-            .get(child_sid)
-            .unwrap()
-            .session
-            .state
-            .is_turn_running()
-    );
+    assert!(app.agents[&parent_id].session.state.is_idle());
+    assert!(app.agents[&child_id].session.state.is_turn_running());
 }
 
 #[test]
@@ -2210,23 +2180,22 @@ fn kill_bg_task_action_emits_client_ui_source() {
 }
 
 #[test]
-fn kill_bg_task_in_subagent_view_names_the_childs_session() {
+fn kill_bg_task_in_child_session_names_child_sid() {
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let root_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-1";
     let mut child = AgentView::new(
-        make_test_agent_session(&app, AgentId(1), child_sid),
+        make_test_agent_session(&app, child_id, child_sid),
         ScrollbackState::new(),
     );
     child
         .session
         .bg_tasks
         .insert("bg-child".into(), super::make_bg_task("bg-child"));
-    {
-        let root = app.agents.get_mut(&root_id).expect("root agent must exist");
-        root.insert_test_child(child_sid.to_string(), Box::new(child));
-        root.active_subagent = Some(child_sid.to_string());
-    }
+    link_child(&mut app.agents, root_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = dispatch(Action::KillBgTask("bg-child".into()), &mut app);
 
@@ -2239,7 +2208,7 @@ fn kill_bg_task_in_subagent_view_names_the_childs_session() {
         "the kill must name the child's session, got {effects:?}"
     );
     assert!(
-        child_task_pending_kill(&app, root_id, child_sid, "bg-child"),
+        child_task_pending_kill(&app, child_id, "bg-child"),
         "the kill must mark the child's row"
     );
 
@@ -2253,7 +2222,7 @@ fn kill_bg_task_in_subagent_view_names_the_childs_session() {
     );
 
     assert!(
-        !child_task_pending_kill(&app, root_id, child_sid, "bg-child"),
+        !child_task_pending_kill(&app, child_id, "bg-child"),
         "a failed kill must clear the child's row"
     );
 
@@ -2266,21 +2235,18 @@ fn kill_bg_task_in_subagent_view_names_the_childs_session() {
         &mut app,
     );
 
-    let child_has_row = get_agent(&app, root_id)
-        .subagent_view(child_sid)
-        .is_some_and(|view| view.session.bg_tasks.contains_key("bg-child"));
+    let child_has_row = get_agent(&app, child_id)
+        .session
+        .bg_tasks
+        .contains_key("bg-child");
     assert!(!child_has_row, "an unknown task must drop the child's row");
 }
 
-fn child_task_pending_kill(
-    app: &AppView,
-    root_id: AgentId,
-    child_sid: &str,
-    task_id: &str,
-) -> bool {
-    get_agent(app, root_id)
-        .subagent_view(child_sid)
-        .and_then(|view| view.session.bg_tasks.get(task_id))
+fn child_task_pending_kill(app: &AppView, child_id: AgentId, task_id: &str) -> bool {
+    get_agent(app, child_id)
+        .session
+        .bg_tasks
+        .get(task_id)
         .map(|task| task.pending_kill)
         .unwrap_or_else(|| panic!("missing the child's task {task_id}"))
 }
@@ -2307,7 +2273,7 @@ fn bg_task_kill_failed_clears_pending_kill_on_inactive_agent() {
     assert!(task.kill_requested_at.is_none());
 }
 
-/// Sticky must land on parent and subagent, and remain on the parent after leaving the subagent view (Esc clears `active_subagent` only).
+/// The sticky notice is shared across session views, and remains when navigating back to the parent.
 #[serial_test::serial(MOUSE_CAPTURE_ENABLED)]
 #[test]
 fn mouse_reporting_toggle_sticky_survives_child_navigation() {
