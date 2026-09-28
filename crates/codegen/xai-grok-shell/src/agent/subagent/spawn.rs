@@ -229,6 +229,9 @@ impl coordinator::ChildRunner for ShellChildRunner {
             let completion_data =
                 ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), turn_number);
             let panic_completion_data = completion_data.clone();
+            let child_parent_session_id = acp::SessionId::new(parent_sid.clone());
+            let child_address = run.agent_address.clone();
+            let (residence_tx, residence_rx) = tokio::sync::oneshot::channel();
             let task = {
                 let _region = Region::from_span(tracing::info_span!(
                     parent: &root_parent,
@@ -242,22 +245,48 @@ impl coordinator::ChildRunner for ShellChildRunner {
                     completion_data,
                     gateway,
                     root_span,
+                    residence_tx,
                 ))
             };
             drop(root_parent);
-            join_worker_task(
-                task,
-                coordinator::ChildRunOutput {
-                    result: SubagentResult::failed(
-                        panic_request.id.clone(),
-                        panic_request.id,
-                        "Subagent runtime panicked",
-                    ),
-                    completion_data: panic_completion_data,
-                    snapshot_ref: None,
-                },
-            )
-            .await
+            let register = async {
+                let Ok(running) = residence_rx.await else {
+                    return;
+                };
+                let reach = match child_address {
+                    Some(address) => crate::agent::mvp_agent::ChildReach::Addressed {
+                        address,
+                        residence: crate::agent::mvp_agent::ChildResidence::Running(Box::new(
+                            running,
+                        )),
+                    },
+                    None => crate::agent::mvp_agent::ChildReach::Unaddressed,
+                };
+                this.register_child_session(
+                    &child_session_id,
+                    crate::agent::mvp_agent::ChildHost {
+                        parent_session_id: child_parent_session_id,
+                        reach,
+                    },
+                );
+            };
+            let ((), output) = tokio::join!(
+                register,
+                join_worker_task(
+                    task,
+                    coordinator::ChildRunOutput {
+                        result: SubagentResult::failed(
+                            panic_request.id.clone(),
+                            panic_request.id,
+                            "Subagent runtime panicked",
+                        ),
+                        completion_data: panic_completion_data,
+                        snapshot_ref: None,
+                    },
+                )
+            );
+            this.finish_child_session(&child_session_id);
+            output
         })
     }
     fn validate_type(

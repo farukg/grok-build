@@ -296,15 +296,47 @@ pub(crate) enum SessionHost {
 #[derive(Clone)]
 pub(crate) struct ChildHost {
     pub(crate) parent_session_id: acp::SessionId,
-    pub(crate) subagent_id: String,
-    pub(crate) turns: tokio::sync::mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+    pub(crate) reach: ChildReach,
 }
 
-pub(crate) enum ChildPromptAdmission {
-    Live,
-    Woken,
-    ContinuedAs(acp::SessionId),
-    Refused(xai_grok_tools::implementations::grok_build::task::types::SubagentResumeError),
+impl ChildHost {
+    pub(crate) fn running_handle(self) -> Option<SessionHandle> {
+        match self.reach {
+            ChildReach::Addressed {
+                residence: ChildResidence::Running(running),
+                ..
+            } => Some(running.handle),
+            ChildReach::Addressed {
+                residence: ChildResidence::Finished,
+                ..
+            }
+            | ChildReach::Unaddressed => None,
+        }
+    }
+}
+
+/// The coordinator mints an agent address for every child except workflow-owned ones.
+#[derive(Clone)]
+pub(crate) enum ChildReach {
+    Addressed {
+        address: xai_grok_tools::implementations::grok_build::task::types::AgentAddress,
+        residence: ChildResidence,
+    },
+    Unaddressed,
+}
+
+#[derive(Clone)]
+pub(crate) enum ChildResidence {
+    Running(Box<RunningChild>),
+    Finished,
+}
+
+/// What the child's worker hands the agent once the coordinator has promoted the child.
+#[derive(Clone)]
+pub(crate) struct RunningChild {
+    pub(crate) handle: SessionHandle,
+    pub(crate) turns: tokio::sync::mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+    pub(crate) parent_prompt_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// The per-session state this registry owns: retained, resident resources, presence (thread and liveness), unavailable model, and bridge.
@@ -348,6 +380,16 @@ impl SessionRegistry {
         let Some(mut released) = entries.remove(id) else {
             return;
         };
+        let mut released_parents = vec![id.clone()];
+        while let Some(parent) = released_parents.pop() {
+            entries.retain(|child_id, entry| match &entry.host {
+                Some(SessionHost::Child(child)) if child.parent_session_id == parent => {
+                    released_parents.push(child_id.clone());
+                    false
+                }
+                Some(SessionHost::Child(_) | SessionHost::Root) | None => true,
+            });
+        }
         let running = released
             .presence
             .as_mut()
@@ -512,6 +554,35 @@ impl SessionRegistry {
     }
     pub(super) fn clear_host(&self, id: &acp::SessionId) {
         self.clear(id, |entry| entry.host = None);
+    }
+    /// A finished child stays promptable by id until its parent session is released; a child
+    /// that outlived its parent leaves nothing behind.
+    pub(super) fn finish_child(&self, id: &acp::SessionId) {
+        let mut entries = self.sessions.borrow_mut();
+        let Some(entry) = entries.get(id) else {
+            return;
+        };
+        let parent_open = match &entry.host {
+            Some(SessionHost::Child(child)) => entries
+                .get(&child.parent_session_id)
+                .is_some_and(|parent| parent.host.is_some()),
+            Some(SessionHost::Root) | None => return,
+        };
+        if !parent_open {
+            entries.remove(id);
+            return;
+        }
+        if let Some(SessionResources {
+            host:
+                Some(SessionHost::Child(ChildHost {
+                    reach: ChildReach::Addressed { residence, .. },
+                    ..
+                })),
+            ..
+        }) = entries.get_mut(id)
+        {
+            *residence = ChildResidence::Finished;
+        }
     }
     pub(super) fn resident_handle(&self, id: &acp::SessionId) -> Option<SessionHandle> {
         self.with(id, |e| {
