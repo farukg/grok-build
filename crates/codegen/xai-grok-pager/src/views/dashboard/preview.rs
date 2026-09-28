@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use indexmap::IndexMap;
+use crate::app::session_views::SessionViews;
 use ratatui::layout::Rect;
 
 use crate::app::agent::AgentId;
@@ -27,7 +27,7 @@ impl DashboardState {
     pub(crate) fn set_preview_enabled(
         &mut self,
         enabled: bool,
-        agents: &mut IndexMap<AgentId, AgentView>,
+        agents: &mut SessionViews,
     ) {
         self.preview_enabled = enabled;
         if !enabled {
@@ -41,7 +41,7 @@ impl DashboardState {
     pub(crate) fn layout_with_preview(
         &mut self,
         area: Rect,
-        agents: &mut IndexMap<AgentId, AgentView>,
+        agents: &mut SessionViews,
     ) -> DashboardLayout {
         let mut result = layout::compute_layout(area, false);
         if !self.preview_enabled {
@@ -59,7 +59,7 @@ impl DashboardState {
         &mut self,
         area: Rect,
         mut result: DashboardLayout,
-        agents: &mut IndexMap<AgentId, AgentView>,
+        agents: &mut SessionViews,
     ) -> DashboardLayout {
         let Some(selected) = self.selected.clone() else {
             self.set_peek_reply_target_cwd(None);
@@ -134,7 +134,7 @@ impl DashboardState {
         &mut self,
         selected: DashboardRowId,
         fields: PeekFields,
-        agents: &IndexMap<AgentId, AgentView>,
+        agents: &SessionViews,
     ) {
         self.set_peek_reply_target_cwd(Self::peeked_agent_cwd(&selected, agents));
         let badge = peek::peek_model_and_mode(&selected, agents);
@@ -157,7 +157,7 @@ impl DashboardState {
 
     fn peeked_agent_cwd(
         selected: &DashboardRowId,
-        agents: &IndexMap<AgentId, AgentView>,
+        agents: &SessionViews,
     ) -> Option<PathBuf> {
         let reply_agent = match selected {
             DashboardRowId::TopLevel(id) => Some(*id),
@@ -166,7 +166,7 @@ impl DashboardState {
         reply_agent.and_then(|id| agents.get(&id).map(|agent| agent.session.cwd.clone()))
     }
 
-    fn ensure_peek_viewport(&mut self, agents: &mut IndexMap<AgentId, AgentView>) {
+    fn ensure_peek_viewport(&mut self, agents: &mut SessionViews) {
         if self.attached_agent.is_some() {
             return;
         }

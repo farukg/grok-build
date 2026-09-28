@@ -186,7 +186,7 @@ impl ClusterClient {
     fn latest_agent(&self) -> &AgentView {
         self.app
             .agents
-            .values()
+            .all().map(|(_, a)| a)
             .last()
             .expect("client has no agent view yet")
     }
@@ -194,7 +194,7 @@ impl ClusterClient {
     fn agent_for_session(&self, sid: &str) -> &AgentView {
         self.app
             .agents
-            .values()
+            .all().map(|(_, a)| a)
             .find(|a| {
                 a.session
                     .session_id
@@ -209,7 +209,7 @@ impl ClusterClient {
         self.act(Action::NewSession);
         self.pump_until("session/new completes", |app| {
             app.agents
-                .values()
+                .all().map(|(_, a)| a)
                 .any(|a| a.session.session_id.is_some() && !a.session.loading_replay)
         })
         .await;
@@ -227,7 +227,7 @@ impl ClusterClient {
         self.act(Action::LoadSession(sid.to_string(), None, false));
         let sid_owned = sid.to_string();
         self.pump_until("session/load completes", move |app| {
-            app.agents.values().any(|a| {
+            app.agents.all().any(|(_, a)| {
                 a.session
                     .session_id
                     .as_ref()
@@ -243,7 +243,7 @@ impl ClusterClient {
         self.act(Action::SendPrompt(prompt.to_string()));
         let sentinel_owned = sentinel.to_string();
         self.pump_until("turn completes", move |app| {
-            app.agents.values().any(|a| {
+            app.agents.all().any(|(_, a)| {
                 matches!(a.session.state, AgentState::Idle)
                     && agent_message_text(a).contains(&sentinel_owned)
             })

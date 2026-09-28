@@ -61,11 +61,8 @@ pub(super) fn reconcile_overdue_prompt_acks_at(
     let mut fired = false;
     let mut effects = Vec::new();
     // A prompt sent from a focused subagent overlay arms the watch on the child view, not the parent
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         fired |= poll_prompt_ack_for_agent(agent, deadlines, now, &mut effects);
-        for child in agent.subagent_views.values_mut() {
-            fired |= poll_prompt_ack_for_agent(child, deadlines, now, &mut effects);
-        }
     }
     fired.then_some(effects)
 }

@@ -277,7 +277,7 @@ struct ReconnectLoadPlan {
 }
 fn restore_dashboard_peek_before_reload(
     dashboard: &mut Option<crate::views::dashboard::DashboardState>,
-    agents: &mut indexmap::IndexMap<super::agent::AgentId, super::agent_view::AgentView>,
+    agents: &mut super::session_views::SessionViews,
 ) {
     if let Some(dashboard) = dashboard.as_mut() {
         dashboard.restore_peek_viewport(agents);
@@ -627,7 +627,7 @@ impl Presenter {
                 if force {
                     let _ = terminal.clear();
                     crate::terminal::overlay::reset_owner();
-                    for agent in app.agents.values_mut() {
+                    for (_, agent) in app.agents.all_mut() {
                         agent.forget_transmitted_inline_media();
                     }
                 }
@@ -715,14 +715,9 @@ fn report_suspend_wait(app: &mut AppView, message: &str) {
             if let ActiveView::Agent(id) = app.active_view
                 && let Some(agent) = app.agents.get_mut(&id)
             {
-                let block = crate::scrollback::block::RenderBlock::system(message);
-                if let Some(child_sid) = agent.active_subagent.clone()
-                    && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-                {
-                    child.scrollback.push_block(block);
-                } else {
-                    agent.scrollback.push_block(block);
-                }
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(message));
             }
         }
     }
@@ -964,8 +959,8 @@ fn run_pending_mode_switch(
             } else {
                 super::MINIMAL_SHOW_SWITCH_BACK_TO_FULLSCREEN
                     .store(false, std::sync::atomic::Ordering::Release);
-                for agent in app.agents.values_mut() {
-                    agent.set_sticky_toast_recursive(None);
+                for (_, agent) in app.agents.all_mut() {
+                    agent.set_sticky_toast(None);
                 }
                 if let ActiveView::Agent(id) = app.active_view
                     && let Some(agent) = app.agents.get_mut(&id)
@@ -1007,8 +1002,8 @@ fn run_pending_mode_switch(
             }
             let effs: Vec<super::actions::Effect> = app
                 .agents
-                .values()
-                .filter_map(|a| {
+                .roots()
+                .filter_map(|(_, a)| {
                     a.session.session_id.as_ref().map(|sid| {
                         super::actions::Effect::UnregisterActiveSession {
                             session_id: sid.clone(),
@@ -2631,8 +2626,8 @@ pub(crate) async fn run(
                                 "generation": generation,
                                 "open_sessions": app
                                     .agents
-                                    .values()
-                                    .filter_map(|a| {
+                                    .roots()
+                                    .filter_map(|(_, a)| {
                                         a.session.session_id.as_ref().map(|s| s.0.to_string())
                                     })
                                     .collect::<Vec<_>>(),
@@ -2670,7 +2665,7 @@ pub(crate) async fn run(
                             _ => None,
                         };
                         let mut agent_ids: Vec<super::agent::AgentId> =
-                            app.agents.keys().copied().collect();
+                            app.agents.roots().map(|(id, _)| id).collect();
                         agent_ids.sort_by_key(|id| Some(*id) != active_agent_id);
                         let mut reload_agent_ids = Vec::new();
                         let mut load_plans = Vec::new();
@@ -3004,7 +2999,7 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
 /// A dashboard created later is seeded in `dispatch_open_dashboard`.
 fn apply_session_recap_available(app: &mut AppView, available: bool) {
     app.session_recap_available = available;
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.set_session_recap_available(available);
     }
     app.welcome_prompt.set_recap_visible(available);
@@ -4045,7 +4040,7 @@ mod tests {
         got
     }
     fn get_agent_map(
-        agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+        agents: &crate::app::session_views::SessionViews,
         id: crate::app::agent::AgentId,
     ) -> &crate::app::agent_view::AgentView {
         let Some(a) = agents.get(&id) else {
@@ -4795,7 +4790,6 @@ mod tests {
     fn reconnect_restores_dashboard_peek_before_replacing_scrollback() {
         use crate::scrollback::block::RenderBlock;
         use crate::views::dashboard::{DashboardRowId, DashboardState};
-        use indexmap::IndexMap;
         let id = super::super::agent::AgentId(0);
         let mut agent = crate::test_util::make_agent_view(Some("sess-1"), "/work");
         agent
@@ -4804,7 +4798,7 @@ mod tests {
         agent.scrollback.prepare_layout(80, 24);
         agent.scrollback.set_selected(Some(0));
         agent.scrollback.set_scroll_offset(0);
-        let mut agents = IndexMap::new();
+        let mut agents = crate::app::session_views::SessionViews::new();
         agents.insert(id, agent);
         let mut dashboard = Some(DashboardState::new());
         dashboard

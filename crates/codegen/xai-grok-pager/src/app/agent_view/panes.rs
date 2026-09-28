@@ -14,6 +14,25 @@ pub(crate) enum DockWatcherId {
     Loop(String),
 }
 impl AgentView {
+    pub(crate) fn linked_child_at_scrollback_row(&mut self, row: u16) -> Option<String> {
+        let idx = self
+            .scrollback
+            .entry_index_at_screen_row(row, self.pane_areas.scrollback)?;
+        self.scrollback.set_selected(Some(idx));
+        self.selected_linked_child()
+    }
+
+    pub(crate) fn selected_linked_child(&self) -> Option<String> {
+        if self.scrollback.is_selected_group_header() {
+            return None;
+        }
+        self.scrollback
+            .selected()
+            .and_then(|idx| self.scrollback.entry(idx))
+            .and_then(|entry| entry.block.child_session_id())
+            .map(str::to_owned)
+    }
+
     /// Scrollback-focused key handling.
     /// When the block viewer is open, routes keys to the viewer.
     /// Otherwise, uses ActionRegistry for keybinding lookup.
@@ -62,8 +81,10 @@ impl AgentView {
             return InputOutcome::Action(Action::OpenLink(target));
         }
         let action = registry.lookup_with_mode(key, When::ScrollbackFocused, self.vim_mode);
-        if action == Some(ActionId::OpenBlockViewer) && self.try_open_child_from_selected_row() {
-            return InputOutcome::Changed;
+        if action == Some(ActionId::OpenBlockViewer)
+            && let Some(child_sid) = self.selected_linked_child()
+        {
+            return InputOutcome::Action(Action::OpenSession(child_sid));
         }
         if self.vim_mode
             && key!('x').matches(key)
@@ -435,10 +456,9 @@ impl AgentView {
                     ),
                     killable: true,
                     openable: s.last_subagent_id.as_deref().is_some_and(|sid| {
-                        self.subagent_sessions.iter().any(|(child, info)| {
-                            info.subagent_id.as_ref() == sid
-                                && self.subagent_views.contains_key(child)
-                        })
+                        self.subagent_sessions
+                            .values()
+                            .any(|info| info.subagent_id.as_ref() == sid)
                     }),
                     spinning: false,
                 },
@@ -816,9 +836,7 @@ impl AgentView {
                     if !row.openable || child_sid.is_empty() {
                         return InputOutcome::Unchanged;
                     }
-                    let sid = child_sid.clone();
-                    self.open_subagent_fullscreen(sid);
-                    InputOutcome::Changed
+                    InputOutcome::Action(Action::OpenSession(child_sid.clone()))
                 } else {
                     InputOutcome::Unchanged
                 }
@@ -876,12 +894,11 @@ impl AgentView {
                     (info.subagent_id.as_ref() == sid).then_some(child.clone())
                 })
             })
-            .filter(|child| self.subagent_views.contains_key(child))
+            .filter(|child| self.subagent_sessions.contains_key(child))
         else {
             return InputOutcome::Unchanged;
         };
-        self.open_subagent_fullscreen(child_sid);
-        InputOutcome::Changed
+        InputOutcome::Action(Action::OpenSession(child_sid))
     }
     /// Dock-focused key handling (remote `dock_enabled`).
     pub(super) fn handle_dock_key(&mut self, key: &KeyEvent) -> InputOutcome {
@@ -1011,9 +1028,8 @@ impl AgentView {
                     child_session_id, ..
                 }) => {
                     let child_sid = child_session_id.clone();
-                    if self.subagent_views.contains_key(&child_sid) {
-                        self.open_subagent_fullscreen(child_sid);
-                        return InputOutcome::Changed;
+                    if self.subagent_sessions.contains_key(&child_sid) {
+                        return InputOutcome::Action(Action::OpenSession(child_sid));
                     }
                 }
                 Some(TaskEntry::Scheduled { .. }) => {}

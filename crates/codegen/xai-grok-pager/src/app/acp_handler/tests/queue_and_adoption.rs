@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     /// The pager reconciles the authoritative shared prompt queue from the `x.ai/queue/changed` broadcast, and an empty broadcast clears it.
     #[test]
@@ -59,10 +60,6 @@
             ),
             &mut app,
         ));
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .active_subagent = Some(child_sid.to_string());
 
         assert!(handle(
             notification(
@@ -89,7 +86,8 @@
         );
         assert!(app.pending_running_adoptions.is_empty());
         assert!(app.pending_effects.is_empty());
-        let child = test_subagent(parent, child_sid);
+        draw_view(child_view_mut(&mut app.agents, child_sid));
+        let child = test_subagent(&app, child_sid);
         assert_eq!(
             child
                 .shared_queue
@@ -116,7 +114,8 @@
             vec!["root-prompt"],
             "clearing the child must not affect root",
         );
-        let child = test_subagent(parent, child_sid);
+        draw_view(child_view_mut(&mut app.agents, child_sid));
+        let child = test_subagent(&app, child_sid);
         assert!(child.shared_queue.is_empty());
         assert!(child.queue.entry_ids().is_empty());
         assert!(!child.queue.is_visible());
@@ -2593,9 +2592,13 @@
         parent
             .subagent_sessions
             .insert(child_sid.into(), make_subagent_info(child_sid));
-        parent
-            .subagent_views
-            .insert(child_sid.into(), Box::new(child));
+        link_child(
+            &mut app.agents,
+            AgentId(0),
+            AgentId(1),
+            child,
+            Instant::now(),
+        );
     }
 
     /// A `x.ai/queue/changed` naming the awaited prompt (queued or running) disarms the watch; one that does not proves nothing.
@@ -2649,7 +2652,7 @@
             &mut app,
         );
         let parent = test_agent(&app, AgentId(0));
-        let child = test_subagent(parent, "sess-1-child");
+        let child = test_subagent(&app, "sess-1-child");
         assert_eq!(
             (None, true, true),
             (
@@ -2667,9 +2670,9 @@
         let mut app = make_app_with_agent("sess-1");
         insert_armed_child(&mut app, "sess-1-child", "p-child");
         handle_ext_notification(&queue_changed_running("sess-1-child", &["other"], None), &mut app);
-        assert!(test_subagent(test_agent(&app, AgentId(0)), "sess-1-child").prompt_ack.is_some());
+        assert!(test_subagent(&app, "sess-1-child").prompt_ack.is_some());
         handle_ext_notification(&queue_changed_running("sess-1-child", &[], Some("p-child")), &mut app);
-        let child = test_subagent(test_agent(&app, AgentId(0)), "sess-1-child");
+        let child = test_subagent(&app, "sess-1-child");
         assert_eq!(
             (None, true),
             (child.prompt_ack.as_ref(), child.session.state.is_turn_running()),

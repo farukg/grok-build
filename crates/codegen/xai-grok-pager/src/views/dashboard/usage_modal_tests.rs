@@ -33,7 +33,7 @@ fn render_with_modal(
     credit_balance: Option<&CreditBalance>,
 ) -> String {
     let mut buf = Buffer::empty(area);
-    let mut agents = IndexMap::new();
+    let mut agents = crate::app::session_views::SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let cursor = crate::views::dashboard::render_dashboard(
         &mut buf,

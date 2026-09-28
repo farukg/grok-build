@@ -20,9 +20,6 @@ impl AgentView {
     pub(crate) fn feedback_modal_open_blocker(&self) -> Option<&'static str> {
         if self.feedback_modal.is_some() {
             Some("The feedback form is already open")
-        } else if self.active_subagent.is_some() {
-            // A fullscreen subagent view hides everything behind it, so the modal would render nowhere while swallowing every key.
-            Some("Close the subagent view before sending feedback")
         } else if self.question_view.is_some() {
             Some("Finish answering the current question first")
         } else if !self.no_input_overlay_pending()

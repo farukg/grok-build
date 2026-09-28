@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -26,7 +25,7 @@ fn agent() -> AgentView {
 
 fn row(agent: AgentView) -> DashboardRow {
     build_rows_with_roster(
-        &IndexMap::from([(AgentId(0), agent)]),
+        &crate::app::session_views::SessionViews::from([(AgentId(0), agent)]),
         &Default::default(),
         &[],
         Grouping::State,

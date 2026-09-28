@@ -1,6 +1,6 @@
 //! Turn cancellation, task and subagent kills, and overdue turn reconciliation.
 
-use super::ctx::{active_subagent_view_mut, get_active_agent_mut};
+use super::ctx::get_active_agent_mut;
 use super::permissions::drain_permission_queue;
 use super::queue::{apply_turn_start_shim, maybe_drain_queue, note_peek_page_flip};
 use crate::app::acp_handler::task_view_by_session_id;
@@ -49,7 +49,7 @@ fn cancel_subagents_pref_canonical_from_ui(
 pub(super) fn apply_cancel_subagents_preference_global(app: &mut AppView, stop: bool) {
     let canonical = cancel_subagents_pref_canonical(stop);
     app.current_ui.cancel_subagents_on_turn_cancel = Some(canonical.to_string());
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.cancel_subagents_preference = Some(stop);
     }
 }
@@ -58,47 +58,6 @@ pub(super) fn dispatch_cancel_turn(app: &mut AppView) -> Vec<Effect> {
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
-    // Overlay [stop] is the child's turn. Parent may be Idle (background Task) and the ask panel would render under the overlay, unreachable.
-    if let Some(agent) = active_subagent_view_mut(app) {
-        // No wire target: leave local state alone (do not flip to Cancelling).
-        let Some(session_id) = agent.session.session_id.clone() else {
-            return vec![];
-        };
-        let retrying = agent.any_cancel_pending();
-        crate::unified_log::info(
-            if retrying {
-                "cancel.retry"
-            } else {
-                "cancel.overlay"
-            },
-            Some(&session_id.0),
-            Some(serde_json::json!({
-                "current_prompt_id": agent.session.current_prompt_id,
-            })),
-        );
-        if retrying {
-            agent.clear_send_now_expectation();
-            return vec![emit_cancel_turn(
-                agent, session_id, /* cancel_subagents */ true,
-                /* rewind_prompt_id */ None,
-            )];
-        }
-        return cancel_agent_turn(
-            agent,
-            /* cancel_rewind_enabled */ false,
-            /* cancel_subagents */ true,
-            CancelOrigin::UserGesture,
-        );
-    }
-    // Focused running subagent with no child view (no overlay to cancel through): kill is the same action as the row's kill button
-    let focused_subagent_kill = app.agents.get(&id).and_then(|agent| {
-        let child_sid = agent.active_subagent.as_ref()?;
-        let info = agent.subagent_sessions.get(child_sid.as_str())?;
-        info.is_running().then(|| info.subagent_id.to_string())
-    });
-    if let Some(subagent_id) = focused_subagent_kill {
-        return dispatch_kill_subagent(app, subagent_id);
-    }
     let ui_pref = effective_cancel_subagents_preference(None, &app.current_ui);
 
     // Scoped agent borrow: extract decisions, then release before `do_cancel_turn`.
@@ -509,14 +468,9 @@ pub(crate) const CANCEL_RESEND_MAX_ATTEMPTS: u8 = 3;
 /// Returns `None` when nothing fired.
 pub(crate) fn reconcile_overdue_cancels(app: &mut AppView) -> Option<Vec<Effect>> {
     let mut effects = Vec::new();
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         if let Some(effect) = overdue_cancel_for_agent(agent) {
             effects.push(effect);
-        }
-        for child in agent.subagent_views.values_mut() {
-            if let Some(effect) = overdue_cancel_for_agent(child) {
-                effects.push(effect);
-            }
         }
     }
     (!effects.is_empty()).then_some(effects)
@@ -574,13 +528,13 @@ pub(crate) const TURN_END_RECONCILE_GRACE: std::time::Duration = std::time::Dura
 pub(crate) fn reconcile_overdue_turn_ends(app: &mut AppView) -> Option<Vec<Effect>> {
     let overdue: Vec<AgentId> = app
         .agents
-        .iter()
+        .all()
         .filter(|(_, a)| {
             a.pending_turn_end_reconcile
                 .as_ref()
                 .is_some_and(|p| p.received_at.elapsed() >= TURN_END_RECONCILE_GRACE)
         })
-        .map(|(id, _)| *id)
+        .map(|(id, _)| id)
         .collect();
     if overdue.is_empty() {
         return None;

@@ -187,7 +187,7 @@ pub(super) fn set_coding_data_sharing_inner(app: &mut AppView, opted_in: bool) {
 fn coding_data_sharing_agent_id(app: &AppView) -> AgentId {
     match app.active_view {
         ActiveView::Agent(id) => id,
-        _ => app.agents.keys().next().copied().unwrap_or(AgentId(0)),
+        _ => app.agents.roots().next().map_or(AgentId(0), |(id, _)| id),
     }
 }
 

@@ -4,8 +4,8 @@ use super::paste::paste_key_tests;
 #[cfg(test)]
 use super::test_fixtures;
 use super::{
-    AgentPane, AgentView, BlockingCard, ComposerRoute, CtaPhase, EscStep, InputMode, KeyOwner,
-    MULTI_CLICK_TIMEOUT_MS, PromptInputMode, ViewSurface, active_contexts_for_pane,
+    AgentPane, AgentView, BlockingCard, CtaPhase, EscStep, InputMode, KeyOwner,
+    MULTI_CLICK_TIMEOUT_MS, PromptInputMode, active_contexts_for_pane,
     format_key_for_log, is_link_modifier_for_key, is_mouse_reporting_toggle_chord, resolve_action,
 };
 use crate::actions::{ActionId, ActionRegistry, When};
@@ -29,7 +29,6 @@ impl AgentView {
     /// The composer is the editing target regardless of pane focus (like the other global chords); overlays and dropdowns still own input.
     pub(crate) fn external_prompt_editor_access(&self) -> ExternalPromptEditorAccess {
         let owned_elsewhere = !matches!(self.prompt_mode, super::PromptMode::Normal)
-            || self.active_subagent.is_some()
             || self.active_modal.is_some()
             || self.extensions_modal.is_some()
             || self.feedback_modal.is_some()
@@ -356,9 +355,6 @@ impl AgentView {
                 }) => self.finish_stuck_drag_as_lost_up(),
                 _ => self.clear_stuck_scrollback_drag(),
             }
-        }
-        if let Some(outcome) = self.intercept_takeover_input(ev, registry, prompt_paging) {
-            return outcome;
         }
         if self.dismiss_jump_picker_if_suppressed()
             && let Event::Key(key) = ev
@@ -950,9 +946,6 @@ impl AgentView {
                 _ => InputOutcome::Unchanged,
             };
         }
-        if let Some(outcome) = self.intercept_root_tree_input(ev) {
-            return outcome;
-        }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
             && registry.matches_id(ActionId::SendToBackground, key)
@@ -1062,7 +1055,6 @@ impl AgentView {
         }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
-            && self.surface() == ViewSurface::Root
             && registry.matches_id(ActionId::OpenSessions, key)
         {
             return self.open_session_picker();
@@ -1083,7 +1075,6 @@ impl AgentView {
         }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
-            && self.surface() == ViewSurface::Root
             && registry.lookup(key, When::AgentScreen) == Some(ActionId::OpenExtensions)
         {
             crate::actions::log_shortcut_used(
@@ -1109,7 +1100,6 @@ impl AgentView {
         }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
-            && self.surface() == ViewSurface::Root
             && self.active_pane != AgentPane::Prompt
             && (key!('p', CONTROL).matches(key)
                 || key.code == KeyCode::Char('?')
@@ -1214,9 +1204,6 @@ impl AgentView {
         action_id: ActionId,
         registry: &ActionRegistry,
     ) -> InputOutcome {
-        if self.surface().hides_chord(action_id) {
-            return InputOutcome::Changed;
-        }
         match action_id {
             ActionId::CancelTurn => {
                 if self.stoppable_activity_running() {
@@ -1244,8 +1231,7 @@ impl AgentView {
                 }
             }
             ActionId::SendToBackground => {
-                if self.surface() == ViewSurface::Root
-                    && self
+                if self
                         .session
                         .tracker
                         .running_execute_tool_call_id()
@@ -1340,9 +1326,6 @@ impl AgentView {
     /// The one chokepoint for focusing the composer: with no route for its text (a child view) the prompt
     /// pane is refused from every entry (Tab, type-to-focus, queue Down, mouse, history accept), even forced.
     pub(crate) fn set_active_pane(&mut self, target: AgentPane, force: bool) -> bool {
-        if target == AgentPane::Prompt && self.composer_route() == ComposerRoute::Hidden {
-            return false;
-        }
         if target != AgentPane::Scrollback {
             self.scrollback_search = None;
         }
@@ -1381,15 +1364,6 @@ impl AgentView {
             && self.active_pane == AgentPane::Prompt
         {
             let _switched = self.set_active_pane(AgentPane::Scrollback, false);
-        }
-    }
-    /// Propagate a vim-mode change to this view and every nested subagent view.
-    /// `ToggleVimMode` / `SetVimMode` only walk the top-level `app.agents`, so without this an already-open subagent view keeps its stale `vim_mode`.
-    /// `j`/`k` then forward to the prompt (the vim-off fallback) instead of navigating, because the subagent view never saw the toggle.
-    pub(crate) fn set_vim_mode_recursive(&mut self, enabled: bool) {
-        self.vim_mode = enabled;
-        for child in self.subagent_views.values_mut() {
-            child.set_vim_mode_recursive(enabled);
         }
     }
     #[cfg(test)]
@@ -2532,45 +2506,5 @@ mod scrollback_paste_focus_forward_tests {
         assert!(matches!(out, InputOutcome::Changed));
         assert_eq!(agent.prompt.images.len(), 1);
         assert!(agent.prompt.text().contains("[Image #1]"));
-    }
-}
-#[cfg(test)]
-mod subagent_forward_tests {
-    use super::test_fixtures::make_agent;
-    use crate::actions::ActionRegistry;
-    use crate::app::actions::Effect;
-    use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
-    /// Child-queued effects must hoist to the parent: `AppView::handle_input`
-    /// drains only the top-level view's `pending_effects`.
-    #[test]
-    fn forwarded_input_hoists_child_pending_effects_to_parent() {
-        let mut parent = make_agent();
-        let mut child = make_agent();
-        child.pending_effects.push(Effect::ResetMouseReporting);
-        parent.insert_test_child("child-sid".to_string(), Box::new(child));
-        parent.active_subagent = Some("child-sid".to_string());
-        let ev = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Moved,
-            column: 5,
-            row: 5,
-            modifiers: KeyModifiers::NONE,
-        });
-        let _ = parent.handle_input(&ev, &ActionRegistry::defaults());
-        assert!(
-            parent
-                .pending_effects
-                .iter()
-                .any(|e| matches!(e, Effect::ResetMouseReporting)),
-            "child effect must reach the parent's queue for the top-level drain"
-        );
-        assert!(
-            parent
-                .subagent_views
-                .get("child-sid")
-                .expect("child view")
-                .pending_effects
-                .is_empty(),
-            "the effect must move, not duplicate"
-        );
     }
 }

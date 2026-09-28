@@ -3,6 +3,7 @@
 use super::{
     AgentPane, AgentView, DEFAULT_SELECTION_HIGHLIGHT_DURATION_MS, MULTI_CLICK_TIMEOUT_MS,
 };
+use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::scrollback::table_geometry::{CellRef, TableGeometry};
 use crate::scrollback::text_selection::{
@@ -151,13 +152,7 @@ impl AgentView {
         if entry_idx == BTW_OVERLAY_ENTRY_IDX {
             return self.with_btw_output(range_id, width_override, |src, _, _| f(src));
         }
-        let scrollback = if let Some(ref child_id) = self.active_subagent
-            && let Some(child) = self.subagent_views.get(child_id)
-        {
-            &child.scrollback
-        } else {
-            &self.scrollback
-        };
+        let scrollback = &self.scrollback;
         let visible_start = scrollback.visible_entry_range().start;
         let abs_idx = entry_idx + visible_start;
         // The per-block content width the geometry/hits were captured against; see the width note in `reconstruct_drag_copy`
@@ -202,13 +197,7 @@ impl AgentView {
                 })
             });
         }
-        let scrollback = if let Some(ref child_id) = self.active_subagent
-            && let Some(child) = self.subagent_views.get(child_id)
-        {
-            &child.scrollback
-        } else {
-            &self.scrollback
-        };
+        let scrollback = &self.scrollback;
         let visible_start = scrollback.visible_entry_range().start;
         let abs_idx = entry_idx + visible_start;
         let content_width = width_override.or_else(|| {
@@ -274,25 +263,15 @@ impl AgentView {
     }
 
     /// Advance drag autoscroll by one tick.
-    /// Scrolls the active scrollback (main or subagent) by `speed` rows in the autoscroll direction.
+    /// Scrolls this view by `speed` rows in the autoscroll direction.
     /// After scrolling, recomputes the drag head from the stored mouse position using the current (soon-stale) selection model.
     pub fn tick_drag_autoscroll(&mut self) -> bool {
         let Some(autoscroll) = self.drag_autoscroll else {
             return false;
         };
 
-        // Scroll the active scrollback.
         {
-            let scrollback = if let Some(ref child_id) = self.active_subagent {
-                if let Some(child) = self.subagent_views.get_mut(child_id) {
-                    &mut child.scrollback
-                } else {
-                    &mut self.scrollback
-                }
-            } else {
-                &mut self.scrollback
-            };
-
+            let scrollback = &mut self.scrollback;
             match autoscroll.direction {
                 AutoScrollDirection::Up => scrollback.scroll_up(autoscroll.speed),
                 AutoScrollDirection::Down => scrollback.scroll_down(autoscroll.speed),
@@ -757,13 +736,7 @@ impl AgentView {
             return reconstruct_selection_text(&self.last_btw_selection_model, drag)
                 .map(|text| (text, SelectionKind::Linear));
         }
-        let scrollback = if let Some(ref child_id) = self.active_subagent
-            && let Some(child) = self.subagent_views.get(child_id)
-        {
-            &child.scrollback
-        } else {
-            &self.scrollback
-        };
+        let scrollback = &self.scrollback;
         let visible_start = scrollback.visible_entry_range().start;
         let abs_idx = drag.anchor.entry_idx + visible_start;
         // Width must come from the same VisibleBlockGeometry the drag's block_line_idx values were captured against
@@ -845,15 +818,7 @@ impl AgentView {
         );
     }
 
-    /// Note on the AgentView whose scrollback was copied: the fullscreen child when active_subagent is set (same view reconstruct_drag_copy / with_entry_* use).
-    /// active_subagent is set (same view reconstruct_drag_copy / with_entry_* use).
     fn note_scrollback_drag_copy(&mut self, entry_idx: usize, toast_ticks: u16) {
-        if let Some(child_id) = self.active_subagent.clone()
-            && let Some(child) = self.subagent_views.get_mut(&child_id)
-        {
-            child.note_own_scrollback_drag_copy(entry_idx, toast_ticks);
-            return;
-        }
         self.note_own_scrollback_drag_copy(entry_idx, toast_ticks);
     }
 
@@ -1084,7 +1049,7 @@ impl AgentView {
         now: Instant,
         idx: usize,
         header_row_click: bool,
-    ) -> (Option<(Instant, usize, u8)>, bool) {
+    ) -> (Option<(Instant, usize, u8)>, Option<Action>) {
         let click_count = if let Some((last_time, last_idx, prev_count)) = self.last_click
             && last_idx == idx
             && now.duration_since(last_time).as_millis() < MULTI_CLICK_TIMEOUT_MS
@@ -1107,10 +1072,11 @@ impl AgentView {
         let word_select_probe = click_count == 2
             && entry_block.is_some_and(|b| b.is_agent_message())
             && !super::is_text_selection_on_double_click();
-        let show_word_select_tip = word_select_probe
+        let word_select_tip = (word_select_probe
             && self
                 .last_word_select_probe
-                .is_some_and(|t| now.duration_since(t) <= WORD_SELECT_REPEAT_WINDOW);
+                .is_some_and(|t| now.duration_since(t) <= WORD_SELECT_REPEAT_WINDOW))
+        .then_some(Action::ShowWordSelectTip);
         if word_select_probe {
             self.last_word_select_probe = Some(now);
         }
@@ -1123,10 +1089,10 @@ impl AgentView {
         if header_row_click {
             if click_count == 2 {
                 self.scrollback.collapse_group_if_expanded();
-                return (None, show_word_select_tip);
+                return (None, word_select_tip);
             }
             if click_count >= 3 {
-                return (None, false);
+                return (None, None);
             }
         }
 
@@ -1136,10 +1102,10 @@ impl AgentView {
         if is_group_header {
             if click_count == 2 {
                 self.scrollback.toggle_group_expansion();
-                return (None, show_word_select_tip);
+                return (None, word_select_tip);
             }
             if click_count >= 3 {
-                return (None, false);
+                return (None, None);
             }
         }
 
@@ -1181,9 +1147,9 @@ impl AgentView {
                 }
             }
             2 if is_child_row => {
-                // Same as Enter; a message row whose child view is gone folds like any other tool row
-                if !self.try_open_child_from_selected_row() && foldable {
-                    self.scrollback.toggle_fold_selected();
+                // Same as Enter
+                if let Some(child_sid) = self.selected_linked_child() {
+                    return (None, Some(Action::OpenSession(child_sid)));
                 }
             }
             2 if is_workflow => {
@@ -1219,7 +1185,7 @@ impl AgentView {
         } else {
             Some((now, idx, click_count))
         };
-        (last_click, show_word_select_tip)
+        (last_click, word_select_tip)
     }
 
     /// Return the correct selection model for a hit, accounting for the /btw overlay panel which has its own model.
@@ -1932,14 +1898,13 @@ mod tests {
     }
 
     #[test]
-    fn active_child_copy_uses_child_scrollback_cwd() {
+    fn child_view_copy_uses_its_own_scrollback_cwd() {
         use crate::scrollback::block::RenderBlock;
         use crate::scrollback::render::ScratchBuffer;
         use crate::scrollback::scrollback_pane::ScrollbackPane;
         use crate::scrollback::types::{DisplayMode, derive_selection_text};
         use ratatui::buffer::Buffer;
 
-        let parent_cwd = std::path::PathBuf::from("/parent/worktree");
         let child_cwd = std::path::PathBuf::from("/child/worktree");
         let mut child = make_agent();
         child.session.cwd = child_cwd.clone();
@@ -1979,17 +1944,13 @@ mod tests {
             .visible_block_content_width(line.entry_idx)
             .expect("visible child block width");
 
-        let mut parent = make_agent();
-        parent.session.cwd = parent_cwd;
-        parent.update_scrollback_selection_state(
+        let mut child = child;
+        child.update_scrollback_selection_state(
             rendered.output.selection_model,
             rendered.selection_boundaries,
         );
-        let child_id = "child".to_string();
-        parent.insert_test_child(child_id.clone(), Box::new(child));
-        parent.active_subagent = Some(child_id.clone());
 
-        let source_text = parent
+        let source_text = child
             .with_entry_output_text_source(
                 line.entry_idx,
                 line.range_id,
@@ -1998,22 +1959,6 @@ mod tests {
             )
             .flatten();
         assert_eq!(source_text.as_deref(), Some("src/lib.rs"));
-        {
-            let child = parent.subagent_views.get(&child_id).expect("active child");
-            let entry = child.scrollback.get(0).expect("child Read entry");
-            let cached = entry.cached_output_ref();
-            assert_eq!(
-                derive_selection_text(
-                    cached
-                        .lines
-                        .get(line.block_line_idx)
-                        .unwrap_or_else(|| panic!("missing index"))
-                ),
-                "src/lib.rs",
-                "copy helper must not rebuild the child cache against parent cwd"
-            );
-        }
-
         let path_width = line
             .selectable_cols
             .end
@@ -2035,7 +1980,7 @@ mod tests {
             anchor_content_width: Some(content_width),
         };
         assert_eq!(
-            parent.reconstruct_drag_copy(&drag),
+            child.reconstruct_drag_copy(&drag),
             Some(("src/lib.rs".to_string(), SelectionKind::Linear))
         );
     }
@@ -2085,12 +2030,12 @@ mod tests {
     /// Returns the tip flag of the second click.
     fn double_click_gesture(agent: &mut AgentView, t: Instant, idx: usize) -> bool {
         let (last, tip1) = agent.handle_scrollback_click(t, idx, false);
-        assert!(!tip1, "a single click must never tip");
+        assert!(tip1.is_none(), "a single click must never tip");
         agent.last_click = last;
         let (last, tip2) =
             agent.handle_scrollback_click(t + Duration::from_millis(100), idx, false);
         agent.last_click = last;
-        tip2
+        matches!(tip2, Some(Action::ShowWordSelectTip))
     }
 
     #[test]

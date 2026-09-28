@@ -1,4 +1,3 @@
-use crate::app::agent_view::AgentView;
 use crate::app::app_view::AppView;
 use crate::scrollback::entry::EntryId;
 use crate::scrollback::state::ScrollbackState;
@@ -26,7 +25,11 @@ pub(super) fn handle_remove_context_items_complete(
     session_id: &agent_client_protocol::SessionId,
     outcome: Result<RemoveContextItemsOutcome, String>,
 ) {
-    let Some(view) = session_view_mut(app, session_id) else {
+    let Some((_, view)) = app
+        .agents
+        .all_mut()
+        .find(|(_, view)| view.session.session_id.as_ref() == Some(session_id))
+    else {
         return;
     };
     let Some(position) = view
@@ -60,23 +63,4 @@ pub(super) fn handle_remove_context_items_complete(
         }
         Err(error) => view.show_toast(&format!("Could not remove from model context: {error}")),
     }
-}
-
-fn session_view_mut<'a>(
-    app: &'a mut AppView,
-    session_id: &agent_client_protocol::SessionId,
-) -> Option<&'a mut AgentView> {
-    let agent_id = app.agents.iter().find_map(|(id, agent)| {
-        (agent.session.session_id.as_ref() == Some(session_id)
-            || agent.subagent_views.contains_key(session_id.0.as_ref()))
-        .then_some(*id)
-    })?;
-    let agent = app.agents.get_mut(&agent_id)?;
-    if agent.session.session_id.as_ref() == Some(session_id) {
-        return Some(agent);
-    }
-    agent
-        .subagent_views
-        .get_mut(session_id.0.as_ref())
-        .map(|child| &mut **child)
 }

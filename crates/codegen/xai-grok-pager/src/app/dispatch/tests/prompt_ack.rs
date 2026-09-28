@@ -108,16 +108,24 @@ fn expired_watch_restores_the_prompt_and_sends_a_rewind_cancel() {
 }
 
 #[test]
-fn expired_watch_on_an_overlay_child_restores_the_child_prompt() {
+fn expired_watch_on_child_session_restores_its_prompt() {
+    use crate::app::agent_view::{AgentRole, ChildLink};
     use crate::app::dispatch::queue::maybe_drain_queue;
 
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
+    let child_id = AgentId(1);
     let child_sid = "child-overlay-ack";
     let mut child = AgentView::new(
-        make_test_agent_session(&app, AgentId(1), child_sid),
+        make_test_agent_session(&app, child_id, child_sid),
         ScrollbackState::new(),
     );
+    child.role = AgentRole::Child(ChildLink {
+        parent: parent_id,
+        parent_session_id: app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap(),
+        subagent_id: child_sid.to_owned(),
+        started_at: std::time::Instant::now(),
+    });
     child.session.enqueue_prompt("child text".into());
     assert!(matches!(
         maybe_drain_queue(&mut child, &mut Vec::new())
@@ -131,13 +139,8 @@ fn expired_watch_on_an_overlay_child_restores_the_child_prompt() {
         .expect("watch armed on the child")
         .prompt_id()
         .to_owned();
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent
-            .subagent_views
-            .insert(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
+    app.agents.insert(child_id, child);
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = reconcile_overdue_prompt_acks_at(&mut app, &DEADLINES, past_hard_deadline())
         .expect("the child's expired watch fires");
@@ -149,9 +152,7 @@ fn expired_watch_on_an_overlay_child_restores_the_child_prompt() {
         ),
         "the abort targets the child session, got {effects:?}"
     );
-    let Some(child) = agent_ref(&app, parent_id).subagent_views.get(child_sid) else {
-        panic!("expected overlay child {child_sid}");
-    };
+    let child = agent_ref(&app, child_id);
     assert_eq!(
         (true, "child text", true, true),
         (

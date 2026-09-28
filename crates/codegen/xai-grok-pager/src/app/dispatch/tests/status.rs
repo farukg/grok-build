@@ -581,7 +581,7 @@ fn scrub_error_for_toast_unit() {
 #[test]
 fn set_coding_data_sharing_no_agents_still_emits_effect() {
     let mut app = test_app_with_agent();
-    app.agents.clear();
+    app.agents = crate::app::session_views::SessionViews::new();
     app.active_view = ActiveView::Welcome;
     app.coding_data_retention_opt_out = true;
     let effects = dispatch(Action::SetCodingDataSharing { opted_in: true }, &mut app);

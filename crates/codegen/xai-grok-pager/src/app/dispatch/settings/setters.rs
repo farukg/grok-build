@@ -279,9 +279,8 @@ pub(in crate::app::dispatch) fn set_voice_stt_language(
 /// Propagates to every in-process agent so background subagents and side panes pick up the change without restart.
 /// The cache mirror lets new agents created later read the same value via `cache::load_vim_mode()` in `AgentView::new`.
 pub(super) fn set_vim_mode_inner(app: &mut AppView, new: bool) {
-    for agent in app.agents.values_mut() {
-        // Recursive so open subagent views also pick up the change; otherwise their scrollback j/k stay in the vim-OFF fallback
-        agent.set_vim_mode_recursive(new);
+    for (_, agent) in app.agents.all_mut() {
+        agent.vim_mode = new;
     }
     crate::appearance::cache::set_vim_mode(new);
 }
@@ -291,7 +290,7 @@ pub(super) fn set_vim_mode_inner(app: &mut AppView, new: bool) {
 /// Propagates to every in-process agent.
 pub(in crate::app::dispatch) fn set_vim_mode(app: &mut AppView, new: bool) -> Vec<Effect> {
     let prev = crate::appearance::cache::load_vim_mode();
-    if prev == new && app.agents.values().all(|a| a.vim_mode == new) {
+    if prev == new && app.agents.all().all(|(_, a)| a.vim_mode == new) {
         return vec![];
     }
     set_vim_mode_inner(app, new);
@@ -508,13 +507,9 @@ pub(super) fn set_show_thinking_blocks_inner(app: &mut AppView, new: bool) {
     crate::appearance::cache::set_show_thinking_blocks(new);
     // Thinking visibility reshapes verb-group runs (shown thoughts claim into folds) AND dense N-more runs (hidden thoughts stop counting toward truncation)
     // Expansion ids therefore describe the OLD grouping shape even with `group_tool_verbs` off; drop them like `set_group_tool_verbs_inner`
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.scrollback.clear_group_expansion();
         agent.scrollback.invalidate_heights();
-        for child in agent.subagent_views.values_mut() {
-            child.scrollback.clear_group_expansion();
-            child.scrollback.invalidate_heights();
-        }
     }
 }
 
@@ -549,13 +544,9 @@ pub(super) fn set_group_tool_verbs_inner(app: &mut AppView, new: bool) {
     crate::appearance::cache::set_group_tool_verbs(new);
     // Expansion ids describe the OLD grouping shape
     // Drop them so stale ids can't reopen a verb slot expanded or mark a coincident dense group expanded after the re-fold (see `clear_group_expansion`)
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.scrollback.clear_group_expansion();
         agent.scrollback.invalidate_heights();
-        for child in agent.subagent_views.values_mut() {
-            child.scrollback.clear_group_expansion();
-            child.scrollback.invalidate_heights();
-        }
     }
 }
 
@@ -591,11 +582,8 @@ pub(super) fn set_collapsed_edit_blocks_inner(app: &mut AppView, new: bool) {
         return;
     }
     // Re-materialize on-default Edit rows and repaint the live +N/-M suffix (the flip policy lives on ScrollbackState)
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.scrollback.apply_collapsed_edit_blocks_flip(prev, new);
-        for child in agent.subagent_views.values_mut() {
-            child.scrollback.apply_collapsed_edit_blocks_flip(prev, new);
-        }
     }
 }
 
@@ -1139,7 +1127,7 @@ pub(super) fn set_simple_mode_inner(app: &mut AppView, new: bool) {
     } else {
         crate::views::agent::InputMode::Vim
     };
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         if agent.input_mode != target_mode {
             agent.set_input_mode(target_mode);
         }

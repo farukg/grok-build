@@ -59,7 +59,7 @@ pub use state::{
 /// map's insertion order.
 pub fn overlay_cycle_order(
     state: &DashboardState,
-    agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+    agents: &crate::app::session_views::SessionViews,
 ) -> Vec<crate::app::agent::AgentId> {
     cycle_order(
         agents,
@@ -72,7 +72,7 @@ pub fn overlay_cycle_order(
 
 /// [`overlay_cycle_order`] from the v1 layout inputs alone, for a dashboard that has not been materialized.
 pub(crate) fn cycle_order(
-    agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+    agents: &crate::app::session_views::SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     reorder: &[DashboardRowId],
     grouping: Grouping,

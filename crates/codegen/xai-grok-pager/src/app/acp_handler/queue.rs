@@ -109,41 +109,6 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
 
     let sid = acp::SessionId::new(session_id.clone());
     let session_match = find_session_match(app, &sid);
-    if let Some(SessionMatch::Child(parent_id)) = session_match {
-        let acks_watch = broadcast_acks_watch(
-            app.agents
-                .get(&parent_id)
-                .and_then(|parent| parent.subagent_views.get(&session_id))
-                .map(|child| &**child),
-            &changed,
-        );
-        let snapshot = changed.entries;
-        if snapshot.is_empty() {
-            app.shared_prompt_queues.remove(&session_id);
-        } else {
-            app.shared_prompt_queues
-                .insert(session_id.clone(), snapshot.clone());
-        }
-
-        // Child queues are read-only mirrors; the root reconciliation and turn handling below must not run for them
-        let is_active_parent = is_matched_agent_active(app, parent_id);
-        let Some(parent) = app.agents.get_mut(&parent_id) else {
-            return false;
-        };
-        let is_active = is_active_parent && parent.active_subagent.as_deref() == Some(&session_id);
-        let Some(child) = parent.subagent_views.get_mut(&session_id) else {
-            return false;
-        };
-        child.shared_queue = snapshot;
-        child.sync_queue_pane();
-        if acks_watch {
-            child.note_prompt_ack(
-                crate::app::prompt_ack::AckSignal::QueueChanged,
-                std::time::Instant::now(),
-            );
-        }
-        return is_active;
-    }
 
     // Prefer running_* fields on the payload (authoritative; present when a turn is promoting)
     // Fall back to the local mirror for older shells
@@ -171,10 +136,7 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
         .or_else(|| running_entry.as_ref().map(|e| e.kind.clone()))
         .unwrap_or_else(|| "prompt".to_string());
 
-    let agent_id = match session_match {
-        Some(SessionMatch::Root(id)) => Some(id),
-        _ => None,
-    };
+    let agent_id = session_match.map(SessionMatch::agent_id);
 
     let recv_entry_ids: Vec<&str> = changed.entries.iter().map(|e| e.id.as_str()).collect();
     // Raw (pre-merge) broadcast rows for the optimistic-echo reconcile
@@ -468,23 +430,8 @@ pub(super) fn handle_prompt_complete(notif: &acp::ExtNotification, app: &mut App
         cancellation_context: payload.cancellation_context(),
         error_kind: payload.error_kind(),
     };
-    if let SessionMatch::Child(_) = matched {
-        let Some(agent) = app.agents.get_mut(&id) else {
-            return false;
-        };
-        let (finished, label) = {
-            let Some(child) = agent.child_view_for_live_update_mut(session_id) else {
-                return false;
-            };
-            let finished =
-                super::super::turn_completion::finalize_child_view_turn(child, signal, None);
-            let label = finished.then(|| subagent_activity_label(child));
-            (finished, label)
-        };
-        if let Some(label) = label {
-            sync_subagent_activity(agent, session_id, label);
-        }
-        return finished && is_active;
+    if is_child_view(app, id) {
+        return complete_child_prompt(app, id, signal);
     }
     let Some(agent) = app.agents.get_mut(&id) else {
         return false;

@@ -859,7 +859,7 @@ fn resume_known_session_id_loads_not_creates() {
 #[test]
 fn session_restored_refuses_local_build_under_chat_mode() {
     let mut app = test_app_with_agent();
-    let id = *app.agents.keys().next().unwrap();
+    let id = app.agents.all().next().unwrap().0;
     app.chat_mode = true;
     let cwd = app.cwd.clone();
     let session_id = format!("restored-build-{}", std::process::id());
@@ -886,7 +886,7 @@ fn session_restored_refuses_local_build_under_chat_mode() {
 #[test]
 fn session_restored_sticky_chat_sets_conversation_entry() {
     let mut app = test_app_with_agent();
-    let id = *app.agents.keys().next().unwrap();
+    let id = app.agents.all().next().unwrap().0;
     app.chat_mode = true;
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SessionRestored {
@@ -1182,13 +1182,6 @@ fn resume_focuses_existing_agent_for_open_session() {
         }),
         &mut app,
     );
-    {
-        let agent = app.agents.get_mut(&agent_0).unwrap();
-        agent
-            .subagent_sessions
-            .insert("child-1".into(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
     dispatch(Action::NewSession, &mut app);
     let agent_1 = AgentId(1);
     dispatch(
@@ -1208,7 +1201,6 @@ fn resume_focuses_existing_agent_for_open_session() {
     assert!(matches!(app.active_view, ActiveView::Agent(id) if id == agent_0));
     assert_eq!(app.agents.len(), count_before);
     assert!(effects.is_empty());
-    assert!(expect_agent(&app, agent_0).active_subagent.is_none());
     assert_eq!(
         expect_agent(&app, agent_0).session.session_id,
         Some(acp::SessionId::new("wt-sess-1"))

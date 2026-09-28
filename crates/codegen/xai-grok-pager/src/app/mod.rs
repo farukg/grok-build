@@ -13,6 +13,7 @@ pub mod actions;
 pub mod agent;
 pub mod agent_view;
 pub mod app_view;
+pub(crate) mod session_views;
 pub mod bundle;
 pub(crate) mod cancel_latency;
 pub mod cli;

@@ -37,7 +37,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     use crate::views::modal::ActiveModal;
     use crate::views::settings_modal::SettingsModalMode;
     // Early exit when no settings modal is open (common case).
-    if !app.agents.values().any(|a| {
+    if !app.agents.all().any(|(_, a)| {
         matches!(
             a.active_modal,
             Some(ActiveModal::Settings { .. } | ActiveModal::ResetSettingsConfirm { .. })
@@ -56,7 +56,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
     let voice_stt_language_from_app = app.voice_config.language.clone();
     let subagent_model_inheritance_from_app = app.subagent_model_inheritance;
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         // Walk both `Settings` and `ResetSettingsConfirm`
         // The confirm dialog embeds settings state that must stay fresh through async persist failures
         let state_opt = match agent.active_modal.as_mut() {
@@ -168,7 +168,8 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
     let id = match app.active_view {
         ActiveView::Agent(id) => id,
         _ => {
-            if let Some(existing) = app.agents.keys().next().copied() {
+            let first_root = app.agents.roots().next().map(|(id, _)| id);
+            if let Some(existing) = first_root {
                 crate::app::dispatch::ctx::switch_to_agent(
                     app,
                     existing,
@@ -525,16 +526,16 @@ pub(in crate::app::dispatch) fn dispatch_toggle_mouse_capture(app: &mut AppView)
     // Ctrl+R only re-enables from scrollback
     let mut toast_applied = false;
     if enable {
-        for agent in app.agents.values_mut() {
-            agent.set_sticky_toast_recursive(None);
+        for (_, agent) in app.agents.all_mut() {
+            agent.set_sticky_toast(None);
         }
         with_active_agent(app, |agent| {
             toast_applied = true;
             agent.show_toast("Mouse reporting on");
         });
     } else {
-        for agent in app.agents.values_mut() {
-            agent.set_sticky_toast_recursive(Some(crate::app::MOUSE_OFF_HINT_SCROLLBACK));
+        for (_, agent) in app.agents.all_mut() {
+            agent.set_sticky_toast(Some(crate::app::MOUSE_OFF_HINT_SCROLLBACK));
             toast_applied = true;
         }
     }
@@ -884,7 +885,7 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
         }
         ("cancel_subagents_on_turn_cancel", SettingValue::Enum("ask")) => {
             app.current_ui.cancel_subagents_on_turn_cancel = None;
-            for agent in app.agents.values_mut() {
+            for (_, agent) in app.agents.all_mut() {
                 agent.cancel_subagents_preference = None;
             }
         }
