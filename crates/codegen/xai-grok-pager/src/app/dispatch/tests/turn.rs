@@ -2347,45 +2347,25 @@ fn bg_task_kill_failed_clears_pending_kill_on_inactive_agent() {
 /// Sticky must land on parent and subagent, and remain on the parent after leaving the subagent view (Esc clears `active_subagent` only).
 #[serial_test::serial(MOUSE_CAPTURE_ENABLED)]
 #[test]
-fn mouse_reporting_toggle_sticky_survives_subagent_esc_to_parent() {
+fn mouse_reporting_toggle_sticky_survives_child_navigation() {
+    use crate::app::session_views::test_support::link_child;
     reset_mouse_capture_enabled(true);
     assert!(mouse_capture_is_enabled());
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let child_sid = "child-mouse-toggle".to_string();
-
-    let child_session = make_test_agent_session(&app, AgentId(1), &child_sid);
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.clone(), Box::new(child));
-        parent.active_subagent = Some(child_sid.clone());
-    }
+    let child_id = AgentId(1);
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-mouse-toggle"),
+        ScrollbackState::new(),
+    );
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     app.registry = crate::actions::ActionRegistry::defaults_with_config(true);
-
-    // Toggle while subagent is "focused" (active_subagent set).
     let _ = dispatch(Action::ToggleMouseCapture, &mut app);
-
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert_eq!(parent.sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
-    let child = parent.subagent_views.get(&child_sid).unwrap();
-    assert_eq!(
-        child.sticky_toast.as_deref(),
-        Some(MOUSE_OFF_STICKY),
-        "child gets sticky recursively even if toast path targeted active view only"
-    );
-
-    // Simulate Esc: leave subagent, return to parent agent view.
-    app.agents.get_mut(&parent_id).unwrap().active_subagent = None;
-
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert_eq!(
-        parent.sticky_toast.as_deref(),
-        Some(MOUSE_OFF_STICKY),
-        "parent keeps sticky after leaving subagent fullscreen"
-    );
-    assert!(parent.toast.is_none() || parent.sticky_toast.is_some());
-
+    assert_eq!(app.agents[&parent_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(app.agents[&child_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    app.active_view = crate::app::app_view::ActiveView::Agent(parent_id);
+    assert_eq!(app.agents[&parent_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
     reset_mouse_capture_enabled(true);
 }
 
