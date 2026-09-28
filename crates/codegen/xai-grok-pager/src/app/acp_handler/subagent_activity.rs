@@ -60,7 +60,7 @@ pub(crate) fn finalize_killed_subagent(
     attempt_id: Option<&str>,
     status: &str,
 ) -> bool {
-    let Some(SessionMatch::Root(agent_id)) = find_session_match(app, session_id) else {
+    let Some(SessionMatch(agent_id)) = find_session_match(app, session_id) else {
         return false;
     };
     let Some(agent) = app.agents.get(&agent_id) else {

@@ -93,7 +93,7 @@ pub(crate) use routing::task_view_by_session_id;
 use routing::*;
 use routing::{
     SessionMatch, find_session_match, interaction_target_agent, is_matched_agent_active,
-    mcp_target_agent, resolve_notif_agent, resolve_target_view, setup_phase_target_agent,
+    mcp_target_agent, resolve_notif_agent, setup_phase_target_agent,
 };
 pub(crate) use session_notification::apply_child_view_session_event;
 #[cfg(test)]
