@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     #[test]
     fn acp_chunk_for_inactive_agent_lands_in_its_scrollback() {
@@ -55,14 +56,13 @@
             parent
                 .subagent_sessions
                 .insert(child_sid.into(), make_subagent_info(child_sid));
-            let mut child = make_agent(Some(child_sid));
-            child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
-                parent: AgentId(0),
-                parent_session_id: agent_client_protocol::SessionId::new("sess-A"),
-                subagent_id: child_sid.to_string(),
-                started_at: std::time::Instant::now(),
-            });
-            app.agents.insert(AgentId(2), child);
+            link_child(
+                &mut app.agents,
+                AgentId(0),
+                AgentId(2),
+                make_agent(Some(child_sid)),
+                std::time::Instant::now(),
+            );
         }
 
         let affected = handle(

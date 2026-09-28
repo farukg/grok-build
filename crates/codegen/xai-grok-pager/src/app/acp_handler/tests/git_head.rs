@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     // ── derive_child_cwd ─────────────────────────────────────────────
 
@@ -67,14 +68,13 @@
         let child_sid = "child-sess-1";
         {
             let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            let mut child = make_agent(Some(child_sid));
-            child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
-                parent: AgentId(0),
-                parent_session_id: agent_client_protocol::SessionId::new("sess-A"),
-                subagent_id: child_sid.to_string(),
-                started_at: std::time::Instant::now(),
-            });
-            app.agents.insert(AgentId(1), child);
+            link_child(
+                &mut app.agents,
+                AgentId(0),
+                AgentId(1),
+                make_agent(Some(child_sid)),
+                std::time::Instant::now(),
+            );
         }
 
         let notif = make_git_head_changed_notif(
@@ -116,14 +116,13 @@
         let child_sid = "child-sess-2";
         {
             let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            let mut child = make_agent(Some(child_sid));
-            child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
-                parent: AgentId(0),
-                parent_session_id: agent_client_protocol::SessionId::new("sess-A"),
-                subagent_id: child_sid.to_string(),
-                started_at: std::time::Instant::now(),
-            });
-            app.agents.insert(AgentId(1), child);
+            link_child(
+                &mut app.agents,
+                AgentId(0),
+                AgentId(1),
+                make_agent(Some(child_sid)),
+                std::time::Instant::now(),
+            );
             parent.current_branch = Some("parent-branch".into());
         }
 
