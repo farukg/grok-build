@@ -251,10 +251,10 @@
 
             let _ = replay(&mut app, test_subagent_spawned_for_attempt("sess-parent", child, Some("at1.one")), 1);
             assert!(replay(&mut app, test_subagent_finished_for_attempt(child, Some("at1.one")), 2));
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child.to_owned());
+            let _ = crate::app::dispatch::dispatch(crate::app::actions::Action::OpenSession(child.to_owned()), &mut app);
 
-            assert_eq!(child_scrollback_tool_call_count(agent, child), 1);
+            assert_eq!(child_scrollback_tool_call_count(&app, child), 1);
+            let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(agent.subagent_sessions.get(child).unwrap_or_else(|| panic!("missing map entry")).transcript, ChildTranscript::DiskBacked);
         });
     }

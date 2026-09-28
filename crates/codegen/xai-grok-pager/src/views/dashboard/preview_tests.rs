@@ -14,7 +14,7 @@ use crate::views::dashboard::render::render_dashboard;
 fn disabling_preview_frees_list_space_and_stays_off_across_selection() {
     for width in [30, 100] {
         let area = Rect::new(0, 0, width, 40);
-        let mut agents: IndexMap<_, _> = (0..2)
+        let mut agents: SessionViews = (0..2)
             .map(|id| {
                 let mut agent = make_agent();
                 agent.display_name = Some(format!("Session {id}"));
@@ -74,7 +74,7 @@ fn disabling_preview_frees_list_space_and_stays_off_across_selection() {
 
 #[test]
 fn disabling_preview_closes_hidden_question_and_routes_typing_to_dispatch() {
-    let mut agents = IndexMap::from([(AgentId(0), make_agent())]);
+    let mut agents = SessionViews::from([(AgentId(0), make_agent())]);
     let mut state = DashboardState::new();
     let row = DashboardRowId::TopLevel(AgentId(0));
     state.focus_row(row.clone());

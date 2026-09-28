@@ -197,7 +197,7 @@ fn workspace_dashboard_renders_snapshot_member_with_archive_control() {
     state.hovered_row = Some(row.clone());
     state.focus_row(row);
     state.list_focused = true;
-    let mut agents = IndexMap::new();
+    let mut agents = SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
@@ -278,7 +278,7 @@ fn dashboard_toast_paints_while_peek_is_open() {
     state.set_error_toast("Session isn't saved to the workspace yet");
     let mut provisional = crate::app::agent_view::test_fixtures::make_agent();
     provisional.session.enqueue_prompt("fix the bug".into());
-    let mut agents = IndexMap::from([(crate::app::agent::AgentId(0), provisional)]);
+    let mut agents = SessionViews::from([(crate::app::agent::AgentId(0), provisional)]);
     let registry = crate::actions::ActionRegistry::defaults();
 
     let _ = render_dashboard(
@@ -321,7 +321,7 @@ fn narrow_workspace_dashboard_keeps_archive_hit_target() {
     };
     let mut state = DashboardState::new();
     state.hovered_row = Some(row_id.clone());
-    let mut agents = IndexMap::new();
+    let mut agents = SessionViews::new();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
         members: vec![xai_grok_dashboard_store::Member {
@@ -374,7 +374,7 @@ fn open_previous_actions_button_is_v2_only_and_follows_new_agent() {
         let area = Rect::new(0, 0, width, 24);
         let mut buf = Buffer::empty(area);
         let mut state = DashboardState::new();
-        let mut agents = IndexMap::new();
+        let mut agents = SessionViews::new();
         let registry = crate::actions::ActionRegistry::defaults();
         let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
             grouping: xai_grok_dashboard_store::Grouping::State,
@@ -495,7 +495,7 @@ fn dashboard_session_picker_renders_simple_open_surface() {
     let mut buf = Buffer::empty(area);
     let mut state = DashboardState::new();
     state.cwd = "/repo".into();
-    let mut agents = IndexMap::new();
+    let mut agents = SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
@@ -577,7 +577,7 @@ fn dashboard_session_picker_search_focus_keeps_the_selected_row() {
     let mut buf = Buffer::empty(area);
     let mut state = DashboardState::new();
     state.cwd = "/repo".into();
-    let mut agents = IndexMap::new();
+    let mut agents = SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
@@ -724,7 +724,7 @@ fn render_dashboard_shows_roster_when_local_agents_empty() {
 
     let area = Rect::new(0, 0, 100, 24);
     let mut buf = Buffer::empty(area);
-    let mut agents: IndexMap<AgentId, AgentView> = IndexMap::new();
+    let mut agents = SessionViews::new();
     let mut state = DashboardState::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let roster = [RosterEntry {
@@ -778,7 +778,7 @@ fn render_dashboard_hover_shows_delete_x_only_for_settled_rows() {
     let render_with = |activity: RosterActivity| -> String {
         let area = Rect::new(0, 0, 100, 24);
         let mut buf = Buffer::empty(area);
-        let mut agents: IndexMap<AgentId, AgentView> = IndexMap::new();
+        let mut agents = SessionViews::new();
         let mut state = DashboardState::new();
         let registry = crate::actions::ActionRegistry::defaults();
         let roster = [RosterEntry {
@@ -862,7 +862,7 @@ fn render_empty_state_paints_on_single_row_area() {
 fn chrome_hit_areas_do_not_survive_a_frame_that_skips_the_header() {
     let area = Rect::new(0, 0, 120, 30);
     let mut state = DashboardState::new();
-    let mut agents = IndexMap::new();
+    let mut agents = SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
@@ -3242,7 +3242,7 @@ fn render_dashboard_paints_full_area_background() {
     let seed = ratatui::style::Color::Rgb(0xFF, 0x00, 0xFF);
     buf.set_style(area, Style::default().bg(seed));
 
-    let mut agents: IndexMap<AgentId, AgentView> = IndexMap::new();
+    let mut agents = SessionViews::new();
     let mut state = DashboardState::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let _ = render_dashboard(

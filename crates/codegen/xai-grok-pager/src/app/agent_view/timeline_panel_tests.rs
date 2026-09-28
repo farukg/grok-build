@@ -133,7 +133,6 @@ fn f6_opens_timeline_in_child() {
 }
 
 #[test]
-#[test]
 fn f6_toggles_timeline_panel() {
     let mut agent = conversation();
     let chat_width = agent.pane_areas.scrollback.width;

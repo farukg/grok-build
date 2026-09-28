@@ -1509,9 +1509,6 @@ pub(super) mod paste_key_tests {
         agent.last_terminal_size = (80, 16);
         assert_refused(&mut agent, &mut counts, "short terminal");
         agent.last_terminal_size = (80, 30);
-        agent.active_subagent = Some("child".into());
-        assert_refused(&mut agent, &mut counts, "subagent takeover");
-        agent.active_subagent = None;
         agent.line_viewer =
             crate::views::file_search::line_viewer::LineViewerState::open_markdown_content(
                 "x.md",
@@ -2029,10 +2026,7 @@ pub(super) mod paste_key_tests {
         let mut agent = make_agent();
         agent
             .inline_media_cache
-            .insert(path.clone(), make_test_png(40, 20));
-        let mut child = make_agent();
-        child.inline_media_cache.insert(path, make_test_png(40, 20));
-        agent.insert_test_child("child-sid".into(), Box::new(child));
+            .insert(path, make_test_png(40, 20));
         let paint_twice = |view: &mut AgentView| {
             let first = view.build_inline_media_escapes(&placement).unwrap();
             assert!(first.contains("a=t"), "first frame transmits: {first:?}");
@@ -2048,10 +2042,8 @@ pub(super) mod paste_key_tests {
             assert!(after_clear.contains("a=p"), "and places: {after_clear:?}");
         };
         paint_twice(&mut agent);
-        paint_twice(agent.subagent_views.get_mut("child-sid").unwrap());
         agent.forget_transmitted_inline_media();
         paint_after_clear(&mut agent);
-        paint_after_clear(agent.subagent_views.get_mut("child-sid").unwrap());
     }
     /// A file that is present but won't decode is negative-cached by its `(len, mtime)`.
     /// Decode work therefore doesn't re-run every frame while the file is unchanged.
@@ -2131,12 +2123,6 @@ pub(super) mod paste_key_tests {
             .insert(std::path::PathBuf::from("/tmp/b.png"), 3);
         agent.last_placed_ids = [2, 3].into_iter().collect();
         agent.inline_media_active = true;
-        let mut child = make_agent();
-        child
-            .inline_media_ids
-            .insert(std::path::PathBuf::from("/tmp/c.png"), 4);
-        child.inline_media_active = true;
-        agent.insert_test_child("child-sid".into(), Box::new(child));
         let esc = agent
             .take_inline_media_clear_escapes()
             .expect("drains placed media");
@@ -2147,10 +2133,6 @@ pub(super) mod paste_key_tests {
         assert!(
             esc.contains(&crate::terminal::image::clear_kitty_image(3)),
             "deletes id 3: {esc:?}"
-        );
-        assert!(
-            esc.contains(&crate::terminal::image::clear_kitty_image(4)),
-            "deletes the subagent view's id 4: {esc:?}"
         );
         assert!(!agent.inline_media_active);
         assert!(agent.inline_media_ids.is_empty());
@@ -2164,41 +2146,7 @@ pub(super) mod paste_key_tests {
         let mut agent = make_agent();
         assert!(agent.take_inline_media_clear_escapes().is_none());
     }
-    /// The own-only drain deletes this view's placements but leaves `subagent_views` untouched.
-    /// The fullscreen takeover therefore doesn't force the active child into a pointless re-transmit.
-    #[test]
-    fn take_own_inline_media_clear_escapes_leaves_children() {
-        let mut agent = make_agent();
-        agent
-            .inline_media_ids
-            .insert(std::path::PathBuf::from("/tmp/a.png"), 2);
-        agent.last_placed_ids = [2].into_iter().collect();
-        agent.inline_media_active = true;
-        let mut child = make_agent();
-        child
-            .inline_media_ids
-            .insert(std::path::PathBuf::from("/tmp/c.png"), 4);
-        child.inline_media_active = true;
-        agent.insert_test_child("child-sid".into(), Box::new(child));
-        let esc = agent
-            .take_own_inline_media_clear_escapes()
-            .expect("drains own placed media");
-        assert!(
-            esc.contains(&crate::terminal::image::clear_kitty_image(2)),
-            "deletes own id 2: {esc:?}"
-        );
-        assert!(
-            !esc.contains(&crate::terminal::image::clear_kitty_image(4)),
-            "must not delete the child's id 4: {esc:?}"
-        );
-        assert!(!agent.inline_media_active);
-        assert!(agent.inline_media_ids.is_empty());
-        assert!(agent.last_placed_ids.is_empty());
-        let child = agent.subagent_views.get("child-sid").unwrap();
-        assert!(child.inline_media_active);
-        assert_eq!(child.inline_media_ids.len(), 1);
-    }
-    /// Draw one 80x30 frame, the shared fixture for the subagent-takeover inline-media regression tests below.
+    /// Draw one 80x30 frame.
     fn draw_media_frame(agent: &mut AgentView) {
         let registry = ActionRegistry::defaults();
         let area = ratatui::layout::Rect::new(0, 0, 80, 30);
@@ -2253,47 +2201,6 @@ pub(super) mod paste_key_tests {
             before + 1,
             "the post-draw drain must purge the dropped frame set"
         );
-    }
-    /// Entering the fullscreen subagent view must delete the parent's Kitty placements.
-    /// The takeover early-returns before every normal per-frame clear path, and Kitty images survive cell overdraw.
-    /// Without the takeover-time drain the parent's image bleeds through the child view.
-    #[test]
-    fn subagent_fullscreen_draw_clears_parent_inline_media() {
-        let mut agent = make_agent();
-        agent
-            .inline_media_ids
-            .insert(std::path::PathBuf::from("/tmp/a.png"), 2);
-        agent.last_placed_ids = [2].into_iter().collect();
-        agent.inline_media_active = true;
-        agent.insert_test_child("child-sid".into(), Box::new(make_agent()));
-        agent.active_subagent = Some("child-sid".into());
-        draw_media_frame(&mut agent);
-        assert!(
-            !agent.inline_media_active,
-            "takeover frame must drain the parent's inline media"
-        );
-        assert!(agent.inline_media_ids.is_empty());
-        assert!(agent.last_placed_ids.is_empty());
-    }
-    /// Symmetric regression: after the fullscreen subagent view closes, the child's per-frame clears stop running.
-    /// The parent's next normal draw must delete whatever the child placed while fullscreen.
-    #[test]
-    fn draw_after_subagent_close_clears_child_inline_media() {
-        let mut agent = make_agent();
-        let mut child = make_agent();
-        child
-            .inline_media_ids
-            .insert(std::path::PathBuf::from("/tmp/c.png"), 4);
-        child.inline_media_active = true;
-        agent.insert_test_child("child-sid".into(), Box::new(child));
-        assert!(agent.active_subagent.is_none(), "subagent view is closed");
-        draw_media_frame(&mut agent);
-        let child = agent.subagent_views.get("child-sid").unwrap();
-        assert!(
-            !child.inline_media_active,
-            "normal draw must drain a closed subagent view's inline media"
-        );
-        assert!(child.inline_media_ids.is_empty());
     }
     fn ctrl_v_key() -> KeyEvent {
         key!('v', CONTROL).to_key_event()

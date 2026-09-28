@@ -7,7 +7,6 @@ use crate::app::session_views::SessionViews;
 use crate::views::dashboard::row_activity::{
     has_live_parent_activity, live_work_badges, top_level_activity, top_level_secondary_line,
 };
-use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
@@ -749,7 +748,7 @@ mod tests {
         let mut unadopted = crate::app::agent_view::test_fixtures::make_agent();
         unadopted.session.session_id = Some(acp::SessionId::new("not-saved"));
         unadopted.display_name = Some("Hidden title".to_owned());
-        let agents = IndexMap::from([(AgentId(7), matched), (AgentId(8), unadopted)]);
+        let agents = SessionViews::from([(AgentId(7), matched), (AgentId(8), unadopted)]);
         let snapshot = workspace_snapshot(vec![workspace_member(
             "saved",
             "Stored title",
@@ -767,7 +766,7 @@ mod tests {
             .session
             .enqueue_prompt("fix the login bug before lunch".into());
         assert!(dispatched.session.session_id.is_none());
-        let agents = IndexMap::from([(AgentId(3), dispatched)]);
+        let agents = SessionViews::from([(AgentId(3), dispatched)]);
         let snapshot = workspace_snapshot(vec![workspace_member("other", "Other", None)]);
         let rows = workspace_rows_with_provisional(&agents, Some(&snapshot), &[AgentId(3)]);
         assert_eq!(rows.len(), 2);
@@ -784,7 +783,7 @@ mod tests {
             .session
             .start_command(crate::app::agent::AgentCommand::CreateWorktree);
         creating.session.enqueue_prompt("queued".into());
-        let agents = IndexMap::from([(AgentId(4), creating)]);
+        let agents = SessionViews::from([(AgentId(4), creating)]);
         let rows = workspace_rows_with_provisional(&agents, None, &[AgentId(4)]);
         assert_eq!(rows.len(), 1, "live rows render before the snapshot loads");
         assert_eq!(nth(&rows, 0).state, RowState::Working);
@@ -795,7 +794,7 @@ mod tests {
     }
     #[test]
     fn empty_idle_provisional_agent_stays_hidden() {
-        let agents = IndexMap::from([(
+        let agents = SessionViews::from([(
             AgentId(6),
             crate::app::agent_view::test_fixtures::make_agent(),
         )]);
@@ -807,7 +806,7 @@ mod tests {
         let mut working = crate::app::agent_view::test_fixtures::make_agent();
         working.session.session_id = Some(acp::SessionId::new("working"));
         working.session.enqueue_prompt("queued work".into());
-        let agents = IndexMap::from([(AgentId(7), working)]);
+        let agents = SessionViews::from([(AgentId(7), working)]);
         let mut old_idle = workspace_member("old-idle", "Old idle", None);
         old_idle.last_change_unix_ms = 1_000;
         let mut fresh_idle = workspace_member("fresh-idle", "Fresh idle", None);
@@ -840,7 +839,7 @@ mod tests {
             workspace_member("shared", "Build", None),
             conversation,
         ]);
-        let rows = workspace_rows(&IndexMap::new(), &snapshot);
+        let rows = workspace_rows(&SessionViews::new(), &snapshot);
         assert_eq!(rows.len(), 1);
         assert_eq!(
             nth(&rows, 0).id,
@@ -856,7 +855,7 @@ mod tests {
         stale.title = None;
         assert_eq!(stale.model.as_deref(), Some("grok-test"));
         let snapshot = workspace_snapshot(vec![stale]);
-        let rows = workspace_rows(&IndexMap::new(), &snapshot);
+        let rows = workspace_rows(&SessionViews::new(), &snapshot);
         assert!(
             rows.is_empty(),
             "an unloaded startup placeholder must not resurface as a cwd row"
@@ -869,7 +868,7 @@ mod tests {
         let snapshot = workspace_snapshot(vec![member]);
         let mut empty = crate::app::agent_view::test_fixtures::make_agent();
         empty.session.session_id = Some(acp::SessionId::new("empty-live"));
-        let agents = IndexMap::from([(AgentId(9), empty)]);
+        let agents = SessionViews::from([(AgentId(9), empty)]);
         let rows = workspace_rows(&agents, &snapshot);
         assert!(
             rows.is_empty(),
@@ -884,7 +883,7 @@ mod tests {
             workspace_member("first", "First", Some("First summary")),
             second,
         ]);
-        let rows = workspace_rows(&IndexMap::new(), &snapshot);
+        let rows = workspace_rows(&SessionViews::new(), &snapshot);
         assert_eq!(rows.len(), 2);
         assert_eq!(
             nth(&rows, 0).id,
@@ -1220,7 +1219,7 @@ mod tests {
         let mut local = crate::app::agent_view::test_fixtures::make_agent();
         local.session.session_id = Some(acp::SessionId::new("z-local"));
         local.display_name = Some("Local".to_owned());
-        let agents = IndexMap::from([(AgentId(1), local)]);
+        let agents = SessionViews::from([(AgentId(1), local)]);
         let roster_id = DashboardRowId::Roster {
             session_id: "a-roster".to_owned(),
         };
@@ -1274,7 +1273,7 @@ mod tests {
                 } else {
                     vec!["a", "z"]
                 };
-                let mut agents = IndexMap::new();
+                let mut agents = crate::app::session_views::SessionViews::new();
                 for loaded in [false, true, false] {
                     if loaded {
                         let mut agent = crate::app::agent_view::test_fixtures::make_agent();
@@ -1283,7 +1282,7 @@ mod tests {
                         agent.session.enqueue_prompt("work".to_owned());
                         agents.insert(AgentId(1), agent);
                     } else {
-                        agents.clear();
+                        agents = crate::app::session_views::SessionViews::new();
                     }
                     let rows = workspace_rows(&agents, &snapshot);
                     assert_eq!(
@@ -1340,7 +1339,7 @@ mod tests {
         append_roster_rows(
             &mut rows,
             &[entry],
-            &IndexMap::new(),
+            &SessionViews::new(),
             &std::collections::BTreeSet::new(),
             None,
         );
@@ -1365,7 +1364,7 @@ mod tests {
     fn roster_rows_sort_by_real_timestamp() {
         let now_ms = now_unix_ms();
         let mut rows = Vec::new();
-        let agents = IndexMap::new();
+        let agents = crate::app::session_views::SessionViews::new();
         let pinned = std::collections::BTreeSet::new();
         append_roster_rows(
             &mut rows,
@@ -1408,7 +1407,7 @@ mod tests {
         pinned: &std::collections::BTreeSet<DashboardRowId>,
     ) -> Vec<DashboardRow> {
         let mut rows = Vec::new();
-        append_roster_rows(&mut rows, entries, &IndexMap::new(), pinned, None);
+        append_roster_rows(&mut rows, entries, &SessionViews::new(), pinned, None);
         rows
     }
     /// An untitled, inactive roster session is the "New session" noise the dashboard hides; every pager launch leaves one behind.
@@ -1814,7 +1813,7 @@ mod tests {
         let mut c = workspace_member("c", "Charlie", None);
         c.order_rank = Some(xai_grok_dashboard_store::RANK_GAP);
         let snapshot = workspace_snapshot(vec![a, b, c]);
-        let rows = workspace_rows(&IndexMap::new(), &snapshot);
+        let rows = workspace_rows(&SessionViews::new(), &snapshot);
         assert_eq!(
             rows.iter()
                 .map(|row| row.label.as_str())
@@ -1823,7 +1822,7 @@ mod tests {
         );
         let workspace = crate::app::workspace_layout::WorkspaceView::from_snapshot(&snapshot);
         let rows = build_rows_with_workspace(
-            &IndexMap::new(),
+            &SessionViews::new(),
             WorkspaceRowInputs {
                 workspace: Some(&workspace),
                 provisional: &[],
@@ -1844,14 +1843,14 @@ mod tests {
         stored.pin_rank = Some(7);
         stored.order_rank = Some(9);
         let snapshot = workspace_snapshot(vec![stored]);
-        let rows = workspace_rows(&IndexMap::new(), &snapshot);
+        let rows = workspace_rows(&SessionViews::new(), &snapshot);
         assert!(nth(&rows, 0).pinned);
         assert!(nth(&rows, 0).badges.contains(&RowBadge::Pinned));
         let agent_id = AgentId(9);
         let mut agent = crate::app::agent_view::test_fixtures::make_agent();
         agent.session.session_id = Some(acp::SessionId::new("saved"));
         agent.session.created_via_new = true;
-        let agents = IndexMap::from([(agent_id, agent)]);
+        let agents = SessionViews::from([(agent_id, agent)]);
         let rows = workspace_rows(&agents, &snapshot);
         assert_eq!(rows.len(), 1);
         assert!(nth(&rows, 0).pinned);

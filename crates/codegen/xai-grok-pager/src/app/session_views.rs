@@ -2,6 +2,7 @@ use crate::app::agent::AgentId;
 use crate::app::agent_view::{AgentRole, AgentView, ChildLink};
 use indexmap::IndexMap;
 
+#[derive(Default)]
 pub struct SessionViews {
     views: IndexMap<AgentId, AgentView>,
 }
@@ -135,6 +136,24 @@ impl SessionViews {
 
 fn child_order_key(started_at: std::time::Instant, sid: &str) -> (std::time::Instant, &str) {
     (started_at, sid)
+}
+
+#[cfg(test)]
+impl FromIterator<(AgentId, AgentView)> for SessionViews {
+    fn from_iter<I: IntoIterator<Item = (AgentId, AgentView)>>(views: I) -> Self {
+        Self {
+            views: views.into_iter().collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<const N: usize> From<[(AgentId, AgentView); N]> for SessionViews {
+    fn from(views: [(AgentId, AgentView); N]) -> Self {
+        Self {
+            views: IndexMap::from(views),
+        }
+    }
 }
 
 /// The one way tests attach a child session: a normal top-level view whose role links it to `parent`.

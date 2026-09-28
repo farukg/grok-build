@@ -478,9 +478,8 @@ mod workflows_overlay_key_tests {
 
         assert!(matches!(
             agent.handle_input(&key(KeyCode::Enter), &reg),
-            InputOutcome::Changed
+            InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-running"
         ));
-        assert_eq!(agent.workflow_runs.len(), 1);
         assert!(agent.show_workflows);
     }
 
@@ -648,22 +647,11 @@ mod workflows_overlay_key_tests {
         let reg = ActionRegistry::defaults();
 
         let out = agent.handle_input(&mouse_down(12, 5), &reg);
-        assert_eq!(out, InputOutcome::Action(Action::OpenSession("child-1".to_string())));
+        assert!(matches!(out, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1"));
         assert!(
             agent.show_workflows,
             "the overlay stays open underneath so closing the transcript returns to it"
         );
-    }
-
-    #[test]
-    fn click_on_roster_agent_without_local_view_is_consumed_noop() {
-        let mut agent = workflows_agent(&["wf_run"]);
-        agent.workflows_view.agent_hits = vec![(rect(10, 5, 30, 1), "ghost".to_string())];
-        let reg = ActionRegistry::defaults();
-
-        let out = agent.handle_input(&mouse_down(12, 5), &reg);
-        assert!(matches!(out, InputOutcome::Changed));
-        assert!(agent.show_workflows);
     }
 
     #[test]

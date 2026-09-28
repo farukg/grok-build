@@ -36,7 +36,7 @@ use super::dashboard::{
     dispatch_dashboard_commit_rename, dispatch_dashboard_confirm_worktree,
     dispatch_dashboard_create_new_agent_with_detail, dispatch_dashboard_delete,
     dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
-    dispatch_dashboard_overlay_cycle, dispatch_dashboard_overlay_exit,
+    dispatch_dashboard_overlay_exit, dispatch_session_cycle,
     dispatch_dashboard_overlay_stop, dispatch_dashboard_peek_reply,
     dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
     dispatch_dashboard_question_answer, dispatch_dashboard_stop,
@@ -79,7 +79,6 @@ use crate::scrollback::blocks::{SessionEvent, ToolCallBlock};
 use crate::scrollback::state::ScrollbackState;
 use crate::views::session_picker_surface::SessionPickerHost;
 use agent_client_protocol as acp;
-use indexmap::IndexMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -89,7 +88,7 @@ fn test_app() -> AppView {
         pending_startup: None,
         active_view: ActiveView::Welcome,
         auth_return_view: None,
-        agents: IndexMap::new(),
+        agents: crate::app::session_views::SessionViews::new(),
         next_agent_id: 0,
         models: ModelState::default(),
         registry: crate::actions::ActionRegistry::defaults(),

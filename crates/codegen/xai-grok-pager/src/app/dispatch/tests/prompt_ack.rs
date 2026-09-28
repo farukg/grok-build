@@ -122,7 +122,7 @@ fn expired_watch_on_child_session_restores_its_prompt() {
     );
     child.role = AgentRole::Child(ChildLink {
         parent: parent_id,
-        parent_session_id: app.agents[&parent_id].session.session_id.clone().unwrap(),
+        parent_session_id: app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap(),
         subagent_id: child_sid.to_owned(),
         started_at: std::time::Instant::now(),
     });

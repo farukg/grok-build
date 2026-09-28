@@ -86,16 +86,16 @@ fn show_word_select_tip_targets_active_child_session() {
     );
     child.role = AgentRole::Child(ChildLink {
         parent: root_id,
-        parent_session_id: app.agents[&root_id].session.session_id.clone().unwrap(),
+        parent_session_id: app.agents.get(&root_id).unwrap().session.session_id.clone().unwrap(),
         subagent_id: "child-tip".to_owned(),
         started_at: std::time::Instant::now(),
     });
     app.agents.insert(child_id, child);
     app.active_view = ActiveView::Agent(child_id);
     let _ = dispatch(Action::ShowWordSelectTip, &mut app);
-    assert_eq!(app.agents[&child_id].ephemeral_tip.current_key(), Some(WORD_SELECT_TIP_KEY));
+    assert_eq!(app.agents.get(&child_id).unwrap().ephemeral_tip.current_key(), Some(WORD_SELECT_TIP_KEY));
     let _ = dispatch(Action::AcceptWordSelectTip, &mut app);
-    assert!(!app.agents[&child_id].ephemeral_tip.is_active());
+    assert!(!app.agents.get(&child_id).unwrap().ephemeral_tip.is_active());
     crate::appearance::cache::set_keep_text_selection(TextSelection::Flash);
 }
 

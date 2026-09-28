@@ -114,17 +114,14 @@
     fn git_head_changed_root_agent_not_affected_when_child_matches() {
         let mut app = make_app_with_agent("sess-A");
         let child_sid = "child-sess-2";
-        {
-            let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            link_child(
-                &mut app.agents,
-                AgentId(0),
-                AgentId(1),
-                make_agent(Some(child_sid)),
-                std::time::Instant::now(),
-            );
-            parent.current_branch = Some("parent-branch".into());
-        }
+        link_child(
+            &mut app.agents,
+            AgentId(0),
+            AgentId(1),
+            make_agent(Some(child_sid)),
+            std::time::Instant::now(),
+        );
+        app.agents.get_mut(&AgentId(0)).unwrap().current_branch = Some("parent-branch".into());
 
         let notif = make_git_head_changed_notif(child_sid, Some("child-branch"), true, None);
         handle_git_head_changed(&notif, &mut app);

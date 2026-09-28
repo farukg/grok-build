@@ -301,7 +301,7 @@ fn editor_failure_targets_original_agent_and_vanished_agent_is_safe() {
             .iter_entries()
             .any(|(_, entry)| entry.block.searchable_text().as_deref() == Some("editor failed"))
     );
-    app.agents.shift_remove(&id);
+    app.agents.remove_tree(id);
     crate::app::external_editor::apply_prompt_text(&mut app, id, "ignored".to_owned());
     crate::app::external_editor::report_prompt_failure(&mut app, id, "ignored");
     assert!(app.agents.is_empty());
@@ -999,7 +999,7 @@ fn child_model_switch_targets_child_sid() {
     app.active_view = ActiveView::Agent(child);
     let model_id = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
     let effects = dispatch(Action::SwitchModel { model_id: model_id.clone(), effort: None }, &mut app);
-    assert!(matches!(effects.as_slice(), [Effect::SwitchModel { session_id, model_id: selected, .. }] if session_id.0 == "child-model" && selected == &model_id));
+    assert!(matches!(effects.as_slice(), [Effect::SwitchModel { session_id, model_id: selected, .. }] if &*session_id.0 == "child-model" && selected == &model_id));
 }
 #[test]
 fn switch_model_allowed_when_agent_chat_kind() {
@@ -1649,7 +1649,7 @@ fn conversation_entry_load_sets_chat_kind_bit() {
             ..
         }] if session_id == "conv-id"
     ));
-    let agent = app.agents.values().next().expect("agent");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
     assert!(agent.chat_kind, "conversation entry → agent chat_kind");
     assert!(
         agent.conversation_entry,
@@ -1697,7 +1697,7 @@ fn chat_mode_resume_without_local_disk_loads_as_chat() {
             ..
         }] if session_id == "remote-conv-only"
     ));
-    let agent = app.agents.values().next().expect("agent");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
     assert!(
         agent.chat_kind,
         "sticky --chat must set agent chat_kind even without entry bit"
@@ -1757,7 +1757,7 @@ fn load_sticky_chat_history_bypass_rename_kind_is_build() {
         ),
         "history-bypass must load the local disk row, got {effects:?}"
     );
-    let agent = app.agents.values().next().expect("agent");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
     assert!(
         agent.chat_kind,
         "sticky --chat still sets the UI chat_kind bit"
@@ -1827,7 +1827,7 @@ fn chat_mode_allows_conversation_entry_even_if_local_path() {
             ..
         }]
     ));
-    let agent = app.agents.values().next().expect("agent");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
     assert!(
         agent.conversation_entry,
         "conversation-entry bit must stamp conversation_entry even if a local path exists"

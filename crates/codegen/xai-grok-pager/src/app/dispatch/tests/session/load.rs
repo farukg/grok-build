@@ -859,7 +859,7 @@ fn resume_known_session_id_loads_not_creates() {
 #[test]
 fn session_restored_refuses_local_build_under_chat_mode() {
     let mut app = test_app_with_agent();
-    let id = *app.agents.keys().next().unwrap();
+    let id = app.agents.all().next().unwrap().0;
     app.chat_mode = true;
     let cwd = app.cwd.clone();
     let session_id = format!("restored-build-{}", std::process::id());
@@ -886,7 +886,7 @@ fn session_restored_refuses_local_build_under_chat_mode() {
 #[test]
 fn session_restored_sticky_chat_sets_conversation_entry() {
     let mut app = test_app_with_agent();
-    let id = *app.agents.keys().next().unwrap();
+    let id = app.agents.all().next().unwrap().0;
     app.chat_mode = true;
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SessionRestored {

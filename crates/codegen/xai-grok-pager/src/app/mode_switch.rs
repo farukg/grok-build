@@ -249,7 +249,7 @@ mod tests {
         mark_theme_resolved();
 
         let mut app = crate::app::app_view::tests::test_app_with_agent();
-        let agent_id = *app.agents.keys().next().expect("agent present");
+        let agent_id = app.agents.all().next().expect("agent present").0;
         let child_id = crate::app::agent::AgentId(1);
         let mut child = crate::app::agent_view::test_agent_view(Some("sess-1"), std::path::PathBuf::from("."));
         child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
@@ -310,7 +310,7 @@ mod tests {
         mark_theme_resolved();
 
         let mut app = crate::app::app_view::tests::test_app_with_agent();
-        let agent_id = *app.agents.keys().next().expect("agent present");
+        let agent_id = app.agents.all().next().expect("agent present").0;
         let agent = app.agents.get_mut(&agent_id).expect("agent present");
 
         let thought = agent

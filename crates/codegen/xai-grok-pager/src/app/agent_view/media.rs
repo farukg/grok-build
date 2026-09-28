@@ -329,15 +329,10 @@ impl AgentView {
         id
     }
 
-    /// Drain this view's inline-media placements and return Kitty delete escapes.
+    /// Drain this agent's inline-media placement tracking and return the Kitty delete escapes for every image it has placed on the GPU.
     /// Kitty graphics are independent of the cell grid: they survive redraws until explicitly deleted.
     /// Every regular clear path lives inside [`AgentView::draw`].
     pub(crate) fn take_inline_media_clear_escapes(&mut self) -> Option<String> {
-        self.take_own_inline_media_clear_escapes()
-    }
-
-    /// Drain this view's inline-media placements.
-    pub(super) fn take_own_inline_media_clear_escapes(&mut self) -> Option<String> {
         // Also proceed when only playback state remains (`inline_video` Some with no active placements)
         // That happens when frames finish loading after the media scrolled off
         // The drain must still stop the ticking video, or it keeps holding the animation gate open invisibly and its eventual drop is never purged

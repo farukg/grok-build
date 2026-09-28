@@ -272,11 +272,11 @@ fn doctor_fix_cancel_routes_to_initiator_then_fallbacks() {
     assert_eq!(last_system_text(&app, initiator), "Fix cancelled.");
 
     let target = target_for(&app, initiator);
-    app.agents.shift_remove(&initiator);
+    app.agents.remove_tree(initiator);
     assert!(dispatch(Action::DoctorFixCancelled(target.clone()), &mut app).is_empty());
     assert_eq!(last_system_text(&app, AgentId(1)), "Fix cancelled.");
 
-    app.agents.clear();
+    app.agents = crate::app::session_views::SessionViews::new();
     app.active_view = ActiveView::Welcome;
     assert!(dispatch(Action::DoctorFixCancelled(target), &mut app).is_empty());
     assert_eq!(
@@ -799,12 +799,11 @@ fn focus_prompt_targets_child_session() {
     );
     link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
     app.agents.get_mut(&parent_id).unwrap().set_active_pane(ActivePane::Scrollback, true);
-    app.agents.insert(child_id, child);
     app.active_view = ActiveView::Agent(child_id);
     let effects = dispatch(Action::FocusPrompt, &mut app);
     assert!(effects.is_empty());
-    assert_eq!(ActivePane::Prompt, app.agents[&child_id].active_pane);
-    assert_eq!(ActivePane::Scrollback, app.agents[&parent_id].active_pane);
+    assert_eq!(ActivePane::Prompt, app.agents.get(&child_id).unwrap().active_pane);
+    assert_eq!(ActivePane::Scrollback, app.agents.get(&parent_id).unwrap().active_pane);
 }
 
 #[test]
@@ -843,7 +842,7 @@ fn child_enter_emits_session_prompt_for_child_sid() {
     app.active_view = ActiveView::Agent(child_id);
     app.agents.get_mut(&child_id).unwrap().prompt.set_text("hello child");
     let effects = dispatch(Action::SendPrompt("hello child".into()), &mut app);
-    assert!(matches!(effects.as_slice(), [Effect::SendPrompt { session_id, text, .. }] if session_id.0 == "child-prompt" && text == "hello child"));
+    assert!(matches!(effects.as_slice(), [Effect::SendPrompt { session_id, text, .. }] if &*session_id.0 == "child-prompt" && text == "hello child"));
 }
 
 /// Register `pr-workflow` as an ACP-advertised skill on the agent's slash registry, mirroring the shell's available-commands sync.
@@ -3541,7 +3540,7 @@ fn child_slash_compact_emits_compact_for_child() {
     link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
     app.active_view = ActiveView::Agent(child_id);
     let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
-    assert!(matches!(effects.as_slice(), [Effect::Compact { session_id, .. }] if session_id.0 == "child-compact"));
+    assert!(matches!(effects.as_slice(), [Effect::Compact { session_id, .. }] if &*session_id.0 == "child-compact"));
 }
 
 #[test]

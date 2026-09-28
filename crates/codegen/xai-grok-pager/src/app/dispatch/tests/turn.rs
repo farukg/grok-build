@@ -1012,7 +1012,7 @@ fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
     let child = AgentView::new(child_session, ScrollbackState::new());
     link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
-    assert!(app.agents[&parent_id].session.state.is_idle());
+    assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
     let effects = dispatch(Action::CancelTurn, &mut app);
 
     assert!(
@@ -1027,9 +1027,9 @@ fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
         ),
         "overlay stop must emit CancelTurn for the child session, got {effects:?}"
     );
-    assert!(app.agents[&parent_id].session.state.is_idle());
-    assert!(app.agents[&parent_id].cancel_turn_view.is_none());
-    assert!(app.agents[&child_id].session.state.is_cancelling());
+    assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
+    assert!(app.agents.get(&parent_id).unwrap().cancel_turn_view.is_none());
+    assert!(app.agents.get(&child_id).unwrap().session.state.is_cancelling());
 }
 
 /// Esc on a running child cancels that session without opening the parent's ask panel.
@@ -1060,9 +1060,9 @@ fn child_esc_emits_session_cancel_for_child() {
         ),
         "overlay stop must target the child session, got {effects:?}"
     );
-    assert!(app.agents[&parent_id].cancel_turn_view.is_none());
-    assert!(app.agents[&parent_id].session.state.is_turn_running());
-    assert!(app.agents[&child_id].session.state.is_cancelling());
+    assert!(app.agents.get(&parent_id).unwrap().cancel_turn_view.is_none());
+    assert!(app.agents.get(&parent_id).unwrap().session.state.is_turn_running());
+    assert!(app.agents.get(&child_id).unwrap().session.state.is_cancelling());
 }
 
 
@@ -1133,7 +1133,7 @@ fn cancel_turn_in_child_session_without_session_id_is_noop() {
     let effects = dispatch(Action::CancelTurn, &mut app);
 
     assert!(effects.is_empty());
-    assert!(app.agents[&child_id].session.state.is_turn_running());
+    assert!(app.agents.get(&child_id).unwrap().session.state.is_turn_running());
 }
 
 #[test]
@@ -1195,8 +1195,8 @@ fn cancel_turn_on_idle_parent_does_not_cancel_background_child() {
     link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
     let effects = dispatch(Action::CancelTurn, &mut app);
     assert!(effects.is_empty());
-    assert!(app.agents[&parent_id].session.state.is_idle());
-    assert!(app.agents[&child_id].session.state.is_turn_running());
+    assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
+    assert!(app.agents.get(&child_id).unwrap().session.state.is_turn_running());
 }
 
 #[test]
@@ -2291,10 +2291,10 @@ fn mouse_reporting_toggle_sticky_survives_child_navigation() {
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     app.registry = crate::actions::ActionRegistry::defaults_with_config(true);
     let _ = dispatch(Action::ToggleMouseCapture, &mut app);
-    assert_eq!(app.agents[&parent_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
-    assert_eq!(app.agents[&child_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(app.agents.get(&parent_id).unwrap().sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(app.agents.get(&child_id).unwrap().sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
     app.active_view = crate::app::app_view::ActiveView::Agent(parent_id);
-    assert_eq!(app.agents[&parent_id].sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(app.agents.get(&parent_id).unwrap().sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
     reset_mouse_capture_enabled(true);
 }
 

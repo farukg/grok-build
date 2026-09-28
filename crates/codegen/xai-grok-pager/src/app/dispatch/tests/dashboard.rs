@@ -2662,7 +2662,7 @@ fn workspace_layout_on_provisional_row_toasts() {
     ensure_dashboard_state(&mut app);
     app.active_view = ActiveView::AgentDashboard;
     let _ = dispatch_dashboard_dispatch(&mut app, "pin me".into(), false);
-    let new_id = *app.agents.keys().last().unwrap();
+    let new_id = app.agents.all().last().unwrap().0;
     app.dashboard
         .as_mut()
         .unwrap()
@@ -3110,7 +3110,7 @@ fn dashboard_plan_description_transforms_snapshot_and_chip_ranges() {
         dashboard.dispatch.text().to_owned()
     };
     let _ = dispatch_dashboard_dispatch_slash(&mut app, command);
-    let agent = app.agents.values().next().expect("plan session");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("plan session");
     let queued = agent.session.pending_prompts.back().expect("plan prompt");
     assert!(!queued.text.starts_with("/plan"));
     assert!(queued.text.starts_with("line one"));
@@ -3263,7 +3263,7 @@ fn dashboard_slash_usage_opens_dashboard_modal() {
     assert!(modal.ctx.usage_visible);
     assert!(!modal.ctx.chat_kind);
     assert!(modal.billing_loading);
-    for agent in app.agents.values() {
+    for (_, agent) in app.agents.all() {
         assert!(
             agent.active_modal.is_none(),
             "modal must not land on a background agent"
@@ -3551,7 +3551,7 @@ fn dashboard_slash_session_modals_toast_instead_of_noop() {
             Some(expected.as_str()),
             "/{name}: unexpected toast"
         );
-        for agent in app.agents.values() {
+        for (_, agent) in app.agents.all() {
             assert!(
                 agent.extensions_modal.is_none(),
                 "/{name}: extensions modal must stay closed"
@@ -3781,7 +3781,7 @@ fn dashboard_dispatch_always_approve_sets_yolo() {
         d.pending_mode = DashboardDispatchMode::AlwaysApprove;
     }
     let effects = dispatch_dashboard_dispatch(&mut app, "do the thing".into(), false);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert!(
         test_agent(&app, new_id).session.is_yolo(),
         "Always-Approve must spawn the agent in auto-approve"
@@ -3804,7 +3804,7 @@ fn dashboard_dispatch_auto_sets_classifier_without_changing_globals() {
     open_dashboard(&mut app);
     app.dashboard.as_mut().unwrap().pending_mode = DashboardDispatchMode::Auto;
     let effects = dispatch_dashboard_dispatch(&mut app, "do the thing".into(), false);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert!(test_agent(&app, new_id).session.is_auto());
     assert!(!test_agent(&app, new_id).session.is_yolo());
     assert!(effects.iter().any(|effect| matches!(
@@ -3842,7 +3842,7 @@ fn dashboard_dispatch_stale_auto_degrades_when_gate_is_off() {
     app.dashboard.as_mut().unwrap().pending_mode = DashboardDispatchMode::Auto;
     app.auto_mode_gate = false;
     let effects = dispatch_dashboard_dispatch(&mut app, "do the thing".into(), false);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert_eq!(
         app.dashboard.as_ref().unwrap().pending_mode,
         DashboardDispatchMode::Normal
@@ -3883,7 +3883,7 @@ fn dashboard_dispatch_always_approve_blocked_warns_on_dashboard() {
         d.pending_mode = DashboardDispatchMode::AlwaysApprove;
     }
     let _ = dispatch_dashboard_dispatch(&mut app, "do the thing".into(), false);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert!(
         !test_agent(&app, new_id).session.is_yolo(),
         "pinned always-approve must spawn the agent in Normal"
@@ -3904,7 +3904,7 @@ fn dashboard_dispatch_new_agent_is_working_with_prompt_title() {
     let mut app = test_app();
     open_dashboard(&mut app);
     let _ = dispatch_dashboard_dispatch(&mut app, "fix the login bug".into(), false);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert_eq!(
         classify_top_level(test_agent(&app, new_id)),
         RowState::Working,
@@ -3946,7 +3946,7 @@ fn dashboard_dispatch_applies_pending_model_and_plan() {
     }
     let effects = dispatch_dashboard_dispatch(&mut app, "do the thing".into(), false);
     assert_eq!(app.agents.len(), 1);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert!(effects.iter().any(|e| matches!(
         e,
         Effect::CreateSession { model_id: Some(m), .. } if *m == model_id
@@ -3985,7 +3985,7 @@ fn dashboard_new_agent_button_applies_pending_model_and_plan() {
     }
     let effects = dispatch(Action::DashboardCreateNewAgentWithDetail, &mut app);
     assert_eq!(app.agents.len(), 1);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert!(effects.iter().any(|e| matches!(
         e,
         Effect::CreateSession { model_id: Some(m), .. } if *m == model_id
@@ -4015,7 +4015,7 @@ fn dashboard_new_agent_button_carries_auto_permission_override() {
     open_dashboard(&mut app);
     app.dashboard.as_mut().unwrap().pending_mode = DashboardDispatchMode::Auto;
     let effects = dispatch(Action::DashboardCreateNewAgentWithDetail, &mut app);
-    let new_id = *app.agents.keys().next().unwrap();
+    let new_id = app.agents.all().next().unwrap().0;
     assert!(test_agent(&app, new_id).session.is_auto());
     assert_eq!(app.current_ui.permission_mode.as_deref(), Some("auto"));
     assert!(effects.iter().any(|effect| matches!(
@@ -4176,7 +4176,7 @@ fn dashboard_ctrl_s_button_focused_with_text_creates_and_opens() {
     open_dashboard(&mut app);
     assert!(app.dashboard.as_ref().unwrap().new_agent_button_focused());
     let _ = dispatch_dashboard_dispatch(&mut app, "kick off and open".into(), true);
-    let new_id = *app.agents.keys().last().unwrap();
+    let new_id = app.agents.all().last().unwrap().0;
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == new_id),
         "Ctrl+S on button + text must switch to the new agent's view, \
@@ -4632,7 +4632,7 @@ fn dashboard_exit_does_not_overlay_fallback_when_return_agent_dead() {
         crate::views::dashboard::DashboardRowId::TopLevel(id2),
     );
     let _ = dispatch_dashboard_overlay_exit(&mut app);
-    app.agents.shift_remove(&id2);
+    app.agents.remove_tree(id2);
     let _ = dispatch_exit_dashboard(&mut app);
     assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
     assert_eq!(app.dashboard.as_ref().and_then(|d| d.attached_agent), None);
@@ -5687,8 +5687,7 @@ fn dashboard_upgrade_cta_paints_arms_rect_and_ctrl_o_override() {
     use ratatui::layout::Rect;
     use xai_grok_telemetry::events::AnnouncementCtaSurface;
     let registry = ActionRegistry::defaults();
-    let mut agents: indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView> =
-        indexmap::IndexMap::new();
+    let mut agents = crate::app::session_views::SessionViews::new();
     let area = Rect::new(0, 0, 140, 20);
     let ctrl_o = || Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     let header_row = |buf: &Buffer, y: u16| -> String {
@@ -6044,7 +6043,7 @@ fn dashboard_open_drops_pinned_ids_for_missing_agents() {
 fn dashboard_row_stop_cancels_wake_turn_with_gesture_trigger() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("s0"));
@@ -6078,7 +6077,7 @@ fn dashboard_row_stop_cancels_wake_turn_with_gesture_trigger() {
 fn dashboard_row_stop_during_send_over_wake_cancels_wake_not_local_turn() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("s0"));
@@ -6126,11 +6125,11 @@ fn dashboard_stop_double_press_deletes_top_level() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    for (i, a) in app.agents.values_mut().enumerate() {
+    for (i, (_, a)) in app.agents.all_mut().enumerate() {
         a.session.session_id = Some(acp::SessionId::new(format!("s{i}")));
     }
     open_dashboard(&mut app);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     if let Some(d) = app.dashboard.as_mut() {
         d.selected = Some(crate::views::dashboard::DashboardRowId::TopLevel(target));
     }
@@ -6147,7 +6146,7 @@ fn workspace_dashboard_stop_archives_loaded_row_and_repairs_selection() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let ids = app.agents.keys().copied().collect::<Vec<_>>();
+    let ids = app.agents.all().map(|(id, _)| id).collect::<Vec<_>>();
     for (index, id) in ids.iter().copied().enumerate() {
         let agent = app.agents.get_mut(&id).unwrap();
         agent.display_name = Some(format!("agent-{index}"));
@@ -6225,7 +6224,7 @@ fn workspace_archive_keeps_conversation_twin_open_and_registered() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let ids = app.agents.keys().copied().collect::<Vec<_>>();
+    let ids = app.agents.all().map(|(id, _)| id).collect::<Vec<_>>();
     let [build_id, conversation_id, ..] = ids.as_slice() else {
         panic!("expected two agents: {ids:?}");
     };
@@ -6416,7 +6415,7 @@ fn dashboard_stop_moves_selection_down_one() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    for (i, agent) in app.agents.values_mut().enumerate() {
+    for (i, (_, agent)) in app.agents.all_mut().enumerate() {
         agent.display_name = Some(format!("agent-{i}"));
         agent.session.session_id = Some(acp::SessionId::new(format!("s{i}")));
     }
@@ -6469,7 +6468,7 @@ fn dashboard_stop_last_row_falls_back_to_previous() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    for (i, agent) in app.agents.values_mut().enumerate() {
+    for (i, (_, agent)) in app.agents.all_mut().enumerate() {
         agent.display_name = Some(format!("agent-{i}"));
         agent.session.session_id = Some(acp::SessionId::new(format!("s{i}")));
     }
@@ -6525,7 +6524,7 @@ fn dashboard_stop_does_not_plant_error_toast() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     open_dashboard(&mut app);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     if let Some(d) = app.dashboard.as_mut() {
         d.selected = Some(crate::views::dashboard::DashboardRowId::TopLevel(target));
     }
@@ -6721,7 +6720,7 @@ fn dashboard_new_agent_button_create_with_detail_switches_view() {
         agents_before + 1,
         "create-with-detail must spawn a session",
     );
-    let new_id = *app.agents.keys().last().unwrap();
+    let new_id = app.agents.all().last().unwrap().0;
     assert!(
         matches!(app.active_view, ActiveView::Agent(a) if a == new_id),
         "create-with-detail must switch active_view to the new agent, got {:?}",
@@ -7009,7 +7008,7 @@ fn dashboard_stop_double_press_after_2s_rearms() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     open_dashboard(&mut app);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     if let Some(d) = app.dashboard.as_mut() {
         d.selected = Some(crate::views::dashboard::DashboardRowId::TopLevel(target));
     }
@@ -7099,7 +7098,7 @@ fn dashboard_stop_busy_top_level_cancels_without_arming() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("busy-top"));
@@ -7134,7 +7133,7 @@ fn dashboard_stop_bg_work_row_stops_without_arming() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("bg-loop"));
@@ -7181,7 +7180,7 @@ fn dashboard_stop_running_bg_task_emits_teardown_kill() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("bg-stop"));
@@ -7227,7 +7226,7 @@ fn dashboard_stop_queued_prompt_row_drops_queue_without_arming() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("queued"));
@@ -7261,7 +7260,7 @@ fn dashboard_delete_confirm_rechecks_settled_row() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     {
         let agent = app.agents.get_mut(&target).unwrap();
         agent.session.session_id = Some(acp::SessionId::new("recheck"));
@@ -7316,7 +7315,7 @@ fn dashboard_delete_top_level_without_session_id_toasts() {
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     app.agents.get_mut(&target).unwrap().session.session_id = None;
     open_dashboard(&mut app);
     if let Some(d) = app.dashboard.as_mut() {

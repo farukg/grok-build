@@ -79,7 +79,7 @@ pub(crate) fn test_app() -> AppView {
         pending_startup: None,
         active_view: ActiveView::Welcome,
         auth_return_view: None,
-        agents: indexmap::IndexMap::new(),
+        agents: crate::app::session_views::SessionViews::new(),
         next_agent_id: 0,
         models: ModelState::default(),
         registry: ActionRegistry::defaults(),
@@ -3413,8 +3413,8 @@ fn prompt_page_actions_target_visible_fullscreen_child_scrollback() {
     app.active_view = ActiveView::Agent(child_id);
     let offsets = |app: &AppView| {
         (
-            app.agents[&id].scrollback.scroll_info().0,
-            app.agents[&child_id].scrollback.scroll_info().0,
+            app.agents.get(&id).unwrap().scrollback.scroll_info().0,
+            app.agents.get(&child_id).unwrap().scrollback.scroll_info().0,
         )
     };
     let before = offsets(&app);
@@ -6064,7 +6064,7 @@ fn dashboard_picker_esc_after_search_click_restores_the_selection() {
     }
     let area = Rect::new(0, 0, 100, 28);
     let mut buf = ratatui::buffer::Buffer::empty(area);
-    let mut agents = indexmap::IndexMap::new();
+    let mut agents = crate::app::session_views::SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
@@ -7777,7 +7777,7 @@ fn minimal_double_ctrl_c_arms_then_quits() {
 fn handle_input_clears_stale_attached_agent_on_input() {
     let mut app = test_app_with_agent();
     let id = attach_popup(&mut app);
-    app.agents.shift_remove(&id);
+    app.agents.remove_tree(id);
     let _ = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::NONE));
     assert_eq!(
         app.dashboard.as_ref().unwrap().attached_agent,
@@ -7871,9 +7871,6 @@ fn handle_input_exit_session_action_closes_popup() {
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id));
     if let Some(d) = app.dashboard.as_mut() {
         d.close_popup();
-    }
-    if let Some(agent) = app.agents.get_mut(&id) {
-        agent.close_subagent_fullscreen();
     }
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, None);
     assert!(

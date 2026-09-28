@@ -118,7 +118,7 @@ fn toggle_vim_mode_propagates_to_resident_child_sessions() {
     child.vim_mode = false;
     child.role = AgentRole::Child(ChildLink {
         parent: parent_id,
-        parent_session_id: app.agents[&parent_id].session.session_id.clone().unwrap(),
+        parent_session_id: app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap(),
         subagent_id: "child-1".to_owned(),
         started_at: std::time::Instant::now(),
     });
@@ -1945,7 +1945,7 @@ fn set_simple_mode_propagates_to_every_agent() {
     app.agents.insert(id_b, agent_b);
     app.next_agent_id = 2;
     let _ = dispatch(Action::SetSimpleMode(true), &mut app);
-    for (id, agent) in &app.agents {
+    for (id, agent) in app.agents.all() {
         assert_eq!(
             agent.input_mode,
             crate::views::agent::InputMode::Simple,
@@ -2798,7 +2798,7 @@ fn set_respect_manual_folds_applies_persists_and_rolls_back() {
         "expected exactly one PersistSetting effect, got {effects:?}",
     );
     assert!(app.appearance.scrollback.scroll.respect_manual_folds);
-    for (id, agent) in &app.agents {
+    for (id, agent) in app.agents.all() {
         assert!(
             agent
                 .scrollback

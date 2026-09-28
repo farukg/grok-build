@@ -125,15 +125,11 @@
             test_subagent_spawned("sess-1", "child-1"),
         );
         assert!(handle(spawn, &mut app));
-        assert_eq!(
-            Some(&ChildLink::unaddressable(acp::SessionId::new("sess-1"))),
-            app.agents
-                .get(&AgentId(0))
-                .unwrap_or_else(|| panic!("missing root agent"))
-                .subagent_view("child-1")
-                .expect("spawn inserts the child view")
-                .child_link()
-        );
+        assert!(matches!(
+            &test_subagent(&app, "child-1").role,
+            crate::app::agent_view::AgentRole::Child(link)
+                if link.parent == AgentId(0) && &*link.parent_session_id.0 == "sess-1"
+        ));
     }
 
     #[test]
@@ -639,8 +635,7 @@
             .unwrap()
             .scrollback
             .remove_entry(entry_id);
-        let first_view = test_subagent(&app, "child-live-duplicate")
-            .as_ref() as *const AgentView;
+        let first_view = test_subagent(&app, "child-live-duplicate") as *const AgentView;
 
         let duplicate = make_ext_session_notification(
             "sess-parent",
@@ -982,7 +977,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "resume spawn must NOT eagerly replay the child transcript"
             );
@@ -994,13 +989,13 @@
                 "resume spawn must leave the transcript NeedsReplay for the first open"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, &child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening the subagent after resume must replay its transcript"
             );
+            let agent = app.agents.get(&AgentId(0)).unwrap();
             assert!(
                 agent
                     .subagent_sessions
@@ -1038,7 +1033,7 @@
             let agent = app.agents.get(&AgentId(0)).unwrap();
             for sid in &child_sids {
                 assert_eq!(
-                    child_scrollback_tool_call_count(agent, sid),
+                    child_scrollback_tool_call_count(&app, sid),
                     0,
                     "a live spawn must not replay the on-disk transcript"
                 );
@@ -1051,16 +1046,15 @@
                 );
             }
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sids.first().unwrap_or_else(|| panic!("missing index")).clone());
+            open_child_view(&mut app, &child_sids.first().unwrap_or_else(|| panic!("missing index")));
             assert_eq!(
                 crate::app::subagent::test_support::transcript_reads(),
                 reads_before + 1,
                 "the first open must read exactly the opened child's transcript"
             );
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sids.first().unwrap_or_else(|| panic!("missing index"))), 1);
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sids.first().unwrap_or_else(|| panic!("missing index"))), 1);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sids.get(1).unwrap_or_else(|| panic!("missing index"))),
+                child_scrollback_tool_call_count(&app, child_sids.get(1).unwrap_or_else(|| panic!("missing index"))),
                 0,
                 "opening one child must not read its siblings"
             );
@@ -1089,7 +1083,7 @@
             );
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "a resumed spawn must defer the read like any other"
             );
@@ -1106,15 +1100,14 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "the inherited tool call must be read before the live block lands"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, &child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening the child must show the inherited history exactly once"
             );
@@ -1148,7 +1141,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "resume must not eagerly load the finished subagent transcript"
             );
@@ -1167,10 +1160,9 @@
                 "finished subagent must be Idle after resume, not TurnRunning"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, &child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening a finished subagent after resume must show its transcript"
             );
@@ -1207,9 +1199,8 @@
             );
 
             // Open it fullscreen before any transcript exists: the read finds nothing, so the view stays empty
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sid), 0);
+            open_child_view(&mut app, &child_sid);
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 0);
 
             // The inherited transcript flushes, then the child finishes while still open, having streamed no live block
             write_child_updates_jsonl(home, child_sid, &(child_tool_line(child_sid) + "\n"));
@@ -1224,7 +1215,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "finishing must hydrate the open resumed child in place, not just stamp a footer"
             );
@@ -1309,12 +1300,11 @@
             }
 
             fn open_child(&mut self, child_sid: &str) {
-                let sid = child_sid.to_string();
-                self.agent_mut().open_subagent_fullscreen(sid);
+                open_child_view(&mut self.app, child_sid);
             }
 
             fn close(&mut self) {
-                self.agent_mut().close_subagent_fullscreen();
+                leave_child_view(&mut self.app);
             }
 
             /// Deliver a live ACP update on the child's own session id.
@@ -1359,15 +1349,15 @@
             }
 
             fn tool_calls_for(&self, child_sid: &str) -> usize {
-                child_scrollback_tool_call_count(self.agent(), child_sid)
+                child_scrollback_tool_call_count(&self.app, child_sid)
             }
 
             fn session_events(&self) -> usize {
-                child_scrollback_session_event_count(self.agent(), self.child_sid)
+                child_scrollback_session_event_count(&self.app, self.child_sid)
             }
 
             fn prompts_matching(&self, prompt: &str) -> usize {
-                child_scrollback_matching_prompt_count(self.agent(), self.child_sid, prompt)
+                child_scrollback_matching_prompt_count(&self.app, self.child_sid, prompt)
             }
 
             fn has_system_block(&self) -> bool {
@@ -1536,7 +1526,7 @@
                     "spawn seeds nothing and reads nothing"
                 );
                 assert!(
-                    !child_tracker_expects_user_echo(s.agent(), child_sid),
+                    !child_tracker_expects_user_echo(&s.app, child_sid),
                     "spawn arms no echo skip"
                 );
 
@@ -1547,7 +1537,7 @@
                         "eviction resets to the empty baseline"
                     );
                     assert!(
-                        !child_tracker_expects_user_echo(s.agent(), child_sid),
+                        !child_tracker_expects_user_echo(&s.app, child_sid),
                         "eviction arms no echo skip"
                     );
                 }
@@ -1922,7 +1912,7 @@
                     "spawn leaves the child view empty for {meta:?}"
                 );
                 assert!(
-                    !child_tracker_expects_user_echo(agent, &child_sid),
+                    !child_tracker_expects_user_echo(&app, &child_sid),
                     "spawn arms no echo skip for {meta:?}"
                 );
                 assert_eq!(
@@ -1954,15 +1944,15 @@
 
             let agent = app.agents.get_mut(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "spawn must defer the replay to first open"
             );
-            agent.open_subagent_fullscreen(child_sid.to_string());
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sid), 1);
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, &child_sid);
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 1);
+            open_child_view(&mut app, &child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "re-opening must not duplicate the replay once the disk copy is recorded"
             );
@@ -1985,7 +1975,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "live spawn must not scan a foreign-cwd transcript"
             );
@@ -1998,10 +1988,9 @@
             );
 
             // The retry on open stays hinted-only for a live child, so the foreign-cwd transcript is still not read
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, &child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "opening a live child must not scan a foreign-cwd transcript"
             );
@@ -2036,7 +2025,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "a resumed spawn must defer the replay like any other"
             );
@@ -2048,10 +2037,9 @@
                 "a resumed spawn must leave the transcript NeedsReplay"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, &child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening a resumed child must scan for the relocated transcript"
             );
@@ -2307,12 +2295,8 @@
                 .status(acp::ToolCallStatus::Completed)
                 .raw_input(Some(serde_json::json!({"subagent_id": target, "text": "follow up"})))
                 .raw_output(Some(accepted.clone()));
-            let child = app
-                .agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .subagent_view_mut(sender)
-                .expect("child view");
+            let child_id = app.agents.find_by_session_id(sender).expect("child view");
+            let child = app.agents.get_mut(&child_id).unwrap();
             child.session.tracker.handle_update(
                 acp::SessionUpdate::ToolCall(send),
                 &NotificationMeta::default(),

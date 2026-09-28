@@ -4190,7 +4190,7 @@ impl AppView {
         }
         let mut clears = crate::terminal::overlay::PostFlush::default();
         let mut has_escapes = false;
-        for (id, agent) in agents.roots_mut() {
+        for (id, agent) in agents.all_mut() {
             if Some(id) == drawn_agent {
                 continue;
             }

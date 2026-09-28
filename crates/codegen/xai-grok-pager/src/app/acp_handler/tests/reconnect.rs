@@ -996,14 +996,7 @@
             "no Finished in the replay → the row stays running indefinitely \
              (current behavior: nothing resolves it after the swap)"
         );
-        let child_id = app.agents.iter().find_map(|(child_id, child)| {
-            child
-                .session
-                .session_id
-                .as_ref()
-                .is_some_and(|sid| sid.0 == "child-sub")
-                .then_some(*child_id)
-        }).expect("the replayed child view is registered");
+        let child_id = app.agents.find_by_session_id("child-sub").expect("the replayed child view is registered");
 
         let child_len_before = app.agents.get(&child_id).unwrap_or_else(|| panic!("missing child view")).scrollback.len();
         let _ = handle(

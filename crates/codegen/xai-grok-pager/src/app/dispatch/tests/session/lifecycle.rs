@@ -1815,7 +1815,7 @@ fn chat_mode_new_session_creates_with_chat_kind() {
         )),
         "expected chat CreateSession under --chat, got {effects:?}"
     );
-    let agent = app.agents.values().next().expect("agent");
+    let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
     assert!(
         agent.conversation_entry,
         "sticky --chat NewSession must stamp conversation_entry for rename kind"
@@ -3121,7 +3121,7 @@ fn dashboard_stop_with_peek_open_moves_selection_and_peek_down_one() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
-    for (i, agent) in app.agents.values_mut().enumerate() {
+    for (i, (_, agent)) in app.agents.all_mut().enumerate() {
         agent.display_name = Some(format!("agent-{i}"));
         agent.session.session_id = Some(acp::SessionId::new(format!("s{i}")));
     }
@@ -3219,7 +3219,7 @@ fn dashboard_stop_double_press_via_handle_key_deletes_top_level() {
     let _ = dispatch_new_session_inner(&mut app, None);
     let _ = dispatch_new_session_inner(&mut app, None);
     open_dashboard(&mut app);
-    let target = *app.agents.keys().next().unwrap();
+    let target = app.agents.all().next().unwrap().0;
     app.agents.get_mut(&target).unwrap().session.session_id = Some(acp::SessionId::new("s-target"));
     if let Some(d) = app.dashboard.as_mut() {
         d.selected = Some(crate::views::dashboard::DashboardRowId::TopLevel(target));
@@ -3340,7 +3340,7 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "create must not consume history bypass (restore+load still owns it)"
         );
-        let agent = app.agents.values().next().expect("new agent");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("new agent");
         assert!(agent.chat_kind);
         assert_eq!(
             agent.workspace_mode,
@@ -3672,7 +3672,7 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "bypass stays until process_effects LoadSession"
         );
-        let agent = app.agents.values().next().expect("placeholder agent");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("placeholder agent");
         assert!(
             agent.chat_kind,
             "sticky --chat keeps agent.chat_kind for already-open focus matching"
@@ -3989,7 +3989,7 @@ mod welcome_workspace_mode {
             )),
             "conversation must still load: {effects:?}"
         );
-        let agent = app.agents.values().next().expect("agent");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("agent");
         assert_eq!(
             agent.workspace_mode,
             WelcomeWorkspaceMode::Sandbox,
@@ -4059,7 +4059,7 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "bypass kept until follow-up LoadSession"
         );
-        let agent = app.agents.values().next().expect("restore placeholder");
+        let agent = app.agents.all().next().map(|(_, a)| a).expect("restore placeholder");
         assert_eq!(
             agent.workspace_mode,
             WelcomeWorkspaceMode::LocalWorkspace,

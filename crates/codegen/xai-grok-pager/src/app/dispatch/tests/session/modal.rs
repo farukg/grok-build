@@ -189,7 +189,7 @@ fn dispatch_new_session_skips_modal_in_non_git_repo() {
         "non-git path must emit CreateSession, got {effects:?}"
     );
     assert!(
-        app.agents.values().all(|a| a.question_view.is_none()),
+        app.agents.all().all(|(_, a)| a.question_view.is_none()),
         "non-git path must not open the modal"
     );
 }

@@ -1089,36 +1089,26 @@
     }
 
     #[test]
-    fn child_observation_ignores_compact_started_update() {
+    fn child_notification_without_view_returns_false() {
+        let mut app = make_app_with_agent("root-sess");
+        // No child view is registered
         let update = XaiSessionUpdate::AutoCompactStarted {
             tokens_used: 90000,
             context_window: 131072,
             percentage: 85,
             reason: "threshold".into(),
         };
-        assert!(crate::app::acp_handler::child_observation::classify(&update, &make_agent(Some("unknown-child"))).is_none());
+        assert!(!handle(make_ext_session_notification("unknown-child", update), &mut app));
     }
 
     #[test]
-    fn child_context_observation_classifies_compact_tokens() {
-        let child_sid = "child-sess-2";
-
-        let update = XaiSessionUpdate::AutoCompactCompleted {
-            tokens_before: Some(90000),
-            tokens_after: 25000,
-            elapsed_ms: Some(300),
-            summary_preview: None,
-        };
-        assert!(matches!(
-            crate::app::acp_handler::child_observation::classify(&update, &make_agent(Some(child_sid))),
-            Some(crate::app::acp_handler::child_observation::ChildObservation::ContextTokens { tokens_used: 25000, .. })
-        ));
-    }
-
-    #[test]
-    fn child_observation_ignores_unprojected_event() {
+    fn child_unknown_event_returns_false() {
+        let child_sid = "child-1";
+        let mut app = make_app_with_agent("root-sess");
+        app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+        link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), std::time::Instant::now());
         let update = XaiSessionUpdate::MemoryFlushStarted;
-        assert!(crate::app::acp_handler::child_observation::classify(&update, &make_agent(Some("child-1"))).is_none());
+        assert!(!handle(make_ext_session_notification(child_sid, update), &mut app));
     }
 
     #[test]

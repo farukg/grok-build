@@ -4788,7 +4788,6 @@ mod tests {
     fn reconnect_restores_dashboard_peek_before_replacing_scrollback() {
         use crate::scrollback::block::RenderBlock;
         use crate::views::dashboard::{DashboardRowId, DashboardState};
-        use indexmap::IndexMap;
         let id = super::super::agent::AgentId(0);
         let mut agent = crate::test_util::make_agent_view(Some("sess-1"), "/work");
         agent
@@ -4797,7 +4796,7 @@ mod tests {
         agent.scrollback.prepare_layout(80, 24);
         agent.scrollback.set_selected(Some(0));
         agent.scrollback.set_scroll_offset(0);
-        let mut agents = IndexMap::new();
+        let mut agents = crate::app::session_views::SessionViews::new();
         agents.insert(id, agent);
         let mut dashboard = Some(DashboardState::new());
         dashboard

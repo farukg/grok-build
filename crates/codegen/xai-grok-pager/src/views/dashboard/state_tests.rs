@@ -6140,7 +6140,7 @@ fn location_picker_typed_path_no_match_uses_raw_query() {
 }
 
 fn agent(
-    agents: &indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
+    agents: &crate::app::session_views::SessionViews,
     id: AgentId,
 ) -> &crate::app::agent_view::AgentView {
     agents
@@ -6148,10 +6148,7 @@ fn agent(
         .unwrap_or_else(|| panic!("missing agent {id:?}"))
 }
 
-fn lease_fixture_agent() -> (
-    AgentId,
-    indexmap::IndexMap<AgentId, crate::app::agent_view::AgentView>,
-) {
+fn lease_fixture_agent() -> (AgentId, crate::app::session_views::SessionViews) {
     use crate::scrollback::block::RenderBlock;
     let id = AgentId(1);
     let mut agent = crate::test_util::make_agent_view(Some("s1"), "/tmp");
@@ -6166,7 +6163,7 @@ fn lease_fixture_agent() -> (
     agent.scrollback.prepare_layout(80, 24);
     agent.scrollback.set_selected(Some(0));
     agent.scrollback.set_scroll_offset(2);
-    let mut agents = indexmap::IndexMap::new();
+    let mut agents = crate::app::session_views::SessionViews::new();
     agents.insert(id, agent);
     (id, agents)
 }
@@ -6905,7 +6902,7 @@ fn workspace_identity_rebinds_selection_between_unloaded_and_loaded_rows() {
         }],
         data_version: 1,
     };
-    let mut agents = indexmap::IndexMap::new();
+    let mut agents = crate::app::session_views::SessionViews::new();
     let workspace = workspace_view(&snapshot);
     let unloaded = SessionIdResolver::from_agents_and_workspace(&agents, Some(&workspace));
     let workspace_row = DashboardRowId::Workspace {
@@ -6924,7 +6921,7 @@ fn workspace_identity_rebinds_selection_between_unloaded_and_loaded_rows() {
     assert_eq!(dashboard.selected, Some(loaded_row.clone()));
 
     let old = loaded;
-    agents.clear();
+    agents = crate::app::session_views::SessionViews::new();
     let new = SessionIdResolver::from_agents_and_workspace(&agents, Some(&workspace));
     dashboard.rebind_workspace_identities(&old, &new, &mut agents);
     assert_eq!(
@@ -6959,7 +6956,7 @@ fn workspace_identity_keeps_removed_selection_as_repair_anchor() {
         pin_rank: None,
         order_rank: None,
     });
-    let agents = indexmap::IndexMap::new();
+    let agents = crate::app::session_views::SessionViews::new();
     let old_workspace = workspace_view(&old_snapshot);
     let workspace = workspace_view(&snapshot);
     let old = SessionIdResolver::from_agents_and_workspace(&agents, Some(&old_workspace));
@@ -6967,7 +6964,7 @@ fn workspace_identity_keeps_removed_selection_as_repair_anchor() {
     let mut dashboard = DashboardState::new();
     dashboard.focus_row(old_row.clone());
 
-    dashboard.rebind_workspace_identities(&old, &new, &mut indexmap::IndexMap::new());
+    dashboard.rebind_workspace_identities(&old, &new, &mut crate::app::session_views::SessionViews::new());
 
     assert_eq!(dashboard.selected, Some(old_row));
 }
