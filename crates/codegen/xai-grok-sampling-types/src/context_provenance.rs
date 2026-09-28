@@ -7,7 +7,7 @@ pub fn classify_item(item: &ConversationItem) -> ContextCategory {
             SyntheticReason::Human | SyntheticReason::Unknown => ContextCategory::OtherRuntime,
             reason => category_of(reason),
         },
-        ConversationItem::User(user) => match user.synthetic_reason {
+        ConversationItem::User(user) => match &user.synthetic_reason {
             SyntheticReason::Human => ContextCategory::UserTurns,
             SyntheticReason::Unknown => ContextCategory::OtherRuntime,
             reason => category_of(reason),
