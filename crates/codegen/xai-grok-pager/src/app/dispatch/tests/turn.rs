@@ -1001,7 +1001,7 @@ fn cancel_turn_keeps_a_post_turn_plan_review() {
 
 /// An Idle parent with a TurnRunning overlay child must cancel the child session.
 #[test]
-fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
+fn child_esc_emits_session_cancel_for_child() {
     use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
@@ -1013,7 +1013,6 @@ fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
     link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     assert!(app.agents[&parent_id].session.state.is_idle());
-
     let effects = dispatch(Action::CancelTurn, &mut app);
 
     assert!(
