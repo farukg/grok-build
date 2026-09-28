@@ -123,7 +123,7 @@ use subagent_activity::{subagent_activity_label, sync_subagent_activity};
 use subagent_lifecycle::{
     LifecycleOrigin, classify_subagent_lifecycle, prepare_tui_subagent_lifecycle,
 };
-use child_observation::{ChildObservation, classify as classify_child_observation, observe_child};
+use child_observation::{classify as classify_child_observation, observe_child};
 use workflow_ingest::ingest_workflow_update;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -177,6 +177,25 @@ fn is_streaming_output(msg: &AcpClientMessage) -> bool {
         | AcpClientMessage::ExtNotification(_) => false,
     }
 }
+fn apply_session_notification_for_view(
+    app: &mut AppView,
+    id: AgentId,
+    update: acp::SessionUpdate,
+    meta: &mut NotificationMeta,
+) -> bool {
+    let is_active = is_matched_agent_active(app, id);
+    let stashed_adoption_pid = app.pending_running_adoptions.get(&id).map(|p| p.prompt_id.clone());
+    let Some(view) = app.agents.get_mut(&id) else { return false };
+    let is_child = matches!(view.role, crate::app::agent_view::AgentRole::Child(_));
+    let observation = is_child.then(|| classify_child_observation(&update, view)).flatten();
+    ack_prompt_from_update(view, meta);
+    let changed = view.session.handle_update(update, meta, &mut view.scrollback);
+    if let Some(observation) = observation {
+        observe_child(&mut app.agents, id, observation);
+    }
+    changed && is_active
+}
+
 fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
@@ -438,19 +457,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     mutated && is_active
                 }
                 Some(SessionMatch(id)) => {
-                    let is_active = is_matched_agent_active(app, id);
-                    let stashed_adoption_pid = app.pending_running_adoptions.get(&id).map(|p| p.prompt_id.clone());
-                    let update = notif.request.update;
-                    let child_view = app.agents.get_mut(&id).expect("matched session view exists");
-                    let outcome = apply_session_update(child_view, update.clone(), &mut meta, stashed_adoption_pid);
-                    let observation = matches!(child_view.role, crate::app::agent_view::AgentRole::Child(_))
-                        .then(|| classify_child_observation(&update, child_view))
-                        .flatten();
-                    drop(child_view);
-                    if let Some(observation) = observation {
-                        observe_child(&mut app.agents, id, observation);
-                    }
-                    outcome.changed && is_active
+                    apply_session_notification_for_view(app, id, notif.request.update, &mut meta)
                 }
                 None => {
                     tracing::debug!(
