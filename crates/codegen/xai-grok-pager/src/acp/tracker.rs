@@ -351,9 +351,10 @@ pub struct AcpUpdateTracker {
     /// Entry currently receiving AgentThoughtChunk deltas.
     /// None when agent isn't thinking.
     current_thinking: Option<EntryId>,
-    /// Tool calls in flight, keyed by ACP tool call ID string.
+    /// Tool calls in flight, keyed by ACP tool call ID.
     /// Stores the base ToolCall for field merging with ToolCallUpdate.
     pending_tools: HashMap<String, PendingTool>,
+    tool_context_ids: HashMap<EntryId, xai_grok_shell::session::ToolCallId>,
     /// ToolCallUpdates that arrived before their ToolCall (race condition).
     /// When the ToolCall arrives, we merge and create the entry immediately as completed.
     orphan_updates: HashMap<String, acp::ToolCallUpdate>,
@@ -430,6 +431,7 @@ struct PendingTool {
     /// block type briefly before the real kind arrives.
     entry_id: Option<EntryId>,
     base: acp::ToolCall,
+    context_id: xai_grok_shell::session::ToolCallId,
     /// Streaming UTF-8 decoder for incremental bash output deltas.
     utf8_decoder: Utf8Decoder,
     /// Stashed `started_at` from eager creation. The eagerly-created block is `ToolCallBlock::Other`.
@@ -594,9 +596,26 @@ impl AcpUpdateTracker {
             .get(tool_call_id)
             .and_then(|t| t.entry_id)
     }
+    pub fn context_tool_call_id_for_entry(&self, entry_id: EntryId) -> Option<xai_grok_shell::session::ToolCallId> {
+        self.tool_context_ids.get(&entry_id).cloned().or_else(|| self.pending_tools.values().find(|tool| tool.entry_id == Some(entry_id)).map(|tool| tool.context_id.clone()))
+    }
+    pub fn tool_call_ids_by_entry(&self) -> HashMap<EntryId, xai_grok_shell::session::ToolCallId> {
+        let mut ids = self.tool_context_ids.clone();
+        ids.extend(self.pending_tools.values().filter_map(|tool| tool.entry_id.map(|id| (id, tool.context_id.clone()))));
+        ids
+    }
+    pub fn remove_context_tool_call_ids(&mut self, entry_ids: &[EntryId]) {
+        for entry_id in entry_ids {
+            self.tool_context_ids.remove(entry_id);
+        }
+    }
     /// Called when an execute block is being swapped to a BgTask block.
     pub fn remove_pending_tool(&mut self, tool_call_id: &str) {
-        self.pending_tools.remove(tool_call_id);
+        if let Some(pending) = self.pending_tools.remove(tool_call_id)
+            && let Some(entry_id) = pending.entry_id
+        {
+            self.tool_context_ids.remove(&entry_id);
+        }
     }
     /// Tool_call_id of the currently running Execute tool, if any.
     /// Used by demotion (Ctrl+B) to know which tool to background.
@@ -918,6 +937,7 @@ impl AcpUpdateTracker {
         }
         scrollback.mark_structurally_dirty(survivor);
         scrollback.remove_entry(removed);
+        self.tool_context_ids.remove(&removed);
         self.pending_edit_hl.retain(|id| *id != removed);
         if !is_replay && !self.pending_edit_hl.contains(&survivor) {
             self.pending_edit_hl.push(survivor);
@@ -1246,7 +1266,8 @@ impl AcpUpdateTracker {
                 self.session_cwd.as_deref(),
                 &self.subagent_labels.borrow(),
             );
-            self.finish_completed_tool(block, scrollback, is_replay);
+            let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
+            self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
             return true;
         }
         let is_completed = matches!(
@@ -1259,7 +1280,8 @@ impl AcpUpdateTracker {
                 self.session_cwd.as_deref(),
                 &self.subagent_labels.borrow(),
             );
-            self.finish_completed_tool(block, scrollback, is_replay);
+            let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
+            self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
         } else {
             let block = tool_call_to_block(
                 &tc,
@@ -1269,10 +1291,12 @@ impl AcpUpdateTracker {
             let id = scrollback.push_block(block);
             scrollback.set_last_running(true);
             let started_at = Some(std::time::Instant::now());
+            self.tool_context_ids.insert(id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
             self.pending_tools.insert(
-                tc_id,
+                tc_id.clone(),
                 PendingTool {
                     entry_id: Some(id),
+                    context_id: xai_grok_shell::session::ToolCallId::new(tc_id.as_str()),
                     base: tc,
                     utf8_decoder: Utf8Decoder::default(),
                     started_at,
@@ -1340,7 +1364,8 @@ impl AcpUpdateTracker {
                             self.session_cwd.as_deref(),
                             &self.subagent_labels.borrow(),
                         );
-                        self.finish_completed_tool(block, scrollback, is_replay);
+                        let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
+                        self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id_str.as_str()));
                         return true;
                     }
                 }
@@ -1379,6 +1404,7 @@ impl AcpUpdateTracker {
                     let desc = extract_raw_field(&pending.base, "description");
                     if drop_placeholder {
                         if let Some(id) = pending.entry_id.take() {
+                            self.tool_context_ids.remove(&id);
                             scrollback.remove_entry(id);
                         }
                         Some((tc_id.clone(), desc, false))
@@ -1424,6 +1450,7 @@ impl AcpUpdateTracker {
                         let id = scrollback.push_block(block);
                         scrollback.set_last_running(true);
                         pending.entry_id = Some(id);
+                        self.tool_context_ids.insert(id, pending.context_id.clone());
                         id
                     };
                     if let Some(bash_output) = bash_output {
@@ -1455,12 +1482,14 @@ impl AcpUpdateTracker {
         }
         if let Some(pending) = self.pending_tools.remove(&tc_id) {
             let merged = merge_tool_call_update(pending.base, tcu);
+            let context_id = pending.context_id.clone();
             let block = tool_call_to_block(
                 &merged,
                 self.session_cwd.as_deref(),
                 &self.subagent_labels.borrow(),
             );
             if let Some(entry_id) = pending.entry_id {
+                self.tool_context_ids.insert(entry_id, context_id);
                 if scrollback.replace_tool_block(entry_id, block, pending.started_at)
                     && let Some(entry) = scrollback.get_by_id(entry_id)
                 {
@@ -1469,7 +1498,8 @@ impl AcpUpdateTracker {
                 scrollback.finish_running(entry_id);
                 self.try_coalesce_edit(entry_id, scrollback, is_replay);
             } else {
-                self.finish_completed_tool(block, scrollback, is_replay);
+                let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
+                self.tool_context_ids.insert(entry_id, context_id);
             }
             true
         } else {
