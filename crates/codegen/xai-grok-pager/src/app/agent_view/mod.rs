@@ -192,6 +192,7 @@ pub(in crate::app) use subagent_takeover::{
 mod task_icon_mouse_tests;
 #[cfg(test)]
 mod task_status_tests;
+mod context_removal;
 mod timeline_panel;
 mod viewer;
 mod workflows_overlay;
@@ -1466,6 +1467,7 @@ pub struct AgentView {
     /// Effects queued by input handlers that cannot return `InputOutcome::Action`.
     /// Drained by `AppView.handle_input` after each event.
     pub(crate) pending_effects: Vec<super::actions::Effect>,
+    pub(crate) pending_removed_context_items: Vec<(acp::SessionId, Vec<xai_chat_state::ContextItemRef>)>,
     /// In-flight deferred clipboard attachment probes for this prompt. A send while `> 0` is stashed (see `deferred_send`) so a paste-then-immediate-send never builds content blocks before the image attaches.
     pub(crate) paste_probe_in_flight: usize,
     /// A prompt send / interject deferred until the in-flight paste probe(s)

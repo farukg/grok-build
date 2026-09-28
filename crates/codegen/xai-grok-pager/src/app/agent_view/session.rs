@@ -428,6 +428,7 @@ impl AgentView {
             last_turn_summary: None,
             last_turn_summary_gen: 0,
             pending_effects: Vec::new(),
+            pending_removed_context_items: Vec::new(),
             paste_probe_in_flight: 0,
             deferred_send: None,
             pending_turn_end_reconcile: None,

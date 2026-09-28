@@ -2,6 +2,7 @@
 //! This module takes [`Effect`] values produced by [`super::dispatch`] and spawns them as async tasks on a [`JoinSet`].
 //! When tasks complete, the event loop converts their output into [`TaskResult`] and feeds it back through dispatch.
 mod helpers;
+mod remove_context_items;
 mod session_list;
 use super::actions;
 use super::worktree_session;
@@ -4755,6 +4756,12 @@ pub(crate) fn execute(
                         }
                     }
                 });
+        }
+        Effect::RemoveContextItems { session_id, items } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                remove_context_items::remove_context_items(session_id, items, &tx).await
+            });
         }
         Effect::RewindExecute { agent_id, session_id, target_prompt_index } => {
             let tx = acp_tx.clone();

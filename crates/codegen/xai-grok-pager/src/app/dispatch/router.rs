@@ -1057,6 +1057,12 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             subagent_id,
             prompt,
         } => dispatch_resume_subagent(app, subagent_id, prompt),
+        Action::RemoveContextItems(items) => {
+            if let Some(agent) = get_active_agent_mut(app) {
+                agent.dispatch_remove_context_items(items);
+            }
+            vec![]
+        }
         Action::CancelScheduledTask(task_id) => dispatch_cancel_scheduled_task(app, task_id),
         Action::DemoteToBackground => dispatch_demote_to_background(app),
         Action::RequestBundleStatus => vec![Effect::FetchBundleStatus],
