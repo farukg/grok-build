@@ -2500,27 +2500,6 @@ pub(crate) mod test_fixtures {
             ScrollbackState::new(),
         )
     }
-    impl AgentView {
-        /// Insert `child` the way a spawn does, linked (unaddressable) to this view's own session id.
-        pub(crate) fn insert_test_child(&mut self, child_sid: String, child: Box<AgentView>) {
-            let parent_sid = self
-                .session
-                .session_id
-                .clone()
-                .unwrap_or_else(|| acp::SessionId::new("parent"));
-            self.insert_subagent_view(
-                child_sid,
-                child,
-                super::ChildLink::unaddressable(parent_sid),
-            );
-        }
-    }
-    /// An idle parent with one idle child inserted under `child_sid`.
-    pub(crate) fn parent_with_child(child_sid: &str) -> AgentView {
-        let mut parent = make_agent();
-        parent.insert_test_child(child_sid.to_owned(), Box::new(make_agent()));
-        parent
-    }
     /// Interject chord for non–VS Code family tests (`Ctrl+Enter`).
     pub fn force_interject_key() -> KeyEvent {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
