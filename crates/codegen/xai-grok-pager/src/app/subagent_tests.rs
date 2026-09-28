@@ -4,7 +4,8 @@ use crate::acp::meta::NotificationMeta;
 use crate::acp::model_state::ModelState;
 use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::agent::{AgentId, AgentSession, AgentState};
-use crate::app::agent_view::AgentView;
+use crate::app::agent_view::{AgentRole, ChildLink, AgentView};
+use crate::app::session_views::SessionViews;
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::state::ScrollbackState;
 use agent_client_protocol as acp;
@@ -52,6 +53,26 @@ fn make_min_child_view() -> AgentView {
         created_via_new: false,
     };
     AgentView::new(session, ScrollbackState::new())
+}
+fn session_views(sid: &str, mut child: AgentView, info: SubagentInfo) -> (SessionViews, AgentId) {
+    let parent_id = AgentId(0);
+    let child_id = AgentId(1);
+    let mut parent = make_min_child_view();
+    parent.session.id = parent_id;
+    parent.session.session_id = Some(acp::SessionId::new("parent"));
+    child.session.id = child_id;
+    child.session.session_id = Some(acp::SessionId::new(sid));
+    child.role = AgentRole::Child(ChildLink {
+        parent: parent_id,
+        parent_session_id: acp::SessionId::new("parent"),
+        subagent_id: sid.to_owned(),
+        started_at: std::time::Instant::now(),
+    });
+    parent.subagent_sessions.insert(sid.to_owned(), info);
+    let mut views = SessionViews::new();
+    views.insert(parent_id, parent);
+    views.insert(child_id, child);
+    (views, child_id)
 }
 fn seed_tool_call(view: &mut AgentView) {
     view.session.tracker.handle_update(
