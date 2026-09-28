@@ -44,7 +44,7 @@
 
     #[test]
     fn acp_chunk_for_subagent_routes_through_parent() {
-        // Subagent (child) chunk must land in the parent's `subagent_views[child_sid]` even when a different agent is currently active
+        // A child session is independently routed even when a different agent is currently active
         let mut app = make_app_with_agent("sess-A");
         insert_agent(&mut app, AgentId(1), Some("sess-B"));
         switch_active_to(&mut app, AgentId(1));
