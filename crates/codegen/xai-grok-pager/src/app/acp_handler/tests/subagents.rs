@@ -989,7 +989,7 @@
                 "resume spawn must leave the transcript NeedsReplay for the first open"
             );
 
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
                 child_scrollback_tool_call_count(&app, child_sid),
                 1,
@@ -1046,7 +1046,7 @@
                 );
             }
 
-            open_child_view(&mut app, &child_sids.first().unwrap_or_else(|| panic!("missing index")));
+            open_child_view(&mut app, child_sids.first().unwrap_or_else(|| panic!("missing index")));
             assert_eq!(
                 crate::app::subagent::test_support::transcript_reads(),
                 reads_before + 1,
@@ -1105,7 +1105,7 @@
                 "the inherited tool call must be read before the live block lands"
             );
 
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
                 child_scrollback_tool_call_count(&app, child_sid),
                 1,
@@ -1160,7 +1160,7 @@
                 "finished subagent must be Idle after resume, not TurnRunning"
             );
 
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
                 child_scrollback_tool_call_count(&app, child_sid),
                 1,
@@ -1199,7 +1199,7 @@
             );
 
             // Open it fullscreen before any transcript exists: the read finds nothing, so the view stays empty
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 0);
 
             // The inherited transcript flushes, then the child finishes while still open, having streamed no live block
@@ -1954,9 +1954,9 @@
                 0,
                 "spawn must defer the replay to first open"
             );
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 1);
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
                 child_scrollback_tool_call_count(&app, child_sid),
                 1,
@@ -1994,7 +1994,7 @@
             );
 
             // The retry on open stays hinted-only for a live child, so the foreign-cwd transcript is still not read
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
                 child_scrollback_tool_call_count(&app, child_sid),
                 0,
@@ -2043,7 +2043,7 @@
                 "a resumed spawn must leave the transcript NeedsReplay"
             );
 
-            open_child_view(&mut app, &child_sid);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
                 child_scrollback_tool_call_count(&app, child_sid),
                 1,

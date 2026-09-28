@@ -613,7 +613,8 @@ pub(super) fn handle_session_notification_with_origin(
             if let Some(child) = lifecycle_child {
                 child_follow_up = Some(ChildViewFollowUp::Restarted {
                     child,
-                    tracker: is_new_attempt.then(|| AcpUpdateTracker::sharing_labels(labels)),
+                    tracker: is_new_attempt
+                        .then(|| Box::new(AcpUpdateTracker::sharing_labels(labels))),
                 });
             } else {
                 let child_session = AgentSession {
@@ -1470,7 +1471,7 @@ enum ChildViewFollowUp {
     Spawned(Box<AgentView>),
     Restarted {
         child: AgentId,
-        tracker: Option<AcpUpdateTracker>,
+        tracker: Option<Box<AcpUpdateTracker>>,
     },
     Progressed {
         child: AgentId,
@@ -1494,7 +1495,7 @@ fn apply_child_view_follow_up(app: &mut AppView, follow_up: ChildViewFollowUp) {
             if let Some(child_view) = app.agents.get_mut(&child) {
                 child_view.session.state = AgentState::TurnRunning;
                 if let Some(tracker) = tracker {
-                    child_view.session.tracker = tracker;
+                    child_view.session.tracker = *tracker;
                 }
             }
         }
