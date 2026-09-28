@@ -28,7 +28,6 @@ mod prompt_ack;
 mod queue;
 mod rewind;
 mod rewind_remove;
-pub(super) use rewind_remove::handle_remove_context_items_complete;
 mod router;
 mod session;
 mod settings;

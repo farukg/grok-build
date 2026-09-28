@@ -1467,7 +1467,10 @@ pub struct AgentView {
     /// Effects queued by input handlers that cannot return `InputOutcome::Action`.
     /// Drained by `AppView.handle_input` after each event.
     pub(crate) pending_effects: Vec<super::actions::Effect>,
-    pub(crate) pending_removed_context_items: Vec<(acp::SessionId, Vec<xai_chat_state::ContextItemRef>)>,
+    pub(crate) pending_removed_context_items: Vec<(
+        agent_client_protocol::SessionId,
+        Vec<xai_grok_shell::session::ContextItemRef>,
+    )>,
     /// In-flight deferred clipboard attachment probes for this prompt. A send while `> 0` is stashed (see `deferred_send`) so a paste-then-immediate-send never builds content blocks before the image attaches.
     pub(crate) paste_probe_in_flight: usize,
     /// A prompt send / interject deferred until the in-flight paste probe(s)

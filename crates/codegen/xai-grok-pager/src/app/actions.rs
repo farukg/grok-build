@@ -412,7 +412,7 @@ pub enum Action {
     KillSubagent(String),
     /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
     ResumeSubagent { subagent_id: String, prompt: String },
-    RemoveContextItems(Vec<xai_chat_state::ContextItemRef>),
+    RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
     DemoteToBackground,
@@ -2182,7 +2182,7 @@ pub enum Effect {
     },
     RemoveContextItems {
         session_id: acp::SessionId,
-        items: Vec<xai_chat_state::ContextItemRef>,
+        items: Vec<xai_grok_shell::session::ContextItemRef>,
     },
     /// Fetch billing/credit usage from the agent's `x.ai/billing` extension.
     /// When `silent` is true the result updates `credit_balance` without pushing a system message into scrollback.
@@ -3144,7 +3144,7 @@ pub enum TaskResult {
     },
     RemoveContextItemsComplete {
         session_id: acp::SessionId,
-        outcome: Result<xai_grok_shell::extensions::remove_items::RemoveContextItemsOutcome, String>,
+        outcome: Result<xai_grok_shell::session::RemoveContextItemsOutcome, String>,
     },
     /// Billing data fetched from the agent.
     BillingFetched {

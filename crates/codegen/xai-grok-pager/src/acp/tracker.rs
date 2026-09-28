@@ -354,7 +354,7 @@ pub struct AcpUpdateTracker {
     /// Tool calls in flight, keyed by ACP tool call ID.
     /// Stores the base ToolCall for field merging with ToolCallUpdate.
     pending_tools: HashMap<String, PendingTool>,
-    tool_context_ids: HashMap<EntryId, xai_chat_state::ToolCallId>,
+    tool_context_ids: HashMap<EntryId, xai_grok_shell::session::ToolCallId>,
     /// ToolCallUpdates that arrived before their ToolCall (race condition).
     /// When the ToolCall arrives, we merge and create the entry immediately as completed.
     orphan_updates: HashMap<String, acp::ToolCallUpdate>,
@@ -431,7 +431,7 @@ struct PendingTool {
     /// block type briefly before the real kind arrives.
     entry_id: Option<EntryId>,
     base: acp::ToolCall,
-    context_id: xai_chat_state::ToolCallId,
+    context_id: xai_grok_shell::session::ToolCallId,
     /// Streaming UTF-8 decoder for incremental bash output deltas.
     utf8_decoder: Utf8Decoder,
     /// Stashed `started_at` from eager creation. The eagerly-created block is `ToolCallBlock::Other`.
@@ -596,10 +596,10 @@ impl AcpUpdateTracker {
             .get(tool_call_id)
             .and_then(|t| t.entry_id)
     }
-    pub fn context_tool_call_id_for_entry(&self, entry_id: EntryId) -> Option<xai_chat_state::ToolCallId> {
+    pub fn context_tool_call_id_for_entry(&self, entry_id: EntryId) -> Option<xai_grok_shell::session::ToolCallId> {
         self.tool_context_ids.get(&entry_id).cloned().or_else(|| self.pending_tools.values().find(|tool| tool.entry_id == Some(entry_id)).map(|tool| tool.context_id.clone()))
     }
-    pub fn tool_call_ids_by_entry(&self) -> HashMap<EntryId, xai_chat_state::ToolCallId> {
+    pub fn tool_call_ids_by_entry(&self) -> HashMap<EntryId, xai_grok_shell::session::ToolCallId> {
         let mut ids = self.tool_context_ids.clone();
         ids.extend(self.pending_tools.values().filter_map(|tool| tool.entry_id.map(|id| (id, tool.context_id.clone()))));
         ids
@@ -1267,7 +1267,7 @@ impl AcpUpdateTracker {
                 &self.subagent_labels.borrow(),
             );
             let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
-            self.tool_context_ids.insert(entry_id, xai_chat_state::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
             return true;
         }
         let is_completed = matches!(
@@ -1281,7 +1281,7 @@ impl AcpUpdateTracker {
                 &self.subagent_labels.borrow(),
             );
             let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
-            self.tool_context_ids.insert(entry_id, xai_chat_state::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
         } else {
             let block = tool_call_to_block(
                 &tc,
@@ -1291,12 +1291,12 @@ impl AcpUpdateTracker {
             let id = scrollback.push_block(block);
             scrollback.set_last_running(true);
             let started_at = Some(std::time::Instant::now());
-            self.tool_context_ids.insert(id, xai_chat_state::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids.insert(id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
             self.pending_tools.insert(
                 tc_id.clone(),
                 PendingTool {
                     entry_id: Some(id),
-                    context_id: xai_chat_state::ToolCallId::new(tc_id.as_str()),
+                    context_id: xai_grok_shell::session::ToolCallId::new(tc_id.as_str()),
                     base: tc,
                     utf8_decoder: Utf8Decoder::default(),
                     started_at,
@@ -1365,7 +1365,7 @@ impl AcpUpdateTracker {
                             &self.subagent_labels.borrow(),
                         );
                         let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
-                        self.tool_context_ids.insert(entry_id, xai_chat_state::ToolCallId::new(tc_id_str.as_str()));
+                        self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id_str.as_str()));
                         return true;
                     }
                 }
