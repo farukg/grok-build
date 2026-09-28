@@ -177,43 +177,25 @@ fn is_streaming_output(msg: &AcpClientMessage) -> bool {
         | AcpClientMessage::ExtNotification(_) => false,
     }
 }
-fn apply_session_notification_for_view(
-    app: &mut AppView,
-    id: AgentId,
-    update: acp::SessionUpdate,
-    meta: &mut NotificationMeta,
-) -> bool {
-    let is_active = is_matched_agent_active(app, id);
-    let stashed_adoption_pid = app.pending_running_adoptions.get(&id).map(|p| p.prompt_id.clone());
-    let Some(view) = app.agents.get_mut(&id) else { return false };
-    let is_child = matches!(view.role, crate::app::agent_view::AgentRole::Child(_));
-    let observation = is_child.then(|| classify_child_observation(&update, view)).flatten();
-    ack_prompt_from_update(view, meta);
-    let changed = view.session.handle_update(update, meta, &mut view.scrollback);
-    if let Some(observation) = observation {
-        observe_child(&mut app.agents, id, observation);
-    }
-    changed && is_active
-}
-
 fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch(id)) => {
-                    if matches!(app.agents.get(&id).map(|view| &view.role), Some(crate::app::agent_view::AgentRole::Child(_))) {
-                        apply_session_notification_for_view(app, id, notif.request.update, &mut meta)
-                    } else {
                     let is_active = is_matched_agent_active(app, id);
                     let stashed_adoption_pid = app
                         .pending_running_adoptions
                         .get(&id)
                         .map(|p| p.prompt_id.clone());
+                    let update = notif.request.update;
                     let agent = app
                         .agents
                         .get_mut(&id)
                         .expect("find_session_match returned an existing AgentId");
+                    let child_observation = matches!(agent.role, crate::app::agent_view::AgentRole::Child(_))
+                        .then(|| classify_child_observation(&update, agent))
+                        .flatten();
                     let dedup_drop = !meta.is_replay
                         && meta.event_seq.is_some_and(|seq| {
                             agent.last_applied_event_seq.is_some_and(|last| seq <= last)
@@ -363,7 +345,6 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             ));
                         }
                         let had_activity_before = agent.session.tracker.activity().is_some();
-                        let update = notif.request.update;
                         let (is_visible_kind, is_bash) = if meta.is_replay {
                             (
                                 crate::acp::tracker::is_agent_output_update(&update),
@@ -440,6 +421,10 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         advance_reconnect_cursor(agent, &mut meta);
                         !meta.is_replay && !agent.session.loading_replay
                     };
+                    drop(agent);
+                    if let Some(observation) = child_observation {
+                        observe_child(&mut app.agents, id, observation);
+                    }
                     if plan_mode_modal_refresh_needed {
                         crate::app::dispatch::refresh_open_settings_modals(app);
                     }
@@ -458,7 +443,6 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         app.pending_effects.extend(flush);
                     }
                     mutated && is_active
-                    }
                 }
                 None => {
                     tracing::debug!(

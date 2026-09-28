@@ -55,8 +55,14 @@
             parent
                 .subagent_sessions
                 .insert(child_sid.into(), make_subagent_info(child_sid));
-            parent
-                .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+            let mut child = make_agent(Some(child_sid));
+            child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
+                parent: AgentId(0),
+                parent_session_id: agent_client_protocol::SessionId::new("sess-A"),
+                subagent_id: child_sid.to_string(),
+                started_at: std::time::Instant::now(),
+            });
+            app.agents.insert(AgentId(2), child);
         }
 
         let affected = handle(
@@ -64,15 +70,11 @@
             &mut app,
         );
 
-        let parent = app.agents.get(&AgentId(0)).unwrap();
-        let child_view = parent
-            .subagent_views
-            .get(child_sid)
-            .expect("child view must still exist");
+        let child_view = app.agents.get(&AgentId(2)).unwrap();
         assert_eq!(
             agent_message_text(child_view),
             "hello from subagent",
-            "subagent chunk must land in subagent_views[child_sid]"
+            "subagent chunk must land in its top-level session view"
         );
         assert!(
             !affected,
