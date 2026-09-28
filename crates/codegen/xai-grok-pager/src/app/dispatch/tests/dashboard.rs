@@ -8249,3 +8249,45 @@ fn stop_readiness_predicate_matches_the_built_plan() {
     assert!(!DashboardStopPlan::would_stop_anything(agent));
     agree(agent);
 }
+/// A child session draws the normal session view: its own composer, and its kind from the parent's row in the header.
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn child_renders_composer_and_kind_label() {
+    use crate::app::session_views::test_support::link_child;
+    let mut app = three_sessions_opened_directly();
+    let parent = AgentId(0);
+    let child = AgentId(app.next_agent_id);
+    app.next_agent_id += 1;
+    let mut info = crate::app::subagent::test_support::make_info();
+    info.child_session_id = "child-render".into();
+    info.attempt.persona = Some("explorer".into());
+    info.transcript = crate::app::subagent::ChildTranscript::DiskBacked;
+    app.agents
+        .get_mut(&parent)
+        .unwrap()
+        .subagent_sessions
+        .insert("child-render".into(), info);
+    let view = AgentView::new(
+        make_test_agent_session(&app, child, "child-render"),
+        ScrollbackState::new(),
+    );
+    link_child(&mut app.agents, parent, child, view, std::time::Instant::now());
+    switch_to_agent(&mut app, child, SwitchCause::Navigate);
+    app.agents.get_mut(&child).unwrap().prompt.set_text("child draft text");
+    let (mut terminal, _frames) = crate::test_util::test_terminal();
+    terminal
+        .resize(ratatui::layout::Rect::new(0, 0, 140, 30))
+        .expect("channel-backed terminal resizes");
+    app.draw(&mut terminal);
+    let buf = terminal.completed_buffer();
+    let rows: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
+                .collect()
+        })
+        .collect();
+    assert!(rows.iter().any(|row| row.contains("child draft text")), "composer: {rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("Explorer")), "kind label: {rows:#?}");
+    assert!(app.agents.get(&child).unwrap().pane_areas.prompt.height > 0);
+}
