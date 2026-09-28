@@ -215,10 +215,7 @@
             .get(&AgentId(0))
             .unwrap_or_else(|| panic!("missing root agent"));
         assert_eq!(QueueMutation::PerRowKind, root.queue.mutation());
-        let child = root
-            .subagent_views
-            .get("child-1")
-            .unwrap_or_else(|| panic!("missing child view"));
+        let child = test_subagent(&app, "child-1");
         assert_eq!(QueueMutation::ReadOnly, child.queue.mutation());
     }
 
@@ -255,7 +252,7 @@
                 .count()
         };
         let footer_count = |app: &crate::app::app_view::AppView| {
-            count_turn_markers(app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("child-bg").unwrap_or_else(|| panic!("missing map entry")))
+            count_turn_markers(test_subagent(app, "child-bg"))
         };
         assert_eq!(terminal_rows(&app), 1, "first finish appends one terminal row");
         assert_eq!(footer_count(&app), 1, "first finish appends one footer");
@@ -304,13 +301,7 @@
         ));
         // Seed an intermediate turn marker, then later content, then finalize.
         {
-            let child = app
-                .agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .subagent_views
-                .get_mut("child-multi")
-                .unwrap();
+            let child = app.agents.get_mut(&AgentId(1)).unwrap();
             child
                 .scrollback
                 .push_block(RenderBlock::session_event(SessionEvent::TurnCompleted {
@@ -418,16 +409,12 @@
             );
         }
 
-        let agent = app.agents.get(&AgentId(0)).unwrap();
-        assert_eq!(
-            agent.subagent_views.len(),
-            SUBAGENTS,
-            "every spawn must have created a child view (the leak's unit)"
-        );
-        let daemons = agent
-            .subagent_views
-            .values()
-            .filter(|v| v.prompt.history_search.daemon_built())
+        let children = app.agents.children_of(AgentId(0));
+        assert_eq!(children.len(), SUBAGENTS, "every spawn inserts one child session view");
+        let daemons = children
+            .iter()
+            .filter_map(|id| app.agents.get(id))
+            .filter(|view| view.prompt.history_search.daemon_built())
             .count();
         assert_eq!(
             daemons, 0,
@@ -460,10 +447,13 @@
             .expect("SubagentSpawned must register subagent_sessions");
         assert_eq!(info.description.as_ref(), "scan src/");
         assert_eq!(info.subagent_type.as_ref(), "explore");
-        assert!(
-            agent.subagent_views.contains_key(child_sid),
-            "SubagentSpawned must create subagent_views eagerly"
-        );
+        assert!(matches!(
+            &test_subagent(&app, child_sid).role,
+            crate::app::agent_view::AgentRole::Child(link)
+                if link.parent == AgentId(0)
+                    && link.parent_session_id == acp::SessionId::new("sess-parent")
+                    && link.subagent_id == child_sid
+        ));
         let entry_id = info
             .attempt.scrollback_entry_id
             .expect("spawn must stash scrollback_entry_id on SubagentInfo");
@@ -649,7 +639,7 @@
             .unwrap()
             .scrollback
             .remove_entry(entry_id);
-        let first_view = app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("child-live-duplicate").unwrap_or_else(|| panic!("missing map entry"))
+        let first_view = test_subagent(&app, "child-live-duplicate")
             .as_ref() as *const AgentView;
 
         let duplicate = make_ext_session_notification(
@@ -661,7 +651,7 @@
         let agent = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry"));
         assert!(agent.scrollback.is_empty());
         assert_eq!(
-            agent.subagent_views.get("child-live-duplicate").unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView,
+            test_subagent(&app, "child-live-duplicate") as *const AgentView,
             first_view,
             "live duplicate spawn must not replace the child view"
         );
@@ -694,14 +684,13 @@
         };
 
         assert!(handle_ext_notification(&spawn(), &mut app));
-        let first_view = app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("workflow-child").unwrap_or_else(|| panic!("missing map entry"))
-            .as_ref() as *const AgentView;
+        let first_view = test_subagent(&app, "workflow-child") as *const AgentView;
         assert!(!handle_ext_notification(&spawn(), &mut app));
 
         let agent = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry"));
         assert!(agent.scrollback.is_empty());
         assert_eq!(
-            agent.subagent_views.get("workflow-child").unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView,
+            test_subagent(&app, "workflow-child") as *const AgentView,
             first_view,
             "duplicate replay must not replace the workflow child's AgentView"
         );
