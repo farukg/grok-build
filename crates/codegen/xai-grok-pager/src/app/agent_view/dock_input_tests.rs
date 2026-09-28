@@ -443,15 +443,12 @@ fn clicking_hover_stop_kills_subagent_but_clicking_row_opens_it() {
         outcome,
         InputOutcome::Action(Action::KillSubagent(id)) if id == "sa-child-1"
     ));
-    assert!(agent.active_subagent.is_none());
-
     let outcome = agent.handle_mouse(&mouse(
         MouseEventKind::Down(MouseButton::Left),
         agent.pane_areas.dock.x + 5,
         row_y,
     ));
-    assert!(matches!(outcome, InputOutcome::Changed));
-    assert_eq!(agent.active_subagent.as_deref(), Some("child-1"));
+    assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(sid)) if sid == "child-1"));
 }
 
 #[test]
@@ -599,7 +596,7 @@ fn pending_kill_subagent_has_no_clickable_stop() {
     assert!(agent.dock_stop_button.is_none());
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), right, row));
     assert!(matches!(outcome, InputOutcome::Changed));
-    assert_eq!(agent.active_subagent.as_deref(), Some("child-1"));
+    assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(sid)) if sid == "child-1"));
 }
 
 #[test]
@@ -621,7 +618,6 @@ fn stop_click_uses_current_row_when_rows_change_after_hover() {
         ))
     );
     agent.subagent_sessions.remove("child-1");
-    agent.subagent_views.remove("child-1");
     cache_stop_button(&mut agent);
 
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
@@ -650,7 +646,6 @@ fn stale_stop_click_does_not_kill_the_replacement_row() {
         ))
     );
     agent.subagent_sessions.remove("child-1");
-    agent.subagent_views.remove("child-1");
 
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
     assert!(
@@ -713,7 +708,6 @@ fn every_visible_stop_column_dispatches_and_adjacent_click_opens_row() {
                 y,
             ));
             assert!(matches!(outcome, InputOutcome::Changed));
-            assert_eq!(agent.active_subagent.as_deref(), Some("child-1"));
         }
     }
 }
@@ -741,7 +735,7 @@ fn occluded_stop_click_does_not_fall_through_to_row_activation() {
         stop.y,
     ));
     assert!(matches!(outcome, InputOutcome::Changed));
-    assert!(agent.active_subagent.is_none());
+    assert!(matches!(outcome, InputOutcome::Changed));
 }
 
 #[test]
@@ -1483,10 +1477,9 @@ fn click_opens_a_linked_loop_and_ignores_an_unlinked_one() {
     );
 
     let outcome = agent.handle_dock_key(&key(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(matches!(outcome, InputOutcome::Changed));
-    assert_eq!(agent.active_subagent.as_deref(), Some("child-1"));
+    assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(sid)) if sid == "child-1"));
 
-    agent.active_subagent = None;
+
     agent.active_pane = AgentPane::Dock;
     agent
         .session
@@ -1496,7 +1489,6 @@ fn click_opens_a_linked_loop_and_ignores_an_unlinked_one() {
         .last_subagent_id = None;
     let outcome = agent.handle_dock_key(&key(KeyCode::Enter, KeyModifiers::NONE));
     assert!(matches!(outcome, InputOutcome::Unchanged));
-    assert!(agent.active_subagent.is_none());
 }
 
 #[test]
