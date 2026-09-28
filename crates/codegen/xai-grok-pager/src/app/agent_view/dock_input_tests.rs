@@ -29,10 +29,6 @@ fn insert_running_subagent(agent: &mut AgentView, child_session_id: &str) {
     agent
         .subagent_sessions
         .insert(child_session_id.to_string(), info);
-    agent.insert_test_child(
-        child_session_id.to_string(),
-        Box::new(super::test_fixtures::make_agent()),
-    );
 }
 
 fn insert_finished_subagent(agent: &mut AgentView, child_session_id: &str) {
