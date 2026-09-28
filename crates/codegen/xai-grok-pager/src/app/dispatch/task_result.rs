@@ -20,7 +20,7 @@ use super::prompt::{
     handle_prompt_response, handle_suggestion_debounce_expired,
 };
 use super::queue::push_and_page_flip;
-use super::handle_remove_context_items_complete;
+use super::rewind_remove::handle_remove_context_items_complete;
 use super::rewind::{
     dispatch_rewind_success, handle_rewind_execute_failed, handle_rewind_points_loaded,
 };

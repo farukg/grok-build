@@ -3,7 +3,7 @@ use xai_acp_lib::acp_send;
 
 pub(super) async fn remove_context_items(
     session_id: acp::SessionId,
-    items: Vec<xai_chat_state::ContextItemRef>,
+    items: Vec<xai_grok_shell::session::ContextItemRef>,
     tx: &xai_acp_lib::AcpAgentTx,
 ) -> crate::app::actions::TaskResult {
     use crate::app::actions::TaskResult;
