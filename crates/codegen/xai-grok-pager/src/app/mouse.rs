@@ -627,10 +627,9 @@ impl AgentView {
                                         .iter()
                                         .find(|(_, info)| info.subagent_id.as_ref() == sid.as_str())
                                         .map(|(k, _)| k.clone())
-                                        && self.subagent_views.contains_key(&child_sid)
+                                        && self.subagent_sessions.contains_key(&child_sid)
                                     {
-                                        self.open_subagent_fullscreen(child_sid);
-                                        return InputOutcome::Changed;
+                                        return InputOutcome::Action(Action::OpenSession(child_sid));
                                     }
                                 }
                                 TaskEntryId::Scheduled(tid) => {
@@ -646,10 +645,9 @@ impl AgentView {
                                                 info.subagent_id.as_ref() == sid.as_str()
                                             })
                                             .map(|(k, _)| k.clone())
-                                        && self.subagent_views.contains_key(&child_sid)
+                                        && self.subagent_sessions.contains_key(&child_sid)
                                     {
-                                        self.open_subagent_fullscreen(child_sid);
-                                        return InputOutcome::Changed;
+                                        return InputOutcome::Action(Action::OpenSession(child_sid));
                                     }
                                 }
                                 TaskEntryId::Workflow(_) => {}
@@ -661,13 +659,12 @@ impl AgentView {
                             mouse.row,
                             self.pane_areas.tasks,
                         );
-                        if is_open_child_click(mouse.modifiers) {
-                            let selected =
-                                self.tasks.selected_child_session_id().map(str::to_owned);
-                            if self.open_child_from_click(selected) {
-                                self.last_bg_click = None;
-                                return InputOutcome::Changed;
-                            }
+                        if is_open_child_click(mouse.modifiers)
+                            && let Some(child_sid) = self.tasks.selected_child_session_id()
+                            && self.subagent_sessions.contains_key(child_sid)
+                        {
+                            self.last_bg_click = None;
+                            return InputOutcome::Action(Action::OpenSession(child_sid.to_owned()));
                         }
                         if let Some(group) = self.tasks.selected_header_group() {
                             self.tasks.toggle_group(group);
@@ -685,11 +682,10 @@ impl AgentView {
                                 return InputOutcome::Changed;
                             }
                             if let Some(child_sid) = self.tasks.selected_child_session_id()
-                                && self.subagent_views.contains_key(child_sid)
+                                && self.subagent_sessions.contains_key(child_sid)
                             {
-                                self.open_subagent_fullscreen(child_sid.to_string());
                                 self.last_bg_click = None;
-                                return InputOutcome::Changed;
+                                return InputOutcome::Action(Action::OpenSession(child_sid.to_string()));
                             }
                             if let Some(crate::views::tasks_pane::TaskEntry::Workflow {
                                 name,
