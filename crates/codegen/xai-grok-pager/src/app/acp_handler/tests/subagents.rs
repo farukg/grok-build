@@ -1317,7 +1317,7 @@
                 self.agent_mut().close_subagent_fullscreen();
             }
 
-            /// Deliver a live ACP update on the child's own session id (`SessionMatch::Child`).
+            /// Deliver a live ACP update on the child's own session id.
             fn live_child_update(&mut self, update: acp::SessionUpdate) {
                 let (tx, _rx) = tokio::sync::oneshot::channel();
                 let request =

@@ -1048,7 +1048,7 @@
         let mut app = make_app_with_agent("root-sess");
         app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
         link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), std::time::Instant::now());
-        let _ = handle(make_ext_session_notification("root-sess", update), &mut app);
+        let _ = handle(make_ext_session_notification(child_sid, update), &mut app);
 
         let info = app.agents.get(&AgentId(0)).unwrap().subagent_sessions.get(child_sid).unwrap();
         assert_eq!(info.attempt.tokens_used, Some(25000));
@@ -1079,7 +1079,7 @@
         let mut app = make_app_with_agent("root-sess");
         app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
         link_child(&mut app.agents, AgentId(0), AgentId(1), child_view, std::time::Instant::now());
-        let _ = handle(make_ext_session_notification("root-sess", update), &mut app);
+        let _ = handle(make_ext_session_notification(child_sid, update), &mut app);
 
         let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(
