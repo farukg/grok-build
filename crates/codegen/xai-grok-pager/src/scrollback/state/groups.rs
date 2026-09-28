@@ -509,6 +509,7 @@ mod tests {
 
     #[test]
     fn expanded_verb_run_stacks_header_and_keeps_member_rows() {
+        crate::appearance::cache::set_group_tool_verbs(true);
         let entries = map(vec![skill_read(), skill_read()]);
         let mut layout = seeded_layout(entries.len());
         let expanded: HashSet<EntryId> = [EntryId::new(0)].into();
