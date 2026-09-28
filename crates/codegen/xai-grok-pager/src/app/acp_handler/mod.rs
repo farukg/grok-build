@@ -202,8 +202,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch(id)) => {
-                    let is_child = matches!(app.agents.get(&id).map(|view| &view.role), Some(crate::app::agent_view::AgentRole::Child(_)));
-                    if is_child {
+                    if matches!(app.agents.get(&id).map(|view| &view.role), Some(crate::app::agent_view::AgentRole::Child(_))) {
                         apply_session_notification_for_view(app, id, notif.request.update, &mut meta)
                     } else {
                     let is_active = is_matched_agent_active(app, id);
@@ -211,9 +210,6 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         .pending_running_adoptions
                         .get(&id)
                         .map(|p| p.prompt_id.clone());
-                    if matches!(app.agents.get(&id).map(|view| &view.role), Some(crate::app::agent_view::AgentRole::Child(_))) {
-                        apply_session_notification_for_view(app, id, notif.request.update, &mut meta)
-                    } else {
                     let agent = app
                         .agents
                         .get_mut(&id)
