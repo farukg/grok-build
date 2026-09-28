@@ -786,30 +786,30 @@ fn focus_prompt_switches_pane() {
     assert_eq!(agent_ref(&app, id).active_pane, ActivePane::Prompt);
 }
 
-/// `FocusPrompt` resolves to the child under a takeover, whose hidden composer refuses the pane; the root keeps its focus too.
+/// Prompt focus targets a child session's own pane.
 #[test]
-fn focus_prompt_under_takeover_is_refused_on_the_child() {
+fn focus_prompt_targets_child_session() {
+    use crate::app::agent_view::{AgentRole, ChildLink};
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let child_sid = "child-overlay-focus";
-    let child = AgentView::new(
-        make_test_agent_session(&app, AgentId(1), child_sid),
+    let child_id = AgentId(1);
+    let mut child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-overlay-focus"),
         ScrollbackState::new(),
     );
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.set_active_pane(ActivePane::Scrollback, true);
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-    }
-
+    child.role = AgentRole::Child(ChildLink {
+        parent: parent_id,
+        parent_session_id: app.agents[&parent_id].session.session_id.clone().unwrap(),
+        subagent_id: "child-overlay-focus".to_owned(),
+        started_at: std::time::Instant::now(),
+    });
+    app.agents.get_mut(&parent_id).unwrap().set_active_pane(ActivePane::Scrollback, true);
+    app.agents.insert(child_id, child);
+    app.active_view = ActiveView::Agent(child_id);
     let effects = dispatch(Action::FocusPrompt, &mut app);
-
     assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert_eq!(ActivePane::Scrollback, parent.active_pane);
-    let child = parent.subagent_view(child_sid).unwrap();
-    assert_eq!(ActivePane::Scrollback, child.active_pane);
+    assert_eq!(ActivePane::Prompt, app.agents[&child_id].active_pane);
+    assert_eq!(ActivePane::Scrollback, app.agents[&parent_id].active_pane);
 }
 
 #[test]
