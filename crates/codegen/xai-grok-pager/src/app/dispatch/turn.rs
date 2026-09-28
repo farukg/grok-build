@@ -468,14 +468,9 @@ pub(crate) const CANCEL_RESEND_MAX_ATTEMPTS: u8 = 3;
 /// Returns `None` when nothing fired.
 pub(crate) fn reconcile_overdue_cancels(app: &mut AppView) -> Option<Vec<Effect>> {
     let mut effects = Vec::new();
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         if let Some(effect) = overdue_cancel_for_agent(agent) {
             effects.push(effect);
-        }
-        for child in agent.subagent_views.values_mut() {
-            if let Some(effect) = overdue_cancel_for_agent(child) {
-                effects.push(effect);
-            }
         }
     }
     (!effects.is_empty()).then_some(effects)

@@ -508,13 +508,9 @@ pub(super) fn set_show_thinking_blocks_inner(app: &mut AppView, new: bool) {
     crate::appearance::cache::set_show_thinking_blocks(new);
     // Thinking visibility reshapes verb-group runs (shown thoughts claim into folds) AND dense N-more runs (hidden thoughts stop counting toward truncation)
     // Expansion ids therefore describe the OLD grouping shape even with `group_tool_verbs` off; drop them like `set_group_tool_verbs_inner`
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.scrollback.clear_group_expansion();
         agent.scrollback.invalidate_heights();
-        for child in agent.subagent_views.values_mut() {
-            child.scrollback.clear_group_expansion();
-            child.scrollback.invalidate_heights();
-        }
     }
 }
 
@@ -549,13 +545,9 @@ pub(super) fn set_group_tool_verbs_inner(app: &mut AppView, new: bool) {
     crate::appearance::cache::set_group_tool_verbs(new);
     // Expansion ids describe the OLD grouping shape
     // Drop them so stale ids can't reopen a verb slot expanded or mark a coincident dense group expanded after the re-fold (see `clear_group_expansion`)
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.scrollback.clear_group_expansion();
         agent.scrollback.invalidate_heights();
-        for child in agent.subagent_views.values_mut() {
-            child.scrollback.clear_group_expansion();
-            child.scrollback.invalidate_heights();
-        }
     }
 }
 
@@ -591,11 +583,8 @@ pub(super) fn set_collapsed_edit_blocks_inner(app: &mut AppView, new: bool) {
         return;
     }
     // Re-materialize on-default Edit rows and repaint the live +N/-M suffix (the flip policy lives on ScrollbackState)
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.scrollback.apply_collapsed_edit_blocks_flip(prev, new);
-        for child in agent.subagent_views.values_mut() {
-            child.scrollback.apply_collapsed_edit_blocks_flip(prev, new);
-        }
     }
 }
 
