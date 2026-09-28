@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     #[test]
     fn mcp_init_progress_overwrites_the_counts() {
@@ -264,14 +265,13 @@
                 total: 2,
                 connected: 1,
             });
-        // Register a subagent child view keyed by the child session id.
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .insert_test_child(
-                "child-sess".to_string(),
-                Box::new(make_agent(Some("child-sess"))),
-            );
+        link_child(
+            &mut app.agents,
+            AgentId(0),
+            AgentId(1),
+            make_agent(Some("child-sess")),
+            std::time::Instant::now(),
+        );
 
         // init_progress for the child session must leave the parent untouched.
         let changed = handle_ext_notification(
