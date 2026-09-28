@@ -697,14 +697,6 @@ fn restore_or_finalize_child(
     }
 }
 
-fn detach_child_view_content(
-    child_view: &mut crate::app::agent_view::AgentView,
-) -> crate::app::agent_view::ReplayRebuiltState {
-    let detached = child_view.take_replay_rebuilt_state();
-    child_view.inline_media_cache = Default::default();
-    child_view.inline_media_load_failed = Default::default();
-    detached
-}
 
 fn is_resumed_child(info: &SubagentInfo) -> bool {
     info.attempt.resumed_from.is_some() || info.attempt.context == SubagentContext::Resumed
