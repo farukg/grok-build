@@ -453,11 +453,19 @@ impl AgentView {
                                 } else if self.active_pane == AgentPane::Dock {
                                     self.set_active_pane(AgentPane::Prompt, false);
                                 }
-                                self.activate_dock_item(item);
+                                let outcome = self.activate_dock_item(item);
                                 self.dock_hovered =
                                     self.dock_item_at(self.pane_areas.dock, mouse.row);
                                 self.cache_dock_stop_button();
-                                InputOutcome::Changed
+                                match outcome {
+                                    InputOutcome::Changed | InputOutcome::Unchanged => {
+                                        InputOutcome::Changed
+                                    }
+                                    InputOutcome::Action(_)
+                                    | InputOutcome::ActionThenForward(_)
+                                    | InputOutcome::ActionPair(..)
+                                    | InputOutcome::ArmPending { .. } => outcome,
+                                }
                             }
                             None => {
                                 self.set_active_pane(AgentPane::Dock, false);

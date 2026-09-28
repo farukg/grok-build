@@ -230,15 +230,18 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
         let abandoned = super::session::lifecycle::abandon_unused_home_session(app);
         app.pending_effects.extend(abandoned);
     }
-    // Capture before mutating active_view (subagent views are not top-level ids).
+    // Capture before mutating active_view; the dashboard attaches roots, so a child's root stands in for it
     let previous_top_level = match app.active_view {
-        ActiveView::Agent(id) => Some(id),
+        ActiveView::Agent(id) => Some(app.agents.root_of(id)),
         _ => None,
     };
     if let ActiveView::Agent(previous) = app.active_view {
         let _outcome = crate::app::subagent::evict_on_leave(&mut app.agents, previous);
     }
     app.active_view = ActiveView::Agent(target);
+    // An inertial scroll stream belongs to the view it started on
+    app.scroll_state.cancel_stream();
+    app.last_scroll_pos = None;
     let _outcome = crate::app::subagent::replay_on_open(&mut app.agents, target);
     // Re-anchor the global permission-mode mirror to the now-active agent
     // The cycle's `sync_active_auto_flag` (derived from the global) then can't copy a different agent's stale Auto/Always-Approve onto this one

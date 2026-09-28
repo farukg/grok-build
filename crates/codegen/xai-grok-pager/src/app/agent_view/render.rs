@@ -1,8 +1,7 @@
 //! Frame rendering for [`AgentView`]: the `draw` entry point plus shortcut hints.
 use super::{
-    ActivePane, AgentPane, AgentRole, AgentView, AgentViewLayout, BlockingCard, CtaPhase,
-    EscStep, InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, SessionKindLabel,
-    collect_citation_links, dropdown_content_inset, dropdown_items_width, record_dot_pulse,
+    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase, EscStep,
+    InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links, dropdown_content_inset, dropdown_items_width, record_dot_pulse,
     render_dropdown_chrome, supports_osc22,
 };
 use crate::actions::{ActionId, ActionRegistry};
@@ -56,6 +55,8 @@ pub struct AppRenderParams<'a> {
 pub struct OverlayHeader<'a> {
     pub title: Option<&'a str>,
     pub position: Option<(usize, usize)>,
+    /// A child session's kind ("Explorer", "General", …), shown before the title.
+    pub kind: Option<&'a str>,
 }
 impl OverlayHeader<'_> {
     /// The `i/n` position when `‹`/`›` have anything to cycle through.
@@ -1383,12 +1384,6 @@ impl AgentView {
         }
         let prefix_width: u16 = location.iter().map(|s| s.width() as u16).sum();
         let path_width = short.width() as u16;
-        let kind_label = match &self.role {
-            AgentRole::Root => None,
-            AgentRole::Child(link) => self.subagent_sessions.values()
-                .find(|info| info.subagent_id.as_ref() == link.subagent_id)
-                .map(SessionKindLabel::from_subagent),
-        };
         let title = overlay_header.title.and_then(|title| {
             const PATH_MIN: u16 = 12;
             let sep_width = crate::views::agent_status::separator(&theme).width() as u16;
@@ -1408,8 +1403,8 @@ impl AgentView {
         location.push(Span::styled(short, path_style));
         let mut parts: Vec<Span> = Vec::new();
         let mut path_offset: u16 = prefix_width;
-        if let Some(SessionKindLabel::Subagent { kind }) = kind_label {
-            parts.push(Span::styled(kind.into_owned(), bg.fg(theme.gray)));
+        if let Some(kind) = overlay_header.kind {
+            parts.push(Span::styled(kind.to_owned(), bg.fg(theme.gray)));
             parts.push(Span::styled(" ", bg));
         }
         if let Some(title) = title {
@@ -4543,6 +4538,7 @@ mod overlay_cycle_hint_tests {
                 overlay_header: super::OverlayHeader {
                     title: None,
                     position: Some((1, if can_cycle { 2 } else { 1 })),
+                    kind: None,
                 },
                 ..Default::default()
             },
@@ -4584,6 +4580,7 @@ mod overlay_cycle_hint_tests {
                 overlay_header: super::OverlayHeader {
                     title: None,
                     position: Some((1, 2)),
+                    kind: None,
                 },
                 ..Default::default()
             },

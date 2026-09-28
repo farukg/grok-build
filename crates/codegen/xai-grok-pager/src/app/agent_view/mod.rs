@@ -178,7 +178,7 @@ mod dock_input_tests;
 mod header_tests;
 mod rewind;
 mod role;
-pub(crate) use role::{AgentRole, ChildLink, SessionKindLabel};
+pub(crate) use role::{AgentRole, ChildLink};
 mod selection;
 mod session;
 mod session_mode;

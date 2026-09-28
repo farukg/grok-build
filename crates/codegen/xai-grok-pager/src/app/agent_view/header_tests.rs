@@ -23,13 +23,10 @@ fn child_header_shows_kind_before_title() {
         subagent_id: "explorer".into(),
         started_at: std::time::Instant::now(),
     });
-    let mut info = crate::app::subagent::test_support::make_info();
-    info.subagent_id = "explorer".into();
-    info.attempt.persona = Some("Explorer".into());
-    child.subagent_sessions.insert("explorer".into(), info);
     let buf = draw(&mut child, &ActionRegistry::defaults(), false, OverlayHeader {
         title: Some("Header target title"),
         position: None,
+        kind: Some("Explorer"),
     });
     let row = header_row(&child, &buf);
     let kind = row.find("Explorer").expect("session kind");
@@ -205,6 +202,7 @@ fn overlay_header_leads_with_title_and_paints_switcher() {
     let header = OverlayHeader {
         title: Some("Refactor the theme loader"),
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -256,6 +254,7 @@ fn overlay_header_omits_title_when_unnamed_and_switcher_when_alone() {
     let header = OverlayHeader {
         title: None,
         position: Some((1, 1)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -285,6 +284,7 @@ fn narrow_overlay_header_caps_title_and_keeps_location_and_buttons() {
     let header = OverlayHeader {
         title: Some("A generated title long enough to need trimming here"),
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -318,6 +318,7 @@ fn long_title_and_long_branch_leave_the_path_visible() {
     let header = OverlayHeader {
         title: Some("A generated title long enough to need trimming here"),
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -348,6 +349,7 @@ fn hover_brightens_only_the_pointed_affordance() {
     let header = OverlayHeader {
         title: None,
         position: Some((2, 5)),
+        kind: None,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let prev = agent.hit_overlay_prev.rect.unwrap();
@@ -398,6 +400,7 @@ fn long_link_preview_yields_to_the_switcher_and_dashboard_button() {
     let header = OverlayHeader {
         title: None,
         position: Some((2, 5)),
+        kind: None,
     };
     let mut agent = agent_at(100);
     highlight(&mut agent);
@@ -438,6 +441,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
     let header = OverlayHeader {
         title: None,
         position: Some((2, 5)),
+        kind: None,
     };
     draw(&mut agent, &registry, true, header);
     let dash = agent.hit_dashboard.rect.expect("armed with no dropdown");

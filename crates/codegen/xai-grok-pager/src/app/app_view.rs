@@ -4712,9 +4712,16 @@ impl AppView {
                                         .and_then(crate::views::session_title::named_title)
                                 })
                                 .flatten();
+                            let kind = agents
+                                .link_and_parent(id)
+                                .and_then(|(link, parent)| {
+                                    parent.subagent_sessions.get(&link.subagent_id)
+                                })
+                                .map(|info| crate::app::subagent::format_subagent_label(info).0);
                             let overlay_header = crate::app::agent_view::OverlayHeader {
                                 title: overlay_title.as_deref(),
                                 position,
+                                kind: kind.as_deref(),
                             };
                             if let Some(d) = self.dashboard.as_mut()
                                 && d.peek_viewport.is_some()
@@ -5582,12 +5589,16 @@ impl AppView {
         }
         if self
             .agents
-            .roots()
+            .all()
             .any(|(_, a)| a.pending_turn_end_reconcile.is_some())
         {
             return TickDemand::Fast;
         }
-        if self.agents.roots().any(|(_, a)| a.pending_cancel_resend.is_some() || a.prompt_ack.is_some()) {
+        if self
+            .agents
+            .all()
+            .any(|(_, a)| a.pending_cancel_resend.is_some() || a.prompt_ack.is_some())
+        {
             return TickDemand::Fast;
         }
         if self.deferred_notification.is_some() {
