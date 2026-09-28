@@ -710,11 +710,10 @@ impl AgentView {
                         self.persistent_text_selection = None;
                         self.table_selection_geometry = None;
                         self.selection_created_at = None;
-                        if is_open_child_click(mouse.modifiers) {
-                            let linked = self.linked_child_at_scrollback_row(mouse.row);
-                            if self.open_child_from_click(linked) {
-                                return InputOutcome::Changed;
-                            }
+                        if is_open_child_click(mouse.modifiers)
+                            && let Some(child_sid) = self.child_link_at_scrollback_row(mouse.row)
+                        {
+                            return InputOutcome::Action(Action::OpenSession(child_sid));
                         } else if mouse
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::ALT)
