@@ -389,7 +389,9 @@ impl<'a> EntryRenderer<'a> {
         }
         // Collapsed / Truncated foldable entries render a compact ~1-line header, NOT their (often huge) hidden body
         // Use the ENTRY-level foldability, matching the fold path
-        let lines = if self.entry.display_mode != DisplayMode::Expanded && self.entry.is_foldable()
+        let lines = if self.entry.display_mode != DisplayMode::Expanded
+            && self.entry.is_foldable()
+            && !matches!(self.entry.block, RenderBlock::UserPrompt(_))
         {
             1
         } else {
@@ -436,9 +438,7 @@ impl<'a> EntryRenderer<'a> {
             .lines
             .iter()
             .enumerate()
-            .filter(|(_, line)| {
-                !matches!(line.selectable, Selectable::None) && line.joiner.is_none()
-            })
+            .filter(|(_, line)| line.joiner.is_none())
             .map(|(idx, _)| vpad_top.saturating_add(u16::try_from(idx).unwrap_or(u16::MAX)))
             .collect();
         let last_content_row = vpad_top.saturating_add(
@@ -954,7 +954,8 @@ mod tests {
         let theme = Theme::current();
         // First logical line is long enough to wrap into several rows at a narrow width; the second logical line then starts well past row 1
         let text = format!("{}\nsecond", "word ".repeat(40));
-        let entry = ScrollbackEntry::new(RenderBlock::user_prompt(text));
+        let entry = ScrollbackEntry::new(RenderBlock::user_prompt(text))
+            .with_display_mode(DisplayMode::Expanded);
         let renderer = EntryRenderer::new(&entry, &theme);
 
         // Narrow entry-area width (chrome is subtracted internally) forces wrap.

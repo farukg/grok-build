@@ -71,10 +71,8 @@ impl AgentView {
         };
         panel.refresh(&self.scrollback);
         if panel.focus == PanelFocus::Chat
-            && let Some(key) = self
-                .scrollback
-                .timeline_follow_index()
-                .and_then(|idx| self.scrollback.timeline_row_key(idx))
+            && let Some(idx) = self.scrollback.timeline_follow_index()
+            && let Some(key) = self.scrollback.timeline_row_key(idx)
         {
             panel.follow(key);
         }
