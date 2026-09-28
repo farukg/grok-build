@@ -78,11 +78,6 @@ impl AppView {
             return;
         }
 
-        // Below the watchdog, which the run is still owed, and above the recompute, which would run a script for a row nobody can see
-        if self.a_subagent_owns_the_frame() {
-            return;
-        }
-
         if self.status_line.set_source(source) {
             // Forced rather than run outright: a switch drops the next run to the floor, so cycling agents cannot run a script once per tick
             self.status_line.force_next_run();

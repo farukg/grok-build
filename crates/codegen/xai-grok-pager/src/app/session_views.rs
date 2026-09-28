@@ -1,29 +1,44 @@
 use crate::app::agent::AgentId;
-use crate::app::agent_view::{AgentRole, AgentView};
+use crate::app::agent_view::{AgentRole, AgentView, ChildLink};
 use indexmap::IndexMap;
 
-pub(crate) struct SessionViews {
+pub struct SessionViews {
     views: IndexMap<AgentId, AgentView>,
 }
 
 impl SessionViews {
     pub(crate) fn new() -> Self {
-        Self { views: IndexMap::new() }
+        Self {
+            views: IndexMap::new(),
+        }
     }
 
-    pub(crate) fn get(&self, id: &AgentId) -> Option<&AgentView> { self.views.get(id) }
-    pub(crate) fn get_mut(&mut self, id: &AgentId) -> Option<&mut AgentView> { self.views.get_mut(id) }
-    pub(crate) fn insert(&mut self, id: AgentId, view: AgentView) -> Option<AgentView> { self.views.insert(id, view) }
-    pub(crate) fn shift_remove(&mut self, id: &AgentId) -> Option<AgentView> { self.views.shift_remove(id) }
-    pub(crate) fn contains_key(&self, id: &AgentId) -> bool { self.views.contains_key(id) }
-    pub(crate) fn is_empty(&self) -> bool { self.views.is_empty() }
-    pub(crate) fn len(&self) -> usize { self.views.len() }
+    pub(crate) fn get(&self, id: &AgentId) -> Option<&AgentView> {
+        self.views.get(id)
+    }
+    pub(crate) fn get_mut(&mut self, id: &AgentId) -> Option<&mut AgentView> {
+        self.views.get_mut(id)
+    }
+    pub(crate) fn insert(&mut self, id: AgentId, view: AgentView) -> Option<AgentView> {
+        self.views.insert(id, view)
+    }
+    pub(crate) fn contains_key(&self, id: &AgentId) -> bool {
+        self.views.contains_key(id)
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.views.is_empty()
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.views.len()
+    }
 
     pub(crate) fn roots_mut(&mut self) -> impl Iterator<Item = (AgentId, &mut AgentView)> {
-        self.views.iter_mut().filter_map(|(id, view)| match view.role {
-            AgentRole::Root => Some((*id, view)),
-            AgentRole::Child(_) => None,
-        })
+        self.views
+            .iter_mut()
+            .filter_map(|(id, view)| match view.role {
+                AgentRole::Root => Some((*id, view)),
+                AgentRole::Child(_) => None,
+            })
     }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = (AgentId, &AgentView)> {
@@ -34,20 +49,78 @@ impl SessionViews {
     }
 
     pub(crate) fn children_of(&self, parent: AgentId) -> Vec<AgentId> {
-        let mut children: Vec<_> = self.views.iter().filter_map(|(id, view)| match &view.role {
-            AgentRole::Root => None,
-            AgentRole::Child(link) if link.parent == parent => Some((*id, link.started_at, link.subagent_id.as_str())),
-            AgentRole::Child(_) => None,
-        }).collect();
+        let mut children: Vec<_> = self
+            .views
+            .iter()
+            .filter_map(|(id, view)| match &view.role {
+                AgentRole::Root => None,
+                AgentRole::Child(link) if link.parent == parent => {
+                    Some((*id, link.started_at, link.subagent_id.as_str()))
+                }
+                AgentRole::Child(_) => None,
+            })
+            .collect();
         children.sort_by_key(|(_, started_at, sid)| child_order_key(*started_at, sid));
         children.into_iter().map(|(id, _, _)| id).collect()
     }
 
+    /// Removes `id` together with every session below it: a child view never outlives its parent's.
+    pub(crate) fn remove_tree(&mut self, id: AgentId) -> Vec<AgentView> {
+        let mut removed = Vec::new();
+        let mut pending = vec![id];
+        while let Some(next) = pending.pop() {
+            pending.extend(self.children_of(next));
+            removed.extend(self.views.shift_remove(&next));
+        }
+        removed
+    }
+
     pub(crate) fn root_of(&self, id: AgentId) -> AgentId {
-        let Some(view) = self.views.get(&id) else { return id };
+        let Some(view) = self.views.get(&id) else {
+            return id;
+        };
         match &view.role {
             AgentRole::Root => id,
             AgentRole::Child(link) => self.root_of(link.parent),
+        }
+    }
+
+    /// The one exact session-id lookup: roots and children alike.
+    pub(crate) fn find_by_session_id(&self, session_id: &str) -> Option<AgentId> {
+        self.views.iter().find_map(|(id, view)| {
+            view.session
+                .session_id
+                .as_ref()
+                .is_some_and(|sid| &*sid.0 == session_id)
+                .then_some(*id)
+        })
+    }
+
+    pub(crate) fn parent_of(&self, id: AgentId) -> Option<AgentId> {
+        match &self.views.get(&id)?.role {
+            AgentRole::Root => None,
+            AgentRole::Child(link) => Some(link.parent),
+        }
+    }
+
+    /// A child's link beside its parent's view, which owns the child's subagent row.
+    pub(crate) fn link_and_parent(&self, child: AgentId) -> Option<(&ChildLink, &AgentView)> {
+        let link = match &self.views.get(&child)?.role {
+            AgentRole::Root => return None,
+            AgentRole::Child(link) => link,
+        };
+        Some((link, self.views.get(&link.parent)?))
+    }
+
+    pub(crate) fn link_and_parent_mut(
+        &mut self,
+        child: AgentId,
+    ) -> Option<(&ChildLink, &mut AgentView)> {
+        let parent = self.parent_of(child).filter(|parent| *parent != child)?;
+        let [child_view, parent_view] = self.views.get_disjoint_mut([&child, &parent]);
+        match &child_view?.role {
+            AgentRole::Root => None,
+            AgentRole::Child(link) => Some((link, parent_view?)),
         }
     }
 
@@ -128,7 +201,13 @@ mod tests {
         let mut views = SessionViews::new();
         views.insert(root, view("root"));
         link_child(&mut views, root, AgentId(1), view("child"), Instant::now());
-        link_child(&mut views, AgentId(1), nested, view("nested"), Instant::now());
+        link_child(
+            &mut views,
+            AgentId(1),
+            nested,
+            view("nested"),
+            Instant::now(),
+        );
         assert_eq!(views.root_of(nested), root);
     }
 
@@ -138,8 +217,20 @@ mod tests {
         let start = Instant::now();
         let mut views = SessionViews::new();
         views.insert(root, view("root"));
-        link_child(&mut views, root, AgentId(2), view("second"), start + Duration::from_secs(2));
-        link_child(&mut views, root, AgentId(1), view("first"), start + Duration::from_secs(1));
+        link_child(
+            &mut views,
+            root,
+            AgentId(2),
+            view("second"),
+            start + Duration::from_secs(2),
+        );
+        link_child(
+            &mut views,
+            root,
+            AgentId(1),
+            view("first"),
+            start + Duration::from_secs(1),
+        );
         assert_eq!(views.children_of(root), [AgentId(1), AgentId(2)]);
     }
 }

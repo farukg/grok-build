@@ -3,6 +3,7 @@
 use super::{
     AgentPane, AgentView, DEFAULT_SELECTION_HIGHLIGHT_DURATION_MS, MULTI_CLICK_TIMEOUT_MS,
 };
+use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::scrollback::table_geometry::{CellRef, TableGeometry};
 use crate::scrollback::text_selection::{
@@ -1048,7 +1049,7 @@ impl AgentView {
         now: Instant,
         idx: usize,
         header_row_click: bool,
-    ) -> (Option<(Instant, usize, u8)>, bool) {
+    ) -> (Option<(Instant, usize, u8)>, Option<Action>) {
         let click_count = if let Some((last_time, last_idx, prev_count)) = self.last_click
             && last_idx == idx
             && now.duration_since(last_time).as_millis() < MULTI_CLICK_TIMEOUT_MS
@@ -1071,10 +1072,11 @@ impl AgentView {
         let word_select_probe = click_count == 2
             && entry_block.is_some_and(|b| b.is_agent_message())
             && !super::is_text_selection_on_double_click();
-        let show_word_select_tip = word_select_probe
+        let word_select_tip = (word_select_probe
             && self
                 .last_word_select_probe
-                .is_some_and(|t| now.duration_since(t) <= WORD_SELECT_REPEAT_WINDOW);
+                .is_some_and(|t| now.duration_since(t) <= WORD_SELECT_REPEAT_WINDOW))
+        .then_some(Action::ShowWordSelectTip);
         if word_select_probe {
             self.last_word_select_probe = Some(now);
         }
@@ -1087,10 +1089,10 @@ impl AgentView {
         if header_row_click {
             if click_count == 2 {
                 self.scrollback.collapse_group_if_expanded();
-                return (None, show_word_select_tip);
+                return (None, word_select_tip);
             }
             if click_count >= 3 {
-                return (None, false);
+                return (None, None);
             }
         }
 
@@ -1100,10 +1102,10 @@ impl AgentView {
         if is_group_header {
             if click_count == 2 {
                 self.scrollback.toggle_group_expansion();
-                return (None, show_word_select_tip);
+                return (None, word_select_tip);
             }
             if click_count >= 3 {
-                return (None, false);
+                return (None, None);
             }
         }
 
@@ -1145,9 +1147,9 @@ impl AgentView {
                 }
             }
             2 if is_child_row => {
-                // Same as Enter; a message row whose child view is gone folds like any other tool row
-                if !self.try_open_child_from_selected_row() && foldable {
-                    self.scrollback.toggle_fold_selected();
+                // Same as Enter
+                if let Some(child_sid) = self.selected_linked_child() {
+                    return (None, Some(Action::OpenSession(child_sid)));
                 }
             }
             2 if is_workflow => {
@@ -1183,7 +1185,7 @@ impl AgentView {
         } else {
             Some((now, idx, click_count))
         };
-        (last_click, show_word_select_tip)
+        (last_click, word_select_tip)
     }
 
     /// Return the correct selection model for a hit, accounting for the /btw overlay panel which has its own model.
@@ -2028,12 +2030,12 @@ mod tests {
     /// Returns the tip flag of the second click.
     fn double_click_gesture(agent: &mut AgentView, t: Instant, idx: usize) -> bool {
         let (last, tip1) = agent.handle_scrollback_click(t, idx, false);
-        assert!(!tip1, "a single click must never tip");
+        assert!(tip1.is_none(), "a single click must never tip");
         agent.last_click = last;
         let (last, tip2) =
             agent.handle_scrollback_click(t + Duration::from_millis(100), idx, false);
         agent.last_click = last;
-        tip2
+        matches!(tip2, Some(Action::ShowWordSelectTip))
     }
 
     #[test]

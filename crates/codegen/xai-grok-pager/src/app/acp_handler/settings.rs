@@ -21,7 +21,7 @@ pub(super) fn handle_models_update(notif: &acp::ExtNotification, app: &mut AppVi
             app.models.set_current(id, None);
         }
 
-        for agent in app.agents.values_mut() {
+        for (_, agent) in app.agents.all_mut() {
             if let Some(ref current) = agent.session.models.current
                 && !new_models.available.contains_key(current)
             {
@@ -84,9 +84,9 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
             // Sessions to notify: agents that HAD Auto on (capture before the downgrade clears the flag) and have a live session id
             let leaving_auto: Vec<acp::SessionId> = app
                 .agents
-                .values()
-                .filter(|a| a.session.is_auto())
-                .filter_map(|a| a.session.session_id.clone())
+                .all()
+                .filter(|(_, a)| a.session.is_auto())
+                .filter_map(|(_, a)| a.session.session_id.clone())
                 .collect();
             super::super::dispatch::downgrade_displayed_auto_if_gated(app);
             notify_sessions_leave_auto(app, &leaving_auto);
@@ -118,7 +118,7 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
     // Presence is still observed so a later re-enable can go back to `app.sharing_enabled = v`
     if update.sharing_enabled.is_some() {
         app.sharing_enabled = false;
-        for agent in app.agents.values_mut() {
+        for (_, agent) in app.agents.all_mut() {
             agent.set_sharing_enabled(false);
         }
     }

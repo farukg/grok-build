@@ -68,10 +68,9 @@ pub(super) fn setup_phase_target_agent<'a>(
 ) -> Option<&'a mut AgentView> {
     let sid = acp::SessionId::new(session_id);
     app.agents
-        .values_mut()
-        .find(|agent| agent.pending_session_id.as_ref() == Some(&sid))
+        .roots_mut()
+        .find_map(|(_, agent)| (agent.pending_session_id.as_ref() == Some(&sid)).then_some(agent))
 }
-
 
 /// The only agent that could own such a pre-assignment notification is the one the user just created (necessarily active, `session_id == None`).
 /// Returns `None` when the notification cannot be associated with any agent.
@@ -80,10 +79,8 @@ pub(super) fn find_session_match(
     app: &AppView,
     session_id: &acp::SessionId,
 ) -> Option<SessionMatch> {
-    for (id, agent) in &app.agents {
-        if agent.session.session_id.as_ref() == Some(session_id) {
-            return Some(SessionMatch(*id));
-        }
+    if let Some(id) = app.agents.find_by_session_id(&session_id.0) {
+        return Some(SessionMatch(id));
     }
     // Pass 3: race-window fallback for notifications that arrive before the root session_id has been assigned
     // Only the active agent is eligible, and only when its `session_id` is still `None`

@@ -3,6 +3,7 @@ use super::state::{DashboardRowId, Filter, RowState};
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::app::roster::{RosterActivity, RosterEntry};
+use crate::app::session_views::SessionViews;
 use crate::views::dashboard::row_activity::{
     has_live_parent_activity, live_work_badges, top_level_activity, top_level_secondary_line,
 };
@@ -82,7 +83,7 @@ fn fallback_epoch() -> Instant {
 /// It appends "roster-only" rows for leader sessions this client is not locally attached to (the
 /// FleetView dashboard). Only top-level agents and roster sessions appear (see [`build_local_rows`]).
 pub fn build_rows_with_roster(
-    agents: &IndexMap<AgentId, AgentView>,
+    agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     reorder: &[DashboardRowId],
     grouping: super::state::Grouping,
@@ -114,19 +115,19 @@ impl WorkspaceRowInputs<'_> {
 }
 /// The store is authoritative for membership, layout, and sessions this process has not loaded.
 pub(crate) fn build_rows_with_workspace(
-    agents: &IndexMap<AgentId, AgentView>,
+    agents: &SessionViews,
     inputs: WorkspaceRowInputs<'_>,
     filter: &Filter,
     home: Option<&str>,
 ) -> Vec<DashboardRow> {
     let live_by_session: HashMap<&str, (AgentId, &AgentView)> = agents
-        .iter()
+        .roots()
         .filter_map(|(id, agent)| {
             agent
                 .session
                 .session_id
                 .as_ref()
-                .map(|session_id| (session_id.0.as_ref(), (*id, agent)))
+                .map(|session_id| (session_id.0.as_ref(), (id, agent)))
         })
         .collect();
     let reorder = inputs
@@ -254,17 +255,17 @@ fn workspace_member_row(
 /// Build the local-agent rows WITHOUT applying filter or sort. [`build_rows_with_roster`] appends
 /// roster rows on top.
 fn build_local_rows(
-    agents: &IndexMap<AgentId, AgentView>,
+    agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     home: Option<&str>,
 ) -> Vec<DashboardRow> {
     let mut rows = Vec::new();
-    for (id, agent) in agents.iter() {
-        let top_id = DashboardRowId::TopLevel(*id);
+    for (id, agent) in agents.roots() {
+        let top_id = DashboardRowId::TopLevel(id);
         if is_empty_idle_top_level(agent) && !pinned.contains(&top_id) {
             continue;
         }
-        rows.push(top_level_row(*id, agent, pinned.contains(&top_id), home));
+        rows.push(top_level_row(id, agent, pinned.contains(&top_id), home));
     }
     rows
 }
@@ -284,7 +285,7 @@ pub fn roster_activity_to_state(activity: RosterActivity) -> RowState {
 fn append_roster_rows(
     rows: &mut Vec<DashboardRow>,
     roster: &[RosterEntry],
-    agents: &IndexMap<AgentId, AgentView>,
+    agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     home: Option<&str>,
 ) {
@@ -292,8 +293,8 @@ fn append_roster_rows(
         return;
     }
     let local_ids: std::collections::HashSet<&str> = agents
-        .values()
-        .filter_map(|a| a.session.session_id.as_ref().map(|s| s.0.as_ref()))
+        .all()
+        .filter_map(|(_, a)| a.session.session_id.as_ref().map(|s| s.0.as_ref()))
         .collect();
     for entry in roster {
         if local_ids.contains(entry.session_id.as_str()) {
@@ -719,13 +720,13 @@ mod tests {
         member
     }
     fn workspace_rows(
-        agents: &IndexMap<AgentId, AgentView>,
+        agents: &SessionViews,
         snapshot: &xai_grok_dashboard_store::WorkspaceSnapshot,
     ) -> Vec<DashboardRow> {
         workspace_rows_with_provisional(agents, Some(snapshot), &[])
     }
     fn workspace_rows_with_provisional(
-        agents: &IndexMap<AgentId, AgentView>,
+        agents: &SessionViews,
         snapshot: Option<&xai_grok_dashboard_store::WorkspaceSnapshot>,
         provisional: &[AgentId],
     ) -> Vec<DashboardRow> {

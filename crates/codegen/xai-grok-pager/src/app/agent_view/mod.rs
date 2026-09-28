@@ -1222,7 +1222,7 @@ pub struct AgentView {
     pub(crate) export_copy_detector: crate::tips::export_copy::ExportCopyDetector,
     /// Persistent status line (e.g. mouse reporting off). Survives transient
     /// toasts, keypress dismissal, and subagent open/close when propagated
-    /// via [`Self::set_sticky_toast_recursive`].
+    /// via [`Self::set_sticky_toast`].
     pub(crate) sticky_toast: Option<String>,
     /// Transient "Switched to mode: X" banner shown above the prompt after Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then fades out over the final 0.3 s.
     /// Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then

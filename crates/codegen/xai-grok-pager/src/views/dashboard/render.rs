@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use crate::app::session_views::SessionViews;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -39,7 +39,7 @@ pub(crate) fn render_dashboard(
     buf: &mut Buffer,
     area: Rect,
     state: &mut DashboardState,
-    agents: &mut IndexMap<AgentId, AgentView>,
+    agents: &mut SessionViews,
     registry: &crate::actions::ActionRegistry,
     // App-level double-press confirmation hint (e.g. "press again to quit" for Ctrl+Q / Ctrl+C / Ctrl+D).
     // Threaded to the footer so the session-less dashboard shows the same feedback the agent view does

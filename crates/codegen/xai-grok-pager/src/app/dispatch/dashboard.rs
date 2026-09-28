@@ -200,8 +200,8 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     }
     let agent_cwds: Vec<(AgentId, std::path::PathBuf)> = app
         .agents
-        .iter()
-        .map(|(id, a)| (*id, a.session.cwd.clone()))
+        .roots()
+        .map(|(id, a)| (id, a.session.cwd.clone()))
         .collect();
     for (id, cwd) in agent_cwds {
         if let Some(info) = crate::git_info::compute_cwd_git_info(&cwd)
@@ -228,7 +228,7 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     vec![Effect::FetchDashboardSessions]
 }
 fn dashboard_alive_fn<'a>(
-    agents: &'a indexmap::IndexMap<AgentId, AgentView>,
+    agents: &'a crate::app::session_views::SessionViews,
     workspace: Option<&'a crate::app::workspace_layout::WorkspaceView>,
 ) -> impl Fn(&crate::views::dashboard::DashboardRowId) -> bool + 'a {
     move |id| match id {
@@ -266,8 +266,8 @@ pub(super) fn dispatch_exit_dashboard(app: &mut AppView) -> Vec<Effect> {
         Some(t) => (t.agent_id(), t.is_overlay()),
         None => (
             app.agents
-                .keys()
-                .copied()
+                .roots()
+                .map(|(id, _)| id)
                 .find(|id| app.home_session_agent != Some(*id)),
             false,
         ),
@@ -414,9 +414,6 @@ pub(super) fn dispatch_dashboard_attach(
                     d.set_error_toast("Session no longer exists");
                 }
                 return vec![];
-            }
-            if let Some(agent) = app.agents.get_mut(&agent_id) {
-                agent.close_subagent_fullscreen();
             }
             if let Some(d) = app.dashboard.as_mut() {
                 d.focus_row(DashboardRowId::TopLevel(agent_id));
@@ -966,7 +963,7 @@ pub(crate) enum CycleScope {
     Siblings(Vec<AgentId>),
 }
 
-pub(crate) fn cycle_scope(app: &mut AppView, current: AgentId) -> Option<CycleScope> {
+pub(crate) fn cycle_scope(app: &AppView, current: AgentId) -> Option<CycleScope> {
     match app.agents.get(&current).map(|view| &view.role) {
         Some(crate::app::agent_view::AgentRole::Root) => Some(CycleScope::Roots),
         Some(crate::app::agent_view::AgentRole::Child(link)) => {
@@ -998,7 +995,10 @@ pub(super) fn dispatch_session_cycle(app: &mut AppView, direction: Direction) ->
             switch_to_agent(app, target, SwitchCause::Navigate);
             vec![]
         }
-        CycleScope::Roots => dispatch_root_cycle(app, current, direction, session_cycle(app)),
+        CycleScope::Roots => {
+            let cycle = session_cycle(app);
+            dispatch_root_cycle(app, current, direction, cycle)
+        }
     }
 }
 
@@ -1020,9 +1020,9 @@ pub(super) fn dispatch_navigate_tree(app: &mut AppView, step: crate::app::action
         return vec![];
     };
     let target = match step {
-        crate::app::actions::TreeStep::Parent => match app.agents.get(&current).map(|view| &view.role) {
-            Some(crate::app::agent_view::AgentRole::Child(link)) => Some(link.parent),
-            Some(crate::app::agent_view::AgentRole::Root) | None => {
+        crate::app::actions::TreeStep::Parent => match app.agents.parent_of(current) {
+            Some(parent) => Some(parent),
+            None => {
                 app.show_toast("No parent session");
                 None
             }
@@ -1051,7 +1051,7 @@ fn dispatch_root_cycle(
     let SessionCycle::Order(order) = cycle else {
         return vec![];
     };
-    let Some(next_id) = cycle_target(order, current, direction) else {
+    let Some(next_id) = cycle_target(&order, current, direction) else {
         return vec![];
     };
     if next_id == current {
@@ -1060,9 +1060,6 @@ fn dispatch_root_cycle(
     if app.dashboard.is_none() {
         ensure_dashboard_state(app);
         configure_dashboard_state(app);
-    }
-    if let Some(agent) = app.agents.get_mut(&next_id) {
-        agent.close_subagent_fullscreen();
     }
     clear_pending_overlay_stop(app);
     if let Some(d) = app.dashboard.as_mut() {
@@ -1111,10 +1108,9 @@ fn session_cycle(app: &mut AppView) -> crate::views::dashboard::SessionCycle {
 /// `current`'s `i/n` in [`session_cycle`] for the header switcher, memoized on `app.session_cycle` until it is marked stale.
 pub(crate) fn session_cycle_position(app: &mut AppView, current: AgentId) -> Option<(usize, usize)> {
     match cycle_scope(app, current)? {
-        CycleScope::Siblings(order) => order
-            .iter()
-            .position(|id| *id == current)
-            .map(|index| (index + 1, order.len())),
+        CycleScope::Siblings(order) => {
+            crate::views::dashboard::SessionCycle::from_order(order).position(current)
+        }
         CycleScope::Roots => match &app.session_cycle {
             crate::views::dashboard::SessionCycleCache::Fresh(cycle) => cycle.position(current),
             crate::views::dashboard::SessionCycleCache::Stale => {
@@ -2169,7 +2165,7 @@ fn archive_dashboard_row(
             let session_id = session_id.0.to_string();
             let loaded_ids = app
                 .agents
-                .iter()
+                .roots()
                 .filter_map(|(candidate_id, candidate)| {
                     (!candidate.conversation_entry
                         && candidate
@@ -2177,7 +2173,7 @@ fn archive_dashboard_row(
                             .session_id
                             .as_ref()
                             .is_some_and(|candidate| candidate.0.as_ref() == session_id.as_str()))
-                    .then_some(*candidate_id)
+                    .then_some(candidate_id)
                 })
                 .collect::<Vec<_>>();
             if loaded_ids.iter().any(|id| {
@@ -2224,8 +2220,8 @@ fn close_dashboard_agents(
         app.agents
             .get(id)
             .and_then(|agent| agent.session.session_id.clone())
-    }) && !app.agents.iter().any(|(id, agent)| {
-        !loaded_ids.contains(id)
+    }) && !app.agents.roots().any(|(id, agent)| {
+        !loaded_ids.contains(&id)
             && agent
                 .session
                 .session_id

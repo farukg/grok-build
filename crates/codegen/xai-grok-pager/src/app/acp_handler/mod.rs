@@ -96,6 +96,7 @@ use routing::{
     SessionMatch, find_session_match, interaction_target_agent, is_matched_agent_active,
     mcp_target_agent, resolve_notif_agent, setup_phase_target_agent,
 };
+pub(crate) use session_notification::apply_child_view_session_event;
 #[cfg(test)]
 pub(crate) use session_notification::apply_session_event_for_test;
 pub(crate) use session_notification::detect_plan_mode_change_replayed;
@@ -122,7 +123,10 @@ use subagent_activity::{subagent_activity_label, sync_subagent_activity};
 use subagent_lifecycle::{
     LifecycleOrigin, classify_subagent_lifecycle, prepare_tui_subagent_lifecycle,
 };
-use child_observation::{classify as classify_child_observation, observe_child};
+use child_observation::{
+    ChildObservation, apply_child_acp_update, apply_child_xai_update, complete_child_prompt,
+    is_child_turn_update, is_child_view, observe_child,
+};
 use workflow_ingest::ingest_workflow_update;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -181,20 +185,19 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
         AcpClientMessage::SessionNotification(notif) => {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
             let affected = match find_session_match(app, &notif.request.session_id) {
+                Some(SessionMatch(id)) if is_child_view(app, id) => {
+                    apply_child_acp_update(app, id, notif.request.update, &meta)
+                }
                 Some(SessionMatch(id)) => {
                     let is_active = is_matched_agent_active(app, id);
                     let stashed_adoption_pid = app
                         .pending_running_adoptions
                         .get(&id)
                         .map(|p| p.prompt_id.clone());
-                    let update = notif.request.update;
                     let agent = app
                         .agents
                         .get_mut(&id)
                         .expect("find_session_match returned an existing AgentId");
-                    let child_observation = matches!(agent.role, crate::app::agent_view::AgentRole::Child(_))
-                        .then(|| classify_child_observation(&update, agent))
-                        .flatten();
                     let dedup_drop = !meta.is_replay
                         && meta.event_seq.is_some_and(|seq| {
                             agent.last_applied_event_seq.is_some_and(|last| seq <= last)
@@ -344,6 +347,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             ));
                         }
                         let had_activity_before = agent.session.tracker.activity().is_some();
+                        let update = notif.request.update;
                         let (is_visible_kind, is_bash) = if meta.is_replay {
                             (
                                 crate::acp::tracker::is_agent_output_update(&update),
@@ -420,10 +424,6 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         advance_reconnect_cursor(agent, &mut meta);
                         !meta.is_replay && !agent.session.loading_replay
                     };
-                    drop(agent);
-                    if let Some(observation) = child_observation {
-                        observe_child(&mut app.agents, id, observation);
-                    }
                     if plan_mode_modal_refresh_needed {
                         crate::app::dispatch::refresh_open_settings_modals(app);
                     }

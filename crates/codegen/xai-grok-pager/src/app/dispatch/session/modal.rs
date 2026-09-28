@@ -17,13 +17,13 @@ pub(in crate::app::dispatch) fn remove_agent_and_cleanup(app: &mut AppView, agen
             &mut app.agents,
         );
     }
-    let removed = app.agents.shift_remove(&agent_id);
-    for agent in app.agents.values_mut() {
+    let removed = app.agents.remove_tree(agent_id);
+    for (_, agent) in app.agents.all_mut() {
         if agent.session.forked_from == Some(agent_id) {
             agent.session.forked_from = None;
         }
     }
-    if removed.is_some() {
+    if !removed.is_empty() {
         drop(removed);
         crate::memory_release::release_retained_memory("agent-close");
     }
@@ -42,9 +42,9 @@ pub(in crate::app::dispatch) fn drop_other_agents_in_minimal(
     }
     let stale: Vec<_> = app
         .agents
-        .iter()
-        .filter(|(id, _)| **id != keep)
-        .map(|(id, agent)| (*id, agent.session.session_id.clone()))
+        .roots()
+        .filter(|(id, _)| *id != keep)
+        .map(|(id, agent)| (id, agent.session.session_id.clone()))
         .collect();
     let mut effects = Vec::new();
     for (id, session_id) in stale {
@@ -68,7 +68,7 @@ pub(in crate::app::dispatch) fn dispatch_sessions_confirm_close(
     if !app.agents.contains_key(&closed_id) {
         return vec![];
     }
-    if app.agents.len() == 1 {
+    if app.agents.roots().nth(1).is_none() {
         app.show_toast("Cannot close the only session -- use /home to exit");
         return vec![];
     }
@@ -78,7 +78,7 @@ pub(in crate::app::dispatch) fn dispatch_sessions_confirm_close(
             .get(&closed_id)
             .and_then(|a| a.session.forked_from)
             .filter(|p| app.agents.contains_key(p));
-        let fallback = parent.or_else(|| app.agents.keys().copied().find(|id| *id != closed_id));
+        let fallback = parent.or_else(|| app.agents.roots().map(|(id, _)| id).find(|id| *id != closed_id));
         if let Some(target) = fallback {
             switch_to_agent(app, target, SwitchCause::Picker);
         } else {

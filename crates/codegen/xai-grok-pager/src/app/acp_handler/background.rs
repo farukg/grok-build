@@ -448,13 +448,10 @@ pub(super) fn handle_git_head_changed(notif: &acp::ExtNotification, app: &mut Ap
         return false;
     };
 
-    // Find the agent by ACP session id and update its git display cache
-    if let Some((_, agent)) = app.agents.all_mut().find(|(_, a)| {
-        a.session
-            .session_id
-            .as_ref()
-            .is_some_and(|s| s.0.as_ref() == params.session_id.as_str())
-    }) {
+    // Find the agent by ACP session id (not local AgentId) and update its git display cache
+    if let Some(id) = app.agents.find_by_session_id(params.session_id.as_str())
+        && let Some(agent) = app.agents.get_mut(&id)
+    {
         // Refresh the shared per-cwd git cache so views keyed on this directory pick up the new branch without spawning subprocesses
         // (The header/top bar reads it when this is the process cwd; the agent's own fields below drive its status bar and dashboard row directly.)
         crate::git_info::update_from_notification(

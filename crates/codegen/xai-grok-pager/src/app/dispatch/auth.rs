@@ -267,7 +267,7 @@ pub(super) fn dispatch_cancel_login(app: &mut AppView) -> Vec<Effect> {
     // This runs on all agents because the login may have been started from the dashboard
     // Clearing the stash alone is not enough
     // A leftover `ReAuthRequired` block would let a later `PromptResponse` re-detect it via `scrollback_has_recent_reauth_prompt`
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.reauth_stashed_prompt = None;
         strip_trailing_auth_error_blocks(agent);
     }
@@ -327,7 +327,7 @@ pub(super) fn handle_auth_complete(
             // Auth is global, so handle every agent (the login may have been started from the dashboard, not the agent that 401'd)
             let mut retry_effects = Vec::new();
             let mut page_flips = Vec::new();
-            for agent in app.agents.values_mut() {
+            for (_, agent) in app.agents.all_mut() {
                 strip_trailing_auth_error_blocks(agent);
                 // Auto-resubmit the prompt that failed on the expired login so the user doesn't have to retype it
                 // The user couldn't have queued another prompt during the auth detour, so a plain front-enqueue and drain is safe

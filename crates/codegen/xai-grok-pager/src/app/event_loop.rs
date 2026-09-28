@@ -277,7 +277,7 @@ struct ReconnectLoadPlan {
 }
 fn restore_dashboard_peek_before_reload(
     dashboard: &mut Option<crate::views::dashboard::DashboardState>,
-    agents: &mut indexmap::IndexMap<super::agent::AgentId, super::agent_view::AgentView>,
+    agents: &mut super::session_views::SessionViews,
 ) {
     if let Some(dashboard) = dashboard.as_mut() {
         dashboard.restore_peek_viewport(agents);
@@ -958,7 +958,7 @@ fn run_pending_mode_switch(
                 super::MINIMAL_SHOW_SWITCH_BACK_TO_FULLSCREEN
                     .store(false, std::sync::atomic::Ordering::Release);
                 for (_, agent) in app.agents.all_mut() {
-                    agent.set_sticky_toast_recursive(None);
+                    agent.set_sticky_toast(None);
                 }
                 if let ActiveView::Agent(id) = app.active_view
                     && let Some(agent) = app.agents.get_mut(&id)
@@ -1000,8 +1000,8 @@ fn run_pending_mode_switch(
             }
             let effs: Vec<super::actions::Effect> = app
                 .agents
-                .values()
-                .filter_map(|a| {
+                .roots()
+                .filter_map(|(_, a)| {
                     a.session.session_id.as_ref().map(|sid| {
                         super::actions::Effect::UnregisterActiveSession {
                             session_id: sid.clone(),
@@ -2624,8 +2624,8 @@ pub(crate) async fn run(
                                 "generation": generation,
                                 "open_sessions": app
                                     .agents
-                                    .values()
-                                    .filter_map(|a| {
+                                    .roots()
+                                    .filter_map(|(_, a)| {
                                         a.session.session_id.as_ref().map(|s| s.0.to_string())
                                     })
                                     .collect::<Vec<_>>(),
@@ -2663,7 +2663,7 @@ pub(crate) async fn run(
                             _ => None,
                         };
                         let mut agent_ids: Vec<super::agent::AgentId> =
-                            app.agents.keys().copied().collect();
+                            app.agents.roots().map(|(id, _)| id).collect();
                         agent_ids.sort_by_key(|id| Some(*id) != active_agent_id);
                         let mut reload_agent_ids = Vec::new();
                         let mut load_plans = Vec::new();
@@ -4038,7 +4038,7 @@ mod tests {
         got
     }
     fn get_agent_map(
-        agents: &indexmap::IndexMap<crate::app::agent::AgentId, crate::app::agent_view::AgentView>,
+        agents: &crate::app::session_views::SessionViews,
         id: crate::app::agent::AgentId,
     ) -> &crate::app::agent_view::AgentView {
         let Some(a) = agents.get(&id) else {

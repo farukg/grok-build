@@ -218,7 +218,7 @@ pub(crate) fn downgrade_displayed_auto_if_gated(app: &mut AppView) {
     if app.auto_mode_gate {
         return;
     }
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.session.auto_mode = false;
     }
     if let Some(dashboard) = app.dashboard.as_mut()

@@ -256,24 +256,11 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
     }
 }
 
-pub(super) fn find_agent_id_by_session_id(
-    agents: &crate::app::session_views::SessionViews,
-    session_id: &str,
-) -> Option<AgentId> {
-    agents.all().find_map(|(id, a)| {
-        a.session
-            .session_id
-            .as_ref()
-            .is_some_and(|sid| &*sid.0 == session_id)
-            .then_some(*id)
-    })
-}
-
 /// Root session match (for async kill-result routing off the active view).
 pub(super) fn find_agent_by_session_id<'a>(
     agents: &'a mut crate::app::session_views::SessionViews,
     session_id: &str,
 ) -> Option<&'a mut AgentView> {
-    let id = find_agent_id_by_session_id(agents, session_id)?;
+    let id = agents.find_by_session_id(session_id)?;
     agents.get_mut(&id)
 }

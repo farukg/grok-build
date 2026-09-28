@@ -215,10 +215,10 @@ pub(super) fn handle_mcp_servers_updated(_notif: &acp::ExtNotification, app: &mu
     // Snapshot (agent_id, session_id, modal_open) up front so the mutable `pending_effects` borrow can proceed without aliasing `app.agents`
     let targets: Vec<(AgentId, acp::SessionId)> = app
         .agents
-        .iter()
+        .all()
         .filter_map(|(id, agent)| {
             if agent.extensions_modal.is_some() {
-                agent.session.session_id.clone().map(|sid| (*id, sid))
+                agent.session.session_id.clone().map(|sid| (id, sid))
             } else {
                 None
             }

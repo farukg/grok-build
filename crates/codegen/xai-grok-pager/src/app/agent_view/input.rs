@@ -946,9 +946,6 @@ impl AgentView {
                 _ => InputOutcome::Unchanged,
             };
         }
-        if let Some(outcome) = self.intercept_root_tree_input(ev) {
-            return outcome;
-        }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
             && registry.matches_id(ActionId::SendToBackground, key)
@@ -1368,9 +1365,6 @@ impl AgentView {
         {
             let _switched = self.set_active_pane(AgentPane::Scrollback, false);
         }
-    }
-    pub(crate) fn set_vim_mode_recursive(&mut self, enabled: bool) {
-        self.vim_mode = enabled;
     }
     #[cfg(test)]
     pub(crate) fn is_simple_mode(&self) -> bool {

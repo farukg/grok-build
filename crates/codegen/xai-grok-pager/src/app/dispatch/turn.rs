@@ -49,7 +49,7 @@ fn cancel_subagents_pref_canonical_from_ui(
 pub(super) fn apply_cancel_subagents_preference_global(app: &mut AppView, stop: bool) {
     let canonical = cancel_subagents_pref_canonical(stop);
     app.current_ui.cancel_subagents_on_turn_cancel = Some(canonical.to_string());
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.cancel_subagents_preference = Some(stop);
     }
 }
@@ -528,13 +528,13 @@ pub(crate) const TURN_END_RECONCILE_GRACE: std::time::Duration = std::time::Dura
 pub(crate) fn reconcile_overdue_turn_ends(app: &mut AppView) -> Option<Vec<Effect>> {
     let overdue: Vec<AgentId> = app
         .agents
-        .iter()
+        .all()
         .filter(|(_, a)| {
             a.pending_turn_end_reconcile
                 .as_ref()
                 .is_some_and(|p| p.received_at.elapsed() >= TURN_END_RECONCILE_GRACE)
         })
-        .map(|(id, _)| *id)
+        .map(|(id, _)| id)
         .collect();
     if overdue.is_empty() {
         return None;

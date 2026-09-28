@@ -1761,8 +1761,8 @@ impl AppView {
             crate::views::announcements::has_session_announcements(&self.active_announcements);
         if self
             .agents
-            .values()
-            .any(|a| a.prompt.slash_controller.has_session_announcements() != has)
+            .roots()
+            .any(|(_, a)| a.prompt.slash_controller.has_session_announcements() != has)
         {
             self.sync_session_announcement_slash_gate();
         }
@@ -2747,9 +2747,6 @@ impl AppView {
                             if let Some(d) = self.dashboard.as_mut() {
                                 d.close_popup();
                             }
-                            if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                agent.close_subagent_fullscreen();
-                            }
                             return InputOutcome::Changed;
                         }
                     }
@@ -2794,9 +2791,6 @@ impl AppView {
                             if let Some(d) = self.dashboard.as_mut() {
                                 d.close_popup();
                             }
-                            if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                agent.close_subagent_fullscreen();
-                            }
                             return InputOutcome::Changed;
                         }
                         if !in_outer && let Some(target) = row_target {
@@ -2825,9 +2819,6 @@ impl AppView {
                             ) {
                                 if let Some(d) = self.dashboard.as_mut() {
                                     d.close_popup();
-                                }
-                                if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                    agent.close_subagent_fullscreen();
                                 }
                                 return InputOutcome::Changed;
                             }
@@ -4292,7 +4283,7 @@ impl AppView {
             });
             super::MOUSE_CAPTURE_ENABLED.store(true, std::sync::atomic::Ordering::Release);
             for (_, agent) in self.agents.all_mut() {
-                agent.set_sticky_toast_recursive(None);
+                agent.set_sticky_toast(None);
             }
         }
     }
@@ -5591,8 +5582,8 @@ impl AppView {
         }
         if self
             .agents
-            .values()
-            .any(|a| a.pending_turn_end_reconcile.is_some())
+            .roots()
+            .any(|(_, a)| a.pending_turn_end_reconcile.is_some())
         {
             return TickDemand::Fast;
         }

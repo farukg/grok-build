@@ -888,8 +888,8 @@ fn live_prompt_images_reference_session(app: &AppView, session_id: &acp::Session
     refs_sid(&app.welcome_prompt.images)
         || app
             .agents
-            .values()
-            .any(|agent| refs_sid(&agent.prompt.images))
+            .all()
+            .any(|(_, agent)| refs_sid(&agent.prompt.images))
 }
 fn unused_husk_delete_effect(
     app: &AppView,
@@ -1343,7 +1343,7 @@ pub(in crate::app::dispatch) fn dispatch_new_session_with_id(
 /// Never leave a half-loaded slot with a bound session id.
 pub(in crate::app::dispatch) fn refuse_chat_mode_build_agent(app: &mut AppView, agent_id: AgentId) {
     app.show_toast(crate::app::session_startup::CHAT_MODE_LOCAL_BUILD_REFUSAL);
-    let fallback = app.agents.keys().copied().find(|id| *id != agent_id);
+    let fallback = app.agents.roots().map(|(id, _)| id).find(|id| *id != agent_id);
     remove_agent_and_cleanup(app, agent_id);
     if let Some(target) = fallback {
         switch_to_agent(app, target, SwitchCause::Picker);
@@ -1752,7 +1752,7 @@ pub(in crate::app::dispatch) fn handle_session_failed(
     if is_orphan {
         restore_orphan_create_draft_to_welcome(app, agent_id);
         let failed_was_active = matches!(app.active_view, ActiveView::Agent(id) if id == agent_id);
-        let fallback = app.agents.keys().copied().find(|id| *id != agent_id);
+        let fallback = app.agents.roots().map(|(id, _)| id).find(|id| *id != agent_id);
         remove_agent_and_cleanup(app, agent_id);
         if let Some(target) = fallback {
             if failed_was_active {
@@ -1828,7 +1828,7 @@ pub(in crate::app::dispatch) fn handle_worktree_session_failed(
         .is_some_and(|a| a.session.session_id.is_none() && a.session.forked_from.is_none());
     if is_orphan {
         restore_orphan_create_draft_to_welcome(app, agent_id);
-        let fallback = app.agents.keys().copied().find(|id| *id != agent_id);
+        let fallback = app.agents.roots().map(|(id, _)| id).find(|id| *id != agent_id);
         remove_agent_and_cleanup(app, agent_id);
         if let Some(target) = fallback {
             switch_to_agent(app, target, SwitchCause::Picker);

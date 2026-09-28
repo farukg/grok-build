@@ -503,7 +503,10 @@ pub(super) fn dispatch_show_word_select_tip(app: &mut AppView) -> Vec<Effect> {
     if crate::appearance::cache::load_keep_text_selection().selects_word() {
         return vec![];
     }
-    let Some(agent) = get_active_agent_mut(app) else {
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
         return vec![];
     };
     if agent.show_ephemeral_tip(

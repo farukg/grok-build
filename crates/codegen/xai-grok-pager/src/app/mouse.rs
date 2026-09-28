@@ -711,8 +711,10 @@ impl AgentView {
                         self.table_selection_geometry = None;
                         self.selection_created_at = None;
                         if is_open_child_click(mouse.modifiers)
-                            && let Some(child_sid) = self.child_link_at_scrollback_row(mouse.row)
+                            && let Some(child_sid) = self.linked_child_at_scrollback_row(mouse.row)
                         {
+                            // The press hands the pointer to the child's view, so this view's click gesture ends here
+                            self.left_mouse_down = false;
                             return InputOutcome::Action(Action::OpenSession(child_sid));
                         } else if mouse
                             .modifiers
@@ -889,11 +891,11 @@ impl AgentView {
                                         .scrollback
                                         .entry_screen_area(idx, self.pane_areas.scrollback)
                                         .is_some_and(|(a, _, _)| click_row == a.y);
-                                let (last_click, show_word_select_tip) =
+                                let (last_click, follow_up) =
                                     self.handle_scrollback_click(now, idx, header_row_click);
                                 self.last_click = last_click;
-                                if show_word_select_tip {
-                                    return InputOutcome::Action(Action::ShowWordSelectTip);
+                                if let Some(action) = follow_up {
+                                    return InputOutcome::Action(action);
                                 }
                                 return InputOutcome::Changed;
                             }
@@ -901,11 +903,11 @@ impl AgentView {
                             && now.duration_since(last_time).as_millis() < MULTI_CLICK_TIMEOUT_MS
                             && last_count >= 2
                         {
-                            let (last_click, show_word_select_tip) =
+                            let (last_click, follow_up) =
                                 self.handle_scrollback_click(now, last_idx, false);
                             self.last_click = last_click;
-                            if show_word_select_tip {
-                                return InputOutcome::Action(Action::ShowWordSelectTip);
+                            if let Some(action) = follow_up {
+                                return InputOutcome::Action(action);
                             }
                             return InputOutcome::Changed;
                         }

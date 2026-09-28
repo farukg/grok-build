@@ -1521,7 +1521,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::CycleSessions(direction) => dispatch_session_cycle(app, direction),
         Action::NavigateTree(step) => dispatch_navigate_tree(app, step),
         Action::OpenSession(session_id) => {
-            let id = super::ctx::find_agent_id_by_session_id(&app.agents, &session_id);
+            let id = app.agents.find_by_session_id(&session_id);
             if let Some(id) = id {
                 super::ctx::switch_to_agent(app, id, super::ctx::SwitchCause::Navigate);
             }
@@ -1639,7 +1639,7 @@ pub(crate) fn flush_image_notices(app: &mut AppView) -> bool {
     }
     let target = match app.active_view {
         ActiveView::Agent(id) => app.agents.get_mut(&id),
-        _ => app.agents.values_mut().next(),
+        _ => app.agents.roots_mut().next().map(|(_, agent)| agent),
     };
     let Some(agent) = target else {
         return false;

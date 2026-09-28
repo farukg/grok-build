@@ -186,10 +186,6 @@ impl AgentView {
         self.session.blocked_prompt = None;
     }
 
-    pub fn set_sticky_toast_recursive(&mut self, msg: Option<&str>) {
-        self.set_sticky_toast(msg);
-    }
-
     /// Show a toast with an explicit tick duration.
     pub fn show_toast_ticks(&mut self, msg: &str, ticks: u8) {
         self.toast = Some((

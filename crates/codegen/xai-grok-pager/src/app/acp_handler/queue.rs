@@ -109,14 +109,6 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
 
     let sid = acp::SessionId::new(session_id.clone());
     let session_match = find_session_match(app, &sid);
-    let snapshot = changed.entries.clone();
-    if snapshot.is_empty() {
-        app.shared_prompt_queues.remove(&session_id);
-    } else {
-        app.shared_prompt_queues
-            .insert(session_id.clone(), snapshot.clone());
-    }
-
 
     // Prefer running_* fields on the payload (authoritative; present when a turn is promoting)
     // Fall back to the local mirror for older shells
@@ -438,6 +430,9 @@ pub(super) fn handle_prompt_complete(notif: &acp::ExtNotification, app: &mut App
         cancellation_context: payload.cancellation_context(),
         error_kind: payload.error_kind(),
     };
+    if is_child_view(app, id) {
+        return complete_child_prompt(app, id, signal);
+    }
     let Some(agent) = app.agents.get_mut(&id) else {
         return false;
     };

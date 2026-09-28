@@ -141,14 +141,14 @@ impl AgentView {
                         InputOutcome::Changed
                     }
                     KeyCode::Enter if in_detail => {
-                        if let Some(run) = view.detail_run(&runs)
-                            && let Some(agent_id) =
-                                transcript_target(run, view.selected_phase_name.as_deref())
-                        {
-                            self.open_subagent_fullscreen(agent_id);
-                        }
+                        let target = view.detail_run(&runs).and_then(|run| {
+                            transcript_target(run, view.selected_phase_name.as_deref())
+                        });
                         self.workflows_view = view;
-                        InputOutcome::Changed
+                        match target {
+                            Some(agent_id) => InputOutcome::Action(Action::OpenSession(agent_id)),
+                            None => InputOutcome::Changed,
+                        }
                     }
                     KeyCode::Enter | KeyCode::Right if !in_detail => {
                         if let Some(run) = runs.get(view.selected_run) {
@@ -256,7 +256,8 @@ impl AgentView {
                                 .find(|(r, _)| hit(r))
                                 .map(|(_, id)| id.clone())
                             {
-                                self.open_subagent_fullscreen(agent_id);
+                                self.workflows_view = view;
+                                return Some(InputOutcome::Action(Action::OpenSession(agent_id)));
                             } else if let Some(phase_name) = view
                                 .phase_hits
                                 .iter()

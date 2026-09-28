@@ -335,13 +335,7 @@ pub(in crate::app::dispatch) fn dispatch_startup_fork_session(
             });
         return vec![];
     }
-    let (_agent_id, mut effects) = dispatch_new_session_inner_with_id(app, None, false);
-    let agent_id = app
-        .agents
-        .keys()
-        .next_back()
-        .copied()
-        .expect("fork placeholder agent");
+    let (agent_id, mut effects) = dispatch_new_session_inner_with_id(app, None, false);
     effects.retain(|e| !matches!(e, Effect::CreateSession { .. }));
     let cwd = parent_cwd.unwrap_or_else(|| app.cwd.clone());
     let parent_is_worktree =

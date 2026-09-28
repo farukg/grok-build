@@ -27,22 +27,25 @@ pub enum SwitchModelError {
     /// Any other failure (network, auth, server error, etc.).
     Other(String),
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeStep {
+    Parent,
+    LatestChild,
+}
 /// Synchronous, side-effect-free user intent.
 /// Produced by [`super::input`] from key/mouse events.
 /// Consumed by [`super::dispatch::dispatch`] to mutate state and return effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Direction { Prev, Next }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TreeStep { Parent, LatestChild }
-
 #[derive(Debug)]
 #[cfg_attr(test, derive(strum::AsRefStr))]
 #[allow(clippy::large_enum_variant)]
 pub enum Action {
-    CycleSessions(Direction),
-    NavigateTree(TreeStep),
-    OpenSession(String),
+    /// Quit the application.
+    Quit,
     /// Restart the binary to pick up a downloaded update.
     QuitForUpdate,
     /// Resume the recent foreign session offered on the launch welcome screen.
@@ -419,6 +422,7 @@ pub enum Action {
     KillSubagent(String),
     /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
     ResumeSubagent { subagent_id: String, prompt: String },
+    RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
     DemoteToBackground,
@@ -851,6 +855,12 @@ pub enum Action {
     /// Returns to the dashboard with the cursor on the previously attached row.
     /// Bound to Esc, Ctrl+\\, and `[Dashboard]` click inside the overlay.
     DashboardOverlayExit,
+    /// Previous/next session: the top-level sessions in dashboard row order from a root, the siblings from a child.
+    CycleSessions(Direction),
+    /// Open the parent session, or the most recently started child.
+    NavigateTree(TreeStep),
+    /// Open the session view with this session id.
+    OpenSession(String),
     /// Confirmed stop from inside the dashboard's session-overlay: close the attached session and return to the dashboard.
     /// State machine documented at `dispatch_dashboard_overlay_stop`.
     DashboardOverlayStop,
@@ -954,9 +964,6 @@ pub enum Action {
     JumpPickerSelect(EntryId),
     /// Close the picker and restore the stashed viewport.
     JumpDismiss,
-    /// Quit the application.
-    Quit,
-    RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
 }
 /// A server-authoritative queue row plus the version its removal is checked against.
 #[derive(Clone, Debug, Eq, PartialEq)]
