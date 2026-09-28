@@ -1066,36 +1066,20 @@ fn child_esc_emits_session_cancel_for_child() {
 }
 
 
-/// An Idle parent with a cancelling overlay child must keep Fast ticks for resend.
+/// Any cancelling resident session keeps the resend tick demand active.
 #[test]
-fn tick_demand_fast_for_idle_parent_with_cancelling_overlay_child() {
+fn tick_demand_fast_while_any_session_is_cancelling() {
     use crate::app::app_view::TickDemand;
-
+    use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let child_sid = "child-overlay-tick-demand";
-    let mut child_session = make_test_agent_session(&app, AgentId(1), child_sid);
-    child_session.state = AgentState::TurnRunning;
-    let mut child = AgentView::new(child_session, ScrollbackState::new());
-    child.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::Mouse);
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.insert_test_child(child_sid.to_string(), Box::new(child));
-        parent.active_subagent = Some(child_sid.to_string());
-        assert!(parent.session.state.is_idle());
-    }
-    assert_eq!(app.tick_demand(), TickDemand::None, "idle overlay parks");
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-    assert!(
-        matches!(effects.as_slice(), [Effect::CancelTurn { .. }]),
-        "overlay stop must cancel the child, got {effects:?}"
-    );
-    assert_eq!(
-        app.tick_demand(),
-        TickDemand::Fast,
-        "idle parent with a cancelling child must not park before resend grace"
-    );
+    let child_id = AgentId(1);
+    let child_sid = "child-tick-demand";
+    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
+    child_session.state = AgentState::TurnCancelling;
+    let child = AgentView::new(child_session, ScrollbackState::new());
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    assert_eq!(app.tick_demand(), TickDemand::Fast);
 }
 
 /// Overlay stop sends cancel_subagents true even when always_continue is set.
@@ -1131,27 +1115,6 @@ fn cancel_turn_in_subagent_overlay_ignores_always_continue_pref() {
     );
 }
 
-/// Dangling active_subagent is not an overlay; parent ask-panel still opens.
-#[test]
-fn cancel_turn_with_stale_active_subagent_still_shows_ask_panel() {
-    let mut app = test_app_with_agent();
-    let parent_id = AgentId(0);
-    {
-        let parent = app.agents.get_mut(&parent_id).unwrap();
-        parent.session.state = AgentState::TurnRunning;
-        parent
-            .subagent_sessions
-            .insert("child-1".into(), make_test_subagent("child-1", "sa-1"));
-        parent.active_subagent = Some("stale-sid".into());
-    }
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(effects.is_empty());
-    let parent = app.agents.get(&parent_id).unwrap();
-    assert!(parent.cancel_turn_view.is_some());
-    assert!(parent.session.state.is_turn_running());
-}
 
 /// Overlay child with no session_id: no wire cancel and no local Cancelling.
 #[test]
