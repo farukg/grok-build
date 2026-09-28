@@ -234,7 +234,11 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
         ActiveView::Agent(id) => Some(id),
         _ => None,
     };
+    if let ActiveView::Agent(previous) = app.active_view {
+        let _outcome = crate::app::subagent::evict_on_leave(&mut app.agents, previous);
+    }
     app.active_view = ActiveView::Agent(target);
+    let _outcome = crate::app::subagent::replay_on_open(&mut app.agents, target);
     // Re-anchor the global permission-mode mirror to the now-active agent
     // The cycle's `sync_active_auto_flag` (derived from the global) then can't copy a different agent's stale Auto/Always-Approve onto this one
     // Per-session yolo/auto are the source of truth; the global is a write-only mirror

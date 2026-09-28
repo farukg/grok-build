@@ -1184,6 +1184,32 @@ pub(super) fn default_actions(
             requires_confirmation: false,
             long_help: None,
         },
+        ActionDef {
+            id: ActionId::SessionParent,
+            label: "parent session",
+            description: "Open parent session",
+            default_key: key!(Up, CONTROL | ALT),
+            alt_keys: vec![],
+            category: Category::Agent,
+            context: When::AgentScreen,
+            hint_priority: None,
+            hint_key_display: None,
+            requires_confirmation: false,
+            long_help: None,
+        },
+        ActionDef {
+            id: ActionId::SessionLatestChild,
+            label: "latest child session",
+            description: "Open latest child session",
+            default_key: key!(Down, CONTROL | ALT),
+            alt_keys: vec![],
+            category: Category::Agent,
+            context: When::AgentScreen,
+            hint_priority: None,
+            hint_key_display: None,
+            requires_confirmation: false,
+            long_help: None,
+        },
         // Stop with dashboard parity inside the session overlay; the state machine is documented at `dispatch_dashboard_overlay_stop`
         // Intentionally shadows the agent view's `ShortcutsHelp` alt binding (Ctrl+X) inside the overlay; Ctrl+. still opens the cheatsheet there.
         ActionDef {

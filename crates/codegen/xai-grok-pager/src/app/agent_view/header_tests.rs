@@ -208,11 +208,11 @@ fn overlay_header_leads_with_title_and_paints_switcher() {
     );
     assert!(matches!(
         agent.handle_input(&click(prev.x, prev.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayPrev)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Prev))
     ));
     assert!(matches!(
         agent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
     let dash = agent.hit_dashboard.rect.unwrap();
     assert!(matches!(
@@ -433,7 +433,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
     );
     assert!(!matches!(
         agent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
     agent.prompt.set_text("");
     agent.prompt.refresh_slash(&agent.session.models);
@@ -442,6 +442,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
     assert_eq!(agent.hit_dashboard.rect, Some(dash));
     assert!(matches!(
         agent.handle_input(&click(next.x, next.y), &registry),
-        InputOutcome::Action(Action::DashboardOverlayNext)
+        InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
 }
+
