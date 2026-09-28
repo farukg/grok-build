@@ -259,13 +259,8 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
         row_y,
     ));
     assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "clicking the painted [↗] must open the subagent, got {outcome:?}"
-    );
-    assert_eq!(
-        agent.active_subagent.as_deref(),
-        Some("child-1"),
-        "the [↗] click must open the subagent fullscreen"
+        matches!(outcome, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1"),
+        "clicking the painted [↗] must request the child session, got {outcome:?}"
     );
 }
 /// Dock (remote `dock_enabled`): hovering a task row reveals `[↗][stop]`;
