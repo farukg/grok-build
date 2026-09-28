@@ -360,6 +360,7 @@ pub(crate) async fn run_shell_child(
     mut completion_data: ShellCompletionData,
     gateway: GatewaySender,
     mut spawn_root: Option<tracing::Span>,
+    residence: oneshot::Sender<crate::agent::mvp_agent::RunningChild>,
 ) -> ChildRunOutput<ShellCompletionData> {
     if let Some(tp) = run.request.spawn_root.traceparent() {
         xai_grok_otel::link_current_span_to_meta(&serde_json::json!({ "traceparent": tp }));
@@ -1740,6 +1741,7 @@ pub(crate) async fn run_shell_child(
     let mut restore_wake_after_teardown = false;
     let promoted = match readiness {
         InitialChildPromptReadiness::Admitted(release) => {
+            let child_turns = receipt_sink.clone();
             let child = StartedChild {
                 child_session_id: child_session_id.0.to_string(),
                 persona: effective_runtime.persona.clone(),
@@ -1871,6 +1873,11 @@ pub(crate) async fn run_shell_child(
                         if start_artifacts.publish_at(PublicationBoundary::Started) {
                             completion_data.mark_spawned_notification_emitted();
                         }
+                        let _ = residence.send(crate::agent::mvp_agent::RunningChild {
+                            handle: child_handle.clone(),
+                            turns: child_turns,
+                            parent_prompt_index: ctx.active_message_parent_prompt_index.clone(),
+                        });
                         let _ = release.send(());
                         true
                     }

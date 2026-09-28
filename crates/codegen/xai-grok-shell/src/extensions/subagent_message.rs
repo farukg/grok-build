@@ -48,7 +48,9 @@ pub enum SendSubagentMessageOutcome {
     ChannelClosed,
 }
 
-fn literal_text(content: Vec<acp::ContentBlock>) -> Result<String, SendSubagentMessageOutcome> {
+pub(crate) fn literal_text(
+    content: Vec<acp::ContentBlock>,
+) -> Result<String, SendSubagentMessageOutcome> {
     if content.len() != 1 {
         return Err(SendSubagentMessageOutcome::UnsupportedContent);
     }

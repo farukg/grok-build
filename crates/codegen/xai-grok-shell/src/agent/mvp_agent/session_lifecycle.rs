@@ -161,13 +161,11 @@ impl MvpAgent {
     pub(crate) fn clear_session_host(&self, id: &acp::SessionId) {
         self.session_registry.clear_host(id);
     }
-    pub(crate) fn register_child_session(&self, id: &acp::SessionId, handle: SessionHandle, host: ChildHost) {
-        self.session_registry.put_resident(id, handle, None);
+    pub(crate) fn register_child_session(&self, id: &acp::SessionId, host: ChildHost) {
         self.session_registry.set_host(id, SessionHost::Child(host));
     }
-    pub(crate) fn release_child_session(&self, id: &acp::SessionId) {
-        self.session_registry.take_resident(id);
-        self.session_registry.release(id);
+    pub(crate) fn finish_child_session(&self, id: &acp::SessionId) {
+        self.session_registry.finish_child(id);
     }
     pub(crate) fn is_resident(&self, id: &acp::SessionId) -> bool {
         self.session_registry.is_resident(id)

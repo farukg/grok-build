@@ -68,7 +68,17 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         let ctx = self.contexts.lock().pop_front().expect("run context");
         let gateway = self.gateway.clone();
         let completion_data = ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), None);
-        Box::pin(async move { run_shell_child(run, ctx, completion_data, gateway, None).await })
+        Box::pin(async move {
+            run_shell_child(
+                run,
+                ctx,
+                completion_data,
+                gateway,
+                None,
+                tokio::sync::oneshot::channel().0,
+            )
+            .await
+        })
     }
 
     fn validate_type(

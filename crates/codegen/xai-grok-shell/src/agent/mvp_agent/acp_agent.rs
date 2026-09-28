@@ -565,6 +565,7 @@ impl acp::Agent for MvpAgent {
                     );
                     serde_json::json!({
                     "grokShell": true,
+                    "childSessions": "firstClass",
                     // Re-deriving this precedence client-side has regressed OIDC refresh, so clients consume the agent's choice from here
                     "defaultAuthMethodId": default_auth_method_id_wire,
                     // The agent can drive in-process SDK MCP servers over the ACP reverse channel (`x.ai/mcp/sdk_call`)
@@ -1015,10 +1016,26 @@ impl acp::Agent for MvpAgent {
             Some(arguments.session_id.0.as_ref()),
             None,
         );
-        let handle = self
-            .session_handle_waiting_for_load(&arguments.session_id)
-            .await
-            .ok_or_else(|| acp::Error::invalid_params().data("unknown session id"))?;
+        let (handle, child_turn) = match self.session_host(&arguments.session_id) {
+            Some(SessionHost::Child(child)) => match super::child_prompt::ChildPromptAdmission::of(child) {
+                super::child_prompt::ChildPromptAdmission::Live { handle, turn } => (*handle, Some(turn)),
+                super::child_prompt::ChildPromptAdmission::Woken { parent_session_id, address } => {
+                    return self
+                        .wake_child_with_prompt(&parent_session_id, address, arguments.prompt)
+                        .await;
+                }
+                super::child_prompt::ChildPromptAdmission::Refused(refusal) => {
+                    return Err(acp::Error::invalid_request().data(refusal.to_string()));
+                }
+            },
+            Some(SessionHost::Root) | None => (
+                self
+                    .session_handle_waiting_for_load(&arguments.session_id)
+                    .await
+                    .ok_or_else(|| acp::Error::invalid_params().data("unknown session id"))?,
+                None,
+            ),
+        };
         if self.models_manager.allowlist_excludes_all() {
             let deny = crate::agent::remote_config::allowlist_excludes_all_message(
                 &self.cfg.borrow(),
@@ -1422,6 +1439,17 @@ impl acp::Agent for MvpAgent {
                 })
         };
         dispatch_result?;
+        let child_turn_completion = child_turn
+            .map(|turn| {
+                turn.admit(
+                    prompt_id.clone(),
+                    if send_now {
+                        xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation::Interject
+                    } else {
+                        xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation::Queue
+                    },
+                )
+            });
         drop(dispatch_guard);
         self.push_roster_activity_delta(
             &arguments.session_id,
@@ -1434,6 +1462,14 @@ impl acp::Agent for MvpAgent {
             .map_err(|_| {
                 acp::Error::internal_error().data("session failed to respond")
             })?;
+        if let Some(completion) = child_turn_completion
+            && completion.send(stop_result.clone()).is_err()
+        {
+            tracing::debug!(
+                session_id = %arguments.session_id.0,
+                "child run already settled; its parent result does not include this turn"
+            );
+        }
         await_turn_span.close();
         let removed_from_queue = matches!(
             &stop_result,
@@ -1851,7 +1887,10 @@ impl acp::Agent for MvpAgent {
     }
     async fn cancel(&self, args: acp::CancelNotification) -> Result<(), acp::Error> {
         tracing::info!("Received cancel request {args:?}");
-        let handle = self.session_handle_waiting_for_load(&args.session_id).await;
+        let handle = match self.session_host(&args.session_id) {
+            Some(SessionHost::Child(child)) => child.running_handle(),
+            Some(SessionHost::Root) | None => self.session_handle_waiting_for_load(&args.session_id).await,
+        };
         let cancel_trigger = args
             .meta
             .as_ref()

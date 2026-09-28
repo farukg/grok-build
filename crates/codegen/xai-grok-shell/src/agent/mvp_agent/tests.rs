@@ -3169,6 +3169,7 @@ async fn lazy_registry_build_resolves_real_remote_trust_before_reading_disk_conf
         .and_then(|s| s.get("regr-lazy-killswitch").map(|p| p.trusted));
     assert_eq!(trusted, Some(true), "kill-switched folder counts trusted");
 }
+mod child_prompt_tests;
 mod list_running_heal_tests;
 #[cfg(unix)]
 mod process_scope_reclaim;

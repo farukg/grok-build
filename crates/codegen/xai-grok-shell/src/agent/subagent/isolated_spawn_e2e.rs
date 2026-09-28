@@ -174,7 +174,17 @@ impl ChildRunner for Runner {
         let ctx = self.ctx.lock().take().expect("run context");
         let gateway = self.gateway.clone();
         let completion_data = ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), None);
-        Box::pin(async move { run_shell_child(run, ctx, completion_data, gateway, None).await })
+        Box::pin(async move {
+            run_shell_child(
+                run,
+                ctx,
+                completion_data,
+                gateway,
+                None,
+                tokio::sync::oneshot::channel().0,
+            )
+            .await
+        })
     }
     fn validate_type(
         &self,

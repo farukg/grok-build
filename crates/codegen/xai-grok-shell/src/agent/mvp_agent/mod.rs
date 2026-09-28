@@ -1220,6 +1220,7 @@ mod session_registry;
 mod session_lifecycle;
 mod agent_ops;
 mod acp_agent;
+mod child_prompt;
 pub(crate) mod reasoning_effort;
 mod sampler_prewarm;
 mod session_setup;
@@ -1227,8 +1228,9 @@ pub use session_setup::SessionSetupPhase;
 mod subagent_spawn;
 pub(crate) mod test_hooks;
 mod turn_end;
+pub(crate) use session_registry::{ChildHost, ChildReach, ChildResidence, RunningChild};
 use session_registry::{
-    ChildHost, IdentityStamp, SessionHost, SessionRegistry, StampResolution, WithdrawnInstall,
+    IdentityStamp, SessionHost, SessionRegistry, StampResolution, WithdrawnInstall,
 };
 pub(crate) use session_lifecycle::RegistrySnapshot;
 pub(super) use super::ext_parsers;

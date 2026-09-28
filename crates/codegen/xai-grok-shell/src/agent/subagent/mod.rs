@@ -60,7 +60,7 @@ mod prompt_turn_result;
 mod resume_window;
 pub(crate) use child_runtime::{
     ShellChildRuntime, UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT, UnpromotedResourceFate,
-    await_session_thread_exit,
+    await_session_thread_exit, parent_telemetry_ctx,
 };
 pub(crate) use handle_request::run_shell_child;
 pub(crate) use prompt_turn_receipt::PromptTurnReceipt;
