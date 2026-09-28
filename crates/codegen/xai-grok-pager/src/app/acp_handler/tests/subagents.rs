@@ -1,6 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
-    use crate::app::agent_view::ChildLink;
+    use crate::app::session_views::test_support::link_child;
 
     #[test]
     fn replayed_subagent_finished_marks_orphan_terminal() {
