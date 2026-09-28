@@ -5424,21 +5424,23 @@ fn ctrl_alt_right_cycles_sessions_without_takeover() {
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn cycle_in_child_is_siblings_in_root_is_roots() {
-    use crate::app::agent_view::{AgentRole, ChildLink};
+    use crate::app::session_views::test_support::link_child;
     let mut app = three_sessions_opened_directly();
     let parent_id = AgentId(0);
     let children = ["child-a", "child-b"].map(|sid| {
         let id = AgentId(app.next_agent_id);
         app.next_agent_id += 1;
-        let session = make_test_agent_session(&app, id, sid);
-        let mut child = AgentView::new(session, ScrollbackState::new());
-        child.role = AgentRole::Child(ChildLink {
-            parent: parent_id,
-            parent_session_id: app.agents[&parent_id].session.session_id.clone().unwrap(),
-            subagent_id: sid.to_owned(),
-            started_at: std::time::Instant::now(),
-        });
-        app.agents.insert(id, child);
+        let child = AgentView::new(
+            make_test_agent_session(&app, id, sid),
+            ScrollbackState::new(),
+        );
+        link_child(
+            &mut app.agents,
+            parent_id,
+            id,
+            child,
+            std::time::Instant::now(),
+        );
         id
     });
     app.active_view = ActiveView::Agent(children[0]);
@@ -5453,21 +5455,21 @@ fn cycle_in_child_is_siblings_in_root_is_roots() {
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn ctrl_alt_up_from_child_opens_parent() {
-    use crate::app::agent_view::{AgentRole, ChildLink};
+    use crate::app::session_views::test_support::link_child;
     let mut app = three_sessions_opened_directly();
     let parent = AgentId(0);
     let child = AgentId(app.next_agent_id);
-    let mut view = AgentView::new(
+    let view = AgentView::new(
         make_test_agent_session(&app, child, "child"),
         ScrollbackState::new(),
     );
-    view.role = AgentRole::Child(ChildLink {
+    link_child(
+        &mut app.agents,
         parent,
-        parent_session_id: app.agents[&parent].session.session_id.clone().unwrap(),
-        subagent_id: "child".to_owned(),
-        started_at: std::time::Instant::now(),
-    });
-    app.agents.insert(child, view);
+        child,
+        view,
+        std::time::Instant::now(),
+    );
     app.active_view = ActiveView::Agent(child);
     press(&mut app, KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT);
     assert_eq!(app.active_view, ActiveView::Agent(parent));
