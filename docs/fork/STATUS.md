@@ -1,6 +1,6 @@
 # Fork status
 
-As of 2026-09-28 (W1-S landed). Upstream base: `4c72e282` (`origin/main` = `xai-org/grok-build`).
+As of 2026-09-28 (W1-H landed). Upstream base: `4c72e282` (`origin/main` = `xai-org/grok-build`).
 `main` of this fork = upstream + the commits below. `main` is the integration branch:
 everything that compiles and passes its tests lands here.
 
@@ -26,6 +26,7 @@ everything that compiles and passes its tests lands here.
 | M5 remove turns / tool exchanges from the model context via the timeline, persisted across replay | `5f39a22f`, `3d97d8ef`, `e4a3117b`, `b6f08d05`, `b043352b` |
 | W2 subagent view = normal session view (child sessions are top-level views, takeover modal removed) | `a632eab`, `1765af0` (pager-minimal build fix) |
 | W1-S human prompts reach child sessions by id (running: receipt to parent; finished: coordinator wake; workflow: refused), cancel by child id, `childSessions: "firstClass"` | `c084eea` |
+| W1-H a human prompt holds a running subagent's answer; `[deliver]` / F5 hands the last turn to the caller | `71a6fae`, `6fa71ae` |
 | CI: `linux-build` workflow builds `grok` (x86_64 Linux) on every push to `main`, Actions artifact `grok-x86_64-linux` | `50fa826` |
 
 Last full test run of `xai-grok-pager`, `xai-grok-shell`, `xai-grok-sampling-types` on `c5c2c850`:
@@ -34,6 +35,9 @@ green except the known failures below. `3b54b425` passed `cargo test -p xai-grok
 `cargo clippy -p xai-grok-pager -p xai-grok-shell --tests` without errors.
 `c084eea` (W1-S): `cargo test -p xai-grok-shell --lib` 7074 passed, the same 10 failures as `main` (below);
 `cargo check -p xai-grok-pager-bin` and clippy on the touched crates clean.
+`6fa71ae` (W1-H): `cargo test -p xai-grok-pager --lib` 10119 passed (only the four doctor failures),
+`cargo test -p xai-grok-shell --lib` 7076 passed (the same 10 environment failures); clippy clean
+on the touched lines; `cargo check -p xai-grok-pager-bin` builds.
 
 ### Known failures (not regressions)
 - Upstream, also failing on `4c72e282`: `diagnostics::doctor_format::tests::limited_color_output_is_stable`,
@@ -53,6 +57,7 @@ green except the known failures below. `3b54b425` passed `cargo test -p xai-grok
 | Stream | Branch | State | Stream file |
 |---|---|---|---|
 | W2 subagent view = normal session view | on `main` (`a632eab`) | done; follow-up W3 with W1-S | `streams/w2-subagent-session-view.md` |
+| W1-H hold a steered subagent until `deliver` | on `main` (`6fa71ae`) | done; next: ↑ history in child views (low prio) | `streams/w1h-hold-deliver.md` |
 | W1-S shell: children are first-class ACP sessions | on `main` (`c084eea`) | done; open questions in stream file, W3 consumes it | `streams/w1s-child-sessions-shell.md` |
 | M11 agent + human control over subagents | `grb/m11` | partial, uncompiled wiring | `streams/m11-subagent-control.md` |
 | F1-display per-kind one-line renderers | `grb/f1display` | partial | `streams/f1-display.md` |
