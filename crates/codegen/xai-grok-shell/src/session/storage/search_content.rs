@@ -8,9 +8,9 @@ use std::path::Path;
 
 use super::{
     ContentPeek, PromptExtractEvent, RawLinePeek, RawParamsPeek, XAI_SESSION_UPDATE_METHOD,
-    collect_prompts_from_events,
+    collect_prompts_from_events, parse_removed_items,
 };
-use crate::session::wire_tags::{REWIND_MARKER, USER_MESSAGE_CHUNK};
+use crate::session::wire_tags::{CONTEXT_ITEMS_REMOVED, REWIND_MARKER, USER_MESSAGE_CHUNK};
 
 const SEARCH_CONTENT_CHAR_LIMIT: usize = 200_000;
 
@@ -265,6 +265,12 @@ pub(super) fn collect_all_indexable_content_single_pass(
                     } else {
                         prompt_events.push(PromptExtractEvent::NotUserMessage);
                     }
+                }
+                Some(t) if t == *CONTEXT_ITEMS_REMOVED => {
+                    flush_assistant(&mut current_assistant, &mut assistant_texts);
+                    prompt_events.push(PromptExtractEvent::ContextItemsRemoved(
+                        parse_removed_items(update_peek.as_ref().and_then(|u| u.items)),
+                    ));
                 }
                 _ => {
                     flush_assistant(&mut current_assistant, &mut assistant_texts);

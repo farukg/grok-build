@@ -135,8 +135,8 @@ fn surviving_line_indexes<R: BufRead>(
         records.push(LineRecord { index, step });
         Ok(ControlFlow::Continue(()))
     })?;
-    let mut records = filter_rewind_by(records, |record| record.step);
-    let keep = truncate_for_prompt_by(&records, target_prompt_index, |record| record.step);
+    let mut records = filter_rewind_by(records, |record| record.step.clone());
+    let keep = truncate_for_prompt_by(&records, target_prompt_index, |record| record.step.clone());
     records.truncate(keep);
     Ok(records.into_iter().map(|record| record.index).collect())
 }

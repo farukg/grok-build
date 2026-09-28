@@ -2,6 +2,7 @@
 //! The actor implementation lives in `acp_session.rs`.
 use super::acp_types::*;
 use super::plan_mode::PromptMode;
+use super::{RemoveContextItemsOutcome, RemoveItemsRequest};
 use crate::extensions::notification::SessionNotification;
 use crate::session::signals::TurnDeltaSnapshot;
 use agent_client_protocol as acp;

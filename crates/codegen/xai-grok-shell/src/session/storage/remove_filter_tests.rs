@@ -1,4 +1,4 @@
-use super::*;
+use super::remove_filter::{ConversationRemoval, remove_from_conversation};
 use crate::sampling::{ConversationItem, ToolCall};
 use crate::session::ContextItemRef;
 

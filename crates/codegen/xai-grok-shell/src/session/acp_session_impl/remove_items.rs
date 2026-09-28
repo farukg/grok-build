@@ -33,7 +33,7 @@ impl SessionActor {
                 crate::sampling::ConversationItem::User(user) if user.prompt_index == Some(*prompt_index))),
             ContextItemRef::ToolExchange { tool_call_id } => {
                 let calls = conversation.iter().filter(|message| matches!(message,
-                    crate::sampling::ConversationItem::Assistant(assistant) if assistant.tool_calls.iter().any(|call| call.id == tool_call_id.as_str()))).count();
+                    crate::sampling::ConversationItem::Assistant(assistant) if assistant.tool_calls.iter().any(|call| call.id.as_ref() == tool_call_id.as_str()))).count();
                 let results = conversation.iter().filter(|message| matches!(message,
                     crate::sampling::ConversationItem::ToolResult(result) if result.tool_call_id == tool_call_id.as_str())).count();
                 calls == 1 && results == 1
