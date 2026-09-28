@@ -14,6 +14,14 @@ pub(crate) enum DockWatcherId {
     Loop(String),
 }
 impl AgentView {
+    pub(crate) fn linked_child_at_scrollback_row(&mut self, row: u16) -> Option<String> {
+        let idx = self
+            .scrollback
+            .entry_index_at_screen_row(row, self.pane_areas.scrollback)?;
+        self.scrollback.set_selected(Some(idx));
+        self.selected_linked_child()
+    }
+
     pub(crate) fn selected_linked_child(&self) -> Option<String> {
         if self.scrollback.is_selected_group_header() {
             return None;
