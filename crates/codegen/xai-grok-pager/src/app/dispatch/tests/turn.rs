@@ -999,9 +999,9 @@ fn cancel_turn_keeps_a_post_turn_plan_review() {
     );
 }
 
-/// An Idle parent with a TurnRunning overlay child must cancel the child session.
+/// An Idle parent with a TurnRunning child must cancel the child session.
 #[test]
-fn child_esc_emits_session_cancel_for_child() {
+fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
     use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
