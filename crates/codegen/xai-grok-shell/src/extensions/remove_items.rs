@@ -8,14 +8,14 @@ use super::{ExtResult, parse_params, to_raw_response};
 use crate::agent::MvpAgent;
 use crate::session::{RemoveContextItemsOutcome, RemoveItemsRequest, SessionCommand};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoveItemsSessionRequest {
     pub session_id: String,
     pub items: Vec<crate::session::ContextItemRef>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoveItemsSessionResponse {
     pub outcome: RemoveContextItemsOutcome,
