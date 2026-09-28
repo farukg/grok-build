@@ -954,7 +954,8 @@ mod tests {
         let theme = Theme::current();
         // First logical line is long enough to wrap into several rows at a narrow width; the second logical line then starts well past row 1
         let text = format!("{}\nsecond", "word ".repeat(40));
-        let entry = ScrollbackEntry::new(RenderBlock::user_prompt(text));
+        let entry = ScrollbackEntry::new(RenderBlock::user_prompt(text))
+            .with_display_mode(DisplayMode::Expanded);
         let renderer = EntryRenderer::new(&entry, &theme);
 
         // Narrow entry-area width (chrome is subtracted internally) forces wrap.
