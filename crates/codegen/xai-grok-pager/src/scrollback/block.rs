@@ -121,21 +121,10 @@ pub enum EntryForm {
     Override(super::types::DisplayForm),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Kind defaults the user chose; a kind without one keeps its block's own display policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DisplayDefaults {
     forms: Vec<(MessageKind, super::types::DisplayForm)>,
-}
-
-impl Default for DisplayDefaults {
-    fn default() -> Self {
-        Self {
-            forms: MessageKind::settings_kinds()
-                .iter()
-                .copied()
-                .map(|kind| (kind, super::types::DisplayForm::Collapsed))
-                .collect(),
-        }
-    }
 }
 
 impl DisplayDefaults {
@@ -146,12 +135,13 @@ impl DisplayDefaults {
     }
 
     pub fn set(&mut self, kind: MessageKind, form: super::types::DisplayForm) {
-        if let Some((_, current)) = self
+        match self
             .forms
             .iter_mut()
             .find(|(candidate, _)| *candidate == kind)
         {
-            *current = form;
+            Some((_, current)) => *current = form,
+            None => self.forms.push((kind, form)),
         }
     }
 }
