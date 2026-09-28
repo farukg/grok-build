@@ -151,13 +151,7 @@ impl AgentView {
         if entry_idx == BTW_OVERLAY_ENTRY_IDX {
             return self.with_btw_output(range_id, width_override, |src, _, _| f(src));
         }
-        let scrollback = if let Some(ref child_id) = self.active_subagent
-            && let Some(child) = self.subagent_views.get(child_id)
-        {
-            &child.scrollback
-        } else {
-            &self.scrollback
-        };
+        let scrollback = &self.scrollback;
         let visible_start = scrollback.visible_entry_range().start;
         let abs_idx = entry_idx + visible_start;
         // The per-block content width the geometry/hits were captured against; see the width note in `reconstruct_drag_copy`
@@ -202,13 +196,7 @@ impl AgentView {
                 })
             });
         }
-        let scrollback = if let Some(ref child_id) = self.active_subagent
-            && let Some(child) = self.subagent_views.get(child_id)
-        {
-            &child.scrollback
-        } else {
-            &self.scrollback
-        };
+        let scrollback = &self.scrollback;
         let visible_start = scrollback.visible_entry_range().start;
         let abs_idx = entry_idx + visible_start;
         let content_width = width_override.or_else(|| {
@@ -274,25 +262,15 @@ impl AgentView {
     }
 
     /// Advance drag autoscroll by one tick.
-    /// Scrolls the active scrollback (main or subagent) by `speed` rows in the autoscroll direction.
+    /// Scrolls this view by `speed` rows in the autoscroll direction.
     /// After scrolling, recomputes the drag head from the stored mouse position using the current (soon-stale) selection model.
     pub fn tick_drag_autoscroll(&mut self) -> bool {
         let Some(autoscroll) = self.drag_autoscroll else {
             return false;
         };
 
-        // Scroll the active scrollback.
         {
-            let scrollback = if let Some(ref child_id) = self.active_subagent {
-                if let Some(child) = self.subagent_views.get_mut(child_id) {
-                    &mut child.scrollback
-                } else {
-                    &mut self.scrollback
-                }
-            } else {
-                &mut self.scrollback
-            };
-
+            let scrollback = &mut self.scrollback;
             match autoscroll.direction {
                 AutoScrollDirection::Up => scrollback.scroll_up(autoscroll.speed),
                 AutoScrollDirection::Down => scrollback.scroll_down(autoscroll.speed),
@@ -757,13 +735,7 @@ impl AgentView {
             return reconstruct_selection_text(&self.last_btw_selection_model, drag)
                 .map(|text| (text, SelectionKind::Linear));
         }
-        let scrollback = if let Some(ref child_id) = self.active_subagent
-            && let Some(child) = self.subagent_views.get(child_id)
-        {
-            &child.scrollback
-        } else {
-            &self.scrollback
-        };
+        let scrollback = &self.scrollback;
         let visible_start = scrollback.visible_entry_range().start;
         let abs_idx = drag.anchor.entry_idx + visible_start;
         // Width must come from the same VisibleBlockGeometry the drag's block_line_idx values were captured against
@@ -845,15 +817,7 @@ impl AgentView {
         );
     }
 
-    /// Note on the AgentView whose scrollback was copied: the fullscreen child when active_subagent is set (same view reconstruct_drag_copy / with_entry_* use).
-    /// active_subagent is set (same view reconstruct_drag_copy / with_entry_* use).
     fn note_scrollback_drag_copy(&mut self, entry_idx: usize, toast_ticks: u16) {
-        if let Some(child_id) = self.active_subagent.clone()
-            && let Some(child) = self.subagent_views.get_mut(&child_id)
-        {
-            child.note_own_scrollback_drag_copy(entry_idx, toast_ticks);
-            return;
-        }
         self.note_own_scrollback_drag_copy(entry_idx, toast_ticks);
     }
 
@@ -1932,14 +1896,13 @@ mod tests {
     }
 
     #[test]
-    fn active_child_copy_uses_child_scrollback_cwd() {
+    fn child_view_copy_uses_its_own_scrollback_cwd() {
         use crate::scrollback::block::RenderBlock;
         use crate::scrollback::render::ScratchBuffer;
         use crate::scrollback::scrollback_pane::ScrollbackPane;
         use crate::scrollback::types::{DisplayMode, derive_selection_text};
         use ratatui::buffer::Buffer;
 
-        let parent_cwd = std::path::PathBuf::from("/parent/worktree");
         let child_cwd = std::path::PathBuf::from("/child/worktree");
         let mut child = make_agent();
         child.session.cwd = child_cwd.clone();
@@ -1979,17 +1942,13 @@ mod tests {
             .visible_block_content_width(line.entry_idx)
             .expect("visible child block width");
 
-        let mut parent = make_agent();
-        parent.session.cwd = parent_cwd;
-        parent.update_scrollback_selection_state(
+        let mut child = child;
+        child.update_scrollback_selection_state(
             rendered.output.selection_model,
             rendered.selection_boundaries,
         );
-        let child_id = "child".to_string();
-        parent.insert_test_child(child_id.clone(), Box::new(child));
-        parent.active_subagent = Some(child_id.clone());
 
-        let source_text = parent
+        let source_text = child
             .with_entry_output_text_source(
                 line.entry_idx,
                 line.range_id,
@@ -1998,22 +1957,6 @@ mod tests {
             )
             .flatten();
         assert_eq!(source_text.as_deref(), Some("src/lib.rs"));
-        {
-            let child = parent.subagent_views.get(&child_id).expect("active child");
-            let entry = child.scrollback.get(0).expect("child Read entry");
-            let cached = entry.cached_output_ref();
-            assert_eq!(
-                derive_selection_text(
-                    cached
-                        .lines
-                        .get(line.block_line_idx)
-                        .unwrap_or_else(|| panic!("missing index"))
-                ),
-                "src/lib.rs",
-                "copy helper must not rebuild the child cache against parent cwd"
-            );
-        }
-
         let path_width = line
             .selectable_cols
             .end
@@ -2035,7 +1978,7 @@ mod tests {
             anchor_content_width: Some(content_width),
         };
         assert_eq!(
-            parent.reconstruct_drag_copy(&drag),
+            child.reconstruct_drag_copy(&drag),
             Some(("src/lib.rs".to_string(), SelectionKind::Linear))
         );
     }

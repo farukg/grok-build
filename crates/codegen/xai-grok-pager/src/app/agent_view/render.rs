@@ -632,11 +632,6 @@ impl AgentView {
             self.inline_media_ids.clear();
             self.inline_media_iterm_emitted.clear();
         }
-        if let Some(esc) = self.take_subagent_inline_media_clear_escapes() {
-            xai_grok_shell::util::with_locked_stderr(|stderr| {
-                let _ = std::io::Write::write_all(stderr, esc.as_bytes());
-            });
-        }
         let appearance = self.scrollback.appearance().clone();
         let layout_cfg = &appearance.scrollback.layout;
         let scrollbar_cfg = &appearance.scrollback.scrollbar;
