@@ -957,7 +957,7 @@
     }
 
     /// Characterization (leader-relaunch orphan rows).
-    /// The window finalize force-idles only the ROOT transcript; nothing resolves or expires subagent rows.
+    /// The replayed child remains independently addressable after the root reconnects.
     /// So a post-reconnect freeze would be leader route loss (see the `leader::server` child-route backfill tests), not pager state.
     #[test]
     fn reload_replayed_spawn_without_finished_keeps_unresolved_running_row() {
@@ -996,19 +996,22 @@
             "no Finished in the replay → the row stays running indefinitely \
              (current behavior: nothing resolves it after the swap)"
         );
-        assert!(
-            agent.subagent_views.contains_key("child-sub"),
-            "the child view exists and is tracked"
-        );
+        let child_id = app.agents.iter().find_map(|(child_id, child)| {
+            child
+                .session
+                .session_id
+                .as_ref()
+                .is_some_and(|sid| sid.0 == "child-sub")
+                .then_some(*child_id)
+        }).expect("the replayed child view is registered");
 
-        // A live child delta after the swap still renders into the child view: pager-side routing is intact when the leader delivers it
-        let child_len_before = app.agents.get(&id).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("child-sub").unwrap_or_else(|| panic!("missing map entry")).scrollback.len();
+        let child_len_before = app.agents.get(&child_id).unwrap_or_else(|| panic!("missing child view")).scrollback.len();
         let _ = handle(
             make_agent_chunk_with_event("child-sub", "child live text", "p-child", None),
             &mut app,
         );
         assert!(
-            app.agents.get(&id).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("child-sub").unwrap_or_else(|| panic!("missing map entry")).scrollback.len() > child_len_before,
+            app.agents.get(&child_id).unwrap_or_else(|| panic!("missing child view")).scrollback.len() > child_len_before,
             "a delivered live child update must render into the child view"
         );
     }
