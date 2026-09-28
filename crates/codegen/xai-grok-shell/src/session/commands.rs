@@ -505,6 +505,10 @@ pub enum SessionCommand {
         request: RewindRequest,
         respond_to: oneshot::Sender<anyhow::Result<RewindResponse>>,
     },
+    RemoveContextItems {
+        request: RemoveItemsRequest,
+        respond_to: oneshot::Sender<RemoveContextItemsOutcome>,
+    },
     /// Out-of-band history repair (`x.ai/session/repair`): fix tool-pairing violations that would otherwise 400 on every request.
     /// The violations: orphaned or displaced `ToolResult`s, duplicates, and unanswered calls.
     /// `dry_run` only reports.

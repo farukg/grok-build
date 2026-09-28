@@ -7,7 +7,7 @@ use crate::sampling::ConversationItem;
 use crate::session::info::Info;
 use crate::session::persistence::Summary;
 use crate::session::signals::SessionSignals;
-use crate::session::wire_tags::{REWIND_MARKER, USER_MESSAGE_CHUNK};
+use crate::session::wire_tags::{CONTEXT_ITEMS_REMOVED, REWIND_MARKER, USER_MESSAGE_CHUNK};
 use crate::tools::todo::TodoState;
 use agent_client_protocol as acp;
 use xai_grok_sampling_types::ReasoningEffort;
@@ -250,6 +250,12 @@ fn temp_sibling(path: &Path) -> PathBuf {
     name.push(format!(".{}.tmp", uuid::Uuid::now_v7()));
     PathBuf::from(name)
 }
+
+pub(crate) mod remove_filter;
+use remove_filter::{raw_line_matches_removed_item, update_matches_removed_item};
+#[cfg(test)]
+#[path = "remove_filter_tests.rs"]
+mod remove_filter_tests;
 
 /// Rebuild the derived `chat_history.jsonl` cache from `updates.jsonl`, the durable source of truth.
 /// A session then restores from its update stream alone.
@@ -1076,7 +1082,7 @@ fn truncate_for_prompt_by<T>(
                     }
                 }
             }
-            RewindStep::Rewind { .. } | RewindStep::Other => tracker.on_non_user(),
+            RewindStep::Rewind { .. } | RewindStep::RemoveItems(_) | RewindStep::Other => tracker.on_non_user(),
         }
     }
 
@@ -1538,6 +1544,10 @@ pub(crate) struct RawUpdatePeek<'a> {
     #[serde(rename = "sessionUpdate")]
     pub session_update: &'a str,
     #[serde(default)]
+    pub items: Option<Vec<crate::session::ContextItemRef>>,
+    #[serde(default)]
+    pub tool_call_id: Option<&'a str>,
+    #[serde(default)]
     pub status: Option<&'a str>,
     #[serde(default)]
     pub target_prompt_index: Option<usize>,
@@ -1555,10 +1565,11 @@ pub(crate) struct RawChunkMetaPeek {
 }
 
 /// Role of one item in the rewind timeline, as seen by [`filter_rewind_by`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum RewindStep {
     /// Rewind marker: truncate survivors back to `target`'s prompt boundary.
     Rewind { target: usize },
+    RemoveItems(Vec<crate::session::ContextItemRef>),
     /// User-message chunk opening (or continuing) a prompt run.
     UserChunk { prompt_index: Option<usize> },
     /// Anything else: kept, but ends the current user run.
@@ -1580,6 +1591,16 @@ fn filter_rewind_by<T>(items: Vec<T>, classify: impl Fn(&T) -> RewindStep) -> Ve
                 let trunc = prompt_starts.get(target).copied().unwrap_or(result.len());
                 result.truncate(trunc);
                 prompt_starts.truncate(target);
+                tracker.on_non_user();
+                continue;
+            }
+            RewindStep::RemoveItems(refs) => {
+                result.retain(|item| !update_matches_removed_item(item, &refs));
+                let removed_prompts = refs.iter().filter_map(|reference| match reference {
+                    crate::session::ContextItemRef::Turn { prompt_index } => Some(*prompt_index),
+                    crate::session::ContextItemRef::ToolExchange { .. } => None,
+                }).collect::<std::collections::HashSet<_>>();
+                prompt_starts.retain(|index| !removed_prompts.contains(index));
                 tracker.on_non_user();
                 continue;
             }
@@ -1617,6 +1638,9 @@ fn rewind_step_for_line(line: &str) -> RewindStep {
     {
         return RewindStep::Rewind { target };
     }
+    if is_xai && u.session_update == *CONTEXT_ITEMS_REMOVED {
+        return RewindStep::RemoveItems(u.items.unwrap_or_default());
+    }
 
     let is_host_turn = u.meta.as_ref().and_then(|m| m.host_turn).unwrap_or(false);
     if !is_xai && !is_host_turn && u.session_update == *USER_MESSAGE_CHUNK {
@@ -1631,15 +1655,16 @@ fn rewind_step_for_line(line: &str) -> RewindStep {
 }
 
 fn rewind_step_for_update(update: &SessionUpdate) -> RewindStep {
-    if let SessionUpdate::Xai(n) = update
-        && let crate::extensions::notification::SessionUpdate::RewindMarker {
-            target_prompt_index,
-            ..
-        } = &n.update
-    {
-        return RewindStep::Rewind {
-            target: *target_prompt_index,
-        };
+    if let SessionUpdate::Xai(n) = update {
+        match &n.update {
+            crate::extensions::notification::SessionUpdate::RewindMarker { target_prompt_index, .. } => {
+                return RewindStep::Rewind { target: *target_prompt_index };
+            }
+            crate::extensions::notification::SessionUpdate::ContextItemsRemoved { items, .. } => {
+                return RewindStep::RemoveItems(items.clone());
+            }
+            _ => {}
+        }
     }
     if is_acp_user_message_chunk(update) && !is_host_turn_update(update) {
         return RewindStep::UserChunk {
@@ -1650,9 +1675,9 @@ fn rewind_step_for_update(update: &SessionUpdate) -> RewindStep {
 }
 
 /// Canonical raw-line rewind filter used by the initial and delta replay paths.
-/// Skips parsing entirely when no rewind markers are present.
+/// Skips parsing entirely when no rewind or removal markers are present.
 pub(crate) fn filter_rewind_lines(lines: Vec<&str>) -> Vec<&str> {
-    if !lines.iter().any(|l| l.contains(&*REWIND_MARKER)) {
+    if !lines.iter().any(|line| line.contains(&*REWIND_MARKER) || line.contains(&*CONTEXT_ITEMS_REMOVED)) {
         return lines;
     }
     filter_rewind_by(lines, |line| rewind_step_for_line(line))
@@ -1661,13 +1686,9 @@ pub(crate) fn filter_rewind_lines(lines: Vec<&str>) -> Vec<&str> {
 /// Typed equivalent of [`filter_rewind_lines`] over the same [`filter_rewind_by`] driver.
 pub fn filter_rewind_updates(updates: Vec<SessionUpdate>) -> Vec<SessionUpdate> {
     let has_rewinds = updates.iter().any(|u| {
-        matches!(
-            u,
-            SessionUpdate::Xai(n) if matches!(
-                n.update,
-                crate::extensions::notification::SessionUpdate::RewindMarker { .. }
-            )
-        )
+        matches!(u, SessionUpdate::Xai(n) if matches!(n.update,
+            crate::extensions::notification::SessionUpdate::RewindMarker { .. }
+                | crate::extensions::notification::SessionUpdate::ContextItemsRemoved { .. }))
     });
     if !has_rewinds {
         return updates;
@@ -1732,6 +1753,7 @@ pub enum PromptExtractEvent {
     ///
     /// Any in-progress user message should be flushed before truncating.
     RewindTo(usize),
+    ContextItemsRemoved(Vec<crate::session::ContextItemRef>),
 
     /// Any other update type: the current user message (if any) has ended.
     NotUserMessage,
@@ -1878,6 +1900,17 @@ pub fn collect_prompts_from_events(iter: impl Iterator<Item = PromptExtractEvent
                     &mut current_counts,
                 );
                 prompts.truncate(target_index);
+            }
+            PromptExtractEvent::ContextItemsRemoved(refs) => {
+                flush(&mut prompts, &mut current, &mut in_user, &mut current_run_pi, &mut current_counts);
+                let mut removed = refs.iter().filter_map(|reference| match reference {
+                    crate::session::ContextItemRef::Turn { prompt_index } => Some(*prompt_index),
+                    crate::session::ContextItemRef::ToolExchange { .. } => None,
+                }).collect::<Vec<_>>();
+                removed.sort_unstable();
+                for index in removed.into_iter().rev() {
+                    if index < prompts.len() { prompts.remove(index); }
+                }
             }
             PromptExtractEvent::NotUserMessage => {
                 flush(
@@ -2100,10 +2133,10 @@ pub(crate) struct ContentMetaPeek<'a> {
 }
 
 /// Parse one `updates.jsonl` line into a [`PromptExtractEvent`].
-/// Always returns an event: `NotUserMessage` for every line that is not a user-message chunk or rewind marker (including unparseable ones).
-/// Fast path: only those two kinds can produce a non-`NotUserMessage` event, and their discriminant appears verbatim.
+/// Always returns an event: `NotUserMessage` for lines unrelated to prompts and history markers.
+/// Fast path: user chunks and internal history markers are checked by their discriminant before parsing.
 pub(crate) fn parse_prompt_extract_event(line: &str) -> PromptExtractEvent {
-    if !line.contains(&*USER_MESSAGE_CHUNK) && !line.contains(&*REWIND_MARKER) {
+    if !line.contains(&*USER_MESSAGE_CHUNK) && !line.contains(&*REWIND_MARKER) && !line.contains(&*CONTEXT_ITEMS_REMOVED) {
         return PromptExtractEvent::NotUserMessage;
     }
 
@@ -2159,6 +2192,13 @@ pub(crate) fn parse_prompt_extract_event(line: &str) -> PromptExtractEvent {
         return PromptExtractEvent::NotUserMessage;
     }
 
+    if is_xai && tag == *CONTEXT_ITEMS_REMOVED {
+        let refs = serde_json::from_str::<RawUpdatePeek<'_>>(raw_params)
+            .ok()
+            .and_then(|update| update.items)
+            .unwrap_or_default();
+        return PromptExtractEvent::ContextItemsRemoved(refs);
+    }
     if is_xai && tag == *REWIND_MARKER {
         if let Some(idx) = peek.update.target_prompt_index {
             return PromptExtractEvent::RewindTo(idx);
