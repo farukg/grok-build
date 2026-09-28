@@ -7,6 +7,7 @@
 #![deny(clippy::indexing_slicing)]
 
 pub mod context_policy;
+pub mod context_provenance;
 pub mod conversation;
 pub mod doom_loop;
 pub mod error;
@@ -18,6 +19,8 @@ pub mod tool_overrides;
 pub mod types;
 
 pub use self::context_policy::{all_categories, ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice};
+pub use self::context_provenance::classify_legacy_item;
+pub use self::conversation::ContextSection;
 pub use self::conversation::*;
 pub use self::doom_loop::{
     DEFAULT_EXACT_REPETITION_MIN_TOKENS, DOOM_LOOP_CHECK_EVENT_TYPE, DOOM_LOOP_CHECK_HEADER,

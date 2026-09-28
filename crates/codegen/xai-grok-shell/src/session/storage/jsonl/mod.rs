@@ -1032,7 +1032,10 @@ impl JsonlStorageAdapter {
                     })
             };
             let item = match item_result {
-                Ok(item) => item,
+                Ok(mut item) => {
+                    item = item.tagged(xai_grok_sampling_types::classify_legacy_item(&item));
+                    item
+                }
                 Err(e) => {
                     skip_line(line_idx + 1, e.to_string());
                     continue;

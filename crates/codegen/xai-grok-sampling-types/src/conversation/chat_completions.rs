@@ -5,6 +5,8 @@ impl From<ChatRequestMessage> for ConversationItem {
         match msg.role {
             Role::System => ConversationItem::System(SystemItem {
                 content: Arc::<str>::from(msg.text_content()),
+                context_category: crate::ContextCategory::CoreInstructions,
+                sections: Vec::new(),
                 synthetic_reason: SyntheticReason::Primary,
             }),
             Role::User => {
@@ -24,6 +26,8 @@ impl From<ChatRequestMessage> for ConversationItem {
                 ConversationItem::User(UserItem {
                     content: parts,
                     synthetic_reason: SyntheticReason::Human,
+                    context_category: crate::ContextCategory::UserTurns,
+                    sections: Vec::new(),
                     cwd_generation: None,
                     prior_turn_interrupt: None,
                     prompt_index: None,

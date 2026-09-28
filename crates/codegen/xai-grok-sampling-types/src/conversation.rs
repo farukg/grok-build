@@ -86,10 +86,18 @@ pub enum ConversationItem {
     Reasoning(rs::ReasoningItem),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSection {
+    pub category: crate::ContextCategory,
+    pub content: Arc<str>,
+}
+
 /// System message content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemItem {
     pub content: Arc<str>,
+    pub context_category: crate::ContextCategory,
+    pub sections: Vec<ContextSection>,
     /// `Primary` is omitted on write and filled in when absent, so the leading prompt serializes as it did before this field existed.
     #[serde(
         default = "SyntheticReason::primary",
@@ -236,9 +244,11 @@ pub enum PriorTurnInterrupt {
 }
 
 /// User message with text and optional images
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserItem {
     pub content: Vec<ContentPart>,
+    pub context_category: crate::ContextCategory,
+    pub sections: Vec<ContextSection>,
     /// `Human` is omitted on write and filled in when absent, so real user turns serialize as they did when this field was optional.
     #[serde(default, skip_serializing_if = "SyntheticReason::is_human")]
     pub synthetic_reason: SyntheticReason,
@@ -961,10 +971,21 @@ impl ConversationResponse {
 // ============================================================================
 
 impl ConversationItem {
+    pub fn tagged(mut self, category: crate::ContextCategory) -> Self {
+        match &mut self {
+            Self::System(item) => item.context_category = category,
+            Self::User(item) => item.context_category = category,
+            Self::Assistant(_) | Self::ToolResult(_) | Self::BackendToolCall(_) | Self::Reasoning(_) => {}
+        }
+        self
+    }
+
     /// Create the request's system prompt, tagged [`SyntheticReason::Primary`].
     pub fn system(content: impl Into<String>) -> Self {
         Self::System(SystemItem {
             content: Arc::<str>::from(content.into()),
+            context_category: crate::ContextCategory::CoreInstructions,
+            sections: Vec::new(),
             synthetic_reason: SyntheticReason::Primary,
         })
     }
@@ -977,6 +998,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::Human,
+            context_category: crate::ContextCategory::UserTurns,
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -988,6 +1011,8 @@ impl ConversationItem {
         Self::User(UserItem {
             content: parts,
             synthetic_reason: SyntheticReason::Human,
+            context_category: crate::ContextCategory::UserTurns,
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1003,6 +1028,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::CompactionMeta,
+            context_category: crate::ContextCategory::CompactionSummary,
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1018,6 +1045,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::SystemReminder,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::SystemReminder),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1031,6 +1060,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::LengthContinue,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::LengthContinue),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1058,6 +1089,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::ProjectInstructions,
+            context_category: crate::ContextCategory::ProjectInstructions,
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1071,6 +1104,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::WorkingDirectorySwitch,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::WorkingDirectorySwitch),
+            sections: Vec::new(),
             cwd_generation: Some(cwd_generation),
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1084,6 +1119,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::AgentMessage,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::AgentMessage),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1099,6 +1136,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::AutoContinue,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::AutoContinue),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1114,6 +1153,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::AutoRecovery,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::AutoRecovery),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1128,6 +1169,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::Interjection,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::Interjection),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1141,6 +1184,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::TaskCompleted,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::TaskCompleted),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1154,6 +1199,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::SubagentCompleted,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::SubagentCompleted),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1167,6 +1214,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::NotificationDrain,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::NotificationDrain),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1180,6 +1229,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::GoalSummary,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::GoalSummary),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1195,6 +1246,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::GoalClassifierNudge,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::GoalClassifierNudge),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1208,6 +1261,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::SchedulerFired,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::SchedulerFired),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -1221,6 +1276,8 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::StopHookFeedback,
+            context_category: crate::ContextCategory::RuntimeNotices(crate::RuntimeNotice::StopHookFeedback),
+            sections: Vec::new(),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
