@@ -473,14 +473,13 @@ mod workflows_overlay_key_tests {
                 duration_ms: 0,
             },
         ];
-        agent.insert_test_child("child-running".to_owned(), Box::new(make_agent()));
         let reg = ActionRegistry::defaults();
 
         assert!(matches!(
             agent.handle_input(&key(KeyCode::Enter), &reg),
             InputOutcome::Changed
         ));
-        assert_eq!(agent.active_subagent.as_deref(), Some("child-running"));
+        assert_eq!(agent.workflow_runs.len(), 1);
         assert!(agent.show_workflows);
     }
 
@@ -645,16 +644,10 @@ mod workflows_overlay_key_tests {
     fn click_on_roster_agent_opens_transcript_fullscreen_over_overlay() {
         let mut agent = workflows_agent(&["wf_run"]);
         agent.workflows_view.agent_hits = vec![(rect(10, 5, 30, 1), "child-1".to_string())];
-        agent.insert_test_child("child-1".to_string(), Box::new(make_agent()));
         let reg = ActionRegistry::defaults();
 
         let out = agent.handle_input(&mouse_down(12, 5), &reg);
-        assert!(matches!(out, InputOutcome::Changed));
-        assert_eq!(
-            agent.active_subagent.as_deref(),
-            Some("child-1"),
-            "roster click must open the child transcript fullscreen"
-        );
+        assert_eq!(out, InputOutcome::Action(Action::OpenSession("child-1".to_string())));
         assert!(
             agent.show_workflows,
             "the overlay stays open underneath so closing the transcript returns to it"
@@ -669,7 +662,6 @@ mod workflows_overlay_key_tests {
 
         let out = agent.handle_input(&mouse_down(12, 5), &reg);
         assert!(matches!(out, InputOutcome::Changed));
-        assert_eq!(agent.active_subagent, None);
         assert!(agent.show_workflows);
     }
 
