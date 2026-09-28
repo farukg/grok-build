@@ -20,6 +20,7 @@ use super::prompt::{
     handle_prompt_response, handle_suggestion_debounce_expired,
 };
 use super::queue::push_and_page_flip;
+use super::rewind_remove::handle_remove_context_items_complete;
 use super::rewind::{
     dispatch_rewind_success, handle_rewind_execute_failed, handle_rewind_points_loaded,
 };
@@ -2215,6 +2216,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::RewindExecuteFailed { agent_id, error } => {
             handle_rewind_execute_failed(app, agent_id, error)
+        }
+        TaskResult::RemoveContextItemsComplete { session_id, outcome } => {
+            handle_remove_context_items_complete(app, &session_id, outcome);
+            vec![]
         }
         TaskResult::SuggestionDebounceExpired {
             agent_id,

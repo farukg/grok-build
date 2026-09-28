@@ -27,6 +27,7 @@
 
 pub mod actor;
 pub mod commands;
+pub mod context_item_ref;
 pub mod compaction_image_context;
 pub mod compaction_mode;
 pub mod compaction_utils;
@@ -46,6 +47,7 @@ pub use actor::state::{
     estimate_tool_definitions_tokens, estimate_tool_specs_tokens,
 };
 pub use commands::{ModelMetadata, ServedRouteChange, StrictAppendAck, StrictAppendError};
+pub use context_item_ref::{ContextItemRef, ToolCallId};
 pub use compaction_mode::CompactionMode;
 pub use events::ChatStateEvent;
 pub use handle::{ChatStateHandle, ChatStateMailboxClosed};

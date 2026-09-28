@@ -27,6 +27,7 @@ mod prompt;
 mod prompt_ack;
 mod queue;
 mod rewind;
+mod rewind_remove;
 mod router;
 mod session;
 mod settings;

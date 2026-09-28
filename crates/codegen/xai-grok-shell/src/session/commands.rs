@@ -2,6 +2,7 @@
 //! The actor implementation lives in `acp_session.rs`.
 use super::acp_types::*;
 use super::plan_mode::PromptMode;
+use super::{RemoveContextItemsOutcome, RemoveItemsRequest};
 use crate::extensions::notification::SessionNotification;
 use crate::session::signals::TurnDeltaSnapshot;
 use agent_client_protocol as acp;
@@ -504,6 +505,10 @@ pub enum SessionCommand {
     Rewind {
         request: RewindRequest,
         respond_to: oneshot::Sender<anyhow::Result<RewindResponse>>,
+    },
+    RemoveContextItems {
+        request: RemoveItemsRequest,
+        respond_to: oneshot::Sender<RemoveContextItemsOutcome>,
     },
     /// Out-of-band history repair (`x.ai/session/repair`): fix tool-pairing violations that would otherwise 400 on every request.
     /// The violations: orphaned or displaced `ToolResult`s, duplicates, and unanswered calls.

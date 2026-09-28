@@ -247,6 +247,17 @@ fn alt_click_opens_panel_on_clicked_entry() {
 }
 
 #[test]
+fn removing_unidentified_entry_is_disabled_without_scrollback_mutation() {
+    let mut agent = conversation();
+    open_panel_at_top(&mut agent);
+    let before = all_ids(&agent);
+    let outcome = press(&mut agent, KeyCode::Char('d'));
+    assert!(matches!(outcome, InputOutcome::Changed));
+    assert_eq!(all_ids(&agent), before);
+    assert!(agent.pending_effects.is_empty());
+}
+
+#[test]
 fn panel_copy_dispatches_copy_for_cursor_entry() {
     let mut agent = conversation();
     let answer = 5;

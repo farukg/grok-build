@@ -247,6 +247,8 @@ mod context_snapshot;
 mod recap;
 #[path = "acp_session_impl/rewind.rs"]
 mod rewind;
+#[path = "acp_session_impl/remove_items.rs"]
+mod remove_items;
 #[path = "acp_session_impl/session_setup.rs"]
 mod session_setup;
 #[path = "acp_session_impl/side_call.rs"]

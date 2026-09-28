@@ -43,8 +43,6 @@ pub enum Action {
     CycleSessions(Direction),
     NavigateTree(TreeStep),
     OpenSession(String),
-    /// Quit the application.
-    Quit,
     /// Restart the binary to pick up a downloaded update.
     QuitForUpdate,
     /// Resume the recent foreign session offered on the launch welcome screen.
@@ -853,9 +851,6 @@ pub enum Action {
     /// Returns to the dashboard with the cursor on the previously attached row.
     /// Bound to Esc, Ctrl+\\, and `[Dashboard]` click inside the overlay.
     DashboardOverlayExit,
-    CycleSessions(Direction),
-    NavigateTree(TreeStep),
-    OpenSession(String),
     /// Confirmed stop from inside the dashboard's session-overlay: close the attached session and return to the dashboard.
     /// State machine documented at `dispatch_dashboard_overlay_stop`.
     DashboardOverlayStop,
@@ -959,6 +954,9 @@ pub enum Action {
     JumpPickerSelect(EntryId),
     /// Close the picker and restore the stashed viewport.
     JumpDismiss,
+    /// Quit the application.
+    Quit,
+    RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
 }
 /// A server-authoritative queue row plus the version its removal is checked against.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2187,6 +2185,10 @@ pub enum Effect {
         session_id: acp::SessionId,
         target_prompt_index: usize,
     },
+    RemoveContextItems {
+        session_id: acp::SessionId,
+        items: Vec<xai_grok_shell::session::ContextItemRef>,
+    },
     /// Fetch billing/credit usage from the agent's `x.ai/billing` extension.
     /// When `silent` is true the result updates `credit_balance` without pushing a system message into scrollback.
     /// The silent form is used for automatic refreshes on session init and after each turn.
@@ -3144,6 +3146,10 @@ pub enum TaskResult {
     RewindExecuteFailed {
         agent_id: AgentId,
         error: String,
+    },
+    RemoveContextItemsComplete {
+        session_id: acp::SessionId,
+        outcome: Result<xai_grok_shell::session::RemoveContextItemsOutcome, String>,
     },
     /// Billing data fetched from the agent.
     BillingFetched {

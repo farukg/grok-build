@@ -926,6 +926,12 @@ impl AgentView {
             };
         }
         if let Some(outcome) = self.route_timeline_panel_input(ev) {
+            if let (Event::Key(key), InputOutcome::ArmPending { .. }) = (ev, &outcome)
+                && crate::app::agent_view::context_removal::is_remove_key(key)
+                && let Some(row) = self.timeline_mode.panel().and_then(|panel| panel.cursor_row()).copied()
+            {
+                return self.run_timeline_item_remove(row, key);
+            }
             return outcome;
         }
         if self.focused_card() == Some(BlockingCard::CancelTurn) {

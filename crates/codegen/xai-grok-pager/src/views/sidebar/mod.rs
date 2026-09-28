@@ -67,7 +67,7 @@ pub enum SidebarSection<'a> {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SidebarRow<'a> {
     pub left: Line<'a>,
     pub right: Option<Line<'a>>,
@@ -222,7 +222,6 @@ pub enum SidebarHit {
     Footer,
 }
 
-#[derive(Debug, Clone, Copy)]
 pub struct SidebarContent<'a> {
     pub header: &'a [Line<'a>],
     pub sections: &'a [SidebarSection<'a>],
@@ -482,12 +481,12 @@ fn render_row(
     let right_width = row
         .right
         .as_ref()
-        .map_or(0, |line| line.width() as u16)
+        .map_or(0, |line| u16::try_from(line.width()).unwrap_or(u16::MAX))
         .min(width);
     let left_width = width.saturating_sub(right_width);
     buf.set_line(body.x, y, &row.left, left_width);
     if let Some(right) = &row.right {
-        let right_width = right.width().min(width);
+        let right_width = u16::try_from(right.width()).unwrap_or(u16::MAX).min(width);
         let x = body.x.saturating_add(width.saturating_sub(right_width));
         let right = right
             .clone()
@@ -505,7 +504,10 @@ fn detail_for<'a>(
     match line {
         SidebarLine::Hosted(_) | SidebarLine::SectionTitle(_) => None,
         SidebarLine::Row(section, row) => {
-            Some((line, &sections.get(section.0)?.rows.get(row.0)?.detail))
+            let SidebarSection::Rows { rows, .. } = sections.get(section.0)? else {
+                return None;
+            };
+            Some((line, &rows.get(row.0)?.detail))
         }
     }
 }
@@ -522,7 +524,11 @@ fn render_detail(
     if bounds.width < 8 || bounds.height < 3 || detail.is_empty() {
         return;
     }
-    let content_width = detail.iter().map(Line::width).max().unwrap_or(0) as u16;
+    let content_width = detail
+        .iter()
+        .map(Line::width)
+        .max()
+        .map_or(0, |width| u16::try_from(width).unwrap_or(u16::MAX));
     let width = content_width
         .saturating_add(4)
         .min(bounds.width.saturating_sub(1));

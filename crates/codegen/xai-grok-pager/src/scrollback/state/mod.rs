@@ -567,10 +567,7 @@ impl ScrollbackState {
         let mut entry = entry;
         entry.id = id;
 
-        self.apply_edit_default_display_mode(&mut entry);
-        if let Some(form) = self.display_defaults.get(MessageKind::from(&entry.block)) {
-            entry.display_mode = DisplayMode::from(form);
-        }
+        self.apply_kind_default(&mut entry);
 
         // Track if this entry is running
         if entry.is_running {
@@ -638,10 +635,7 @@ impl ScrollbackState {
         self.next_id += 1;
         let mut entry = ScrollbackEntry::new(block);
         entry.id = id;
-        self.apply_edit_default_display_mode(&mut entry);
-        if let Some(form) = self.display_defaults.get(MessageKind::from(&entry.block)) {
-            entry.display_mode = DisplayMode::from(form);
-        }
+        self.apply_kind_default(&mut entry);
         if entry.is_running {
             self.running.insert(id);
         }
@@ -663,22 +657,31 @@ impl ScrollbackState {
         id
     }
 
-    /// Fresh Edit entries at the block's Collapsed default adopt the state-owned materialize policy.
-    /// An explicit non-Collapsed mode survives.
-    /// An explicit Collapsed is indistinguishable from the default and may be upgraded by the effective expanded default.
-    fn apply_edit_default_display_mode(&self, entry: &mut ScrollbackEntry) {
-        if let RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) = &entry.block
-            && entry.display_mode == DisplayMode::Collapsed
-        {
-            entry.display_mode = edit_default_display_mode(
-                self.appearance
-                    .scrollback
-                    .blocks
-                    .edit
-                    .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks()),
-                edit,
-            );
+    /// A fresh entry still at its block's built-in default takes the kind setting, else the state-owned policy.
+    /// An explicit mode chosen by the producer survives both; a successful untrusted edit summary always expands,
+    /// because its one-liner cannot truthfully compress the change.
+    fn apply_kind_default(&self, entry: &mut ScrollbackEntry) {
+        if entry.display_mode != entry.block.default_display_mode() {
+            return;
         }
+        let setting = self.display_defaults.get(MessageKind::from(&entry.block));
+        entry.display_mode = match (&entry.block, setting) {
+            (RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), setting) => {
+                let expanded_by_default = match setting {
+                    Some(DisplayForm::Expanded) => true,
+                    Some(DisplayForm::Collapsed) => false,
+                    None => self
+                        .appearance
+                        .scrollback
+                        .blocks
+                        .edit
+                        .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks()),
+                };
+                edit_default_display_mode(expanded_by_default, edit)
+            }
+            (_, Some(form)) => DisplayMode::from(form),
+            (block, None) => block.default_display_mode(),
+        };
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -1198,7 +1201,6 @@ impl ScrollbackState {
                     entry.display_mode = thinking_mode;
                 }
             } else if let Some(mode) = entry.block.finished_display_mode() {
-                // Collapsed stays folded; finish must not snap-open
                 if entry.display_mode != DisplayMode::Collapsed {
                     entry.display_mode = mode;
                 }

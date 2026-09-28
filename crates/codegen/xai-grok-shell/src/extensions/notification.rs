@@ -709,6 +709,10 @@ pub enum SessionUpdate {
         /// When the rewind occurred.
         created_at: String,
     },
+    ContextItemsRemoved {
+        items: Vec<crate::session::ContextItemRef>,
+        created_at: String,
+    },
     /// Task completed notification
     TaskCompleted {
         task_snapshot: TaskSnapshot,

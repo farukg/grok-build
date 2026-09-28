@@ -1306,6 +1306,13 @@ pub(super) async fn run_session(
                                 let _ = respond_to.send(result);
                             });
                         }
+                        SessionCommand::RemoveContextItems { request, respond_to } => {
+                            let s = session.clone();
+                            tokio::task::spawn_local(async move {
+                                let outcome = s.handle_remove_context_items(request).await;
+                                let _ = respond_to.send(outcome);
+                            });
+                        }
                         SessionCommand::GetRewindPoints { respond_to } => {
                             let response = session.get_rewind_points().await;
                             let _ = respond_to.send(response);
