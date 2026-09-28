@@ -156,8 +156,7 @@ impl AgentView {
         Some(outcome)
     }
 
-    /// Wheel over the panel moves its cursor; wheel over the chat hands the selection back to the chat.
-    /// Returns whether the panel consumed the wheel.
+    /// Wheel over the panel moves its cursor; chat scrolling is handled by the scrollback pane.
     pub(super) fn scroll_timeline_panel(&mut self, lines: i32, col: u16, row: u16) -> bool {
         let Some(panel) = self.timeline_mode.panel_mut() else {
             return false;

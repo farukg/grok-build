@@ -211,10 +211,8 @@ impl BlockContent for SubagentBlock {
                     Span::styled("Subagent ", bold),
                     Span::styled(verb, muted),
                     Span::styled(desc, muted),
+                    Span::styled(activity_suffix, muted),
                 ];
-                if !activity_suffix.is_empty() {
-                    spans.push(Span::styled(activity_suffix, muted));
-                }
                 spans.push(Span::styled(meta, muted));
                 Line::from(spans)
             }
