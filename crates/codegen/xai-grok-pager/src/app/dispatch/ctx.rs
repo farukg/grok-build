@@ -1,6 +1,7 @@
 //! Active-agent lookup and view-context helpers shared across dispatch modules.
 
 use super::dashboard_telemetry::log_dashboard_opened;
+use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::app::app_view::{ActiveView, AppView, WelcomeAnnouncementState};
 use crate::scrollback::state::ScrollbackState;
@@ -85,7 +86,7 @@ pub(super) fn navigate_clearing_selection(app: &mut AppView, f: impl FnOnce(&mut
 /// Inhibits idle sleep when any agent is busy; releases when all are idle.
 /// Called after every `AgentState` transition in dispatch.
 pub(super) fn sync_sleep_inhibitor(app: &AppView) {
-    let any_busy = app.agents.values().any(|a| !a.session.state.is_idle());
+    let any_busy = app.agents.all().any(|(_, a)| !a.session.state.is_idle());
     if any_busy {
         app.notification_service.sleep_inhibitor.inhibit();
     } else {
@@ -256,10 +257,10 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
 }
 
 pub(super) fn find_agent_id_by_session_id(
-    agents: &indexmap::IndexMap<AgentId, AgentView>,
+    agents: &crate::app::session_views::SessionViews,
     session_id: &str,
 ) -> Option<AgentId> {
-    agents.iter().find_map(|(id, a)| {
+    agents.all().find_map(|(id, a)| {
         a.session
             .session_id
             .as_ref()
@@ -270,7 +271,7 @@ pub(super) fn find_agent_id_by_session_id(
 
 /// Root session match (for async kill-result routing off the active view).
 pub(super) fn find_agent_by_session_id<'a>(
-    agents: &'a mut indexmap::IndexMap<AgentId, AgentView>,
+    agents: &'a mut crate::app::session_views::SessionViews,
     session_id: &str,
 ) -> Option<&'a mut AgentView> {
     let id = find_agent_id_by_session_id(agents, session_id)?;

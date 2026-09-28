@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::agent_view::AgentRole;
+use crate::app::agent_view::{AgentRole, ChildLink};
 
 #[derive(Debug, Clone)]
 pub(super) enum ChildObservation {

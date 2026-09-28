@@ -55,7 +55,7 @@ pub(super) fn apply_cancel_subagents_preference_global(app: &mut AppView, stop: 
 }
 
 pub(super) fn dispatch_cancel_turn(app: &mut AppView) -> Vec<Effect> {
-    let ActiveView::Agent(_) = app.active_view else {
+    let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
     let ui_pref = effective_cancel_subagents_preference(None, &app.current_ui);

@@ -2215,7 +2215,7 @@ impl AppView {
                     scroll_offset,
                     max_offset,
                     total_height,
-                    follow_mode: scrollback.is_follow_mode(),
+                    follow_mode: agent.scrollback.is_follow_mode(),
                     at_bottom: scroll_offset >= max_offset,
                 }
             }),
@@ -5669,7 +5669,7 @@ impl AppView {
                             *loading,
                             lanes,
                         )
-                    )
+                    );
 
                 if fast {
                     return TickDemand::Fast;

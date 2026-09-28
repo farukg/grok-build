@@ -96,7 +96,6 @@ use routing::{
     SessionMatch, find_session_match, interaction_target_agent, is_matched_agent_active,
     mcp_target_agent, resolve_notif_agent, setup_phase_target_agent,
 };
-pub(crate) use session_notification::apply_child_view_session_event;
 #[cfg(test)]
 pub(crate) use session_notification::apply_session_event_for_test;
 pub(crate) use session_notification::detect_plan_mode_change_replayed;
