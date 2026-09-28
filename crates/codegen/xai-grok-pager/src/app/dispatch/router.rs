@@ -14,7 +14,7 @@ use super::dashboard::{
     dispatch_dashboard_confirm_worktree, dispatch_dashboard_create_new_agent_with_detail,
     dispatch_dashboard_delete, dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
     dispatch_dashboard_open_location_picker, dispatch_dashboard_open_session_picker,
-    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_session_cycle,
+    dispatch_dashboard_open_shortcuts_help, dispatch_session_cycle,
     dispatch_dashboard_overlay_exit, dispatch_dashboard_overlay_stop, dispatch_navigate_tree,
     dispatch_dashboard_peek_cycle_mode, dispatch_dashboard_peek_reply,
     dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
@@ -1512,8 +1512,15 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::DashboardReorderUp => dispatch_dashboard_reorder(app, true),
         Action::DashboardReorderDown => dispatch_dashboard_reorder(app, false),
         Action::DashboardOverlayExit => dispatch_dashboard_overlay_exit(app),
-        Action::CycleSessions(direction) => dispatch_dashboard_session_cycle(app, direction),
+        Action::CycleSessions(direction) => dispatch_session_cycle(app, direction),
         Action::NavigateTree(step) => dispatch_navigate_tree(app, step),
+        Action::OpenSession(session_id) => {
+            let id = super::ctx::find_agent_id_by_session_id(&app.agents, &session_id);
+            if let Some(id) = id {
+                super::ctx::switch_to_agent(app, id, super::ctx::SwitchCause::Navigate);
+            }
+            vec![]
+        }
         Action::DashboardOverlayStop => dispatch_dashboard_overlay_stop(app),
         Action::DashboardToggleAutoApprove => dispatch_dashboard_toggle_auto_approve(app),
         Action::DashboardToggleWorktree => dispatch_dashboard_toggle_worktree(app),

@@ -2507,27 +2507,20 @@ impl AppView {
                     .dashboard
                     .as_ref()
                     .is_some_and(|d| d.attached_agent == Some(id));
-                let takeover_owns_key = super::agent_view::tree_chord(ev).is_some()
-                    && self.agents.get(&id).is_some_and(|a| matches!(a.role, super::agent_view::AgentRole::Child(_)));
                 if let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
-                    && let Some(action) = self
-                        .registry
-                        .lookup(key, crate::actions::When::DashboardOverlay)
-                        .and_then(|action| match action {
-                            crate::actions::ActionId::DashboardOverlayPrev => {
-                                Some(Action::DashboardOverlayPrev)
-                            }
-                            crate::actions::ActionId::DashboardOverlayNext => {
-                                Some(Action::DashboardOverlayNext)
-                            }
-                            _ => None,
-                        })
+                    && let Some(action) = self.registry.lookup(key, crate::actions::When::AgentScreen)
+                    && let Some(action) = match action {
+                        crate::actions::ActionId::SessionPrev => Some(Action::CycleSessions(crate::app::actions::Direction::Prev)),
+                        crate::actions::ActionId::SessionNext => Some(Action::CycleSessions(crate::app::actions::Direction::Next)),
+                        crate::actions::ActionId::SessionParent => Some(Action::NavigateTree(crate::app::actions::TreeStep::Parent)),
+                        crate::actions::ActionId::SessionLatestChild => Some(Action::NavigateTree(crate::app::actions::TreeStep::LatestChild)),
+                        _ => None,
+                    }
                 {
                     return InputOutcome::Action(action);
                 }
                 if overlay_active
-                    && !takeover_owns_key
                     && let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
                 {
