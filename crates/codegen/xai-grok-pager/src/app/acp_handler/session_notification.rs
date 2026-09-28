@@ -746,12 +746,8 @@ pub(super) fn handle_session_notification_with_origin(
                 && let Some(child_view) = app.agents.get_mut(&child_id)
                 && context_window_tokens > 0
             {
-                child_view
-                    .session
-                    .models
-                    .override_context_window(context_window_tokens);
+                child_view.session.models.override_context_window(context_window_tokens);
             }
-            observe_child(app, parent_id, &child_session_id);
             true
         }
         XaiSessionUpdate::SubagentFinished {
@@ -878,13 +874,15 @@ pub(super) fn handle_session_notification_with_origin(
                 info.transcript.retry_disk_after_finish();
             }
             let resuming = agent.session.loading_replay;
-            if let Some(child_id) = child_view_id(app, &child_session_id)
-                && let Some(child_view) = app.agents.get_mut(&child_id)
-            {
-                child_view.session.state = AgentState::Idle;
-            }
-            if !resuming {
-                observe_child(app, parent_id, &child_session_id);
+            if let Some(child_id) = app.agents.all_mut().find_map(|(id, view)| {
+                (view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == child_session_id)).then_some(id)
+            }) {
+                if let Some(child_view) = app.agents.get_mut(&child_id) {
+                    child_view.session.state = AgentState::Idle;
+                }
+                if !resuming {
+                    crate::app::subagent::evict_on_leave(&mut app.agents, child_id);
+                }
             }
             true
         }
@@ -1440,17 +1438,6 @@ fn queue_wake_turn_complete_notification(app: &mut AppView, agent_id: AgentId) {
     ));
 }
 
-fn observe_child(app: &mut AppView, parent_id: AgentId, child_session_id: &str) {
-    let child_id = app.agents.all_mut().find_map(|(id, view)| {
-        (view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == child_session_id)).then_some(id)
-    });
-    let activity = child_id
-        .and_then(|id| app.agents.get(&id))
-        .and_then(subagent_activity_label);
-    if let Some(parent) = app.agents.get_mut(&parent_id) {
-        sync_subagent_activity(parent, child_session_id, activity);
-    }
-}
 fn apply_compaction_or_retry_update(
     agent: &mut AgentView,
     update: &XaiSessionUpdate,
