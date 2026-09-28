@@ -944,6 +944,20 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             None => vec![],
         },
+        TaskResult::DeliverSubagentComplete { outcome } => {
+            use xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome;
+            match outcome {
+                Some(DeliverSubagentOutcome::Delivered) => {}
+                Some(DeliverSubagentOutcome::NotHeld) => {
+                    app.show_toast("Nothing held: the subagent delivers when its turn ends");
+                }
+                Some(DeliverSubagentOutcome::NotRunning) => {
+                    app.show_toast("The subagent is no longer running");
+                }
+                None => app.show_toast("Could not deliver the subagent's answer"),
+            }
+            vec![]
+        }
         TaskResult::ResumeSubagentComplete {
             subagent_id,
             outcome,

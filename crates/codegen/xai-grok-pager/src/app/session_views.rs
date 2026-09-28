@@ -1,5 +1,6 @@
 use crate::app::agent::AgentId;
 use crate::app::agent_view::{AgentRole, AgentView, ChildLink};
+use crate::app::subagent::SubagentInfo;
 use indexmap::IndexMap;
 
 #[derive(Default)]
@@ -111,6 +112,12 @@ impl SessionViews {
             AgentRole::Child(link) => link,
         };
         Some((link, self.views.get(&link.parent)?))
+    }
+
+    /// The parent's record of the subagent `child` shows.
+    pub(crate) fn child_info(&self, child: AgentId) -> Option<&SubagentInfo> {
+        let (link, parent) = self.link_and_parent(child)?;
+        parent.subagent_sessions.get(&link.subagent_id)
     }
 
     pub(crate) fn link_and_parent_mut(

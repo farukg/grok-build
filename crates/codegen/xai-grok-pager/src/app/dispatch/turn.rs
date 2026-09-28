@@ -740,6 +740,28 @@ pub(super) fn dispatch_resume_subagent(
     }]
 }
 
+/// Release the active child view's held answer (`x.ai/subagent/deliver`); a no-op anywhere else.
+pub(super) fn dispatch_deliver_subagent(app: &mut AppView) -> Vec<Effect> {
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    if !app
+        .agents
+        .child_info(id)
+        .is_some_and(crate::app::subagent::SubagentInfo::awaits_delivery)
+    {
+        return vec![];
+    }
+    let Some(child_session_id) = app
+        .agents
+        .get(&id)
+        .and_then(|agent| agent.session.session_id.clone())
+    else {
+        return vec![];
+    };
+    vec![Effect::DeliverSubagent { child_session_id }]
+}
+
 pub(super) fn dispatch_demote_to_background(app: &mut AppView) -> Vec<Effect> {
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];

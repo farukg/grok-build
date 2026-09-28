@@ -1082,6 +1082,7 @@ pub struct AgentView {
     pub hit_cwd: HitArea,
     /// `[Dashboard]` on the header row: opens the dashboard, or returns to it when this view is the dashboard's session overlay.
     pub hit_dashboard: HitArea,
+    pub hit_deliver: HitArea,
     /// `‹` of the header's `‹ i/n ›` switcher; painted only inside the dashboard overlay with more than one agent to cycle.
     pub hit_overlay_prev: HitArea,
     /// `›` of the same switcher.
@@ -1941,6 +1942,7 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         ActionId::FocusScrollback => Action::FocusScrollback,
         ActionId::NextModel => Action::NextModel,
         ActionId::CycleMode => Action::CycleMode,
+        ActionId::DeliverSubagent => Action::DeliverSubagent,
         ActionId::CancelTurn
         | ActionId::Quit
         | ActionId::ExitSession
@@ -2317,6 +2319,7 @@ pub(crate) mod test_fixtures {
                 tools_used: Vec::new(),
                 error_count: None,
                 activity_label: None,
+                delivery: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,
