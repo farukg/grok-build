@@ -3,10 +3,12 @@
 
 use acp::Agent as _;
 use agent_client_protocol as acp;
+use serde_json::json;
 use xai_grok_tools::implementations::grok_build::task::types::AgentAddress;
 
 use super::{build_minimal_agent_for_tests, make_live_session_handle, run_local_for_bridge_test};
 use crate::agent::mvp_agent::{ChildHost, ChildReach, ChildResidence, RunningChild};
+use crate::extensions::notification::SubagentDelivery;
 use crate::session::SessionCommand;
 use crate::session::commands::{PromptCompletionKind, PromptTurnOk};
 
@@ -69,6 +71,7 @@ fn running_child_prompt_runs_on_child_and_settles_the_parent_receipt() {
         let (handle, _cmd_tx, cmd_rx) = make_live_session_handle(&child, None);
         spawn_child_actor(cmd_rx, 42);
         let (turns, mut receipts) = tokio::sync::mpsc::channel(4);
+        let (delivery, delivery_rx) = tokio::sync::watch::channel(SubagentDelivery::OnTurnEnd);
         agent.register_child_session(
             &child,
             child_host(ChildReach::Addressed {
@@ -77,6 +80,7 @@ fn running_child_prompt_runs_on_child_and_settles_the_parent_receipt() {
                     handle,
                     turns,
                     parent_prompt_index: Default::default(),
+                    delivery,
                 })),
             }),
         );
@@ -103,6 +107,47 @@ fn running_child_prompt_runs_on_child_and_settles_the_parent_receipt() {
             .expect("the receipt settles with the child's turn")
             .expect("the child's turn succeeded");
         assert_eq!(settled.total_tokens, 42);
+        assert_eq!(
+            *delivery_rx.borrow(),
+            SubagentDelivery::Held,
+            "a human prompt holds the child's answer back from its caller"
+        );
+
+        assert_eq!(deliver(&agent).await, json!({ "kind": "delivered" }));
+        assert_eq!(*delivery_rx.borrow(), SubagentDelivery::OnTurnEnd);
+        assert_eq!(deliver(&agent).await, json!({ "kind": "not_held" }));
+    });
+}
+
+async fn deliver(agent: &crate::agent::mvp_agent::MvpAgent) -> serde_json::Value {
+    let params = json!({ "sessionId": CHILD });
+    let response = agent
+        .ext_method(acp::ExtRequest::new(
+            "x.ai/subagent/deliver",
+            std::sync::Arc::from(
+                serde_json::value::to_raw_value(&params).expect("deliver params serialize"),
+            ),
+        ))
+        .await
+        .expect("deliver answers");
+    let body: serde_json::Value =
+        serde_json::from_str(response.0.get()).expect("deliver response is JSON");
+    body["result"].clone()
+}
+
+#[test]
+fn deliver_on_a_finished_child_reports_not_running() {
+    run_local_for_bridge_test(|| async {
+        let agent = build_minimal_agent_for_tests();
+        agent.register_child_session(
+            &acp::SessionId::new(CHILD),
+            child_host(ChildReach::Addressed {
+                address: AgentAddress::mint(3),
+                residence: ChildResidence::Finished,
+            }),
+        );
+
+        assert_eq!(deliver(&agent).await, json!({ "kind": "not_running" }));
     });
 }
 

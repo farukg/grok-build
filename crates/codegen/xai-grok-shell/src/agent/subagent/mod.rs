@@ -2018,17 +2018,23 @@ pub(crate) fn spawn_progress_publisher(
     started_at: std::time::Instant,
     cancel_token: tokio_util::sync::CancellationToken,
     parent_cmd_tx: Option<mpsc::UnboundedSender<SessionCommand>>,
+    mut delivery: tokio::sync::watch::Receiver<crate::extensions::notification::SubagentDelivery>,
 ) -> tokio_util::task::AbortOnDropHandle<()> {
     tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let mut interval = tokio::time::interval(PROGRESS_PUBLISH_INTERVAL);
         interval.tick().await;
         let mut last_signature: ProgressSignature = (0, 0, 0, 0, 0);
+        let mut last_delivery = *delivery.borrow();
+        let mut is_delivery_open = true;
         let mut last_emit_at = tokio::time::Instant::now();
         let heartbeat_max = tokio::time::Duration::from_secs(8);
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => break,
                 _ = interval.tick() => {}
+                changed = delivery.changed(), if is_delivery_open => {
+                    is_delivery_open = changed.is_ok();
+                }
             }
             let signals = match signals_handle.snapshot().await {
                 Some(s) => s,
@@ -2042,10 +2048,14 @@ pub(crate) fn spawn_progress_publisher(
                 signals.context_tokens_used,
             );
             let heartbeat_due = last_emit_at.elapsed() >= heartbeat_max;
-            if !progress_tick_should_emit(last_signature, sig, heartbeat_due) {
+            let current_delivery = *delivery.borrow();
+            if current_delivery == last_delivery
+                && !progress_tick_should_emit(last_signature, sig, heartbeat_due)
+            {
                 continue;
             }
             last_signature = sig;
+            last_delivery = current_delivery;
             last_emit_at = tokio::time::Instant::now();
             let duration_ms = started_at.elapsed().as_millis() as u64;
             let update = SessionUpdate::SubagentProgress {
@@ -2061,6 +2071,7 @@ pub(crate) fn spawn_progress_publisher(
                 context_usage_pct: signals.context_window_usage,
                 tools_used: signals.tools_used,
                 error_count: signals.error_count,
+                delivery: current_delivery,
             };
             let notification = SessionNotification {
                 session_id: acp::SessionId::new(parent_session_id.clone()),
