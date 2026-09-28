@@ -3,12 +3,39 @@
 use super::{AgentView, AppRenderParams, BannerSlotParams, OverlayHeader, test_fixtures};
 use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
+use crate::app::agent::AgentId;
+use crate::app::agent_view::{AgentRole, ChildLink};
 use crate::app::app_view::{ActiveView, AppView, InputOutcome};
 use crate::scrollback::render::ScratchBuffer;
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 const PATH: &str = "/grok-header-marker";
+
+#[test]
+fn child_header_shows_kind_before_title() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut child = agent_at(120);
+    child.session.session_id = Some("child-session".into());
+    child.role = AgentRole::Child(ChildLink {
+        parent: AgentId(0),
+        parent_session_id: "parent".into(),
+        subagent_id: "explorer".into(),
+        started_at: std::time::Instant::now(),
+    });
+    let mut info = crate::app::subagent::test_support::make_info();
+    info.subagent_id = "explorer".into();
+    info.attempt.persona = Some("Explorer".into());
+    child.subagent_sessions.insert("explorer".into(), info);
+    let buf = draw(&mut child, &ActionRegistry::defaults(), false, OverlayHeader {
+        title: Some("Header target title"),
+        position: None,
+    });
+    let row = header_row(&child, &buf);
+    let kind = row.find("Explorer").expect("session kind");
+    let title = row.find("Header target title").expect("existing session title");
+    assert!(kind < title, "kind precedes title: {row:?}");
+}
 /// `/dashboard` is pinned visible so the plain-session `[Dashboard]` gate does not read `GROK_AGENT_DASHBOARD` or the
 /// developer's config. `draw` re-measures the terminal from its area, so the width lives only in `last_terminal_size`.
 fn agent_at(width: u16) -> AgentView {
