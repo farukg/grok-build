@@ -142,6 +142,8 @@ pub(crate) enum SwitchCause {
     Load,
     /// Triggered by the agent picker (dashboard attach / switch).
     Picker,
+    /// Triggered by session navigation or opening a child session.
+    Navigate,
     // There is no `Dashboard` variant: the dashboard attach path sets `DashboardState::attached_agent` directly and never reaches `switch_to_agent`
     // Any future caller can re-add it
 }
@@ -209,7 +211,7 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
     // Asserting the gate here makes "no session is created while `TrustState::Pending`" a property of the flow rather than of each call site
     // This assert therefore never fires on the reachable gated paths
     debug_assert!(
-        matches!(cause, SwitchCause::Picker) || app.session_startup_allowed(),
+        matches!(cause, SwitchCause::Picker | SwitchCause::Navigate) || app.session_startup_allowed(),
         "session creation via {cause:?} requires the startup gate open (auth + folder trust)"
     );
     if !app.agents.contains_key(&target) {
