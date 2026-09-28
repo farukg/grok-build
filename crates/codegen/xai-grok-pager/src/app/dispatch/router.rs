@@ -112,8 +112,8 @@ use super::transcript::{
 };
 use super::turn::{
     dispatch_cancel_scheduled_task, dispatch_cancel_turn, dispatch_cancel_turn_choice,
-    dispatch_demote_to_background, dispatch_kill_bg_task, dispatch_kill_subagent,
-    dispatch_resume_subagent,
+    dispatch_deliver_subagent, dispatch_demote_to_background, dispatch_kill_bg_task,
+    dispatch_kill_subagent, dispatch_resume_subagent,
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
 use crate::app::actions::{Action, Effect};
@@ -1057,6 +1057,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             subagent_id,
             prompt,
         } => dispatch_resume_subagent(app, subagent_id, prompt),
+        Action::DeliverSubagent => dispatch_deliver_subagent(app),
         Action::RemoveContextItems(items) => {
             if let Some(agent) = get_active_agent_mut(app) {
                 agent.dispatch_remove_context_items(items);

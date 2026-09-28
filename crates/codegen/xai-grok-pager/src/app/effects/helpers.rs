@@ -1520,15 +1520,11 @@ pub(super) fn parse_subagent_kill_outcome(resp: &str) -> SubagentKillOutcome {
         }
     }
 }
-/// Read the typed `x.ai/subagent/resume` outcome under `result`; `None` for an error body.
-pub(super) fn parse_subagent_resume_outcome(
-    resp: &str,
-) -> Option<xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome> {
-    serde_json::from_str::<
-        ExtMethodResult<xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome>,
-    >(resp)
-    .ok()
-    .and_then(|envelope| envelope.result)
+/// Read a typed ext-method outcome under `result`; `None` for an error body.
+pub(super) fn parse_ext_outcome<T: serde::Serialize + serde::de::DeserializeOwned>(resp: &str) -> Option<T> {
+    serde_json::from_str::<ExtMethodResult<T>>(resp)
+        .ok()
+        .and_then(|envelope| envelope.result)
 }
 /// Map disk-write outcome and persist variant to the correct `TaskResult`.
 pub(super) fn route_permission_mode_result(

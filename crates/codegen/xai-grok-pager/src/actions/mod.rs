@@ -99,6 +99,8 @@ pub enum ActionId {
     SendToBackground,
     /// Expand the timeline rail into the navigable outline panel (F6), or fold it back.
     ToggleTimelinePanel,
+    /// Send a steered subagent's answer to its caller.
+    DeliverSubagent,
 
     // Prompt
     EditPromptExternal,

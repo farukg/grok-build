@@ -226,6 +226,9 @@ impl AgentView {
                         xai_grok_telemetry::events::AnnouncementCtaSurface::Header,
                     ));
                 }
+                if self.hit_deliver.contains(mouse.column, mouse.row) {
+                    return InputOutcome::Action(Action::DeliverSubagent);
+                }
                 if self.hit_dashboard.contains(mouse.column, mouse.row) {
                     return InputOutcome::Action(if self.in_dashboard_overlay {
                         Action::DashboardOverlayExit
@@ -1113,6 +1116,7 @@ impl AgentView {
                 changed |= self.hit_bg_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_cwd.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_dashboard.update_hover(mouse.column, mouse.row);
+                changed |= self.hit_deliver.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_overlay_prev.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_overlay_next.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_upgrade_cta.update_hover(mouse.column, mouse.row);

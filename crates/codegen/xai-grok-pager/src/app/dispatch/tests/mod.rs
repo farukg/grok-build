@@ -453,6 +453,7 @@ fn make_test_subagent(child_sid: &str, sa_id: &str) -> crate::app::subagent::Sub
             tools_used: Vec::new(),
             error_count: None,
             activity_label: None,
+            delivery: Default::default(),
             is_background: false,
             pending_kill: false,
             kill_requested_at: None,

@@ -4712,16 +4712,16 @@ impl AppView {
                                         .and_then(crate::views::session_title::named_title)
                                 })
                                 .flatten();
-                            let kind = agents
-                                .link_and_parent(id)
-                                .and_then(|(link, parent)| {
-                                    parent.subagent_sessions.get(&link.subagent_id)
-                                })
+                            let child_info = agents.child_info(id);
+                            let kind = child_info
                                 .map(|info| crate::app::subagent::format_subagent_label(info).0);
                             let overlay_header = crate::app::agent_view::OverlayHeader {
                                 title: overlay_title.as_deref(),
                                 position,
                                 kind: kind.as_deref(),
+                                awaits_delivery: child_info.is_some_and(
+                                    crate::app::subagent::SubagentInfo::awaits_delivery,
+                                ),
                             };
                             if let Some(d) = self.dashboard.as_mut()
                                 && d.peek_viewport.is_some()

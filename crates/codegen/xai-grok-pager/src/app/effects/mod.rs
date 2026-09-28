@@ -1921,7 +1921,7 @@ pub(crate) fn execute(
                         Ok(raw) => {
                             let req = acp::ExtRequest::new("x.ai/subagent/resume", raw.into());
                             match acp_send(req, &tx).await {
-                                Ok(resp) => parse_subagent_resume_outcome(resp.0.get()),
+                                Ok(resp) => parse_ext_outcome(resp.0.get()),
                                 Err(e) => {
                                     tracing::warn!("Failed to resume subagent: {e}");
                                     None
@@ -1934,6 +1934,32 @@ pub(crate) fn execute(
                         }
                     };
                     TaskResult::ResumeSubagentComplete { subagent_id, outcome }
+                });
+        }
+        Effect::DeliverSubagent { child_session_id } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let params = xai_grok_shell::extensions::subagent_deliver::DeliverSubagentRequest {
+                        session_id: child_session_id.0.to_string(),
+                    };
+                    let outcome = match serde_json::value::to_raw_value(&params) {
+                        Ok(raw) => {
+                            let req = acp::ExtRequest::new("x.ai/subagent/deliver", raw.into());
+                            match acp_send(req, &tx).await {
+                                Ok(resp) => parse_ext_outcome(resp.0.get()),
+                                Err(e) => {
+                                    tracing::warn!("Failed to deliver subagent: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to encode subagent deliver: {e}");
+                            None
+                        }
+                    };
+                    TaskResult::DeliverSubagentComplete { outcome }
                 });
         }
         Effect::DeleteScheduledTask { session_id, task_id } => {

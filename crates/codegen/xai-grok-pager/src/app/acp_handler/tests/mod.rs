@@ -158,6 +158,7 @@ pub(super) fn make_subagent_info(child_sid: &str) -> SubagentInfo {
             tools_used: Vec::new(),
             error_count: None,
             activity_label: None,
+            delivery: Default::default(),
             is_background: false,
             pending_kill: false,
             kill_requested_at: None,
@@ -1626,6 +1627,7 @@ pub(super) fn test_subagent_progress(
         context_usage_pct: 0,
         tools_used: vec![],
         error_count: 0,
+        delivery: Default::default(),
     }
 }
 /// Snapshot of subagent state after SubagentSpawned for method-parity tests.
@@ -2448,6 +2450,7 @@ mod session_routing;
 mod plugins;
 mod subagents;
 mod subagent_attempt_lifecycle;
+mod subagent_delivery;
 mod goals;
 mod interactions;
 mod background_tasks;

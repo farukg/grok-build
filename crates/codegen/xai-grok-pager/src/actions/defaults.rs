@@ -560,6 +560,21 @@ pub(super) fn default_actions(
             ),
         },
         ActionDef {
+            id: ActionId::DeliverSubagent,
+            label: "deliver",
+            description: "Send the steered subagent's answer to its caller",
+            default_key: key!(F(5)),
+            alt_keys: vec![],
+            category: Category::Session,
+            context: When::AgentScreen,
+            hint_priority: None,
+            hint_key_display: None,
+            requires_confirmation: false,
+            long_help: Some(
+                "A prompt you send to a running subagent holds its answer back from the agent that started it.\nSteer it as long as you like; deliver then hands its latest answer to the caller.",
+            ),
+        },
+        ActionDef {
             id: ActionId::ToggleQueue,
             label: "queue",
             description: "Toggle prompt queue",

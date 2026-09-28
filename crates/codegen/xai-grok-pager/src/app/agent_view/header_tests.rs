@@ -27,6 +27,7 @@ fn child_header_shows_kind_before_title() {
         title: Some("Header target title"),
         position: None,
         kind: Some("Explorer"),
+        awaits_delivery: false,
     });
     let row = header_row(&child, &buf);
     let kind = row.find("Explorer").expect("session kind");
@@ -203,6 +204,7 @@ fn overlay_header_leads_with_title_and_paints_switcher() {
         title: Some("Refactor the theme loader"),
         position: Some((2, 5)),
         kind: None,
+        awaits_delivery: false,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -255,6 +257,7 @@ fn overlay_header_omits_title_when_unnamed_and_switcher_when_alone() {
         title: None,
         position: Some((1, 1)),
         kind: None,
+        awaits_delivery: false,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -285,6 +288,7 @@ fn narrow_overlay_header_caps_title_and_keeps_location_and_buttons() {
         title: Some("A generated title long enough to need trimming here"),
         position: Some((2, 5)),
         kind: None,
+        awaits_delivery: false,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -319,6 +323,7 @@ fn long_title_and_long_branch_leave_the_path_visible() {
         title: Some("A generated title long enough to need trimming here"),
         position: Some((2, 5)),
         kind: None,
+        awaits_delivery: false,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let row = header_row(&agent, &buf);
@@ -350,6 +355,7 @@ fn hover_brightens_only_the_pointed_affordance() {
         title: None,
         position: Some((2, 5)),
         kind: None,
+        awaits_delivery: false,
     };
     let buf = draw(&mut agent, &registry, true, header);
     let prev = agent.hit_overlay_prev.rect.unwrap();
@@ -401,6 +407,7 @@ fn long_link_preview_yields_to_the_switcher_and_dashboard_button() {
         title: None,
         position: Some((2, 5)),
         kind: None,
+        awaits_delivery: false,
     };
     let mut agent = agent_at(100);
     highlight(&mut agent);
@@ -442,6 +449,7 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
         title: None,
         position: Some((2, 5)),
         kind: None,
+        awaits_delivery: false,
     };
     draw(&mut agent, &registry, true, header);
     let dash = agent.hit_dashboard.rect.expect("armed with no dropdown");
@@ -476,4 +484,35 @@ fn open_dropdown_disarms_the_navigation_targets_until_it_closes() {
         InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next))
     ));
 }
+#[test]
+fn held_child_header_offers_deliver_as_a_click_target() {
+    let _theme = crate::theme::cache::pin_theme();
+    let registry = ActionRegistry::defaults();
+    let mut agent = agent_at(120);
+    let held = OverlayHeader {
+        title: None,
+        position: None,
+        kind: Some("Explorer"),
+        awaits_delivery: true,
+    };
+    let buf = draw(&mut agent, &registry, false, held);
+    let row = header_row(&agent, &buf);
+    assert!(row.contains("[deliver]"), "row = {row:?}");
+    let deliver = agent.hit_deliver.rect.expect("[deliver] is clickable");
+    assert!(matches!(
+        agent.handle_input(&click(deliver.x, deliver.y), &registry),
+        InputOutcome::Action(Action::DeliverSubagent)
+    ));
 
+    let buf = draw(
+        &mut agent,
+        &registry,
+        false,
+        OverlayHeader {
+            awaits_delivery: false,
+            ..held
+        },
+    );
+    assert!(!header_row(&agent, &buf).contains("[deliver]"));
+    assert!(agent.hit_deliver.rect.is_none());
+}

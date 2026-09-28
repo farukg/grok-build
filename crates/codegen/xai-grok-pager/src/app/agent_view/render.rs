@@ -58,6 +58,8 @@ pub struct OverlayHeader<'a> {
     pub position: Option<(usize, usize)>,
     /// A child session's kind ("Explorer", "General", …), shown before the title.
     pub kind: Option<&'a str>,
+    /// A human steered this child; the header offers `[deliver]`.
+    pub awaits_delivery: bool,
 }
 impl OverlayHeader<'_> {
     /// The `i/n` position when `‹`/`›` have anything to cycle through.
@@ -1298,6 +1300,15 @@ impl AgentView {
                 ]),
             );
         }
+        if overlay_header.awaits_delivery {
+            status.push(
+                "deliver",
+                Line::from(Span::styled(
+                    "[deliver]",
+                    hover_or(self.hit_deliver.hovered, bg.fg(theme.warning)),
+                )),
+            );
+        }
         let dashboard_available = in_dashboard_overlay
             || self
                 .prompt
@@ -1334,6 +1345,8 @@ impl AgentView {
         let dropdown_open = self.prompt.any_dropdown_open();
         self.hit_dashboard
             .set_unless_dropdown(areas.get("dashboard").copied(), dropdown_open);
+        self.hit_deliver
+            .set_unless_dropdown(areas.get("deliver").copied(), dropdown_open);
         let switcher_rect = areas.get("switcher").copied();
         self.hit_overlay_prev
             .set_unless_dropdown(switcher_rect.map(|r| Rect { width: 1, ..r }), dropdown_open);
@@ -4539,6 +4552,7 @@ mod overlay_cycle_hint_tests {
                     title: None,
                     position: Some((1, if can_cycle { 2 } else { 1 })),
                     kind: None,
+                    awaits_delivery: false,
                 },
                 ..Default::default()
             },
@@ -4581,6 +4595,7 @@ mod overlay_cycle_hint_tests {
                     title: None,
                     position: Some((1, 2)),
                     kind: None,
+                    awaits_delivery: false,
                 },
                 ..Default::default()
             },

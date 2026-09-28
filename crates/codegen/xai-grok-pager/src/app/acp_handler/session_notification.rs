@@ -571,6 +571,7 @@ pub(super) fn handle_session_notification_with_origin(
                 tools_used: Vec::new(),
                 error_count: None,
                 activity_label: None,
+                delivery: Default::default(),
                 is_background,
                 pending_kill: false,
                 kill_requested_at: None,
@@ -737,6 +738,7 @@ pub(super) fn handle_session_notification_with_origin(
             context_usage_pct,
             tools_used,
             error_count,
+            delivery,
             ..
         } => {
             if let Some(info) = agent.subagent_sessions.get_mut(&child_session_id) {
@@ -748,6 +750,7 @@ pub(super) fn handle_session_notification_with_origin(
                 info.attempt.context_usage_pct = Some(context_usage_pct);
                 info.attempt.tools_used = tools_used.into_iter().map(Arc::from).collect();
                 info.attempt.error_count = Some(error_count);
+                info.attempt.delivery = delivery;
                 info.attempt.last_progress_at = std::time::Instant::now();
             }
             child_follow_up = lifecycle_child.map(|child| ChildViewFollowUp::Progressed {

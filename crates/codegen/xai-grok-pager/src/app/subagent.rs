@@ -77,6 +77,7 @@ pub struct SubagentAttemptInfo {
     pub error_count: Option<u32>,
     /// Live activity label ("Thinking", "Running: cargo build") for the tasks pane and dashboard; cleared on `SubagentFinished`.
     pub activity_label: Option<String>,
+    pub delivery: xai_grok_shell::extensions::notification::SubagentDelivery,
 
     /// Affects scrollback rendering (background shows "started:"/"completed:").
     pub is_background: bool,
@@ -104,6 +105,7 @@ impl SubagentAttemptInfo {
         self.tools_used.clone_from(&prior.tools_used);
         self.error_count = prior.error_count;
         self.activity_label.clone_from(&prior.activity_label);
+        self.delivery = prior.delivery;
     }
 
     /// Context tokens as `used/window`, or `used` alone while the window is unknown; `None` before any report.
@@ -326,6 +328,13 @@ impl SubagentInfo {
         !self.attempt.lifecycle.is_finished()
     }
 
+    /// A human steered this running subagent; its answer reaches the caller only on `deliver`.
+    pub fn awaits_delivery(&self) -> bool {
+        self.is_running()
+            && self.attempt.delivery
+                == xai_grok_shell::extensions::notification::SubagentDelivery::Held
+    }
+
     pub(crate) fn is_finished(&self) -> bool {
         self.attempt.lifecycle.is_finished()
     }
@@ -540,6 +549,7 @@ pub(crate) mod test_support {
                 tools_used: Vec::new(),
                 error_count: None,
                 activity_label: None,
+                delivery: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,

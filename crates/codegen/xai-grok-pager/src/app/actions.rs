@@ -422,6 +422,8 @@ pub enum Action {
     KillSubagent(String),
     /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
     ResumeSubagent { subagent_id: String, prompt: String },
+    /// Release the active child view's held answer to its caller.
+    DeliverSubagent,
     RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
@@ -1610,6 +1612,8 @@ pub enum Effect {
         subagent_id: String,
         prompt: String,
     },
+    /// Release a held child session via `x.ai/subagent/deliver`.
+    DeliverSubagent { child_session_id: acp::SessionId },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
     KillSubagent {
         session_id: acp::SessionId,
@@ -2652,6 +2656,10 @@ pub enum TaskResult {
     /// The answer stands for this run, but nothing on disk holds it, so the notice returns at the next launch.
     ConsentPersistFailed {
         error: String,
+    },
+    /// Response to `x.ai/subagent/deliver`; `None` when the RPC itself failed.
+    DeliverSubagentComplete {
+        outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,
     },
     /// Response to `x.ai/subagent/resume`; `None` when the RPC itself failed.
     ResumeSubagentComplete {
