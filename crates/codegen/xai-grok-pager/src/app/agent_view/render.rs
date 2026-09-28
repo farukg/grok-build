@@ -1,8 +1,9 @@
 //! Frame rendering for [`AgentView`]: the `draw` entry point plus shortcut hints.
 use super::{
     ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase, EscStep,
-    InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links, dropdown_content_inset, dropdown_items_width, record_dot_pulse,
-    render_dropdown_chrome, supports_osc22,
+    InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links,
+    dropdown_content_inset, dropdown_items_width, record_dot_pulse, render_dropdown_chrome,
+    supports_osc22,
 };
 use crate::actions::{ActionId, ActionRegistry};
 use crate::key;
@@ -401,10 +402,10 @@ impl AgentView {
                 )
             };
         let can_demote = self
-                .session
-                .tracker
-                .running_execute_tool_call_id()
-                .is_some();
+            .session
+            .tracker
+            .running_execute_tool_call_id()
+            .is_some();
         let selected_can_kill = if self.active_pane == ActivePane::Dock {
             self.dock_items()
                 .get(self.dock_cursor)
@@ -945,8 +946,7 @@ impl AgentView {
         if self.active_pane == ActivePane::Tasks && !self.tasks.is_visible() {
             self.active_pane = ActivePane::Scrollback;
         }
-        let dock_on = crate::views::dock::enabled()
-            && area.height > agent::SHORT_TERMINAL_ROWS;
+        let dock_on = crate::views::dock::enabled() && area.height > agent::SHORT_TERMINAL_ROWS;
         self.dock_on = dock_on;
         let tasks_height = if dock_on {
             0

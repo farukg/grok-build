@@ -647,7 +647,9 @@ mod workflows_overlay_key_tests {
         let reg = ActionRegistry::defaults();
 
         let out = agent.handle_input(&mouse_down(12, 5), &reg);
-        assert!(matches!(out, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1"));
+        assert!(
+            matches!(out, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1")
+        );
         assert!(
             agent.show_workflows,
             "the overlay stays open underneath so closing the transcript returns to it"

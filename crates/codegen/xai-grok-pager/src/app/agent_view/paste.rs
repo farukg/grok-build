@@ -2024,9 +2024,7 @@ pub(super) mod paste_key_tests {
         let path = std::path::PathBuf::from("/tmp/tool-media.png");
         let placement = tool_media_placement(path.clone());
         let mut agent = make_agent();
-        agent
-            .inline_media_cache
-            .insert(path, make_test_png(40, 20));
+        agent.inline_media_cache.insert(path, make_test_png(40, 20));
         let paint_twice = |view: &mut AgentView| {
             let first = view.build_inline_media_escapes(&placement).unwrap();
             assert!(first.contains("a=t"), "first frame transmits: {first:?}");

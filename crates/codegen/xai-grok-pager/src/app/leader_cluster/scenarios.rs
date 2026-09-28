@@ -26,7 +26,8 @@ fn two_clients_share_session_and_stream_both_ways() {
         b.load_session(&sid).await;
         b.pump_until("replay reaches viewer", move |app| {
             app.agents
-                .all().map(|(_, a)| a)
+                .all()
+                .map(|(_, a)| a)
                 .any(|agent| agent_message_text(agent).contains(T1))
         })
         .await;
@@ -43,7 +44,8 @@ fn two_clients_share_session_and_stream_both_ways() {
             clients.iter().all(|c| {
                 c.app
                     .agents
-                    .all().map(|(_, a)| a)
+                    .all()
+                    .map(|(_, a)| a)
                     .any(|agent| agent_message_text(agent).contains(T2))
             })
         })
@@ -86,7 +88,8 @@ fn n_client_fan_out_without_replay_duplication() {
             viewer
                 .pump_until("viewer replay lands", move |app| {
                     app.agents
-                        .all().map(|(_, a)| a)
+                        .all()
+                        .map(|(_, a)| a)
                         .any(|agent| agent_message_text(agent).contains(T1))
                 })
                 .await;
@@ -117,7 +120,8 @@ fn n_client_fan_out_without_replay_duplication() {
             clients.iter().all(|c| {
                 c.app
                     .agents
-                    .all().map(|(_, a)| a)
+                    .all()
+                    .map(|(_, a)| a)
                     .any(|agent| agent_message_text(agent).contains(T2))
             })
         })
@@ -184,7 +188,8 @@ fn reattach_completion_roundtrips_durable_log() {
         c.load_session(&sid).await;
         c.pump_until("reattach replay lands", move |app| {
             app.agents
-                .all().map(|(_, a)| a)
+                .all()
+                .map(|(_, a)| a)
                 .any(|agent| agent_message_text(agent).contains(T1))
         })
         .await;
@@ -319,7 +324,8 @@ fn leader_kill_reconnect_reloads_without_duplicating_history() {
         // Drain the replay the load unicast to this client BEFORE finalizing, mirroring the production replay-then-finalize order
         a.pump_until("reload replay lands", move |app| {
             app.agents
-                .all().map(|(_, a)| a)
+                .all()
+                .map(|(_, a)| a)
                 .any(|agent| agent_message_text(agent).contains(T1))
         })
         .await;

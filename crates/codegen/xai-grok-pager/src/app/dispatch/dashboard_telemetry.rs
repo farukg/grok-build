@@ -6,7 +6,11 @@ use xai_grok_telemetry::events::{
 use xai_grok_telemetry::session_ctx::log_event;
 
 pub(super) fn log_dashboard_opened(app: &AppView) {
-    let subagents: usize = app.agents.roots().map(|(_, a)| a.subagent_sessions.len()).sum();
+    let subagents: usize = app
+        .agents
+        .roots()
+        .map(|(_, a)| a.subagent_sessions.len())
+        .sum();
     log_event(DashboardOpened {
         agents: app.agents.roots().count(),
         subagents,

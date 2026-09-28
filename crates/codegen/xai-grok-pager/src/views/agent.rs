@@ -983,9 +983,7 @@ pub(crate) fn build_hints(
     {
         hints.push(def.hint());
     }
-    if can_demote
-        && let Some(key) = registry.key_for(ActionId::SendToBackground)
-    {
+    if can_demote && let Some(key) = registry.key_for(ActionId::SendToBackground) {
         hints.push(HintItem::new(key, "send to bg"));
     }
     hints
@@ -1575,7 +1573,7 @@ mod tests {
                 false,
                 multiline,
                 true,
-                    true,
+                true,
                 true,
                 QueueMutation::PerRowKind,
                 false,
@@ -1619,7 +1617,7 @@ mod tests {
                 false,
                 false,
                 vim_mode,
-                    true,
+                true,
                 false,
                 QueueMutation::PerRowKind,
                 false,

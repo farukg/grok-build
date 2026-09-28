@@ -715,7 +715,9 @@ fn report_suspend_wait(app: &mut AppView, message: &str) {
             if let ActiveView::Agent(id) = app.active_view
                 && let Some(agent) = app.agents.get_mut(&id)
             {
-                agent.scrollback.push_block(crate::scrollback::block::RenderBlock::system(message));
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(message));
             }
         }
     }

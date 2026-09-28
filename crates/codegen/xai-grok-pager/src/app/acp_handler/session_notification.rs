@@ -687,14 +687,13 @@ pub(super) fn handle_session_notification_with_origin(
                     .registry()
                     .restricted_commands();
                 child_view.set_restricted_commands(&restricted);
-                child_view.role = crate::app::agent_view::AgentRole::Child(
-                    crate::app::agent_view::ChildLink {
+                child_view.role =
+                    crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
                         parent: parent_id,
                         parent_session_id: acp::SessionId::new(parent_session_id),
                         subagent_id: child_session_id.clone(),
                         started_at: now,
-                    },
-                );
+                    });
                 child_follow_up = Some(ChildViewFollowUp::Spawned(Box::new(child_view)));
             }
             if workflow_run_id.is_none() {

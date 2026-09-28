@@ -246,7 +246,9 @@ fn report_config_failure(app: &mut AppView, message: &str) {
         && let ActiveView::Agent(id) = app.active_view
         && let Some(agent) = app.agents.get_mut(&id)
     {
-        agent.scrollback.push_block(RenderBlock::system(message.to_owned()));
+        agent
+            .scrollback
+            .push_block(RenderBlock::system(message.to_owned()));
     } else {
         app.show_toast(message);
     }

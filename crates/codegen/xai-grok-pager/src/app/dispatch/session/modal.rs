@@ -78,7 +78,12 @@ pub(in crate::app::dispatch) fn dispatch_sessions_confirm_close(
             .get(&closed_id)
             .and_then(|a| a.session.forked_from)
             .filter(|p| app.agents.contains_key(p));
-        let fallback = parent.or_else(|| app.agents.roots().map(|(id, _)| id).find(|id| *id != closed_id));
+        let fallback = parent.or_else(|| {
+            app.agents
+                .roots()
+                .map(|(id, _)| id)
+                .find(|id| *id != closed_id)
+        });
         if let Some(target) = fallback {
             switch_to_agent(app, target, SwitchCause::Picker);
         } else {

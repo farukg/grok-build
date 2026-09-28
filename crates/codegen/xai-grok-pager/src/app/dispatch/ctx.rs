@@ -212,7 +212,8 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
     // Asserting the gate here makes "no session is created while `TrustState::Pending`" a property of the flow rather than of each call site
     // This assert therefore never fires on the reachable gated paths
     debug_assert!(
-        matches!(cause, SwitchCause::Picker | SwitchCause::Navigate) || app.session_startup_allowed(),
+        matches!(cause, SwitchCause::Picker | SwitchCause::Navigate)
+            || app.session_startup_allowed(),
         "session creation via {cause:?} requires the startup gate open (auth + folder trust)"
     );
     if !app.agents.contains_key(&target) {

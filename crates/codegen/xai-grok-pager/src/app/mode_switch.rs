@@ -251,7 +251,8 @@ mod tests {
         let mut app = crate::app::app_view::tests::test_app_with_agent();
         let agent_id = app.agents.all().next().expect("agent present").0;
         let child_id = crate::app::agent::AgentId(1);
-        let mut child = crate::app::agent_view::test_agent_view(Some("sess-1"), std::path::PathBuf::from("."));
+        let mut child =
+            crate::app::agent_view::test_agent_view(Some("sess-1"), std::path::PathBuf::from("."));
         child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
             parent: agent_id,
             parent_session_id: "parent".into(),
@@ -283,12 +284,18 @@ mod tests {
                 "welcome prompt slash gate"
             );
             assert_eq!(
-                app.agents.get(&agent_id).expect("agent present").is_minimal_mode(),
+                app.agents
+                    .get(&agent_id)
+                    .expect("agent present")
+                    .is_minimal_mode(),
                 minimal,
                 "agent gate"
             );
             assert_eq!(
-                app.agents.get(&child_id).expect("subagent present").is_minimal_mode(),
+                app.agents
+                    .get(&child_id)
+                    .expect("subagent present")
+                    .is_minimal_mode(),
                 minimal,
                 "subagent gate"
             );

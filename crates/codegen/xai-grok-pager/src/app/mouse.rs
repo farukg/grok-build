@@ -234,10 +234,14 @@ impl AgentView {
                     });
                 }
                 if self.hit_overlay_prev.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Prev));
+                    return InputOutcome::Action(Action::CycleSessions(
+                        crate::app::actions::Direction::Prev,
+                    ));
                 }
                 if self.hit_overlay_next.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next));
+                    return InputOutcome::Action(Action::CycleSessions(
+                        crate::app::actions::Direction::Next,
+                    ));
                 }
                 if self.hit_cwd.contains(mouse.column, mouse.row) {
                     let path = self.session.cwd.display().to_string();
@@ -637,7 +641,9 @@ impl AgentView {
                                         .map(|(k, _)| k.clone())
                                         && self.subagent_sessions.contains_key(&child_sid)
                                     {
-                                        return InputOutcome::Action(Action::OpenSession(child_sid));
+                                        return InputOutcome::Action(Action::OpenSession(
+                                            child_sid,
+                                        ));
                                     }
                                 }
                                 TaskEntryId::Scheduled(tid) => {
@@ -655,7 +661,9 @@ impl AgentView {
                                             .map(|(k, _)| k.clone())
                                         && self.subagent_sessions.contains_key(&child_sid)
                                     {
-                                        return InputOutcome::Action(Action::OpenSession(child_sid));
+                                        return InputOutcome::Action(Action::OpenSession(
+                                            child_sid,
+                                        ));
                                     }
                                 }
                                 TaskEntryId::Workflow(_) => {}
@@ -693,7 +701,9 @@ impl AgentView {
                                 && self.subagent_sessions.contains_key(child_sid)
                             {
                                 self.last_bg_click = None;
-                                return InputOutcome::Action(Action::OpenSession(child_sid.to_string()));
+                                return InputOutcome::Action(Action::OpenSession(
+                                    child_sid.to_string(),
+                                ));
                             }
                             if let Some(crate::views::tasks_pane::TaskEntry::Workflow {
                                 name,
