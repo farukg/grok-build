@@ -1,0 +1,61 @@
+name: linux-build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: linux-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'farukg/grok-build'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-release
+
+      - name: Build
+        run: cargo build -p xai-grok-pager-bin --release --locked
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/xai-grok-pager dist/grok
+          strip dist/grok
+          tar -C dist -czf grok-x86_64-linux.tar.gz grok
+          sha256sum grok-x86_64-linux.tar.gz > grok-x86_64-linux.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grok-x86_64-linux
+          path: |
+            grok-x86_64-linux.tar.gz
+            grok-x86_64-linux.tar.gz.sha256
+          retention-days: 30
