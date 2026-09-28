@@ -3529,6 +3529,22 @@ fn slash_compact_enqueues_command() {
 }
 
 #[test]
+fn child_slash_compact_emits_compact_for_child() {
+    use crate::app::session_views::test_support::link_child;
+    let mut app = test_app_with_agent();
+    let parent_id = AgentId(0);
+    let child_id = AgentId(1);
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-compact"),
+        ScrollbackState::new(),
+    );
+    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.active_view = ActiveView::Agent(child_id);
+    let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
+    assert!(matches!(effects.as_slice(), [Effect::Compact { session_id, .. }] if session_id.0 == "child-compact"));
+}
+
+#[test]
 fn edit_prompt_direct_route_preserves_nonempty_draft_and_elements() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
