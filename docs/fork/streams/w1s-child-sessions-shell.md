@@ -44,18 +44,11 @@ Implemented (shell only):
    `FeatureSpec ActiveAgentMessages default_enabled: false`). Without it a finished child answers
    `InvalidRequest "waking a finished child session requires features.active_agent_messages"`.
    Keep the gate (current), or let human wakes bypass it?
-2. **ContinuedAs after a restart is not wired.** A child that is not in memory has no registry
-   entry, and continuing it needs its parent: `MvpAgent::resume_subagent(parent_session_id, …)`
-   (S/agent/mvp_agent/subagent_spawn.rs ~L114) and `durable_resume_source(subagent_id,
-   parent_session_id, cwd)` (S/agent/subagent/spawn.rs ~L132). The pager knows the parent and can
-   call `x.ai/subagent/resume` (M4) directly on "unknown session id" — proposal for W3 instead of
-   a shell-side lookup (which would need startup I/O).
-3. **S3 authority gates stay on `is_subagent`.** A subagent's initial task prompt id is a bare
-   uuid (S/agent/subagent/handle_request.rs ~L1705) and therefore classifies as
-   `PromptOrigin::User` → `InputAuthority::HumanIntent` (S/session/mod.rs ~L166-173). Switching the
-   gates in hook_dispatch.rs L437 / prompt_queue.rs L169 to authority alone would run
-   UserPromptSubmit hooks and prompt history for every task prompt. Needs the task prompt to get
-   its own origin first. Until then human prompts to a child skip those hooks and prompt history.
+2. Decided (Faruk): ContinuedAs after a restart is the pager's job in W3 via
+   `x.ai/subagent/resume` on "unknown session id".
+3. Decided (Faruk): subagent behavior stays as it is; the `is_subagent` gates for hooks and the ↑
+   prompt history are not switched to authority. ↑ history in child views is a low-priority
+   follow-up (see `streams/w1h-hold-deliver.md`).
 4. By-id handlers other than prompt/cancel (set_model, compact, mode, …) still resolve only root
    sessions.
 
