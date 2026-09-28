@@ -50,6 +50,13 @@ pub(crate) static TOOL_CALL_STATUS_IN_PROGRESS: LazyLock<String> = LazyLock::new
 });
 
 /// Appears verbatim in compact JSON, so it doubles as a cheap substring pre-filter.
+pub(crate) static CONTEXT_ITEMS_REMOVED: LazyLock<String> = LazyLock::new(|| {
+    tagged_discriminant(&XaiSessionUpdate::ContextItemsRemoved {
+        items: Vec::new(),
+        created_at: String::new(),
+    })
+});
+
 pub(crate) static REWIND_MARKER: LazyLock<String> = LazyLock::new(|| {
     tagged_discriminant(&XaiSessionUpdate::RewindMarker {
         target_prompt_index: 0,
@@ -116,6 +123,7 @@ mod tests {
         assert_eq!(TOOL_CALL_UPDATE.as_str(), "tool_call_update");
         assert_eq!(TOOL_CALL_STATUS_IN_PROGRESS.as_str(), "in_progress");
         assert_eq!(REWIND_MARKER.as_str(), "rewind_marker");
+        assert_eq!(CONTEXT_ITEMS_REMOVED.as_str(), "context_items_removed");
         assert_eq!(TASK_BACKGROUNDED.as_str(), "task_backgrounded");
         assert_eq!(TASK_COMPLETED.as_str(), "task_completed");
         assert_eq!(
