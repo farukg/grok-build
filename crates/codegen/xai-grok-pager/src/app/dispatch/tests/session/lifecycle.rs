@@ -2304,7 +2304,7 @@ fn dispatch_new_session_keeps_stale_attach_on_other_agent() {
         "attach on a different agent must not be re-pointed to the new session",
     );
 }
-/// Re-point uses the active child session's AgentId rather than its parent.
+/// Re-point uses the root of the active child session, the id the dashboard attached.
 #[test]
 fn dispatch_new_session_repoints_attach_while_child_view_open() {
     use crate::app::session_views::test_support::link_child;
@@ -2334,7 +2334,11 @@ fn dispatch_new_session_repoints_attach_while_child_view_open() {
         "new session must switch to the new top-level agent"
     );
     let d = app.dashboard.as_ref().unwrap();
-    assert_eq!(d.attached_agent, Some(parent));
+    assert_eq!(
+        d.attached_agent,
+        Some(new_id),
+        "attach must re-point from the child's root, not the child",
+    );
     assert_eq!(
         d.selected,
         Some(DashboardRowId::TopLevel(new_id)),

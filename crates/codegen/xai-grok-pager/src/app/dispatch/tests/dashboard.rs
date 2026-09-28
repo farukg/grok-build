@@ -5321,6 +5321,7 @@ fn three_sessions_opened_directly() -> AppView {
         agent.generated_session_title = Some(format!("Session {n}"));
         app.agents.insert(id, agent);
     }
+    app.next_agent_id = 3;
     switch_to_agent(&mut app, AgentId(0), SwitchCause::Picker);
     app
 }
@@ -5447,10 +5448,14 @@ fn cycle_in_child_is_siblings_in_root_is_roots() {
     press(&mut app, KeyCode::Char(']'), KeyModifiers::CONTROL);
     assert_eq!(app.active_view, ActiveView::Agent(children[1]));
     app.active_view = ActiveView::Agent(AgentId(0));
-    let roots = crate::views::dashboard::SessionCycle::from_order(vec![AgentId(0), AgentId(1), AgentId(2)]);
-    app.session_cycle = crate::views::dashboard::SessionCycleCache::Fresh(roots);
+    ensure_dashboard_state(&mut app);
+    let roots =
+        crate::views::dashboard::overlay_cycle_order(app.dashboard.as_ref().unwrap(), &app.agents);
+    app.dashboard = None;
+    assert!(!roots.iter().any(|id| children.contains(id)), "children are never cycle rows: {roots:?}");
+    let start = roots.iter().position(|id| *id == AgentId(0)).unwrap();
     press(&mut app, KeyCode::Char(']'), KeyModifiers::CONTROL);
-    assert_eq!(app.active_view, ActiveView::Agent(AgentId(1)));
+    assert_eq!(app.active_view, ActiveView::Agent(roots[(start + 1) % roots.len()]));
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]

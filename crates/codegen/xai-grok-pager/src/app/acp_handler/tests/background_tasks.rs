@@ -241,7 +241,7 @@
 
     #[test]
     fn task_backgrounded_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
         let notif =
             make_task_backgrounded_notif("child-sess", "tc-child-1", "task-child-1", "sleep 100");
         let changed = handle_task_backgrounded(&notif, &mut app);
@@ -386,7 +386,7 @@
 
     #[test]
     fn task_completed_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
 
         // First, background a task on the child.
         let bg_notif =
@@ -443,7 +443,7 @@
 
     #[test]
     fn task_completed_failure_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
 
         let bg_notif = make_task_backgrounded_notif("child-sess", "tc-fail", "task-fail", "exit 1");
         handle_task_backgrounded(&bg_notif, &mut app);
@@ -468,7 +468,7 @@
 
     #[test]
     fn monitor_event_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
 
         // Background a task on the child so monitor event has somewhere to land.
         let bg_notif =
@@ -519,13 +519,13 @@
         let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
         // Insert a second agent and switch to it so the first agent is inactive.
         let other = make_agent(Some("other-sess"));
-        app.agents.insert(AgentId(1), other);
+        app.agents.insert(AgentId(2), other);
         crate::app::dispatch::switch_to_agent(
             &mut app,
-            AgentId(1),
+            AgentId(2),
             crate::app::dispatch::SwitchCause::New,
         );
-        assert!(matches!(app.active_view, ActiveView::Agent(AgentId(1))));
+        assert!(matches!(app.active_view, ActiveView::Agent(AgentId(2))));
 
         let notif =
             make_task_backgrounded_notif("child-sess", "tc-bg-inact", "task-bg-inact", "sleep 1");
@@ -555,10 +555,10 @@
 
         // Now switch away.
         let other = make_agent(Some("other-sess"));
-        app.agents.insert(AgentId(1), other);
+        app.agents.insert(AgentId(2), other);
         crate::app::dispatch::switch_to_agent(
             &mut app,
-            AgentId(1),
+            AgentId(2),
             crate::app::dispatch::SwitchCause::New,
         );
 

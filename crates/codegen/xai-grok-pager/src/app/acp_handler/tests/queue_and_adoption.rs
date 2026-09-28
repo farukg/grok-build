@@ -86,6 +86,7 @@
         );
         assert!(app.pending_running_adoptions.is_empty());
         assert!(app.pending_effects.is_empty());
+        draw_view(child_view_mut(&mut app.agents, child_sid));
         let child = test_subagent(&app, child_sid);
         assert_eq!(
             child
@@ -113,6 +114,7 @@
             vec!["root-prompt"],
             "clearing the child must not affect root",
         );
+        draw_view(child_view_mut(&mut app.agents, child_sid));
         let child = test_subagent(&app, child_sid);
         assert!(child.shared_queue.is_empty());
         assert!(child.queue.entry_ids().is_empty());

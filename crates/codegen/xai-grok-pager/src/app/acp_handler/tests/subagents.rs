@@ -198,7 +198,7 @@
     }
 
     #[test]
-    fn child_spawn_sets_read_only_pane() {
+    fn child_queue_is_editable() {
         use crate::views::queue_mutation::QueueMutation;
 
         let mut app = make_app_with_agent("sess-1");
@@ -212,7 +212,7 @@
             .unwrap_or_else(|| panic!("missing root agent"));
         assert_eq!(QueueMutation::PerRowKind, root.queue.mutation());
         let child = test_subagent(&app, "child-1");
-        assert_eq!(QueueMutation::ReadOnly, child.queue.mutation());
+        assert_eq!(QueueMutation::PerRowKind, child.queue.mutation());
     }
 
     #[test]
@@ -1299,7 +1299,13 @@
                 self.open_child(self.child_sid);
             }
 
+            /// Opening from the parent's row: a child already on screen is left first, as the user would.
             fn open_child(&mut self, child_sid: &str) {
+                if self.app.agents.find_by_session_id(child_sid).is_some_and(|id| {
+                    matches!(self.app.active_view, ActiveView::Agent(active) if active == id)
+                }) {
+                    leave_child_view(&mut self.app);
+                }
                 open_child_view(&mut self.app, child_sid);
             }
 

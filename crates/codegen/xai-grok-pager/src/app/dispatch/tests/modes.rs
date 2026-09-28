@@ -84,6 +84,7 @@ fn show_word_select_tip_targets_active_child_session() {
         make_test_agent_session(&app, child_id, "child-tip"),
         ScrollbackState::new(),
     );
+    child.last_terminal_size = (80, 30);
     child.role = AgentRole::Child(ChildLink {
         parent: root_id,
         parent_session_id: app.agents.get(&root_id).unwrap().session.session_id.clone().unwrap(),

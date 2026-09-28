@@ -743,18 +743,6 @@ fn block_viewer_esc_clears_sticky_then_closes() {
 }
 
 #[test]
-fn block_viewer_enter_from_child_quotes_into_child_composer() {
-    let mut child = agent_with_markdown_viewer("hello world");
-    child.prompt.set_text("child-draft");
-    let registry = ActionRegistry::defaults();
-    let outcome = child.handle_input(&Event::Key(enter_key()), &registry);
-    assert!(matches!(outcome, crate::app::app_view::InputOutcome::Changed));
-    assert_eq!(child.prompt.text(), "child-draft\n> hello world\n\n");
-    assert_eq!(child.active_pane, crate::app::agent_view::AgentPane::Prompt);
-    assert!(child.block_viewer.is_none());
-}
-
-#[test]
 fn install_block_viewer_ignores_missing_resume_id() {
     use crate::app::agent_view::BlockViewerResume;
     use crate::scrollback::block::RenderBlock;

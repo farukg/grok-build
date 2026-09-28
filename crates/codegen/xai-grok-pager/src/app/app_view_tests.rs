@@ -1948,6 +1948,7 @@ fn needs_animation_gates_subagent_image_viewer_loading() {
         *child,
         std::time::Instant::now(),
     );
+    app.active_view = ActiveView::Agent(child_id);
     assert!(
         !app.needs_animation(),
         "an idle agent with an idle subagent child must not request ticks"
@@ -5607,8 +5608,7 @@ fn opening_workflow_transcript_cancels_pending_scroll_stream() {
         *child,
         std::time::Instant::now(),
     );
-    app.active_view = ActiveView::Agent(child_id);
-    let agent = app.agents.get_mut(&child_id).unwrap();
+    let agent = app.agents.get_mut(&id).unwrap();
     agent
         .workflow_runs
         .push(crate::views::workflows::WorkflowRunSnapshot {
@@ -5647,8 +5647,11 @@ fn opening_workflow_transcript_cancels_pending_scroll_stream() {
         .on_scroll_event(ScrollDirection::Up, ScrollConfig::default());
     app.last_scroll_pos = Some((30, 12));
     assert!(app.scroll_state.has_active_stream());
-    let out = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(matches!(out, InputOutcome::Changed));
+    let InputOutcome::Action(open) = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("Enter on a workflow agent must request its session");
+    };
+    let _ = crate::app::dispatch::dispatch(open, &mut app);
     assert_eq!(app.active_view, ActiveView::Agent(child_id));
     assert!(!app.scroll_state.has_active_stream());
     assert_eq!(app.last_scroll_pos, None);

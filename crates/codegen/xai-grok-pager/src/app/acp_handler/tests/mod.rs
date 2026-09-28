@@ -248,6 +248,7 @@ pub(super) fn make_app_with_agent(session_id: &str) -> AppView {
     let id = AgentId(0);
     let agent = make_agent(Some(session_id));
     app.agents.insert(id, agent);
+    app.next_agent_id = 1;
     crate::app::dispatch::switch_to_agent(
         &mut app,
         id,
@@ -2089,6 +2090,30 @@ pub(super) fn make_app_with_parent_and_child(
     let mut app = make_app_with_agent(parent_sid);
     app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
     link_child(&mut app.agents, AgentId(0), AgentId(1), make_agent(Some(child_sid)), Instant::now());
+    app.next_agent_id = 2;
+    app
+}
+/// Paint one 80x30 frame of `view`, the point where its panes pick up session state.
+pub(super) fn draw_view(view: &mut AgentView) {
+    let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    view.draw(
+        area,
+        &mut buf,
+        &crate::actions::ActionRegistry::defaults(),
+        &mut crate::scrollback::render::ScratchBuffer::new(),
+        None,
+        false,
+        crate::app::agent_view::BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        crate::app::agent_view::AppRenderParams::default(),
+    );
+}
+/// A parent with one child session, the child's view on screen.
+pub(super) fn make_app_viewing_child(parent_sid: &str, child_sid: &str) -> AppView {
+    let mut app = make_app_with_parent_and_child(parent_sid, child_sid);
+    app.active_view = ActiveView::Agent(AgentId(1));
     app
 }
 pub(super) fn make_task_completed_notif(

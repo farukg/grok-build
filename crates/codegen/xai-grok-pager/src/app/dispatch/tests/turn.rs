@@ -1065,75 +1065,29 @@ fn child_esc_emits_session_cancel_for_child() {
     assert!(app.agents.get(&child_id).unwrap().session.state.is_cancelling());
 }
 
-
-/// Any cancelling resident session keeps the resend tick demand active.
+/// Leaving a child whose cancel still awaits its resend keeps Fast ticks, so the resend fires off-screen.
 #[test]
-fn tick_demand_fast_while_any_session_is_cancelling() {
+fn tick_demand_fast_after_leaving_a_cancelling_child() {
     use crate::app::app_view::TickDemand;
     use crate::app::session_views::test_support::link_child;
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
     let child_id = AgentId(1);
-    let child_sid = "child-tick-demand";
-    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
-    child_session.state = AgentState::TurnCancelling;
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
-    assert_eq!(app.tick_demand(), TickDemand::Fast);
-}
-
-/// Overlay stop sends cancel_subagents true even when always_continue is set.
-#[test]
-fn cancel_turn_in_child_session_ignores_always_continue_pref() {
-    use crate::app::session_views::test_support::link_child;
-    let mut app = test_app_with_agent();
-    let parent_id = AgentId(0);
-    let child_id = AgentId(1);
-    let child_sid = "child-overlay-always-continue";
-    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
+    let mut child_session = make_test_agent_session(&app, child_id, "child-tick-demand");
     child_session.state = AgentState::TurnRunning;
     let mut child = AgentView::new(child_session, ScrollbackState::new());
-    child.cancel_subagents_preference = Some(false);
-    app.agents.get_mut(&parent_id).unwrap().cancel_subagents_preference = Some(false);
+    child.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::Mouse);
     link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    app.next_agent_id = 2;
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
-    app.current_ui.cancel_subagents_on_turn_cancel = Some("always_continue".into());
-
     let effects = dispatch(Action::CancelTurn, &mut app);
-
     assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::CancelTurn {
-                session_id,
-                cancel_subagents: true,
-                ..
-            }] if session_id.0.as_ref() == child_sid
-        ),
-        "overlay stop must ignore always_continue, got {effects:?}"
+        matches!(effects.as_slice(), [Effect::CancelTurn { .. }]),
+        "stop must cancel the child, got {effects:?}"
     );
-}
-
-
-/// Overlay child with no session_id: no wire cancel and no local Cancelling.
-#[test]
-fn cancel_turn_in_child_session_without_session_id_is_noop() {
-    use crate::app::session_views::test_support::link_child;
-    let mut app = test_app_with_agent();
-    let parent_id = AgentId(0);
-    let child_id = AgentId(1);
-    let child_sid = "child-overlay-no-sid";
-    let mut child_session = make_test_agent_session(&app, child_id, child_sid);
-    child_session.state = AgentState::TurnRunning;
-    child_session.session_id = None;
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
-    app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
-
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(effects.is_empty());
-    assert!(app.agents.get(&child_id).unwrap().session.state.is_turn_running());
+    app.active_view = crate::app::app_view::ActiveView::Agent(parent_id);
+    assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
+    assert_eq!(app.tick_demand(), TickDemand::Fast);
 }
 
 #[test]

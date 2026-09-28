@@ -63,6 +63,8 @@ fn session_views(sid: &str, child: AgentView, info: SubagentInfo) -> (SessionVie
     parent.session.session_id = Some(acp::SessionId::new("parent"));
     parent.subagent_sessions.insert(sid.to_owned(), info);
     views.insert(parent_id, parent);
+    let mut child = child;
+    child.session.session_id = Some(acp::SessionId::new(sid));
     crate::app::session_views::test_support::link_child(
         &mut views,
         parent_id,
@@ -173,14 +175,9 @@ fn finished_child_evicted_on_leave_and_replayed_on_open() {
     let (mut views, child_id) = session_views(child_sid, child, info);
     assert_eq!(replay_on_open(&mut views, child_id), ChildReplayOutcome::Replayed);
     assert_eq!(evict_on_leave(&mut views, child_id), EvictOutcome::Evicted);
-    assert!(!views.contains_key(&child_id));
-    let child = make_min_child_view();
-    crate::app::session_views::test_support::link_child(
-        &mut views,
-        AgentId(0),
-        child_id,
-        child,
-        std::time::Instant::now(),
+    assert!(
+        views.get(&child_id).is_some_and(|child| child.scrollback.is_empty()),
+        "eviction drops the rebuilt content, never the session view"
     );
     assert_eq!(replay_on_open(&mut views, child_id), ChildReplayOutcome::Replayed);
     assert_eq!(views.get(&child_id).unwrap().scrollback.len(), 1);
@@ -211,11 +208,9 @@ fn a_disk_backed_child_is_not_replayed_again() {
     ));
 }
 #[test]
-fn row_click_opens_child_session_view() {
-    use crate::app::actions::Action;
+fn enter_on_a_subagent_row_opens_the_child_session_view() {
     use crate::app::agent_view::test_fixtures::make_agent;
     use crate::app::app_view::{ActiveView, AppView};
-    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut app = AppView::new(
         tx,
@@ -240,7 +235,9 @@ fn row_click_opens_child_session_view() {
             false,
         ),
     ));
-    parent.subagent_sessions.insert(child_sid.to_owned(), make_info());
+    let mut info = make_info();
+    info.transcript = ChildTranscript::DiskBacked;
+    parent.subagent_sessions.insert(child_sid.to_owned(), info);
     app.agents.insert(parent_id, parent);
     let mut child = make_agent();
     child.session.session_id = Some(acp::SessionId::new(child_sid));
@@ -253,11 +250,17 @@ fn row_click_opens_child_session_view() {
     );
     app.active_view = ActiveView::Agent(parent_id);
     let parent = app.agents.get_mut(&parent_id).unwrap();
-    parent.pane_areas.scrollback = ratatui::layout::Rect::new(0, 0, 80, 10);
+    parent.set_active_pane(crate::app::agent_view::AgentPane::Scrollback, false);
     parent.scrollback.set_selected(Some(0));
-    let mouse = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 1, row: 0, modifiers: crossterm::event::KeyModifiers::CONTROL };
-    let outcome = parent.handle_mouse(&mouse);
-    assert!(matches!(outcome, crate::app::app_view::InputOutcome::Action(Action::OpenSession(sid)) if sid == child_sid));
+    let enter = crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Enter,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    let crate::app::app_view::InputOutcome::Action(action) = app.handle_input(&enter) else {
+        panic!("Enter on a subagent row must request an action");
+    };
+    let _ = crate::app::dispatch::dispatch(action, &mut app);
+    assert_eq!(app.active_view, ActiveView::Agent(child_id));
 }
 
 #[test]

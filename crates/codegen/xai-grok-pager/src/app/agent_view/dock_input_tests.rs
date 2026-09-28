@@ -591,7 +591,6 @@ fn pending_kill_subagent_has_no_clickable_stop() {
     cache_stop_button(&mut agent);
     assert!(agent.dock_stop_button.is_none());
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), right, row));
-    assert!(matches!(outcome, InputOutcome::Changed));
     assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(sid)) if sid == "child-1"));
 }
 
@@ -703,7 +702,9 @@ fn every_visible_stop_column_dispatches_and_adjacent_click_opens_row() {
                 stop.x - 1,
                 y,
             ));
-            assert!(matches!(outcome, InputOutcome::Changed));
+            assert!(
+                matches!(outcome, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1")
+            );
         }
     }
 }
@@ -730,7 +731,6 @@ fn occluded_stop_click_does_not_fall_through_to_row_activation() {
         stop.x,
         stop.y,
     ));
-    assert!(matches!(outcome, InputOutcome::Changed));
     assert!(matches!(outcome, InputOutcome::Changed));
 }
 
@@ -1474,7 +1474,6 @@ fn click_opens_a_linked_loop_and_ignores_an_unlinked_one() {
 
     let outcome = agent.handle_dock_key(&key(KeyCode::Enter, KeyModifiers::NONE));
     assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(sid)) if sid == "child-1"));
-
 
     agent.active_pane = AgentPane::Dock;
     agent
