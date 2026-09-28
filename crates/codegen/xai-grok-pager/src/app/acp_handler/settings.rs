@@ -283,13 +283,9 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
     // Drop them so the re-fold can't reopen a verb slot expanded or mark a coincident dense group expanded (see `clear_group_expansion`)
     if resolved != crate::appearance::cache::load_group_tool_verbs() {
         crate::appearance::cache::set_group_tool_verbs(resolved);
-        for agent in app.agents.values_mut() {
+        for (_, agent) in app.agents.all_mut() {
             agent.scrollback.clear_group_expansion();
             agent.scrollback.invalidate_heights();
-            for child in agent.subagent_views.values_mut() {
-                child.scrollback.clear_group_expansion();
-                child.scrollback.invalidate_heights();
-            }
         }
     }
 
@@ -311,15 +307,10 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
     let prev = crate::appearance::cache::load_collapsed_edit_blocks();
     if resolved != prev {
         crate::appearance::cache::set_collapsed_edit_blocks(resolved);
-        for agent in app.agents.values_mut() {
+        for (_, agent) in app.agents.all_mut() {
             agent
                 .scrollback
                 .apply_collapsed_edit_blocks_flip(prev, resolved);
-            for child in agent.subagent_views.values_mut() {
-                child
-                    .scrollback
-                    .apply_collapsed_edit_blocks_flip(prev, resolved);
-            }
         }
     }
 
