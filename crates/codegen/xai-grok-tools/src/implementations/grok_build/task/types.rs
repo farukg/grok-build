@@ -24,7 +24,8 @@ use educe::Educe;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use xai_tool_types::{
-    HandedOffSubagentState, SubagentCapabilityMode, SubagentIsolationMode, WaitMode,
+    HandedOffSubagentState, InterruptionCause, SubagentActor, SubagentCapabilityMode,
+    SubagentIsolationMode, SubagentState, WaitMode,
 };
 
 use crate::register_resource;
@@ -436,9 +437,7 @@ pub struct SubagentResult {
     pub output: Arc<str>,
     /// Error message if the subagent failed.
     pub error: Option<String>,
-    /// True if the subagent was cancelled (by user or model).
-    /// Distinct from failure — cancellation is intentional.
-    pub cancelled: bool,
+    pub state: SubagentState,
     pub subagent_id: String,
     /// The child session ID (same as subagent_id for MVP).
     pub child_session_id: String,
@@ -467,7 +466,7 @@ impl Default for SubagentResult {
             success: false,
             output: Arc::from(""),
             error: None,
-            cancelled: false,
+            state: SubagentState::Running,
             subagent_id: String::new(),
             child_session_id: String::new(),
             tool_calls: 0,
@@ -492,8 +491,10 @@ impl SubagentResult {
         child_session_id: impl Into<String>,
         error: impl Into<String>,
     ) -> Self {
+        let error = error.into();
         SubagentResult {
-            error: Some(error.into()),
+            error: Some(error.clone()),
+            state: SubagentState::Failed { message: error },
             subagent_id: subagent_id.into(),
             child_session_id: child_session_id.into(),
             ..SubagentResult::default()
@@ -506,10 +507,42 @@ impl SubagentResult {
         child_session_id: impl Into<String>,
         error: impl Into<String>,
     ) -> Self {
+        let error = error.into();
         SubagentResult {
-            cancelled: true,
-            ..SubagentResult::failed(subagent_id, child_session_id, error)
+            success: false,
+            error: Some(error.clone()),
+            state: SubagentState::Interrupted {
+                cause: InterruptionCause::Error { message: error },
+            },
+            subagent_id: subagent_id.into(),
+            child_session_id: child_session_id.into(),
+            ..SubagentResult::default()
         }
+    }
+
+    pub fn interrupted(
+        subagent_id: impl Into<String>,
+        child_session_id: impl Into<String>,
+        cause: InterruptionCause,
+    ) -> Self {
+        SubagentResult {
+            state: SubagentState::Interrupted { cause },
+            subagent_id: subagent_id.into(),
+            child_session_id: child_session_id.into(),
+            ..SubagentResult::default()
+        }
+    }
+
+    pub fn is_interrupted(&self) -> bool {
+        matches!(self.state, SubagentState::Interrupted { .. })
+    }
+
+    pub fn set_interruption(&mut self, cause: InterruptionCause) {
+        self.state = SubagentState::Interrupted { cause };
+    }
+
+    pub fn state(&self) -> &SubagentState {
+        &self.state
     }
 
     #[must_use]
@@ -525,15 +558,12 @@ impl SubagentResult {
         }
     }
 
-    /// Terminal status string: `"cancelled"`, `"completed"`, or `"failed"`.
     pub fn status(&self) -> &'static str {
-        if self.cancelled {
-            "cancelled"
-        } else if self.success {
-            "completed"
-        } else {
-            "failed"
-        }
+        self.state.legacy_status()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self.state, SubagentState::Interrupted { .. })
     }
 }
 
@@ -571,6 +601,8 @@ pub struct SubagentSnapshot {
     pub subagent_id: String,
     pub description: String,
     pub subagent_type: String,
+    pub state: SubagentState,
+    pub legacy_status: String,
     pub status: SubagentSnapshotStatus,
     /// Wall-clock start time (epoch ms).
     pub started_at_epoch_ms: u64,
@@ -594,10 +626,7 @@ impl SubagentSnapshot {
     /// Whether the child is still in flight (initializing or running) — the
     /// shared liveness rule every driver's blocking query loops on.
     pub fn is_running(&self) -> bool {
-        matches!(
-            self.status,
-            SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Initializing
-        )
+        matches!(self.state, SubagentState::Running)
     }
 }
 
@@ -635,8 +664,10 @@ pub enum SubagentSnapshotStatus {
     },
     /// Child session failed or crashed.
     Failed { error: String },
-    /// Child session was cancelled (by user or model).
-    Cancelled { reason: Option<String> },
+    Cancelled {
+        reason: Option<String>,
+        cause: Option<InterruptionCause>,
+    },
 }
 
 impl SubagentSnapshotStatus {
@@ -661,20 +692,37 @@ pub enum SubagentCancelTarget {
     WorkflowRunId(String),
 }
 
-/// Cancel request sent by `KillTaskTool` or session cancellation paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentCancelDisposition {
+    Stop,
+    Pause,
+}
+
+/// Cancel request sent by model, human, or session cancellation paths.
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentCancelRequest {
     pub parent_session_id: Option<String>,
     pub target: SubagentCancelTarget,
+    pub actor: SubagentActor,
+    pub disposition: SubagentCancelDisposition,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<SubagentCancelOutcome>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentQueryStatus {
+    Running,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentCancelOutcome {
-    Cancelled,
-    AlreadyFinished { status: String },
+    Cancelled { state: SubagentState },
+    Paused { state: SubagentState },
+    AlreadyFinished { state: SubagentState },
     NotFound,
 }
 
@@ -801,6 +849,14 @@ pub struct SubagentInspectRequest {
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentListRunningRequest {
+    pub parent_session_id: String,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+}
+
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentListOwnedRequest {
     pub parent_session_id: String,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
@@ -970,6 +1026,7 @@ pub enum SubagentEvent {
     Cancel(SubagentCancelRequest),
     ListActive(SubagentListActiveRequest),
     ListRunning(SubagentListRunningRequest),
+    ListOwned(SubagentListOwnedRequest),
     Completions(SubagentCompletionsRequest),
     /// `Completions` without draining; the requester's ledger discards the copies at a later drain. `suppress_ids` is ignored.
     PeekCompletions(SubagentCompletionsRequest),

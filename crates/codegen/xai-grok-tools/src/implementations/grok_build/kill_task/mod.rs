@@ -224,20 +224,26 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                         .cloned()
                 };
                 if let Some(backend) = backend {
-                    let outcome = backend.backend().cancel(&input.task_id).await;
+                    let outcome = backend.backend().cancel_with_disposition(
+                        &input.task_id,
+                        crate::implementations::grok_build::task::types::SubagentActor::ParentModel {
+                            session_id: my_owner.clone().unwrap_or_default(),
+                        },
+                        crate::implementations::grok_build::task::types::SubagentCancelDisposition::Stop,
+                    ).await;
                     return Ok(match outcome {
-                        SubagentCancelOutcome::Cancelled => {
+                        SubagentCancelOutcome::Cancelled { .. } | SubagentCancelOutcome::Paused { .. } => {
                             KillTaskOutput::Result(KillTaskResult {
                                 task_id: input.task_id.clone(),
                                 outcome: "killed".to_string(),
                                 message: "Subagent cancellation initiated".to_string(),
                             })
                         }
-                        SubagentCancelOutcome::AlreadyFinished { status } => {
+                        SubagentCancelOutcome::AlreadyFinished { state } => {
                             KillTaskOutput::Result(KillTaskResult {
                                 task_id: input.task_id.clone(),
                                 outcome: "already_exited".to_string(),
-                                message: format!("Subagent already {status}"),
+                                message: format!("Subagent already {}", state.legacy_status()),
                             })
                         }
                         SubagentCancelOutcome::NotFound => {
@@ -722,7 +728,7 @@ mod tests {
                 other => panic!("Expected SubagentId, got {:?}", other),
             }
             req.respond_to
-                .send(SubagentCancelOutcome::Cancelled)
+                .send(SubagentCancelOutcome::Cancelled { state: SubagentState::Interrupted { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::ParentModel { session_id: String::new() } } } })
                 .unwrap();
         });
 
@@ -760,7 +766,7 @@ mod tests {
             let req = unwrap_cancel(cancel_rx.recv().await.unwrap());
             req.respond_to
                 .send(SubagentCancelOutcome::AlreadyFinished {
-                    status: "completed".to_string(),
+                    state: SubagentState::Completed,
                 })
                 .unwrap();
         });

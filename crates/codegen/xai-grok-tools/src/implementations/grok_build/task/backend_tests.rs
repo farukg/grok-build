@@ -106,7 +106,7 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         None
     }
 
-    async fn cancel(&self, _id: &str) -> SubagentCancelOutcome {
+    async fn cancel_with_disposition(&self, _id: &str, _actor: SubagentActor, _disposition: SubagentCancelDisposition) -> SubagentCancelOutcome {
         SubagentCancelOutcome::NotFound
     }
 
@@ -525,17 +525,19 @@ async fn channel_backend_cancel_success() {
 
     let handle = tokio::spawn(async move {
         let req = recv_event!(rx, Cancel);
+        assert_eq!(req.actor, SubagentActor::ParentModel { session_id: String::new() });
+        assert_eq!(req.disposition, SubagentCancelDisposition::Stop);
         match &req.target {
             SubagentCancelTarget::SubagentId(id) => assert_eq!(id, "sub-cancel"),
             other => panic!("Expected SubagentId, got {:?}", other),
         }
         req.respond_to
-            .send(SubagentCancelOutcome::Cancelled)
+            .send(SubagentCancelOutcome::Cancelled { state: SubagentState::Interrupted { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::ParentModel { session_id: "".to_owned() } } } })
             .unwrap();
     });
 
     let outcome = backend.cancel("sub-cancel").await;
-    assert!(matches!(outcome, SubagentCancelOutcome::Cancelled));
+    assert!(matches!(outcome, SubagentCancelOutcome::Cancelled { .. }));
 
     handle.await.unwrap();
 }

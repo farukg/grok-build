@@ -100,7 +100,7 @@ pub(super) fn reduce_prompt_turn_settlement(
             settlement_status: crate::session::telemetry::classify_completed_settlement(
                 crate::session::telemetry::ActiveAgentMessageCompletedSettlement {
                     is_result_success: result.success,
-                    is_result_cancelled: result.cancelled,
+                    is_result_cancelled: result.is_interrupted(),
                     is_final_receipt_closed,
                 },
             ),
@@ -121,7 +121,9 @@ pub(super) fn reduce_prompt_turn_settlement(
     };
 
     result.success = false;
-    result.cancelled = true;
+    result.state = xai_tool_types::SubagentState::Interrupted {
+        cause: xai_tool_types::InterruptionCause::Error { message: error.to_owned() },
+    };
     result.error = Some(error.to_string());
     result.output = Arc::from(final_text);
     result.output_usage_incomplete = true;

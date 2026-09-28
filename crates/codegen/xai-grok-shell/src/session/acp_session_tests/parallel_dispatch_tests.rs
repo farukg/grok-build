@@ -45,7 +45,7 @@ impl SubagentBackend for FixedActiveMessageBackend {
         self.outcome.clone()
     }
 
-    async fn cancel(&self, _: &str) -> SubagentCancelOutcome {
+    async fn cancel_with_disposition(&self, _: &str, _: SubagentActor, _: SubagentCancelDisposition) -> SubagentCancelOutcome {
         SubagentCancelOutcome::NotFound
     }
 

@@ -792,7 +792,7 @@ async fn unsettled_completion_before_runner_output_marks_terminal_result_failed(
         .expect("completed")
         .result;
     assert!(!result.success);
-    assert!(result.cancelled);
+    assert!(result.is_cancelled());
 }
 
 #[tokio::test]
@@ -822,7 +822,7 @@ async fn runner_output_parked_before_unsettled_completion_is_failed() {
         .expect("completed")
         .result;
     assert!(!result.success);
-    assert!(result.cancelled);
+    assert!(result.is_cancelled());
 }
 
 #[tokio::test]
@@ -898,11 +898,11 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
     );
     let result = recv_with_timeout(&mut completions).await;
     assert!(!result.success);
-    assert!(result.cancelled);
+    assert!(result.is_cancelled());
     assert_eq!(Some("Subagent runtime panicked"), result.error.as_deref());
     let spawned_result = await_with_timeout(&mut spawn).await.unwrap().unwrap();
     assert!(!spawned_result.success);
-    assert!(spawned_result.cancelled);
+    assert!(spawned_result.is_cancelled());
     let SubagentResumeLookup::Completed(source) =
         reporter.resume_source("panic-child", "parent").await
     else {
@@ -1143,7 +1143,7 @@ async fn parent_session_cancel_unblocks_parked_send() {
 
     assert!(matches!(
         coordinator.cancel_parent_session(Some("parent")),
-        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled
+        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(
         ActiveAgentMessageOutcome::NotActiveOrFinalizing,
@@ -1151,7 +1151,7 @@ async fn parent_session_cancel_unblocks_parked_send() {
     );
     let terminal = response_outcome_result(spawn_result).await;
     assert!(
-        terminal.cancelled && !terminal.success,
+        terminal.is_interrupted() && !terminal.success,
         "session cancel must resolve a terminal result: {terminal:?}"
     );
     assert!(admissions.try_recv().is_err());
@@ -1314,7 +1314,7 @@ async fn cancel_parent_prompt_rejects_parked_send() {
     );
     let terminal = response_outcome_result(spawn_result).await;
     assert!(
-        terminal.cancelled && !terminal.success,
+        terminal.is_interrupted() && !terminal.success,
         "queued cancel must resolve a terminal result: {terminal:?}"
     );
     assert!(admissions.try_recv().is_err());
@@ -1375,7 +1375,7 @@ async fn cancel_pending_rejects_parked_human_as_terminal() {
     );
     assert!(matches!(
         coordinator.cancel_one("child", Some("parent"), true),
-        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled
+        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(
         ActiveAgentMessageOutcome::NotFoundOrNotOwned,

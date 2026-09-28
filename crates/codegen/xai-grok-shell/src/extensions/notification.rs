@@ -1,10 +1,26 @@
 use agent_client_protocol as acp;
 use xai_grok_tools::types::TaskSnapshot;
+use serde::Deserialize;
 
 use crate::session::feedback::FeedbackRequest as FeedbackRequestData;
 
 pub use crate::extensions::background_task::{BackgroundTaskRow, BackgroundTaskStatus};
 pub use crate::session::goal_tracker::GoalClassifierVerdict;
+
+fn deserialize_subagent_state<'de, D>(deserializer: D) -> Result<xai_tool_types::SubagentState, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if let Ok(state) = serde_json::from_value::<xai_tool_types::SubagentState>(value.clone()) {
+        return Ok(state);
+    }
+    let status = value.get("status").and_then(serde_json::Value::as_str)
+        .ok_or_else(|| D::Error::custom("legacy subagent state lacks status"))?;
+    let error = value.get("error").and_then(serde_json::Value::as_str);
+    Ok(xai_tool_types::SubagentState::parse_legacy(status, error))
+}
 
 /// Retained for wire backwards compatibility; always empty in the simplified goal model (no deliverables).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -806,8 +822,10 @@ pub enum SessionUpdate {
         attempt_id: Option<String>,
         /// The child session's ACP session ID.
         child_session_id: String,
-        /// Outcome: "completed", "failed", or "cancelled".
+        /// Legacy status string retained for replay and older clients.
         status: String,
+        #[serde(default, deserialize_with = "deserialize_subagent_state")]
+        state: xai_tool_types::SubagentState,
         /// Error message if the subagent failed.
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,

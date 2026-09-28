@@ -217,7 +217,7 @@ pub(in super::super) async fn replay_target_resolution_table() {
             24 | 26 => {
                 assert!(matches!(
                     c.cancel_one(IDS[3], Some("other"), true),
-                    SubagentCancelOutcome::Cancelled
+                    SubagentCancelOutcome::Cancelled { .. }
                 ));
                 finish_child(&mut c, IDS[3]);
             }
@@ -344,7 +344,7 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
                 } else {
                     assert!(matches!(
                         c.cancel_one(IDS[3], Some("other"), exit == "killed"),
-                        SubagentCancelOutcome::Cancelled
+                        SubagentCancelOutcome::Cancelled { .. }
                     ));
                 }
                 let result = SubagentResult::cancelled(IDS[3].to_owned(), IDS[3].to_owned(), "");
@@ -354,7 +354,7 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
                 assert!(c.queued.contains_id(IDS[3]), "{exit}");
                 assert!(matches!(
                     c.cancel_one(IDS[3], Some("other"), true),
-                    SubagentCancelOutcome::Cancelled
+                    SubagentCancelOutcome::Cancelled { .. }
                 ));
             }
             "setup_failure" => {

@@ -1855,7 +1855,7 @@ fn failure_result(request: &SubagentRequest, error: &str) -> SubagentResult {
     SubagentResult::failed(request.id.clone(), request.id.clone(), error)
 }
 fn cancelled_result(request: &SubagentRequest, error: &str) -> SubagentResult {
-    SubagentResult::cancelled(request.id.clone(), request.id.clone(), error)
+    SubagentResult::interrupted(request.id.clone(), request.id.clone(), xai_tool_types::InterruptionCause::Error { message: error.to_owned() })
 }
 fn child_run_output(
     result: SubagentResult,
@@ -1917,7 +1917,7 @@ impl UnpromotedChildDisposition {
         match self {
             Self::Cancelled => SubagentResult {
                 duration_ms,
-                ..SubagentResult::cancelled(subagent_id, child_session_id, "Subagent was cancelled")
+                ..SubagentResult::interrupted(subagent_id, child_session_id, xai_tool_types::InterruptionCause::Error { message: "Subagent was cancelled".to_owned() })
             },
             Self::AdmissionTimedOut => SubagentResult {
                 duration_ms,
@@ -2120,15 +2120,43 @@ pub(crate) enum SubagentMetaStatus {
     Cancelled,
 }
 impl SubagentMetaStatus {
-    pub(crate) fn of_result(result: &SubagentResult) -> Self {
-        if result.cancelled {
-            Self::Cancelled
-        } else if result.success {
-            Self::Completed
-        } else {
-            Self::Failed
+    pub(crate) fn of_state(state: &xai_tool_types::SubagentState) -> Self {
+        match state {
+            xai_tool_types::SubagentState::Running => Self::Running,
+            xai_tool_types::SubagentState::Completed => Self::Completed,
+            xai_tool_types::SubagentState::Failed { .. } => Self::Failed,
+            xai_tool_types::SubagentState::Interrupted { .. } => Self::Cancelled,
         }
     }
+
+    pub(crate) fn of_result(result: &SubagentResult) -> Self {
+        Self::of_state(&result.state)
+    }
+}
+
+fn legacy_state_for_meta<'de, D>(deserializer: D) -> Result<xai_tool_types::SubagentState, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    if let Ok(state) = serde_json::from_value::<xai_tool_types::SubagentState>(raw.clone()) {
+        return Ok(state);
+    }
+    let status_raw = raw.get("status").ok_or_else(|| D::Error::custom("legacy subagent state lacks status"))?;
+    let status: SubagentMetaStatus = serde_json::from_value(status_raw.clone()).map_err(D::Error::custom)?;
+    let error = raw.get("error").and_then(serde_json::Value::as_str);
+    Ok(match status {
+        SubagentMetaStatus::Running => xai_tool_types::SubagentState::Running,
+        SubagentMetaStatus::Completed => xai_tool_types::SubagentState::Completed,
+        SubagentMetaStatus::Failed => xai_tool_types::SubagentState::Failed {
+            message: error.map(str::to_owned).unwrap_or_else(|| "Subagent failed".to_owned()),
+        },
+        SubagentMetaStatus::Cancelled => xai_tool_types::SubagentState::Interrupted {
+            cause: error.map(|message| xai_tool_types::InterruptionCause::Error { message: message.to_owned() })
+                .unwrap_or(xai_tool_types::InterruptionCause::ProcessRestart),
+        },
+    })
 }
 /// Metadata stored as `meta.json` in the child session directory.
 /// Links the child session back to its parent.
@@ -2143,6 +2171,8 @@ pub(crate) struct SubagentMeta {
     pub subagent_type: String,
     pub description: String,
     pub prompt: String,
+    #[serde(default, deserialize_with = "legacy_state_for_meta")]
+    pub state: xai_tool_types::SubagentState,
     pub status: SubagentMetaStatus,
     pub started_at: chrono::DateTime<chrono::Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2405,6 +2435,7 @@ fn persist_subagent_completion(dir: &Path, result: &SubagentResult, gcs_ctx: &Gc
         && let Ok(mut meta) = serde_json::from_str::<SubagentMeta>(&data)
     {
         meta.status = SubagentMetaStatus::of_result(result);
+        meta.state = result.state.clone();
         meta.completed_at = Some(chrono::Utc::now());
         meta.duration_ms = Some(result.duration_ms);
         meta.tool_calls = Some(result.tool_calls);
@@ -2448,6 +2479,9 @@ fn cancelled_orphan_finish(
         subagent_id,
         child_session_id,
         status: "cancelled".to_string(),
+        state: xai_tool_types::SubagentState::Interrupted {
+            cause: if reason == ORPHAN_RECONCILE_REASON { xai_tool_types::InterruptionCause::ProcessRestart } else { xai_tool_types::InterruptionCause::LiveParentOrphan },
+        },
         error: Some(reason.to_owned()),
         tool_calls: 0,
         turns: 0,
@@ -2472,6 +2506,13 @@ fn finalize_orphaned_subagent(
     let completed_at = chrono::Utc::now();
     let duration_ms = (completed_at - meta.started_at).num_milliseconds().max(0) as u64;
     meta.status = SubagentMetaStatus::Cancelled;
+    meta.state = xai_tool_types::SubagentState::Interrupted {
+        cause: if reason == ORPHAN_RECONCILE_REASON {
+            xai_tool_types::InterruptionCause::ProcessRestart
+        } else {
+            xai_tool_types::InterruptionCause::LiveParentOrphan
+        },
+    };
     meta.completed_at = Some(completed_at);
     meta.duration_ms = Some(duration_ms);
     meta.tool_calls = Some(0);
@@ -2503,6 +2544,7 @@ fn persist_running_meta_as_finish(
 ) -> bool {
     let SessionUpdate::SubagentFinished {
         status,
+        state,
         error,
         tool_calls,
         turns,
@@ -2519,6 +2561,7 @@ fn persist_running_meta_as_finish(
         return false;
     }
     meta.status = status;
+    meta.state = state.clone();
     meta.completed_at = Some(chrono::Utc::now());
     meta.duration_ms = Some(*duration_ms);
     meta.tool_calls = Some(*tool_calls);
@@ -2547,12 +2590,12 @@ fn completed_finish_from_inspection(
     inspection: &SubagentInspection,
     attempt_id: Option<String>,
 ) -> Option<SessionUpdate> {
-    let (status, error, tool_calls, turns) = match &inspection.snapshot.status {
+    let (status, state, error, tool_calls, turns) = match &inspection.snapshot.status {
         SubagentSnapshotStatus::Completed {
             tool_calls, turns, ..
-        } => ("completed", None, *tool_calls, *turns),
-        SubagentSnapshotStatus::Failed { error } => ("failed", Some(error.clone()), 0, 0),
-        SubagentSnapshotStatus::Cancelled { reason } => ("cancelled", reason.clone(), 0, 0),
+        } => ("completed", inspection.snapshot.state.clone(), None, *tool_calls, *turns),
+        SubagentSnapshotStatus::Failed { error } => ("failed", inspection.snapshot.state.clone(), Some(error.clone()), 0, 0),
+        SubagentSnapshotStatus::Cancelled { reason, .. } => ("cancelled", inspection.snapshot.state.clone(), reason.clone(), 0, 0),
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
             return None;
         }
@@ -2562,6 +2605,7 @@ fn completed_finish_from_inspection(
         subagent_id: inspection.snapshot.subagent_id.clone(),
         child_session_id: inspection.child_session_id.clone(),
         status: status.to_owned(),
+        state,
         error,
         tool_calls,
         turns,
@@ -2670,6 +2714,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
                         subagent_id,
                         child_session_id: m.child_session_id,
                         status: m.status.to_string(),
+                        state: m.state,
                         error: m.error,
                         tool_calls: m.tool_calls.unwrap_or(0),
                         turns: m.turns.unwrap_or(0),

@@ -82,8 +82,9 @@ pub struct CancelSubagentRequest {
 pub enum SubagentCancelOutcomeDto {
     /// A live subagent was cancelled; a real `SubagentFinished` is coming.
     Cancelled,
-    /// The subagent already finished, so no finish event is coming; `status` is the real terminal status.
-    AlreadyFinished { status: String },
+    Paused { state: xai_tool_types::SubagentState },
+    /// The subagent already finished, so no finish event is coming; state is its terminal state.
+    AlreadyFinished { state: xai_tool_types::SubagentState },
     /// The id is unknown (never existed, or evicted), so no finish event is coming.
     NotFound,
     /// Unknown future `kind` (`#[serde(other)]`): lets an old client still parse and fall back to the legacy bool.
@@ -103,8 +104,9 @@ impl SubagentCancelOutcomeDto {
 impl From<SubagentCancelOutcome> for SubagentCancelOutcomeDto {
     fn from(outcome: SubagentCancelOutcome) -> Self {
         match outcome {
-            SubagentCancelOutcome::Cancelled => Self::Cancelled,
-            SubagentCancelOutcome::AlreadyFinished { status } => Self::AlreadyFinished { status },
+            SubagentCancelOutcome::Cancelled { .. } => Self::Cancelled,
+            SubagentCancelOutcome::Paused { state } => Self::Paused { state },
+            SubagentCancelOutcome::AlreadyFinished { state } => Self::AlreadyFinished { state },
             SubagentCancelOutcome::NotFound => Self::NotFound,
         }
     }
@@ -130,6 +132,14 @@ pub struct CancelSubagentResponse {
 struct ListRunningSubagentsRequest {
     session_id: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListSubagentsRequest { session_id: String }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListSubagentsResponse { subagents: Vec<SubagentSnapshotDto> }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,6 +237,7 @@ struct SubagentSnapshotDto {
     started_at_epoch_ms: u64,
     duration_ms: u64,
     status: String,
+    state: xai_tool_types::SubagentState,
     // ── Running fields (present only when status == "running") ────
     #[serde(skip_serializing_if = "Option::is_none")]
     turn_count: Option<u32>,
@@ -281,7 +292,8 @@ impl SubagentSnapshotDto {
             description: snap.description,
             started_at_epoch_ms: snap.started_at_epoch_ms,
             duration_ms: snap.duration_ms,
-            status: String::new(),
+            status: snap.legacy_status,
+            state: snap.state.clone(),
             turn_count: None,
             tool_call_count: None,
             tokens_used: None,
@@ -337,8 +349,7 @@ impl SubagentSnapshotDto {
                 dto.status = "failed".into();
                 dto.failure_error = Some(error);
             }
-            SubagentSnapshotStatus::Cancelled { reason } => {
-                dto.status = "cancelled".into();
+            SubagentSnapshotStatus::Cancelled { reason, .. } => {
                 dto.cancel_reason = reason;
             }
         }
@@ -466,6 +477,14 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
                     )
                 }),
             }))
+        }
+        "x.ai/subagent/list" => {
+            let req: ListSubagentsRequest = parse(args)?;
+            let subagents = agent.list_owned_subagents(&req.session_id).await.into_iter().map(|inspection| {
+                let SubagentInspection { snapshot, parent_session_id, child_session_id, .. } = inspection;
+                SubagentSnapshotDto::from_snapshot(snapshot, parent_session_id, child_session_id, SubagentProvenance::default())
+            }).collect();
+            respond(Ok::<_, String>(ListSubagentsResponse { subagents }))
         }
         "x.ai/subagent/list_running" => {
             let req: ListRunningSubagentsRequest = parse(args)?;
@@ -911,18 +930,18 @@ mod tests {
     #[test]
     fn subagent_cancel_outcome_dto_maps_from_coordinator_outcome() {
         // Cancelled maps to legacy bool true (a real finish is coming)
-        let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::Cancelled);
+        let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::Cancelled { state: xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::ExplicitStop { actor: xai_tool_types::SubagentActor::Human } } });
         assert_eq!(dto, SubagentCancelOutcomeDto::Cancelled);
         assert!(dto.cancelled_bool());
 
         // AlreadyFinished carries the terminal status; the legacy bool is false
         let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::AlreadyFinished {
-            status: "completed".into(),
+            state: xai_tool_types::SubagentState::Completed,
         });
         assert_eq!(
             dto,
             SubagentCancelOutcomeDto::AlreadyFinished {
-                status: "completed".into()
+                state: xai_tool_types::SubagentState::Completed
             }
         );
         assert!(!dto.cancelled_bool());
@@ -939,7 +958,7 @@ mod tests {
             subagent_id: "sa-1".into(),
             cancelled: false,
             outcome: Some(SubagentCancelOutcomeDto::AlreadyFinished {
-                status: "failed".into(),
+                state: xai_tool_types::SubagentState::Failed { message: "failed".into() },
             }),
         };
         let json = serde_json::to_value(&resp).expect("should serialize");

@@ -318,7 +318,7 @@ async fn cancelled_attempt_fails_closed_when_the_signals_read_never_answers() {
         .expect(
             "a cancelled attempt must complete in bounded time under a wedged child",
         );
-    assert!(outcome.result.cancelled);
+    assert!(outcome.result.is_interrupted());
     assert!(
             outcome.cancellation_may_hide_usage,
             "an unanswered signals read must not pass for 'no work done'"
@@ -687,7 +687,7 @@ fn resume_worktree_action_covers_three_outcomes() {
 fn should_auto_wake_subagent_truth_table() {
     let wakeable = AutoWakeInputs {
         run_in_background: true,
-        cancelled: false,
+        state: xai_tool_types::SubagentState::Completed,
         auto_wake_enabled: true,
         block_waited: false,
         explicitly_killed: false,
@@ -701,7 +701,7 @@ fn should_auto_wake_subagent_truth_table() {
             ..wakeable
         },
         AutoWakeInputs {
-            cancelled: true,
+            state: xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::ProcessRestart },
             ..wakeable
         },
         AutoWakeInputs {
@@ -776,7 +776,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
         was_cancelled: false,
     });
     assert!(folded.result.success);
-    assert!(!folded.result.cancelled);
+    assert!(!folded.result.is_interrupted());
     let request = auto_wake_test_request("sa-followup");
     let completion = ChildCompletion {
         snapshot: test_snapshot(&request, &folded.result),
@@ -2247,7 +2247,7 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
     assert!(!result.success);
     let completion_data = ShellCompletionData::from_context(
         &ctx,
@@ -2325,7 +2325,7 @@ async fn run_promote_cancel_with_worktree(
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
 }
 /// A pending cancel removes a freshly-created worktree but preserves a resumed child worktree owned by its source.
 #[tokio::test]
@@ -2416,7 +2416,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
     assert!(
             worktree.path().exists(),
             "worktree must stay when actor exit is not proven"
@@ -2463,7 +2463,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(!result.cancelled);
+    assert!(!result.is_interrupted());
     assert!(!result.success);
     assert_eq!(result.status(), "failed");
     assert_eq!(

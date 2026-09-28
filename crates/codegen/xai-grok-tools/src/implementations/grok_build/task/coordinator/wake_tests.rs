@@ -244,7 +244,7 @@ async fn stopped_session_refuses_parked_wake_before_publication() {
 
     assert_eq!(
         backend.cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     );
     assert_eq!(
         send.await.unwrap(),
@@ -520,7 +520,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
             PreStartExit::Cancellation => {
                 assert_eq!(
                     backend.cancel(CHILD_ID).await,
-                    SubagentCancelOutcome::Cancelled
+                    SubagentCancelOutcome::Cancelled { .. }
                 );
             }
         }

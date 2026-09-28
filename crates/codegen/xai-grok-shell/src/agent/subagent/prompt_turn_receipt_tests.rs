@@ -189,7 +189,7 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
     {
         let folded = reduce_prompt_turn_settlement(PromptTurnSettlementInput {
             result: SubagentResult {
-                cancelled: true,
+                state: xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::Error { message: "cancelled".to_owned() } },
                 output: std::sync::Arc::from("kept"),
                 ..Default::default()
             },
@@ -202,7 +202,7 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
         assert_eq!(
             (
                 folded.result.success,
-                folded.result.cancelled,
+                folded.result.is_interrupted(),
                 folded.result.error.as_deref(),
                 folded.result.output.as_ref(),
                 folded.cancellation_may_hide_usage,
@@ -250,7 +250,7 @@ fn unclean_settlement_dispositions_map_to_cancelled_results() {
         assert_eq!(
             (
                 folded.result.success,
-                folded.result.cancelled,
+                folded.result.is_interrupted(),
                 folded.result.error.as_deref(),
                 folded.result.output.as_ref(),
                 folded.result.output_usage_incomplete,

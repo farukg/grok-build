@@ -742,12 +742,10 @@ pub(crate) fn terminal_subagent_result(snap: &SubagentSnapshot) -> TaskOutputRes
             ("completed", Some(0), output)
         }
         SubagentSnapshotStatus::Failed { error } => ("failed", Some(1), error.clone()),
-        SubagentSnapshotStatus::Cancelled { reason } => (
+        SubagentSnapshotStatus::Cancelled { reason, cause } => (
             "cancelled",
             None,
-            reason
-                .clone()
-                .unwrap_or_else(|| "Subagent was cancelled".to_string()),
+            cause.as_ref().map(ToString::to_string).or_else(|| reason.clone()).unwrap_or_else(|| "Subagent was cancelled".to_string()),
         ),
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
             unreachable!("terminal_subagent_result called for a live subagent")

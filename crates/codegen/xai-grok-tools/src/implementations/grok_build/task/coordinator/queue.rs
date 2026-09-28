@@ -225,9 +225,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
 }
 
 fn cancelled_while_queued_result(request: &SubagentRequest) -> SubagentResult {
-    SubagentResult::cancelled(
+    SubagentResult::interrupted(
         request.id.clone(),
         request.id.clone(),
-        "cancelled while queued for a subagent slot",
+        crate::implementations::grok_build::task::types::InterruptionCause::Error { message: "cancelled while queued for a subagent slot".to_owned() },
     )
 }

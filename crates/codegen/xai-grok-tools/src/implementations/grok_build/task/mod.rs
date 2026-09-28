@@ -36,9 +36,48 @@ use crate::types::output::ToolOutput;
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::resources::{SessionFolder, SharedResources};
 use crate::types::tool::{ToolKind, ToolNamespace};
+use crate::types::tool_metadata::ToolMetadata;
+use xai_tool_runtime::Tool;
 use xai_tool_types::{SubagentCompletedOutput, SubagentIsolationMode, TaskToolInput};
 
 pub const TASK_TOOL_NAME: &str = "task";
+
+#[derive(Debug, Default)]
+pub struct ControlSubagentTool;
+
+impl ToolMetadata for ControlSubagentTool {
+    fn kind(&self) -> ToolKind { ToolKind::KillTaskAction }
+    fn tool_namespace(&self) -> ToolNamespace { ToolNamespace::GrokBuild }
+    fn description_template(&self) -> &str {
+        "Control an owned subagent. Use action=stop to terminate it permanently (resume later with task(resume_from=subagent_id)); use action=pause to interrupt the current turn while preserving the same subagent identity and history for a later message."
+    }
+}
+
+impl Tool for ControlSubagentTool {
+    type Args = crate::implementations::grok_build::control_subagent::ControlSubagentInput;
+    type Output = crate::implementations::grok_build::control_subagent::ControlSubagentOutput;
+    fn id(&self) -> xai_tool_protocol::ToolId { xai_tool_protocol::ToolId::new("control_subagent").expect("valid tool id") }
+    async fn run(&self, ctx: xai_tool_runtime::ToolCallContext, input: Self::Args) -> Result<Self::Output, xai_tool_runtime::ToolError> {
+        let resources = crate::types::tool_metadata::shared_resources(&ctx)?;
+        let backend = {
+            let res = resources.lock().await;
+            res.require::<SubagentBackendResource>()?.clone()
+        };
+        let actor = resources.lock().await.get::<crate::types::resources::OwnerSessionId>()
+            .map(|owner| types::SubagentActor::ParentModel { session_id: owner.0.clone() })
+            .unwrap_or(types::SubagentActor::Runtime);
+        let disposition = match input.action {
+            crate::implementations::grok_build::control_subagent::SubagentControlAction::Stop => types::SubagentCancelDisposition::Stop,
+            crate::implementations::grok_build::control_subagent::SubagentControlAction::Pause => types::SubagentCancelDisposition::Pause,
+        };
+        let outcome = backend.backend().cancel_with_disposition(&input.subagent_id, actor, disposition).await;
+        Ok(match outcome {
+            types::SubagentCancelOutcome::Cancelled { state } | types::SubagentCancelOutcome::Paused { state } => crate::implementations::grok_build::control_subagent::ControlSubagentOutput::Accepted { subagent_id: input.subagent_id, state },
+            types::SubagentCancelOutcome::AlreadyFinished { state } => crate::implementations::grok_build::control_subagent::ControlSubagentOutput::AlreadyFinished { subagent_id: input.subagent_id, state },
+            types::SubagentCancelOutcome::NotFound => crate::implementations::grok_build::control_subagent::ControlSubagentOutput::NotFound { subagent_id: input.subagent_id },
+        })
+    }
+}
 
 /// Default max nesting depth when [`MaxSubagentDepth`] is not injected.
 pub const MAX_SUBAGENT_DEPTH: u32 = 1;
@@ -804,9 +843,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             }))
         } else {
             Err(xai_tool_runtime::ToolError::invalid_arguments(
-                result
-                    .error
-                    .unwrap_or_else(|| "Unknown subagent error".to_string()),
+                result.error.unwrap_or_else(|| "Unknown subagent error".to_string()),
             ))
         }
     }

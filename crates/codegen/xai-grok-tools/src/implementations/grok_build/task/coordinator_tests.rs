@@ -386,7 +386,7 @@ async fn finish_one_for(gate: &mut tokio::sync::broadcast::Receiver<String>, id:
 fn cancelled_result(request: &SubagentRequest) -> SubagentResult {
     SubagentResult {
         success: false,
-        cancelled: true,
+        state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "cancelled".to_owned() } },
         error: Some("cancelled".to_owned()),
         subagent_id: request.id.clone(),
         child_session_id: request.id.clone(),
@@ -963,7 +963,7 @@ async fn pending_cancel_delivers_waiter_once() {
     tokio::task::yield_now().await;
     assert!(matches!(
         harness.backend.cancel("pending-cancel").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     let snapshot = wait.await.unwrap().unwrap();
     assert!(matches!(
@@ -975,7 +975,7 @@ async fn pending_cancel_delivers_waiter_once() {
     assert!(disposition.explicitly_killed);
     assert!(!disposition.should_surface);
     let started = spawn.await.unwrap().unwrap();
-    assert!(started.cancelled, "{started:?}");
+    assert!(started.is_interrupted(), "{started:?}");
     harness.actor.abort();
 }
 
@@ -1169,7 +1169,7 @@ async fn drain_resolves_when_queued_spawn_is_cancelled() {
     );
     let result = queued.await.expect("join").expect("spawn round-trips");
     assert!(
-        result.cancelled,
+        result.is_interrupted(),
         "the queued spawn was cancelled: {result:?}"
     );
     harness.actor.abort();
@@ -1418,7 +1418,7 @@ async fn external_cancel_token_cancels_live_child() {
         .expect("external cancellation should finish")
         .unwrap()
         .unwrap();
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
     let disposition = harness.completions.recv().await.unwrap();
     assert!(!disposition.explicitly_killed);
     harness.actor.abort();
@@ -1566,6 +1566,8 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::WorkflowRunId("workflow-run".to_owned()),
+            actor: SubagentActor::Runtime,
+            disposition: SubagentCancelDisposition::Stop,
             respond_to: cancel_respond_to,
         }))
         .expect("actor command channel open");
@@ -1578,10 +1580,10 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
     let _ = harness.finish.send(());
     assert!(matches!(
         cancel_response_rx.await.unwrap(),
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
-    assert!(active_spawn.await.unwrap().unwrap().cancelled);
-    assert!(pending_spawn.await.unwrap().unwrap().cancelled);
+    assert!(active_spawn.await.unwrap().unwrap().is_interrupted());
+    assert!(pending_spawn.await.unwrap().unwrap().is_interrupted());
     assert!(
         harness
             .backend
@@ -1657,8 +1659,8 @@ async fn teardown_session_children_spares_other_sessions() {
         })
         .expect("actor command channel open");
 
-    assert!(kill_active.await.unwrap().unwrap().cancelled);
-    assert!(kill_pending.await.unwrap().unwrap().cancelled);
+    assert!(kill_active.await.unwrap().unwrap().is_interrupted());
+    assert!(kill_pending.await.unwrap().unwrap().is_interrupted());
 
     assert!(
         !keep.is_finished(),
@@ -1666,7 +1668,7 @@ async fn teardown_session_children_spares_other_sessions() {
     );
     let _ = harness.finish.send(());
     let keep = keep.await.unwrap().unwrap();
-    assert!(keep.success && !keep.cancelled);
+    assert!(keep.success && !keep.is_interrupted());
     harness.actor.abort();
 }
 
@@ -1699,7 +1701,7 @@ async fn teardown_holds_admission_until_children_drain_then_reopens() {
     let mut late = request("late", false);
     late.parent_session_id = "parent".to_owned();
     assert!(
-        harness.backend.spawn(late, None).await.unwrap().cancelled,
+        harness.backend.spawn(late, None).await.unwrap().is_interrupted(),
         "spawn must be refused while the teardown drains"
     );
 
@@ -1726,7 +1728,7 @@ async fn teardown_holds_admission_until_children_drain_then_reopens() {
 
     // Finishing the cancelled child drains the session and resolves the ack.
     let _ = harness.finish.send(());
-    assert!(child.await.unwrap().unwrap().cancelled);
+    assert!(child.await.unwrap().unwrap().is_interrupted());
     tokio::time::timeout(std::time::Duration::from_secs(2), rx)
         .await
         .expect("drain ack")
@@ -1753,7 +1755,7 @@ async fn teardown_holds_admission_until_children_drain_then_reopens() {
     let _ = harness.finish.send(());
     let result = admitted.await.unwrap().unwrap();
     assert!(
-        result.success && !result.cancelled,
+        result.success && !result.is_interrupted(),
         "spawn must be admitted once the teardown drain completes: {result:?}"
     );
     harness.actor.abort();
@@ -2035,15 +2037,17 @@ async fn queued_resume_inherits_the_source_type_before_admission() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued-resume".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
     assert!(matches!(
         outcome.await.unwrap(),
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     let result = queued.await.expect("join").expect("spawn round-trips");
-    assert!(result.cancelled, "cancel must resolve the queued resume");
+    assert!(result.is_interrupted(), "cancel must resolve the queued resume");
     let snapshot = harness
         .backend
         .query("queued-resume", false, None)
@@ -2104,15 +2108,17 @@ async fn queued_resume_inherits_a_durable_source_type_before_admission() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued-resume".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
     assert!(matches!(
         outcome.await.unwrap(),
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     let result = queued.await.expect("join").expect("spawn round-trips");
-    assert!(result.cancelled, "cancel must resolve the queued resume");
+    assert!(result.is_interrupted(), "cancel must resolve the queued resume");
     let snapshot = harness
         .backend
         .query("queued-resume", false, None)
@@ -2189,12 +2195,14 @@ async fn resolved_subagent_type_updates_a_queued_record() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued-resume".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
     assert!(matches!(
         outcome.await.unwrap(),
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     assert!(
         queued
@@ -2409,7 +2417,7 @@ async fn usage_events_feed_sorted_outstanding_reply() {
 
     assert!(matches!(
         harness.backend.cancel_parent_prompt("prompt").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     for id in ["z-foreground", "a-foreground", "background"] {
         let snapshot = harness
@@ -2426,7 +2434,7 @@ async fn usage_events_feed_sorted_outstanding_reply() {
     for spawn in spawns {
         let result = spawn.await.expect("spawn join").expect("spawn result");
         assert!(
-            result.cancelled || !result.success,
+            result.is_interrupted() || !result.success,
             "cancel must yield a terminal failure, got {result:?}"
         );
     }
@@ -2462,7 +2470,7 @@ async fn cancel_parent_session_kills_prior_turn_background() {
     }
     assert!(matches!(
         parent_backend(&harness).cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     for id in ["prior-bg", "current"] {
         let snapshot = harness
@@ -2479,7 +2487,7 @@ async fn cancel_parent_session_kills_prior_turn_background() {
     for spawn in spawns {
         let result = spawn.await.expect("spawn join").expect("spawn result");
         assert!(
-            result.cancelled || !result.success,
+            result.is_interrupted() || !result.success,
             "ParentSession cancel must yield a terminal failure, got {result:?}"
         );
     }
@@ -2519,7 +2527,7 @@ async fn cancel_parent_session_does_not_touch_foreign_session() {
 
     assert!(matches!(
         parent_backend(&harness).cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     // Foreign child still running — finish it successfully.
     let _ = harness.finish.send(());
@@ -2564,7 +2572,7 @@ async fn cancel_parent_session_rejects_late_spawn_until_admission_reopens() {
 
     assert!(matches!(
         bound.cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     let prior_snapshot = harness
         .backend
@@ -2690,7 +2698,7 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
 
     assert!(matches!(
         parent_backend(&harness).cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
 
     // Promote pending → active, then finish all three (must wait until each is
@@ -2877,9 +2885,9 @@ async fn nested_spawner_can_query_inspect_and_cancel_background_grandchild() {
 
     assert!(matches!(
         child_backend.cancel("grandchild").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
-    assert!(grandchild.await.unwrap().unwrap().cancelled);
+    assert!(grandchild.await.unwrap().unwrap().is_interrupted());
     for backend in [&child_backend, &root] {
         let snapshot = backend
             .query("grandchild", false, None)
@@ -2943,9 +2951,9 @@ async fn nested_spawner_can_query_and_cancel_queued_grandchild() {
     ));
     assert!(matches!(
         child_backend.cancel("grandchild").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
-    assert!(grandchild.await.unwrap().unwrap().cancelled);
+    assert!(grandchild.await.unwrap().unwrap().is_interrupted());
     harness.actor.abort();
 }
 
@@ -3021,9 +3029,9 @@ async fn nested_spawner_resume_of_grandchild_is_reparented_and_reachable() {
     // `finish` is broadcast to every runner and would end the spawner too.
     assert!(matches!(
         child_backend.cancel("grandchild").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
-    assert!(grandchild.await.unwrap().unwrap().cancelled);
+    assert!(grandchild.await.unwrap().unwrap().is_interrupted());
 
     let mut resume = request("g2", true);
     resume.resume_from = Some("grandchild".to_owned());
@@ -3171,7 +3179,7 @@ async fn cancelled_spawner_does_not_receive_grandchild_completion() {
     assert_eq!(harness.started.recv().await.as_deref(), Some("grandchild"));
     assert!(matches!(
         parent_backend(&harness).cancel("child").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
 
     let _ = harness.finish_one.send("grandchild".to_owned());
@@ -3640,7 +3648,7 @@ async fn blocking_query_of_cancelled_child_returns_immediately() {
     );
     assert!(matches!(
         harness.backend.cancel("already-killed").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     assert!(spawn.await.unwrap().unwrap().cancelled);
     let _ = harness.completions.recv().await;
@@ -3705,7 +3713,7 @@ async fn session_backend_cannot_query_or_cancel_foreign_child() {
 
     assert!(matches!(
         harness.backend.cancel("scoped").await,
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     let snapshot = harness
         .backend
@@ -4351,7 +4359,7 @@ async fn an_out_of_band_token_cancel_resolves_without_other_actor_traffic() {
         "a token-cancelled queued spawn must resolve without other traffic"
     );
     let result = queued.await.expect("join").expect("spawn round-trips");
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
 
     let _ = harness.finish.send(());
     assert!(
@@ -4385,16 +4393,18 @@ async fn a_cancel_command_by_id_resolves_a_queued_spawn() {
         .send(SubagentEvent::Cancel(SubagentCancelRequest {
             parent_session_id: Some("parent".to_owned()),
             target: SubagentCancelTarget::SubagentId("queued".to_owned()),
+            actor: SubagentActor::ParentModel { session_id: "parent".to_owned() },
+            disposition: SubagentCancelDisposition::Stop,
             respond_to,
         }))
         .expect("actor command channel open");
     assert!(matches!(
         outcome.await.unwrap(),
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { .. }
     ));
     let result = queued.await.expect("join").expect("spawn round-trips");
     assert!(
-        result.cancelled,
+        result.is_interrupted(),
         "cancel by id must resolve the spawn caller"
     );
     let snapshot = harness

@@ -249,6 +249,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 handle_only: request.run_in_background,
                 explicitly_killed: false,
                 disposition: Default::default(),
+                cancel_cause: None,
                 launched: false,
                 attempt_id: xai_message_delivery_core::AttemptId::mint(
                     uuid::Uuid::new_v4().as_u128(),
@@ -306,7 +307,7 @@ pub(super) enum BackgroundStartAck {
 /// A spawn refused before it ever became a child record.
 fn rejected_spawn_result(id: &str, error: &str, cancelled: bool) -> SubagentResult {
     if cancelled {
-        SubagentResult::cancelled(id, id, error)
+        SubagentResult::interrupted(id, id, InterruptionCause::Error { message: error.to_owned() })
     } else {
         SubagentResult::failed(id, id, error)
     }

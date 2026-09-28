@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use super::coordinator::ActiveChildGeneration;
 use super::coordinator::active_message::ActiveMessageLifecycle;
 use super::types::{
-    ActiveAgentMessageDelivery, ActiveSubagentSummary, AgentAddress, SubagentCompletionSummary,
-    SubagentDescribeOutcome, SubagentInspection, SubagentRequest, SubagentResult,
+    ActiveAgentMessageDelivery, ActiveSubagentSummary, AgentAddress, InterruptionCause,
+    SubagentCancelDisposition, SubagentCompletionSummary, SubagentState, SubagentDescribeOutcome, SubagentInspection, SubagentRequest, SubagentResult,
     SubagentResumeLookup, SubagentSnapshot, SubagentSnapshotStatus, SubagentValidateTypeOutcome,
 };
 
@@ -499,8 +499,18 @@ pub(super) struct DisplacedCompletedChild {
 pub(super) enum PendingDisposition {
     #[default]
     Live,
-    /// A user or owner cancel: the prior completed record must not be re-woken.
+    Stopped,
+    Paused,
     Cancelled,
+}
+
+impl From<SubagentCancelDisposition> for PendingDisposition {
+    fn from(disposition: SubagentCancelDisposition) -> Self {
+        match disposition {
+            SubagentCancelDisposition::Stop => Self::Stopped,
+            SubagentCancelDisposition::Pause => Self::Paused,
+        }
+    }
 }
 
 pub(super) struct PendingChild {
@@ -512,6 +522,7 @@ pub(super) struct PendingChild {
     pub(super) handle_only: bool,
     pub(super) explicitly_killed: bool,
     pub(super) disposition: PendingDisposition,
+    pub(super) cancel_cause: Option<InterruptionCause>,
     /// False when the record was synthesized for a spawn that never reached
     /// the runner (admission reject, cancelled while queued).
     pub(super) launched: bool,
@@ -536,6 +547,7 @@ pub(super) struct ActiveChild<C> {
     pub(super) definition_background: bool,
     pub(super) explicitly_killed: bool,
     pub(super) disposition: PendingDisposition,
+    pub(super) cancel_cause: Option<InterruptionCause>,
     pub(super) child_session_id: String,
     pub(super) persona: Option<String>,
     pub(super) resumed_from: Option<String>,
@@ -926,6 +938,8 @@ pub(super) fn running_inspection(
             subagent_id: seed.subagent_id,
             description: seed.description,
             subagent_type: seed.subagent_type,
+            state: SubagentState::Running,
+            legacy_status: "running".to_owned(),
             status: SubagentSnapshotStatus::Running {
                 turn_count: progress.turn_count,
                 tool_call_count: progress.tool_call_count,
@@ -951,6 +965,8 @@ pub(super) fn pending_snapshot(child: &PendingChild) -> SubagentSnapshot {
         subagent_id: child.request.id.clone(),
         description: child.request.description.clone(),
         subagent_type: child.request.subagent_type.clone(),
+        state: SubagentState::Running,
+        legacy_status: "initializing".to_owned(),
         status: SubagentSnapshotStatus::Initializing,
         started_at_epoch_ms: instant_to_epoch_ms(child.started_at),
         duration_ms: child.started_at.elapsed().as_millis() as u64,
@@ -978,6 +994,8 @@ pub(super) fn queued_snapshot(
         subagent_id: request.id.clone(),
         description: request.description.clone(),
         subagent_type: request.subagent_type.clone(),
+        state: SubagentState::Running,
+        legacy_status: "initializing".to_owned(),
         status: SubagentSnapshotStatus::Initializing,
         // Stable across polls: the enqueue time, with the duration showing
         // how long the spawn has waited for a slot.
@@ -1008,31 +1026,36 @@ pub fn terminal_snapshot(
     persona: Option<String>,
     started_at_epoch_ms: u64,
 ) -> SubagentSnapshot {
-    let status = if result.cancelled {
-        SubagentSnapshotStatus::Cancelled {
+    let state = match &result.state {
+        SubagentState::Running if !result.success && result.error.is_some() => SubagentState::Failed {
+            message: result.error.clone().unwrap_or_else(|| "Subagent failed".to_owned()),
+        },
+        SubagentState::Running => SubagentState::Completed,
+        state => state.clone(),
+    };
+    let status = match &state {
+        SubagentState::Interrupted { cause } => SubagentSnapshotStatus::Cancelled {
             reason: result.error.clone(),
-        }
-    } else if result.success {
-        SubagentSnapshotStatus::Completed {
+            cause: Some(cause.clone()),
+        },
+        SubagentState::Completed => SubagentSnapshotStatus::Completed {
             output: persisted_output
                 .map(str::to_owned)
                 .unwrap_or_else(|| result.output.to_string()),
             tool_calls: result.tool_calls,
             turns: result.turns,
             worktree_path: result.worktree_path.clone(),
-        }
-    } else {
-        SubagentSnapshotStatus::Failed {
-            error: result
-                .error
-                .clone()
-                .unwrap_or_else(|| "Unknown error".to_owned()),
-        }
+        },
+        SubagentState::Failed { message } => SubagentSnapshotStatus::Failed {
+            error: message.clone(),
+        },
     };
     SubagentSnapshot {
         subagent_id: request.id.clone(),
         description: request.description.clone(),
         subagent_type: request.subagent_type.clone(),
+        legacy_status: state.legacy_status().to_owned(),
+        state,
         status,
         started_at_epoch_ms,
         duration_ms: result.duration_ms,

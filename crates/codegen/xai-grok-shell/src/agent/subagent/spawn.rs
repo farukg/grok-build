@@ -432,6 +432,7 @@ pub(crate) fn present_child_completion(
                 attempt_id: completion_data.attempt_id.as_ref().map(ToString::to_string),
                 child_session_id: result.child_session_id.clone(),
                 status: result.status().to_owned(),
+                state: result.state.clone(),
                 error: result.error.clone(),
                 tool_calls: result.tool_calls,
                 turns: result.turns,
@@ -462,7 +463,7 @@ pub(crate) fn present_child_completion(
 #[derive(Clone, Copy)]
 pub(crate) struct AutoWakeInputs {
     pub run_in_background: bool,
-    pub cancelled: bool,
+    pub state: xai_tool_types::SubagentState,
     pub auto_wake_enabled: bool,
     pub block_waited: bool,
     pub explicitly_killed: bool,
@@ -473,7 +474,7 @@ impl AutoWakeInputs {
     pub(crate) fn from_completion(completion: &ChildCompletion<ShellCompletionData>) -> Self {
         Self {
             run_in_background: completion.disposition.backgrounded,
-            cancelled: completion.result.cancelled,
+            state: completion.result.state.clone(),
             auto_wake_enabled: completion.completion_data.auto_wake_enabled,
             block_waited: completion.disposition.waiter_delivered,
             explicitly_killed: completion.disposition.explicitly_killed,
@@ -490,10 +491,10 @@ impl AutoWakeInputs {
     }
 }
 /// Auto-wake gate. `parent_channel_open` folds the inject's no-channel bail into the decision, so a stamped `will_wake` never promises a wake the inject won't do.
-/// `cancelled` never wakes: the Ctrl+C race can background a foreground child moments before its cancel lands. Waking would prompt the model right after the user stopped everything.
+/// Interrupted children never wake the parent.
 pub(crate) fn should_auto_wake_subagent(inputs: AutoWakeInputs) -> bool {
     inputs.run_in_background
-        && !inputs.cancelled
+        && !matches!(inputs.state, xai_tool_types::SubagentState::Interrupted { .. })
         && inputs.auto_wake_enabled
         && !inputs.block_waited
         && !inputs.explicitly_killed

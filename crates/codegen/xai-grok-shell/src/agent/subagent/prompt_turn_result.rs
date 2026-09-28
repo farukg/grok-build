@@ -58,7 +58,7 @@ pub(super) fn reduce_prompt_turn_result(
                         Some(Ok(value)),
                     ) => {
                         result.success = true;
-                        result.cancelled = false;
+                        result.state = xai_tool_types::SubagentState::Completed;
                         result.error = None;
                         result.output = Arc::from(value.to_string());
                     }
@@ -69,7 +69,7 @@ pub(super) fn reduce_prompt_turn_result(
                         Some(Err(error)),
                     ) => {
                         result.success = false;
-                        result.cancelled = false;
+                        result.state = xai_tool_types::SubagentState::Failed { message: format!("structured output validation failed: {error}") };
                         result.error = Some(with_truncation_error(
                             format!("structured output validation failed: {error}"),
                             truncated,
@@ -83,7 +83,7 @@ pub(super) fn reduce_prompt_turn_result(
                         None,
                     ) => {
                         result.success = false;
-                        result.cancelled = false;
+                        result.state = xai_tool_types::SubagentState::Failed { message: "structured output requested but none produced".to_owned() };
                         result.error = Some(with_truncation_error(
                             "structured output requested but none produced".to_string(),
                             truncated,
@@ -97,7 +97,7 @@ pub(super) fn reduce_prompt_turn_result(
                         _,
                     ) => {
                         result.success = true;
-                        result.cancelled = false;
+                        result.state = xai_tool_types::SubagentState::Completed;
                         result.error = None;
                         result.output = with_truncation_note(
                             text_or_summary(&final_text, summaries.success),
@@ -106,7 +106,7 @@ pub(super) fn reduce_prompt_turn_result(
                     }
                     (PromptTurnResultMode::ParentFollowup, None) => {
                         result.success = true;
-                        result.cancelled = false;
+                        result.state = xai_tool_types::SubagentState::Completed;
                         result.error = None;
                         result.output = with_truncation_note(
                             text_or_summary(&final_text, summaries.success),
@@ -115,7 +115,7 @@ pub(super) fn reduce_prompt_turn_result(
                     }
                     (PromptTurnResultMode::ParentFollowup, Some(_)) => {
                         result.success = false;
-                        result.cancelled = false;
+                        result.state = xai_tool_types::SubagentState::Failed { message: "Parent follow-up unexpectedly produced structured output".to_owned() };
                         result.error = Some(with_truncation_error(
                             "Parent follow-up unexpectedly produced structured output".to_string(),
                             truncated,
@@ -127,25 +127,27 @@ pub(super) fn reduce_prompt_turn_result(
             }
             PromptCompletionKind::Cancelled { category, context } => {
                 result.success = false;
-                result.cancelled = true;
-                result.error = Some(super::cancellation_error_message(
-                    category,
-                    context.as_ref(),
-                ));
+                let message = super::cancellation_error_message(category, context.as_ref());
+                result.state = xai_tool_types::SubagentState::Interrupted {
+                    cause: xai_tool_types::InterruptionCause::Error { message: message.clone() },
+                };
+                result.error = Some(message);
                 result.output = text_or_summary(&final_text, summaries.cancelled);
                 result.output_usage_incomplete = true;
                 cancellation_may_hide_usage = true;
             }
             PromptCompletionKind::MaxTurnsReached { limit } => {
                 result.success = false;
-                result.cancelled = true;
+                result.state = xai_tool_types::SubagentState::Interrupted {
+                    cause: xai_tool_types::InterruptionCause::Limit { actor: xai_tool_types::SubagentActor::Limit { limit: limit as u32 }, limit: limit as u32 },
+                };
                 result.error = Some(format!("max turns reached (limit: {limit})"));
                 result.output = text_or_summary(&final_text, || (summaries.max_turns)(limit));
                 result.output_usage_incomplete = true;
             }
             PromptCompletionKind::Rewound => {
                 result.success = false;
-                result.cancelled = true;
+                result.state = xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::Error { message: "Subagent turn was rewound".to_owned() } };
                 result.error = Some("Subagent turn was rewound".to_string());
                 result.output = Arc::from(final_text);
                 result.output_usage_incomplete = true;
@@ -153,7 +155,7 @@ pub(super) fn reduce_prompt_turn_result(
             }
             PromptCompletionKind::RemovedFromQueue => {
                 result.success = false;
-                result.cancelled = true;
+                result.state = xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::Error { message: "Subagent turn was removed before it ran".to_owned() } };
                 result.error = Some("Subagent turn was removed before it ran".to_string());
                 result.output = Arc::from(final_text);
                 result.output_usage_incomplete = true;
@@ -161,24 +163,24 @@ pub(super) fn reduce_prompt_turn_result(
         },
         Ok(Err(error)) => {
             result.success = false;
-            result.cancelled = was_cancelled;
-            result.error = Some(if was_cancelled {
-                "Subagent was cancelled".to_string()
+            result.state = if was_cancelled {
+                xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::Error { message: "Subagent was cancelled".to_owned() } }
             } else {
-                format!("Session error: {error}")
-            });
+                xai_tool_types::SubagentState::Failed { message: format!("Session error: {error}") }
+            };
+            result.error = Some(if was_cancelled { "Subagent was cancelled".to_owned() } else { format!("Session error: {error}") });
             result.output = Arc::from(final_text);
             result.output_usage_incomplete = true;
             cancellation_may_hide_usage = was_cancelled;
         }
         Err(_) => {
             result.success = false;
-            result.cancelled = was_cancelled;
-            result.error = Some(if was_cancelled {
-                "Subagent was cancelled".to_string()
+            result.state = if was_cancelled {
+                xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::Error { message: "Subagent was cancelled".to_owned() } }
             } else {
-                "Child session dropped unexpectedly".to_string()
-            });
+                xai_tool_types::SubagentState::Failed { message: "Child session dropped unexpectedly".to_owned() }
+            };
+            result.error = Some(if was_cancelled { "Subagent was cancelled".to_owned() } else { "Child session dropped unexpectedly".to_owned() });
             result.output = Arc::from(final_text);
             result.output_usage_incomplete = true;
             cancellation_may_hide_usage = true;

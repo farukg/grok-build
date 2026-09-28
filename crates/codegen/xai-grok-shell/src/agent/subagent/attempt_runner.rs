@@ -99,6 +99,7 @@ pub(super) async fn run_one_turn_attempt(
         return OneTurnAttemptOutcome {
             result: SubagentResult {
                 success: false,
+                state: xai_tool_types::SubagentState::Failed { message: "injected pre-admission attempt failure".to_owned() },
                 error: Some("injected pre-admission attempt failure".to_owned()),
                 ..base_result(input.request, input.worktree_path, 0, 1, 0)
             },
@@ -165,7 +166,9 @@ pub(super) async fn run_one_turn_attempt(
             (
                 SubagentResult {
                     success: false,
-                    cancelled: true,
+                    state: xai_tool_types::SubagentState::Interrupted {
+                        cause: xai_tool_types::InterruptionCause::Error { message: "Subagent was cancelled".to_owned() },
+                    },
                     error: Some("Subagent was cancelled".to_string()),
                     ..base_result(
                         input.request,

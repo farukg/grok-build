@@ -616,6 +616,8 @@ impl WorkflowManager {
                         target: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelTarget::WorkflowRunId(
                             run_id.to_owned(),
                         ),
+                        actor: xai_grok_tools::implementations::grok_build::task::types::SubagentActor::Runtime,
+                        disposition: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition::Stop,
                         respond_to,
                     },
                 ),
@@ -946,7 +948,7 @@ mod tests {
                 match event {
                     SubagentEvent::Cancel(request) => {
                         cancels_stub.lock().push(request.target.clone());
-                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled);
+                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled { state: xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::Error { message: format!("workflow {run_id} cancelled") } } });
                     }
                     other => {
                         if event_tx.send(other).is_err() {

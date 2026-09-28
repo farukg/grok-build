@@ -305,7 +305,7 @@ fn every_completion_kind_maps_to_the_terminal_contract() {
         assert_eq!(
             (
                 output.result.success,
-                output.result.cancelled,
+                output.result.is_interrupted(),
                 output.result.error.as_deref(),
                 output.result.output_usage_incomplete,
                 output.cancellation_may_hide_usage,

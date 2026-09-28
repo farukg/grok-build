@@ -1007,6 +1007,7 @@ pub(crate) async fn run_shell_child(
         subagent_type: request.subagent_type.clone(),
         description: request.description.clone(),
         prompt: request.prompt.clone(),
+        state: xai_tool_types::SubagentState::Running,
         started_at: chrono::Utc::now(),
         completed_at: None,
         duration_ms: None,
@@ -2071,7 +2072,7 @@ pub(crate) async fn run_shell_child(
         )
         .await
         .map(|mut cap| {
-            cap.reason = Some(if result.cancelled {
+            cap.reason = Some(if result.is_interrupted() {
                 "subagent_cancel".to_string()
             } else {
                 "subagent_non_completed".to_string()
@@ -2249,7 +2250,7 @@ pub(crate) async fn run_shell_child(
     }
     let outcome = if result.success {
         xai_grok_telemetry::events::Outcome::Completed
-    } else if result.cancelled {
+    } else if result.is_interrupted() {
         xai_grok_telemetry::events::Outcome::Cancelled
     } else {
         xai_grok_telemetry::events::Outcome::Error
@@ -2373,7 +2374,9 @@ pub(crate) async fn run_shell_child(
     if worktree_removed {
         result.worktree_path = None;
     }
-    let success = result.success && !result.cancelled;
+    let final_status = SubagentMetaStatus::of_result(&result);
+    subagent_meta.state = result.state.clone();
+    let success = result.success && !result.is_interrupted();
     let preview = crate::util::truncate(&result.output, 200);
     let level_fn = if success {
         xai_grok_telemetry::unified_log::info
@@ -2392,7 +2395,7 @@ pub(crate) async fn run_shell_child(
             "subagent_type": &request.subagent_type,
             "effective_model": tracker_model_id,
             "success": success,
-            "cancelled": result.cancelled,
+            "state": &result.state,
             "duration_ms": result.duration_ms,
             "turns": result.turns,
             "tool_calls": result.tool_calls,
