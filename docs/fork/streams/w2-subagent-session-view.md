@@ -33,7 +33,7 @@ reducer. Session-id → view lookup: `SessionViews::find_by_session_id` (roots a
 `routing.rs::find_session_match` adds only the pre-bind race fallback.
 Tests attach children with `session_views::test_support::link_child`.
 
-## State (cloud session 2026-09-28, branch `claude/adoring-thompson-ap40n6` → PR into `grb/w2`)
+## State (cloud session 2026-09-28, branch `claude/adoring-thompson-ap40n6` → PR into `main`)
 - `104746c` fix(pager): pager library compiles (`cargo check -p xai-grok-pager -p xai-grok-shell`
   warning-free). Every `SessionViews` reader chose roots or all views (dashboard, workspace,
   reconnect reload, telemetry → roots; settings fan-out, session-id lookup, prompt images,
@@ -70,15 +70,16 @@ Tests attach children with `session_views::test_support::link_child`.
   the root dispatch path. Merging both needs W1-S (shell admission) and a behavior decision.
 
 ## Next steps (in order)
-1. Review of this PR by Faruk (merge into `grb/w2`).
-2. W3 (together with W1-S): pager parses `_meta.childSessions` from the shell's
+1. Integration into `main`: PR https://github.com/farukg/grok-build/pull/1 (head
+   `claude/adoring-thompson-ap40n6`, contains `grb/w2` and `main`). Squash-merge keeps the
+   `wip(...)` history out of `main`. After the merge `STATUS.md` records W2 as landed.
+2. Follow-up stream W3 (together with W1-S): pager parses `_meta.childSessions` from the shell's
    `initialize` response into `enum ShellChildSupport { FirstClass, Legacy }` (Legacy → typed
    refusal toast asking for a leader restart); end-to-end tests with a fake ACP peer
    `child_session_full_parity_roundtrip`, `parent_sees_final_response_after_human_turns`;
    fork from a child view forks the child's conversation (design §6 Q3 = a).
-3. Squash into a few clean commits on a fresh branch from `main` (e.g. store+role, dispatch/navigation,
-   ACP routing, views/input, test migration) and open the PR into `main`.
 
 ## Log
 - 2026-09-28: handoff to cloud agents at `grb/w2` HEAD (see `git log`).
 - 2026-09-28: library and tests compile, lib tests green (see State).
+- 2026-09-28: PR retargeted to `main` (a stream is finished only once it is in `main`).

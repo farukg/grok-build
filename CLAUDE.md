@@ -75,10 +75,10 @@ Path shorthands used in the docs (all under `crates/codegen/`): `P/` = `xai-grok
 - Push only to this fork (`farukg/grok-build`). **Never push to, or open a pull request against,
   `xai-org/grok-build`.** When you open a PR, pass `--repo farukg/grok-build` explicitly, because
   GitHub defaults a fork's PRs to the upstream repository.
-- If your environment only lets you push to a `claude/…` branch, push there and open a PR into
-  your stream branch in `farukg/grok-build`.
-- Integration into `main` happens by PR into `main` of `farukg/grok-build` once the stream's
-  build and tests are green; Faruk merges.
+- If your environment only lets you push to a `claude/…` branch, push there and open the PR from
+  it into `main` of `farukg/grok-build`.
+- A stream is finished only when it is integrated into `main`: once its build and tests are
+  green, open the PR into `main` (not into the stream branch); Faruk merges.
 
 ## Reporting
 
