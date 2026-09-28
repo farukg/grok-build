@@ -2304,26 +2304,27 @@ fn dispatch_new_session_keeps_stale_attach_on_other_agent() {
         "attach on a different agent must not be re-pointed to the new session",
     );
 }
-/// Re-point must use top-level `active_view` id, not `get_active_agent` (subagent child views use placeholder `AgentId(0)`).
+/// Re-point uses the active child session's AgentId rather than its parent.
 #[test]
-fn dispatch_new_session_repoints_attach_while_subagent_view_open() {
+fn dispatch_new_session_repoints_attach_while_child_view_open() {
+    use crate::app::session_views::test_support::link_child;
     use crate::views::dashboard::DashboardRowId;
     let mut app = test_app();
     let parent = AgentId(5);
-    let session = make_test_agent_session(&app, parent, "parent-session");
-    let mut parent_view = AgentView::new(session, ScrollbackState::new());
-    let child_session = make_test_agent_session(&app, AgentId(0), "child-session");
-    let child = AgentView::new(child_session, ScrollbackState::new());
-    parent_view.insert_test_child("child-sid".into(), Box::new(child));
-    parent_view.active_subagent = Some("child-sid".into());
-    app.agents.insert(parent, parent_view);
-    app.next_agent_id = 6;
-    app.active_view = ActiveView::Agent(parent);
-    assert_eq!(
-        get_active_agent(&app).map(|a| a.session.id),
-        Some(AgentId(0)),
-        "precondition: get_active_agent resolves subagent AgentId(0)"
+    let child_id = AgentId(0);
+    let parent_view = AgentView::new(
+        make_test_agent_session(&app, parent, "parent-session"),
+        ScrollbackState::new(),
     );
+    let child = AgentView::new(
+        make_test_agent_session(&app, child_id, "child-session"),
+        ScrollbackState::new(),
+    );
+    app.agents.insert(parent, parent_view);
+    link_child(&mut app.agents, parent, child_id, child, std::time::Instant::now());
+    app.next_agent_id = 6;
+    app.active_view = ActiveView::Agent(child_id);
+    assert_eq!(get_active_agent(&app).map(|agent| agent.session.id), Some(child_id));
     ensure_dashboard_state(&mut app);
     app.dashboard.as_mut().unwrap().attached_agent = Some(parent);
     dispatch(Action::NewSession, &mut app);
@@ -2333,11 +2334,7 @@ fn dispatch_new_session_repoints_attach_while_subagent_view_open() {
         "new session must switch to the new top-level agent"
     );
     let d = app.dashboard.as_ref().unwrap();
-    assert_eq!(
-        d.attached_agent,
-        Some(new_id),
-        "attach must re-point from top-level parent, not subagent AgentId(0)",
-    );
+    assert_eq!(d.attached_agent, Some(parent));
     assert_eq!(
         d.selected,
         Some(DashboardRowId::TopLevel(new_id)),
