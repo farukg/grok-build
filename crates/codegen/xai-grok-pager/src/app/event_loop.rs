@@ -715,14 +715,7 @@ fn report_suspend_wait(app: &mut AppView, message: &str) {
             if let ActiveView::Agent(id) = app.active_view
                 && let Some(agent) = app.agents.get_mut(&id)
             {
-                let block = crate::scrollback::block::RenderBlock::system(message);
-                if let Some(child_sid) = agent.active_subagent.clone()
-                    && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-                {
-                    child.scrollback.push_block(block);
-                } else {
-                    agent.scrollback.push_block(block);
-                }
+                agent.scrollback.push_block(crate::scrollback::block::RenderBlock::system(message));
             }
         }
     }
@@ -964,7 +957,7 @@ fn run_pending_mode_switch(
             } else {
                 super::MINIMAL_SHOW_SWITCH_BACK_TO_FULLSCREEN
                     .store(false, std::sync::atomic::Ordering::Release);
-                for agent in app.agents.values_mut() {
+                for (_, agent) in app.agents.all_mut() {
                     agent.set_sticky_toast_recursive(None);
                 }
                 if let ActiveView::Agent(id) = app.active_view
@@ -3004,7 +2997,7 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
 /// A dashboard created later is seeded in `dispatch_open_dashboard`.
 fn apply_session_recap_available(app: &mut AppView, available: bool) {
     app.session_recap_available = available;
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.set_session_recap_available(available);
     }
     app.welcome_prompt.set_recap_visible(available);
