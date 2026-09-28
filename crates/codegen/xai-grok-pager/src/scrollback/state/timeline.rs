@@ -228,15 +228,29 @@ impl ScrollbackState {
         )
     }
 
-    /// The entry owning the viewport top row, the per-entry analog of [`Self::active_turn_for_viewport`].
+    /// The first entry still showing at or below the first content row under the sticky header, the per-entry analog
+    /// of [`Self::active_turn_for_viewport`]. A content top inside the gap after an entry resolves to the next entry.
     /// A partition search over cached `virtual_y`; folded (zero-height) members resolve to the row that shows them.
     pub fn active_entry_for_viewport(&self) -> Option<usize> {
         let cache = self.layout_cache.as_ref()?;
         let range = self.visible_entry_range();
         let base = *cache.virtual_y.get(range.start)?;
-        let top = base + self.scroll_offset;
+        let header_rows = self
+            .current_sticky_layout(cache, &range)
+            .header_screen_rows();
+        let top = base + self.scroll_offset + usize::from(header_rows);
         let slice = cache.virtual_y.get(range.clone())?;
         let mut idx = range.start + slice.partition_point(|&y| y <= top).checked_sub(1)?;
+        let ends_above_top = |idx: usize| {
+            cache
+                .virtual_y
+                .get(idx)
+                .zip(cache.entries.get(idx))
+                .is_some_and(|(&y, info)| y + usize::from(info.height) <= top)
+        };
+        if ends_above_top(idx) && idx + 1 < range.end {
+            idx += 1;
+        }
         while idx > range.start && self.is_entry_hidden(idx) {
             idx -= 1;
         }
@@ -382,15 +396,14 @@ mod tests {
         assert!(max > 0);
         state.goto_top();
         let mut seen = Vec::new();
+        let area = Rect::new(0, 0, 80, 6);
         for offset in 0..=max {
             state.set_scroll_offset(offset);
             let idx = state.active_entry_for_viewport().expect("an entry owns the top");
-            let ys = state.get_cached_virtual_y().expect("layout");
-            assert!(ys[idx] <= offset, "entry {idx} starts at or above the top");
-            assert!(
-                ys.get(idx + 1).is_none_or(|&next| next > offset),
-                "no later entry starts at or above the top (offset {offset})"
-            );
+            let (rect, _, _) = state
+                .entry_screen_area(idx, area)
+                .expect("the tracked entry is on screen below the sticky header");
+            assert!(rect.height > 0, "entry {idx} shows at offset {offset}");
             seen.push(idx);
         }
         assert!(seen.contains(&1) && seen.contains(&2), "{seen:?}");
