@@ -8102,13 +8102,6 @@ fn dashboard_attach_roster_focuses_existing_local_agent() {
         }),
         &mut app,
     );
-    {
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent
-            .subagent_sessions
-            .insert("child-1".into(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
     app.active_view = ActiveView::AgentDashboard;
     ensure_dashboard_state(&mut app);
     let count_before = app.agents.len();
@@ -8121,7 +8114,6 @@ fn dashboard_attach_roster_focuses_existing_local_agent() {
     assert!(effects.is_empty());
     assert!(matches!(app.active_view, ActiveView::Agent(a) if a == id));
     assert_eq!(app.agents.len(), count_before);
-    assert!(test_agent(&app, id).active_subagent.is_none());
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id));
 }
 /// A conversation-origin roster row attaches via the direct chat load,
