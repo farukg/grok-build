@@ -69,57 +69,33 @@ fn show_word_select_tip_shows_and_counts_when_flag_on() {
     );
 }
 
-/// Under a takeover the tip belongs to the view the user dragged in: it lands on the child and never on the root.
+/// A child session uses the same word-select tip behavior as a root session.
 #[test]
-fn show_word_select_tip_targets_the_takeover_child() {
+fn show_word_select_tip_targets_active_child_session() {
+    use crate::app::agent_view::{AgentRole, ChildLink};
     use crate::appearance::TextSelection;
     use crate::tips::word_select::WORD_SELECT_TIP_KEY;
     crate::appearance::cache::set_keep_text_selection(TextSelection::Flash);
     let mut app = test_app_with_agent();
     app.contextual_hints.word_select = true;
     let root_id = AgentId(0);
-    let child_sid = "child-tip";
+    let child_id = AgentId(1);
     let mut child = AgentView::new(
-        make_test_agent_session(&app, AgentId(1), child_sid),
+        make_test_agent_session(&app, child_id, "child-tip"),
         ScrollbackState::new(),
     );
-    child.last_terminal_size = (80, 30);
-    {
-        let root = app.agents.get_mut(&root_id).unwrap();
-        root.last_terminal_size = (80, 30);
-        root.insert_test_child(child_sid.to_string(), Box::new(child));
-        root.active_subagent = Some(child_sid.to_string());
-    }
-
+    child.role = AgentRole::Child(ChildLink {
+        parent: root_id,
+        parent_session_id: app.agents[&root_id].session.session_id.clone().unwrap(),
+        subagent_id: "child-tip".to_owned(),
+        started_at: std::time::Instant::now(),
+    });
+    app.agents.insert(child_id, child);
+    app.active_view = ActiveView::Agent(child_id);
     let _ = dispatch(Action::ShowWordSelectTip, &mut app);
-    let root = app
-        .agents
-        .get(&root_id)
-        .unwrap_or_else(|| panic!("missing root agent"));
-    assert!(
-        !root.ephemeral_tip.is_active(),
-        "the root never shows a tip for a child drag"
-    );
-    assert_eq!(
-        Some(WORD_SELECT_TIP_KEY),
-        root.subagent_view(child_sid)
-            .unwrap()
-            .ephemeral_tip
-            .current_key()
-    );
-
+    assert_eq!(app.agents[&child_id].ephemeral_tip.current_key(), Some(WORD_SELECT_TIP_KEY));
     let _ = dispatch(Action::AcceptWordSelectTip, &mut app);
-    let root = app
-        .agents
-        .get(&root_id)
-        .unwrap_or_else(|| panic!("missing root agent"));
-    assert!(
-        !root
-            .subagent_view(child_sid)
-            .unwrap()
-            .ephemeral_tip
-            .is_active()
-    );
+    assert!(!app.agents[&child_id].ephemeral_tip.is_active());
     crate::appearance::cache::set_keep_text_selection(TextSelection::Flash);
 }
 

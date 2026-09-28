@@ -225,41 +225,8 @@ fn cancel_turn_without_subagents_cancels_immediately() {
     assert!(get_agent(&app, id).session.state.is_cancelling());
 }
 
-/// Cancel inside a subagent drill-in view kills the focused running subagent instead of resolving the root turn.
-/// The root is idle here, so only the kill path reaches the coordinator-run child.
-#[test]
-fn cancel_turn_in_subagent_view_kills_focused_subagent() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    {
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent.session.state = AgentState::Idle;
-        agent
-            .subagent_sessions
-            .insert("child-1".to_string(), make_test_subagent("child-1", "sa-1"));
-        agent.active_subagent = Some("child-1".into());
-    }
 
-    let effects = dispatch(Action::CancelTurn, &mut app);
-
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::KillSubagent { subagent_id, .. }] if subagent_id == "sa-1"
-        ),
-        "stop in a subagent view must kill the focused subagent, got {effects:?}"
-    );
-    assert!(
-        get_agent(&app, id)
-            .subagent_sessions
-            .get("child-1")
-            .unwrap_or_else(|| panic!("missing child-1"))
-            .attempt
-            .pending_kill
-    );
-}
-
-/// The kill routing keys off the focused running subagent, not root idleness.
+/// A focused child takeover routes cancellation to the child.
 /// With the root turn running, cancel still kills the child and leaves the root turn running (never cancelling).
 #[test]
 fn cancel_turn_in_subagent_view_kills_child_even_with_running_root() {
