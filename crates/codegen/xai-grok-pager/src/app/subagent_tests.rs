@@ -124,7 +124,6 @@ fn a_running_child_whose_view_holds_only_the_echoed_prompt_is_not_replayed() {
     );
     std::fs::write(session_dir.join("updates.jsonl"), echo + "\n").unwrap();
     set_replay_grok_home_for_tests(Some(home.path().to_path_buf()));
-    let mut parent = make_min_child_view();
     let mut child = make_min_child_view();
     child.session.tracker.handle_update(
         acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
@@ -134,18 +133,17 @@ fn a_running_child_whose_view_holds_only_the_echoed_prompt_is_not_replayed() {
         &mut child.scrollback,
     );
     assert_eq!(child.scrollback.len(), 1);
-    parent.insert_test_child(child_sid.to_string(), Box::new(child));
     let mut info = make_info();
     info.child_session_id = child_sid.into();
-    parent.subagent_sessions.insert(child_sid.to_string(), info);
+    let (mut views, child_id) = session_views(child_sid, child, info);
     let before = test_support::transcript_reads();
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::ViewHoldsLiveBlocks,
         "a live echo closes the replay window like any other live block"
     );
     assert_eq!(test_support::transcript_reads(), before, "disk is not read");
-    let child = parent.subagent_views.get(child_sid).unwrap();
+    let child = views.get(&child_id).unwrap();
     assert_eq!(
         child.scrollback.len(),
         1,
@@ -167,10 +165,10 @@ fn a_disk_backed_child_is_not_replayed_again() {
     info.transcript = ChildTranscript::DiskBacked;
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::NothingToRead
     );
-    let child = parent.subagent_views.get(child_sid).unwrap();
+    let child = views.get(&child_id).unwrap();
     assert_eq!(child.scrollback.len(), 1);
     assert!(matches!(
         child.scrollback.entry(0).unwrap().block,
@@ -188,7 +186,7 @@ fn replay_reports_live_blocks_and_unknown_children_distinctly() {
     info.child_session_id = child_sid.into();
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::ViewHoldsLiveBlocks
     );
     assert_eq!(
@@ -208,7 +206,7 @@ fn empty_read_of_a_running_child_is_cached_until_it_finishes() {
     set_replay_grok_home_for_tests(Some(home.path().to_path_buf()));
     let before = test_support::transcript_reads();
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::FoundNothingOnDisk
     );
     assert_eq!(
@@ -219,7 +217,7 @@ fn empty_read_of_a_running_child_is_cached_until_it_finishes() {
         Some(&ChildTranscript::DiskEmptyWhileRunning)
     );
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::NothingToRead
     );
     assert_eq!(
@@ -255,7 +253,7 @@ fn an_empty_read_of_a_running_resumed_child_stays_needs_replay_and_retries() {
     info.attempt.context = xai_grok_shell::extensions::subagent_context::SubagentContext::Resumed;
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::FoundNothingOnDisk
     );
     assert_eq!(
@@ -278,7 +276,7 @@ fn an_empty_read_of_a_running_resumed_child_stays_needs_replay_and_retries() {
     );
     std::fs::write(session_dir.join("updates.jsonl"), tool_line + "\n").unwrap();
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::Replayed,
         "the retry after the transcript flushes must replay the inherited prefix"
     );
@@ -289,7 +287,7 @@ fn an_empty_read_of_a_running_resumed_child_stays_needs_replay_and_retries() {
             .map(|s| &s.transcript),
         Some(&ChildTranscript::DiskBacked)
     );
-    let child = parent.subagent_views.get(child_sid).unwrap();
+    let child = views.get(&child_id).unwrap();
     let tools = (0..child.scrollback.len())
         .filter(|i| {
             child
@@ -329,7 +327,7 @@ fn a_child_replay_releases_retained_memory_only_once() {
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     let before = test_support::calls();
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::Replayed,
         "an emitting replay returns Replayed"
     );
@@ -431,7 +429,7 @@ fn rebuilt_child_transcript_keeps_persisted_timestamps_not_the_rebuild_time() {
             .unwrap()
             .with_timezone(&chrono::Local)
     };
-    let child = parent.subagent_views.get(child_sid).unwrap();
+    let child = views.get(&child_id).unwrap();
     let mut prompts_seen = 0;
     let mut msg_seen = false;
     for i in 0..child.scrollback.len() {
@@ -559,7 +557,7 @@ fn a_read_error_reports_read_failed_and_closes_the_scrollback_batch() {
     info.child_session_id = child_sid.into();
     parent.subagent_sessions.insert(child_sid.to_string(), info);
     assert_eq!(
-        ensure_subagent_child_replayed(&mut parent, child_sid),
+        replay_on_open(&mut views, child_id),
         ChildReplayOutcome::ReadFailed,
         "a broken transcript surfaces as ReadFailed so the next open retries"
     );
