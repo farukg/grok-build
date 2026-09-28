@@ -1570,7 +1570,7 @@ mod tests {
         );
         let bad_type = as_map(serde_json::json!({"reasoningEffort": 3}));
         assert_eq!(parse_reasoning_effort_meta(Some(&bad_type)), None);
-        let unknown = as_map(serde_json::json!({"reasoningEffort": "ULTRA"}));
+        let unknown = as_map(serde_json::json!({"reasoningEffort": "EXTREME"}));
         assert_eq!(parse_reasoning_effort_meta(Some(&unknown)), None);
     }
 
