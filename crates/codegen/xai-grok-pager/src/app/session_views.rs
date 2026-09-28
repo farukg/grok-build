@@ -60,26 +60,52 @@ fn child_order_key(started_at: std::time::Instant, sid: &str) -> (std::time::Ins
     (started_at, sid)
 }
 
+/// The one way tests attach a child session: a normal top-level view whose role links it to `parent`.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::SessionViews;
+    use crate::app::agent::AgentId;
+    use crate::app::agent_view::{AgentRole, AgentView, ChildLink};
+    use std::time::Instant;
+
+    pub(crate) fn link_child(
+        views: &mut SessionViews,
+        parent: AgentId,
+        child: AgentId,
+        mut view: AgentView,
+        started_at: Instant,
+    ) {
+        let subagent_id = view
+            .session
+            .session_id
+            .as_ref()
+            .map(|sid| sid.0.to_string())
+            .unwrap_or_else(|| format!("child-{}", child.0));
+        let parent_session_id = views
+            .get(&parent)
+            .and_then(|parent| parent.session.session_id.clone())
+            .unwrap_or_else(|| agent_client_protocol::SessionId::new("parent"));
+        view.session.id = child;
+        view.role = AgentRole::Child(ChildLink {
+            parent,
+            parent_session_id,
+            subagent_id,
+            started_at,
+        });
+        views.insert(child, view);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SessionViews;
+    use super::test_support::link_child;
     use crate::app::agent::AgentId;
-    use crate::app::agent_view::{AgentRole, ChildLink, AgentView};
+    use crate::app::agent_view::AgentView;
     use std::time::{Duration, Instant};
 
     fn view(sid: &str) -> AgentView {
         crate::app::agent_view::test_agent_view(Some(sid), std::path::PathBuf::from("."))
-    }
-
-    fn child(parent: AgentId, sid: &str, started_at: Instant) -> AgentView {
-        let mut view = view(sid);
-        view.role = AgentRole::Child(ChildLink {
-            parent,
-            parent_session_id: agent_client_protocol::SessionId::new("parent"),
-            subagent_id: sid.to_owned(),
-            started_at,
-        });
-        view
     }
 
     #[test]
@@ -87,7 +113,7 @@ mod tests {
         let root = AgentId(0);
         let mut views = SessionViews::new();
         views.insert(root, view("root"));
-        views.insert(AgentId(1), child(root, "child", Instant::now()));
+        link_child(&mut views, root, AgentId(1), view("child"), Instant::now());
         assert_eq!(views.roots().map(|(id, _)| id).collect::<Vec<_>>(), [root]);
     }
 
@@ -97,8 +123,8 @@ mod tests {
         let nested = AgentId(2);
         let mut views = SessionViews::new();
         views.insert(root, view("root"));
-        views.insert(AgentId(1), child(root, "child", Instant::now()));
-        views.insert(nested, child(AgentId(1), "nested", Instant::now()));
+        link_child(&mut views, root, AgentId(1), view("child"), Instant::now());
+        link_child(&mut views, AgentId(1), nested, view("nested"), Instant::now());
         assert_eq!(views.root_of(nested), root);
     }
 
@@ -108,8 +134,8 @@ mod tests {
         let start = Instant::now();
         let mut views = SessionViews::new();
         views.insert(root, view("root"));
-        views.insert(AgentId(2), child(root, "second", start + Duration::from_secs(2)));
-        views.insert(AgentId(1), child(root, "first", start + Duration::from_secs(1)));
+        link_child(&mut views, root, AgentId(2), view("second"), start + Duration::from_secs(2));
+        link_child(&mut views, root, AgentId(1), view("first"), start + Duration::from_secs(1));
         assert_eq!(views.children_of(root), [AgentId(1), AgentId(2)]);
     }
 }
