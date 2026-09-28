@@ -26,6 +26,14 @@ pub(super) fn sync_subagent_activity(
     child_key: &str,
     activity_label: Option<String>,
 ) {
+    sync_child_activity(parent, child_key, activity_label);
+}
+
+pub(super) fn sync_child_activity(
+    parent: &mut AgentView,
+    child_key: &str,
+    activity_label: Option<String>,
+) {
     let Some(info) = parent.subagent_sessions.get_mut(child_key) else {
         return;
     };

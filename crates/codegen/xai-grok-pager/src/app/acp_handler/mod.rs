@@ -28,6 +28,7 @@ use xai_grok_shell::tools::todo::todo_item_from_plan_entry;
 use xai_grok_tools::notification::ScheduledTaskRemovedReason;
 use xai_grok_workspace::permission::bash_command_splitting::BashCommandHighlights;
 mod background;
+mod child_observation;
 mod follow_ups;
 mod interactions;
 mod mcp;
@@ -122,6 +123,7 @@ use subagent_activity::{subagent_activity_label, sync_subagent_activity};
 use subagent_lifecycle::{
     LifecycleOrigin, classify_subagent_lifecycle, prepare_tui_subagent_lifecycle,
 };
+use child_observation::{classify as classify_child_observation, observe_child};
 use workflow_ingest::ingest_workflow_update;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -175,6 +177,25 @@ fn is_streaming_output(msg: &AcpClientMessage) -> bool {
         | AcpClientMessage::ExtNotification(_) => false,
     }
 }
+fn apply_session_notification_for_view(
+    app: &mut AppView,
+    id: AgentId,
+    update: acp::SessionUpdate,
+    meta: &mut NotificationMeta,
+) -> bool {
+    let is_active = is_matched_agent_active(app, id);
+    let stashed_adoption_pid = app.pending_running_adoptions.get(&id).map(|p| p.prompt_id.clone());
+    let Some(view) = app.agents.get_mut(&id) else { return false };
+    let is_child = matches!(view.role, crate::app::agent_view::AgentRole::Child(_));
+    let observation = is_child.then(|| classify_child_observation(&update, view)).flatten();
+    ack_prompt_from_update(view, meta);
+    let changed = view.session.handle_update(update, meta, &mut view.scrollback);
+    if let Some(observation) = observation {
+        observe_child(&mut app.agents, id, observation);
+    }
+    changed && is_active
+}
+
 fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
@@ -435,63 +456,8 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     }
                     mutated && is_active
                 }
-                Some(SessionMatch(child_id)) => {
-                    let is_active = is_matched_agent_active(app, child_id);
-                    let child_view = app
-                        .agents
-                        .get_mut(&child_id)
-                        .expect("find_session_match returned an existing AgentId");
-                    ack_prompt_from_update(child_view, &meta);
-                    if let Some(tokens) = meta.total_tokens {
-                        confirm_context_used(child_view, tokens);
-                    }
-                    if let acp::SessionUpdate::UsageUpdate(ref usage) = notif.request.update {
-                        child_view.apply_context_used(usage.used, usage.size);
-                    }
-                    let ended = !meta.is_replay
-                        && meta.prompt_id.as_deref().is_some_and(|pid| {
-                            child_view.ended_child_prompt_ids.contains(pid)
-                                || child_view.superseded_child_prompt_ids.contains(pid)
-                        });
-                    if !ended {
-                        let is_live = !meta.is_replay && !child_view.session.loading_replay;
-                        let apply = !is_live
-                            || note_child_live_prompt(
-                                child_view,
-                                meta.prompt_id.as_deref(),
-                                meta.turn_start_ms,
-                                meta.is_replay,
-                            );
-                        if apply {
-                            if is_live {
-                                if let Some(ts) = meta.turn_start_ms {
-                                    let named = meta
-                                        .prompt_id
-                                        .as_deref()
-                                        .is_some_and(|pid| !pid.is_empty());
-                                    if named
-                                        || child_view.turn_start_ms_prompt.is_none()
-                                        || child_view.turn_start_ms == Some(ts)
-                                    {
-                                        child_view.turn_start_ms = Some(ts);
-                                        if named {
-                                            child_view.turn_start_ms_prompt = meta.prompt_id.clone();
-                                        }
-                                    }
-                                }
-                                backdate_child_turn_clock(child_view);
-                            }
-                            child_view.session.handle_update(
-                                notif.request.update,
-                                &meta,
-                                &mut child_view.scrollback,
-                            );
-                            for entry_id in child_view.session.tracker.take_pending_edit_hl() {
-                                child_view.submit_edit_highlight(entry_id);
-                            }
-                        }
-                    }
-                    is_active
+                Some(SessionMatch(id)) => {
+                    apply_session_notification_for_view(app, id, notif.request.update, &mut meta)
                 }
                 None => {
                     tracing::debug!(
