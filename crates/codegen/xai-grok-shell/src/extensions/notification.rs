@@ -496,6 +496,16 @@ pub enum AutoCompactCancelReason {
 /// `Switching model…` loader (family-switch compact runs with no turn in flight).
 pub const MODEL_FAMILY_SWITCH_COMPACT_BANNER: &str = "Switching model. Compacting…";
 
+/// When a running subagent's answer goes to its caller: when its turn ends, or, once a human has
+/// prompted it, only after the human delivers it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentDelivery {
+    #[default]
+    OnTurnEnd,
+    Held,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
 pub enum SessionUpdate {
@@ -799,6 +809,8 @@ pub enum SessionUpdate {
         tools_used: Vec<String>,
         /// Number of errors encountered so far.
         error_count: u32,
+        #[serde(default)]
+        delivery: SubagentDelivery,
     },
     /// A subagent session has finished (success, failure, or cancellation).
     ///
@@ -1652,6 +1664,7 @@ mod tests {
             context_usage_pct: 35,
             tools_used: vec!["bash".into(), "grep".into()],
             error_count: 1,
+            delivery: SubagentDelivery::OnTurnEnd,
         };
         let json = serde_json::to_value(&update).unwrap();
         assert_eq!(
@@ -1699,6 +1712,7 @@ mod tests {
             context_usage_pct: 1,
             tools_used: vec![],
             error_count: 0,
+            delivery: SubagentDelivery::OnTurnEnd,
         };
         let json_str = serde_json::to_string(&update).unwrap();
         let parsed: SessionUpdate = serde_json::from_str(&json_str).unwrap();
@@ -1741,6 +1755,7 @@ mod tests {
             context_usage_pct: 0,
             tools_used: vec![],
             error_count: 0,
+            delivery: SubagentDelivery::OnTurnEnd,
         })
         .unwrap();
         let finished = serde_json::to_value(SessionUpdate::SubagentFinished {

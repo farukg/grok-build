@@ -1689,10 +1689,13 @@ pub(crate) async fn run_shell_child(
     );
     let ready_to_first_turn_span = phase_region(SubagentSpawnPhase::ReadyToFirstTurn);
     let (receipt_sink, receipt_stream) = mpsc::channel(ACTIVE_MESSAGE_RECEIPT_CAPACITY);
+    let (delivery, delivery_rx) =
+        tokio::sync::watch::channel(crate::extensions::notification::SubagentDelivery::OnTurnEnd);
     let receipt_drain = PromptTurnReceiptDrain::start(
         receipt_stream,
         child_handle.cmd_tx.clone(),
         cancel_token.clone(),
+        delivery_rx.clone(),
     );
     let (prompt_admitted, prompt_admitted_rx) = oneshot::channel();
     super::resume_window::arm_force_compact(
@@ -1877,6 +1880,7 @@ pub(crate) async fn run_shell_child(
                             handle: child_handle.clone(),
                             turns: child_turns,
                             parent_prompt_index: ctx.active_message_parent_prompt_index.clone(),
+                            delivery: delivery.clone(),
                         });
                         let _ = release.send(());
                         true
@@ -1933,6 +1937,7 @@ pub(crate) async fn run_shell_child(
         start,
         cancel_token.clone(),
         goal_tick_cmd_tx(ctx.goal_enabled, ctx.parent_cmd_tx.as_ref()),
+        delivery_rx,
     );
     spawn_timer.record(
         SubagentSpawnPhase::ReadyToFirstTurn,

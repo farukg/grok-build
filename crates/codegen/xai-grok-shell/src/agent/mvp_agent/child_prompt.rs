@@ -6,8 +6,10 @@ use xai_grok_tools::implementations::grok_build::task::types::{
     ActiveAgentMessageOperation, ActiveAgentMessageOutcome, AgentAddress,
 };
 
-use super::{ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild};
+use super::{ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild, SessionHost};
 use crate::agent::subagent::PromptTurnReceipt;
+use crate::extensions::notification::SubagentDelivery;
+use crate::extensions::subagent_deliver::DeliverSubagentOutcome;
 use crate::extensions::subagent_message::{SendSubagentMessageOutcome, literal_text};
 use crate::session::SessionHandle;
 use crate::session::commands::PromptTurnResult;
@@ -58,16 +60,22 @@ impl ChildPromptAdmission {
                     handle,
                     turns,
                     parent_prompt_index,
+                    delivery,
                 } = *running;
                 match turns.try_reserve_owned() {
-                    Ok(receipt) => Self::Live {
-                        handle: Box::new(handle),
-                        turn: ChildTurn {
-                            receipt,
-                            parent_session_id,
-                            parent_prompt_index,
-                        },
-                    },
+                    Ok(receipt) => {
+                        // Held only after the reservation: a child whose drain already closed must
+                        // not wait for a `deliver` nobody can send.
+                        delivery.send_replace(SubagentDelivery::Held);
+                        Self::Live {
+                            handle: Box::new(handle),
+                            turn: ChildTurn {
+                                receipt,
+                                parent_session_id,
+                                parent_prompt_index,
+                            },
+                        }
+                    }
                     // The receipt drain closes when the child's run finalizes; from then on only a
                     // wake reaches it.
                     Err(mpsc::error::TrySendError::Closed(_)) => Self::Woken {
@@ -117,6 +125,38 @@ impl ChildTurn {
 }
 
 impl MvpAgent {
+    pub(crate) fn deliver_child(&self, id: &acp::SessionId) -> DeliverSubagentOutcome {
+        let Some(SessionHost::Child(child)) = self.session_host(id) else {
+            return DeliverSubagentOutcome::NotRunning;
+        };
+        match child.reach {
+            ChildReach::Addressed {
+                residence: ChildResidence::Running(running),
+                ..
+            } => {
+                let released = running
+                    .delivery
+                    .send_if_modified(|delivery| match delivery {
+                        SubagentDelivery::Held => {
+                            *delivery = SubagentDelivery::OnTurnEnd;
+                            true
+                        }
+                        SubagentDelivery::OnTurnEnd => false,
+                    });
+                if released {
+                    DeliverSubagentOutcome::Delivered
+                } else {
+                    DeliverSubagentOutcome::NotHeld
+                }
+            }
+            ChildReach::Addressed {
+                residence: ChildResidence::Finished,
+                ..
+            }
+            | ChildReach::Unaddressed => DeliverSubagentOutcome::NotRunning,
+        }
+    }
+
     pub(super) async fn wake_child_with_prompt(
         &self,
         parent_session_id: &acp::SessionId,

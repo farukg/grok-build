@@ -337,6 +337,8 @@ pub(crate) struct RunningChild {
     pub(crate) handle: SessionHandle,
     pub(crate) turns: tokio::sync::mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
     pub(crate) parent_prompt_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    pub(crate) delivery:
+        tokio::sync::watch::Sender<crate::extensions::notification::SubagentDelivery>,
 }
 
 /// The per-session state this registry owns: retained, resident resources, presence (thread and liveness), unavailable model, and bridge.

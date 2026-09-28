@@ -424,6 +424,7 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
     match args.method.as_ref() {
         "x.ai/subagent/message" => crate::extensions::subagent_message::handle(agent, args).await,
         "x.ai/subagent/resume" => crate::extensions::subagent_resume::handle(agent, args).await,
+        "x.ai/subagent/deliver" => crate::extensions::subagent_deliver::handle(agent, args).await,
         "x.ai/subagent/cancel" => {
             let req: CancelSubagentRequest = parse(args)?;
             tracing::info!(subagent_id = %req.subagent_id, "Cancelling subagent via ext method");
