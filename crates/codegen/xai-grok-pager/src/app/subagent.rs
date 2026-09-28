@@ -711,22 +711,6 @@ fn is_resumed_child(info: &SubagentInfo) -> bool {
 }
 
 
-/// Reset a child view to the empty baseline: detach every replay-rebuilt field and drop the media caches.
-///
-/// Returns the detached state so a rebuild that emitted nothing can restore it losslessly (eviction drops it instead).
-#[must_use = "dropping the detached state destroys the only in-memory copy; eviction must drop it explicitly"]
-fn detach_child_view_content(
-    parent: &mut crate::app::agent_view::AgentView,
-    child_sid: &str,
-) -> Option<crate::app::agent_view::ReplayRebuiltState> {
-    let child_view = parent.subagent_views.get_mut(child_sid)?;
-    let detached = child_view.take_replay_rebuilt_state();
-    // Drop the byte cache and failed-load markers; keep inline_media_ids so transmitted placements stay valid and re-place from disk
-    child_view.inline_media_cache = Default::default();
-    child_view.inline_media_load_failed = Default::default();
-    Some(detached)
-}
-
 /// Whether [`evict_on_leave`] removed the child view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
