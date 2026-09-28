@@ -14,7 +14,7 @@ pub mod pending_interaction;
 pub mod prompt_queue;
 pub(crate) mod resume_status;
 mod remove_items;
-pub use self::remove_items::{ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest};
+pub use self::remove_items::{ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest, ToolCallId};
 pub mod two_pass;
 pub mod user_echo;
 pub mod visibility;

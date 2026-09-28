@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use crate::session::ContextItemRef;
-use crate::session::storage::{RawLinePeek, RawParamsPeek, RawUpdatePeek, SessionUpdate, XAI_SESSION_UPDATE_METHOD};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConversationRemoval {
@@ -8,57 +10,13 @@ pub(crate) enum ConversationRemoval {
     WouldOrphan,
 }
 
-pub(crate) fn update_matches_removed_item(item: &crate::session::storage::SessionUpdate, refs: &[ContextItemRef]) -> bool {
-    match item {
-        SessionUpdate::Acp(notification) => match &notification.update {
-            agent_client_protocol::SessionUpdate::UserMessageChunk(chunk) => {
-                let prompt_index = chunk.meta.as_ref().and_then(|meta| meta.get("promptIndex")).and_then(serde_json::Value::as_u64).and_then(|value| usize::try_from(value).ok());
-                refs.iter().any(|reference| matches!(reference, ContextItemRef::Turn { prompt_index: removed } if Some(*removed) == prompt_index))
-            }
-            agent_client_protocol::SessionUpdate::ToolCall(call) => refs.iter().any(|reference| matches!(reference, ContextItemRef::ToolExchange { tool_call_id } if tool_call_id.as_str() == call.tool_call_id.0.as_ref())),
-            agent_client_protocol::SessionUpdate::ToolCallUpdate(call) => refs.iter().any(|reference| matches!(reference, ContextItemRef::ToolExchange { tool_call_id } if tool_call_id.as_str() == call.tool_call_id.0.as_ref())),
-            _ => false,
-        },
-        SessionUpdate::Xai(notification) => match &notification.update {
-            crate::extensions::notification::SessionUpdate::ContextItemsRemoved { items, .. } => items.iter().any(|removed| refs.contains(removed)),
-            _ => false,
-        },
-    }
-}
-
-pub(crate) fn raw_line_matches_removed_item(line: &str, refs: &[ContextItemRef]) -> bool {
-    let Ok(envelope) = serde_json::from_str::<RawLinePeek<'_>>(line) else { return false };
-    let (Some(method), Some(params)) = (envelope.method, envelope.params) else { return false };
-    let Ok(params) = serde_json::from_str::<RawParamsPeek<'_>>(params.get()) else { return false };
-    let Some(update) = params.update else { return false };
-    if method == XAI_SESSION_UPDATE_METHOD {
-        return update.session_update == *crate::session::wire_tags::CONTEXT_ITEMS_REMOVED
-            && update.items.as_ref().is_some_and(|items| items.iter().any(|removed| refs.contains(removed)));
-    }
-    raw_update_matches_removed_item(&update, refs)
-}
-
-fn raw_update_matches_removed_item(update: &RawUpdatePeek<'_>, refs: &[ContextItemRef]) -> bool {
-    match update.session_update {
-        "user_message_chunk" => {
-            let prompt_index = update.meta.as_ref().and_then(|meta| meta.prompt_index).and_then(|value| usize::try_from(value).ok());
-            refs.iter().any(|reference| matches!(reference, ContextItemRef::Turn { prompt_index: removed } if Some(*removed) == prompt_index))
-        }
-        "tool_call" | "tool_call_update" => {
-            let call_id = update.tool_call_id;
-            refs.iter().any(|reference| matches!(reference, ContextItemRef::ToolExchange { tool_call_id: removed } if Some(removed.as_str()) == call_id))
-        }
-        _ => false,
-    }
-}
-
 pub(crate) fn remove_from_conversation(
     items: &mut Vec<crate::sampling::ConversationItem>,
     refs: &[ContextItemRef],
 ) -> ConversationRemoval {
     use crate::sampling::ConversationItem;
     let original = items.len();
-    let mut tool_ids = std::collections::HashSet::new();
+    let mut tool_ids: HashSet<Arc<str>> = HashSet::new();
     let mut found = false;
     let mut invalid_pair = false;
     let mut ranges = Vec::new();
@@ -73,13 +31,13 @@ pub(crate) fn remove_from_conversation(
                 }).unwrap_or(items.len());
                 for item in items.iter().take(end).skip(start) {
                     if let ConversationItem::Assistant(assistant) = item {
-                        tool_ids.extend(assistant.tool_calls.iter().map(|call| call.id.as_ref()));
+                        tool_ids.extend(assistant.tool_calls.iter().map(|call| call.id.clone()));
                     }
                 }
                 ranges.push(start..end);
             }
             ContextItemRef::ToolExchange { tool_call_id } => {
-                let calls = items.iter().flat_map(|item| match item {
+                let calls = items.iter().map(|item| match item {
                     ConversationItem::Assistant(assistant) => assistant.tool_calls.iter().filter(|call| call.id.as_ref() == tool_call_id.as_str()).count(),
                     _ => 0,
                 }).sum::<usize>();
@@ -87,7 +45,7 @@ pub(crate) fn remove_from_conversation(
                 match (calls, results) {
                     (0, 0) => {}
                     (1, 1) => {
-                        tool_ids.insert(tool_call_id.as_str());
+                        tool_ids.insert(Arc::from(tool_call_id.as_str()));
                         found = true;
                     }
                     _ => invalid_pair = true,
@@ -98,6 +56,7 @@ pub(crate) fn remove_from_conversation(
     if invalid_pair { return ConversationRemoval::WouldOrphan; }
     if !found { return ConversationRemoval::NotFound; }
     ranges.sort_by_key(|range| range.start);
+    ranges.dedup();
     for range in ranges.into_iter().rev() { items.drain(range); }
     items.retain_mut(|item| match item {
         ConversationItem::ToolResult(result) => !tool_ids.contains(result.tool_call_id.as_str()),

@@ -35,6 +35,13 @@ pub(crate) static AVAILABLE_COMMANDS_UPDATE: LazyLock<String> = LazyLock::new(||
     ))
 });
 
+pub(crate) static TOOL_CALL: LazyLock<String> = LazyLock::new(|| {
+    tagged_discriminant(&acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+        acp::ToolCallId::new("t"),
+        "",
+    )))
+});
+
 pub(crate) static TOOL_CALL_UPDATE: LazyLock<String> = LazyLock::new(|| {
     tagged_discriminant(&acp::SessionUpdate::ToolCallUpdate(
         acp::ToolCallUpdate::new(acp::ToolCallId::new("t"), acp::ToolCallUpdateFields::new()),
@@ -120,6 +127,7 @@ mod tests {
             AVAILABLE_COMMANDS_UPDATE.as_str(),
             "available_commands_update"
         );
+        assert_eq!(TOOL_CALL.as_str(), "tool_call");
         assert_eq!(TOOL_CALL_UPDATE.as_str(), "tool_call_update");
         assert_eq!(TOOL_CALL_STATUS_IN_PROGRESS.as_str(), "in_progress");
         assert_eq!(REWIND_MARKER.as_str(), "rewind_marker");
