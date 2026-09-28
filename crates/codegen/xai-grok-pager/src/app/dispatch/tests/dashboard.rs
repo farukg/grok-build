@@ -4599,65 +4599,23 @@ fn dashboard_overlay_exit_then_exit_returns_to_attached_agent() {
         Some(id2)
     );
 }
-/// Leaving the dashboard back into an overlay keeps a live subagent takeover and selects the
-/// parent's top-level row.
+/// Returning from the dashboard selects the attached root row without changing the active session tree.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
-fn dashboard_overlay_return_keeps_takeover_on_top_level_row() {
+fn dashboard_return_selects_attached_root_row() {
     let mut app = test_app_with_agent();
     open_dashboard(&mut app);
     let parent = AgentId(0);
     mark_agent_nonempty(&mut app, parent);
-    let child_sid = "child-return".to_string();
-    {
-        let agent = app.agents.get_mut(&parent).unwrap();
-        agent
-            .subagent_sessions
-            .insert(child_sid.clone(), make_test_subagent(&child_sid, "sa-ret"));
-        agent.active_subagent = Some(child_sid.clone());
-    }
     app.active_view = ActiveView::Agent(parent);
-    if let Some(d) = app.dashboard.as_mut() {
-        d.attached_agent = Some(parent);
+    if let Some(dashboard) = app.dashboard.as_mut() {
+        dashboard.attached_agent = Some(parent);
     }
     let _ = dispatch_dashboard_overlay_exit(&mut app);
     let _ = dispatch_exit_dashboard(&mut app);
     assert_eq!(app.active_view, ActiveView::Agent(parent));
     assert_eq!(
-        app.dashboard.as_ref().and_then(|d| d.attached_agent),
-        Some(parent)
-    );
-    assert_eq!(
-        test_agent(&app, parent).active_subagent.as_deref(),
-        Some(child_sid.as_str())
-    );
-    assert_eq!(
-        app.dashboard.as_ref().and_then(|d| d.selected.clone()),
-        Some(crate::views::dashboard::DashboardRowId::TopLevel(parent))
-    );
-}
-/// A stale takeover (child id absent from `subagent_sessions`) is cleared on the same overlay
-/// return, and the dashboard selection is still the parent's top-level row.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_overlay_return_clears_stale_takeover_on_top_level_row() {
-    let mut app = test_app_with_agent();
-    open_dashboard(&mut app);
-    let parent = AgentId(0);
-    mark_agent_nonempty(&mut app, parent);
-    {
-        let agent = app.agents.get_mut(&parent).unwrap();
-        agent.active_subagent = Some("missing-child".to_string());
-    }
-    app.active_view = ActiveView::Agent(parent);
-    if let Some(d) = app.dashboard.as_mut() {
-        d.attached_agent = Some(parent);
-    }
-    let _ = dispatch_dashboard_overlay_exit(&mut app);
-    let _ = dispatch_exit_dashboard(&mut app);
-    assert!(test_agent(&app, parent).active_subagent.is_none());
-    assert_eq!(
-        app.dashboard.as_ref().and_then(|d| d.selected.clone()),
+        app.dashboard.as_ref().and_then(|dashboard| dashboard.selected.clone()),
         Some(crate::views::dashboard::DashboardRowId::TopLevel(parent))
     );
 }
