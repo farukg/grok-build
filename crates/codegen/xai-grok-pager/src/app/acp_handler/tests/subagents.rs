@@ -797,14 +797,8 @@
             match case {
                 Case::Live => {}
                 Case::ReloadingTranscript => {
-                    app.agents
-                        .get_mut(&AgentId(0))
-                        .unwrap()
-                        .subagent_views
-                        .get_mut(child_sid)
-                        .unwrap()
-                        .session
-                        .loading_replay = true;
+                    let child_id = app.agents.children_of(AgentId(0))[0];
+                    app.agents.get_mut(&child_id).unwrap().session.loading_replay = true;
                 }
                 Case::Unregistered => {
                     app.agents
@@ -841,7 +835,7 @@
                     assert!(!changed, "a delta must be ignored while the child reloads its transcript");
                     assert!(agent.subagent_sessions.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).attempt.activity_label.is_none());
                     assert_eq!(
-                        agent.subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).session.tracker.activity(),
+                        test_subagent(&app, child_sid).session.tracker.activity(),
                         None,
                         "the reloading tracker must not pick up the delta"
                     );
@@ -879,14 +873,8 @@
             let changed = match event {
                 LateEvent::AcpChunk => {
                     // Simulate the race: the child view still looks live after the finish
-                    app.agents
-                        .get_mut(&AgentId(0))
-                        .unwrap()
-                        .subagent_views
-                        .get_mut(child_sid)
-                        .unwrap()
-                        .session
-                        .state = AgentState::TurnRunning;
+                    let child_id = app.agents.children_of(AgentId(0))[0];
+                    app.agents.get_mut(&child_id).unwrap().session.state = AgentState::TurnRunning;
                     handle(
                         make_agent_chunk_with_event(child_sid, "late text", "p-child", None),
                         &mut app,
@@ -946,7 +934,7 @@
                 agent.subagent_sessions.is_empty(),
                 "unexpected replay spawn must not register"
             );
-            assert!(agent.subagent_views.is_empty());
+            assert!(app.agents.children_of(AgentId(0)).is_empty());
         });
     }
 
@@ -1173,7 +1161,7 @@
             );
             assert!(
                 matches!(
-                    agent.subagent_views.get(child_sid).unwrap().session.state,
+                    test_subagent(&app, child_sid).session.state,
                     AgentState::Idle
                 ),
                 "finished subagent must be Idle after resume, not TurnRunning"
@@ -1186,7 +1174,7 @@
                 1,
                 "opening a finished subagent after resume must show its transcript"
             );
-            let child = agent.subagent_views.get(child_sid).unwrap();
+            let child = test_subagent(&app, child_sid);
             assert!(
                 (0..child.scrollback.len()).any(|i| child
                     .scrollback
