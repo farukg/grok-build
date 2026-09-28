@@ -2113,6 +2113,8 @@ mod tests {
             subagent_id: subagent_id.into(),
             description: "loop: watch ci".into(),
             subagent_type: "general-purpose".into(),
+            state: SubagentState::Running,
+            legacy_status: "running".to_owned(),
             status,
             started_at_epoch_ms: 0,
             duration_ms: 100,
@@ -2366,6 +2368,8 @@ mod tests {
                 subagent_id: first_id.clone(),
                 description: "loop: watch ci".into(),
                 subagent_type: "general-purpose".into(),
+                state: SubagentState::Running,
+                legacy_status: "running".to_owned(),
                 status: SubagentSnapshotStatus::Running {
                     turn_count: 1,
                     tool_call_count: 1,
@@ -2391,6 +2395,8 @@ mod tests {
                 subagent_id: first_id.clone(),
                 description: "loop: watch ci".into(),
                 subagent_type: "general-purpose".into(),
+                state: SubagentState::Completed,
+                legacy_status: "completed".to_owned(),
                 status: SubagentSnapshotStatus::Completed {
                     output: "old task output".into(),
                     tool_calls: 1,

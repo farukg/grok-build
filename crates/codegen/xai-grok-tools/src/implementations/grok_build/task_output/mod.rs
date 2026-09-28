@@ -2147,6 +2147,8 @@ mod tests {
             subagent_id: "sub-init".to_string(),
             description: "Check PR status".to_string(),
             subagent_type: "general-purpose".to_string(),
+            state: xai_tool_types::SubagentState::Running,
+            legacy_status: "initializing".to_owned(),
             persona: None,
             status: SubagentSnapshotStatus::Initializing,
             started_at_epoch_ms: 1_700_000_000_000,
@@ -2185,6 +2187,8 @@ mod tests {
             subagent_id: "sub-abc".to_string(),
             description: "Find all API endpoints".to_string(),
             subagent_type: "explore".to_string(),
+            state: xai_tool_types::SubagentState::Running,
+            legacy_status: "running".to_owned(),
             persona: None,
             status: SubagentSnapshotStatus::Running {
                 turn_count: 3,
@@ -2254,6 +2258,8 @@ mod tests {
             subagent_id: "sub-stable".to_string(),
             description: "stable body".to_string(),
             subagent_type: "explore".to_string(),
+            state: xai_tool_types::SubagentState::Running,
+            legacy_status: "running".to_owned(),
             persona: None,
             status: SubagentSnapshotStatus::Running {
                 turn_count: 1,
@@ -2312,6 +2318,8 @@ mod tests {
             subagent_id: "sub-new".to_string(),
             description: "just started".to_string(),
             subagent_type: "general-purpose".to_string(),
+            state: xai_tool_types::SubagentState::Running,
+            legacy_status: "running".to_owned(),
             persona: None,
             status: SubagentSnapshotStatus::Running {
                 turn_count: 0,
@@ -2461,6 +2469,8 @@ mod tests {
                     subagent_id: "sub-done".to_string(),
                     description: "find files".to_string(),
                     subagent_type: "explore".to_string(),
+                    state: xai_tool_types::SubagentState::Completed,
+                    legacy_status: "completed".to_owned(),
                     status: SubagentSnapshotStatus::Completed {
                         output: "Found 3 files".to_string(),
                         tool_calls: 5,
@@ -2509,6 +2519,8 @@ mod tests {
                     subagent_id: "sub-run".to_string(),
                     description: "exploring".to_string(),
                     subagent_type: "general-purpose".to_string(),
+                    state: xai_tool_types::SubagentState::Running,
+                    legacy_status: "running".to_owned(),
                     status: SubagentSnapshotStatus::Running {
                         turn_count: 2,
                         tool_call_count: 5,
@@ -2584,6 +2596,8 @@ mod tests {
             subagent_id: id.to_string(),
             description: "find files".to_string(),
             subagent_type: "explore".to_string(),
+            state: xai_tool_types::SubagentState::Completed,
+            legacy_status: "completed".to_owned(),
             status: SubagentSnapshotStatus::Completed {
                 output: "Found 3 files".to_string(),
                 tool_calls: 5,
@@ -2650,6 +2664,8 @@ mod tests {
                     subagent_id: "sub-run".to_string(),
                     description: "exploring".to_string(),
                     subagent_type: "general-purpose".to_string(),
+                    state: xai_tool_types::SubagentState::Running,
+                    legacy_status: "running".to_owned(),
                     status: SubagentSnapshotStatus::Running {
                         turn_count: 2,
                         tool_call_count: 5,
@@ -2724,8 +2740,11 @@ mod tests {
                     subagent_id: "sub-cancel".to_string(),
                     description: "cancelled".to_string(),
                     subagent_type: "explore".to_string(),
+                    state: xai_tool_types::SubagentState::Interrupted { cause: xai_tool_types::InterruptionCause::ExplicitStop { actor: xai_tool_types::SubagentActor::Human } },
+                    legacy_status: "cancelled".to_owned(),
                     status: SubagentSnapshotStatus::Cancelled {
                         reason: Some("stop".to_string()),
+                        cause: Some(xai_tool_types::InterruptionCause::ExplicitStop { actor: xai_tool_types::SubagentActor::Human }),
                     },
                     started_at_epoch_ms: 1_700_000_000_000,
                     duration_ms: 10,
@@ -2739,6 +2758,8 @@ mod tests {
                     subagent_id: "sub-fail".to_string(),
                     description: "failed".to_string(),
                     subagent_type: "explore".to_string(),
+                    state: xai_tool_types::SubagentState::Failed { message: "boom".to_owned() },
+                    legacy_status: "failed".into(),
                     status: SubagentSnapshotStatus::Failed {
                         error: "boom".to_string(),
                     },

@@ -236,6 +236,8 @@ async fn channel_backend_query_found() {
                 subagent_id: "sub-1".to_string(),
                 description: "find bugs".to_string(),
                 subagent_type: "explore".to_string(),
+                state: SubagentState::Completed,
+                legacy_status: "completed".to_owned(),
                 status: super::super::types::SubagentSnapshotStatus::Completed {
                     output: "result".to_string(),
                     tool_calls: 2,

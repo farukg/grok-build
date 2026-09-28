@@ -854,6 +854,8 @@ mod live_orphan_hook_tests {
                 subagent_id: id.to_string(),
                 description: "task".to_string(),
                 subagent_type: "explore".to_string(),
+                state: xai_tool_types::SubagentState::Running,
+                legacy_status: "running".to_owned(),
                 status: SubagentSnapshotStatus::Running {
                     turn_count: 1,
                     tool_call_count: 0,

@@ -1607,6 +1607,8 @@ mod tests {
                 subagent_id: "sub-1".into(),
                 description: "test task".into(),
                 subagent_type: "general-purpose".into(),
+                state: super::SubagentState::Completed,
+                legacy_status: "completed".to_owned(),
                 status: super::SubagentSnapshotStatus::Completed {
                     output: String::new(),
                     tool_calls: 7,
@@ -1664,6 +1666,8 @@ mod tests {
                 subagent_id: "a".into(),
                 description: "task a".into(),
                 subagent_type: "general-purpose".into(),
+                state: super::SubagentState::Completed,
+                legacy_status: "completed".to_owned(),
                 status: super::SubagentSnapshotStatus::Completed {
                     output: "done".into(),
                     tool_calls: 3,
