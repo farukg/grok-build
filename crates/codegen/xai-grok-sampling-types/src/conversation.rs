@@ -257,7 +257,7 @@ pub enum PriorTurnInterrupt {
 }
 
 /// User message with text and optional images
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserItem {
     pub content: Vec<ContentPart>,
     #[serde(default, skip_serializing_if = "Sections::is_whole")]

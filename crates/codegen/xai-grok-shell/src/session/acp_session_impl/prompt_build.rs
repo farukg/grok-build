@@ -807,7 +807,7 @@ impl SessionActor {
     pub(super) async fn add_followup_message_as_user_turn(&self, message: &str) {
         self.inject_synthetic_user_message(
             message,
-            ConversationItem::system_reminder(message.to_string()),
+            ConversationItem::user(message.to_string()),
             true,
             &[],
         )
