@@ -70,7 +70,10 @@ Path shorthands used in the docs (all under `crates/codegen/`): `P/` = `xai-grok
   and a 1–4 line body saying what and why.
 - **No AI attribution anywhere**: no `Co-Authored-By`, no "Generated with …" line, no `Review:`
   trailer, in commits or anywhere else.
-- Never rewrite published history and never force-push. Never delete branches or other agents'
+- Before you start a stream, rebase its branch onto the current `main` so it builds on the latest
+  state.
+- Never rewrite `main`'s history and never force-push `main`. Every other branch may be
+  force-pushed (use `--force-with-lease`). Never delete branches or other agents'
   work; commit work in progress before you switch context.
 - Push only to this fork (`farukg/grok-build`). **Never push to, or open a pull request against,
   `xai-org/grok-build`.** Check the target repository of every push.
