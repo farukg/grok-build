@@ -1167,6 +1167,9 @@ impl AgentView {
             }
             return;
         }
+        if self.scroll_timeline_panel(lines, col, row) {
+            return;
+        }
         if let Some(ref mut btw) = self.btw_state
             && matches!(btw, crate::views::btw_overlay::BtwOverlayState::Done { .. })
             && self.last_btw_area.area() > 0
@@ -1244,9 +1247,6 @@ impl AgentView {
             {
                 self.apply_question_scroll(lines);
             }
-            return;
-        }
-        if self.scroll_timeline_panel(lines, col, row) {
             return;
         }
         let target = self
