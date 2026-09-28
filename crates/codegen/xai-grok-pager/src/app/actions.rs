@@ -30,10 +30,19 @@ pub enum SwitchModelError {
 /// Synchronous, side-effect-free user intent.
 /// Produced by [`super::input`] from key/mouse events.
 /// Consumed by [`super::dispatch::dispatch`] to mutate state and return effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Direction { Prev, Next }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TreeStep { Parent, LatestChild }
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(strum::AsRefStr))]
 #[allow(clippy::large_enum_variant)]
 pub enum Action {
+    CycleSessions(Direction),
+    NavigateTree(TreeStep),
+    OpenSession(String),
     /// Quit the application.
     Quit,
     /// Restart the binary to pick up a downloaded update.
@@ -844,10 +853,9 @@ pub enum Action {
     /// Returns to the dashboard with the cursor on the previously attached row.
     /// Bound to Esc, Ctrl+\\, and `[Dashboard]` click inside the overlay.
     DashboardOverlayExit,
-    /// Cycle the dashboard's session-overlay to the previous top-level agent in the row list (`‹` click or Ctrl+\[).
-    DashboardOverlayPrev,
-    /// Cycle the dashboard's session-overlay to the next top-level agent in the row list (`›` click or Ctrl+\]).
-    DashboardOverlayNext,
+    CycleSessions(Direction),
+    NavigateTree(TreeStep),
+    OpenSession(String),
     /// Confirmed stop from inside the dashboard's session-overlay: close the attached session and return to the dashboard.
     /// State machine documented at `dispatch_dashboard_overlay_stop`.
     DashboardOverlayStop,

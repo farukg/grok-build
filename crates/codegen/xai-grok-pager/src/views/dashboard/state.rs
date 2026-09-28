@@ -4172,8 +4172,10 @@ fn dashboard_action_for_id(
         | ActionId::VoiceToggle
         // Overlay actions are intercepted at the AppView level before they reach the dashboard's own input loop; they can never arrive here
         | ActionId::DashboardOverlayExit
-        | ActionId::DashboardOverlayPrev
-        | ActionId::DashboardOverlayNext
+        | ActionId::SessionPrev
+        | ActionId::SessionNext
+        | ActionId::SessionParent
+        | ActionId::SessionLatestChild
         | ActionId::DashboardOverlayStop => None,
     }
 }

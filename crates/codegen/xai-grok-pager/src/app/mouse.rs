@@ -234,10 +234,10 @@ impl AgentView {
                     });
                 }
                 if self.hit_overlay_prev.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::DashboardOverlayPrev);
+                    return InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Prev));
                 }
                 if self.hit_overlay_next.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::DashboardOverlayNext);
+                    return InputOutcome::Action(Action::CycleSessions(crate::app::actions::Direction::Next));
                 }
                 if self.hit_cwd.contains(mouse.column, mouse.row) {
                     let path = self.session.cwd.display().to_string();

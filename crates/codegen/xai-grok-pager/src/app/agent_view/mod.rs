@@ -1981,8 +1981,10 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         | ActionId::DashboardShortcutsHelp
         | ActionId::DashboardExit
         | ActionId::DashboardOverlayExit
-        | ActionId::DashboardOverlayPrev
-        | ActionId::DashboardOverlayNext
+        | ActionId::SessionPrev
+        | ActionId::SessionNext
+        | ActionId::SessionParent
+        | ActionId::SessionLatestChild
         | ActionId::DashboardOverlayStop
         | ActionId::DashboardToggleAutoApprove
         | ActionId::DashboardOpenLocationPicker

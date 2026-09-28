@@ -14,8 +14,8 @@ use super::dashboard::{
     dispatch_dashboard_confirm_worktree, dispatch_dashboard_create_new_agent_with_detail,
     dispatch_dashboard_delete, dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
     dispatch_dashboard_open_location_picker, dispatch_dashboard_open_session_picker,
-    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_cycle,
-    dispatch_dashboard_overlay_exit, dispatch_dashboard_overlay_stop,
+    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_session_cycle,
+    dispatch_dashboard_overlay_exit, dispatch_dashboard_overlay_stop, dispatch_navigate_tree,
     dispatch_dashboard_peek_cycle_mode, dispatch_dashboard_peek_reply,
     dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
     dispatch_dashboard_pick_session, dispatch_dashboard_question_answer,
@@ -117,7 +117,7 @@ use super::turn::{
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
 use crate::app::actions::{Action, Effect};
-use crate::app::agent_view::{ActivePane, Direction};
+use crate::app::agent_view::ActivePane;
 use crate::app::app_view::{ActiveView, AppView, AuthState};
 use crate::app::consent::ConsentState;
 use crate::scrollback::types::DisplayMode;
@@ -1512,8 +1512,8 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::DashboardReorderUp => dispatch_dashboard_reorder(app, true),
         Action::DashboardReorderDown => dispatch_dashboard_reorder(app, false),
         Action::DashboardOverlayExit => dispatch_dashboard_overlay_exit(app),
-        Action::DashboardOverlayPrev => dispatch_dashboard_overlay_cycle(app, Direction::Prev),
-        Action::DashboardOverlayNext => dispatch_dashboard_overlay_cycle(app, Direction::Next),
+        Action::CycleSessions(direction) => dispatch_dashboard_session_cycle(app, direction),
+        Action::NavigateTree(step) => dispatch_navigate_tree(app, step),
         Action::DashboardOverlayStop => dispatch_dashboard_overlay_stop(app),
         Action::DashboardToggleAutoApprove => dispatch_dashboard_toggle_auto_approve(app),
         Action::DashboardToggleWorktree => dispatch_dashboard_toggle_worktree(app),

@@ -1,7 +1,6 @@
 //! Active-agent lookup and view-context helpers shared across dispatch modules.
 
 use super::dashboard_telemetry::log_dashboard_opened;
-use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::app::app_view::{ActiveView, AppView, WelcomeAnnouncementState};
 use crate::scrollback::state::ScrollbackState;
@@ -11,9 +10,7 @@ use agent_client_protocol as acp;
 /// Every path in this module tree that says exactly this uses it; the action-specific variants ("No active session to delete") stay separate.
 pub(super) const NO_SESSION_NOTICE: &str = "No active session";
 
-/// The active agent's root session id, if any.
-/// Used to scope server-queue edit Effects to the foregrounded session.
-/// Root-only by construction, even under a subagent takeover: the read-only child queue pane keeps child actions out.
+/// The active session id, if any.
 pub(super) fn active_agent_session_id(app: &AppView) -> Option<acp::SessionId> {
     let ActiveView::Agent(id) = app.active_view else {
         return None;
@@ -50,59 +47,23 @@ pub(super) fn open_url_or_show(app: &mut AppView, url: &str) {
     }
 }
 
-/// Get a shared reference to the visible agent view (if any).
-/// The unused home session on Welcome is not this (see `home_session_agent`); the first interaction reveals it and then acts on it as the active agent.
-/// The dashboard has its own dispatch box and must not inherit that session.
+/// Get the active agent view (if any).
 pub(super) fn get_active_agent(app: &AppView) -> Option<&AgentView> {
     let ActiveView::Agent(id) = app.active_view else {
         return None;
     };
-    let agent = app.agents.get(&id)?;
-    if let Some(ref child_sid) = agent.active_subagent
-        && let Some(child) = agent.subagent_views.get(child_sid)
-    {
-        return Some(child);
-    }
-    Some(agent)
+    app.agents.get(&id)
 }
 
-/// Get a mutable reference to the visible agent view (if any).
+/// Get a mutable reference to the active agent view (if any).
 pub(super) fn get_active_agent_mut(app: &mut AppView) -> Option<&mut AgentView> {
-    visible_agent_mut(&mut app.agents, app.active_view)
-}
-
-/// [`get_active_agent_mut`] over the split-out fields, for a caller that must hold another `AppView` field alongside the view.
-pub(super) fn visible_agent_mut(
-    agents: &mut indexmap::IndexMap<AgentId, AgentView>,
-    active_view: ActiveView,
-) -> Option<&mut AgentView> {
-    let ActiveView::Agent(id) = active_view else {
-        return None;
-    };
-    let agent = agents.get_mut(&id)?;
-    if let Some(child_sid) = agent.active_subagent.clone()
-        && agent.subagent_views.contains_key(&child_sid)
-    {
-        return agent.subagent_views.get_mut(&child_sid).map(|b| &mut **b);
-    }
-    Some(agent)
-}
-
-/// Child view when a fullscreen subagent overlay is open.
-/// Unlike [`get_active_agent_mut`], never falls back to the parent.
-/// Overlay cancel uses this so the overlay-open check and cancel target cannot disagree.
-pub(super) fn active_subagent_view_mut(app: &mut AppView) -> Option<&mut AgentView> {
     let ActiveView::Agent(id) = app.active_view else {
         return None;
     };
-    let agent = app.agents.get_mut(&id)?;
-    let child_sid = agent.active_subagent.clone()?;
-    agent.subagent_views.get_mut(&child_sid).map(|b| &mut **b)
+    app.agents.get_mut(&id)
 }
 
 /// Apply a closure to the active agent's scrollback (if any).
-///
-/// Resolves through `active_subagent`; see [`with_active_agent`].
 pub(super) fn with_scrollback(app: &mut AppView, f: impl FnOnce(&mut ScrollbackState)) {
     with_active_agent(app, |agent| f(&mut agent.scrollback));
 }
@@ -181,6 +142,8 @@ pub(crate) enum SwitchCause {
     Load,
     /// Triggered by the agent picker (dashboard attach / switch).
     Picker,
+    /// Triggered by session navigation or opening a child session.
+    Navigate,
     // There is no `Dashboard` variant: the dashboard attach path sets `DashboardState::attached_agent` directly and never reaches `switch_to_agent`
     // Any future caller can re-add it
 }
@@ -248,7 +211,7 @@ pub(crate) fn switch_to_agent(app: &mut AppView, target: AgentId, cause: SwitchC
     // Asserting the gate here makes "no session is created while `TrustState::Pending`" a property of the flow rather than of each call site
     // This assert therefore never fires on the reachable gated paths
     debug_assert!(
-        matches!(cause, SwitchCause::Picker) || app.session_startup_allowed(),
+        matches!(cause, SwitchCause::Picker | SwitchCause::Navigate) || app.session_startup_allowed(),
         "session creation via {cause:?} requires the startup gate open (auth + folder trust)"
     );
     if !app.agents.contains_key(&target) {

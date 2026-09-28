@@ -1,6 +1,6 @@
 //! Turn cancellation, task and subagent kills, and overdue turn reconciliation.
 
-use super::ctx::{active_subagent_view_mut, get_active_agent_mut};
+use super::ctx::get_active_agent_mut;
 use super::permissions::drain_permission_queue;
 use super::queue::{apply_turn_start_shim, maybe_drain_queue, note_peek_page_flip};
 use crate::app::acp_handler::task_view_by_session_id;
@@ -55,50 +55,9 @@ pub(super) fn apply_cancel_subagents_preference_global(app: &mut AppView, stop: 
 }
 
 pub(super) fn dispatch_cancel_turn(app: &mut AppView) -> Vec<Effect> {
-    let ActiveView::Agent(id) = app.active_view else {
+    let ActiveView::Agent(_) = app.active_view else {
         return vec![];
     };
-    // Overlay [stop] is the child's turn. Parent may be Idle (background Task) and the ask panel would render under the overlay, unreachable.
-    if let Some(agent) = active_subagent_view_mut(app) {
-        // No wire target: leave local state alone (do not flip to Cancelling).
-        let Some(session_id) = agent.session.session_id.clone() else {
-            return vec![];
-        };
-        let retrying = agent.any_cancel_pending();
-        crate::unified_log::info(
-            if retrying {
-                "cancel.retry"
-            } else {
-                "cancel.overlay"
-            },
-            Some(&session_id.0),
-            Some(serde_json::json!({
-                "current_prompt_id": agent.session.current_prompt_id,
-            })),
-        );
-        if retrying {
-            agent.clear_send_now_expectation();
-            return vec![emit_cancel_turn(
-                agent, session_id, /* cancel_subagents */ true,
-                /* rewind_prompt_id */ None,
-            )];
-        }
-        return cancel_agent_turn(
-            agent,
-            /* cancel_rewind_enabled */ false,
-            /* cancel_subagents */ true,
-            CancelOrigin::UserGesture,
-        );
-    }
-    // Focused running subagent with no child view (no overlay to cancel through): kill is the same action as the row's kill button
-    let focused_subagent_kill = app.agents.get(&id).and_then(|agent| {
-        let child_sid = agent.active_subagent.as_ref()?;
-        let info = agent.subagent_sessions.get(child_sid.as_str())?;
-        info.is_running().then(|| info.subagent_id.to_string())
-    });
-    if let Some(subagent_id) = focused_subagent_kill {
-        return dispatch_kill_subagent(app, subagent_id);
-    }
     let ui_pref = effective_cancel_subagents_preference(None, &app.current_ui);
 
     // Scoped agent borrow: extract decisions, then release before `do_cancel_turn`.
