@@ -67,8 +67,14 @@
         let child_sid = "child-sess-1";
         {
             let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            parent
-                .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+            let mut child = make_agent(Some(child_sid));
+            child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
+                parent: AgentId(0),
+                parent_session_id: agent_client_protocol::SessionId::new("sess-A"),
+                subagent_id: child_sid.to_string(),
+                started_at: std::time::Instant::now(),
+            });
+            app.agents.insert(AgentId(1), child);
         }
 
         let notif = make_git_head_changed_notif(
@@ -81,7 +87,7 @@
 
         assert!(changed);
         let parent = app.agents.get(&AgentId(0)).unwrap();
-        let child_view = parent.subagent_views.get(child_sid).unwrap();
+        let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(
             child_view.current_branch.as_deref(),
             Some("worktree-branch")
@@ -110,8 +116,14 @@
         let child_sid = "child-sess-2";
         {
             let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            parent
-                .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+            let mut child = make_agent(Some(child_sid));
+            child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
+                parent: AgentId(0),
+                parent_session_id: agent_client_protocol::SessionId::new("sess-A"),
+                subagent_id: child_sid.to_string(),
+                started_at: std::time::Instant::now(),
+            });
+            app.agents.insert(AgentId(1), child);
             parent.current_branch = Some("parent-branch".into());
         }
 
@@ -124,7 +136,7 @@
             Some("parent-branch"),
             "parent's branch must not change when child is updated"
         );
-        let child_view = parent.subagent_views.get(child_sid).unwrap();
+        let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(child_view.current_branch.as_deref(), Some("child-branch"));
     }
 
