@@ -1348,13 +1348,10 @@
             }
 
             fn push_child_block(&mut self, block: RenderBlock) {
-                let sid = self.child_sid;
-                self.agent_mut()
-                    .subagent_views
-                    .get_mut(sid)
-                    .unwrap()
-                    .scrollback
-                    .push_block(block);
+                let child_id = self.app.agents.children_of(AgentId(0)).into_iter().find(|id| {
+                    self.app.agents.get(id).is_some_and(|view| view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == self.child_sid))
+                }).unwrap();
+                self.app.agents.get_mut(&child_id).unwrap().scrollback.push_block(block);
             }
 
             fn tool_calls(&self) -> usize {
@@ -1374,7 +1371,7 @@
             }
 
             fn has_system_block(&self) -> bool {
-                let child = self.agent().subagent_views.get(self.child_sid).unwrap();
+                let child = test_subagent(&self.app, self.child_sid);
                 (0..child.scrollback.len()).any(|i| {
                     matches!(
                         child.scrollback.entry(i).map(|e| &e.block),
@@ -1384,7 +1381,7 @@
             }
 
             fn compaction_markers(&self) -> usize {
-                let child = self.agent().subagent_views.get(self.child_sid).unwrap();
+                let child = test_subagent(&self.app, self.child_sid);
                 (0..child.scrollback.len())
                     .filter(|i| {
                         matches!(
@@ -1458,7 +1455,7 @@
                         s.open();
                         s.close();
                         s.finish();
-                        let child = s.agent().subagent_views.get(child_sid).unwrap();
+                        let child = test_subagent(&s.app, child_sid);
                         assert_eq!(child.scrollback.len(), 0, "finish must evict the transcript");
                         assert!(matches!(child.session.state, AgentState::Idle));
                     }
@@ -1535,7 +1532,7 @@
                 let mut s = Scenario::spawn(child_sid, Some(updates));
 
                 assert!(
-                    s.agent().subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).scrollback.is_empty(),
+                    test_subagent(&s.app, child_sid).scrollback.is_empty(),
                     "spawn seeds nothing and reads nothing"
                 );
                 assert!(
@@ -1546,7 +1543,7 @@
                 if matches!(entry, Entry::Evicted) {
                     s.finish();
                     assert!(
-                        s.agent().subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).scrollback.is_empty(),
+                        test_subagent(&s.app, child_sid).scrollback.is_empty(),
                         "eviction resets to the empty baseline"
                     );
                     assert!(
@@ -1646,7 +1643,7 @@
             let mut s = Scenario { app, child_sid };
 
             assert!(
-                s.agent().subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).scrollback.is_empty(),
+                test_subagent(&s.app, child_sid).scrollback.is_empty(),
                 "a resumed spawn seeds nothing and reads nothing"
             );
 
@@ -1921,7 +1918,7 @@
                     "meta.json enrichment for {meta:?}"
                 );
                 assert!(
-                    agent.subagent_views.get(&child_sid).unwrap().scrollback.is_empty(),
+                    test_subagent(&app, &child_sid).scrollback.is_empty(),
                     "spawn leaves the child view empty for {meta:?}"
                 );
                 assert!(
@@ -2128,8 +2125,8 @@
             .get(child_sid)
             .expect("SubagentSpawned must register on inactive agent A");
         assert!(
-            agent_a.subagent_views.contains_key(child_sid),
-            "SubagentSpawned must create subagent_views on inactive agent A"
+            app.agents.children_of(AgentId(0)).iter().any(|id| app.agents.get(id).is_some_and(|view| view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == child_sid))),
+            "SubagentSpawned must create an independent child session view on inactive agent A"
         );
         assert_eq!(agent_a.scrollback.len(), 1);
         let entry_id = info
