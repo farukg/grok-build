@@ -64,9 +64,8 @@ pub(crate) use settings::ui::refresh_open_settings_modals;
 pub(crate) use status::commit_minimal_update_notice;
 pub(crate) use turn::{reconcile_overdue_cancels, reconcile_overdue_turn_ends};
 
-// Test-only consumers (cfg(test) mods elsewhere in the crate); a plain re-export trips -D unused-imports in the lib build
-#[cfg(test)]
 pub(crate) use ctx::{SwitchCause, switch_to_agent};
+// Test-only consumers (cfg(test) mods elsewhere in the crate); a plain re-export trips -D unused-imports in the lib build
 #[cfg(test)]
 pub(crate) use settings::ui::{ROLLBACK_NO_ARM_TOAST, build_pager_snapshot};
 #[cfg(test)]
