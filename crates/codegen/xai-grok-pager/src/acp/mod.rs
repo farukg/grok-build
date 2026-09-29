@@ -119,6 +119,8 @@ pub struct AcpConnection {
     pub session_recap_available: bool,
     /// Shell-side feedback trace-offer eligibility (see `feedbackTraceOffer`).
     pub feedback_trace_offer: bool,
+    /// Whether the shell accepts prompts addressed to child session ids (`_meta.childSessions`).
+    pub child_support: ShellChildSupport,
     /// `AuthManager` for pager-side authenticated channels (voice STT and TTS).
     /// In-process mode shares the agent's instance (single token cache); leader mode builds a dedicated one off the same local `auth.json`.
     /// Either way it resolves a fresh bearer per request via the refresh chain.
@@ -273,6 +275,7 @@ pub(in crate::acp) async fn initialize_connection(
         cancel_rewind_enabled: agent.cancel_rewind_enabled,
         session_recap_available: agent.session_recap_available,
         feedback_trace_offer: agent.feedback_trace_offer,
+        child_support: agent.child_support,
         auth_manager,
     })
 }
@@ -480,6 +483,7 @@ pub(crate) struct InitializedAgent {
     pub(crate) cancel_rewind_enabled: bool,
     pub(crate) session_recap_available: bool,
     pub(crate) feedback_trace_offer: bool,
+    pub(crate) child_support: ShellChildSupport,
 }
 /// Send InitializeRequest and parse the response.
 async fn initialize(tx: &AcpAgentTx, flags: &ConnectFlags) -> Result<InitializedAgent> {
@@ -520,6 +524,7 @@ async fn initialize(tx: &AcpAgentTx, flags: &ConnectFlags) -> Result<Initialized
         .unwrap_or(true);
     let session_recap_available = parse_session_recap_available(resp.meta.as_ref());
     let feedback_trace_offer = parse_feedback_trace_offer(resp.meta.as_ref());
+    let child_support = ShellChildSupport::parse(resp.meta.as_ref());
     let default_auth_method_id = parse_default_auth_method_id(resp.meta.as_ref());
     Ok(InitializedAgent {
         models,
@@ -530,6 +535,7 @@ async fn initialize(tx: &AcpAgentTx, flags: &ConnectFlags) -> Result<Initialized
         cancel_rewind_enabled,
         session_recap_available,
         feedback_trace_offer,
+        child_support,
     })
 }
 /// Parse `availableCommands` from an `InitializeResponse.meta` value.
@@ -548,6 +554,27 @@ pub fn parse_session_recap_available(meta: Option<&acp::Meta>) -> bool {
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
+/// Whether the shell treats child sessions as first-class ACP sessions: prompts and by-id requests
+/// addressed to a subagent's session id work. A shell that predates it answers `unknown session id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellChildSupport {
+    FirstClass,
+    Legacy,
+}
+
+impl ShellChildSupport {
+    /// Parsed from `InitializeResponse.meta.childSessions`; anything but `"firstClass"` is legacy.
+    pub fn parse(meta: Option<&acp::Meta>) -> Self {
+        match meta
+            .and_then(|m| m.get("childSessions"))
+            .and_then(|v| v.as_str())
+        {
+            Some("firstClass") => Self::FirstClass,
+            Some(_) | None => Self::Legacy,
+        }
+    }
+}
+
 pub fn parse_feedback_trace_offer(meta: Option<&acp::Meta>) -> bool {
     meta.and_then(|m| m.get("feedbackTraceOffer"))
         .and_then(|v| v.as_bool())
@@ -804,6 +831,18 @@ mod tests {
         });
         let cmds = parse_available_commands(meta.as_object());
         assert!(cmds.is_empty());
+    }
+    #[test]
+    fn child_support_is_first_class_only_when_the_shell_says_so() {
+        let first_class = serde_json::json!({ "childSessions": "firstClass" });
+        assert_eq!(
+            ShellChildSupport::parse(first_class.as_object()),
+            ShellChildSupport::FirstClass
+        );
+        for legacy in [serde_json::json!({}), serde_json::json!({ "childSessions": "other" })] {
+            assert_eq!(ShellChildSupport::parse(legacy.as_object()), ShellChildSupport::Legacy);
+        }
+        assert_eq!(ShellChildSupport::parse(None), ShellChildSupport::Legacy);
     }
     #[test]
     fn parse_session_recap_available_true() {

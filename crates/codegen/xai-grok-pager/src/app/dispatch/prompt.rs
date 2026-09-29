@@ -17,7 +17,7 @@ use super::turn::finish_turn_view;
 use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, DoctorFixTarget, Effect};
 use crate::app::agent::{AgentCommand, AgentId, AgentState};
-use crate::app::agent_view::AgentView;
+use crate::app::agent_view::{AgentRole, AgentView};
 use crate::app::app_view::{ActiveView, AppView};
 use crate::app::cancel_latency::TurnEnd;
 use crate::notifications::{NotificationEvent, NotificationEventKind};
@@ -29,6 +29,7 @@ use xai_grok_telemetry::session_ctx::log_event;
 
 /// Shared by every submit guard that refuses while the session reconnects.
 pub(super) const RECONNECTING_NOTICE: &str = "Reconnecting, please wait...";
+const LEGACY_SHELL_CHILD_NOTICE: &str = "This shell predates subagent prompts; restart the leader";
 
 pub(super) use crate::app::agent_view::{
     BUILD_IN_FLIGHT_ABANDON_NOTICE, BUILD_IN_FLIGHT_REVISE_NOTICE, LEAVE_PLAN_REVISE_NOTICE,
@@ -632,6 +633,16 @@ pub(super) fn dispatch_send_prompt_submission(
 
     if app.reconnect_pending {
         app.show_toast(RECONNECTING_NOTICE);
+        return vec![];
+    }
+    if app.shell_child_support == crate::acp::ShellChildSupport::Legacy
+        && matches!(
+            app.active_view,
+            ActiveView::Agent(id)
+                if app.agents.get(&id).is_some_and(|agent| matches!(agent.role, AgentRole::Child(_)))
+        )
+    {
+        app.show_toast(LEGACY_SHELL_CHILD_NOTICE);
         return vec![];
     }
 

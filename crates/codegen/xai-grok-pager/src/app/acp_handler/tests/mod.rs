@@ -2116,6 +2116,7 @@ pub(super) fn draw_view(view: &mut AgentView) {
 pub(super) fn make_app_viewing_child(parent_sid: &str, child_sid: &str) -> AppView {
     let mut app = make_app_with_parent_and_child(parent_sid, child_sid);
     app.active_view = ActiveView::Agent(AgentId(1));
+    app.shell_child_support = crate::acp::ShellChildSupport::FirstClass;
     app
 }
 pub(super) fn make_task_completed_notif(

@@ -720,6 +720,8 @@ pub struct AppView {
     /// Shell-advertised eligibility for the `/feedback` trace-upload offer, exactly as received (initialize meta / auth-meta refreshes).
     /// Read it through [`Self::feedback_trace_offer`], which subtracts the latch.
     pub shell_feedback_trace_offer: bool,
+    /// Whether prompts to subagent views can reach the shell; set from the ACP `initialize` reply.
+    pub shell_child_support: crate::acp::ShellChildSupport,
     /// A persisted card answer was made this session; keeps auth-meta refreshes from re-offering before the async config write lands.
     pub feedback_trace_choice_latched: bool,
     /// Stateful prompt widget rendered on the welcome screen (persists input across frames).
@@ -1645,6 +1647,7 @@ impl AppView {
             cancel_rewind_enabled: true,
             session_recap_available: false,
             shell_feedback_trace_offer: false,
+            shell_child_support: crate::acp::ShellChildSupport::Legacy,
             feedback_trace_choice_latched: false,
             tutorial: None,
             dashboard: None,

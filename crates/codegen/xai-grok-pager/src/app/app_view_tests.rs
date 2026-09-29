@@ -310,6 +310,7 @@ pub(crate) fn test_app() -> AppView {
         cancel_rewind_enabled: true,
         session_recap_available: false,
         shell_feedback_trace_offer: false,
+        shell_child_support: crate::acp::ShellChildSupport::FirstClass,
         feedback_trace_choice_latched: false,
         tutorial: None,
         dashboard: None,
