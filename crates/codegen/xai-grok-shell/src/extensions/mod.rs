@@ -30,6 +30,7 @@ pub mod prompt_history;
 pub mod prompt_meta;
 pub mod recap;
 pub mod repair;
+pub mod context_policy;
 pub mod remove_items;
 pub(crate) mod review;
 pub mod rewind;

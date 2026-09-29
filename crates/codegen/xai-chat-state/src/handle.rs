@@ -451,6 +451,13 @@ impl ChatStateHandle {
         .unwrap_or_default()
     }
 
+    /// Get the context policy requests are built under.
+    pub async fn get_context_policy(&self) -> xai_grok_sampling_types::ContextPolicy {
+        self.query("GetContextPolicy", |reply| ChatStateCommand::GetContextPolicy { reply })
+            .await
+            .unwrap_or_default()
+    }
+
     /// Get current prompt index.
     pub async fn get_prompt_index(&self) -> usize {
         self.query("GetPromptIndex", |reply| ChatStateCommand::GetPromptIndex {

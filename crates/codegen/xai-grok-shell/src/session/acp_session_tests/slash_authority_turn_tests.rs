@@ -945,3 +945,60 @@ async fn human_parent_message_keeps_compact_and_file_refs_literal() {
         })
         .await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn context_policy_decides_what_the_next_request_sends() {
+    use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch};
+
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let server = MockInferenceServer::start()
+                .await
+                .expect("mock inference server");
+            for _ in 0..3 {
+                server.enqueue_response(
+                    "/v1/responses",
+                    ScriptedResponse::sse(responses_api_script_exact("noted", "test")),
+                );
+            }
+            let (actor, _hook_rx, _user_chunk_rx, _policy_recorder) = actor_with_sampler(
+                &server,
+                Arc::new(RecordingTerminal {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            )
+            .await;
+            let last_request = || {
+                server
+                    .requests()
+                    .into_iter()
+                    .rev()
+                    .find(|request| request.path == "/v1/responses")
+                    .and_then(|request| request.body)
+                    .expect("request body")
+                    .to_string()
+            };
+
+            run_parent_turn(&actor, human_request("first prompt"))
+                .await
+                .expect("first turn");
+
+            let mut policy = ContextPolicy::default();
+            policy.set(ContextCategory::UserTurns, ContextSwitch::Excluded);
+            actor.set_context_policy(policy);
+            run_parent_turn(&actor, human_request("second prompt"))
+                .await
+                .expect("second turn");
+            let restricted = last_request();
+            assert!(restricted.contains("second prompt"), "the current prompt is always sent");
+            assert!(!restricted.contains("first prompt"), "an excluded category is not sent");
+
+            actor.set_context_policy(ContextPolicy::default());
+            run_parent_turn(&actor, human_request("third prompt"))
+                .await
+                .expect("third turn");
+            assert!(last_request().contains("first prompt"), "switching a category back on sends it again");
+        })
+        .await;
+}
