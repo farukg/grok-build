@@ -32,6 +32,7 @@ everything that compiles and passes its tests lands here.
 | F1-core A1/A2/B1: typed origins SessionPrefix/DirectBash/GoalSetup, request projection under `ContextPolicy`, `x.ai/session/context_policy` get/set persisted per session, compaction summarizes what the policy sends | `54d0530` … `dcbfd9a` |
 | W3 (part): pager knows `ShellChildSupport`, prompts from child views name their parent, a resumed finished child opens in place | `grb/w3` squash, see `streams/w3-pager-child-sessions.md` |
 | F2/F3 (part): F7 sidebar with the session's context switches (per-category ON/OFF and estimated tokens, shell-acknowledged) | `grb/f2f3`, see `streams/f2-f3-sidebars.md` |
+| Fix: resuming a finished subagent (`task(resume_from)`, `x.ai/subagent/resume`) wakes it under its own id instead of starting a new one; only an on-disk-only source still continues via a `resume_from` spawn | `bc68c35` |
 | CI: `linux-build` workflow builds `grok` (x86_64 Linux) on every push to `main`, Actions artifact `grok-x86_64-linux` | `50fa826` |
 
 Last full test run of `xai-grok-pager`, `xai-grok-shell`, `xai-grok-sampling-types` on `c5c2c850`:
