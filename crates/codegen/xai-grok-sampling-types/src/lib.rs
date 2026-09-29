@@ -7,6 +7,7 @@
 #![deny(clippy::indexing_slicing)]
 
 pub mod context_policy;
+mod context_projection;
 mod context_provenance;
 pub mod conversation;
 pub mod doom_loop;

@@ -79,6 +79,12 @@ impl ContextPolicy {
     pub fn includes(&self, category: ContextCategory) -> bool {
         self.switch(category) == ContextSwitch::Included
     }
+
+    pub fn is_unrestricted(&self) -> bool {
+        self.switches
+            .iter()
+            .all(|(_, switch)| *switch == ContextSwitch::Included)
+    }
 }
 
 pub fn all_categories() -> Vec<ContextCategory> {
