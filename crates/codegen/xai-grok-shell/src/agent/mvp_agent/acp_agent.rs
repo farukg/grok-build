@@ -1021,7 +1021,12 @@ impl acp::Agent for MvpAgent {
                 super::child_prompt::ChildPromptAdmission::Live { handle, turn } => (*handle, Some(turn)),
                 super::child_prompt::ChildPromptAdmission::Woken { parent_session_id, address } => {
                     return self
-                        .wake_child_with_prompt(&parent_session_id, address, arguments.prompt)
+                        .wake_child_with_prompt(
+                            &parent_session_id,
+                            &arguments.session_id,
+                            address,
+                            arguments.prompt,
+                        )
                         .await;
                 }
                 super::child_prompt::ChildPromptAdmission::Refused(refusal) => {
