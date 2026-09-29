@@ -248,6 +248,11 @@ pub enum ChatStateCommand {
     /// Get current prompt index.
     GetPromptIndex { reply: oneshot::Sender<usize> },
 
+    /// Get the context policy requests are built under.
+    GetContextPolicy {
+        reply: oneshot::Sender<xai_grok_sampling_types::ContextPolicy>,
+    },
+
     /// Get the prompt index at which the last compaction occurred.
     /// `Some` means the context currently holds a compaction summary.
     GetLastCompactionPromptIndex {

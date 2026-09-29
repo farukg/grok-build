@@ -362,6 +362,9 @@ impl ChatStateActor {
                 );
                 let _ = reply.send(self.state.conversation.clone());
             }
+            ChatStateCommand::GetContextPolicy { reply } => {
+                let _ = reply.send(self.state.context_policy.clone());
+            }
             ChatStateCommand::GetPromptIndex { reply } => {
                 let _ = reply.send(self.state.prompt_index);
             }

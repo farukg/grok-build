@@ -510,6 +510,14 @@ pub enum SessionCommand {
         request: RemoveItemsRequest,
         respond_to: oneshot::Sender<RemoveContextItemsOutcome>,
     },
+    /// Replace which context categories later requests send; persisted with the session.
+    SetContextPolicy {
+        policy: xai_grok_sampling_types::ContextPolicy,
+        respond_to: oneshot::Sender<()>,
+    },
+    GetContextPolicy {
+        respond_to: oneshot::Sender<xai_grok_sampling_types::ContextPolicy>,
+    },
     /// Out-of-band history repair (`x.ai/session/repair`): fix tool-pairing violations that would otherwise 400 on every request.
     /// The violations: orphaned or displaced `ToolResult`s, duplicates, and unanswered calls.
     /// `dry_run` only reports.

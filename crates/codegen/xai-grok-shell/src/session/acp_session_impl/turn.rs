@@ -3012,7 +3012,16 @@ impl SessionActor {
             if structured_output_native {
                 request.json_schema = json_schema.clone();
             }
-            request.hosted_tools = self.hosted_tools_for_turn();
+            request.hosted_tools = if self
+                .chat_state_handle
+                .get_context_policy()
+                .await
+                .includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions)
+            {
+                self.hosted_tools_for_turn()
+            } else {
+                Vec::new()
+            };
             request.max_output_tokens = self
                 .tool_context
                 .clamp_task_model_request(request.max_output_tokens)

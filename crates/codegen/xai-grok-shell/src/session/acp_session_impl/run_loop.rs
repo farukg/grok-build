@@ -1313,6 +1313,13 @@ pub(super) async fn run_session(
                                 let _ = respond_to.send(outcome);
                             });
                         }
+                        SessionCommand::SetContextPolicy { policy, respond_to } => {
+                            session.set_context_policy(policy);
+                            let _ = respond_to.send(());
+                        }
+                        SessionCommand::GetContextPolicy { respond_to } => {
+                            let _ = respond_to.send(session.chat_state_handle.get_context_policy().await);
+                        }
                         SessionCommand::GetRewindPoints { respond_to } => {
                             let response = session.get_rewind_points().await;
                             let _ = respond_to.send(response);

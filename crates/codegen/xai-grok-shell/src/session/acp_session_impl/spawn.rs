@@ -657,6 +657,9 @@ pub(crate) async fn spawn_session_actor(
     .await;
     drop(chat_state_timer);
     chat_state_handle.update_credentials(credentials);
+    chat_state_handle.set_context_policy(crate::session::helpers::context_policy_store::load(
+        &crate::session::persistence::session_dir(&session_info),
+    ));
     let state = TokioMutex::new(State {
         running_task: None,
         finalization_gate: Default::default(),
