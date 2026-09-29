@@ -61,6 +61,7 @@ pub(in crate::app) use rewind::find_user_prompt_entry_for_shell_index;
 pub(crate) use router::{dispatch, flush_image_notices};
 pub(crate) use session::lifecycle::{abandon_unused_home_session, maybe_create_home_session};
 pub(crate) use settings::ui::refresh_open_settings_modals;
+pub(crate) use ctx::{SwitchCause, switch_to_agent};
 #[cfg(test)]
 pub(crate) use settings::ui::{ROLLBACK_NO_ARM_TOAST, build_pager_snapshot};
 pub(crate) use status::commit_minimal_update_notice;
