@@ -186,6 +186,12 @@ impl SyntheticReason {
         *self == Self::Primary
     }
 
+    /// Whether the user authored the item: typed text, a `!cmd`, or a `/goal` objective with its rules.
+    /// Sessions written before these origins were typed store all of them as [`Self::Human`].
+    pub fn is_user_input(&self) -> bool {
+        matches!(self, Self::Human | Self::DirectBash | Self::GoalSetup)
+    }
+
     /// Whether an item with this reason **starts a prompt turn**, meaning the turn pipeline pushed it while consuming a `prompt_index` slot.
     /// That covers real prompts, auto-wake and other server-initiated turns, as opposed to a mid-turn injection that never incremented the index.
     /// Unknown future reasons fail safe as boundaries so older readers cannot merge a newer conversational origin into a prior turn.
@@ -994,6 +1000,45 @@ impl ConversationItem {
         })
     }
 
+    /// The startup `<user_info>` / rules / VCS-status prefix, tagged [`SyntheticReason::SessionPrefix`].
+    pub fn session_prefix(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: SyntheticReason::SessionPrefix,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+        })
+    }
+
+    /// The command-and-output history message of a `!cmd` turn, tagged [`SyntheticReason::DirectBash`].
+    pub fn direct_bash(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: SyntheticReason::DirectBash,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+        })
+    }
+
+    /// The rules and objective that open a `/goal`, tagged [`SyntheticReason::GoalSetup`].
+    pub fn goal_setup(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: SyntheticReason::GoalSetup,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+        })
+    }
+
     /// Create a synthetic user message for metadata injection.
     /// Used by the compaction pipeline to inject file contents as plain-text user messages.
     /// Tagged with [`SyntheticReason::CompactionMeta`] so downstream code (pruning, compaction helpers) skips it.
@@ -1716,6 +1761,13 @@ impl ConversationRequest {
     }
 }
 
+/// Whether the startup prefix carries [`SyntheticReason::SessionPrefix`]. Older sessions store it as an untyped `Human` item, which the legacy turn walkers skip as the first marker-less user item.
+pub fn has_typed_session_prefix(conversation: &[ConversationItem]) -> bool {
+    conversation.iter().any(|item| {
+        matches!(item, ConversationItem::User(u) if u.synthetic_reason == SyntheticReason::SessionPrefix)
+    })
+}
+
 /// Calculate how many conversation items to keep so that everything from prompt-turn `target_prompt_index` onward is dropped.
 /// **Before the first** [`UserItem::prompt_index`]: legacy rules apply. The first marker-less non-synthetic is the `<user_info>` preamble. Later non-synthetics and [`SyntheticReason::starts_prompt_turn`] synthetics are turns; **From the first marker onward**: only marked rows open turns; unmarked mid-turn phantoms (bash / permission followup) never open a cut.
 pub fn conversation_truncate_for_prompt(
@@ -1761,7 +1813,7 @@ fn conversation_truncate_legacy(
     target_prompt_index: usize,
 ) -> usize {
     let mut next_unmarked_index = 0usize;
-    let mut seen_unmarked_preamble = false;
+    let mut seen_unmarked_preamble = has_typed_session_prefix(conversation);
 
     for (i, item) in conversation.iter().enumerate() {
         let ConversationItem::User(user) = item else {
@@ -1792,7 +1844,7 @@ fn conversation_truncate_legacy(
 /// Count legacy turns in the unmarked prefix (stops at the first marker).
 fn count_legacy_turns_until_marker(conversation: &[ConversationItem]) -> usize {
     let mut turns = 0usize;
-    let mut seen_unmarked_preamble = false;
+    let mut seen_unmarked_preamble = has_typed_session_prefix(conversation);
 
     for item in conversation {
         let ConversationItem::User(user) = item else {
@@ -1818,7 +1870,7 @@ fn conversation_truncate_progressive(
     target_prompt_index: usize,
 ) -> usize {
     let mut next_unmarked_index = 0usize;
-    let mut seen_unmarked_preamble = false;
+    let mut seen_unmarked_preamble = has_typed_session_prefix(conversation);
     let mut seen_marker = false;
 
     for (i, item) in conversation.iter().enumerate() {
@@ -2628,6 +2680,30 @@ mod tests {
 
         // Keep up to and including prompt 2 (all messages)
         assert_eq!(conversation_truncate_for_prompt(&conversation, 2), 6);
+    }
+
+    #[test]
+    fn typed_session_prefix_cuts_where_the_untyped_prefix_did() {
+        let build = |prefix: ConversationItem| {
+            vec![
+                ConversationItem::system("System"),
+                prefix,
+                ConversationItem::user("User 1"),
+                ConversationItem::assistant("Asst 1"),
+                ConversationItem::user("User 2"),
+            ]
+        };
+        let untyped = build(ConversationItem::user("<user_info>"));
+        let typed = build(ConversationItem::session_prefix("<user_info>"));
+
+        for target in 0..=2 {
+            assert_eq!(
+                conversation_truncate_for_prompt(&typed, target),
+                conversation_truncate_for_prompt(&untyped, target),
+                "prompt {target}"
+            );
+        }
+        assert_eq!(conversation_truncate_for_prompt(&typed, 1), 4);
     }
 
     #[test]
