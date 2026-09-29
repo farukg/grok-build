@@ -1313,6 +1313,7 @@ pub(crate) fn execute(
             prompt_id,
             plan_file_content,
             plan_file_uri,
+            target,
         } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1320,7 +1321,7 @@ pub(crate) fn execute(
             tasks
                 .spawn(async move {
                     let prompt = vec![acp::ContentBlock::Text(acp::TextContent::new(String::new()))];
-                    let mut meta = prompt_request_meta(&prompt_id, screen_mode, &PromptTarget::Session);
+                    let mut meta = prompt_request_meta(&prompt_id, screen_mode, &target);
                     if let Some(map) = meta.as_object_mut() {
                         let mut execute_plan = serde_json::Map::new();
                         execute_plan
@@ -1423,7 +1424,7 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SendBashCommand { agent_id, session_id, command, prompt_id } => {
+        Effect::SendBashCommand { agent_id, session_id, command, prompt_id, target } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
             let is_api_key_auth = session_flags.is_api_key_auth;
@@ -1453,7 +1454,7 @@ pub(crate) fn execute(
                 )];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode, &PromptTarget::Session)
+                            prompt_request_meta(&prompt_id, screen_mode, &target)
                                 .as_object()
                                 .cloned(),
                         );
@@ -1728,6 +1729,7 @@ pub(crate) fn execute(
             text,
             prompt_id,
             skill_token_ranges,
+            target,
         } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1749,7 +1751,7 @@ pub(crate) fn execute(
                     let prompt = vec![plain_prompt_content_block(text, &skill_token_ranges)];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode, &PromptTarget::Session)
+                            prompt_request_meta(&prompt_id, screen_mode, &target)
                                 .as_object()
                                 .cloned(),
                         );

@@ -6735,3 +6735,34 @@ fn send_now_from_dashboard_view_still_flushes_image_notice() {
     );
     assert!(toast_text(&app, AgentId(0)).is_none());
 }
+
+#[test]
+fn bash_command_from_a_child_view_names_its_parent() {
+    use crate::app::agent_view::{AgentRole, ChildLink, PromptTarget};
+    use crate::app::dispatch::queue::maybe_drain_queue;
+
+    let mut app = test_app_with_agent();
+    let parent_id = AgentId(0);
+    let parent_session_id = app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap();
+    let mut child = AgentView::new(
+        make_test_agent_session(&app, AgentId(1), "child-bash"),
+        ScrollbackState::new(),
+    );
+    child.role = AgentRole::Child(ChildLink {
+        parent: parent_id,
+        parent_session_id: parent_session_id.clone(),
+        subagent_id: "child-bash".to_owned(),
+        started_at: std::time::Instant::now(),
+    });
+    child.session.enqueue_bash_command("ls".into());
+
+    let effects = maybe_drain_queue(&mut child, &mut Vec::new()).effects;
+
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::SendBashCommand { target: PromptTarget::ChildOf(parent), .. }] if *parent == parent_session_id
+        ),
+        "got {effects:?}"
+    );
+}

@@ -652,6 +652,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     session_id,
                     command: queued.text,
                     prompt_id,
+                    target: agent.role.prompt_target(),
                 }],
                 page_flip_entry: None,
             }

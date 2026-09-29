@@ -214,12 +214,14 @@ pub(super) fn dispatch_execute_plan(
     // The daemon's execute-plan kickoff is the initiating message (same as cron/adopt).
     agent.session.tracker.clear_user_echo_skip();
     agent.set_execute_plan_prompt(prompt_id.clone());
+    let target = agent.role.prompt_target();
     vec![Effect::ExecutePlan {
         agent_id: id,
         session_id,
         prompt_id,
         plan_file_content,
         plan_file_uri,
+        target,
     }]
 }
 
@@ -1351,6 +1353,7 @@ pub(super) fn dispatch_send_bash_command(app: &mut AppView, command: String) -> 
             .clone()
             .expect("session_id is_some checked");
         let agent_id = agent.session.id;
+        let target = agent.role.prompt_target();
         let prompt_id = uuid::Uuid::new_v4().to_string();
         // Self-originated (see the plain immediate-send path): keep this turn's deltas ours in the ACP gate once it becomes the running turn
         agent.note_self_originated_prompt(&prompt_id);
@@ -1369,6 +1372,7 @@ pub(super) fn dispatch_send_bash_command(app: &mut AppView, command: String) -> 
             session_id,
             command,
             prompt_id,
+            target,
         }];
     }
 

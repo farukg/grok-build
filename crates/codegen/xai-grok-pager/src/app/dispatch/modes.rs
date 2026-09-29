@@ -76,6 +76,7 @@ pub(super) fn dispatch_enter_plan_mode(
                     text,
                     prompt_id,
                     skill_token_ranges,
+                    target,
                     ..
                 } => {
                     effects.push(Effect::SetModeThenPrompt {
@@ -85,6 +86,7 @@ pub(super) fn dispatch_enter_plan_mode(
                         text,
                         prompt_id,
                         skill_token_ranges,
+                        target,
                     });
                 }
                 other => effects.push(other),

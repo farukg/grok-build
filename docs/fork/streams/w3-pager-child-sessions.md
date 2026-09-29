@@ -22,4 +22,4 @@ Branch: `grb/w3`. Shell side is W1-S/W1-H (on `main`).
    child's id and cwd should already fork the child's conversation. Not verified live.
 3. End-to-end tests with a fake ACP peer (`child_session_full_parity_roundtrip`,
    `parent_sees_final_response_after_human_turns`).
-4. `!cmd`, execute-plan and bash prompts from a child view do not carry `childOf`.
+4. ~~`!cmd`, execute-plan and bash prompts from a child view do not carry `childOf`.~~ Done: `Effect::SendBashCommand`, `ExecutePlan` and `SetModeThenPrompt` carry the view's `PromptTarget`.

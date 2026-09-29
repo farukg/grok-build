@@ -1586,6 +1586,7 @@ pub enum Effect {
         plan_file_content: String,
         /// File URI of the keep. Omitted on the wire when empty.
         plan_file_uri: Option<String>,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Send a direct bash command to the agent (with typed PromptBlockMeta).
     SendBashCommand {
@@ -1594,6 +1595,7 @@ pub enum Effect {
         command: String,
         /// See [`Effect::SendPrompt::prompt_id`].
         prompt_id: String,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Cancel the current turn.
     CancelTurn {
@@ -1802,6 +1804,7 @@ pub enum Effect {
         prompt_id: String,
         /// See [`Effect::SendPrompt::skill_token_ranges`].
         skill_token_ranges: Vec<std::ops::Range<usize>>,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Fetch prompt history for the current session from the ACP agent.
     /// `session_id` scopes the per-CWD history file to this session (the agent's `filter_session_id` param).
