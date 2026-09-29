@@ -1104,6 +1104,39 @@ fn stamp_live_fork_session_metadata(
         tracing::warn!(error = %e, "live fork: failed to write forked session summary");
     }
 }
+/// The policy a child starts under: its resume source's own, else its parent's as of now. Afterwards it is independent.
+async fn context_policy_to_inherit(
+    resume_source: Option<&ResumeSourceData>,
+    parent_chat_state: Option<&xai_chat_state::ChatStateHandle>,
+) -> Option<xai_grok_sampling_types::ContextPolicy> {
+    match resume_source {
+        Some(source) => Some(crate::session::helpers::context_policy_store::load(
+            &crate::session::persistence::session_dir(&SessionInfo {
+                id: acp::SessionId::new(source.child_session_id.clone()),
+                cwd: source.child_cwd.clone(),
+            }),
+        )),
+        None => match parent_chat_state {
+            Some(chat_state) => Some(chat_state.get_context_policy().await),
+            None => None,
+        },
+    }
+}
+
+/// Only a restricted policy is written; the session actor reads the file when it starts, so the default path costs nothing.
+fn write_inherited_context_policy(
+    child_session_dir: &Path,
+    policy: &xai_grok_sampling_types::ContextPolicy,
+) {
+    if policy.is_unrestricted() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(child_session_dir) {
+        tracing::warn!(%error, "could not create the child session dir for its inherited context policy");
+        return;
+    }
+    crate::session::helpers::context_policy_store::save(child_session_dir, policy);
+}
 enum BootstrapInitialContext {
     Ready(InitialContext),
     /// Explicit resume_from failed: abort spawn (fail closed).

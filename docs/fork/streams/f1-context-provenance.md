@@ -30,8 +30,13 @@ Design: `docs/fork/design/f6-f7.md` §1, §2, §7 and waves A1/A2/B1.
   are cleared when ToolDefinitions is off. Tests: `ST/context_projection_tests.rs`, `CS/actor/tests.rs`
   `context_policy_shapes_the_request_and_not_the_history`.
 
+## Done since
+- Child inheritance: a child starts under its resume source's saved policy, else its parent's live policy (snapshot, written to the child's
+  session dir only when restricted, so the default path does no I/O; `context_policy_to_inherit` in `S/agent/subagent/mod.rs`). Hosted tools
+  already follow ToolDefinitions (`turn.rs`).
+
 ## Next steps
-1. B1 shell: `x.ai/context/policy` get/set ext method, persist the policy in the session (replay, resume,
+1. B1 shell (remaining: `changed` notification): `x.ai/context/policy` get/set ext method, persist the policy in the session (replay, resume,
    compaction never resurrects excluded content because the filter is request-time; child inheritance);
    hosted tools and `tool_choice` in `turn.rs` (~L3003) must follow ToolDefinitions.
 2. Mixed sections (`Sections::Split`) for the prefix (rules/skills/MCP/memory), system prompt fragments and

@@ -68,7 +68,7 @@ on the touched lines; `cargo check -p xai-grok-pager-bin` builds.
 | W3 pager consumes child sessions | `grb/w3` | partly on `main`; open: finished-child handlers, fork check, e2e tests | `streams/w3-pager-child-sessions.md` |
 | M11 agent + human control over subagents | `grb/m11` | partial, uncompiled wiring | `streams/m11-subagent-control.md` |
 | F1-display per-kind one-line renderers | `grb/f1display` | F7 Message Display rows on `main`; the old renderer WIP was dropped (rejected in `reviews/f1display.md`); open: better first lines per block, golden tests | `streams/f1-display.md` |
-| F1-core context provenance | `grb/f1core` | A1+A2+B1 on `main`; next: mixed sections (prefix/system fragments/memory), child inheritance of the policy | `streams/f1-context-provenance.md` |
+| F1-core context provenance | `grb/f1core` | A1+A2+B1 and child inheritance of the policy on `main`; next: mixed sections (prefix/system fragments/memory) so Skills/MCP/Memory get rows | `streams/f1-context-provenance.md` |
 | F2/F3 F6/F7 sidebars wired into the view | `grb/f2f3` | F6 left, F7 with Dock, Context and Message Display on `main`; open: F6/F7 hang on very large sessions (see stream file), dock glyph/hover polish, global persistence of display defaults | `streams/f2-f3-sidebars.md` |
 
 Suggested order: F1-core and W3 (pager consumes W1-S) next, in parallel M11, F1-display.

@@ -264,3 +264,21 @@ fn resume_cwd_fallback_is_reported_to_the_model() {
     };
     assert_eq!(resume_cwd_fallback(Some(&present)), None);
 }
+
+#[test]
+fn a_child_starts_under_a_restricted_policy_and_the_default_writes_nothing() {
+    use crate::session::helpers::context_policy_store;
+    use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch};
+
+    let root = tempfile::tempdir().expect("temp dir");
+    let mut restricted = ContextPolicy::default();
+    restricted.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
+
+    let child = root.path().join("child");
+    write_inherited_context_policy(&child, &restricted);
+    assert_eq!(context_policy_store::load(&child), restricted);
+
+    let untouched = root.path().join("untouched");
+    write_inherited_context_policy(&untouched, &ContextPolicy::default());
+    assert!(!untouched.exists(), "an unrestricted policy costs no I/O");
+}

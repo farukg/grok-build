@@ -979,6 +979,11 @@ pub(crate) async fn run_shell_child(
         }
     };
     context_bootstrap_span.close();
+    if let Some(policy) =
+        context_policy_to_inherit(resume_source.as_ref(), ctx.parent_chat_state.as_ref()).await
+    {
+        write_inherited_context_policy(&child_session_dir, &policy);
+    }
     let verbatim_mirror_fork = initial_context.is_verbatim_fork();
     let InitialContext {
         context: context_source,
