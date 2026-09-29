@@ -11,7 +11,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
-use crate::views::timeline_panel::{TimelineMode, panel_width};
+use crate::views::timeline_panel::TimelineMode;
 
 /// Columns reserved for the rail (widest tick).
 pub const RAIL_WIDTH: u16 = 2;
@@ -57,7 +57,7 @@ pub enum TimelineHit {
 }
 
 /// Columns to reserve for the timeline column this frame: the single eligibility policy (setting, view kind, terminal width, turn count).
-/// The expanded panel reuses the same column at panel width, independent of the setting and the turn minimum.
+/// The expanded panel lives in its own left column and takes none.
 /// Geometry feasibility (enough rows) stays in [`compute_rail`].
 pub(crate) fn rail_width(
     show_timeline: bool,
@@ -65,9 +65,6 @@ pub(crate) fn rail_width(
     area_width: u16,
     turn_count: usize,
 ) -> u16 {
-    if matches!(mode, TimelineMode::Expanded(_)) && area_width >= MIN_TERMINAL_WIDTH {
-        return panel_width(area_width);
-    }
     if matches!(mode, TimelineMode::Expanded(_)) {
         return 0;
     }
@@ -524,17 +521,13 @@ mod tests {
     }
 
     #[test]
-    fn expanded_mode_uses_panel_width_without_min_turns() {
+    fn expanded_mode_takes_no_center_columns() {
         let panel = TimelineMode::Expanded(
             crate::views::timeline_panel::TimelinePanelState::open(
                 &crate::scrollback::state::ScrollbackState::new(),
                 None,
             ),
         );
-        // Neither the setting nor the two-turn minimum gate the panel
-        let width = rail_width(false, &panel, 120, 0);
-        assert!(width > RAIL_WIDTH, "panel is wider than the rail: {width}");
-        assert!(width <= 60, "panel leaves the chat at least half: {width}");
-        assert_eq!(0, rail_width(false, &panel, MIN_TERMINAL_WIDTH - 1, 5));
+        assert_eq!(0, rail_width(true, &panel, 120, 5));
     }
 }

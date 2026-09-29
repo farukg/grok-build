@@ -20,13 +20,6 @@ use crate::scrollback::state::{
 };
 use crate::theme::Theme;
 
-/// Panel columns, capped at half the terminal.
-pub const PANEL_WIDTH: u16 = 36;
-
-pub(crate) fn panel_width(area_width: u16) -> u16 {
-    PANEL_WIDTH.min(area_width / 2)
-}
-
 /// How the timeline column presents itself.
 #[derive(Debug, Default)]
 pub enum TimelineMode {
@@ -227,11 +220,12 @@ pub fn timeline_panel_key(key: &KeyEvent) -> TimelinePanelInput {
         KeyCode::Char('d') | KeyCode::Delete => TimelinePanelInput::Act(TimelineItemAction::Remove),
         KeyCode::Tab => TimelinePanelInput::FocusChat,
         KeyCode::Esc | KeyCode::F(6) => TimelinePanelInput::Close,
+        KeyCode::F(_) => TimelinePanelInput::Passthrough,
         _ => TimelinePanelInput::Consumed,
     }
 }
 
-/// Paint the panel: a left rule, then one row per outline row in the window.
+/// Paint the panel: one row per outline row in the window.
 pub fn render_panel(
     buf: &mut Buffer,
     panel: &TimelinePanelState,
@@ -245,12 +239,8 @@ pub fn render_panel(
     let bg = theme.bg_base;
     ratatui::widgets::Widget::render(ratatui::widgets::Clear, area, buf);
     buf.set_style(area, Style::default().bg(bg));
-    let rule = Style::default().fg(theme.gray_dim).bg(bg);
-    for y in area.y..area.y + area.height {
-        buf.set_span(area.x, y, &Span::styled("\u{2502}", rule), 1);
-    }
-    let text_x = area.x + 1;
-    let text_w = area.width - 1;
+    let text_x = area.x;
+    let text_w = area.width;
     let cursor_style = match panel.focus {
         PanelFocus::Panel => theme.selection_overlay(),
         PanelFocus::Chat => theme.hover_overlay(),
