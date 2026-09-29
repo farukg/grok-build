@@ -68,6 +68,11 @@ pub enum SubagentResumeError {
     StillRunning {
         subagent_id: String,
     },
+    /// The source had finished and could not be woken with the prompt.
+    WakeRefused {
+        subagent_id: String,
+        delivery: SendSubagentMessageOutput,
+    },
     /// The source is live and the prompt could not be queued to it.
     NotDelivered {
         subagent_id: String,
@@ -116,6 +121,14 @@ impl std::fmt::Display for SubagentResumeError {
                 "Cannot resume from subagent '{subagent_id}': it is still running. Wait for it to \
                  finish, or message it with send_subagent_message."
             ),
+            Self::WakeRefused {
+                subagent_id,
+                delivery,
+            } => write!(
+                f,
+                "Cannot resume from subagent '{subagent_id}': it has finished and could not be \
+                 woken with the prompt ({delivery}). Retry shortly."
+            ),
             Self::NotDelivered {
                 subagent_id,
                 delivery,
@@ -159,7 +172,8 @@ impl std::error::Error for SubagentResumeError {}
 pub enum SubagentResumeTarget {
     /// A live (running, pending, or queued) subagent owned by the caller.
     Running { subagent_id: String },
-    /// A finished subagent, known in memory or on disk; resume spawns from it.
+    /// A finished subagent, known in memory or on disk; resume wakes it, or spawns from it when
+    /// it cannot be woken.
     Finished { subagent_id: String },
 }
 
@@ -171,11 +185,18 @@ pub enum SubagentResumeRoute {
         subagent_id: String,
         message_id: String,
     },
-    /// Spawn a continuation with `resume_from = source_id`.
+    /// The finished subagent was woken with the prompt: same id, same session.
+    Woken {
+        subagent_id: String,
+        message_id: String,
+    },
+    /// Spawn a continuation with `resume_from = source_id`, because the source cannot be woken
+    /// (for example it exists only on disk after a restart).
     Spawn { source_id: String },
 }
 
-/// Resolve `reference` and queue the prompt to a running target; a finished target is left to
+/// Resolve `reference` and hand the prompt to the target: queued to a running subagent, or
+/// waking a finished one under its own id. Only a finished target that cannot be woken is left to
 /// the caller's spawn. Shared by the `task` tool and `x.ai/subagent/resume`.
 pub async fn route_subagent_resume(
     backend: &dyn SubagentBackend,
@@ -183,32 +204,57 @@ pub async fn route_subagent_resume(
     prompt: &str,
     parent_session_id: &str,
 ) -> Result<SubagentResumeRoute, SubagentResumeError> {
+    let queue = |subagent_id: String| async move {
+        let outcome = match ActiveAgentMessageRequest::try_new_with_operation(
+            subagent_id.as_str(),
+            prompt,
+            ActiveAgentMessageOperation::Queue,
+        ) {
+            Ok(request) => backend.send_active_message(request).await,
+            Err(outcome) => outcome,
+        };
+        (subagent_id, outcome)
+    };
     match backend.resolve_resume(reference, parent_session_id).await? {
-        SubagentResumeTarget::Finished { subagent_id } => Ok(SubagentResumeRoute::Spawn {
-            source_id: subagent_id,
-        }),
-        SubagentResumeTarget::Running { subagent_id } => {
-            let outcome = match ActiveAgentMessageRequest::try_new_with_operation(
-                subagent_id.as_str(),
-                prompt,
-                ActiveAgentMessageOperation::Queue,
-            ) {
-                Ok(request) => backend.send_active_message(request).await,
-                Err(outcome) => outcome,
-            };
+        SubagentResumeTarget::Finished { subagent_id } => {
+            let (subagent_id, outcome) = queue(subagent_id).await;
             match outcome {
                 ActiveAgentMessageOutcome::Accepted { message_id } => {
-                    Ok(SubagentResumeRoute::Delivered {
+                    Ok(SubagentResumeRoute::Woken {
                         subagent_id,
                         message_id,
                     })
                 }
-                refused => Err(SubagentResumeError::NotDelivered {
-                    subagent_id,
-                    delivery: refused.into(),
+                ActiveAgentMessageOutcome::NotFoundOrNotOwned
+                | ActiveAgentMessageOutcome::NotActiveOrFinalizing
+                | ActiveAgentMessageOutcome::Unsupported => Ok(SubagentResumeRoute::Spawn {
+                    source_id: subagent_id,
                 }),
+                refused @ (ActiveAgentMessageOutcome::Saturated { .. }
+                | ActiveAgentMessageOutcome::QuotaExceeded { .. }
+                | ActiveAgentMessageOutcome::AdmissionUncertain
+                | ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline
+                | ActiveAgentMessageOutcome::Limit { .. }
+                | ActiveAgentMessageOutcome::ChannelClosed) => {
+                    Err(SubagentResumeError::WakeRefused {
+                        subagent_id,
+                        delivery: refused.into(),
+                    })
+                }
             }
         }
+        SubagentResumeTarget::Running { subagent_id } => match queue(subagent_id.clone()).await.1 {
+            ActiveAgentMessageOutcome::Accepted { message_id } => {
+                Ok(SubagentResumeRoute::Delivered {
+                    subagent_id,
+                    message_id,
+                })
+            }
+            refused => Err(SubagentResumeError::NotDelivered {
+                subagent_id,
+                delivery: refused.into(),
+            }),
+        },
     }
 }
 
@@ -218,6 +264,15 @@ pub fn format_resume_delivered(subagent_id: &str, message_id: &str) -> String {
         "Subagent '{subagent_id}' is still running, so the prompt was queued to it as its next turn \
          (message_id: {message_id}) instead of starting a new subagent. Its result arrives when it \
          finishes."
+    )
+}
+
+/// Model-facing notice for [`SubagentResumeRoute::Woken`].
+pub fn format_resume_woken(subagent_id: &str, message_id: &str) -> String {
+    format!(
+        "Subagent '{subagent_id}' had finished and was woken with the prompt as its next turn \
+         (message_id: {message_id}); no new subagent was started. Its result arrives when it \
+         finishes. Keep using '{subagent_id}' to continue it."
     )
 }
 

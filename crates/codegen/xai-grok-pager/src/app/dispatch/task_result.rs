@@ -971,7 +971,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             use xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome;
             match outcome {
                 Some(ResumeSubagentOutcome::Queued { .. }) => {
-                    app.show_toast(&format!("Queued the prompt to running subagent {subagent_id}"));
+                    app.show_toast(&format!("Queued the prompt to subagent {subagent_id}"));
                 }
                 Some(ResumeSubagentOutcome::Resumed { .. }) => {}
                 Some(ResumeSubagentOutcome::Refused { reason }) => {

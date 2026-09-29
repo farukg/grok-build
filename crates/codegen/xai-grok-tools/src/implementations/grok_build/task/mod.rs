@@ -480,6 +480,14 @@ impl xai_tool_runtime::Tool for TaskTool {
                         resume::format_resume_delivered(&subagent_id, &message_id).into(),
                     ));
                 }
+                Ok(resume::SubagentResumeRoute::Woken {
+                    subagent_id,
+                    message_id,
+                }) => {
+                    return Ok(ToolOutput::Text(
+                        resume::format_resume_woken(&subagent_id, &message_id).into(),
+                    ));
+                }
                 Ok(resume::SubagentResumeRoute::Spawn { source_id }) => Some(source_id),
                 Err(error) => {
                     return Err(xai_tool_runtime::ToolError::invalid_arguments(

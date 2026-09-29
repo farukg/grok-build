@@ -28,7 +28,7 @@ pub struct ResumeSubagentRequest {
     rename_all_fields = "camelCase"
 )]
 pub enum ResumeSubagentOutcome {
-    /// The subagent was running; the prompt is queued as its next turn.
+    /// The prompt is queued as the next turn of the same subagent (woken first when it had finished).
     Queued { subagent_id: String, message_id: String },
     /// A continuation was spawned from the finished subagent; it reports as a new subagent.
     Resumed { source_id: String },
@@ -38,10 +38,16 @@ pub enum ResumeSubagentOutcome {
 impl From<Result<SubagentResumeRoute, SubagentResumeError>> for ResumeSubagentOutcome {
     fn from(route: Result<SubagentResumeRoute, SubagentResumeError>) -> Self {
         match route {
-            Ok(SubagentResumeRoute::Delivered {
-                subagent_id,
-                message_id,
-            }) => Self::Queued {
+            Ok(
+                SubagentResumeRoute::Delivered {
+                    subagent_id,
+                    message_id,
+                }
+                | SubagentResumeRoute::Woken {
+                    subagent_id,
+                    message_id,
+                },
+            ) => Self::Queued {
                 subagent_id,
                 message_id,
             },
