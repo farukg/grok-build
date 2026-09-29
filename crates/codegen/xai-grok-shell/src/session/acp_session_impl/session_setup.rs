@@ -160,7 +160,7 @@ impl SessionActor {
         };
         let mut conversation = self.chat_state_handle.get_conversation().await;
         let insert_at = conversation.len().min(1);
-        conversation.insert(insert_at, ConversationItem::user(prefix));
+        conversation.insert(insert_at, ConversationItem::session_prefix(prefix));
         if !self.startup_hints.preserve_inherited_system
             && !conversation_has_project_instructions(&conversation)
             && let Some(agents_md_reminder) = self.agent.borrow().agents_md_user_reminder()
@@ -178,7 +178,7 @@ impl SessionActor {
                     conversation
                         .iter()
                         .position(|item| {
-                            matches!(item, ConversationItem::User(u) if u.synthetic_reason.is_human())
+                            matches!(item, ConversationItem::User(u) if u.synthetic_reason.is_legacy_human())
                         })
                         .unwrap_or(conversation.len()),
                 );

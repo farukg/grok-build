@@ -159,14 +159,14 @@ pub(crate) const MIN_TURNS_FOR_AUTO_RECAP: usize = 3;
 /// It is written only when a recap commits (success, or an over-long auto recap suppressed from display), never on failure/cancel.
 pub(crate) const RECAP_WATERMARK_FILE: &str = "last_recap_main_turn";
 
-/// Counts real user prompts (`synthetic_reason.is_human()`), not assistant/tool items.
+/// Counts user prompts, not assistant/tool items. The startup prefix counts as one: title checkpoints and recap watermarks are calibrated on it.
 pub(crate) fn main_turn_count(conversation: &[ConversationItem]) -> usize {
     conversation
         .iter()
         .filter(|item| {
             matches!(
                 item,
-                ConversationItem::User(u) if u.synthetic_reason.is_human()
+                ConversationItem::User(u) if u.synthetic_reason.is_legacy_human()
             )
         })
         .count()

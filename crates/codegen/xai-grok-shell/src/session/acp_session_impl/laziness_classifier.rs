@@ -470,7 +470,7 @@ pub(crate) fn laziness_window_start(
     let mut nth_assistant_idx: Option<usize> = None;
     for (idx, item) in items.iter().enumerate().rev() {
         match item {
-            ConversationItem::User(u) if u.synthetic_reason.is_human() => {
+            ConversationItem::User(u) if u.synthetic_reason.is_user_input() => {
                 user_seen += 1;
                 if user_seen == min_user_turns.max(1) && nth_user_idx.is_none() {
                     nth_user_idx = Some(idx);

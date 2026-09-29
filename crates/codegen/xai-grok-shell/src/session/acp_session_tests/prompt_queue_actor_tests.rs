@@ -3886,6 +3886,75 @@ async fn bash_turn_sets_committed_flag_before_running_the_command() {
         .await;
 }
 
+/// A terminal whose command succeeds with fixed output.
+struct EchoTerminal;
+
+#[async_trait::async_trait]
+impl crate::terminal::AsyncTerminalRunner for EchoTerminal {
+    async fn run(
+        &self,
+        _request: crate::terminal::runner::TerminalRunRequest,
+    ) -> Result<crate::terminal::runner::TerminalRunResult, crate::terminal::runner::TerminalError>
+    {
+        Ok(crate::terminal::runner::TerminalRunResult {
+            combined_output: "hello".to_string(),
+            exit_code: Some(0),
+            truncated: false,
+            signal: None,
+            timed_out: false,
+        })
+    }
+}
+
+/// The `!cmd` history message is a user turn of its own origin, not typed text.
+#[tokio::test(flavor = "current_thread")]
+async fn bash_turn_records_a_direct_bash_history_item() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, mut persistence_rx) =
+                tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            tokio::task::spawn_local(async move {
+                while let Some(message) = persistence_rx.recv().await {
+                    if let PersistenceMsg::FlushAndAck { respond_to } = message {
+                        let _ = respond_to.send(Ok(()));
+                    }
+                }
+            });
+            let (actor, _ev) = create_test_actor_with_terminal(
+                0,
+                256_000,
+                85,
+                gateway_tx,
+                persistence_tx,
+                std::sync::Arc::new(EchoTerminal),
+            )
+            .await;
+
+            let _ = actor
+                .handle_direct_bash_command(
+                    "bash-1",
+                    "echo hello".to_string(),
+                    &[acp::ContentBlock::Text(acp::TextContent::new("!echo hello"))],
+                )
+                .await;
+
+            let conversation = actor.chat_state_handle.get_conversation().await;
+            let Some(xai_grok_sampling_types::ConversationItem::User(user)) = conversation.last()
+            else {
+                panic!("the bash turn ends with its history message: {conversation:?}");
+            };
+            assert_eq!(
+                user.synthetic_reason,
+                xai_grok_sampling_types::SyntheticReason::DirectBash
+            );
+            assert!(user.synthetic_reason.starts_prompt_turn());
+        })
+        .await;
+}
+
 /// Builtin turns carry no user message; they commit at intake so a send-now can cancel a long-running builtin like `/compact`.
 #[tokio::test(flavor = "current_thread")]
 async fn builtin_turn_commits_immediately() {

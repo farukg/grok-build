@@ -773,7 +773,7 @@ pub(super) fn extract_first_user_prompt(
 pub(super) fn count_chat_history_stats(history_path: &Path) -> (usize, usize) {
     use std::io::BufRead;
     use xai_grok_shell::sampling::{
-        AssistantItem, ConversationItem, SyntheticReason, UserItem,
+        AssistantItem, ConversationItem, UserItem,
     };
     let mut turn_count = 0usize;
     let mut tool_call_count = 0usize;
@@ -782,11 +782,8 @@ pub(super) fn count_chat_history_stats(history_path: &Path) -> (usize, usize) {
     };
     for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
         match serde_json::from_str::<ConversationItem>(&line) {
-            Ok(
-                ConversationItem::User(
-                    UserItem { synthetic_reason: SyntheticReason::Human, .. },
-                ),
-            ) => turn_count += 1,
+            Ok(ConversationItem::User(UserItem { synthetic_reason, .. }))
+                if synthetic_reason.is_legacy_human() => turn_count += 1,
             Ok(ConversationItem::Assistant(AssistantItem { ref tool_calls, .. })) => {
                 tool_call_count += tool_calls.len();
             }

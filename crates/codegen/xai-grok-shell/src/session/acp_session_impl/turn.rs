@@ -324,6 +324,11 @@ pub(super) fn record_failed_sample_on_turn_span(
     };
     record_last_sample(span, stop_reason, false, 0);
 }
+/// What the user's own input becomes in the conversation.
+enum UserInputKind {
+    Typed,
+    GoalSetup,
+}
 /// How the turn's per-block user-message echo is published to clients / `updates.jsonl`.
 /// Turns whose content must not render as a user prompt (notification drain) are hidden by the *pager* via the `hideFromScrollback` chunk meta.
 /// The persisted line is never omitted.
@@ -688,6 +693,7 @@ impl SessionActor {
                 }
             }
         };
+        let mut user_input_kind = UserInputKind::Typed;
         let prompt_blocks = match resolved {
             Ok(blocks) => blocks,
             Err(SlashCommandOutcome::Builtin(action)) => {
@@ -711,6 +717,7 @@ impl SessionActor {
                         xai_grok_telemetry::session_ctx::log_event(slash_used);
                         match self.setup_goal(&objective, token_budget).await {
                             GoalSetupOutcome::Inference { reminder } => {
+                                user_input_kind = UserInputKind::GoalSetup;
                                 vec![text_block(reminder)]
                             }
                             GoalSetupOutcome::Message(msg) => {
@@ -1212,9 +1219,11 @@ impl SessionActor {
                 }
                 super::super::PromptOrigin::PlanResume => ConversationItem::user(user_message),
                 super::super::PromptOrigin::User => {
-                    let mut item = ConversationItem::user(
-                        self.maybe_apply_interrupt_envelope(user_message, verbatim),
-                    );
+                    let text = self.maybe_apply_interrupt_envelope(user_message, verbatim);
+                    let mut item = match user_input_kind {
+                        UserInputKind::Typed => ConversationItem::user(text),
+                        UserInputKind::GoalSetup => ConversationItem::goal_setup(text),
+                    };
                     if let Some(interrupt) = self
                         .events
                         .take_prior_interrupt_category()

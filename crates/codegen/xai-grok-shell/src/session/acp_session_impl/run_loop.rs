@@ -2439,7 +2439,8 @@ pub(super) fn slash_feedback_last_turn(
     }) {
         return Some(n);
     }
-    let mut seen_unmarked_preamble = false;
+    let mut seen_unmarked_preamble =
+        xai_grok_sampling_types::has_typed_session_prefix(conversation);
     let mut n = 0usize;
     for item in conversation {
         let ConversationItem::User(u) = item else {
@@ -2485,7 +2486,8 @@ pub(super) fn turn_texts_for_feedback(
     {
         (i, true)
     } else {
-        let mut seen_unmarked_preamble = false;
+        let mut seen_unmarked_preamble =
+        xai_grok_sampling_types::has_typed_session_prefix(conversation);
         let mut n = 0usize;
         let mut i = None;
         for (idx, item) in conversation.iter().enumerate() {

@@ -187,9 +187,14 @@ impl SyntheticReason {
     }
 
     /// Whether the user authored the item: typed text, a `!cmd`, or a `/goal` objective with its rules.
-    /// Sessions written before these origins were typed store all of them as [`Self::Human`].
     pub fn is_user_input(&self) -> bool {
         matches!(self, Self::Human | Self::DirectBash | Self::GoalSetup)
+    }
+
+    /// Every origin that sessions written before these origins were typed store as [`Self::Human`]:
+    /// user input and the startup prefix.
+    pub fn is_legacy_human(&self) -> bool {
+        self.is_user_input() || *self == Self::SessionPrefix
     }
 
     /// Whether an item with this reason **starts a prompt turn**, meaning the turn pipeline pushed it while consuming a `prompt_index` slot.

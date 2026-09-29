@@ -467,6 +467,27 @@ mod install_system_prompt_tests {
         );
     }
     #[test]
+    fn zero_turn_rewrite_types_the_prefix_it_replaces() {
+        let mut conv = vec![
+            ConversationItem::system("system"),
+            ConversationItem::user("<user_info>legacy</user_info>"),
+        ];
+        super::SessionActor::rewrite_zero_turn_prefix(
+            &mut conv,
+            "<user_info>new</user_info>".into(),
+            false,
+        );
+        assert_eq!(conv.len(), 2, "the legacy prefix slot is replaced, not duplicated");
+        let Some(ConversationItem::User(prefix)) = conv.get(1) else {
+            panic!("slot 1 holds a user item: {conv:?}");
+        };
+        assert_eq!(
+            prefix.synthetic_reason,
+            xai_grok_sampling_types::SyntheticReason::SessionPrefix
+        );
+        assert_eq!(prefix.content.len(), 1);
+    }
+    #[test]
     fn top_level_resume_keeps_stored_system() {
         let mut conv = vec![
             ConversationItem::system("stored"),
@@ -500,15 +521,15 @@ impl SessionActor {
     ) {
         let is_prefix_slot = matches!(
             conversation.get(1),
-            Some(ConversationItem::User(u)) if u.synthetic_reason.is_human()
+            Some(ConversationItem::User(u)) if u.synthetic_reason.is_legacy_human()
         );
         if is_prefix_slot {
             if let Some(slot) = conversation.get_mut(1) {
-                *slot = ConversationItem::user(new_prefix);
+                *slot = ConversationItem::session_prefix(new_prefix);
             }
         } else {
             let insert_at = conversation.len().min(1);
-            conversation.insert(insert_at, ConversationItem::user(new_prefix));
+            conversation.insert(insert_at, ConversationItem::session_prefix(new_prefix));
         }
         if drop_startup_skill_reminder {
             conversation.retain(|item| {

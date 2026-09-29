@@ -370,7 +370,7 @@ impl SessionActor {
 
         // Add to chat history as a user message only
         self.chat_state_handle
-            .push_user_message(ConversationItem::user(&user_message));
+            .push_user_message(ConversationItem::direct_bash(&user_message));
 
         self.chat_state_handle.flush();
 

@@ -19,7 +19,7 @@ const ANCHOR_MAX_CHARS: usize = 120;
 /// `None` when no real user message with text exists (caller should skip generation).
 pub(crate) fn last_user_anchor(conversation: &[ConversationItem]) -> Option<String> {
     let text = conversation.iter().rev().find_map(|item| match item {
-        ConversationItem::User(u) if u.synthetic_reason.is_human() => {
+        ConversationItem::User(u) if u.synthetic_reason.is_user_input() => {
             let text = item.text_content();
             (!text.trim().is_empty()).then_some(text)
         }

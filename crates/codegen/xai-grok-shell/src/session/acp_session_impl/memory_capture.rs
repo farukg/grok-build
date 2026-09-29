@@ -360,7 +360,7 @@ fn select_completed_turn_items(
             if is_selected_turn && user.synthetic_reason.starts_prompt_turn() {
                 break;
             }
-            if user.synthetic_reason.is_human()
+            if user.synthetic_reason.is_user_input()
                 && user.prompt_index == Some(source_prompt_index as usize)
             {
                 is_selected_turn = true;
