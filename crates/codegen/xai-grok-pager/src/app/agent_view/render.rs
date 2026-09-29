@@ -569,6 +569,40 @@ impl AgentView {
         Option<(u16, u16)>,
         Option<crate::terminal::overlay::PostFlush>,
     ) {
+        let columns = crate::views::sidebar::screen_columns(area, self.sidebars_open());
+        let drawn = self.draw_session(
+            columns.center,
+            buf,
+            registry,
+            scratch,
+            pending_hint,
+            overlay_focused,
+            banner,
+            in_dashboard_overlay,
+            link_spans_out,
+            app_params,
+        );
+        self.draw_context_sidebar(columns.right, buf);
+        drawn
+    }
+
+    /// The session view itself, drawn into the center column.
+    fn draw_session(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        registry: &ActionRegistry,
+        scratch: &mut ScratchBuffer,
+        pending_hint: Option<PendingHint>,
+        overlay_focused: bool,
+        banner: super::BannerSlotParams<'_>,
+        in_dashboard_overlay: bool,
+        link_spans_out: &mut Vec<xai_ratatui_inline::LinkSpan>,
+        app_params: AppRenderParams<'_>,
+    ) -> (
+        Option<(u16, u16)>,
+        Option<crate::terminal::overlay::PostFlush>,
+    ) {
         let AppRenderParams {
             voice_available,
             voice_listening,

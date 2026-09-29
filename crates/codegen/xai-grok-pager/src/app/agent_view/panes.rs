@@ -1183,6 +1183,9 @@ impl AgentView {
             }
             return;
         }
+        if self.scroll_context_sidebar(lines, col, row) {
+            return;
+        }
         if self.scroll_timeline_panel(lines, col, row) {
             return;
         }

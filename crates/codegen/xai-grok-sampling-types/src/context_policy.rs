@@ -87,6 +87,22 @@ impl ContextPolicy {
     }
 }
 
+/// The categories whose switch changes a request today. Skills, the MCP catalog and memory are still
+/// rendered into one startup prefix and have no producer of their own (`streams/f1-context-provenance.md`).
+pub fn switchable_categories() -> Vec<ContextCategory> {
+    all_categories()
+        .into_iter()
+        .filter(|category| {
+            !matches!(
+                category,
+                ContextCategory::SkillsWorkflows
+                    | ContextCategory::McpCatalog
+                    | ContextCategory::Memory
+            )
+        })
+        .collect()
+}
+
 pub fn all_categories() -> Vec<ContextCategory> {
     use ContextCategory::*;
     vec![

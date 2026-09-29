@@ -191,6 +191,9 @@ mod task_icon_mouse_tests;
 #[cfg(test)]
 mod task_status_tests;
 mod context_removal;
+mod context_sidebar;
+#[cfg(test)]
+mod context_sidebar_tests;
 mod timeline_panel;
 mod viewer;
 mod workflows_overlay;
@@ -1395,6 +1398,8 @@ pub struct AgentView {
     pub(crate) timeline_hover_preview: Option<(usize, String)>,
     /// Rail, or the expanded outline panel occupying the rail's layout column.
     pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
+    /// The F7 sidebar with the session's context switches.
+    pub(crate) context_sidebar: context_sidebar::ContextSidebar,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
     pub subagent_sessions: HashMap<String, SubagentInfo>,
@@ -1967,6 +1972,7 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         ActionId::ToggleTodos
         | ActionId::ToggleTasks
         | ActionId::ToggleTimelinePanel
+        | ActionId::ToggleContextSidebar
         | ActionId::EditPromptExternal
         | ActionId::ToggleQueue
         | ActionId::OpenSessions

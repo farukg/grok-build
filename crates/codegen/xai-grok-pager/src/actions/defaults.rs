@@ -560,6 +560,21 @@ pub(super) fn default_actions(
             ),
         },
         ActionDef {
+            id: ActionId::ToggleContextSidebar,
+            label: "context",
+            description: "Choose which context the next requests send",
+            default_key: key!(F(7)),
+            alt_keys: vec![],
+            category: Category::Panels,
+            context: When::AgentScreen,
+            hint_priority: None,
+            hint_key_display: None,
+            requires_confirmation: false,
+            long_help: Some(
+                "Opens a sidebar with every kind of context the session sends to the model.\nSpace or Enter switches the row under the cursor ON or OFF; the change applies from the next request on.\nYour current message is always sent. F7 or Esc closes the sidebar.",
+            ),
+        },
+        ActionDef {
             id: ActionId::DeliverSubagent,
             label: "deliver",
             description: "Send the steered subagent's answer to its caller",
