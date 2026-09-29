@@ -113,6 +113,38 @@ impl MessageKind {
             Self::MemoryCapture,
         ]
     }
+
+    /// The form blocks of this kind start in until the user picks one; only settings rows show it.
+    pub fn starting_form(self) -> super::types::DisplayForm {
+        use super::types::DisplayForm;
+        match self {
+            Self::AgentMessage
+            | Self::System
+            | Self::SessionEvent
+            | Self::ContextInfo
+            | Self::MemoryCapture
+            | Self::Stub => DisplayForm::Expanded,
+            Self::UserPrompt
+            | Self::Execute
+            | Self::Read
+            | Self::Edit
+            | Self::ListDir
+            | Self::Search
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::IntegrationSearch
+            | Self::UseTool
+            | Self::MemorySearch
+            | Self::SentMessage
+            | Self::Skill
+            | Self::OtherTool
+            | Self::Thinking
+            | Self::BgTask
+            | Self::Subagent
+            | Self::Workflow
+            | Self::Btw => DisplayForm::Collapsed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -132,6 +164,11 @@ impl DisplayDefaults {
         self.forms
             .iter()
             .find_map(|(candidate, form)| (*candidate == kind).then_some(*form))
+    }
+
+    /// What a settings row shows: the user's choice, else the form the kind starts in.
+    pub fn shown(&self, kind: MessageKind) -> super::types::DisplayForm {
+        self.get(kind).unwrap_or_else(|| kind.starting_form())
     }
 
     pub fn set(&mut self, kind: MessageKind, form: super::types::DisplayForm) {

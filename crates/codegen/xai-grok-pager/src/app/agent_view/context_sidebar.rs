@@ -6,8 +6,10 @@ use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::theme::Theme;
 use crate::views::context_bar::fmt_tokens;
+use crate::scrollback::block::MessageKind;
+use crate::scrollback::types::DisplayForm;
 use crate::views::sidebar::{
-    RowIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout, SidebarLine,
+    RowIdx, SectionIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout, SidebarLine,
     SidebarRender, SidebarRow, SidebarSection, SidebarState,
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
@@ -18,8 +20,26 @@ use ratatui::text::{Line, Span};
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
 use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, switchable_categories};
 
-/// Section 0 is the blank slot the dock paints over; the switches are section 1.
-const FIRST_SWITCH: SidebarLine = SidebarLine::Row(crate::views::sidebar::SectionIdx(1), RowIdx(0));
+/// Section 0 is the blank slot the dock paints over, then the context switches, then message display.
+const CONTEXT_SECTION: SectionIdx = SectionIdx(1);
+const DISPLAY_SECTION: SectionIdx = SectionIdx(2);
+const FIRST_SWITCH: SidebarLine = SidebarLine::Row(CONTEXT_SECTION, RowIdx(0));
+
+/// What a row of the sidebar changes.
+enum RowTarget {
+    Context(ContextCategory),
+    Display(MessageKind),
+}
+
+fn row_target(section: SectionIdx, RowIdx(index): RowIdx) -> Option<RowTarget> {
+    if section == CONTEXT_SECTION {
+        switchable_categories().get(index).copied().map(RowTarget::Context)
+    } else if section == DISPLAY_SECTION {
+        MessageKind::settings_kinds().get(index).copied().map(RowTarget::Display)
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Default)]
 pub(crate) enum ContextSidebar {
@@ -114,6 +134,57 @@ fn consequence(category: ContextCategory) -> &'static str {
     }
 }
 
+fn kind_label(kind: MessageKind) -> &'static str {
+    match kind {
+        MessageKind::UserPrompt => "Your messages",
+        MessageKind::AgentMessage => "Agent replies",
+        MessageKind::Execute => "Commands",
+        MessageKind::Read => "File reads",
+        MessageKind::Edit => "File edits",
+        MessageKind::ListDir => "Directory listings",
+        MessageKind::Search => "Code searches",
+        MessageKind::WebFetch => "Web fetches",
+        MessageKind::WebSearch => "Web searches",
+        MessageKind::IntegrationSearch => "Integration searches",
+        MessageKind::UseTool => "Integration tools",
+        MessageKind::MemorySearch => "Memory searches",
+        MessageKind::SentMessage => "Sent messages",
+        MessageKind::Skill => "Skills",
+        MessageKind::OtherTool => "Other tools",
+        MessageKind::Thinking => "Reasoning",
+        MessageKind::System => "System messages",
+        MessageKind::SessionEvent => "Session events",
+        MessageKind::BgTask => "Background tasks",
+        MessageKind::Subagent => "Subagents",
+        MessageKind::Workflow => "Workflows",
+        MessageKind::Btw => "Side questions",
+        MessageKind::ContextInfo => "Context info",
+        MessageKind::MemoryCapture => "Memory captures",
+        MessageKind::Stub => "Stub",
+    }
+}
+
+fn form_label(form: DisplayForm) -> &'static str {
+    match form {
+        DisplayForm::Collapsed => "1 line",
+        DisplayForm::Expanded => "full",
+    }
+}
+
+fn display_rows(
+    kinds: &[MessageKind],
+    defaults: &crate::scrollback::block::DisplayDefaults,
+) -> Vec<SidebarRow<'static>> {
+    kinds
+        .iter()
+        .map(|&kind| SidebarRow {
+            left: Line::from(kind_label(kind)),
+            right: Some(Line::from(form_label(defaults.shown(kind)))),
+            detail: &[],
+        })
+        .collect()
+}
+
 fn rows<'a>(
     report: Option<&ContextPolicyReport>,
     categories: &[ContextCategory],
@@ -206,7 +277,7 @@ impl AgentView {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') => open.sidebar.move_cursor(-1, viewport),
                     KeyCode::Down | KeyCode::Char('j') => open.sidebar.move_cursor(1, viewport),
-                    KeyCode::Char(' ') | KeyCode::Enter => return Some(self.toggle_cursor_category()),
+                    KeyCode::Char(' ') | KeyCode::Enter => return Some(self.toggle_cursor_row()),
                     KeyCode::Esc => {
                         self.context_sidebar = ContextSidebar::Closed;
                     }
@@ -223,7 +294,7 @@ impl AgentView {
                     Some(SidebarHit::Line(line @ SidebarLine::Row(..))) => {
                         open.focus = SidebarFocus::Sidebar;
                         open.sidebar.cursor = Some(line);
-                        Some(self.toggle_cursor_category())
+                        Some(self.toggle_cursor_row())
                     }
                     Some(SidebarHit::Line(SidebarLine::Hosted(_))) => None,
                     Some(SidebarHit::Header | SidebarHit::Footer | SidebarHit::Line(_)) => {
@@ -256,16 +327,32 @@ impl AgentView {
         true
     }
 
-    fn toggle_cursor_category(&mut self) -> InputOutcome {
+    fn toggle_cursor_row(&mut self) -> InputOutcome {
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return InputOutcome::Unchanged;
         };
-        let (Some(SidebarLine::Row(_, RowIdx(index))), Some(shown)) =
-            (open.sidebar.cursor, open.policy.shown().cloned())
-        else {
+        let Some(SidebarLine::Row(section, row)) = open.sidebar.cursor else {
             return InputOutcome::Unchanged;
         };
-        let Some(&category) = switchable_categories().get(index) else {
+        match row_target(section, row) {
+            Some(RowTarget::Context(category)) => self.toggle_context_category(category),
+            Some(RowTarget::Display(kind)) => {
+                let form = match self.scrollback.display_defaults().shown(kind) {
+                    DisplayForm::Collapsed => DisplayForm::Expanded,
+                    DisplayForm::Expanded => DisplayForm::Collapsed,
+                };
+                self.scrollback.set_kind_default(kind, form);
+                InputOutcome::Changed
+            }
+            None => InputOutcome::Unchanged,
+        }
+    }
+
+    fn toggle_context_category(&mut self, category: ContextCategory) -> InputOutcome {
+        let ContextSidebar::Open(open) = &mut self.context_sidebar else {
+            return InputOutcome::Unchanged;
+        };
+        let Some(shown) = open.policy.shown().cloned() else {
             return InputOutcome::Unchanged;
         };
         let mut requested = shown.policy.clone();
@@ -301,12 +388,20 @@ impl AgentView {
             "Context",
             Style::default().fg(theme.text_primary),
         ));
+        let display = display_rows(MessageKind::settings_kinds(), self.scrollback.display_defaults());
         let dock_slot = super::sidebars::DockSlot(self.dock_rows_in_sidebar);
         let sections = [
             SidebarSection::Hosted(&dock_slot),
             SidebarSection::Rows {
                 title: title.clone(),
                 rows: &rows,
+            },
+            SidebarSection::Rows {
+                title: Line::from(Span::styled(
+                    "Message display",
+                    Style::default().fg(theme.text_primary),
+                )),
+                rows: &display,
             },
         ];
         open.sidebar.rebuild_layout(&sections);
@@ -317,7 +412,7 @@ impl AgentView {
             PolicyState::Loading => "Loading…",
             PolicyState::Applying { .. } => "Applying…",
             PolicyState::Unavailable => "Unavailable for this session",
-            PolicyState::Ready(_) => "Space toggles · Esc closes",
+            PolicyState::Ready(_) => "Space changes · Esc closes",
         };
         let header = [Line::from("Context sent to the model")];
         let footer = [

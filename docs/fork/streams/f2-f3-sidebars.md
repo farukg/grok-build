@@ -36,6 +36,9 @@ for visible rows.
 - Dock (B4): hosted in the top rows of the F7 body (blank `DockSlot` section, painted after the sidebar
   chrome via `PendingDock`); F7 closed means no snapshot, no render, no queue above the prompt. Dock rows
   are capped at half the body height.
-- Not yet: Message Display section (needs F1-display), dock glyph/width optimisation and hover detail,
+- Message Display: F7 lists every settings `MessageKind` with `1 line | full`; click/Space flips the session's
+  kind default through `ScrollbackState::set_kind_default`; an unset kind shows `MessageKind::starting_form`.
+  Session-scoped only, not persisted globally yet.
+- Not yet: global persistence of the display defaults, dock glyph/width optimisation and hover detail,
   F6 mirrored to the left with the 25/50/25 layout, Skills/MCP/Memory rows (need `Sections::Split`),
   a shell `changed` notification so other clients follow.

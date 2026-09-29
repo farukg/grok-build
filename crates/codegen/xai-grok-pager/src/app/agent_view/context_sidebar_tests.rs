@@ -4,7 +4,9 @@ use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::scrollback::render::ScratchBuffer;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
@@ -93,4 +95,44 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
     assert!(!screen(&draw(&mut agent)).contains("Applying"));
     assert!(matches!(press(&mut agent, KeyCode::Esc), InputOutcome::Changed));
     assert!(!screen(&draw(&mut agent)).contains("Context sent to the model"));
+}
+
+fn click_row(agent: &mut AgentView, buf: &Buffer, label: &str) -> InputOutcome {
+    let y = screen(buf)
+        .lines()
+        .position(|line| line.contains(label))
+        .expect("row is visible") as u16;
+    agent.handle_input(
+        &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: buf.area.right() - 12,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }),
+        &ActionRegistry::defaults(),
+    )
+}
+
+#[test]
+fn f7_message_display_flips_a_kind_between_one_line_and_full() {
+    use crate::scrollback::block::MessageKind;
+    use crate::scrollback::types::DisplayForm;
+
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = test_fixtures::make_agent();
+    let _ = press(&mut agent, KeyCode::F(7));
+    let buf = draw(&mut agent);
+    assert!(sidebar_row(&buf, "File reads").contains("1 line"));
+
+    assert!(matches!(click_row(&mut agent, &buf, "File reads"), InputOutcome::Changed));
+    assert!(sidebar_row(&draw(&mut agent), "File reads").contains("full"));
+    assert_eq!(
+        agent.scrollback.display_defaults().get(MessageKind::Read),
+        Some(DisplayForm::Expanded)
+    );
+    assert_eq!(agent.scrollback.display_defaults().get(MessageKind::Execute), None);
+
+    let buf = draw(&mut agent);
+    let _ = click_row(&mut agent, &buf, "File reads");
+    assert!(sidebar_row(&draw(&mut agent), "File reads").contains("1 line"));
 }
