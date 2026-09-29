@@ -42,3 +42,10 @@ for visible rows.
 - Not yet: global persistence of the display defaults, dock glyph/width optimisation and hover detail,
   F6 mirrored to the left with the 25/50/25 layout, Skills/MCP/Memory rows (need `Sections::Split`),
   a shell `changed` notification so other clients follow.
+
+## Open: F6/F7 hang on very large sessions (reported 2026-09-29)
+Opening or closing F6/F7 hangs the UI for 20-30 s in session `01a0b0d3` (~92k updates, 412 MB updates.jsonl);
+small sessions are instant. A synthetic probe with up to 42k entries (long verb-group runs, 400-line outputs)
+needed at most ~60 ms per frame in a debug build, so layout and outline are not the cost. Suspect: the terminal
+writer stalling (`term.writer.blocked` / `term.writer.recovered` in `~/.grok/logs/unified.jsonl`, `event_loop.rs` Presenter).
+Needs: those log lines and a `GROK_FPS=1` run on the large session.

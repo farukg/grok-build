@@ -16,7 +16,11 @@ a meaningful summary (tool label + key detail), one row at every width. Design:
 the block's own policy), and the pipeline guarantee in `RenderBlock::output` that Collapsed output
 is truncated to one row.
 
-## State of the branch
+## State (2026-09-29)
+The F7 Message Display section is on `main`. The renderer WIP below was dropped: it mostly contained the changes
+`reviews/f1display.md` rejects. What remains is the real goal: audit each kind's collapsed first line and add golden tests.
+
+## Old state of the branch
 - `d2a17cde` wip per-kind collapsed renderers; `2e4e5bf1` separates explicit choices from the row
   presentation default (`DisplayDefaults::row_form`, used only by the sidebar row), keeps Stub out
   of settings; `d815339c` restores upstream transient fold policies. Not compiled.
