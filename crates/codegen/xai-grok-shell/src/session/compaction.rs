@@ -229,8 +229,12 @@ impl SessionActor {
             span.record("compaction_prefire_note1_chars", v as i64);
         }
     }
+    /// Two-pass compaction summarizes the stored history; a restricted context policy summarizes less.
+    async fn compacts_the_whole_history(&self) -> bool {
+        self.chat_state_handle.get_context_policy().await.is_unrestricted()
+    }
     async fn run_prefire_pass1_inner(self: &Arc<Self>) -> PrefirePass1Run {
-        if !self.two_pass_active() {
+        if !self.two_pass_active() || !self.compacts_the_whole_history().await {
             return PrefireOutcome::Disabled.into();
         }
         if std::env::var("GROK_DEBUG_TWO_PASS_FAIL_PASS1")
@@ -315,7 +319,7 @@ impl SessionActor {
         user_context: Option<&str>,
         strips_reasoning: bool,
     ) -> Option<CompactOutput> {
-        if !self.two_pass_active() {
+        if !self.two_pass_active() || !self.compacts_the_whole_history().await {
             return None;
         }
         let mut prefire_waited_ms = 0u64;
@@ -996,11 +1000,13 @@ impl SessionActor {
         .await;
         let max_retries = 3u32;
         let retry_delay_secs = 3u64;
-        let (conv_len, system_message, full_conversation) = tokio::join!(
+        let (conv_len, system_message, full_conversation, context_policy) = tokio::join!(
             self.chat_state_handle.get_conversation_len(),
             self.chat_state_handle.get_system_message(),
             self.chat_state_handle.get_conversation(),
+            self.chat_state_handle.get_context_policy(),
         );
+        let full_conversation = context_policy.project(full_conversation);
         let assembly_start = std::time::Instant::now();
         let segment_messages = if self.compaction.compaction_mode.writes_segments() {
             xai_chat_state::compaction_utils::prepare_conversation_for_segment(
