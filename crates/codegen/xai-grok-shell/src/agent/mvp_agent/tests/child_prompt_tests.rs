@@ -152,6 +152,39 @@ fn deliver_on_a_finished_child_reports_not_running() {
 }
 
 #[test]
+fn by_id_handlers_reach_a_running_child_but_root_enumerations_do_not() {
+    run_local_for_bridge_test(|| async {
+        let agent = build_minimal_agent_for_tests();
+        let child = acp::SessionId::new(CHILD);
+        let (handle, _cmd_tx, _cmd_rx) = make_live_session_handle(&child, None);
+        let (turns, _receipts) = tokio::sync::mpsc::channel(4);
+        let (delivery, _delivery_rx) = tokio::sync::watch::channel(SubagentDelivery::OnTurnEnd);
+        agent.register_child_session(
+            &child,
+            child_host(ChildReach::Addressed {
+                address: AgentAddress::mint(2),
+                residence: ChildResidence::Running(Box::new(RunningChild {
+                    handle,
+                    turns,
+                    parent_prompt_index: Default::default(),
+                    delivery,
+                })),
+            }),
+        );
+
+        assert!(
+            agent.resident_handle(&child).is_some(),
+            "set_model, compact, mode … address a running child by its id"
+        );
+        assert!(!agent.is_resident(&child), "a child is not a root");
+        assert!(agent.session_registry.resident_ids().is_empty());
+
+        agent.finish_child_session(&child);
+        assert!(agent.resident_handle(&child).is_none());
+    });
+}
+
+#[test]
 fn workflow_child_refuses_prompts() {
     run_local_for_bridge_test(|| async {
         let agent = build_minimal_agent_for_tests();
