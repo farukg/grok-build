@@ -18,7 +18,8 @@ use ratatui::text::{Line, Span};
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
 use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, switchable_categories};
 
-const SECTION: SidebarLine = SidebarLine::Row(crate::views::sidebar::SectionIdx(0), RowIdx(0));
+/// Section 0 is the blank slot the dock paints over; the switches are section 1.
+const FIRST_SWITCH: SidebarLine = SidebarLine::Row(crate::views::sidebar::SectionIdx(1), RowIdx(0));
 
 #[derive(Debug, Default)]
 pub(crate) enum ContextSidebar {
@@ -141,6 +142,15 @@ fn rows<'a>(
 }
 
 impl AgentView {
+    /// Body rect of the F7 column, or empty while it is closed.
+    pub(super) fn context_sidebar_body(&mut self, column: Rect) -> Rect {
+        if !matches!(self.context_sidebar, ContextSidebar::Open(_)) || column.width == 0 {
+            return Rect::default();
+        }
+        let heights = self.sidebar_heights.heights_for(column.width);
+        SidebarLayout::compute(column, heights).body
+    }
+
     /// F7: open the sidebar and ask the shell for the policy, or close it.
     pub(crate) fn toggle_context_sidebar(&mut self) -> InputOutcome {
         if self.is_minimal_mode() {
@@ -215,6 +225,7 @@ impl AgentView {
                         open.sidebar.cursor = Some(line);
                         Some(self.toggle_cursor_category())
                     }
+                    Some(SidebarHit::Line(SidebarLine::Hosted(_))) => None,
                     Some(SidebarHit::Header | SidebarHit::Footer | SidebarHit::Line(_)) => {
                         open.focus = SidebarFocus::Sidebar;
                         Some(InputOutcome::Changed)
@@ -290,13 +301,17 @@ impl AgentView {
             "Context",
             Style::default().fg(theme.text_primary),
         ));
-        let sections = [SidebarSection::Rows {
-            title: title.clone(),
-            rows: &rows,
-        }];
+        let dock_slot = super::sidebars::DockSlot(self.dock_rows_in_sidebar);
+        let sections = [
+            SidebarSection::Hosted(&dock_slot),
+            SidebarSection::Rows {
+                title: title.clone(),
+                rows: &rows,
+            },
+        ];
         open.sidebar.rebuild_layout(&sections);
         if open.sidebar.cursor.is_none() && open.focus == SidebarFocus::Sidebar {
-            open.sidebar.cursor = Some(SECTION);
+            open.sidebar.cursor = Some(FIRST_SWITCH);
         }
         let status = match open.policy {
             PolicyState::Loading => "Loading…",

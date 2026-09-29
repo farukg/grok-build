@@ -570,6 +570,7 @@ impl AgentView {
         Option<crate::terminal::overlay::PostFlush>,
     ) {
         let columns = crate::views::sidebar::screen_columns(area, self.sidebars_open(area.width));
+        self.f7_body = self.context_sidebar_body(columns.right);
         let drawn = self.draw_session(
             columns.center,
             buf,
@@ -584,6 +585,7 @@ impl AgentView {
         );
         self.draw_timeline_sidebar(columns.left, buf);
         self.draw_context_sidebar(columns.right, buf);
+        self.draw_pending_dock(buf);
         drawn
     }
 
@@ -1008,7 +1010,8 @@ impl AgentView {
             self.queue.desired_height()
         };
         let drain_blocked = self.drain_blocked();
-        let dock_covers_cues = self.dock_covers_idle_cues(dock_on);
+        let dock_slot = self.f7_body;
+        let dock_covers_cues = self.dock_covers_idle_cues(dock_on && dock_slot.width > 0);
         let turn_status_drain_blocked = if dock_covers_cues {
             false
         } else {
@@ -1060,12 +1063,16 @@ impl AgentView {
             _ => 1,
         };
         let follow_ups_height = u16::from(self.follow_ups.is_some());
-        let mut dock_data = (dock_on && !self.dock_hidden).then(|| self.dock_snapshot());
-        let dock_height = dock_data
+        let mut dock_data =
+            (dock_on && !self.dock_hidden && dock_slot.width > 0).then(|| self.dock_snapshot());
+        let dock_rows = dock_data
             .as_ref()
-            .map_or(0, crate::views::dock::desired_height);
+            .map_or(0, crate::views::dock::desired_height)
+            .min(dock_slot.height / 2);
+        let dock_rect = Rect::new(dock_slot.x, dock_slot.y, dock_slot.width, dock_rows);
+        self.dock_rows_in_sidebar = dock_rows;
         self.take_dock_row_request();
-        self.dock_shown = dock_height > 0;
+        self.dock_shown = dock_rows > 0;
         if !self.dock_shown && self.active_pane == ActivePane::Dock {
             self.active_pane = ActivePane::Scrollback;
         }
@@ -1089,7 +1096,7 @@ impl AgentView {
             banner_height,
             cta_height,
             follow_ups_height,
-            dock_height,
+            dock_height: 0,
             prompt_gap,
             voice_recording_height,
             shortcuts_height: 1,
@@ -1101,6 +1108,7 @@ impl AgentView {
                 prompt_height.min(AgentViewLayout::rows_available_for_prompt(layout_params));
         }
         let mut layout = AgentViewLayout::compute(layout_params);
+        layout.dock = dock_rect;
         let search_active =
             self.scrollback_search.is_some() && self.active_pane == AgentPane::Scrollback;
         let search_reserved_rows =
@@ -1161,6 +1169,7 @@ impl AgentView {
                         timeline_width: 0,
                         ..layout_params
                     });
+                    layout.dock = dock_rect;
                     if search_reserved_rows > 0 {
                         layout.scrollback.height -= search_reserved_rows;
                         layout.scrollback_content.height = layout
@@ -1180,18 +1189,18 @@ impl AgentView {
             self.timeline_hover_preview = None;
         }
         if let Some(data) = &mut dock_data {
-            if layout.dock.height > 0 {
+            if dock_rect.height > 0 {
                 data.max_rows =
-                    crate::views::dock::MaxRows::new(data.max_rows.get().min(layout.dock.height));
+                    crate::views::dock::MaxRows::new(data.max_rows.get().min(dock_rect.height));
             }
-            self.sync_dock_hover_from_pointer(layout.dock);
+            self.sync_dock_hover_from_pointer(dock_rect);
             data.hovered = self.dock_hovered;
             let (col, row) = self.last_mouse_pos;
-            data.stop_hovered = crate::views::dock::hovered_stop_button_rect(layout.dock, data)
+            data.stop_hovered = crate::views::dock::hovered_stop_button_rect(dock_rect, data)
                 .is_some_and(|hit| hit.rect.contains((col, row).into()));
         }
         if let Some(dock) = &dock_data {
-            let body = crate::views::dock::queue_body_rect(layout.dock, dock);
+            let body = crate::views::dock::queue_body_rect(dock_rect, dock);
             if body.height > 0 {
                 layout.queue = body;
             }
@@ -1850,24 +1859,15 @@ impl AgentView {
             self.hit_queue_close.clear();
         }
         self.dock_stop_button = None;
-        if let Some(dock) = &dock_data
-            && layout.dock.height > 0
-        {
-            crate::views::dock::render(buf, layout.dock, &theme, dock);
-            self.cache_dock_stop_at(layout.dock, dock);
-            let queue_body = crate::views::dock::queue_body_rect(layout.dock, dock);
-            if queue_body.height > 0 {
-                let queue_focused = self.active_pane == ActivePane::Queue && !overlay_focused;
-                self.queue.render(
-                    queue_body,
-                    buf,
-                    queue_focused,
-                    layout_cfg,
-                    Some(layout.scrollback),
-                    self.can_send_now(),
-                );
+        self.pending_dock = dock_data.take().filter(|_| dock_rect.height > 0).map(|data| {
+            super::sidebars::PendingDock {
+                data,
+                rect: dock_rect,
+                scrollback: layout.scrollback,
+                layout_cfg: *layout_cfg,
+                overlay_focused,
             }
-        }
+        });
         self.last_btw_selection_model = ResolvedSelectionModel::default();
         self.last_btw_area = Rect::default();
         if btw_height > 0

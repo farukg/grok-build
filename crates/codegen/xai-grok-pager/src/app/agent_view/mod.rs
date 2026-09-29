@@ -1401,6 +1401,12 @@ pub struct AgentView {
     /// The F7 sidebar with the session's context switches.
     pub(crate) context_sidebar: context_sidebar::ContextSidebar,
     pub(crate) sidebar_heights: sidebars::SidebarHeightsCache,
+    /// Body of the F7 column this frame (empty when F7 is closed): the dock draws into its top rows.
+    pub(crate) f7_body: Rect,
+    /// Rows the dock takes at the top of the F7 body this frame.
+    pub(crate) dock_rows_in_sidebar: u16,
+    /// The dock, painted after the sidebar chrome so the chrome cannot recolor it.
+    pub(crate) pending_dock: Option<sidebars::PendingDock>,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
     pub subagent_sessions: HashMap<String, SubagentInfo>,
