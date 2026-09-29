@@ -203,7 +203,7 @@ fn finished_child_prompt_is_routed_to_the_coordinator_wake() {
 }
 
 #[test]
-fn finished_child_wake_needs_active_agent_messages() {
+fn finished_child_without_active_agent_messages_continues_like_a_resume() {
     run_local_for_bridge_test(|| async {
         let agent = build_minimal_agent_for_tests();
         agent
@@ -222,9 +222,15 @@ fn finished_child_wake_needs_active_agent_messages() {
         let error = agent
             .prompt(prompt("continue"))
             .await
-            .expect_err("wake is gated by the feature");
+            .expect_err("the parent session of this child is not resident");
 
         assert_eq!(error.code, acp::ErrorCode::InvalidRequest);
+        assert!(
+            error
+                .data
+                .is_some_and(|data| data.get("childResume").is_some()),
+            "the refusal comes from the resume route, not from a missing feature"
+        );
     });
 }
 

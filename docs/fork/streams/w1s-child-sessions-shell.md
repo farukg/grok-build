@@ -40,10 +40,11 @@ Implemented (shell only):
   child is released with its parent.
 
 ## Open questions (for Faruk)
-1. **Waking needs `features.active_agent_messages`** (default off, xai-grok-config-types/src/registry.rs
-   `FeatureSpec ActiveAgentMessages default_enabled: false`). Without it a finished child answers
-   `InvalidRequest "waking a finished child session requires features.active_agent_messages"`.
-   Keep the gate (current), or let human wakes bypass it?
+1. Waking a finished child under the same id needs `features.active_agent_messages` (default off,
+   xai-grok-config-types/src/registry.rs `ActiveAgentMessages`). Without it the prompt continues the
+   child like `x.ai/subagent/resume` (M4): a new child starting from the finished one's history,
+   response `_meta.childResume = {kind: resumed | queued | refused}`; the pager sees it as a new
+   subagent. No error any more.
 2. Decided (Faruk): ContinuedAs after a restart is the pager's job in W3 via
    `x.ai/subagent/resume` on "unknown session id".
 3. Decided (Faruk): subagent behavior stays as it is; the `is_subagent` gates for hooks and the ↑
@@ -56,5 +57,8 @@ Verified: `cargo test -p xai-grok-shell --lib` 7074 passed, the same 10 environm
 `main`; `cargo check -p xai-grok-pager-bin`; clippy on the touched crates clean.
 
 ## Next steps
-1. Pager W3: consume `childSessions: "firstClass"` (prompt child sids, handle `childWake`,
+1. Open: after a shell restart the child id is unknown (`InvalidParams "unknown session id"`); the
+   shell cannot name the parent. Idea: the pager stamps `_meta.childOf = <parent session id>` on
+   prompts from child views and the shell resumes via `resume_subagent(parent, child_id, text)`.
+2. Pager W3: consume `childSessions: "firstClass"` (prompt child sids, handle `childWake`,
    resume via `x.ai/subagent/resume` on "unknown session id").
