@@ -338,7 +338,7 @@ pub fn is_synthetic_extracted_query(text: &str) -> bool {
 pub fn is_real_user_turn(item: &ConversationItem) -> bool {
     match item {
         ConversationItem::User(u) => {
-            if !u.synthetic_reason.is_human() {
+            if !u.synthetic_reason.is_user_input() {
                 return false;
             }
             let has_images = u

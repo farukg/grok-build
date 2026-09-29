@@ -26,7 +26,7 @@ pub struct ConversationRequestTrace {
 pub(crate) fn fork_filter_chat(items: &mut Vec<ConversationItem>) {
     items.retain(|item| match item {
         ConversationItem::User(u) => {
-            u.synthetic_reason.is_human() || u.synthetic_reason == SyntheticReason::CompactionMeta
+            u.synthetic_reason.is_legacy_human() || u.synthetic_reason == SyntheticReason::CompactionMeta
         }
         _ => true,
     });
