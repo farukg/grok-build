@@ -19,7 +19,10 @@ pub mod served_route;
 pub mod tool_overrides;
 pub mod types;
 
-pub use self::context_policy::{all_categories, ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice};
+pub use self::context_policy::{
+    all_categories, switchable_categories, ContextCategory, ContextPolicy, ContextSwitch,
+    RuntimeNotice,
+};
 pub use self::conversation::*;
 pub use self::doom_loop::{
     DEFAULT_EXACT_REPETITION_MIN_TOKENS, DOOM_LOOP_CHECK_EVENT_TYPE, DOOM_LOOP_CHECK_HEADER,

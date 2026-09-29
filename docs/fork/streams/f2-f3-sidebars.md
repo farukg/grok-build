@@ -1,7 +1,6 @@
 # F2/F3 — F6 left panel and F7 right sidebar in the session view
 
-No branch yet. Starts after W2 is on `main` (it changes the same view files) and after F1-core
-provides the policy API.
+Branch `grb/f2f3` (from `main`). W2 and the F1-core policy API are on `main`.
 
 ## Goal (Faruk decisions, binding)
 - F6 = the expanded timeline on the **left**; the rail sits flush against the panel, mirrored, and
@@ -27,3 +26,13 @@ bridge/persistence → B4 dock into F7 → D F6 visual rework.
 With F7 closed no dock render/snapshot/hover work. Width budgets computed once per resize or
 geometry change and cached; detail popup only for the hovered/selected row; per-frame work only
 for visible rows.
+
+## State
+- F7 (`ToggleContextSidebar`, `P/app/agent_view/context_sidebar.rs`): `AgentView::draw` splits the area with
+  `screen_columns` (35/65 with F7 open) and draws the shared sidebar component in the right column; the
+  session view draws into the center column unchanged. Rows = `switchable_categories()` with the shell's
+  ON/OFF (`x.ai/session/context_policy`); space/Enter/click asks for the change, the row keeps the shell's
+  last answer while `Applying`. Esc closes, Tab returns focus to the chat.
+- Not yet: token estimates per row, Message Display section (needs F1-display), Dock moved into F7,
+  F6 mirrored to the left with the 25/50/25 layout, Skills/MCP/Memory rows (need `Sections::Split`),
+  a shell `changed` notification so other clients follow.

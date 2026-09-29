@@ -762,6 +762,28 @@ pub(super) fn dispatch_deliver_subagent(app: &mut AppView) -> Vec<Effect> {
     vec![Effect::DeliverSubagent { child_session_id }]
 }
 
+/// Ask the shell to read or replace the active session's context policy.
+pub(super) fn dispatch_context_policy(
+    app: &mut AppView,
+    change: crate::app::actions::ContextPolicyChange,
+) -> Vec<Effect> {
+    let ActiveView::Agent(agent_id) = app.active_view else {
+        return vec![];
+    };
+    let Some(session_id) = app
+        .agents
+        .get(&agent_id)
+        .and_then(|agent| agent.session.session_id.clone())
+    else {
+        return vec![];
+    };
+    vec![Effect::ContextPolicy {
+        agent_id,
+        session_id,
+        change,
+    }]
+}
+
 pub(super) fn dispatch_demote_to_background(app: &mut AppView) -> Vec<Effect> {
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];

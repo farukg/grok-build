@@ -101,6 +101,8 @@ pub enum ActionId {
     ToggleTimelinePanel,
     /// Send a steered subagent's answer to its caller.
     DeliverSubagent,
+    /// Open or close the right sidebar with the session's context switches (F7).
+    ToggleContextSidebar,
 
     // Prompt
     EditPromptExternal,

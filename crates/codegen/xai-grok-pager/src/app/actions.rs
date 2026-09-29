@@ -424,6 +424,10 @@ pub enum Action {
     ResumeSubagent { subagent_id: String, prompt: String },
     /// Release the active child view's held answer to its caller.
     DeliverSubagent,
+    /// Ask the shell for the active session's context policy (the F7 sidebar just opened).
+    FetchContextPolicy,
+    /// Replace the active session's context policy.
+    SetContextPolicy(xai_grok_shell::sampling::ContextPolicy),
     RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
@@ -1411,6 +1415,13 @@ pub enum AfterSessionDelete {
     /// Unused optimistic home husk: remove on-disk data without a toast or view change.
     UnusedHusk,
 }
+/// What an `Effect::ContextPolicy` asks of the shell.
+#[derive(Debug, Clone)]
+pub enum ContextPolicyChange {
+    Read,
+    Replace(xai_grok_shell::sampling::ContextPolicy),
+}
+
 /// Async side effect produced by [`super::dispatch::dispatch`].
 /// The event loop spawns these into a `JoinSet`; completions come back through [`TaskResult`] as `Action::TaskComplete`.
 #[derive(Debug)]
@@ -1616,6 +1627,12 @@ pub enum Effect {
     },
     /// Release a held child session via `x.ai/subagent/deliver`.
     DeliverSubagent { child_session_id: acp::SessionId },
+    /// Read (`policy: None`) or replace the session's context policy via `x.ai/session/context_policy`.
+    ContextPolicy {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        change: ContextPolicyChange,
+    },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
     KillSubagent {
         session_id: acp::SessionId,
@@ -2662,6 +2679,11 @@ pub enum TaskResult {
         error: String,
     },
     /// Response to `x.ai/subagent/deliver`; `None` when the RPC itself failed.
+    /// The shell answered a context policy get or set.
+    ContextPolicyAnswered {
+        agent_id: AgentId,
+        result: Result<xai_grok_shell::sampling::ContextPolicy, String>,
+    },
     DeliverSubagentComplete {
         outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,
     },

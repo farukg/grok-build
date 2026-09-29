@@ -405,6 +405,7 @@ impl AgentView {
             timeline_hover: None,
             timeline_hover_preview: None,
             timeline_mode: crate::views::timeline_panel::TimelineMode::Rail,
+            context_sidebar: Default::default(),
             session_agent_name: None,
             subagent_sessions: HashMap::new(),
             role: AgentRole::Root,

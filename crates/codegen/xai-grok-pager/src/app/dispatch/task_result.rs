@@ -944,6 +944,12 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             None => vec![],
         },
+        TaskResult::ContextPolicyAnswered { agent_id, result } => {
+            if let Some(agent) = app.agents.get_mut(&agent_id) {
+                agent.context_policy_answered(result);
+            }
+            vec![]
+        }
         TaskResult::DeliverSubagentComplete { outcome } => {
             use xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome;
             match outcome {

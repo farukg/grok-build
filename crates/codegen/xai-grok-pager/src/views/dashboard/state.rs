@@ -4169,6 +4169,7 @@ fn dashboard_action_for_id(
         | ActionId::OpenDashboard
         | ActionId::ToggleTimelinePanel
         | ActionId::DeliverSubagent
+        | ActionId::ToggleContextSidebar
         | ActionId::EnableVoiceMode
         | ActionId::VoiceToggle
         // Overlay actions are intercepted at the AppView level before they reach the dashboard's own input loop; they can never arrive here

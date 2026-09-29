@@ -925,6 +925,9 @@ impl AgentView {
                 _ => InputOutcome::Unchanged,
             };
         }
+        if let Some(outcome) = self.route_context_sidebar_input(ev) {
+            return outcome;
+        }
         if let Some(outcome) = self.route_timeline_panel_input(ev) {
             if let (Event::Key(key), InputOutcome::ArmPending { .. }) = (ev, &outcome)
                 && crate::app::agent_view::context_removal::is_remove_key(key)
@@ -1305,6 +1308,7 @@ impl AgentView {
             ActionId::OpenSettings => InputOutcome::Action(Action::OpenSettings),
             ActionId::OpenSessions => self.open_session_picker(),
             ActionId::ToggleTimelinePanel => self.toggle_timeline_panel(),
+            ActionId::ToggleContextSidebar => self.toggle_context_sidebar(),
             ActionId::ToggleMouseCapture => {
                 crate::unified_log::info(
                     "mouse_reporting_toggle.handle_agent_action",

@@ -1938,6 +1938,39 @@ pub(crate) fn execute(
                     TaskResult::ResumeSubagentComplete { subagent_id, outcome }
                 });
         }
+        Effect::ContextPolicy {
+            agent_id,
+            session_id,
+            change,
+        } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                use xai_grok_shell::extensions::context_policy::{
+                    ContextPolicyAction, ContextPolicyRequest, ContextPolicyResponse,
+                };
+                let action = match change {
+                    actions::ContextPolicyChange::Read => ContextPolicyAction::Get,
+                    actions::ContextPolicyChange::Replace(policy) => ContextPolicyAction::Set { policy },
+                };
+                let request = ContextPolicyRequest {
+                    session_id: session_id.0.to_string(),
+                    action,
+                };
+                let result = match serde_json::value::to_raw_value(&request) {
+                    Ok(raw) => {
+                        let req = acp::ExtRequest::new("x.ai/session/context_policy", raw.into());
+                        match acp_send(req, &tx).await {
+                            Ok(resp) => serde_json::from_str::<ContextPolicyResponse>(resp.0.get())
+                                .map(|response| response.policy)
+                                .map_err(|error| error.to_string()),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                    Err(error) => Err(error.to_string()),
+                };
+                TaskResult::ContextPolicyAnswered { agent_id, result }
+            });
+        }
         Effect::DeliverSubagent { child_session_id } => {
             let tx = acp_tx.clone();
             tasks
