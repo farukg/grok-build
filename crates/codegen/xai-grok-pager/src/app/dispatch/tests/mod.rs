@@ -322,6 +322,7 @@ fn test_app() -> AppView {
         session_recap_available: false,
         shell_feedback_trace_offer: false,
         shell_child_support: crate::acp::ShellChildSupport::FirstClass,
+        follow_resumed_child: None,
         feedback_trace_choice_latched: false,
         tutorial: None,
         dashboard: None,

@@ -722,6 +722,8 @@ pub struct AppView {
     pub shell_feedback_trace_offer: bool,
     /// Whether prompts to subagent views can reach the shell; set from the ACP `initialize` reply.
     pub shell_child_support: crate::acp::ShellChildSupport,
+    /// The subagent the user resumed from its finished view; the continuation that names it is opened when it spawns.
+    pub follow_resumed_child: Option<String>,
     /// A persisted card answer was made this session; keeps auth-meta refreshes from re-offering before the async config write lands.
     pub feedback_trace_choice_latched: bool,
     /// Stateful prompt widget rendered on the welcome screen (persists input across frames).
@@ -1648,6 +1650,7 @@ impl AppView {
             session_recap_available: false,
             shell_feedback_trace_offer: false,
             shell_child_support: crate::acp::ShellChildSupport::Legacy,
+            follow_resumed_child: None,
             feedback_trace_choice_latched: false,
             tutorial: None,
             dashboard: None,

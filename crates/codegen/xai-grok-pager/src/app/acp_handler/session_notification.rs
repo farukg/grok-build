@@ -481,6 +481,7 @@ pub(super) fn handle_session_notification_with_origin(
                 subagent_type = %subagent_type,
                 "Subagent spawned"
             );
+            let followed_source = resumed_from.clone();
             let committed_lifecycle = committed_subagent_lifecycle.take();
             let is_new_attempt = committed_lifecycle
                 .as_ref()
@@ -696,7 +697,10 @@ pub(super) fn handle_session_notification_with_origin(
                         subagent_id: child_session_id.clone(),
                         started_at: now,
                     });
-                child_follow_up = Some(ChildViewFollowUp::Spawned(Box::new(child_view)));
+                child_follow_up = Some(ChildViewFollowUp::Spawned {
+                    view: Box::new(child_view),
+                    resumed_from: followed_source,
+                });
             }
             if workflow_run_id.is_none() {
                 let block = crate::scrollback::blocks::SubagentBlock::started(
@@ -1471,7 +1475,10 @@ fn lifecycle_child_session_id(update: &XaiSessionUpdate) -> Option<&str> {
 }
 /// What a parent's subagent lifecycle update does to the child's own view, applied once the parent's borrow ends.
 enum ChildViewFollowUp {
-    Spawned(Box<AgentView>),
+    Spawned {
+        view: Box<AgentView>,
+        resumed_from: Option<String>,
+    },
     Restarted {
         child: AgentId,
         tracker: Option<Box<AcpUpdateTracker>>,
@@ -1488,11 +1495,24 @@ enum ChildViewFollowUp {
 }
 fn apply_child_view_follow_up(app: &mut AppView, follow_up: ChildViewFollowUp) {
     match follow_up {
-        ChildViewFollowUp::Spawned(mut view) => {
+        ChildViewFollowUp::Spawned {
+            mut view,
+            resumed_from,
+        } => {
             let child = AgentId(app.next_agent_id);
             app.next_agent_id += 1;
             view.session.id = child;
             app.agents.insert(child, *view);
+            if let Some(source) = resumed_from
+                && app.follow_resumed_child.as_deref() == Some(source.as_str())
+            {
+                app.follow_resumed_child = None;
+                crate::app::dispatch::switch_to_agent(
+                    app,
+                    child,
+                    crate::app::dispatch::SwitchCause::Navigate,
+                );
+            }
         }
         ChildViewFollowUp::Restarted { child, tracker } => {
             if let Some(child_view) = app.agents.get_mut(&child) {

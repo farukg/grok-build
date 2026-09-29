@@ -48,6 +48,62 @@
     }
 
     #[test]
+    fn a_prompt_answered_with_a_resume_marks_the_continuation_to_follow() {
+        use crate::app::actions::TaskResult;
+        let mut app = make_app_viewing_child("sess-parent", "sess-child");
+        let answer = acp::PromptResponse::new(acp::StopReason::EndTurn).meta(
+            serde_json::json!({ "childResume": { "kind": "resumed", "sourceId": "sess-child" } })
+                .as_object()
+                .cloned(),
+        );
+        let _ = dispatch(
+            Action::TaskComplete(TaskResult::PromptResponse {
+                agent_id: AgentId(1),
+                result: Ok(answer),
+                http_status: None,
+                prompt_id: Some("p-1".into()),
+            }),
+            &mut app,
+        );
+        assert_eq!(app.follow_resumed_child.as_deref(), Some("sess-child"));
+    }
+
+    #[test]
+    fn a_resumed_child_opens_when_the_user_resumed_it_from_its_finished_view() {
+        let mut app = make_app_viewing_child("sess-parent", "sess-child");
+        let resumed = |source: &str, continued: &str| {
+            let mut spawned = test_subagent_spawned("sess-parent", continued);
+            let XaiSessionUpdate::SubagentSpawned { resumed_from, .. } = &mut spawned else {
+                unreachable!("test_subagent_spawned builds a spawn update")
+            };
+            *resumed_from = Some(source.into());
+            make_ext_session_notification_with_method("sess-parent", "x.ai/session/update", spawned)
+        };
+
+        let _ = handle(resumed("sess-child", "sess-continued-1"), &mut app);
+        assert_eq!(
+            app.active_view,
+            ActiveView::Agent(AgentId(1)),
+            "a continuation nobody asked for stays in the background"
+        );
+
+        app.follow_resumed_child = Some("sess-other".into());
+        let _ = handle(resumed("sess-child", "sess-continued-2"), &mut app);
+        assert_eq!(app.active_view, ActiveView::Agent(AgentId(1)));
+
+        app.follow_resumed_child = Some("sess-child".into());
+        let _ = handle(resumed("sess-child", "sess-continued-3"), &mut app);
+        let ActiveView::Agent(opened) = app.active_view else {
+            panic!("an agent view is active");
+        };
+        assert_eq!(
+            app.agents.get(&opened).and_then(|view| view.session.session_id.as_ref()).map(|sid| sid.0.as_ref()),
+            Some("sess-continued-3")
+        );
+        assert_eq!(app.follow_resumed_child, None);
+    }
+
+    #[test]
     fn deliver_key_releases_only_a_held_child() {
         let mut app = make_app_viewing_child("sess-parent", "sess-child");
         assert!(press_deliver_key(&mut app).is_empty(), "nothing is held before a human prompt");

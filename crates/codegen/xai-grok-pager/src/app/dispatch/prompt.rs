@@ -18,6 +18,7 @@ use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, DoctorFixTarget, Effect};
 use crate::app::agent::{AgentCommand, AgentId, AgentState};
 use crate::app::agent_view::{AgentRole, AgentView};
+use xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome;
 use crate::app::app_view::{ActiveView, AppView};
 use crate::app::cancel_latency::TurnEnd;
 use crate::notifications::{NotificationEvent, NotificationEventKind};
@@ -1418,6 +1419,11 @@ pub(super) fn supersede_open_reload_window(
     agent.abort_session_reload();
 }
 
+/// The shell's answer to a prompt that continued a finished subagent as a new one (`_meta.childResume`).
+fn child_resume_outcome(meta: Option<&acp::Meta>) -> Option<ResumeSubagentOutcome> {
+    serde_json::from_value(meta?.get("childResume")?.clone()).ok()
+}
+
 // TaskResult handlers.
 
 pub(super) fn handle_prompt_response(
@@ -1427,6 +1433,12 @@ pub(super) fn handle_prompt_response(
     http_status: Option<u16>,
     prompt_id: Option<String>,
 ) -> Vec<Effect> {
+    if let Ok(response) = &result
+        && let Some(ResumeSubagentOutcome::Resumed { source_id }) =
+            child_resume_outcome(response.meta.as_ref())
+    {
+        app.follow_resumed_child = Some(source_id);
+    }
     // A server-authoritative queued prompt may have drained into the running slot while this turn was still finishing
     // The leader's `running_prompt_id` broadcast can arrive before this `PromptResponse`
     // Take any stashed adoption now; it is applied after `finish_turn` clears `current_prompt_id` below
