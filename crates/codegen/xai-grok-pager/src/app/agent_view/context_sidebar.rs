@@ -6,10 +6,9 @@ use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::theme::Theme;
 use crate::views::context_bar::fmt_tokens;
-use crate::views::prompt_widget::PromptWidget;
 use crate::views::sidebar::{
-    RowIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHeights, SidebarHit, SidebarLayout,
-    SidebarLine, SidebarRender, SidebarRow, SidebarSection, SidebarState, SidebarsOpen,
+    RowIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout, SidebarLine,
+    SidebarRender, SidebarRow, SidebarSection, SidebarState,
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -34,7 +33,6 @@ pub(crate) struct OpenContextSidebar {
     sidebar: SidebarState,
     layout: Option<SidebarLayout>,
     policy: PolicyState,
-    heights: Option<(u16, SidebarHeights)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,13 +141,6 @@ fn rows<'a>(
 }
 
 impl AgentView {
-    pub(crate) fn sidebars_open(&self) -> SidebarsOpen {
-        match self.context_sidebar {
-            ContextSidebar::Closed => SidebarsOpen::None,
-            ContextSidebar::Open(_) => SidebarsOpen::Right,
-        }
-    }
-
     /// F7: open the sidebar and ask the shell for the policy, or close it.
     pub(crate) fn toggle_context_sidebar(&mut self) -> InputOutcome {
         if self.is_minimal_mode() {
@@ -162,7 +153,6 @@ impl AgentView {
                     sidebar: SidebarState::default(),
                     layout: None,
                     policy: PolicyState::Loading,
-                    heights: None,
                 });
                 InputOutcome::Action(Action::FetchContextPolicy)
             }
@@ -289,14 +279,7 @@ impl AgentView {
             return;
         }
         let theme = Theme::current();
-        let heights = match open.heights {
-            Some((width, heights)) if width == area.width => heights,
-            _ => {
-                let heights = SidebarHeights::from_shared_sources(&PromptWidget::new(), area.width);
-                open.heights = Some((area.width, heights));
-                heights
-            }
-        };
+        let heights = self.sidebar_heights.heights_for(area.width);
         let categories = switchable_categories();
         let consequences: Vec<[Line<'static>; 1]> = categories
             .iter()

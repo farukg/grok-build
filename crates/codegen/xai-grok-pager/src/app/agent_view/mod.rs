@@ -189,6 +189,9 @@ mod task_icon_mouse_tests;
 mod task_status_tests;
 mod context_removal;
 mod context_sidebar;
+mod sidebars;
+#[cfg(test)]
+mod sidebars_tests;
 #[cfg(test)]
 mod context_sidebar_tests;
 mod timeline_panel;
@@ -1397,6 +1400,7 @@ pub struct AgentView {
     pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
     /// The F7 sidebar with the session's context switches.
     pub(crate) context_sidebar: context_sidebar::ContextSidebar,
+    pub(crate) sidebar_heights: sidebars::SidebarHeightsCache,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
     pub subagent_sessions: HashMap<String, SubagentInfo>,

@@ -569,7 +569,7 @@ impl AgentView {
         Option<(u16, u16)>,
         Option<crate::terminal::overlay::PostFlush>,
     ) {
-        let columns = crate::views::sidebar::screen_columns(area, self.sidebars_open());
+        let columns = crate::views::sidebar::screen_columns(area, self.sidebars_open(area.width));
         let drawn = self.draw_session(
             columns.center,
             buf,
@@ -582,6 +582,7 @@ impl AgentView {
             link_spans_out,
             app_params,
         );
+        self.draw_timeline_sidebar(columns.left, buf);
         self.draw_context_sidebar(columns.right, buf);
         drawn
     }
@@ -1116,19 +1117,6 @@ impl AgentView {
             || self.blocking_card().is_some()
             || self.block_viewer.is_some();
         if self.timeline_mode.panel().is_some() {
-            if layout.timeline_width > 0 {
-                self.sync_pending_user_input_marks();
-                self.scrollback.set_cwd(Some(self.session.cwd.clone()));
-                self.scrollback.prepare_layout(
-                    layout.scrollback_content.width,
-                    layout.scrollback_content.height,
-                );
-            }
-            self.sync_timeline_panel_frame(
-                layout.scrollback,
-                layout.timeline_x,
-                layout.timeline_width,
-            );
             self.timeline_rail = None;
             self.timeline_hover = None;
             self.timeline_hover_preview = None;
@@ -1670,11 +1658,7 @@ impl AgentView {
                 self.hit_sb_copy.clear();
                 self.hit_sb_view.clear();
             }
-            let panel_shown = self
-                .timeline_mode
-                .panel()
-                .is_some_and(|panel| panel.area.width > 0);
-            let rail_shown = self.timeline_rail.is_some() || panel_shown;
+            let rail_shown = self.timeline_rail.is_some();
             if !rail_shown {
                 agent::render_scrollbar(
                     buf,
@@ -1717,9 +1701,6 @@ impl AgentView {
                         );
                     }
                 }
-            }
-            if let Some(panel) = self.timeline_mode.panel() {
-                crate::views::timeline_panel::render_panel(buf, panel, &self.scrollback, &theme);
             }
         }
         let mut follow_indicator_y: Option<u16> = None;

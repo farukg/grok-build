@@ -50,25 +50,14 @@ impl AgentView {
     /// Per-frame panel geometry and the chat → panel sync.
     /// The outline rebuilds only on structural change; following is a no-op unless the tracked entry moved.
     /// Expects the scrollback layout prepared for this frame.
-    pub(super) fn sync_timeline_panel_frame(
-        &mut self,
-        scrollback_area: Rect,
-        column_x: u16,
-        column_width: u16,
-    ) {
+    pub(super) fn sync_timeline_panel_frame(&mut self, body: Rect) {
         let Some(panel) = self.timeline_mode.panel_mut() else {
             return;
         };
-        if column_width == 0 {
-            panel.area = Rect::default();
+        panel.area = body;
+        if body.width == 0 {
             return;
         }
-        panel.area = Rect {
-            x: column_x,
-            y: scrollback_area.y,
-            width: column_width,
-            height: scrollback_area.height,
-        };
         panel.refresh(&self.scrollback);
         if panel.focus == PanelFocus::Chat
             && let Some(key) = self
