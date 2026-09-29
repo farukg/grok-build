@@ -130,6 +130,8 @@ pub(crate) struct ChatState {
     pub conversation: Vec<ConversationItem>,
     /// Current sampling configuration (model, context window, etc.).
     pub sampling_config: SamplingConfig,
+    /// Categories the session sends to the model; applied to every request.
+    pub context_policy: xai_grok_sampling_types::ContextPolicy,
     /// Current prompt index (incremented per user turn).
     pub prompt_index: usize,
     /// Cached prompt texts for rewind preview.
@@ -220,6 +222,7 @@ impl ChatState {
         Self {
             conversation,
             sampling_config,
+            context_policy: Default::default(),
             prompt_index: 0,
             prompt_texts: Vec::new(),
             total_tokens: crate::types::TokenCount::Fresh {

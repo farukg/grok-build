@@ -236,6 +236,9 @@ impl ChatStateActor {
                     total_tokens: self.state.total_tokens,
                 });
             }
+            ChatStateCommand::SetContextPolicy { policy } => {
+                self.state.context_policy = *policy;
+            }
             ChatStateCommand::RecordAgentEditedPath { path } => {
                 self.state.agent_edited_paths.insert(path);
             }

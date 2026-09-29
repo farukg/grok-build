@@ -5576,3 +5576,61 @@ async fn restore_snapshot_restores_all_fields() {
     let tokens = h.handle.get_total_tokens().await;
     assert_eq!(tokens, 500);
 }
+
+/// The context policy shapes what a request sends and leaves the canonical history alone,
+/// so switching a category back on sends it again.
+#[tokio::test]
+async fn context_policy_shapes_the_request_and_not_the_history() {
+    use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch, ToolSpec};
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("core"),
+        ConversationItem::project_instructions("project rules"),
+        ConversationItem::user("earlier prompt"),
+        ConversationItem::assistant("earlier answer"),
+        ConversationItem::user("current prompt"),
+    ]);
+    let tool = || ToolSpec {
+        name: "read_file".to_string(),
+        description: Some("Read a file".to_string()),
+        parameters: serde_json::json!({"type": "object"}),
+    };
+    let request = || async {
+        h.handle
+            .build_request(vec![tool()], None, false, None, "c".into(), "r".into())
+            .await
+            .unwrap()
+    };
+    let texts = |request: &xai_grok_sampling_types::ConversationRequest| {
+        request
+            .items
+            .iter()
+            .map(ConversationItem::text_content)
+            .collect::<Vec<_>>()
+    };
+
+    let mut policy = ContextPolicy::default();
+    policy.set(ContextCategory::ProjectInstructions, ContextSwitch::Excluded);
+    policy.set(ContextCategory::UserTurns, ContextSwitch::Excluded);
+    policy.set(ContextCategory::ToolDefinitions, ContextSwitch::Excluded);
+    h.handle.set_context_policy(policy);
+
+    let restricted = request().await;
+    assert_eq!(texts(&restricted), ["core", "earlier answer", "current prompt"]);
+    assert!(restricted.tools.is_empty());
+
+    h.handle.set_context_policy(ContextPolicy::default());
+    let restored = request().await;
+    assert_eq!(
+        texts(&restored),
+        [
+            "core",
+            "project rules",
+            "earlier prompt",
+            "earlier answer",
+            "current prompt"
+        ]
+    );
+    assert_eq!(restored.tools.len(), 1);
+    assert_eq!(h.handle.get_conversation().await.len(), 5);
+}

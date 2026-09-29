@@ -1,6 +1,8 @@
 //! ConversationRequest assembly — image compaction, pruning, repair, memory injection.
 
-use xai_grok_sampling_types::{ConversationItem, ConversationRequest, ToolSpec, TraceContext};
+use xai_grok_sampling_types::{
+    ContextCategory, ConversationItem, ConversationRequest, ToolSpec, TraceContext,
+};
 
 use super::ChatStateActor;
 use crate::events::ChatStateEvent;
@@ -73,6 +75,16 @@ impl ChatStateActor {
         if let Some(reminder) = memory_reminder {
             inject_memory_reminder(&mut items, &reminder);
         }
+        items = self.state.context_policy.project(items);
+        let tool_definitions = if self
+            .state
+            .context_policy
+            .includes(ContextCategory::ToolDefinitions)
+        {
+            tool_definitions
+        } else {
+            Vec::new()
+        };
         items = crate::compaction_utils::ModelRequestHistory::from_raw(items).into_items();
 
         // Step 4: Assemble request
