@@ -300,12 +300,12 @@ pub(crate) struct ChildHost {
 }
 
 impl ChildHost {
-    pub(crate) fn running_handle(self) -> Option<SessionHandle> {
-        match self.reach {
+    pub(crate) fn running_handle(&self) -> Option<&SessionHandle> {
+        match &self.reach {
             ChildReach::Addressed {
                 residence: ChildResidence::Running(running),
                 ..
-            } => Some(running.handle),
+            } => Some(&running.handle),
             ChildReach::Addressed {
                 residence: ChildResidence::Finished,
                 ..
@@ -586,11 +586,17 @@ impl SessionRegistry {
             *residence = ChildResidence::Finished;
         }
     }
+    /// The actor handle behind a session id: a hosted root, or a child that is still running.
+    /// Enumerations below stay root-only.
     pub(super) fn resident_handle(&self, id: &acp::SessionId) -> Option<SessionHandle> {
         self.with(id, |e| {
             e.presence
                 .as_ref()
                 .and_then(SessionPresence::hosted_handle)
+                .or(match &e.host {
+                    Some(SessionHost::Child(child)) => child.running_handle(),
+                    Some(SessionHost::Root) | None => None,
+                })
                 .cloned()
         })
         .flatten()

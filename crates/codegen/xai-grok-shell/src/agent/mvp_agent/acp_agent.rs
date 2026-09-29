@@ -1905,7 +1905,7 @@ impl acp::Agent for MvpAgent {
     async fn cancel(&self, args: acp::CancelNotification) -> Result<(), acp::Error> {
         tracing::info!("Received cancel request {args:?}");
         let handle = match self.session_host(&args.session_id) {
-            Some(SessionHost::Child(child)) => child.running_handle(),
+            Some(SessionHost::Child(child)) => child.running_handle().cloned(),
             Some(SessionHost::Root) | None => self.session_handle_waiting_for_load(&args.session_id).await,
         };
         let cancel_trigger = args
