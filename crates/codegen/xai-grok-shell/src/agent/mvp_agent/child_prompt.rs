@@ -165,7 +165,7 @@ impl MvpAgent {
         address: AgentAddress,
         prompt: Vec<acp::ContentBlock>,
     ) -> Result<acp::PromptResponse, acp::Error> {
-        let text = literal_text(prompt).map_err(refused_wake)?;
+        let text = prompt_text(prompt)?;
         match self
             .send_human_subagent_message(
                 &parent_session_id.0,
@@ -193,7 +193,7 @@ impl MvpAgent {
 impl MvpAgent {
     /// Without active agent messages a finished child continues the way `x.ai/subagent/resume`
     /// does: as a new child that starts from the finished one's history.
-    async fn continue_child_with_prompt(
+    pub(super) async fn continue_child_with_prompt(
         &self,
         parent_session_id: &acp::SessionId,
         child: &acp::SessionId,
@@ -212,6 +212,19 @@ impl MvpAgent {
             }
         }
     }
+}
+
+pub(super) fn prompt_text(prompt: Vec<acp::ContentBlock>) -> Result<String, acp::Error> {
+    literal_text(prompt).map_err(refused_wake)
+}
+
+/// The parent session a client names on a prompt to a child id this shell no longer knows
+/// (`_meta.childOf`, stamped by clients that show child sessions).
+pub(super) fn child_of(meta: Option<&acp::Meta>) -> Option<acp::SessionId> {
+    meta?
+        .get("childOf")?
+        .as_str()
+        .map(|parent| acp::SessionId::new(parent.to_owned()))
 }
 
 fn refused_wake(outcome: SendSubagentMessageOutcome) -> acp::Error {

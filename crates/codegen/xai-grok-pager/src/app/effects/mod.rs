@@ -6,6 +6,7 @@ mod remove_context_items;
 mod session_list;
 use super::actions;
 use super::worktree_session;
+use crate::app::agent_view::PromptTarget;
 #[allow(unused_imports)]
 use super::{agent, dispatch};
 pub use helpers::CompactError;
@@ -1252,6 +1253,7 @@ pub(crate) fn execute(
             text,
             prompt_id,
             skill_token_ranges,
+            target,
         } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1273,7 +1275,7 @@ pub(crate) fn execute(
                     let prompt = vec![plain_prompt_content_block(text, &skill_token_ranges)];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode)
+                            prompt_request_meta(&prompt_id, screen_mode, &target)
                                 .as_object()
                                 .cloned(),
                         );
@@ -1318,7 +1320,7 @@ pub(crate) fn execute(
             tasks
                 .spawn(async move {
                     let prompt = vec![acp::ContentBlock::Text(acp::TextContent::new(String::new()))];
-                    let mut meta = prompt_request_meta(&prompt_id, screen_mode);
+                    let mut meta = prompt_request_meta(&prompt_id, screen_mode, &PromptTarget::Session);
                     if let Some(map) = meta.as_object_mut() {
                         let mut execute_plan = serde_json::Map::new();
                         execute_plan
@@ -1357,8 +1359,8 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SendPromptBlocks { agent_id, session_id, blocks, prompt_id }
-        | Effect::SendPromptNow { agent_id, session_id, blocks, prompt_id } => {
+        Effect::SendPromptBlocks { agent_id, session_id, blocks, prompt_id, target }
+        | Effect::SendPromptNow { agent_id, session_id, blocks, prompt_id, target } => {
             let send_now = effect_is_send_now;
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1377,7 +1379,7 @@ pub(crate) fn execute(
                         ),
                     );
                     let send_start = std::time::Instant::now();
-                    let mut meta = prompt_request_meta(&prompt_id, screen_mode);
+                    let mut meta = prompt_request_meta(&prompt_id, screen_mode, &target);
                     if send_now && let Some(map) = meta.as_object_mut() {
                         map.insert("sendNow".into(), serde_json::Value::Bool(true));
                     }
@@ -1451,7 +1453,7 @@ pub(crate) fn execute(
                 )];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode)
+                            prompt_request_meta(&prompt_id, screen_mode, &PromptTarget::Session)
                                 .as_object()
                                 .cloned(),
                         );
@@ -1747,7 +1749,7 @@ pub(crate) fn execute(
                     let prompt = vec![plain_prompt_content_block(text, &skill_token_ranges)];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode)
+                            prompt_request_meta(&prompt_id, screen_mode, &PromptTarget::Session)
                                 .as_object()
                                 .cloned(),
                         );
@@ -5541,9 +5543,16 @@ fn plain_prompt_content_block(
 fn prompt_request_meta(
     prompt_id: &str,
     screen_mode: Option<&'static str>,
+    target: &PromptTarget,
 ) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("promptId".into(), serde_json::Value::String(prompt_id.into()));
+    match target {
+        PromptTarget::Session => {}
+        PromptTarget::ChildOf(parent) => {
+            map.insert("childOf".into(), serde_json::Value::String(parent.0.to_string()));
+        }
+    }
     if let Some(mode) = screen_mode {
         map.insert("screenMode".into(), serde_json::Value::String(mode.into()));
     }

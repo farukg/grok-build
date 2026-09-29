@@ -1,6 +1,7 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
-    use crate::app::actions::Effect;
+    use crate::app::actions::{Action, Effect};
+    use crate::app::agent_view::PromptTarget;
     use crate::app::app_view::InputOutcome;
     use crate::app::dispatch::dispatch;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -22,6 +23,20 @@
             InputOutcome::Action(action) => dispatch(action, app),
             _ => Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_prompt_from_a_child_view_names_its_parent() {
+        let mut app = make_app_viewing_child("sess-parent", "sess-child");
+        let effects = dispatch(Action::SendPrompt("look again".into()), &mut app);
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SendPrompt { session_id, target: PromptTarget::ChildOf(parent), .. }
+                    if session_id.0.as_ref() == "sess-child" && parent.0.as_ref() == "sess-parent"
+            )),
+            "{effects:?}"
+        );
     }
 
     #[test]

@@ -1565,6 +1565,7 @@ pub enum Effect {
         /// Stamped into the content block `_meta` (`skillTokenRanges`) when non-empty so replay restyles the echo like the composer did.
         /// Contract: the offsets index the block's `text` displayed verbatim, never combined with a `displayText` override.
         skill_token_ranges: Vec<std::ops::Range<usize>>,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// `session/prompt` with `_meta.executePlan` after a post-turn plan approve
     ExecutePlan {
@@ -1713,6 +1714,7 @@ pub enum Effect {
         blocks: Vec<acp::ContentBlock>,
         /// See [`Effect::SendPrompt::prompt_id`].
         prompt_id: String,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Cancel-and-send: `session/prompt` stamped with `_meta.sendNow`, so the shell cancels the running turn and runs this prompt next.
     /// Background tasks and the rest of the queue survive.
@@ -1723,6 +1725,7 @@ pub enum Effect {
         blocks: Vec<acp::ContentBlock>,
         /// See [`Effect::SendPrompt::prompt_id`].
         prompt_id: String,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Toggle plan mode: fire-and-forget signal to the shell.
     TogglePlanMode { session_id: acp::SessionId },

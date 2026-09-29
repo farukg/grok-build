@@ -57,8 +57,9 @@ Verified: `cargo test -p xai-grok-shell --lib` 7074 passed, the same 10 environm
 `main`; `cargo check -p xai-grok-pager-bin`; clippy on the touched crates clean.
 
 ## Next steps
-1. Open: after a shell restart the child id is unknown (`InvalidParams "unknown session id"`); the
-   shell cannot name the parent. Idea: the pager stamps `_meta.childOf = <parent session id>` on
-   prompts from child views and the shell resumes via `resume_subagent(parent, child_id, text)`.
+1. Done: after a shell restart the child id is unknown. The pager stamps `_meta.childOf = <parent session id>`
+   on prompts sent from a child view (`PromptTarget::ChildOf`, text prompts, send-now and skill blocks;
+   not bash or execute-plan), and the shell continues the child through the M4 resume route
+   (`continue_child_with_prompt`). Without `childOf` an unknown id is still `InvalidParams`.
 2. Pager W3: consume `childSessions: "firstClass"` (prompt child sids, handle `childWake`,
    resume via `x.ai/subagent/resume` on "unknown session id").

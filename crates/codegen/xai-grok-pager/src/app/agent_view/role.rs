@@ -7,6 +7,23 @@ pub(crate) enum AgentRole {
     Child(ChildLink),
 }
 
+impl AgentRole {
+    pub(crate) fn prompt_target(&self) -> PromptTarget {
+        match self {
+            Self::Root => PromptTarget::Session,
+            Self::Child(link) => PromptTarget::ChildOf(link.parent_session_id.clone()),
+        }
+    }
+}
+
+/// Whom a prompt's session id names. A shell that lost a child session (restart) continues it
+/// from its parent's record instead of refusing the prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptTarget {
+    Session,
+    ChildOf(acp::SessionId),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChildLink {
     pub(crate) parent: AgentId,

@@ -1185,6 +1185,7 @@ pub(super) fn dispatch_send_prompt_submission(
                 .clone()
                 .expect("session_id is_some checked");
             let agent_id = agent.session.id;
+            let target = agent.role.prompt_target();
             let prompt_id = uuid::Uuid::new_v4().to_string();
             // Self-originated: when this prompt becomes the running turn, the ACP gate must treat its deltas as ours, not another client's
             // Adoption happens via the `running_prompt_id` broadcast and the turn-start shim
@@ -1227,6 +1228,7 @@ pub(super) fn dispatch_send_prompt_submission(
                 text,
                 prompt_id,
                 skill_token_ranges,
+                target,
             });
             return effects;
         }

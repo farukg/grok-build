@@ -1033,13 +1033,25 @@ impl acp::Agent for MvpAgent {
                     return Err(acp::Error::invalid_request().data(refusal.to_string()));
                 }
             },
-            Some(SessionHost::Root) | None => (
-                self
-                    .session_handle_waiting_for_load(&arguments.session_id)
-                    .await
-                    .ok_or_else(|| acp::Error::invalid_params().data("unknown session id"))?,
-                None,
-            ),
+            Some(SessionHost::Root) | None => {
+                match self.session_handle_waiting_for_load(&arguments.session_id).await {
+                    Some(handle) => (handle, None),
+                    None => {
+                        let parent = super::child_prompt::child_of(arguments.meta.as_ref());
+                        return match parent {
+                            Some(parent) => {
+                                self.continue_child_with_prompt(
+                                    &parent,
+                                    &arguments.session_id,
+                                    super::child_prompt::prompt_text(arguments.prompt)?,
+                                )
+                                .await
+                            }
+                            None => Err(acp::Error::invalid_params().data("unknown session id")),
+                        };
+                    }
+                }
+            }
         };
         if self.models_manager.allowlist_excludes_all() {
             let deny = crate::agent::remote_config::allowlist_excludes_all_message(
