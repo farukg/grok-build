@@ -145,6 +145,9 @@ pub enum ChatStateCommand {
     /// Update the sampling config (e.g., model switch).
     UpdateSamplingConfig { config: Box<SamplingConfig> },
 
+    /// Replace the context policy every following request is built under.
+    SetContextPolicy { policy: Box<xai_grok_sampling_types::ContextPolicy> },
+
     /// Track that the agent edited a file path.
     RecordAgentEditedPath { path: String },
 

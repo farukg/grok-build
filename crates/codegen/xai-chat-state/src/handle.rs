@@ -232,6 +232,13 @@ impl ChatStateHandle {
         });
     }
 
+    /// Replace the context policy every following request is built under.
+    pub fn set_context_policy(&self, policy: xai_grok_sampling_types::ContextPolicy) {
+        let _ = self.cmd_tx.send(ChatStateCommand::SetContextPolicy {
+            policy: Box::new(policy),
+        });
+    }
+
     /// Track that the agent edited a file path.
     pub fn record_agent_edited_path(&self, path: String) {
         let _ = self

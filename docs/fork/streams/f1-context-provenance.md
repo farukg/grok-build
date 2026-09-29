@@ -14,18 +14,26 @@ Design: `docs/fork/design/f6-f7.md` §1, §2, §7 and waves A1/A2/B1.
   variant and `SyntheticReason`; never stored.
 - M5 per-item removal (`ContextItemRef`, replay persistence) for turns and tool exchanges.
 
+## State (branch `grb/f1core`, from `main` a3bbf8a)
+- A1 producers: `SessionPrefix` (prefix build in `session_setup.rs` / `rewrite_zero_turn_prefix`),
+  `DirectBash` (`tool_dispatch.rs`), `GoalSetup` (`turn.rs`, `UserInputKind`). Readers now use
+  `SyntheticReason::{is_user_input, is_legacy_human}` and `has_typed_session_prefix`, so turn counts and
+  rewind cuts are unchanged for old (untyped) and new (typed) sessions.
+  Deliberate small changes: transcripts/anchors for the turn summary, prompt suggestions and the
+  laziness classifier no longer include the startup prefix text; `recent_user_asks`
+  (`T/task/mod.rs`) skips `!cmd` messages now. Post-compaction the prefix is still `CompactionMeta`
+  (`CS/compaction_utils.rs:932`), i.e. category `CompactionSummary`, not `Environment`.
+- A2 projection: `ContextPolicy::project` (`ST/context_projection.rs`) removes items by category; current
+  turn unchanged; tool calls/results/backend calls/definitions leave together (ToolDefinitions off drops
+  exchanges too); reasoning stays only with a surviving output. Chat-state applies it in
+  `build_conversation_request` (`CS/actor/request_builder.rs`) with `SetContextPolicy`; tool definitions
+  are cleared when ToolDefinitions is off. Tests: `ST/context_projection_tests.rs`, `CS/actor/tests.rs`
+  `context_policy_shapes_the_request_and_not_the_history`.
+
 ## Next steps
-1. Producers for the reserved origins: `docs/fork/briefs/f1core-reserved-origins.md`
-   (SessionPrefix, DirectBash, GoalSetup).
-2. Mixed-content sections: only items that truly carry several categories (system prompt fragments,
-   the startup prefix if it bundles project rules / skills / MCP catalog / memory). Model as
-   `Sections::{Whole, Split(Vec<ContextSection>)}` with serde default `Whole` and
-   `skip_serializing_if` so old sessions load unchanged; decision in
-   `docs/fork/reviews/f1core-sections-decision.md`; earlier code on `archive/f1core-wip-sections`.
-3. A2 request projection in `CS/actor/request_builder.rs::build_conversation_request`: apply the
-   session's `ContextPolicy` in the same single pass as pruning (no extra scan per request), keep
-   provider-required tool call/result pairs and reasoning envelopes valid, tool definitions switchable.
-4. B1 shell policy API + persistence (session state, replay, compaction must not resurrect excluded
-   content, child inheritance).
-5. Tests: every category OFF through the request builder with an independent absence/pairing
-   oracle, then ON again; current prompt always present.
+1. B1 shell: `x.ai/context/policy` get/set ext method, persist the policy in the session (replay, resume,
+   compaction never resurrects excluded content because the filter is request-time; child inheritance);
+   hosted tools and `tool_choice` in `turn.rs` (~L3003) must follow ToolDefinitions.
+2. Mixed sections (`Sections::Split`) for the prefix (rules/skills/MCP/memory), system prompt fragments and
+   the memory reminder; until then Skills/Mcp/Memory switches have no producer.
+3. Pager F7 rows (see `streams/f2-f3-sidebars.md`).
