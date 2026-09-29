@@ -442,6 +442,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
     );
 
     let agent_id = agent.session.id;
+    let target = agent.role.prompt_target();
 
     // Track whether this turn is a bash-mode command for post-turn focus.
     agent.bash_turn = queued.kind == QueueEntryKind::BashCommand;
@@ -526,6 +527,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     session_id,
                     blocks,
                     prompt_id,
+                    target,
                 }]
             } else if !queued.images.is_empty() {
                 // Image-bearing prompt: build text and image content blocks
@@ -547,6 +549,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     session_id,
                     blocks,
                     prompt_id,
+                    target,
                 }]
             } else if multi {
                 // Stamp combinedDisplayTexts so reload paints multi-bubble
@@ -559,6 +562,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     session_id,
                     blocks: vec![acp::ContentBlock::Text(tb)],
                     prompt_id,
+                    target,
                 }]
             } else {
                 // Normal prompt: send text as-is.
@@ -568,6 +572,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     text: queued.text,
                     prompt_id,
                     skill_token_ranges: queued.skill_token_ranges,
+                    target,
                 }]
             };
             QueueDrain {

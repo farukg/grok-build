@@ -164,16 +164,22 @@ fn plain_prompt_block_no_meta_when_ranges_empty() {
 /// With a screen mode, `_meta` carries both `promptId` and `screenMode` (the shell threads the latter into `prompt_submitted.screen_mode`).
 #[test]
 fn prompt_request_meta_stamps_screen_mode() {
-    let meta = prompt_request_meta("p-1", Some("minimal"));
+    let meta = prompt_request_meta("p-1", Some("minimal"), &PromptTarget::Session);
     assert_eq!(
             meta,
             serde_json::json!({ "promptId": "p-1", "screenMode": "minimal" })
         );
 }
+/// A prompt from a child view names its parent so a shell that lost the child can continue it.
+#[test]
+fn prompt_request_meta_names_the_parent_of_a_child_prompt() {
+    let meta = prompt_request_meta("p-3", None, &PromptTarget::ChildOf(acp::SessionId::new("parent")));
+    assert_eq!(meta, serde_json::json!({ "promptId": "p-3", "childOf": "parent" }));
+}
 /// Without a screen mode (`SessionFlags::default()` in tests), the key is omitted; the legacy `{"promptId": …}` wire shape stays byte-identical.
 #[test]
 fn prompt_request_meta_omits_screen_mode_when_unset() {
-    let meta = prompt_request_meta("p-2", None);
+    let meta = prompt_request_meta("p-2", None, &PromptTarget::Session);
     assert_eq!(meta, serde_json::json!({ "promptId": "p-2" }));
 }
 /// Text-only interjections must omit the `content` key entirely; the legacy `x.ai/interject` wire shape stays byte-identical.

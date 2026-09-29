@@ -235,6 +235,25 @@ fn finished_child_without_active_agent_messages_continues_like_a_resume() {
 }
 
 #[test]
+fn unknown_child_id_names_its_parent_to_continue_like_a_resume() {
+    run_local_for_bridge_test(|| async {
+        let agent = build_minimal_agent_for_tests();
+        let unnamed = agent
+            .prompt(prompt("continue"))
+            .await
+            .expect_err("an unknown id without a parent stays unknown");
+        assert_eq!(unnamed.code, acp::ErrorCode::InvalidParams);
+
+        let named = agent
+            .prompt(prompt("continue").meta(json!({ "childOf": PARENT }).as_object().cloned()))
+            .await
+            .expect_err("the named parent is not resident here");
+        assert_eq!(named.code, acp::ErrorCode::InvalidRequest);
+        assert!(named.data.is_some_and(|data| data.get("childResume").is_some()));
+    });
+}
+
+#[test]
 fn finished_child_is_released_with_its_parent() {
     run_local_for_bridge_test(|| async {
         let agent = build_minimal_agent_for_tests();

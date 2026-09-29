@@ -181,7 +181,7 @@ mod header_tests;
 mod model_notice_tests;
 mod rewind;
 mod role;
-pub(crate) use role::{AgentRole, ChildLink};
+pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
 mod selection;
 mod session;
 mod session_mode;

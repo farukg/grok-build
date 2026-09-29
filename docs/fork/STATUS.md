@@ -27,6 +27,7 @@ everything that compiles and passes its tests lands here.
 | W2 subagent view = normal session view (child sessions are top-level views, takeover modal removed) | `a632eab`, `1765af0` (pager-minimal build fix) |
 | W1-S human prompts reach child sessions by id (running: receipt to parent; finished: coordinator wake; workflow: refused), cancel by child id, `childSessions: "firstClass"` | `c084eea` |
 | W1-H a human prompt holds a running subagent's answer; `[deliver]` / F5 hands the last turn to the caller | `71a6fae`, `6fa71ae` |
+| W1-S/W3 a finished or restart-lost child continues like a resume (`_meta.childResume`, pager stamps `_meta.childOf`) | `5f5fed5`, next commit |
 | CI: `linux-build` workflow builds `grok` (x86_64 Linux) on every push to `main`, Actions artifact `grok-x86_64-linux` | `50fa826` |
 
 Last full test run of `xai-grok-pager`, `xai-grok-shell`, `xai-grok-sampling-types` on `c5c2c850`:
