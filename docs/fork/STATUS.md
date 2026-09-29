@@ -30,6 +30,7 @@ everything that compiles and passes its tests lands here.
 | W1-S/W3 a finished or restart-lost child continues like a resume (`_meta.childResume`, pager stamps `_meta.childOf`) | `5f5fed5`, next commit |
 | Fix: by-id handlers (set_model, compact, mode …) resolve a running child session; finished children still answer `unknown session id` (accepted) | `8ea9759` |
 | F1-core A1/A2/B1: typed origins SessionPrefix/DirectBash/GoalSetup, request projection under `ContextPolicy`, `x.ai/session/context_policy` get/set persisted per session, compaction summarizes what the policy sends | `54d0530` … `dcbfd9a` |
+| W3 (part): pager knows `ShellChildSupport`, prompts from child views name their parent, a resumed finished child opens in place | `grb/w3` squash, see `streams/w3-pager-child-sessions.md` |
 | CI: `linux-build` workflow builds `grok` (x86_64 Linux) on every push to `main`, Actions artifact `grok-x86_64-linux` | `50fa826` |
 
 Last full test run of `xai-grok-pager`, `xai-grok-shell`, `xai-grok-sampling-types` on `c5c2c850`:
@@ -61,7 +62,8 @@ on the touched lines; `cargo check -p xai-grok-pager-bin` builds.
 |---|---|---|---|
 | W2 subagent view = normal session view | on `main` (`a632eab`) | done; follow-up W3 with W1-S | `streams/w2-subagent-session-view.md` |
 | W1-H hold a steered subagent until `deliver` | on `main` (`6fa71ae`) | done; next: ↑ history in child views (low prio) | `streams/w1h-hold-deliver.md` |
-| W1-S shell: children are first-class ACP sessions | on `main` (`c084eea`) | done; open questions in stream file, W3 consumes it | `streams/w1s-child-sessions-shell.md` |
+| W1-S shell: children are first-class ACP sessions | on `main` (`c084eea`) | done; open questions in stream file | `streams/w1s-child-sessions-shell.md` |
+| W3 pager consumes child sessions | `grb/w3` | partly on `main`; open: finished-child handlers, fork check, e2e tests | `streams/w3-pager-child-sessions.md` |
 | M11 agent + human control over subagents | `grb/m11` | partial, uncompiled wiring | `streams/m11-subagent-control.md` |
 | F1-display per-kind one-line renderers | `grb/f1display` | partial | `streams/f1-display.md` |
 | F1-core context provenance | `grb/f1core` | A1+A2+B1 on `main`; next: mixed sections (prefix/system fragments/memory), child inheritance of the policy | `streams/f1-context-provenance.md` |
