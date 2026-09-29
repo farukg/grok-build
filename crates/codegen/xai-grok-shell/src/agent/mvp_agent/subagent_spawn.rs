@@ -109,8 +109,9 @@ impl MvpAgent {
             .await
     }
     /// Human resume (`x.ai/subagent/resume`): the same routing as `task(resume_from)`. A running
-    /// target gets the prompt queued; a finished one (in memory or on disk, including children
-    /// interrupted by a restart) continues through the normal `resume_from` spawn.
+    /// target gets the prompt queued; a finished one is woken under its own id, and only one that
+    /// cannot be woken (on disk only, including children interrupted by a restart) continues
+    /// through the `resume_from` spawn.
     pub(crate) async fn resume_subagent(
         &self,
         parent_session_id: &str,
@@ -141,7 +142,8 @@ impl MvpAgent {
         let source_id =
             match route_subagent_resume(&backend, reference, &prompt, parent_session_id).await? {
                 SubagentResumeRoute::Spawn { source_id } => source_id,
-                delivered @ SubagentResumeRoute::Delivered { .. } => return Ok(delivered),
+                delivered @ (SubagentResumeRoute::Delivered { .. }
+                | SubagentResumeRoute::Woken { .. }) => return Ok(delivered),
             };
         let route = SubagentResumeRoute::Spawn {
             source_id: source_id.clone(),

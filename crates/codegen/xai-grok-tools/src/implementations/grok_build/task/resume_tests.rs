@@ -236,19 +236,25 @@ async fn resume_running_target_delivers_as_queued_message() {
 }
 
 #[tokio::test]
-async fn resume_by_unique_prefix_spawns_from_the_full_id() {
+async fn resume_by_unique_prefix_wakes_the_finished_child_under_its_own_id() {
     let mut harness = harness();
     harness.spawn_child(FINISHED_ID, "work").await;
     harness.spawn_child(RUNNING_ID, HOLD).await;
 
     let prefix = &FINISHED_ID[..MIN_SUBAGENT_ID_PREFIX_LEN + 2];
-    harness
+    let output = harness
         .run_task(prefix, "continue")
         .await
         .expect("a unique prefix resumes");
 
-    let resumed = completes(harness.runs.recv()).await.expect("resume spawn");
-    assert_eq!(resumed.resume_from.as_deref(), Some(FINISHED_ID));
+    assert!(matches!(output, ToolOutput::Text(_)), "{output:?}");
+    let woken = completes(harness.runs.recv()).await.expect("wake run");
+    assert_eq!(woken.id, FINISHED_ID, "the same subagent continues");
+    assert_eq!(woken.prompt, "continue");
+    assert!(
+        harness.runs.try_recv().is_err(),
+        "waking a finished child must not start another"
+    );
     harness.actor.abort();
 }
 
