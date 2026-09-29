@@ -40,6 +40,14 @@
     }
 
     #[test]
+    fn a_legacy_shell_refuses_prompts_from_a_child_view() {
+        let mut app = make_app_viewing_child("sess-parent", "sess-child");
+        app.shell_child_support = crate::acp::ShellChildSupport::Legacy;
+        let effects = dispatch(Action::SendPrompt("look again".into()), &mut app);
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    #[test]
     fn deliver_key_releases_only_a_held_child() {
         let mut app = make_app_viewing_child("sess-parent", "sess-child");
         assert!(press_deliver_key(&mut app).is_empty(), "nothing is held before a human prompt");
