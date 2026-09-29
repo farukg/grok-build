@@ -646,6 +646,21 @@ pub(in crate::app::dispatch) fn set_prompt_suggestions(
     }]
 }
 
+pub(in crate::app::dispatch) fn set_system_reminders(app: &mut AppView, new: bool) -> Vec<Effect> {
+    let prev = app.current_ui.system_reminders_enabled();
+    if prev == new {
+        return vec![];
+    }
+    app.current_ui.system_reminders = Some(new);
+    refresh_open_settings_modals(app);
+    app.show_toast("Restart Grok Build to apply tool-output reminders.");
+    vec![Effect::PersistSetting {
+        key: "system_reminders",
+        value: crate::settings::SettingValue::Bool(new),
+        rollback_value: crate::settings::SettingValue::Bool(prev),
+    }]
+}
+
 pub(super) fn set_keep_text_selection_inner(kind: crate::appearance::TextSelection) {
     crate::appearance::cache::set_keep_text_selection(kind);
 }

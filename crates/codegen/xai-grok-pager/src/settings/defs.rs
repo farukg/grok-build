@@ -974,6 +974,19 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: false,
             hidden_in_minimal: false,
         },
+        SettingMeta {
+            key: "system_reminders",
+            category: SettingCategory::Editor,
+            owner: SettingOwner::Shell,
+            label: "Tool-output reminders",
+            description: "Append optional contextual reminders to tool results sent to the model.",
+            keywords: &["reminders", "system", "context", "tools"],
+            kind: SettingKind::Bool {
+                default: ui_default.system_reminders_enabled(),
+            },
+            restart_required: true,
+            hidden_in_minimal: false,
+        },
         // PAGER-owned, persisted to `[scrollback.scroll].respect_manual_folds` in pager.toml (NOT config.toml)
         // The live value is the appearance config (`AppView::set_appearance` fans changes out to every agent)
         // The flag is read at use time, so no restart

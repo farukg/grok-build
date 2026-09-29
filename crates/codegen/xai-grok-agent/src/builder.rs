@@ -53,6 +53,7 @@ pub struct AgentBuilder {
     custom_system_prompt: Option<String>,
     compaction_policy: CompactionPolicy,
     reminder_policy: ReminderPolicy,
+    system_reminders_enabled: bool,
     memory_enabled: bool,
     memory_v2_enabled: bool,
     memory_global_path: Option<String>,
@@ -292,6 +293,7 @@ impl AgentBuilder {
             custom_system_prompt: None,
             compaction_policy: CompactionPolicy::default(),
             reminder_policy: ReminderPolicy::default(),
+            system_reminders_enabled: false,
             memory_enabled: false,
             memory_v2_enabled: false,
             memory_global_path: None,
@@ -454,6 +456,10 @@ impl AgentBuilder {
     }
     pub fn with_reminder_policy(mut self, policy: ReminderPolicy) -> Self {
         self.reminder_policy = policy;
+        self
+    }
+    pub fn with_system_reminders_enabled(mut self, enabled: bool) -> Self {
+        self.system_reminders_enabled = enabled;
         self
     }
     pub fn with_session_env(mut self, env: Arc<HashMap<String, String>>) -> Self {
@@ -735,11 +741,12 @@ impl AgentBuilder {
         } else {
             std::collections::HashSet::new()
         };
-        let tool_bridge_builder = if self.mcp_file_input_preparation {
+        let mut tool_bridge_builder = if self.mcp_file_input_preparation {
             ToolBridge::get_builder().with_mcp_file_input_preparation()
         } else {
             ToolBridge::get_builder()
         };
+        tool_bridge_builder.set_system_reminders_enabled(self.system_reminders_enabled);
         let state_path = self.state_path.clone().unwrap_or_default();
         let mut tool_config = definition.tool_config.clone();
         if !definition.inject_default_tools && tool_config.tools.is_empty() {

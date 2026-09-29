@@ -412,6 +412,10 @@ pub async fn set_prompt_suggestions(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.prompt_suggestions = Some(value)).await
 }
 
+pub async fn set_system_reminders(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.ui.system_reminders = Some(value)).await
+}
+
 /// Persist `[toolset.ask_user_question].timeout_enabled` via `update_config` (the user tier of the shell's tiered resolver).
 /// The effective value is re-resolved at agent build.
 pub async fn set_ask_user_question_timeout_enabled(value: bool) -> Result<()> {

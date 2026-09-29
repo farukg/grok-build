@@ -1178,6 +1178,12 @@ pub(crate) async fn spawn_session_actor(
         },
         task_model_selection: task_model_selection.clone(),
         compaction_policy,
+        system_reminders_enabled: crate::config::load_effective_config()
+            .ok()
+            .and_then(|raw| crate::agent::config::Config::new_from_toml_cfg(&raw).ok())
+            .unwrap_or_default()
+            .ui
+            .system_reminders_enabled(),
         reminder_policy,
         memory_enabled: memory_config
             .as_ref()

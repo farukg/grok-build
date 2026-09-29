@@ -634,7 +634,7 @@ impl ToolRegistryBuilder {
             tools: HashMap::new(),
             reminders: Vec::new(),
             shared_local_registry: None,
-            system_reminders_enabled: true,
+            system_reminders_enabled: false,
             mcp_file_input_preparation: false,
         };
         b.register_with_params::<grok_build::BashTool, grok_build::bash::BashParams>();
@@ -1101,9 +1101,9 @@ impl ToolRegistryBuilder {
                 .get(&tc.id)
                 .is_some_and(|e| e.namespace == concise_ns)
         });
-        if has_concise_tools {
-            resources.insert(crate::types::resources::SystemRemindersEnabled(false));
-        }
+        resources.insert(crate::types::resources::SystemRemindersEnabled(
+            self.system_reminders_enabled && !has_concise_tools,
+        ));
         resources.register_state::<crate::reminders::task_completion::ReportedTaskCompletions>();
         resources.register_state::<crate::implementations::grok_build::todo::TodoState>();
         resources.register_state::<crate::types::resources::WebCitationCounter>();
@@ -2811,7 +2811,9 @@ mod tests {
             "GrokBuild:kill_task",
         ];
         let tmp = TempDir::new().unwrap();
-        let toolset = ToolRegistryBuilder::new()
+        let mut builder = ToolRegistryBuilder::new();
+        builder.set_system_reminders_enabled(true);
+        let toolset = builder
             .finalize(config_with(&ids), test_session_context(&tmp))
             .expect("finalize");
         let (desc_on, field_on) = bash_texts(&toolset);
@@ -2832,6 +2834,11 @@ mod tests {
             field_off.contains("get_task_output"),
             "reminders off: is_background description should name get_task_output: {field_off}"
         );
+        let tmp = TempDir::new().unwrap();
+        let default_toolset = ToolRegistryBuilder::new()
+            .finalize(config_with(&ids), test_session_context(&tmp))
+            .expect("finalize");
+        assert_eq!(bash_texts(&default_toolset), (desc_off, field_off));
     }
     /// Each assertion pattern-matches on the exact `ToolOutput::SearchReplace`
     /// variant so the test fails if the renderer silently returns empty strings

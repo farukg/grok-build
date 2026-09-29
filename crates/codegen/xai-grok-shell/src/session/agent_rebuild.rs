@@ -102,6 +102,7 @@ pub(crate) struct AgentRebuildSpec {
     pub task_model_selection: LatchedTaskModelSelection,
     pub compaction_policy: CompactionPolicy,
     pub reminder_policy: ReminderPolicy,
+    pub system_reminders_enabled: bool,
     pub memory_enabled: bool,
     pub memory_global_path: Option<String>,
     pub memory_workspace_path: Option<String>,
@@ -218,6 +219,7 @@ impl AgentRebuildSpec {
             task_model_selection,
             compaction_policy,
             reminder_policy,
+            system_reminders_enabled,
             memory_enabled,
             memory_global_path,
             memory_workspace_path,
@@ -310,6 +312,7 @@ impl AgentRebuildSpec {
         .from_definition(definition)
         .with_compaction_policy(compaction_policy.clone())
         .with_reminder_policy(reminder_policy.clone())
+        .with_system_reminders_enabled(*system_reminders_enabled)
         .with_memory_enabled(*memory_enabled)
         .with_memory_paths(memory_global_path.clone(), memory_workspace_path.clone())
         .with_memory_v2_access(memory_v2_access.get(), *memory_v2_exposed)
@@ -504,6 +507,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         task_model_selection: LatchedTaskModelSelection::default(),
         compaction_policy: CompactionPolicy::default(),
         reminder_policy: ReminderPolicy::default(),
+        system_reminders_enabled: false,
         memory_enabled: false,
         memory_global_path: None,
         memory_workspace_path: None,

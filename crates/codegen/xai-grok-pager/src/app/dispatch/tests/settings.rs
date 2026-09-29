@@ -1797,6 +1797,9 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         "prompt_suggestions" => {
             let _ = dispatch(Action::SetPromptSuggestions(false), app);
         }
+        "system_reminders" => {
+            let _ = dispatch(Action::SetSystemReminders(true), app);
+        }
         "respect_manual_folds" => {
             let _ = dispatch(
                 Action::SetRespectManualFolds(
