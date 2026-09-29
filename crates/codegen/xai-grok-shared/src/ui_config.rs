@@ -140,6 +140,8 @@ pub struct UiConfig {
     /// Written by the pager's settings modal; the `GROK_PROMPT_SUGGESTIONS` env var overrides at runtime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_suggestions: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_reminders: Option<bool>,
     /// Startup cursor style: `None` (default) inherits the terminal's own style.
     /// `Some(true)` forces the legacy blinking block, `Some(false)` a steady block.
     /// Config-file-only knob (no /settings row).
@@ -284,6 +286,7 @@ impl Default for UiConfig {
             group_tool_verbs: None,
             collapsed_edit_blocks: None,
             prompt_suggestions: None,
+            system_reminders: None,
             cursor_blink: None,
             screen_mode: None,
             double_click_action: None,
@@ -297,6 +300,10 @@ impl Default for UiConfig {
 }
 
 impl UiConfig {
+    pub fn system_reminders_enabled(&self) -> bool {
+        self.system_reminders.unwrap_or(false)
+    }
+
     pub fn dashboard_preview_enabled(&self) -> bool {
         self.dashboard_preview.unwrap_or(true)
     }
