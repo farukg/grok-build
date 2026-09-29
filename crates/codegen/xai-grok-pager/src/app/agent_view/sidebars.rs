@@ -49,7 +49,57 @@ impl HostedSection for TimelineBody<'_> {
     }
 }
 
+/// A dock ready to paint into the top rows of the F7 body.
+pub(crate) struct PendingDock {
+    pub(crate) data: crate::views::dock::DockData,
+    pub(crate) rect: Rect,
+    pub(crate) scrollback: Rect,
+    pub(crate) layout_cfg: crate::appearance::LayoutConfig,
+    pub(crate) overlay_focused: bool,
+}
+
+/// Blank rows the dock is painted over.
+pub(super) struct DockSlot(pub(super) u16);
+
+impl HostedSection for DockSlot {
+    fn desired_height(&self) -> u16 {
+        self.0
+    }
+
+    fn render(&self, _buf: &mut Buffer, _visible_area: Rect, _row_offset: u16, _theme: &Theme) {}
+}
+
 impl AgentView {
+    /// Paint the dock into the F7 column, after the sidebar chrome.
+    pub(super) fn draw_pending_dock(&mut self, buf: &mut Buffer) {
+        self.dock_stop_button = None;
+        let Some(PendingDock {
+            data,
+            rect,
+            scrollback,
+            layout_cfg,
+            overlay_focused,
+        }) = self.pending_dock.take()
+        else {
+            return;
+        };
+        let theme = Theme::current();
+        crate::views::dock::render(buf, rect, &theme, &data);
+        self.cache_dock_stop_at(rect, &data);
+        let queue_body = crate::views::dock::queue_body_rect(rect, &data);
+        if queue_body.height > 0 {
+            let queue_focused = self.active_pane == super::ActivePane::Queue && !overlay_focused;
+            self.queue.render(
+                queue_body,
+                buf,
+                queue_focused,
+                &layout_cfg,
+                Some(scrollback),
+                self.can_send_now(),
+            );
+        }
+    }
+
     /// Which side columns take space this frame. The timeline needs a terminal wide enough for its rail.
     pub(crate) fn sidebars_open(&self, area_width: u16) -> SidebarsOpen {
         let timeline = self.timeline_mode.panel().is_some() && area_width >= MIN_TERMINAL_WIDTH;

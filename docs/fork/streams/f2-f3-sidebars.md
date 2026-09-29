@@ -33,6 +33,9 @@ for visible rows.
   session view draws into the center column unchanged. Rows = `switchable_categories()` with the shell's
   ON/OFF (`x.ai/session/context_policy`); space/Enter/click asks for the change, the row keeps the shell's
   last answer while `Applying`. Esc closes, Tab returns focus to the chat.
-- Not yet: token estimates per row, Message Display section (needs F1-display), Dock moved into F7,
+- Dock (B4): hosted in the top rows of the F7 body (blank `DockSlot` section, painted after the sidebar
+  chrome via `PendingDock`); F7 closed means no snapshot, no render, no queue above the prompt. Dock rows
+  are capped at half the body height.
+- Not yet: Message Display section (needs F1-display), dock glyph/width optimisation and hover detail,
   F6 mirrored to the left with the 25/50/25 layout, Skills/MCP/Memory rows (need `Sections::Split`),
   a shell `changed` notification so other clients follow.
