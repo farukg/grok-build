@@ -14,6 +14,19 @@ impl ChatStateActor {
         }
     }
 
+    /// Estimated tokens per category over the stored history, one pass; approximate like every estimate here.
+    pub(super) fn context_usage(&self) -> Vec<xai_grok_sampling_types::CategoryTokens> {
+        let mut totals = std::collections::BTreeMap::new();
+        for item in &self.state.conversation {
+            *totals.entry(item.context_category()).or_insert(0u64) +=
+                super::state::estimate_item_tokens(item);
+        }
+        totals
+            .into_iter()
+            .map(|(category, tokens)| xai_grok_sampling_types::CategoryTokens { category, tokens })
+            .collect()
+    }
+
     /// Take a full snapshot of the actor's state.
     pub(super) fn snapshot(&self) -> ChatStateSnapshot {
         ChatStateSnapshot {

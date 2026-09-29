@@ -1315,10 +1315,10 @@ pub(super) async fn run_session(
                         }
                         SessionCommand::SetContextPolicy { policy, respond_to } => {
                             session.set_context_policy(policy);
-                            let _ = respond_to.send(());
+                            let _ = respond_to.send(session.context_policy_report().await);
                         }
                         SessionCommand::GetContextPolicy { respond_to } => {
-                            let _ = respond_to.send(session.chat_state_handle.get_context_policy().await);
+                            let _ = respond_to.send(session.context_policy_report().await);
                         }
                         SessionCommand::GetRewindPoints { respond_to } => {
                             let response = session.get_rewind_points().await;

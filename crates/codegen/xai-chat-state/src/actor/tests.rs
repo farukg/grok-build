@@ -5634,3 +5634,25 @@ async fn context_policy_shapes_the_request_and_not_the_history() {
     assert_eq!(restored.tools.len(), 1);
     assert_eq!(h.handle.get_conversation().await.len(), 5);
 }
+
+#[tokio::test]
+async fn context_usage_sums_the_history_by_category() {
+    use xai_grok_sampling_types::ContextCategory;
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system(&"core ".repeat(40)),
+        ConversationItem::user(&"question ".repeat(10)),
+        ConversationItem::assistant(&"answer ".repeat(10)),
+        ConversationItem::user(&"again ".repeat(10)),
+    ]);
+    let usage = h.handle.get_context_usage().await;
+    let tokens = |category| {
+        usage
+            .iter()
+            .find(|entry| entry.category == category)
+            .map(|entry| entry.tokens)
+    };
+    assert!(tokens(ContextCategory::CoreInstructions) > tokens(ContextCategory::AssistantTurns));
+    assert!(tokens(ContextCategory::UserTurns) > tokens(ContextCategory::AssistantTurns));
+    assert_eq!(tokens(ContextCategory::Reasoning), None);
+}

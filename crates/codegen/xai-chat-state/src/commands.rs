@@ -248,6 +248,11 @@ pub enum ChatStateCommand {
     /// Get current prompt index.
     GetPromptIndex { reply: oneshot::Sender<usize> },
 
+    /// Estimated tokens per context category in the stored history.
+    GetContextUsage {
+        reply: oneshot::Sender<Vec<xai_grok_sampling_types::CategoryTokens>>,
+    },
+
     /// Get the context policy requests are built under.
     GetContextPolicy {
         reply: oneshot::Sender<xai_grok_sampling_types::ContextPolicy>,
