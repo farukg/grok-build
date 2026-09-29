@@ -31,6 +31,7 @@ everything that compiles and passes its tests lands here.
 | Fix: by-id handlers (set_model, compact, mode …) resolve a running child session; finished children still answer `unknown session id` (accepted) | `8ea9759` |
 | F1-core A1/A2/B1: typed origins SessionPrefix/DirectBash/GoalSetup, request projection under `ContextPolicy`, `x.ai/session/context_policy` get/set persisted per session, compaction summarizes what the policy sends | `54d0530` … `dcbfd9a` |
 | W3 (part): pager knows `ShellChildSupport`, prompts from child views name their parent, a resumed finished child opens in place | `grb/w3` squash, see `streams/w3-pager-child-sessions.md` |
+| F2/F3 (part): F7 sidebar with the session's context switches (per-category ON/OFF and estimated tokens, shell-acknowledged) | `grb/f2f3`, see `streams/f2-f3-sidebars.md` |
 | CI: `linux-build` workflow builds `grok` (x86_64 Linux) on every push to `main`, Actions artifact `grok-x86_64-linux` | `50fa826` |
 
 Last full test run of `xai-grok-pager`, `xai-grok-shell`, `xai-grok-sampling-types` on `c5c2c850`:
@@ -67,7 +68,7 @@ on the touched lines; `cargo check -p xai-grok-pager-bin` builds.
 | M11 agent + human control over subagents | `grb/m11` | partial, uncompiled wiring | `streams/m11-subagent-control.md` |
 | F1-display per-kind one-line renderers | `grb/f1display` | partial | `streams/f1-display.md` |
 | F1-core context provenance | `grb/f1core` | A1+A2+B1 on `main`; next: mixed sections (prefix/system fragments/memory), child inheritance of the policy | `streams/f1-context-provenance.md` |
-| F2/F3 F6/F7 sidebars wired into the view | later | blocked on F1 (W2 is on `main`) | `streams/f2-f3-sidebars.md` |
+| F2/F3 F6/F7 sidebars wired into the view | `grb/f2f3` | F7 Context section on `main`; open: Message Display, Dock into F7, F6 left | `streams/f2-f3-sidebars.md` |
 
 Suggested order: F1-core and W3 (pager consumes W1-S) next, in parallel M11, F1-display.
 Before starting, a stream rebases its branch onto `main` (stream branches may be force-pushed with
