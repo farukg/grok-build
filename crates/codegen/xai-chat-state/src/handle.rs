@@ -451,6 +451,13 @@ impl ChatStateHandle {
         .unwrap_or_default()
     }
 
+    /// Estimated tokens per context category in the stored history.
+    pub async fn get_context_usage(&self) -> Vec<xai_grok_sampling_types::CategoryTokens> {
+        self.query("GetContextUsage", |reply| ChatStateCommand::GetContextUsage { reply })
+            .await
+            .unwrap_or_default()
+    }
+
     /// Get the context policy requests are built under.
     pub async fn get_context_policy(&self) -> xai_grok_sampling_types::ContextPolicy {
         self.query("GetContextPolicy", |reply| ChatStateCommand::GetContextPolicy { reply })

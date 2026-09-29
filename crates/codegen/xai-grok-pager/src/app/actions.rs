@@ -2682,7 +2682,7 @@ pub enum TaskResult {
     /// The shell answered a context policy get or set.
     ContextPolicyAnswered {
         agent_id: AgentId,
-        result: Result<xai_grok_shell::sampling::ContextPolicy, String>,
+        result: Result<xai_grok_shell::extensions::context_policy::ContextPolicyReport, String>,
     },
     DeliverSubagentComplete {
         outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,

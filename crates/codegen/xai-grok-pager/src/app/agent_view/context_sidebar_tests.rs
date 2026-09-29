@@ -7,7 +7,8 @@ use crate::scrollback::render::ScratchBuffer;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use xai_grok_shell::sampling::{ContextCategory, ContextPolicy, ContextSwitch};
+use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
+use xai_grok_shell::sampling::{CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch};
 
 fn draw(agent: &mut AgentView) -> Buffer {
     let area = Rect::new(0, 0, 160, 40);
@@ -66,9 +67,13 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
 
     let mut policy = ContextPolicy::default();
     policy.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
-    agent.context_policy_answered(Ok(policy));
+    agent.context_policy_answered(Ok(ContextPolicyReport {
+        policy,
+        usage: vec![CategoryTokens { category: ContextCategory::Reasoning, tokens: 12_345 }],
+    }));
     let buf = draw(&mut agent);
     assert!(sidebar_row(&buf, "Reasoning").contains("OFF"));
+    assert!(sidebar_row(&buf, "Reasoning").contains("~12K"));
     assert!(sidebar_row(&buf, "Your messages").contains("ON"));
 
     let InputOutcome::Action(Action::SetContextPolicy(requested)) =
@@ -84,7 +89,7 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
         "the row keeps the shell's last answer until it answers again"
     );
 
-    agent.context_policy_answered(Ok(requested.clone()));
+    agent.context_policy_answered(Ok(ContextPolicyReport { policy: requested, usage: Vec::new() }));
     assert!(!screen(&draw(&mut agent)).contains("Applying"));
     assert!(matches!(press(&mut agent, KeyCode::Esc), InputOutcome::Changed));
     assert!(!screen(&draw(&mut agent)).contains("Context sent to the model"));

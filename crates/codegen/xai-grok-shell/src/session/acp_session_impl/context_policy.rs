@@ -9,4 +9,14 @@ impl SessionActor {
         );
         self.chat_state_handle.set_context_policy(policy);
     }
+
+    pub(super) async fn context_policy_report(
+        &self,
+    ) -> crate::extensions::context_policy::ContextPolicyReport {
+        let (policy, usage) = tokio::join!(
+            self.chat_state_handle.get_context_policy(),
+            self.chat_state_handle.get_context_usage(),
+        );
+        crate::extensions::context_policy::ContextPolicyReport { policy, usage }
+    }
 }

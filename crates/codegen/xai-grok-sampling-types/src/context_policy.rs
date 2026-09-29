@@ -38,6 +38,13 @@ pub enum ContextCategory {
     OtherRuntime,
 }
 
+/// Estimated tokens the stored history holds in one category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CategoryTokens {
+    pub category: ContextCategory,
+    pub tokens: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSwitch {

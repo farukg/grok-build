@@ -1946,7 +1946,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks.spawn(async move {
                 use xai_grok_shell::extensions::context_policy::{
-                    ContextPolicyAction, ContextPolicyRequest, ContextPolicyResponse,
+                    ContextPolicyAction, ContextPolicyReport, ContextPolicyRequest,
                 };
                 let action = match change {
                     actions::ContextPolicyChange::Read => ContextPolicyAction::Get,
@@ -1960,8 +1960,7 @@ pub(crate) fn execute(
                     Ok(raw) => {
                         let req = acp::ExtRequest::new("x.ai/session/context_policy", raw.into());
                         match acp_send(req, &tx).await {
-                            Ok(resp) => serde_json::from_str::<ContextPolicyResponse>(resp.0.get())
-                                .map(|response| response.policy)
+                            Ok(resp) => serde_json::from_str::<ContextPolicyReport>(resp.0.get())
                                 .map_err(|error| error.to_string()),
                             Err(error) => Err(error.to_string()),
                         }

@@ -20,7 +20,8 @@ pub mod tool_overrides;
 pub mod types;
 
 pub use self::context_policy::{
-    all_categories, switchable_categories, ContextCategory, ContextPolicy, ContextSwitch,
+    all_categories, switchable_categories, CategoryTokens, ContextCategory, ContextPolicy,
+    ContextSwitch,
     RuntimeNotice,
 };
 pub use self::conversation::*;

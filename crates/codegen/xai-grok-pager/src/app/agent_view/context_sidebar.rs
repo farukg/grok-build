@@ -5,6 +5,7 @@ use super::AgentView;
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::theme::Theme;
+use crate::views::context_bar::fmt_tokens;
 use crate::views::prompt_widget::PromptWidget;
 use crate::views::sidebar::{
     RowIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHeights, SidebarHit, SidebarLayout,
@@ -15,9 +16,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use xai_grok_shell::sampling::{
-    ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice, switchable_categories,
-};
+use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
+use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, switchable_categories};
 
 const SECTION: SidebarLine = SidebarLine::Row(crate::views::sidebar::SectionIdx(0), RowIdx(0));
 
@@ -47,16 +47,16 @@ enum SidebarFocus {
 #[derive(Debug)]
 pub(crate) enum PolicyState {
     Loading,
-    Ready(ContextPolicy),
+    Ready(ContextPolicyReport),
     /// A change is with the shell; `shown` stays on screen until it answers.
-    Applying { shown: ContextPolicy },
+    Applying { shown: ContextPolicyReport },
     Unavailable,
 }
 
 impl PolicyState {
-    fn shown(&self) -> Option<&ContextPolicy> {
+    fn shown(&self) -> Option<&ContextPolicyReport> {
         match self {
-            Self::Ready(policy) | Self::Applying { shown: policy } => Some(policy),
+            Self::Ready(report) | Self::Applying { shown: report } => Some(report),
             Self::Loading | Self::Unavailable => None,
         }
     }
@@ -116,7 +116,7 @@ fn consequence(category: ContextCategory) -> &'static str {
 }
 
 fn rows<'a>(
-    policy: Option<&ContextPolicy>,
+    report: Option<&ContextPolicyReport>,
     categories: &[ContextCategory],
     consequences: &'a [[Line<'static>; 1]],
 ) -> Vec<SidebarRow<'a>> {
@@ -124,10 +124,18 @@ fn rows<'a>(
         .iter()
         .zip(consequences)
         .map(|(&category, consequence)| {
-            let included = policy.is_none_or(|policy| policy.includes(category));
+            let included = report.is_none_or(|report| report.policy.includes(category));
             SidebarRow {
                 left: Line::from(label(category)),
-                right: policy.map(|_| Line::from(if included { "ON" } else { "OFF" })),
+                right: report.map(|report| {
+                    let tokens = report
+                        .usage
+                        .iter()
+                        .find(|usage| usage.category == category)
+                        .map_or(0, |usage| usage.tokens);
+                    let state = if included { "ON " } else { "OFF" };
+                    Line::from(format!("~{:<4} {state}", fmt_tokens(tokens)))
+                }),
                 detail: if included { &[] } else { consequence },
             }
         })
@@ -166,12 +174,12 @@ impl AgentView {
     }
 
     /// The shell answered a get or set.
-    pub(crate) fn context_policy_answered(&mut self, answer: Result<ContextPolicy, String>) {
+    pub(crate) fn context_policy_answered(&mut self, answer: Result<ContextPolicyReport, String>) {
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return;
         };
         open.policy = match answer {
-            Ok(policy) => PolicyState::Ready(policy),
+            Ok(report) => PolicyState::Ready(report),
             Err(error) => {
                 tracing::warn!(%error, "context policy request failed");
                 match std::mem::replace(&mut open.policy, PolicyState::Unavailable) {
@@ -259,10 +267,10 @@ impl AgentView {
         let Some(&category) = switchable_categories().get(index) else {
             return InputOutcome::Unchanged;
         };
-        let mut requested = shown.clone();
+        let mut requested = shown.policy.clone();
         requested.set(
             category,
-            if shown.includes(category) {
+            if shown.policy.includes(category) {
                 ContextSwitch::Excluded
             } else {
                 ContextSwitch::Included
