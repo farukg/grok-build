@@ -9,7 +9,9 @@ pub use terminal_command::KillTerminalCommandTool;
 use crate::computer::types::{KillOutcome, KillSource};
 use crate::implementations::grok_build::task::TaskTool;
 use crate::implementations::grok_build::task::backend::SubagentBackendResource;
-use crate::implementations::grok_build::task::types::SubagentCancelOutcome;
+use crate::implementations::grok_build::task::types::{
+    SubagentActor, SubagentCancelDisposition, SubagentCancelOutcome,
+};
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::resources::Terminal;
 use crate::types::template_renderer::TemplateRenderer;
@@ -224,20 +226,28 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                         .cloned()
                 };
                 if let Some(backend) = backend {
-                    let outcome = backend.backend().cancel(&input.task_id).await;
+                    let actor = my_owner
+                        .clone()
+                        .map_or(SubagentActor::Runtime, |session_id| {
+                            SubagentActor::ParentModel { session_id }
+                        });
+                    let outcome = backend
+                        .backend()
+                        .cancel(&input.task_id, actor, SubagentCancelDisposition::Stop)
+                        .await;
                     return Ok(match outcome {
-                        SubagentCancelOutcome::Cancelled => {
+                        SubagentCancelOutcome::Cancelled { .. } => {
                             KillTaskOutput::Result(KillTaskResult {
                                 task_id: input.task_id.clone(),
                                 outcome: "killed".to_string(),
                                 message: "Subagent cancellation initiated".to_string(),
                             })
                         }
-                        SubagentCancelOutcome::AlreadyFinished { status } => {
+                        SubagentCancelOutcome::AlreadyFinished { state } => {
                             KillTaskOutput::Result(KillTaskResult {
                                 task_id: input.task_id.clone(),
                                 outcome: "already_exited".to_string(),
-                                message: format!("Subagent already {status}"),
+                                message: format!("Subagent already {}", state.legacy_status()),
                             })
                         }
                         SubagentCancelOutcome::NotFound => {
@@ -267,6 +277,7 @@ impl xai_tool_runtime::Tool for KillTaskTool {
 
 #[cfg(test)]
 mod tests {
+    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor, SubagentState};
     use super::*;
     use crate::computer::types::{
         BackgroundHandle, KillOutcome as KO, TaskSnapshot, TerminalBackend, TerminalRunRequest,
@@ -718,11 +729,11 @@ mod tests {
         let handle = tokio::spawn(async move {
             let req = unwrap_cancel(cancel_rx.recv().await.unwrap());
             match &req.target {
-                SubagentCancelTarget::SubagentId(id) => assert_eq!(id, "sub-1"),
+                SubagentCancelTarget::SubagentId { id, .. } => assert_eq!(id, "sub-1"),
                 other => panic!("Expected SubagentId, got {:?}", other),
             }
             req.respond_to
-                .send(SubagentCancelOutcome::Cancelled)
+                .send(SubagentCancelOutcome::Cancelled { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::Human } })
                 .unwrap();
         });
 
@@ -760,7 +771,7 @@ mod tests {
             let req = unwrap_cancel(cancel_rx.recv().await.unwrap());
             req.respond_to
                 .send(SubagentCancelOutcome::AlreadyFinished {
-                    status: "completed".to_string(),
+                    state: SubagentState::Completed,
                 })
                 .unwrap();
         });

@@ -11,7 +11,8 @@ use std::sync::Arc;
 use xai_grok_session_events::EventWriter;
 use xai_grok_tools::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentOwner, SubagentRequest, SubagentRuntimeOverrides,
+    SubagentActor, SubagentCancelDisposition, SubagentOwner, SubagentRequest,
+    SubagentRuntimeOverrides,
 };
 
 // Shared per-role model override and spawn-and-retry-once fail-open wrapper
@@ -310,7 +311,11 @@ impl ChannelSpawner {
             _ = cancel.cancelled() => {
                 let _ = tokio::time::timeout(
                     GOAL_PLANNER_CANCEL_ACK_TIMEOUT,
-                    backend.cancel(id),
+                    backend.cancel(
+                        id,
+                        SubagentActor::Runtime,
+                        SubagentCancelDisposition::Stop,
+                    ),
                 )
                 .await;
                 return Err(SpawnError::Interrupted);
@@ -326,11 +331,11 @@ impl ChannelSpawner {
                 cancelled: true,
             });
         }
-        if !result.success {
-            let message = result.error.unwrap_or_else(|| "unknown error".to_string());
+        if !result.success() {
+            let message = result.error().unwrap_or_else(|| "unknown error".to_string());
             return Err(SpawnError::Runtime {
                 message,
-                cancelled: result.cancelled,
+                cancelled: result.is_interrupted(),
             });
         }
         Ok(result.output.to_string())
@@ -480,6 +485,7 @@ fn record_fail_closed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
     use crate::session::goal_role_tools::tests::{assert_no_tool_placeholders, summary_with};
     use std::sync::{Arc, Mutex};
     use xai_grok_tools::types::tool::ToolKind;
@@ -1031,7 +1037,7 @@ mod tests {
         );
         // Reply SUCCESS so the explicit pair does NOT trigger a fail-open retry.
         let _ = request.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("ok"),
             ..Default::default()
         });
@@ -1317,14 +1323,13 @@ mod tests {
                 };
                 if req.runtime_overrides.model.is_some() {
                     let _ = req.result_tx.send(SubagentResult {
-                        success: false,
-                        error: Some("bad configured model".into()),
+                        state: SubagentState::Failed { message: "bad configured model".into() },
                         ..Default::default()
                     });
                 } else {
                     let _ = tokio::fs::write(&plan_for_coord, b"# Plan\n").await;
                     let _ = req.result_tx.send(SubagentResult {
-                        success: true,
+                        state: SubagentState::Completed,
                         output: std::sync::Arc::from("Done"),
                         ..Default::default()
                     });
@@ -1386,9 +1391,7 @@ mod tests {
                 };
                 spawns_coord.fetch_add(1, Ordering::SeqCst);
                 let _ = req.result_tx.send(SubagentResult {
-                    success: false,
-                    cancelled: true,
-                    error: Some("user aborted".into()),
+                    state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "user aborted".into() } },
                     ..Default::default()
                 });
             }

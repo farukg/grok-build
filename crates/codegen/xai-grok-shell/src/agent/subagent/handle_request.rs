@@ -2078,7 +2078,7 @@ pub(crate) async fn run_shell_child(
         let turn_messages = take_child_turn_messages(&child_handle.cmd_tx, upload_deadline).await;
         let child_committed = child_stop_reason
             .map(crate::upload::turn::stop_reason_commits_turn)
-            .unwrap_or(result.success);
+            .unwrap_or(result.success());
         let streaming_partial = take_child_streaming_partial(
             &child_handle.cmd_tx,
             upload_deadline,
@@ -2088,7 +2088,7 @@ pub(crate) async fn run_shell_child(
         )
         .await
         .map(|mut cap| {
-            cap.reason = Some(if result.cancelled {
+            cap.reason = Some(if result.is_interrupted() {
                 "subagent_cancel".to_string()
             } else {
                 "subagent_non_completed".to_string()
@@ -2183,7 +2183,7 @@ pub(crate) async fn run_shell_child(
             input_tokens: final_turn_tokens.map(|tokens| tokens.0),
             cached_input_tokens: final_turn_tokens.map(|tokens| tokens.1),
             output_tokens: final_turn_tokens.map(|tokens| tokens.2),
-            error: result.error.clone(),
+            error: result.error().clone(),
             finished_at: chrono::Utc::now().to_rfc3339(),
             signals: None,
             turn_delta: None,
@@ -2228,7 +2228,7 @@ pub(crate) async fn run_shell_child(
     let final_status = SubagentMetaStatus::of_result(&result);
     let snapshot_dispose_enabled =
         terminal_persistence_allowed && ctx.resolve_subagent_worktree_snapshot_enabled();
-    let telemetry_tokens = if result.tool_calls > 0 || result.success {
+    let telemetry_tokens = if result.tool_calls > 0 || result.success() {
         child_actor_query(
             "total_tokens",
             child_handle.chat_state_handle.get_total_tokens(),
@@ -2264,9 +2264,9 @@ pub(crate) async fn run_shell_child(
         )
         .await;
     }
-    let outcome = if result.success {
+    let outcome = if result.success() {
         xai_grok_telemetry::events::Outcome::Completed
-    } else if result.cancelled {
+    } else if result.is_interrupted() {
         xai_grok_telemetry::events::Outcome::Cancelled
     } else {
         xai_grok_telemetry::events::Outcome::Error
@@ -2390,7 +2390,7 @@ pub(crate) async fn run_shell_child(
     if worktree_removed {
         result.worktree_path = None;
     }
-    let success = result.success && !result.cancelled;
+    let success = result.success() && !result.is_interrupted();
     let preview = crate::util::truncate(&result.output, 200);
     let level_fn = if success {
         xai_grok_telemetry::unified_log::info
@@ -2409,12 +2409,12 @@ pub(crate) async fn run_shell_child(
             "subagent_type": &request.subagent_type,
             "effective_model": tracker_model_id,
             "success": success,
-            "cancelled": result.cancelled,
+            "cancelled": result.is_interrupted(),
             "duration_ms": result.duration_ms,
             "turns": result.turns,
             "tool_calls": result.tool_calls,
             "output_preview": preview,
-            "error": &result.error,
+            "error": &result.error(),
         })),
     );
     crate::waterfall::mark(&request.id, crate::waterfall::stage::CHILD_DONE);

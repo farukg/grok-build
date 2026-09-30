@@ -10,6 +10,7 @@
 //! A restore I/O failure or a symlink planted at the path is refused and surfaced via `GoalStrategistContractRestoreFailed` telemetry.
 
 use crate::session::events::{Event, GoalStrategistFailReason, GoalStrategistRestoreFailReason};
+use xai_grok_tools::implementations::grok_build::task::types::{SubagentState};
 use crate::session::goal_planner::{
     GOAL_ROLE_SUBAGENT_TYPE, RoleRenderedPrompt, RoleSpawnOverride, SpawnError,
     parse_terminal_response, spawn_with_fail_open_retry,
@@ -195,11 +196,11 @@ impl ChannelSpawner {
                 cancelled: true,
             });
         }
-        if !result.success {
-            let message = result.error.unwrap_or_else(|| "unknown error".to_string());
+        if !result.success() {
+            let message = result.error().unwrap_or_else(|| "unknown error".to_string());
             return Err(SpawnError::Runtime {
                 message,
-                cancelled: result.cancelled,
+                cancelled: result.is_interrupted(),
             });
         }
         Ok(result.output.to_string())
@@ -629,7 +630,7 @@ mod tests {
         );
         // Reply SUCCESS so the explicit pair does NOT trigger a fail-open retry.
         let _ = request.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("ok"),
             ..Default::default()
         });

@@ -461,12 +461,12 @@ pub(crate) fn present_child_completion(
                 attempt_id: completion_data.attempt_id.as_ref().map(ToString::to_string),
                 child_session_id: result.child_session_id.clone(),
                 status: result.status().to_owned(),
-                error: result.error.clone(),
+                error: result.error().clone(),
                 tool_calls: result.tool_calls,
                 turns: result.turns,
                 duration_ms: result.duration_ms,
                 tokens_used: completion_data.telemetry_tokens(),
-                output: result.success.then(|| result.output.to_string()),
+                output: result.success().then(|| result.output.to_string()),
                 will_wake,
             },
             completion_data.parent_cmd_tx.as_ref(),
@@ -502,7 +502,7 @@ impl AutoWakeInputs {
     pub(crate) fn from_completion(completion: &ChildCompletion<ShellCompletionData>) -> Self {
         Self {
             run_in_background: completion.disposition.backgrounded,
-            cancelled: completion.result.cancelled,
+            cancelled: completion.result.is_interrupted(),
             auto_wake_enabled: completion.completion_data.auto_wake_enabled,
             block_waited: completion.disposition.waiter_delivered,
             explicitly_killed: completion.disposition.explicitly_killed,

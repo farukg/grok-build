@@ -236,7 +236,11 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
     {
         let folded = reduce_prompt_turn_settlement(PromptTurnSettlementInput {
             result: SubagentResult {
-                cancelled: true,
+                state: SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: "cancelled".to_owned(),
+                    },
+                },
                 output: std::sync::Arc::from("kept"),
                 ..Default::default()
             },
@@ -248,9 +252,9 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
 
         assert_eq!(
             (
-                folded.result.success,
-                folded.result.cancelled,
-                folded.result.error.as_deref(),
+                folded.result.success(),
+                folded.result.is_interrupted(),
+                folded.result.error().as_deref(),
                 folded.result.output.as_ref(),
                 folded.cancellation_may_hide_usage,
             ),
@@ -285,7 +289,7 @@ fn unclean_settlement_dispositions_map_to_cancelled_results() {
     for (disposition, expected_error) in cases {
         let folded = reduce_prompt_turn_settlement(PromptTurnSettlementInput {
             result: SubagentResult {
-                success: true,
+                state: SubagentState::Completed,
                 ..Default::default()
             },
             disposition,
@@ -296,9 +300,9 @@ fn unclean_settlement_dispositions_map_to_cancelled_results() {
 
         assert_eq!(
             (
-                folded.result.success,
-                folded.result.cancelled,
-                folded.result.error.as_deref(),
+                folded.result.success(),
+                folded.result.is_interrupted(),
+                folded.result.error().as_deref(),
                 folded.result.output.as_ref(),
                 folded.result.output_usage_incomplete,
                 folded.cancellation_may_hide_usage,

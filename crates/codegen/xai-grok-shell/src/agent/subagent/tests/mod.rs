@@ -109,7 +109,7 @@ async fn usage_ack_precedes_terminal_presentation() {
     );
     completion_data.mark_spawned_notification_emitted();
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "usage-order".to_string(),
         child_session_id: "usage-order".to_string(),
         ..Default::default()
@@ -318,7 +318,7 @@ async fn cancelled_attempt_fails_closed_when_the_signals_read_never_answers() {
         .expect(
             "a cancelled attempt must complete in bounded time under a wedged child",
         );
-    assert!(outcome.result.cancelled);
+    assert!(outcome.result.is_interrupted());
     assert!(
             outcome.cancellation_may_hide_usage,
             "an unanswered signals read must not pass for 'no work done'"
@@ -775,8 +775,8 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
         final_text: "follow-up result".to_string(),
         was_cancelled: false,
     });
-    assert!(folded.result.success);
-    assert!(!folded.result.cancelled);
+    assert!(folded.result.success());
+    assert!(!folded.result.is_interrupted());
     let request = auto_wake_test_request("sa-followup");
     let completion = ChildCompletion {
         snapshot: test_snapshot(&request, &folded.result),
@@ -832,7 +832,7 @@ fn inject_subagent_completed_prompt_sends_prompt() {
     let mut request = auto_wake_test_request("sa-1");
     request.runtime_overrides.loop_task_id = Some("loop-123".into());
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from("PING"),
         subagent_id: "sa-1".into(),
         child_session_id: "sa-1".into(),
@@ -880,7 +880,7 @@ fn inject_subagent_completed_prompt_copies_capped_task_output() {
     let output = "x".repeat(20_000);
     let request = auto_wake_test_request("sa-1");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from(output.as_str()),
         subagent_id: "sa-1".into(),
         child_session_id: "sa-1".into(),
@@ -927,7 +927,7 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
     let request = auto_wake_test_request("sa-no-loop");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "sa-no-loop".into(),
         child_session_id: "sa-no-loop".into(),
         ..Default::default()
@@ -959,7 +959,7 @@ fn inject_subagent_completed_prompt_bails_when_goal_loop_activates_in_gap() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
     let request = auto_wake_test_request("sa-goal");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "sa-goal".into(),
         child_session_id: "sa-goal".into(),
         ..Default::default()
@@ -985,7 +985,7 @@ fn inject_subagent_completed_prompt_bails_when_parent_closed() {
     let (trace_tx, mut trace_rx) = mpsc::unbounded_channel();
     let request = auto_wake_test_request("sa-closed");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "sa-closed".into(),
         child_session_id: "sa-closed".into(),
         ..Default::default()
@@ -1008,7 +1008,7 @@ fn inject_subagent_completed_prompt_bails_when_parent_closed() {
 fn persist_gate_only_persists_successful_nonempty_outputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ok = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from("text"),
         ..Default::default()
     };
@@ -1017,12 +1017,12 @@ fn persist_gate_only_persists_successful_nonempty_outputs() {
             Some(dir.path().to_path_buf())
         );
     let empty = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         ..Default::default()
     };
     assert_eq!(persist_subagent_output(dir.path(), &empty), None);
     let failed = SubagentResult {
-        success: false,
+        state: SubagentState::Failed { message: "Unknown error".to_owned() },
         output: std::sync::Arc::from("partial"),
         ..Default::default()
     };
@@ -2247,8 +2247,8 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
-    assert!(!result.success);
+    assert!(result.is_interrupted());
+    assert!(!result.success());
     let completion_data = ShellCompletionData::from_context(
         &ctx,
         xai_message_delivery_core::AttemptId::mint(1),
@@ -2325,7 +2325,7 @@ async fn run_promote_cancel_with_worktree(
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
 }
 /// A pending cancel removes a freshly-created worktree but preserves a resumed child worktree owned by its source.
 #[tokio::test]
@@ -2416,7 +2416,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
     assert!(
             worktree.path().exists(),
             "worktree must stay when actor exit is not proven"
@@ -2463,11 +2463,11 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(!result.cancelled);
-    assert!(!result.success);
+    assert!(!result.is_interrupted());
+    assert!(!result.success());
     assert_eq!(result.status(), "failed");
     assert_eq!(
-            result.error.as_deref(),
+            result.error().as_deref(),
             Some("Subagent initial prompt was not admitted before the deadline")
         );
     let meta: SubagentMeta = serde_json::from_str(
@@ -2780,8 +2780,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
             inner,
             ChildRunOutput {
                 result: SubagentResult {
-                    success: false,
-                    error: Some("Subagent runtime panicked".to_owned()),
+                    state: SubagentState::Failed { message: "Subagent runtime panicked".to_owned() },
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
                     ..Default::default()

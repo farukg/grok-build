@@ -1,4 +1,5 @@
 use tokio::sync::mpsc;
+use crate::implementations::grok_build::task::types::{SubagentState};
 
 use super::*;
 use crate::implementations::grok_build::task::TaskTool;
@@ -93,7 +94,7 @@ impl ChildRunner for RecordingRunner {
             }
             ChildRunOutput {
                 result: SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "done".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),

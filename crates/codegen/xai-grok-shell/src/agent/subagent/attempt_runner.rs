@@ -98,8 +98,9 @@ pub(super) async fn run_one_turn_attempt(
         drop(input.prompt_admitted);
         return OneTurnAttemptOutcome {
             result: SubagentResult {
-                success: false,
-                error: Some("injected pre-admission attempt failure".to_owned()),
+                state: SubagentState::Failed {
+                    message: "injected pre-admission attempt failure".to_owned(),
+                },
                 ..base_result(input.request, input.worktree_path, 0, 1, 0)
             },
             trace: OneTurnTraceCapture {
@@ -164,9 +165,11 @@ pub(super) async fn run_one_turn_attempt(
             let (tool_calls, turns) = counts.unwrap_or((0, 0));
             (
                 SubagentResult {
-                    success: false,
-                    cancelled: true,
-                    error: Some("Subagent was cancelled".to_string()),
+                    state: SubagentState::Interrupted {
+                        cause: InterruptionCause::Error {
+                            message: "Subagent was cancelled".to_string(),
+                        },
+                    },
                     ..base_result(
                         input.request,
                         input.worktree_path,

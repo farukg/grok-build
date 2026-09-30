@@ -852,6 +852,7 @@ impl Reminder for TaskCompletionReminder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
     use crate::implementations::grok_build::task::types::{
         SubagentOwner, SubagentRequest, SubagentResult,
     };
@@ -1788,7 +1789,13 @@ mod tests {
     }
     fn test_result(id: &str, success: bool) -> SubagentResult {
         SubagentResult {
-            success,
+            state: if success {
+                SubagentState::Completed
+            } else {
+                SubagentState::Failed {
+                    message: "Unknown error".to_owned(),
+                }
+            },
             output: Arc::from(format!("output for {id}")),
             subagent_id: id.into(),
             child_session_id: id.into(),
@@ -2074,8 +2081,17 @@ mod tests {
             let request = test_request("sub-same");
             let mut result = test_result("sub-same", success);
             result.output = Arc::from(output);
-            result.cancelled = cancelled;
-            result.error = error.map(str::to_owned);
+            if cancelled {
+                result.state = SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: error.map_or_else(|| "cancelled".to_owned(), str::to_owned),
+                    },
+                };
+            } else if let Some(message) = error {
+                result.state = SubagentState::Failed {
+                    message: message.to_owned(),
+                };
+            }
             result.worktree_path = worktree.map(str::to_owned);
             let snapshot = terminal_snapshot(
                 &request,
@@ -2125,7 +2141,11 @@ mod tests {
         assert!(body.contains("\nStatus: failed\n"), "{body}");
         assert!(body.contains("\nExit Code: 1\n"), "{body}");
         assert!(body.ends_with("\n=== Output ===\nUnknown error"), "{body}");
-        result.cancelled = true;
+        result.state = SubagentState::Interrupted {
+            cause: InterruptionCause::Error {
+                message: "Subagent was cancelled".to_owned(),
+            },
+        };
         let msg = format_subagent_completion(
             &summarize(&test_request("sub-fail"), &result),
             Some("get_task_output"),
@@ -2226,7 +2246,9 @@ mod tests {
         let mut ok = test_result("sub-tags", true);
         ok.output = Arc::from(tags);
         let mut failed = test_result("sub-tags", false);
-        failed.error = Some(tags.to_owned());
+        failed.state = SubagentState::Failed {
+            message: tags.to_owned(),
+        };
         let ok = summarize(&request, &ok);
         let failed = summarize(&request, &failed);
         let wake = format_subagent_completion(&ok, Some("get_task_output"), None, None);
@@ -2322,9 +2344,12 @@ mod tests {
         let mut request_b = test_request("b");
         request_b.description = "task 2".into();
         let mut result_b = test_result("b", false);
-        result_b.cancelled = true;
+        result_b.state = SubagentState::Interrupted {
+            cause: InterruptionCause::Error {
+                message: "killed by the user".to_owned(),
+            },
+        };
         result_b.tool_calls = 8;
-        result_b.error = Some("killed by the user".into());
         let a = summarize(&request_a, &result_a);
         let b = summarize(&request_b, &result_b);
         let msg = format_between_turn_completions(&[a, b], Some("get_task_output"), None, None);

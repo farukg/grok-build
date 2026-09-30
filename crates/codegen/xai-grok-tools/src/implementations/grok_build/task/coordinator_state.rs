@@ -6,6 +6,7 @@ use std::task::{Context, Poll};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use xai_tool_types::{InterruptionCause, SubagentState};
 
 use super::coordinator::ActiveChildGeneration;
 use super::coordinator::active_message::ActiveMessageLifecycle;
@@ -495,12 +496,50 @@ pub(super) struct DisplacedCompletedChild {
 }
 
 /// Set at the cancel sites; a wake rollback reads it because host rejections cancel the token too.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) enum PendingDisposition {
     #[default]
     Live,
-    /// A user or owner cancel: the prior completed record must not be re-woken.
-    Cancelled,
+    /// A user or owner cancel with its cause. Only a pause leaves the prior completed record wakeable.
+    Interrupted(InterruptionCause),
+}
+
+impl PendingDisposition {
+    /// The first cause stands, except that a stop overrides a pause.
+    pub(super) fn interrupt(&mut self, cause: InterruptionCause) {
+        let replace = match (&*self, &cause) {
+            (Self::Live, _) => true,
+            (
+                Self::Interrupted(InterruptionCause::Paused { .. }),
+                InterruptionCause::ExplicitStop { .. },
+            ) => true,
+            (Self::Interrupted(_), _) => false,
+        };
+        if replace {
+            *self = Self::Interrupted(cause);
+        }
+    }
+
+    pub(super) fn cause(&self) -> Option<&InterruptionCause> {
+        match self {
+            Self::Live => None,
+            Self::Interrupted(cause) => Some(cause),
+        }
+    }
+
+    pub(super) fn explicitly_killed(&self) -> bool {
+        matches!(
+            self,
+            Self::Interrupted(InterruptionCause::ExplicitStop { .. })
+        )
+    }
+
+    pub(super) fn allows_wake(&self) -> bool {
+        match self {
+            Self::Live | Self::Interrupted(InterruptionCause::Paused { .. }) => true,
+            Self::Interrupted(_) => false,
+        }
+    }
 }
 
 pub(super) struct PendingChild {
@@ -510,7 +549,6 @@ pub(super) struct PendingChild {
     pub(super) spawn_reply: Option<oneshot::Sender<SubagentResult>>,
     pub(super) foreground_deadline: Option<tokio::time::Instant>,
     pub(super) handle_only: bool,
-    pub(super) explicitly_killed: bool,
     pub(super) disposition: PendingDisposition,
     /// False when the record was synthesized for a spawn that never reached
     /// the runner (admission reject, cancelled while queued).
@@ -534,7 +572,6 @@ pub(super) struct ActiveChild<C> {
     /// Definition-declared background (see [`StartedChild`]): background for
     /// `Outstanding` accounting even while the spawn caller block-awaits.
     pub(super) definition_background: bool,
-    pub(super) explicitly_killed: bool,
     pub(super) disposition: PendingDisposition,
     pub(super) child_session_id: String,
     pub(super) persona: Option<String>,
@@ -689,6 +726,18 @@ pub(super) enum ChildRecord<C> {
     Active(ActiveChild<C>),
 }
 
+impl PendingChild {
+    pub(super) fn explicitly_killed(&self) -> bool {
+        self.disposition.explicitly_killed()
+    }
+}
+
+impl<C> ActiveChild<C> {
+    pub(super) fn explicitly_killed(&self) -> bool {
+        self.disposition.explicitly_killed()
+    }
+}
+
 impl<C> ChildRecord<C> {
     pub(super) fn request(&self) -> &SubagentRequest {
         match self {
@@ -697,11 +746,15 @@ impl<C> ChildRecord<C> {
         }
     }
 
-    pub(super) fn explicitly_killed(&self) -> bool {
+    pub(super) fn disposition(&self) -> &PendingDisposition {
         match self {
-            Self::Pending(child) => child.explicitly_killed,
-            Self::Active(child) => child.explicitly_killed,
+            Self::Pending(child) => &child.disposition,
+            Self::Active(child) => &child.disposition,
         }
+    }
+
+    pub(super) fn explicitly_killed(&self) -> bool {
+        self.disposition().explicitly_killed()
     }
 
     pub(super) fn attempt_id(&self) -> &xai_message_delivery_core::AttemptId {
@@ -1008,26 +1061,24 @@ pub fn terminal_snapshot(
     persona: Option<String>,
     started_at_epoch_ms: u64,
 ) -> SubagentSnapshot {
-    let status = if result.cancelled {
-        SubagentSnapshotStatus::Cancelled {
-            reason: result.error.clone(),
-        }
-    } else if result.success {
-        SubagentSnapshotStatus::Completed {
+    let status = match &result.state {
+        SubagentState::Interrupted { cause } => SubagentSnapshotStatus::Cancelled {
+            cause: cause.clone(),
+        },
+        SubagentState::Completed => SubagentSnapshotStatus::Completed {
             output: persisted_output
                 .map(str::to_owned)
                 .unwrap_or_else(|| result.output.to_string()),
             tool_calls: result.tool_calls,
             turns: result.turns,
             worktree_path: result.worktree_path.clone(),
-        }
-    } else {
-        SubagentSnapshotStatus::Failed {
-            error: result
-                .error
-                .clone()
-                .unwrap_or_else(|| "Unknown error".to_owned()),
-        }
+        },
+        SubagentState::Failed { message } => SubagentSnapshotStatus::Failed {
+            error: message.clone(),
+        },
+        SubagentState::Running => SubagentSnapshotStatus::Failed {
+            error: "Unknown error".to_owned(),
+        },
     };
     SubagentSnapshot {
         subagent_id: request.id.clone(),

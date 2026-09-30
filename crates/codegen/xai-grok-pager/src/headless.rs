@@ -1535,6 +1535,7 @@ fn reap_request_for_work(
             "x.ai/subagent/cancel",
             serde_json::value::to_raw_value(&CancelSubagentRequest {
                 subagent_id: id.clone(),
+                mode: Default::default(),
             })?,
         ),
         BackgroundWork::Task(id) => (

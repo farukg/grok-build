@@ -2837,11 +2837,17 @@ impl MvpAgent {
     pub(crate) async fn cancel_subagent(
         &self,
         subagent_id: &str,
+        disposition: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition,
     ) -> xai_grok_tools::implementations::grok_build::task::types::SubagentCancelOutcome {
+        use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend as _;
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
                 self.subagent_event_tx.event_sender().0,
             )
-            .cancel(subagent_id)
+            .cancel(
+                subagent_id,
+                xai_grok_tools::implementations::grok_build::task::types::SubagentActor::Human,
+                disposition,
+            )
             .await
     }
     pub(crate) async fn list_running_subagents(

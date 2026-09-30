@@ -5,6 +5,7 @@
 //! - Post-tool hooks and followups
 
 use super::*;
+use xai_grok_tools::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 
 fn at<T>(xs: &[T], i: usize) -> &T {
     let Some(x) = xs.get(i) else {
@@ -45,7 +46,12 @@ impl SubagentBackend for FixedActiveMessageBackend {
         self.outcome.clone()
     }
 
-    async fn cancel(&self, _: &str) -> SubagentCancelOutcome {
+    async fn cancel(
+        &self,
+        _: &str,
+        _: SubagentActor,
+        _: SubagentCancelDisposition,
+    ) -> SubagentCancelOutcome {
         SubagentCancelOutcome::NotFound
     }
 

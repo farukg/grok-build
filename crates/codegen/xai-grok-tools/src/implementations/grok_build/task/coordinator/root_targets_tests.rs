@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 use xai_message_delivery_core::{AgentId, AttemptId};
 
 use super::*;
+use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
+use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor, SubagentState};
 use crate::implementations::grok_build::task::coordinator::active_message::tests::{
     TestCoordinator, finish_child, fixture, insert_child_with, insert_pending, promote_pending,
     recv_with_timeout, release_admission, response_outcome,
@@ -219,7 +221,7 @@ async fn root_resolution_routes_and_completion_are_exact() {
         CHILD.to_owned(),
         crate::implementations::grok_build::task::coordinator::ChildRunOutput {
             result: crate::implementations::grok_build::task::types::SubagentResult {
-                success: true,
+                state: SubagentState::Completed,
                 subagent_id: CHILD.to_owned(),
                 output: "sentinel".into(),
                 ..Default::default()
@@ -326,7 +328,7 @@ async fn peer_root_reaches_another_roots_child_in_every_state() {
             );
         }
         if state == "completed_killed" {
-            c.active.get_mut(CHILD).unwrap().explicitly_killed = true;
+            c.active.get_mut(CHILD).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human });
         }
         if state.starts_with("completed") {
             finish_child(&mut c, CHILD);

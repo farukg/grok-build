@@ -227,12 +227,12 @@ fn background_spawn_reject_error(
             tracing::error!(
                 subagent_id = %id,
                 subagent_type = %subagent_type,
-                error = ?r.error,
+                error = ?r.error(),
                 "background spawn rejected by coordinator",
             );
             xai_tool_runtime::ToolError::custom(
                 "spawn_rejected",
-                r.error.unwrap_or_else(|| {
+                r.error().unwrap_or_else(|| {
                     "background spawn was rejected by the coordinator".to_owned()
                 }),
             )
@@ -786,7 +786,7 @@ impl xai_tool_runtime::Tool for TaskTool {
         }
 
         // 6. Return result
-        if result.success {
+        if result.success() {
             let resume_from_hint = result.subagent_id.clone();
             let persona_hint: Option<String> = None;
             let resolved_type = if result.subagent_type.is_empty() {
@@ -813,7 +813,7 @@ impl xai_tool_runtime::Tool for TaskTool {
         } else {
             Err(xai_tool_runtime::ToolError::invalid_arguments(
                 result
-                    .error
+                    .error()
                     .unwrap_or_else(|| "Unknown subagent error".to_string()),
             ))
         }
@@ -1149,7 +1149,7 @@ mod tests {
             assert_eq!(request.parent_prompt_id.as_deref(), Some("prompt-123"));
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("Found 3 auth middleware files"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -1212,8 +1212,7 @@ mod tests {
             let request = unwrap_spawn(rx.recv().await.unwrap());
             request
                 .respond_with(|_| SubagentResult {
-                    success: false,
-                    error: Some("Child session crashed".to_string()),
+                    state: SubagentState::Failed { message: "Child session crashed".to_string() },
                     ..Default::default()
                 })
                 .unwrap();
@@ -1514,7 +1513,7 @@ mod tests {
             assert_eq!(request.subagent_type, "explore");
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("ok"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -1548,7 +1547,7 @@ mod tests {
             assert_eq!(request.subagent_type, "explore");
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("ok"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -1642,7 +1641,7 @@ mod tests {
             assert_eq!(request.subagent_type, "general-purpose");
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("ok"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -1687,7 +1686,7 @@ mod tests {
             assert_eq!(request.subagent_type, "explore");
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("ok"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -1716,7 +1715,7 @@ mod tests {
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("ok"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -1939,8 +1938,7 @@ mod tests {
         let drain = tokio::spawn(async move {
             if let Some(SubagentEvent::Spawn(boxed)) = rx.recv().await {
                 let _ = boxed.respond_with(|boxed| SubagentResult {
-                    success: false,
-                    error: Some("worktree creation failed".to_string()),
+                    state: SubagentState::Failed { message: "worktree creation failed".to_string() },
                     subagent_id: boxed.id.clone(),
                     ..Default::default()
                 });
@@ -2073,7 +2071,7 @@ mod tests {
                     boxed.notify_registered();
                     // Foreground mode still awaits the terminal `spawn()` result.
                     let _ = boxed.respond_with(|req| SubagentResult {
-                        success: true,
+                        state: SubagentState::Completed,
                         subagent_id: req.id.clone(),
                         child_session_id: req.id.clone(),
                         ..Default::default()
@@ -2575,7 +2573,7 @@ mod tests {
             );
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -2661,7 +2659,7 @@ mod tests {
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "resumed".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -2830,7 +2828,7 @@ mod tests {
             );
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -2882,7 +2880,7 @@ mod tests {
             );
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -2934,7 +2932,7 @@ mod tests {
             );
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -2989,7 +2987,7 @@ mod tests {
             );
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -3082,7 +3080,7 @@ mod tests {
                 );
                 request
                     .respond_with(|request| SubagentResult {
-                        success: true,
+                        state: SubagentState::Completed,
                         output: "ok".into(),
                         subagent_id: request.id.clone(),
                         child_session_id: request.id.clone(),
@@ -3137,7 +3135,7 @@ mod tests {
             assert_eq!(request.cwd.as_deref(), Some("/tmp"));
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "done".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -3196,7 +3194,7 @@ mod tests {
             );
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -3250,7 +3248,7 @@ mod tests {
             assert_eq!(request.cwd.as_deref(), Some("/tmp"));
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -3300,7 +3298,7 @@ mod tests {
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "resumed".into(),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
@@ -3366,7 +3364,7 @@ mod tests {
             request
                 .result_tx
                 .send(SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: id.clone(),
                     child_session_id: id,
@@ -3404,7 +3402,7 @@ mod tests {
             request
                 .result_tx
                 .send(SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: id.clone(),
                     child_session_id: id,
@@ -3454,7 +3452,7 @@ mod tests {
                 request
                     .result_tx
                     .send(SubagentResult {
-                        success: true,
+                        state: SubagentState::Completed,
                         output: "ok".into(),
                         subagent_id: id.clone(),
                         child_session_id: id,
@@ -3495,7 +3493,7 @@ mod tests {
             request
                 .result_tx
                 .send(SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "ok".into(),
                     subagent_id: id.clone(),
                     child_session_id: id,
@@ -3538,7 +3536,7 @@ mod tests {
             request
                 .result_tx
                 .send(SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "resumed".into(),
                     subagent_id: id.clone(),
                     child_session_id: id,
@@ -3574,7 +3572,7 @@ mod tests {
             request
                 .result_tx
                 .send(SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: "resumed".into(),
                     subagent_id: id.clone(),
                     child_session_id: id,

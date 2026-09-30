@@ -1888,7 +1888,13 @@ fn failure_result(request: &SubagentRequest, error: &str) -> SubagentResult {
     SubagentResult::failed(request.id.clone(), request.id.clone(), error)
 }
 fn cancelled_result(request: &SubagentRequest, error: &str) -> SubagentResult {
-    SubagentResult::cancelled(request.id.clone(), request.id.clone(), error)
+    SubagentResult::interrupted(
+        request.id.clone(),
+        request.id.clone(),
+        InterruptionCause::Error {
+            message: error.to_owned(),
+        },
+    )
 }
 fn child_run_output(
     result: SubagentResult,
@@ -1950,7 +1956,13 @@ impl UnpromotedChildDisposition {
         match self {
             Self::Cancelled => SubagentResult {
                 duration_ms,
-                ..SubagentResult::cancelled(subagent_id, child_session_id, "Subagent was cancelled")
+                ..SubagentResult::interrupted(
+                    subagent_id,
+                    child_session_id,
+                    InterruptionCause::Error {
+                        message: "Subagent was cancelled".to_owned(),
+                    },
+                )
             },
             Self::AdmissionTimedOut => SubagentResult {
                 duration_ms,
@@ -2165,9 +2177,9 @@ pub(crate) enum SubagentMetaStatus {
 }
 impl SubagentMetaStatus {
     pub(crate) fn of_result(result: &SubagentResult) -> Self {
-        if result.cancelled {
+        if result.is_interrupted() {
             Self::Cancelled
-        } else if result.success {
+        } else if result.success() {
             Self::Completed
         } else {
             Self::Failed
@@ -2440,7 +2452,7 @@ fn update_subagent_meta_snapshot_ref(
 }
 #[must_use]
 fn persist_subagent_output(dir: &Path, result: &SubagentResult) -> Option<PathBuf> {
-    (result.success && !result.output.is_empty() && write_subagent_output(dir, &result.output))
+    (result.success() && !result.output.is_empty() && write_subagent_output(dir, &result.output))
         .then(|| dir.to_path_buf())
 }
 fn persist_subagent_completion(dir: &Path, result: &SubagentResult, gcs_ctx: &GcsUploadContext) {
@@ -2453,7 +2465,7 @@ fn persist_subagent_completion(dir: &Path, result: &SubagentResult, gcs_ctx: &Gc
         meta.duration_ms = Some(result.duration_ms);
         meta.tool_calls = Some(result.tool_calls);
         meta.turns = Some(result.turns);
-        meta.error = result.error.clone();
+        meta.error = result.error().clone();
         write_subagent_meta(dir, &meta);
         if let (Some(bucket), Some(method)) = (&gcs_ctx.bucket_url, &gcs_ctx.upload_method) {
             let gcs_meta = SubagentSessionMetadata::from_meta(
@@ -2596,7 +2608,9 @@ fn completed_finish_from_inspection(
             tool_calls, turns, ..
         } => ("completed", None, *tool_calls, *turns),
         SubagentSnapshotStatus::Failed { error } => ("failed", Some(error.clone()), 0, 0),
-        SubagentSnapshotStatus::Cancelled { reason } => ("cancelled", reason.clone(), 0, 0),
+        SubagentSnapshotStatus::Cancelled { cause } => {
+            ("cancelled", Some(cause.model_text()), 0, 0)
+        }
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
             return None;
         }

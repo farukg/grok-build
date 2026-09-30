@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use tokio::sync::oneshot;
+use xai_tool_types::InterruptionCause;
 
 use super::super::coordinator_state::{DisplacedCompletedChild, WakeOrigin};
 use super::super::types::{SubagentRequest, SubagentResult};
@@ -163,13 +164,14 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         self.queued.entries = kept;
         for queued in cancelled {
-            self.finish_cancelled_queued(queued);
+            self.finish_cancelled_queued(queued, cancelled_while_queued());
         }
         self.draining_queued = false;
     }
 
     pub(super) fn remove_queued(
         &mut self,
+        cause: &InterruptionCause,
         mut matches: impl FnMut(&SubagentRequest) -> bool,
     ) -> usize {
         let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.queued.entries)
@@ -180,13 +182,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         for queued in removed {
             let id = queued.request.id.clone();
             self.reject_spawn_ready_ids(&[id]);
-            self.finish_cancelled_queued(queued);
+            self.finish_cancelled_queued(queued, cause.clone());
         }
         count
     }
 
     /// Resolve a queued spawn without stranding its waiters.
-    fn finish_cancelled_queued(&mut self, queued: QueuedSpawn) {
+    fn finish_cancelled_queued(&mut self, queued: QueuedSpawn, cause: InterruptionCause) {
         let QueuedSpawn {
             request,
             caller,
@@ -202,7 +204,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         // Token observers must see command-path cancels too.
         request.cancel_token.cancel();
-        let result = cancelled_while_queued_result(&request);
+        let result =
+            SubagentResult::interrupted(request.id.clone(), request.id.clone(), cause);
         self.finish_never_started(
             *request,
             caller.into_spawn_reply(),
@@ -218,16 +221,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         for queued in std::mem::take(&mut self.queued.entries) {
             queued.request.cancel_token.cancel();
             if let Some(result_tx) = queued.caller.into_spawn_reply() {
-                let _ = result_tx.send(cancelled_while_queued_result(&queued.request));
+                let _ = result_tx.send(SubagentResult::interrupted(
+                    queued.request.id.clone(),
+                    queued.request.id.clone(),
+                    InterruptionCause::SessionTeardown {
+                        session_id: queued.request.parent_session_id.clone(),
+                    },
+                ));
             }
         }
     }
 }
 
-fn cancelled_while_queued_result(request: &SubagentRequest) -> SubagentResult {
-    SubagentResult::cancelled(
-        request.id.clone(),
-        request.id.clone(),
-        "cancelled while queued for a subagent slot",
-    )
+/// A queued spawn whose token was cancelled by someone the coordinator did not see.
+pub(super) fn cancelled_while_queued() -> InterruptionCause {
+    InterruptionCause::Error {
+        message: "cancelled while queued for a subagent slot".to_owned(),
+    }
 }

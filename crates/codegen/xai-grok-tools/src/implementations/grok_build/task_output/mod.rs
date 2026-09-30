@@ -742,13 +742,7 @@ pub(crate) fn terminal_subagent_result(snap: &SubagentSnapshot) -> TaskOutputRes
             ("completed", Some(0), output)
         }
         SubagentSnapshotStatus::Failed { error } => ("failed", Some(1), error.clone()),
-        SubagentSnapshotStatus::Cancelled { reason } => (
-            "cancelled",
-            None,
-            reason
-                .clone()
-                .unwrap_or_else(|| "Subagent was cancelled".to_string()),
-        ),
+        SubagentSnapshotStatus::Cancelled { cause } => ("cancelled", None, cause.model_text()),
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
             unreachable!("terminal_subagent_result called for a live subagent")
         }
@@ -1105,6 +1099,7 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::*;
     use super::*;
+    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
     use crate::computer::types::{
         BackgroundHandle, KillOutcome, TaskSnapshot, TerminalBackend, TerminalRunRequest,
         TerminalRunResult,
@@ -2727,7 +2722,9 @@ mod tests {
                     description: "cancelled".to_string(),
                     subagent_type: "explore".to_string(),
                     status: SubagentSnapshotStatus::Cancelled {
-                        reason: Some("stop".to_string()),
+                        cause: InterruptionCause::ExplicitStop {
+                            actor: SubagentActor::Human,
+                        },
                     },
                     started_at_epoch_ms: 1_700_000_000_000,
                     duration_ms: 10,

@@ -825,13 +825,13 @@ impl SchedulerActor {
             let Ok(result) = result_rx.await else {
                 return;
             };
-            if result.error.is_none() {
+            if result.error().is_none() {
                 return;
             }
             tracing::warn!(
                 task_id = %guard_task_id,
                 subagent_id = %spawned_id,
-                error = ?result.error,
+                error = ?result.error(),
                 "Loop iteration spawn failed; clearing chain anchor"
             );
             let mut res = resources.lock().await;
@@ -1003,6 +1003,7 @@ impl SchedulerActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::implementations::grok_build::task::types::{SubagentState};
     use crate::implementations::grok_build::scheduler::types::{
         ScheduledTask, SchedulerHandle, scheduler_tool_error,
     };
@@ -2439,8 +2440,7 @@ mod tests {
         let spawned_id = request.id.clone();
         let _ = request.result_tx.send(
             crate::implementations::grok_build::task::types::SubagentResult {
-                success: false,
-                error: Some("worktree creation failed".into()),
+                state: SubagentState::Failed { message: "worktree creation failed".into() },
                 subagent_id: spawned_id.clone(),
                 ..Default::default()
             },

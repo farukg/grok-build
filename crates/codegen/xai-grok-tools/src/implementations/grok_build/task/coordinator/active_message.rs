@@ -719,7 +719,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.agent_address.as_ref().map(|value| value.as_str()),
                 child.request.id.as_str(),
                 child.request.owner.is_workflow(),
-                if child.cancellation.is_cancelled() || child.explicitly_killed {
+                if child.cancellation.is_cancelled() || child.explicitly_killed() {
                     AddressPresence::Gone
                 } else {
                     AddressPresence::Pending
@@ -947,7 +947,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             let _ = respond_to.send(refused_active_outcome(source));
             return;
         }
-        if source == ActiveAgentMessageSource::Human && child.explicitly_killed {
+        if source == ActiveAgentMessageSource::Human && child.explicitly_killed() {
             let _ = respond_to.send(ActiveAgentMessageOutcome::NotFoundOrNotOwned);
             return;
         }

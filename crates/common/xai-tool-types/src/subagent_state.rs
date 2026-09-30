@@ -21,6 +21,7 @@ pub enum InterruptionCause {
     ParentTurnCancelled { prompt_id: String },
     SessionStopped { session_id: String },
     SessionTeardown { session_id: String },
+    WorkflowCancelled { run_id: String },
     ProcessRestart,
     LiveParentOrphan,
     Error { message: String },
@@ -86,12 +87,47 @@ impl std::fmt::Display for InterruptionCause {
             Self::SessionTeardown { session_id } => {
                 write!(f, "parent session {session_id} ended")
             }
+            Self::WorkflowCancelled { run_id } => write!(f, "workflow {run_id} cancelled"),
             Self::ProcessRestart => f.write_str("interrupted by process restart"),
             Self::LiveParentOrphan => f.write_str("orphaned while parent session stayed live"),
             Self::Error { message } => write!(f, "interrupted by error: {message}"),
             Self::Limit { actor, limit } => {
                 write!(f, "stopped by {} at limit {limit}", actor.label())
             }
+        }
+    }
+}
+
+impl InterruptionCause {
+    /// The sentence a model or human reads in a result or reminder; an error cause keeps its own message.
+    pub fn model_text(&self) -> String {
+        match self {
+            Self::ExplicitStop { actor } => format!("Subagent was stopped by {}.", actor.label()),
+            Self::Paused { actor } => format!(
+                "Subagent was paused by {}; send it a message to resume it.",
+                actor.label()
+            ),
+            Self::ParentTurnCancelled { prompt_id } => {
+                format!("Subagent was cancelled because parent turn {prompt_id} was cancelled.")
+            }
+            Self::SessionStopped { session_id } => {
+                format!("Subagent was cancelled because session {session_id} was stopped.")
+            }
+            Self::SessionTeardown { session_id } => {
+                format!("Subagent was cancelled because parent session {session_id} ended.")
+            }
+            Self::WorkflowCancelled { run_id } => {
+                format!("Subagent was cancelled with workflow {run_id}.")
+            }
+            Self::ProcessRestart => "Subagent was interrupted by a process restart.".to_owned(),
+            Self::LiveParentOrphan => {
+                "Subagent was orphaned while its parent session stayed live.".to_owned()
+            }
+            Self::Error { message } => message.clone(),
+            Self::Limit { actor, limit } => format!(
+                "Subagent was stopped by {} at limit {limit}.",
+                actor.label()
+            ),
         }
     }
 }
