@@ -32,6 +32,7 @@ everything that compiles and passes its tests lands here.
 | F1-core A1/A2/B1: typed origins SessionPrefix/DirectBash/GoalSetup, request projection under `ContextPolicy`, `x.ai/session/context_policy` get/set persisted per session, compaction summarizes what the policy sends | `54d0530` … `dcbfd9a` |
 | W3 (part): pager knows `ShellChildSupport`, prompts from child views name their parent, a resumed finished child opens in place | `grb/w3` squash, see `streams/w3-pager-child-sessions.md` |
 | F2/F3 (part): F7 sidebar with the session's context switches (per-category ON/OFF and estimated tokens, shell-acknowledged), F6 timeline in a left column with the three-column layout, dock inside the F7 body (invisible while F7 is closed), Message Display rows (`1 line | full` per kind, session-scoped) | `grb/f2f3`, see `streams/f2-f3-sidebars.md` |
+| M11 B1: `SubagentResult.state` (typed `SubagentState`), interruption causes with actor for every cancel site, pause keeps a child wakeable, `x.ai/subagent/cancel` `mode: stop\|pause` | `grb/m11` squash, see `streams/m11-subagent-control.md` |
 | Fix: resuming a finished subagent (`task(resume_from)`, `x.ai/subagent/resume`) wakes it under its own id instead of starting a new one; only an on-disk-only source still continues via a `resume_from` spawn | `bc68c35` |
 | CI: `linux-build` workflow builds `grok` (x86_64 Linux) on every push to `main`, Actions artifact `grok-x86_64-linux` | `50fa826` |
 
@@ -66,7 +67,7 @@ on the touched lines; `cargo check -p xai-grok-pager-bin` builds.
 | W1-H hold a steered subagent until `deliver` | on `main` (`6fa71ae`) | done; next: ↑ history in child views (low prio) | `streams/w1h-hold-deliver.md` |
 | W1-S shell: children are first-class ACP sessions | on `main` (`c084eea`) | done; open questions in stream file | `streams/w1s-child-sessions-shell.md` |
 | W3 pager consumes child sessions | `grb/w3` | partly on `main`; open: finished-child handlers, fork check, e2e tests | `streams/w3-pager-child-sessions.md` |
-| M11 agent + human control over subagents | `grb/m11` | partial, uncompiled wiring | `streams/m11-subagent-control.md` |
+| M11 agent + human control over subagents | `grb/m11` | B1 typed state and causes on `main`; next: `control_subagent` tool, `list_subagents`, pager pause/cause display | `streams/m11-subagent-control.md` |
 | F1-display per-kind one-line renderers | `grb/f1display` | F7 Message Display rows on `main`; the old renderer WIP was dropped (rejected in `reviews/f1display.md`); open: better first lines per block, golden tests | `streams/f1-display.md` |
 | F1-core context provenance | `grb/f1core` | A1+A2+B1 and child inheritance of the policy on `main`; next: mixed sections (prefix/system fragments/memory) so Skills/MCP/Memory get rows | `streams/f1-context-provenance.md` |
 | F2/F3 F6/F7 sidebars wired into the view | `grb/f2f3` | F6 left, F7 with Dock, Context and Message Display on `main`; open: F6/F7 hang on very large sessions (see stream file), dock glyph/hover polish, global persistence of display defaults | `streams/f2-f3-sidebars.md` |

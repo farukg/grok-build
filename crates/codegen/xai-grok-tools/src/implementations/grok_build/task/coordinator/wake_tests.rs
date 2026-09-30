@@ -767,3 +767,103 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
     harness.completions.recv().await.unwrap();
     harness.actor.abort();
 }
+
+fn runner_cancelled_result(id: &str) -> SubagentResult {
+    SubagentResult::interrupted(
+        id,
+        id,
+        InterruptionCause::Error {
+            message: "Subagent was cancelled".to_owned(),
+        },
+    )
+}
+
+fn interrupt_and_finish(cause: InterruptionCause) -> TestCoordinator {
+    let (mut coordinator, _command_tx, admission_tx, _admissions) = fixture();
+    insert_child_with(
+        &mut coordinator,
+        admission_tx,
+        "child",
+        "root",
+        None,
+        SubagentOwner::Task,
+    );
+    assert!(matches!(
+        coordinator.cancel_one("child", Some("root"), cause),
+        SubagentCancelOutcome::Cancelled { .. }
+    ));
+    finish_child_with_result(&mut coordinator, "child", runner_cancelled_result("child"));
+    coordinator
+}
+
+#[tokio::test]
+async fn a_paused_child_records_who_paused_it_and_stays_wakeable() {
+    let cause = InterruptionCause::Paused {
+        actor: SubagentActor::Human,
+    };
+    let coordinator = interrupt_and_finish(cause.clone());
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(completed.result.state, SubagentState::Interrupted { cause });
+    assert!(completed.wake_eligible);
+}
+
+#[tokio::test]
+async fn a_stopped_child_records_who_stopped_it_and_cannot_be_woken() {
+    let cause = InterruptionCause::ExplicitStop {
+        actor: SubagentActor::Human,
+    };
+    let coordinator = interrupt_and_finish(cause.clone());
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(completed.result.state, SubagentState::Interrupted { cause });
+    assert!(!completed.wake_eligible);
+}
+
+#[tokio::test]
+async fn stopping_a_paused_child_ends_its_wakeability() {
+    let mut coordinator = interrupt_and_finish(InterruptionCause::Paused {
+        actor: SubagentActor::Human,
+    });
+    let stop = InterruptionCause::ExplicitStop {
+        actor: SubagentActor::Human,
+    };
+    assert!(matches!(
+        coordinator.cancel_one("child", Some("root"), stop.clone()),
+        SubagentCancelOutcome::Cancelled { .. }
+    ));
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(
+        completed.result.state,
+        SubagentState::Interrupted { cause: stop }
+    );
+    assert!(!completed.wake_eligible);
+}
+
+#[tokio::test]
+async fn a_second_cause_does_not_replace_the_first() {
+    let first = InterruptionCause::ExplicitStop {
+        actor: SubagentActor::Human,
+    };
+    let (mut coordinator, _command_tx, admission_tx, _admissions) = fixture();
+    insert_child_with(
+        &mut coordinator,
+        admission_tx,
+        "child",
+        "root",
+        None,
+        SubagentOwner::Task,
+    );
+    coordinator.cancel_one("child", Some("root"), first.clone());
+    coordinator.cancel_one(
+        "child",
+        Some("root"),
+        InterruptionCause::SessionTeardown {
+            session_id: "root".to_owned(),
+        },
+    );
+    finish_child_with_result(&mut coordinator, "child", runner_cancelled_result("child"));
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(
+        completed.result.state,
+        SubagentState::Interrupted { cause: first }
+    );
+}

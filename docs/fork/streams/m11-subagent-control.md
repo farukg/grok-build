@@ -8,24 +8,23 @@ stop / pause / resume, and always see a typed terminal state with the interrupti
 caused it (agent or human). Plan and file:line evidence: `docs/fork/recon/m11-subagent-control.md`
 (B1 typed terminal state, B2 messaging, B3 stop/pause/resume, B4 visibility).
 
-## State
-- On `main`: `b540b07e` typed interruption state types in `crates/common/xai-tool-types/src/subagent_state.rs`.
-- On the branch: `5f38e66d` wiring of the typed state through coordinator, result, notification and
-  `meta.json`; `780a739d` is an interrupted snapshot (adds an untracked-then `control_subagent.rs`
-  tool file and edits in task types, scheduler actor, task_output, notification drain). **Neither
-  has been compiled.** Treat `780a739d` as a draft: keep what fits the plan, finish or remove the rest.
-- `archive/m11-full-wip` holds an older, larger experiment; use it only as reference.
+## State (2026-09-30)
+- On `main`: typed state types (`common/xai-tool-types/src/subagent_state.rs`: `SubagentActor`, `InterruptionCause`,
+  `SubagentState`, `model_text()`), and B1 wiring: `SubagentResult.state` replaces `success/error/cancelled`
+  (`success()`, `error()`, `is_interrupted()` are derived). `SubagentCancelTarget::SubagentId` carries actor and
+  `SubagentCancelDisposition::{Stop, Pause}`; every cancel site (turn, session stop, teardown, workflow, queue) records its
+  `InterruptionCause` in `PendingDisposition::Interrupted(cause)` (first cause wins, a stop overrides a pause), and
+  `finish_child` stamps it on the result. `explicitly_killed` is derived from the disposition. Only a pause leaves the
+  completed child `wake_eligible`. `SubagentSnapshotStatus::Cancelled { cause }`. `x.ai/subagent/cancel` takes
+  `mode: stop|pause` (default stop); `SubagentSnapshotDto` carries `interruption` (`cancelReason` keeps the wording).
+- The old uncompiled draft is archived as `archive/m11-b1-draft`; `archive/m11-full-wip` is the older experiment.
 
 ## Next steps
-1. Merge `main`, make `cargo check -p xai-grok-tools -p xai-grok-shell --tests` green.
-2. Finish B1 wiring: every construction site, old persisted `meta.json` without the new field parses
-   to a named legacy variant at the one parse site; wire `status` strings stay as a projection.
-3. B3: one gated tool `control_subagent { subagent_id, action: pause|stop }` calling the existing
-   backend cancel with the cause; `kill_task` delegates to the same call; pause sets wake
-   eligibility; resume of a paused child uses the existing wake path with a typed notice.
-4. B4: `list_subagents` model tool on one coordinator query, reusing `SubagentSnapshotDto` as the
-   single projection; `get_task_output` / completion words render the cause.
-5. B2 human `delivery` field on `SendSubagentMessageRequest` through the existing `resolve_delivery`.
-6. Pager: parsed terminal state in task rows and the child header (after W2 lands, the child view is
-   the normal session view); `Action::PauseSubagent` next to the existing stop action.
-7. Tests per B1–B4 behavior, then PR into `main` (can land in slices: B1+B3 first).
+1. B3 model tool `control_subagent { subagent_id, action: pause|stop }` (gated), `kill_task` already goes through the
+   same backend call as `ExplicitStop { ParentModel }`. Resume of a paused child = `send_subagent_message` (wakes) or
+   `task(resume_from)`, which now wakes a finished child under its own id.
+2. B4 visibility: `list_subagents` on a coordinator `ListOwned` query; `outcome_words` in `T/../reminders/task_completion.rs`
+   still says "was cancelled" for every cause (use `InterruptionCause::model_text`); `SessionUpdate::SubagentFinished`
+   should carry `interruption`; persisted `SubagentMeta.status` is still a string (old metas must keep loading).
+3. B2 human `delivery` field on `SendSubagentMessageRequest` through `resolve_delivery`.
+4. Pager: parse `interruption` in task rows and the child header, `Action::PauseSubagent` next to `KillSubagent`.
