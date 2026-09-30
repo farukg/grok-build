@@ -220,8 +220,8 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
             "follow-up result",
             true,
         ),
-        (None, false, false, true, None, "kept", false),
-        (None, true, false, true, None, "kept", false),
+        (None, false, false, true, Some("cancelled"), "kept", false),
+        (None, true, false, true, Some("cancelled"), "kept", false),
     ];
 
     for (

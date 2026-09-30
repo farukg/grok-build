@@ -741,12 +741,16 @@ mod tests {
         assert_eq!(json.get("status"), Some(&serde_json::json!("cancelled")));
         assert_eq!(
             json.get("cancelReason"),
-            Some(&serde_json::json!("user cancelled"))
+            Some(&serde_json::json!("Subagent was stopped by human user."))
+        );
+        assert_eq!(
+            json.get("interruption"),
+            Some(&serde_json::json!({"kind": "explicit_stop", "actor": {"kind": "human"}}))
         );
     }
 
     #[test]
-    fn snapshot_dto_cancelled_without_reason_omits_field() {
+    fn snapshot_dto_cancelled_by_restart_names_its_cause() {
         let snap = SubagentSnapshot {
             subagent_id: "sub-5".into(),
             subagent_type: "explore".into(),
@@ -762,7 +766,10 @@ mod tests {
             SubagentSnapshotDto::from_snapshot(snap, "p".into(), "c".into(), Default::default());
         let json = serde_json::to_value(&dto).expect("should serialize");
         assert_eq!(json.get("status"), Some(&serde_json::json!("cancelled")));
-        assert!(json.get("cancelReason").is_none());
+        assert_eq!(
+            json.get("interruption"),
+            Some(&serde_json::json!({"kind": "process_restart"}))
+        );
     }
 
     #[test]
