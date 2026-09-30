@@ -1,4 +1,5 @@
 use std::future::Future;
+use crate::implementations::grok_build::task::types::{SubagentActor, SubagentState};
 
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -264,7 +265,6 @@ pub(in crate::implementations::grok_build::task::coordinator) fn insert_child_wi
             foreground_deadline: None,
             handle_only: true,
             definition_background: false,
-            explicitly_killed: false,
             disposition: Default::default(),
             child_session_id: id.to_owned(),
             persona: None,
@@ -299,7 +299,6 @@ pub(in super::super) fn insert_pending(coordinator: &mut TestCoordinator, id: &s
             spawn_reply: None,
             foreground_deadline: None,
             handle_only: true,
-            explicitly_killed: false,
             disposition: Default::default(),
             launched: true,
             attempt_id: xai_message_delivery_core::AttemptId::mint(1),
@@ -419,7 +418,7 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child(
         coordinator,
         id,
         SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             subagent_id: id.to_owned(),
             child_session_id: id.to_owned(),
             ..Default::default()
@@ -791,8 +790,8 @@ async fn unsettled_completion_before_runner_output_marks_terminal_result_failed(
         .get("child")
         .expect("completed")
         .result;
-    assert!(!result.success);
-    assert!(result.cancelled);
+    assert!(!result.success());
+    assert!(result.is_interrupted());
 }
 
 #[tokio::test]
@@ -821,8 +820,8 @@ async fn runner_output_parked_before_unsettled_completion_is_failed() {
         .get("child")
         .expect("completed")
         .result;
-    assert!(!result.success);
-    assert!(result.cancelled);
+    assert!(!result.success());
+    assert!(result.is_interrupted());
 }
 
 #[tokio::test]
@@ -897,12 +896,12 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
         await_with_timeout(response).await.unwrap()
     );
     let result = recv_with_timeout(&mut completions).await;
-    assert!(!result.success);
-    assert!(result.cancelled);
-    assert_eq!(Some("Subagent runtime panicked"), result.error.as_deref());
+    assert!(!result.success());
+    assert!(result.is_interrupted());
+    assert_eq!(Some("Subagent runtime panicked"), result.error().as_deref());
     let spawned_result = await_with_timeout(&mut spawn).await.unwrap().unwrap();
-    assert!(!spawned_result.success);
-    assert!(spawned_result.cancelled);
+    assert!(!spawned_result.success());
+    assert!(spawned_result.is_interrupted());
     let SubagentResumeLookup::Completed(source) =
         reporter.resume_source("panic-child", "parent").await
     else {
@@ -1143,7 +1142,7 @@ async fn parent_session_cancel_unblocks_parked_send() {
 
     assert!(matches!(
         coordinator.cancel_parent_session(Some("parent")),
-        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled
+        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(
         ActiveAgentMessageOutcome::NotActiveOrFinalizing,
@@ -1151,7 +1150,7 @@ async fn parent_session_cancel_unblocks_parked_send() {
     );
     let terminal = response_outcome_result(spawn_result).await;
     assert!(
-        terminal.cancelled && !terminal.success,
+        terminal.is_interrupted() && !terminal.success(),
         "session cancel must resolve a terminal result: {terminal:?}"
     );
     assert!(admissions.try_recv().is_err());
@@ -1307,14 +1306,20 @@ async fn cancel_parent_prompt_rejects_parked_send() {
     let (mut coordinator, command_tx, _admission_tx, mut admissions) = fixture();
     let spawn_result = insert_queued(&mut coordinator, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
-    coordinator.cancel_parent_prompt("prompt", Some("parent"));
+    coordinator.cancel_parent_prompt(
+        "prompt",
+        Some("parent"),
+        &InterruptionCause::ParentTurnCancelled {
+            prompt_id: "prompt".to_owned(),
+        },
+    );
     assert_eq!(
         ActiveAgentMessageOutcome::NotActiveOrFinalizing,
         response_outcome(response).await
     );
     let terminal = response_outcome_result(spawn_result).await;
     assert!(
-        terminal.cancelled && !terminal.success,
+        terminal.is_interrupted() && !terminal.success(),
         "queued cancel must resolve a terminal result: {terminal:?}"
     );
     assert!(admissions.try_recv().is_err());
@@ -1374,8 +1379,8 @@ async fn cancel_pending_rejects_parked_human_as_terminal() {
         "human send parks while starting"
     );
     assert!(matches!(
-        coordinator.cancel_one("child", Some("parent"), true),
-        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled
+        coordinator.cancel_one("child", Some("parent"), InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+        crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(
         ActiveAgentMessageOutcome::NotFoundOrNotOwned,
@@ -1496,7 +1501,6 @@ async fn human_pending_address_is_not_active() {
             spawn_reply: None,
             foreground_deadline: None,
             handle_only: true,
-            explicitly_killed: false,
             disposition: Default::default(),
             launched: true,
             attempt_id: xai_message_delivery_core::AttemptId::mint(1),

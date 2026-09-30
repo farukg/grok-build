@@ -825,13 +825,13 @@ impl SchedulerActor {
             let Ok(result) = result_rx.await else {
                 return;
             };
-            if result.error.is_none() {
+            if result.error().is_none() {
                 return;
             }
             tracing::warn!(
                 task_id = %guard_task_id,
                 subagent_id = %spawned_id,
-                error = ?result.error,
+                error = ?result.error(),
                 "Loop iteration spawn failed; clearing chain anchor"
             );
             let mut res = resources.lock().await;
@@ -1004,14 +1004,14 @@ impl SchedulerActor {
 mod tests {
     use super::*;
 
+    use crate::implementations::grok_build::task::types::{SubagentState};
     #[test]
     fn truncate_chars_does_not_split_a_four_byte_scalar_at_the_cut() {
         assert_eq!("xx\u{1F600}\u{2026}", truncate_chars("xx\u{1F600}yy", 3));
     }
-
     use crate::implementations::grok_build::scheduler::types::{
-        ScheduledTask, SchedulerHandle, scheduler_tool_error,
-    };
+    ScheduledTask, SchedulerHandle, scheduler_tool_error,
+};
     use crate::notification::{AcknowledgedToolNotification, ToolNotification};
     use crate::types::resources::{Resources, WebCitationCounter};
     use std::sync::Arc;
@@ -2497,8 +2497,7 @@ mod tests {
         let spawned_id = request.id.clone();
         let _ = request.result_tx.send(
             crate::implementations::grok_build::task::types::SubagentResult {
-                success: false,
-                error: Some("worktree creation failed".into()),
+                state: SubagentState::Failed { message: "worktree creation failed".into() },
                 subagent_id: spawned_id.clone(),
                 ..Default::default()
             },

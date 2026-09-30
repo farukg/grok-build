@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use xai_grok_tools::implementations::grok_build::task::types::{
+    InterruptionCause, SubagentActor, SubagentState,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -948,7 +951,11 @@ mod tests {
                 match event {
                     SubagentEvent::Cancel(request) => {
                         cancels_stub.lock().push(request.target.clone());
-                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled);
+                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled {
+                            cause: InterruptionCause::ExplicitStop {
+                                actor: SubagentActor::Human,
+                            },
+                        });
                     }
                     other => {
                         if event_tx.send(other).is_err() {
@@ -1036,7 +1043,7 @@ mod tests {
         use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("ok"),
             subagent_id: id.clone(),
             child_session_id: id,
@@ -1283,7 +1290,7 @@ mod tests {
         };
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("resumed output"),
             subagent_id: id,
             ..Default::default()
@@ -1385,7 +1392,7 @@ mod tests {
         };
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("one"),
             subagent_id: id,
             ..Default::default()
@@ -1514,7 +1521,7 @@ mod tests {
         assert_eq!(req.runtime_overrides.reasoning_effort, None);
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("slow but done"),
             subagent_id: id,
             ..Default::default()
@@ -1752,7 +1759,7 @@ mod tests {
         assert_eq!(req.runtime_overrides.output_token_budget, None);
         let first_id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("All files scanned, nothing found."),
             subagent_id: first_id.clone(),
             child_session_id: first_id.clone(),
@@ -1771,7 +1778,7 @@ mod tests {
         assert_eq!(retry.runtime_overrides.output_token_budget, None);
         let retry_id = retry.id.clone();
         let _ = retry.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("```json\n{\"ok\": true}\n```"),
             subagent_id: retry_id.clone(),
             child_session_id: retry_id,
@@ -1823,7 +1830,7 @@ mod tests {
         assert_eq!(req.runtime_overrides.output_token_budget, None);
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("done"),
             subagent_id: id.clone(),
             child_session_id: id,
@@ -1861,7 +1868,7 @@ mod tests {
         assert_eq!(req.runtime_overrides.output_token_budget, None);
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: std::sync::Arc::from("done"),
             subagent_id: id.clone(),
             child_session_id: id,

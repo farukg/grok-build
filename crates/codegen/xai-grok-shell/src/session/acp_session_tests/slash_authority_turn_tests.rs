@@ -1,4 +1,5 @@
 use super::support::*;
+use xai_grok_tools::implementations::grok_build::task::types::{SubagentState};
 use super::*;
 use crate::extensions::prompt_meta::PromptBlockMeta;
 use crate::session::{InputAuthority, InputPolicy};
@@ -774,8 +775,7 @@ async fn goal_set_with_failed_planner_makes_no_inference_request() {
                 while let Some(ev) = rx.recv().await {
                     if let SubagentEvent::Spawn(req) = ev {
                         let result = SubagentResult {
-                            success: false,
-                            error: Some("planner crashed".into()),
+                            state: SubagentState::Failed { message: "planner crashed".into() },
                             subagent_id: req.id.clone(),
                             child_session_id: req.id.clone(),
                             ..Default::default()

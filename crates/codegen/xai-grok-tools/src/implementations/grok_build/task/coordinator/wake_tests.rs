@@ -1,4 +1,5 @@
 use super::active_message::tests::*;
+use crate::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 use super::tests::*;
 use super::*;
 use crate::implementations::grok_build::task::admission::{LimitBehavior, SubagentLimits};
@@ -174,7 +175,7 @@ async fn completed_wake_waits_for_terminal_publication() {
     harness.wake_runs.recv().await.expect("initial run");
     harness.started.recv().await.expect("initial start");
     let _ = harness.finish.send(());
-    assert!(spawn.await.unwrap().unwrap().success);
+    assert!(spawn.await.unwrap().unwrap().success());
     harness
         .completions
         .recv()
@@ -242,10 +243,10 @@ async fn stopped_session_refuses_parked_wake_before_publication() {
     let backend = parent_backend(&harness);
     let send = park_wake_until_terminal_publication(&mut harness, &backend).await;
 
-    assert_eq!(
-        backend.cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
-    );
+    assert!(matches!(
+backend.cancel_parent_session().await,
+ SubagentCancelOutcome::Cancelled { .. }
+));
     assert_eq!(
         send.await.unwrap(),
         ActiveAgentMessageOutcome::NotActiveOrFinalizing
@@ -386,7 +387,7 @@ async fn complete_child(harness: &mut Harness, backend: &ChannelBackend, id: &st
     harness.wake_runs.recv().await.expect("run observed");
     assert_eq!(harness.started.recv().await.as_deref(), Some(id));
     let _ = harness.finish.send(());
-    assert!(spawn.await.unwrap().unwrap().success);
+    assert!(spawn.await.unwrap().unwrap().success());
     harness
         .completions
         .recv()
@@ -441,7 +442,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
             let _ = harness.start.send(());
             harness.started.recv().await.expect("source started");
             let _ = harness.finish.send(());
-            assert!(source.await.unwrap().unwrap().success);
+            assert!(source.await.unwrap().unwrap().success());
             harness.completions.recv().await.expect("source completion");
         }
         let _ = buffered_completions(&harness, Some("parent")).await;
@@ -483,7 +484,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
                         .await
                         .unwrap()
                         .unwrap()
-                        .success
+                        .success()
                 );
                 harness.completions.recv().await.expect("held completion");
                 harness
@@ -518,10 +519,10 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
                 let _ = harness.start.send(());
             }
             PreStartExit::Cancellation => {
-                assert_eq!(
-                    backend.cancel(CHILD_ID).await,
-                    SubagentCancelOutcome::Cancelled
-                );
+                assert!(matches!(
+backend.cancel(CHILD_ID, SubagentActor::Human, SubagentCancelDisposition::Stop).await,
+ SubagentCancelOutcome::Cancelled { .. }
+));
             }
         }
 

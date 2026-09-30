@@ -273,9 +273,9 @@ pub async fn spawn_isolated_subagent_for_e2e(
     usage_ack.abort();
     match spawned {
         Ok(Ok(result)) => IsolatedSubagentSpawn {
-            success: result.success,
+            success: result.success(),
+            error: result.error(),
             worktree_path: result.worktree_path.map(PathBuf::from),
-            error: result.error,
         },
         Ok(Err(e)) => IsolatedSubagentSpawn {
             success: false,

@@ -26,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 use xai_tool_types::{
     HandedOffSubagentState, SubagentCapabilityMode, SubagentIsolationMode, WaitMode,
 };
+pub use xai_tool_types::{InterruptionCause, SubagentActor, SubagentState};
 
 use crate::register_resource;
 
@@ -429,16 +430,12 @@ impl SubagentCapabilityModeExt for SubagentCapabilityMode {
 /// Result returned by a completed subagent.
 #[derive(Debug, Clone)]
 pub struct SubagentResult {
-    pub success: bool,
+    /// How the child ended. `Running` means no terminal outcome yet (a still-running child handed to a blocking caller).
+    pub state: SubagentState,
     /// The subagent's final output text. Stored as `Arc<str>` so cloning into per-consumer summaries
     /// (`SubagentCompletionSummary`, snapshot status, etc.) is a refcount bump rather than a full copy. Subagent outputs
     /// can be arbitrarily large (entire transcript), so this matters at scale.
     pub output: Arc<str>,
-    /// Error message if the subagent failed.
-    pub error: Option<String>,
-    /// True if the subagent was cancelled (by user or model).
-    /// Distinct from failure — cancellation is intentional.
-    pub cancelled: bool,
     pub subagent_id: String,
     /// The child session ID (same as subagent_id for MVP).
     pub child_session_id: String,
@@ -455,8 +452,7 @@ pub struct SubagentResult {
     /// coordinator did not stamp it.
     pub subagent_type: String,
     /// Set when a blocking caller was handed a still-running child after the foreground await budget (queued or in-flight
-    /// auto-background). Not a completion — `success` stays false so `status()` is not `"completed"`; branch on this before
-    /// `success`. Task `run_in_background` start is a separate registration signal, not this flag on `spawn()`.
+    /// auto-background). Not a completion — `state` stays `Running`; branch on this before `state`. Task `run_in_background` start is a separate registration signal, not this flag on `spawn()`.
     pub backgrounded: bool,
     pub resume_fallback: Option<xai_tool_types::SubagentResumeFallback>,
 }
@@ -464,10 +460,8 @@ pub struct SubagentResult {
 impl Default for SubagentResult {
     fn default() -> Self {
         Self {
-            success: false,
+            state: SubagentState::Running,
             output: Arc::from(""),
-            error: None,
-            cancelled: false,
             subagent_id: String::new(),
             child_session_id: String::new(),
             tool_calls: 0,
@@ -487,13 +481,14 @@ impl Default for SubagentResult {
 
 impl SubagentResult {
     #[must_use]
-    pub fn failed(
+    pub fn completed(
         subagent_id: impl Into<String>,
         child_session_id: impl Into<String>,
-        error: impl Into<String>,
+        output: impl Into<Arc<str>>,
     ) -> Self {
         SubagentResult {
-            error: Some(error.into()),
+            state: SubagentState::Completed,
+            output: output.into(),
             subagent_id: subagent_id.into(),
             child_session_id: child_session_id.into(),
             ..SubagentResult::default()
@@ -501,14 +496,32 @@ impl SubagentResult {
     }
 
     #[must_use]
-    pub fn cancelled(
+    pub fn failed(
         subagent_id: impl Into<String>,
         child_session_id: impl Into<String>,
         error: impl Into<String>,
     ) -> Self {
         SubagentResult {
-            cancelled: true,
-            ..SubagentResult::failed(subagent_id, child_session_id, error)
+            state: SubagentState::Failed {
+                message: error.into(),
+            },
+            subagent_id: subagent_id.into(),
+            child_session_id: child_session_id.into(),
+            ..SubagentResult::default()
+        }
+    }
+
+    #[must_use]
+    pub fn interrupted(
+        subagent_id: impl Into<String>,
+        child_session_id: impl Into<String>,
+        cause: InterruptionCause,
+    ) -> Self {
+        SubagentResult {
+            state: SubagentState::Interrupted { cause },
+            subagent_id: subagent_id.into(),
+            child_session_id: child_session_id.into(),
+            ..SubagentResult::default()
         }
     }
 
@@ -525,15 +538,26 @@ impl SubagentResult {
         }
     }
 
-    /// Terminal status string: `"cancelled"`, `"completed"`, or `"failed"`.
-    pub fn status(&self) -> &'static str {
-        if self.cancelled {
-            "cancelled"
-        } else if self.success {
-            "completed"
-        } else {
-            "failed"
+    pub fn success(&self) -> bool {
+        matches!(self.state, SubagentState::Completed)
+    }
+
+    pub fn is_interrupted(&self) -> bool {
+        matches!(self.state, SubagentState::Interrupted { .. })
+    }
+
+    /// Why the child did not complete, worded for a caller; `None` for a completed or still-running child.
+    pub fn error(&self) -> Option<String> {
+        match &self.state {
+            SubagentState::Running | SubagentState::Completed => None,
+            SubagentState::Failed { message } => Some(message.clone()),
+            SubagentState::Interrupted { cause } => Some(cause.model_text()),
         }
+    }
+
+    /// Terminal status string: `"cancelled"`, `"completed"`, `"failed"`, or `"running"`.
+    pub fn status(&self) -> &'static str {
+        self.state.legacy_status()
     }
 }
 
@@ -635,8 +659,8 @@ pub enum SubagentSnapshotStatus {
     },
     /// Child session failed or crashed.
     Failed { error: String },
-    /// Child session was cancelled (by user or model).
-    Cancelled { reason: Option<String> },
+    /// The child was interrupted, and by whom.
+    Cancelled { cause: InterruptionCause },
 }
 
 impl SubagentSnapshotStatus {
@@ -653,12 +677,26 @@ impl SubagentSnapshotStatus {
 
 #[derive(Debug, Clone)]
 pub enum SubagentCancelTarget {
-    SubagentId(String),
+    SubagentId {
+        id: String,
+        actor: SubagentActor,
+        disposition: SubagentCancelDisposition,
+    },
     /// Turn-scoped cancel (soft cancel / max-turns).
     ParentPromptId(String),
     /// User Stop / Esc with cancel_subagents — prior-turn background too.
     ParentSession,
     WorkflowRunId(String),
+}
+
+/// What a cancel of one subagent leaves behind: a stopped child can only be continued as a new child (`resume_from`),
+/// a paused one is woken under its own id by the next message.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentCancelDisposition {
+    #[default]
+    Stop,
+    Pause,
 }
 
 /// Cancel request sent by `KillTaskTool` or session cancellation paths.
@@ -673,8 +711,8 @@ pub struct SubagentCancelRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentCancelOutcome {
-    Cancelled,
-    AlreadyFinished { status: String },
+    Cancelled { cause: InterruptionCause },
+    AlreadyFinished { state: SubagentState },
     NotFound,
 }
 
@@ -1468,7 +1506,9 @@ mod tests {
     #[test]
     fn is_terminal_returns_true_for_cancelled() {
         let status = super::SubagentSnapshotStatus::Cancelled {
-            reason: Some("user".into()),
+            cause: super::InterruptionCause::ExplicitStop {
+                actor: super::SubagentActor::Human,
+            },
         };
         assert!(status.is_terminal());
     }

@@ -64,7 +64,7 @@ fn max_tokens_turn_marks_every_non_ok_surface() {
         "cut report",
         false,
     );
-    assert!(out.result.success);
+    assert!(out.result.success());
     assert!(
         out.result
             .output
@@ -85,11 +85,11 @@ fn max_tokens_turn_marks_every_non_ok_surface() {
     );
     assert!(
         out.result
-            .error
+            .error()
             .as_deref()
             .is_some_and(|e| e.contains("truncated by the output token limit")),
         "structured error must state the truncation: {:?}",
-        out.result.error
+        out.result.error()
     );
 
     // Validated document: raw JSON by contract, no note.
@@ -140,8 +140,8 @@ fn initial_schema_requirement_accepts_valid_structured_output() {
 
     assert_eq!(
         (
-            output.result.success,
-            output.result.error.as_deref(),
+            output.result.success(),
+            output.result.error().as_deref(),
             output.result.output.as_ref(),
             output.result.tokens_used,
         ),
@@ -171,8 +171,8 @@ fn initial_schema_requirement_rejects_missing_or_invalid_output() {
         );
         assert_eq!(
             (
-                output.result.success,
-                output.result.error.as_deref(),
+                output.result.success(),
+                output.result.error().as_deref(),
                 output.result.output.as_ref(),
             ),
             (false, Some(expected_error), "fallback"),
@@ -200,7 +200,7 @@ fn parent_followup_is_schema_free_while_initial_schema_path_is_not() {
 
     assert_eq!(initial.result.output.as_ref(), r#"{"answer":42}"#);
     assert_eq!(followup.result.output.as_ref(), "follow-up answer");
-    assert!(followup.result.success);
+    assert!(followup.result.success());
 }
 
 #[test]
@@ -215,9 +215,9 @@ fn parent_followup_rejects_impossible_structured_receipt() {
         false,
     );
 
-    assert!(!output.result.success);
+    assert!(!output.result.success());
     assert_eq!(
-        output.result.error.as_deref(),
+        output.result.error().as_deref(),
         Some("Parent follow-up unexpectedly produced structured output")
     );
     assert_eq!(output.result.output.as_ref(), "follow-up text");
@@ -227,7 +227,7 @@ fn parent_followup_rejects_impossible_structured_receipt() {
 #[test]
 fn successful_empty_followup_does_not_reuse_the_initial_output() {
     let previous = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: Arc::from("initial answer"),
         ..Default::default()
     };
@@ -247,7 +247,7 @@ fn successful_empty_followup_does_not_reuse_the_initial_output() {
         result_tokens: 0,
     });
 
-    assert!(output.result.success);
+    assert!(output.result.success());
     assert_eq!(output.result.output.as_ref(), "");
 }
 
@@ -304,9 +304,9 @@ fn every_completion_kind_maps_to_the_terminal_contract() {
         );
         assert_eq!(
             (
-                output.result.success,
-                output.result.cancelled,
-                output.result.error.as_deref(),
+                output.result.success(),
+                output.result.is_interrupted(),
+                output.result.error().as_deref(),
                 output.result.output_usage_incomplete,
                 output.cancellation_may_hide_usage,
             ),
@@ -332,8 +332,8 @@ async fn session_error_and_cancelled_channel_drop_preserve_partial_text() {
     );
     assert_eq!(
         (
-            session_error.result.cancelled,
-            session_error.result.error.as_deref(),
+            session_error.result.is_interrupted(),
+            session_error.result.error().as_deref(),
             session_error.result.output.as_ref(),
             session_error.result.output_usage_incomplete,
             session_error.cancellation_may_hide_usage,
@@ -358,8 +358,8 @@ async fn session_error_and_cancelled_channel_drop_preserve_partial_text() {
     );
     assert_eq!(
         (
-            dropped.result.cancelled,
-            dropped.result.error.as_deref(),
+            dropped.result.is_interrupted(),
+            dropped.result.error().as_deref(),
             dropped.result.output.as_ref(),
             dropped.result.output_usage_incomplete,
             dropped.cancellation_may_hide_usage,

@@ -12,7 +12,9 @@ use crate::extensions::notification::SubagentDelivery;
 use crate::session::{
     CancelOptions, CancelTrigger, SessionCommand, ShutdownKind, commands::PromptTurnResult,
 };
-use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
+use xai_grok_tools::implementations::grok_build::task::types::{
+    InterruptionCause, SubagentResult, SubagentState,
+};
 
 pub(super) const ACTIVE_MESSAGE_RECEIPT_CAPACITY: usize = 64;
 const CANCELLED_RECEIPT_SETTLEMENT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -100,8 +102,8 @@ pub(super) fn reduce_prompt_turn_settlement(
         return PromptTurnSettlementOutput {
             settlement_status: crate::session::telemetry::classify_completed_settlement(
                 crate::session::telemetry::ActiveAgentMessageCompletedSettlement {
-                    is_result_success: result.success,
-                    is_result_cancelled: result.cancelled,
+                    is_result_success: result.success(),
+                    is_result_cancelled: result.is_interrupted(),
                     is_final_receipt_closed,
                 },
             ),
@@ -121,9 +123,11 @@ pub(super) fn reduce_prompt_turn_settlement(
         }
     };
 
-    result.success = false;
-    result.cancelled = true;
-    result.error = Some(error.to_string());
+    result.state = SubagentState::Interrupted {
+        cause: InterruptionCause::Error {
+            message: error.to_string(),
+        },
+    };
     result.output = Arc::from(final_text);
     result.output_usage_incomplete = true;
     PromptTurnSettlementOutput {

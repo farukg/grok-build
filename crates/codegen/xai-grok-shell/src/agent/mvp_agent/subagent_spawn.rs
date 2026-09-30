@@ -160,7 +160,7 @@ impl MvpAgent {
         }
         let reason = match spawn.await {
             Ok(Ok(result)) => result
-                .error
+                .error()
                 .unwrap_or_else(|| "the coordinator did not register the spawn".to_owned()),
             Ok(Err(error)) => error.to_string(),
             Err(error) => error.to_string(),

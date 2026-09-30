@@ -1821,7 +1821,9 @@ async fn live_reconcile_persists_failed_and_cancelled_inspection() {
         ),
         (
             SubagentSnapshotStatus::Cancelled {
-                reason: Some("stop".to_string()),
+                cause: InterruptionCause::ExplicitStop {
+                    actor: SubagentActor::Human,
+                },
             },
             "cancelled",
         ),

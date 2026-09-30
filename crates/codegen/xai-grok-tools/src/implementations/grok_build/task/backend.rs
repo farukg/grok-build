@@ -14,8 +14,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
-    HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest,
-    SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
+    HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest, SubagentActor,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
     SubagentDescribeRequest, SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest,
     SubagentInspectRequest, SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest,
     SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest,
@@ -68,8 +68,13 @@ pub trait SubagentBackend: Send + Sync + 'static {
         Err(SubagentResumeError::CoordinatorUnavailable)
     }
 
-    /// Request cancellation of a subagent by ID.
-    async fn cancel(&self, id: &str) -> SubagentCancelOutcome;
+    /// Stop or pause a subagent by ID on behalf of `actor`.
+    async fn cancel(
+        &self,
+        id: &str,
+        actor: SubagentActor,
+        disposition: SubagentCancelDisposition,
+    ) -> SubagentCancelOutcome;
 
     /// Validate a subagent type synchronously before spawning.
     /// Returns `CoordinatorGone` on channel close and `ValidationUnavailable`
@@ -652,14 +657,23 @@ impl SubagentBackend for ChannelBackend {
             .unwrap_or(Err(SubagentResumeError::CoordinatorUnavailable))
     }
 
-    async fn cancel(&self, id: &str) -> SubagentCancelOutcome {
+    async fn cancel(
+        &self,
+        id: &str,
+        actor: SubagentActor,
+        disposition: SubagentCancelDisposition,
+    ) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
         let sent = self
             .tx
             .event_sender()
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: self.parent_session_id(),
-                target: SubagentCancelTarget::SubagentId(id.to_string()),
+                target: SubagentCancelTarget::SubagentId {
+                    id: id.to_string(),
+                    actor,
+                    disposition,
+                },
                 respond_to,
             }));
         if sent.is_err() {

@@ -27,7 +27,7 @@ use std::sync::Arc;
 use futures::FutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::{mpsc, oneshot};
-use xai_tool_types::HandedOffSubagentState;
+use xai_tool_types::{HandedOffSubagentState, InterruptionCause, SubagentState};
 
 use super::active_message::ActiveMessageIngress;
 use super::admission::Admission;
@@ -41,7 +41,7 @@ use super::coordinator_state::{
 };
 use super::types::{
     ActiveAgentMessageOutcome, AgentAddress, HandedOffForegroundSubagent, SpawnedSubagentRef,
-    SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome, SubagentEvent,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome, SubagentEvent,
     SubagentOutstandingReply, SubagentRegistryCounts, SubagentRequest, SubagentResult,
     SubagentResumeLookup, SubagentResumeSource, SubagentValidateTypeOutcome,
 };
@@ -411,13 +411,31 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 );
             }
             SubagentEvent::Cancel(request) => match request.target {
-                SubagentCancelTarget::SubagentId(id) => {
-                    let outcome = self.cancel_one(&id, request.parent_session_id.as_deref(), true);
+                SubagentCancelTarget::SubagentId {
+                    id,
+                    actor,
+                    disposition,
+                } => {
+                    let cause = match disposition {
+                        SubagentCancelDisposition::Stop => InterruptionCause::ExplicitStop { actor },
+                        SubagentCancelDisposition::Pause => InterruptionCause::Paused { actor },
+                    };
+                    let outcome =
+                        self.cancel_one(&id, request.parent_session_id.as_deref(), cause);
                     let _ = request.respond_to.send(outcome);
                 }
                 SubagentCancelTarget::ParentPromptId(prompt_id) => {
-                    self.cancel_parent_prompt(&prompt_id, request.parent_session_id.as_deref());
-                    let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled);
+                    let cause = InterruptionCause::ParentTurnCancelled {
+                        prompt_id: prompt_id.clone(),
+                    };
+                    self.cancel_parent_prompt(
+                        &prompt_id,
+                        request.parent_session_id.as_deref(),
+                        &cause,
+                    );
+                    let _ = request
+                        .respond_to
+                        .send(SubagentCancelOutcome::Cancelled { cause });
                 }
                 SubagentCancelTarget::ParentSession => {
                     let outcome = self.cancel_parent_session(request.parent_session_id.as_deref());
@@ -426,7 +444,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 SubagentCancelTarget::WorkflowRunId(run_id) => {
                     self.cancel_workflow_children(&run_id, request.parent_session_id.as_deref());
                     if workflow_outstanding(&self.pending, &self.active, &run_id) == 0 {
-                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled);
+                        let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled {
+                            cause: InterruptionCause::WorkflowCancelled { run_id },
+                        });
                     } else {
                         self.workflow_cancel_waiters
                             .entry(run_id)
@@ -751,7 +771,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         foreground_deadline: pending.foreground_deadline,
                         handle_only: pending.handle_only,
                         definition_background,
-                        explicitly_killed: pending.explicitly_killed,
                         disposition: pending.disposition,
                         child_session_id,
                         persona,
@@ -932,7 +951,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 spawn_reply,
                 foreground_deadline,
                 handle_only,
-                explicitly_killed: false,
                 disposition: PendingDisposition::Live,
                 launched: true,
                 attempt_id: attempt_id.clone(),
@@ -1123,11 +1141,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         is_clean: bool,
     ) {
         if !is_clean {
-            output.result.success = false;
-            output.result.cancelled = true;
-            output.result.error.get_or_insert_with(|| {
+            let message = output.result.error().unwrap_or_else(|| {
                 "Active-message admission could not be proven settled".to_owned()
             });
+            output.result.state = SubagentState::Interrupted {
+                cause: InterruptionCause::Error { message },
+            };
             if let Some(child) = self.active.get_mut(id) {
                 child.cancellation.cancel();
                 child.control.cancel();
@@ -1148,19 +1167,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         };
 
         let explicitly_killed = record.explicitly_killed();
-        let (was_cancelled, disposition) = match &record {
-            ChildRecord::Pending(child) => (child.cancellation.is_cancelled(), child.disposition),
-            ChildRecord::Active(child) => (child.cancellation.is_cancelled(), child.disposition),
+        let disposition = record.disposition().clone();
+        let was_cancelled = match &record {
+            ChildRecord::Pending(child) => child.cancellation.is_cancelled(),
+            ChildRecord::Active(child) => child.cancellation.is_cancelled(),
         };
-        if let Some(mut displaced) = record.take_failed_pre_start_wake(output.result.success) {
+        if let Some(mut displaced) = record.take_failed_pre_start_wake(output.result.success()) {
             tracing::warn!(
                 subagent_id = %id,
-                error = ?output.result.error,
+                error = ?output.result.error(),
                 "subagent wake failed before start; keeping prior record",
             );
             // Host rejections also cancel the token, so only a recorded user or owner cancel counts.
-            displaced.completed.wake_eligible &=
-                !explicitly_killed && disposition != PendingDisposition::Cancelled;
+            displaced.completed.wake_eligible &= disposition.allows_wake();
             let parent_session_id = displaced.completed.request.parent_session_id.clone();
             self.restore_displaced_completion(displaced);
             self.running_count_changed();
@@ -1178,13 +1197,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         // detached waiter only logs join/transport errors.
         if launched
             && request.run_in_background
-            && !output.result.success
-            && !output.result.cancelled
+            && !output.result.success()
+            && !output.result.is_interrupted()
         {
             tracing::error!(
                 subagent_id = %id,
                 subagent_type = %request.subagent_type,
-                error = ?output.result.error,
+                error = ?output.result.error(),
                 "background subagent failed after start",
             );
         }
@@ -1232,6 +1251,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         };
 
         output.result.subagent_type = request.subagent_type.clone();
+        if let (SubagentState::Interrupted { .. }, Some(cause)) =
+            (&output.result.state, disposition.cause())
+        {
+            output.result.state = SubagentState::Interrupted {
+                cause: cause.clone(),
+            };
+        }
+        let paused = matches!(
+            output.result.state,
+            SubagentState::Interrupted {
+                cause: InterruptionCause::Paused { .. }
+            }
+        );
         let persisted_output_ref = self.runner.persisted_output_ref(&output.completion_data);
         let completion_age = self.next_completion_age;
         self.next_completion_age = self
@@ -1254,7 +1286,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             effective_model_id,
             agent_address,
             spawner_session_id,
-            wake_eligible: !explicitly_killed && !was_cancelled && !output.result.cancelled,
+            wake_eligible: disposition.allows_wake()
+                && (paused || (!was_cancelled && !output.result.is_interrupted())),
             result: output.result.clone(),
         };
         let snapshot = completed_snapshot(&completed, None);
@@ -1283,7 +1316,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         // Root-scoped: the root is never woken for a grandchild.
         let should_surface = request.surface_completion
             && handle_only
-            && !output.result.cancelled
+            && !output.result.is_interrupted()
             && !waiter_delivered
             && !explicitly_killed;
         let disposition = CompletionDisposition {
@@ -1326,42 +1359,59 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         &mut self,
         id: &str,
         parent_session_id: Option<&str>,
-        explicit: bool,
+        cause: InterruptionCause,
     ) -> SubagentCancelOutcome {
         if !self.is_reachable_from_session(id, parent_session_id) {
             return SubagentCancelOutcome::NotFound;
         }
         if let Some(child) = self.active.get_mut(id) {
-            child.explicitly_killed |= explicit;
-            child.disposition = PendingDisposition::Cancelled;
+            child.disposition.interrupt(cause.clone());
             child.cancellation.cancel();
             child.control.cancel();
-            return SubagentCancelOutcome::Cancelled;
+            return SubagentCancelOutcome::Cancelled { cause };
         }
         if let Some(child) = self.pending.get_mut(id) {
-            child.explicitly_killed |= explicit;
-            child.disposition = PendingDisposition::Cancelled;
+            child.disposition.interrupt(cause.clone());
             child.cancellation.cancel();
             self.reject_spawn_ready_ids(&[id.to_owned()]);
-            return SubagentCancelOutcome::Cancelled;
+            return SubagentCancelOutcome::Cancelled { cause };
         }
-        if self.remove_queued(|request| request.id == id) > 0 {
-            return SubagentCancelOutcome::Cancelled;
+        if self.remove_queued(&cause, |request| request.id == id) > 0 {
+            return SubagentCancelOutcome::Cancelled { cause };
         }
-        if let Some(child) = self.completed.get(id) {
+        if let Some(child) = self.completed.get_mut(id) {
+            if matches!(cause, InterruptionCause::ExplicitStop { .. })
+                && matches!(
+                    child.result.state,
+                    SubagentState::Interrupted {
+                        cause: InterruptionCause::Paused { .. }
+                    }
+                )
+            {
+                child.result.state = SubagentState::Interrupted {
+                    cause: cause.clone(),
+                };
+                child.wake_eligible = false;
+                return SubagentCancelOutcome::Cancelled { cause };
+            }
             return SubagentCancelOutcome::AlreadyFinished {
-                status: child.result.status().to_owned(),
+                state: child.result.state.clone(),
             };
         }
         SubagentCancelOutcome::NotFound
     }
 
-    fn cancel_parent_prompt(&mut self, parent_prompt_id: &str, parent_session_id: Option<&str>) {
+    fn cancel_parent_prompt(
+        &mut self,
+        parent_prompt_id: &str,
+        parent_session_id: Option<&str>,
+        cause: &InterruptionCause,
+    ) {
         for child in self.active.values_mut() {
             if child.request.parent_prompt_id.as_deref() == Some(parent_prompt_id)
                 && belongs_to_session(&child.request, parent_session_id)
             {
-                child.disposition = PendingDisposition::Cancelled;
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
             }
@@ -1371,13 +1421,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             if child.request.parent_prompt_id.as_deref() == Some(parent_prompt_id)
                 && belongs_to_session(&child.request, parent_session_id)
             {
-                child.disposition = PendingDisposition::Cancelled;
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 doomed.push(child.request.id.clone());
             }
         }
         self.reject_spawn_ready_ids(&doomed);
-        self.remove_queued(|request| {
+        self.remove_queued(cause, |request| {
             request.parent_prompt_id.as_deref() == Some(parent_prompt_id)
                 && belongs_to_session(request, parent_session_id)
         });
@@ -1425,7 +1475,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
         }
         handed_off.extend(self.completed.values().filter_map(|child| {
-            let state = if child.result.cancelled {
+            let state = if child.result.is_interrupted() {
                 HandedOffSubagentState::Cancelled
             } else {
                 HandedOffSubagentState::Finished
@@ -1437,13 +1487,16 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     }
 
     fn teardown_session_children(&mut self, parent_session_id: &str) {
+        let cause = InterruptionCause::SessionTeardown {
+            session_id: parent_session_id.to_owned(),
+        };
         let mut cancelled = self.reject_pending_wakes_for_session(parent_session_id);
         for child in self.active.values_mut() {
             if child.request.parent_session_id == parent_session_id {
                 // Parent is gone: do not rebuffer this completion for a later
                 // resume of the same session id.
                 child.request.surface_completion = false;
-                child.disposition = PendingDisposition::Cancelled;
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
                 cancelled += 1;
@@ -1453,7 +1506,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         for child in self.pending.values_mut() {
             if child.request.parent_session_id == parent_session_id {
                 child.request.surface_completion = false;
-                child.disposition = PendingDisposition::Cancelled;
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 doomed.push(child.request.id.clone());
                 cancelled += 1;
@@ -1467,7 +1520,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 queued.request.surface_completion = false;
             }
         }
-        cancelled += self.remove_queued(|request| request.parent_session_id == parent_session_id);
+        cancelled +=
+            self.remove_queued(&cause, |request| request.parent_session_id == parent_session_id);
         if cancelled > 0 {
             tracing::info!(
                 parent_session_id,
@@ -1542,11 +1596,14 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         };
         self.spawn_blocked_sessions
             .insert(parent_session_id.to_owned());
+        let cause = InterruptionCause::SessionStopped {
+            session_id: parent_session_id.to_owned(),
+        };
         for child in self.active.values_mut() {
             if child.request.parent_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
             {
-                child.disposition = PendingDisposition::Cancelled;
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
             }
@@ -1556,33 +1613,38 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             if child.request.parent_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
             {
-                child.disposition = PendingDisposition::Cancelled;
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 doomed.push(child.request.id.clone());
             }
         }
         self.reject_spawn_ready_ids(&doomed);
-        self.remove_queued(|request| {
+        self.remove_queued(&cause, |request| {
             request.parent_session_id == parent_session_id && !request.owner.is_workflow()
         });
         self.reject_pending_wakes_for_session(parent_session_id);
-        SubagentCancelOutcome::Cancelled
+        SubagentCancelOutcome::Cancelled { cause }
     }
 
     fn cancel_workflow_children(&mut self, run_id: &str, parent_session_id: Option<&str>) {
-        for child in self.active.values() {
+        let cause = InterruptionCause::WorkflowCancelled {
+            run_id: run_id.to_owned(),
+        };
+        for child in self.active.values_mut() {
             if child.request.owner.workflow_run_id() == Some(run_id)
                 && belongs_to_session(&child.request, parent_session_id)
             {
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
             }
         }
         let mut doomed = Vec::new();
-        for child in self.pending.values() {
+        for child in self.pending.values_mut() {
             if child.request.owner.workflow_run_id() == Some(run_id)
                 && belongs_to_session(&child.request, parent_session_id)
             {
+                child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 doomed.push(child.request.id.clone());
             }
@@ -1599,7 +1661,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             .remove(run_id)
             .unwrap_or_default()
         {
-            let _ = respond_to.send(SubagentCancelOutcome::Cancelled);
+            let _ = respond_to.send(SubagentCancelOutcome::Cancelled {
+                cause: InterruptionCause::WorkflowCancelled {
+                    run_id: run_id.to_owned(),
+                },
+            });
         }
     }
 
@@ -1649,7 +1715,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 queued.caller = QueuedCaller::Backgrounded;
             }
         }
-        self.remove_queued(|request| request.cancel_token.is_cancelled());
+        self.remove_queued(&queue::cancelled_while_queued(), |request| {
+            request.cancel_token.is_cancelled()
+        });
     }
 
     fn process_deadlines(&mut self) {

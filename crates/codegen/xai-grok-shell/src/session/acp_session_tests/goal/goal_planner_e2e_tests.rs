@@ -2,6 +2,7 @@
 //! Uses the same single-thread runtime and LocalSet pattern as the verification-stage e2e suite.
 
 use super::support::*;
+use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 use super::*;
 use std::sync::Arc as StdArc;
 use std::sync::atomic::{AtomicUsize, Ordering as SeqOrd};
@@ -62,7 +63,7 @@ fn plan_written(
         let _ = std::fs::write(p, body);
     }
     SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: StdArc::from("Done"),
         subagent_id: req.id.clone(),
         child_session_id: req.id.clone(),
@@ -124,9 +125,7 @@ fn spawn_planner_coordinator_capturing(
                         if spawn <= *cancels {
                             req.cancel_token.cancelled().await;
                             SubagentResult {
-                                success: false,
-                                error: Some("cancelled".into()),
-                                cancelled: true,
+                                state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "cancelled".into() } },
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
                                 ..Default::default()
@@ -136,16 +135,24 @@ fn spawn_planner_coordinator_capturing(
                         }
                     }
                     SpawnBehaviour::NoWriteThenDone => SubagentResult {
-                        success: true,
+                        state: SubagentState::Completed,
                         output: StdArc::from("Done"),
                         subagent_id: req.id.clone(),
                         child_session_id: req.id.clone(),
                         ..Default::default()
                     },
                     SpawnBehaviour::Runtime { message, cancelled } => SubagentResult {
-                        success: false,
-                        error: Some(message.clone()),
-                        cancelled: *cancelled,
+                        state: if *cancelled {
+                            SubagentState::Interrupted {
+                                cause: InterruptionCause::Error {
+                                    message: message.clone(),
+                                },
+                            }
+                        } else {
+                            SubagentState::Failed {
+                                message: message.clone(),
+                            }
+                        },
                         subagent_id: req.id.clone(),
                         child_session_id: req.id.clone(),
                         ..Default::default()
@@ -153,8 +160,7 @@ fn spawn_planner_coordinator_capturing(
                     SpawnBehaviour::RuntimeThenWritePlan { message, body } => {
                         if count_task.load(SeqOrd::SeqCst) == 1 {
                             SubagentResult {
-                                success: false,
-                                error: Some(message.clone()),
+                                state: SubagentState::Failed { message: message.clone() },
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
                                 ..Default::default()
@@ -1117,9 +1123,7 @@ async fn lifecycle_fail_pause_resume_retry_success() {
                         }
                         let result = if n == 0 {
                             SubagentResult {
-                                success: false,
-                                error: Some("planner failed".into()),
-                                cancelled: false,
+                                state: SubagentState::Failed { message: "planner failed".into() },
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
                                 ..Default::default()
@@ -1132,7 +1136,7 @@ async fn lifecycle_fail_pause_resume_retry_success() {
                                 let _ = std::fs::write(p, b"# Plan\n");
                             }
                             SubagentResult {
-                                success: true,
+                                state: SubagentState::Completed,
                                 output: StdArc::from("Done"),
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
@@ -1303,9 +1307,17 @@ fn spawn_latching_planner_coordinator() -> (
                         "planner failed"
                     };
                     let result = SubagentResult {
-                        success: false,
-                        error: Some(error.into()),
-                        cancelled: latched,
+                        state: if latched {
+                            SubagentState::Interrupted {
+                                cause: InterruptionCause::Error {
+                                    message: error.into(),
+                                },
+                            }
+                        } else {
+                            SubagentState::Failed {
+                                message: error.into(),
+                            }
+                        },
                         subagent_id: req.id.clone(),
                         child_session_id: req.id.clone(),
                         ..Default::default()

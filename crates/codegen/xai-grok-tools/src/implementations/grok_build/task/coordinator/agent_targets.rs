@@ -27,7 +27,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             || child.attempt_id != *holder.attempt_id()
             || child.generation != holder.generation()
             || child.cancellation.is_cancelled()
-            || child.explicitly_killed
+            || child.explicitly_killed()
             || child.active_messages.is_finalizing()
         {
             return Err(ActiveAgentMessageOutcome::NotActiveOrFinalizing);
@@ -122,7 +122,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     }
                     Some(child)
                         if child.cancellation.is_cancelled()
-                            || child.explicitly_killed
+                            || child.explicitly_killed()
                             || child.active_messages.is_finalizing() =>
                     {
                         failed(ActiveAgentMessageOutcome::NotActiveOrFinalizing)
@@ -201,11 +201,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         if self
             .active
             .get(id)
-            .is_some_and(|child| child.explicitly_killed)
+            .is_some_and(|child| child.explicitly_killed())
             || self
                 .pending
                 .get(id)
-                .is_some_and(|child| child.explicitly_killed)
+                .is_some_and(|child| child.explicitly_killed())
             || self
                 .completed
                 .get(id)
