@@ -25,6 +25,7 @@ use crate::open_code_highlighter::OpenCodeHighlighter;
 use crate::style::{MarkdownStyle, TableBorders};
 use crate::syntax::{Syntect, syntax_highlight_raw};
 use crate::url_scan;
+use crate::visible::visible_text;
 
 /// Trait for converting anstyle to ratatui style.
 trait StyleInto<T> {
@@ -1566,7 +1567,7 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
         let mut styled_lines = Vec::with_capacity(rendered.len());
         let mut line_source_offsets = Vec::with_capacity(rendered.len());
         for (i, line) in rendered.iter().enumerate() {
-            let text = format!("  {line}");
+            let text = visible_text(&format!("  {line}"));
             styled_lines.push(Line::from(Span::styled(text.clone(), style)));
             lines.push(text);
             // Best-effort scroll mapping: the i-th rendered line maps to the i-th content line of the block (clamped to its source lines)
@@ -2049,6 +2050,8 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
                             if cell_span.strike {
                                 style = style.crossed_out();
                             }
+                            let visible = visible_text(slice);
+                            let slice_width = unicode_display_width(&visible);
                             if let Some((url, id)) = &cell_span.link {
                                 // Apply link styling additively (preserves bold/italic if combined)
                                 // link_text style typically adds underline + accent color so the cell visually matches paragraph link rendering
@@ -2056,7 +2059,6 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
                                     self.ms.link_text.style_into();
                                 style = style.patch(link_style);
 
-                                let slice_width = unicode_display_width(slice);
                                 all_links.push(TableHyperlink {
                                     line_offset: vis_line,
                                     column_range: display_col..(display_col + slice_width),
@@ -2064,15 +2066,16 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
                                     id: *id,
                                 });
                             }
-                            let slice_width = unicode_display_width(slice);
-                            plain.push_str(slice);
-                            spans.push(Span::styled(slice.to_string(), style));
+                            plain.push_str(&visible);
+                            spans.push(Span::styled(visible, style));
                             display_col += slice_width;
                         }
                     } else {
-                        plain.push_str(cell_line_text);
-                        spans.push(Span::raw(cell_line_text.to_string()));
-                        display_col += cell_line_width;
+                        let visible = visible_text(cell_line_text);
+                        let visible_width = unicode_display_width(&visible);
+                        plain.push_str(&visible);
+                        spans.push(Span::raw(visible));
+                        display_col += visible_width;
                     }
                 }
 

@@ -21,6 +21,7 @@ use crate::output::{HyperlinkTarget, MarkdownRenderOutput};
 use crate::parse::ParsedMarkdown;
 use crate::source_map::SourceMap;
 use crate::style::{all_hidden, merge_styles};
+use crate::visible::visible_text;
 
 /// Trait for converting anstyle to ratatui style.
 trait StyleInto<T> {
@@ -329,13 +330,14 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                 return;
             }
             if !ctext.is_empty() {
+                let visible = visible_text(ctext);
                 source_map.add(*rendered_offset, crange.clone());
-                *rendered_offset += ctext.len();
+                *rendered_offset += visible.len();
 
                 if cstyle.is_plain() {
-                    out.push_str(ctext);
+                    out.push_str(&visible);
                 } else {
-                    out.push_str(&ctext.astyle(*cstyle).to_string());
+                    out.push_str(&visible.astyle(*cstyle).to_string());
                 }
             }
             *crange = range;
@@ -764,10 +766,11 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                                 }
 
                                 if !segment.is_empty() {
+                                    let visible = visible_text(segment);
+                                    cur_col_in_line += unicode_display_width(&visible);
                                     self.buffers
                                         .current_spans
-                                        .push(Span::styled(segment.to_string(), ratatui_style));
-                                    cur_col_in_line += unicode_display_width(segment);
+                                        .push(Span::styled(visible, ratatui_style));
                                 }
                                 byte_offset += segment.len() + 1;
                                 seg_x_offset += segment.len() + 1;
@@ -821,10 +824,11 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                                         cur_col_in_line = 0;
                                     }
                                     if !segment.is_empty() {
+                                        let visible = visible_text(segment);
+                                        cur_col_in_line += unicode_display_width(&visible);
                                         self.buffers
                                             .current_spans
-                                            .push(Span::styled(segment.to_string(), ratatui_style));
-                                        cur_col_in_line += unicode_display_width(segment);
+                                            .push(Span::styled(visible, ratatui_style));
                                     }
                                 }
                             }
@@ -1048,11 +1052,12 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                         cur_col_in_line = 0;
                     }
 
+                    let visible = visible_text(segment);
                     if !chunk_links.is_empty() {
                         emit_segment_hyperlinks(
                             &chunk_links,
                             &self.buffers.link_targets,
-                            segment,
+                            &visible,
                             seg_x_offset,
                             cur_col_in_line,
                             lines.len(),
@@ -1060,11 +1065,9 @@ impl<'a, 'b> ParsedMarkdown<'a, 'b> {
                         );
                     }
 
-                    if !segment.is_empty() {
-                        self.buffers
-                            .current_spans
-                            .push(Span::raw(segment.to_string()));
-                        cur_col_in_line += unicode_display_width(segment);
+                    if !visible.is_empty() {
+                        cur_col_in_line += unicode_display_width(&visible);
+                        self.buffers.current_spans.push(Span::raw(visible));
                     }
                     byte_offset += segment.len() + 1;
                     seg_x_offset += segment.len() + 1;
@@ -1159,6 +1162,40 @@ mod tests {
 
     fn first_str(xs: &[String]) -> Option<&str> {
         xs.first().map(String::as_str)
+    }
+
+    /// A literal ESC is a terminal command. The words around it stay, and the byte itself does not.
+    #[test]
+    fn literal_escape_stays_visible_text() {
+        let md = "ANSI-GRUEN bleibt und \u{1b}-literal-Kontrolle auch\n";
+        let (output, _) = render_markdown_ratatui_full(md, test_style::STYLE, true, None);
+        let text = lines_to_text(&output.lines).join("\n");
+        assert!(text.contains("ANSI-GRUEN"), "{text}");
+        assert!(text.contains("literal-Kontrolle"), "{text}");
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+
+        let (raw_output, _) = render_markdown_ratatui_full(md, test_style::STYLE, false, None);
+        let raw_text = lines_to_text(&raw_output.lines).join("\n");
+        assert!(raw_text.contains("ANSI-GRUEN"), "{raw_text}");
+        assert!(raw_text.contains("literal-Kontrolle"), "{raw_text}");
+        assert!(!raw_text.contains('\u{1b}'), "{raw_text:?}");
+    }
+
+    /// The same escape inside a table cell must not reach the terminal either.
+    #[test]
+    fn literal_escape_in_table_cell_stays_visible_text() {
+        let md = "| ANSI-GRUEN bleibt und \u{1b}-literal-Kontrolle auch |\n| --- |\n";
+        let (output, _) = render_markdown_ratatui_full(md, test_style::STYLE, true, None);
+        let text = lines_to_text(&output.lines).join("\n");
+        assert!(text.contains("ANSI-GRUEN"), "{text}");
+        assert!(text.contains("literal-Kontrolle"), "{text}");
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+
+        let (raw_output, _) = render_markdown_ratatui_full(md, test_style::STYLE, false, None);
+        let raw_text = lines_to_text(&raw_output.lines).join("\n");
+        assert!(raw_text.contains("ANSI-GRUEN"), "{raw_text}");
+        assert!(raw_text.contains("literal-Kontrolle"), "{raw_text}");
+        assert!(!raw_text.contains('\u{1b}'), "{raw_text:?}");
     }
 
     /// A fenced `mermaid` block renders as a diagram in pretty mode.
