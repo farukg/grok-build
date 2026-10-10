@@ -243,6 +243,8 @@ impl TraceUploadEndpoints for EndpointsConfig {
             auth.is_data_collection_disabled()
         }
     }
+}
+impl EndpointsConfig {
     /// Drop the three gateway `[endpoints]` pins so compiled
     /// `https://cli-chat-proxy.grok.com/v1` and bundled `grok-4.6` apply.
     /// Env alone cannot do this while those TOML keys are set.
