@@ -244,16 +244,6 @@ impl TraceUploadEndpoints for EndpointsConfig {
         }
     }
 }
-impl EndpointsConfig {
-    /// Drop the three gateway `[endpoints]` pins so compiled
-    /// `https://cli-chat-proxy.grok.com/v1` and bundled `grok-4.6` apply.
-    /// Env alone cannot do this while those TOML keys are set.
-    pub fn apply_official_xai_endpoints(&mut self) {
-        self.cli_chat_proxy_base_url = None;
-        self.models_base_url = None;
-        self.models_list_url = None;
-    }
-}
 pub use xai_grok_config::AllowlistPin;
 pub use xai_grok_config_types::{
     BoolFlag, ConfigSource, FEATURES, Feature, FeatureConfigLayer, FeatureConfigLayers,
