@@ -1005,10 +1005,6 @@ mod tests {
     use super::*;
 
     use crate::implementations::grok_build::task::types::{SubagentState};
-    #[test]
-    fn truncate_chars_does_not_split_a_four_byte_scalar_at_the_cut() {
-        assert_eq!("xx\u{1F600}\u{2026}", truncate_chars("xx\u{1F600}yy", 3));
-    }
     use crate::implementations::grok_build::scheduler::types::{
     ScheduledTask, SchedulerHandle, scheduler_tool_error,
 };
@@ -1016,6 +1012,11 @@ mod tests {
     use crate::types::resources::{Resources, WebCitationCounter};
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    #[test]
+    fn truncate_chars_does_not_split_a_four_byte_scalar_at_the_cut() {
+        assert_eq!("xx\u{1F600}\u{2026}", truncate_chars("xx\u{1F600}yy", 3));
+    }
 
     macro_rules! notification {
         ($event:expr, $variant:ident) => {{
