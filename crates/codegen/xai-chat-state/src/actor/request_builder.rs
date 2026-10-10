@@ -121,7 +121,7 @@ impl ChatStateActor {
         mut items: Vec<ConversationItem>,
     ) -> Vec<ConversationItem> {
         if should_prune(
-            self.state.total_tokens.tokens(),
+            self.state.estimate_at_last_response + self.state.estimated_tokens_since_model,
             self.state.sampling_config.context_window,
         ) {
             prune_conversation(&mut items, &self.pruning_config);
@@ -136,7 +136,8 @@ impl ChatStateActor {
 
 /// Check whether pruning should run based on context utilization.
 ///
-/// Returns `true` when `total_tokens` exceeds 50% of `context_window`.
+/// Returns `true` when the retained conversation estimate exceeds 50% of `context_window`.
+/// The provider-reported total is no input: it measures the pruned request, so gating on it flips pruning on and off every call.
 pub(crate) fn should_prune(total_tokens: u64, context_window: std::num::NonZeroU64) -> bool {
     total_tokens > context_window.get() / 2
 }
