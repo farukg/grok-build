@@ -214,11 +214,74 @@ fn test_messages_request_cache_breakpoint_marks_an_image_tip() {
     );
 }
 
+fn signed_reasoning(text: &str, signature: &str) -> ConversationItem {
+    let mut item = synthesized_reasoning_item(text);
+    item.encrypted_content = Some(signature.to_owned());
+    ConversationItem::Reasoning(item)
+}
+
+fn assistant_block_types(json: &serde_json::Value) -> Vec<String> {
+    json["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["role"] == "assistant")
+        .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
+        .filter_map(|b| b["type"].as_str().map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn reasoning_without_signature_is_not_replayed_as_thinking() {
+    for unsigned in [
+        ConversationItem::Reasoning(synthesized_reasoning_item(
+            "recorded under chat completions",
+        )),
+        {
+            let mut item = synthesized_reasoning_item("empty signature");
+            item.encrypted_content = Some(String::new());
+            ConversationItem::Reasoning(item)
+        },
+    ] {
+        let req = ConversationRequest::from_items(vec![
+            ConversationItem::user("Fix the bug"),
+            unsigned,
+            ConversationItem::assistant("Fixed it."),
+        ])
+        .with_model("messages-compatible-model");
+
+        let json = serde_json::to_value(build_messages_request(&req)).unwrap();
+        assert_eq!(assistant_block_types(&json), ["text"], "{json:#}");
+    }
+}
+
+#[test]
+fn signed_reasoning_is_replayed_with_its_signature() {
+    let req = ConversationRequest::from_items(vec![
+        ConversationItem::user("Fix the bug"),
+        signed_reasoning("weighing options", "sig-1"),
+        ConversationItem::assistant("Fixed it."),
+    ])
+    .with_model("messages-compatible-model");
+
+    let json = serde_json::to_value(build_messages_request(&req)).unwrap();
+    assert_eq!(
+        assistant_block_types(&json),
+        ["thinking", "text"],
+        "{json:#}"
+    );
+    assert_eq!(
+        json.pointer("/messages/1/content/0/signature"),
+        Some(&serde_json::json!("sig-1")),
+        "{json:#}"
+    );
+}
+
 #[test]
 fn test_messages_request_cache_breakpoint_skips_thinking() {
     let req = ConversationRequest::from_items(vec![
         ConversationItem::user("Fix the bug"),
-        ConversationItem::Reasoning(synthesized_reasoning_item("weighing options")),
+        signed_reasoning("weighing options", "sig-1"),
         ConversationItem::assistant("Fixed it."),
     ])
     .with_model("messages-compatible-model");
