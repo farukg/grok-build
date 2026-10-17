@@ -95,4 +95,23 @@ async fn tool_bridge_routes_writes_through_injected_fs() {
         .await
         .expect("Write went to disk instead of injected FileSystem");
     assert_eq!(String::from_utf8(written).unwrap(), "hello from ACP\n");
+
+    let replacement = bridge
+        .call(
+            "search_replace",
+            serde_json::json!({
+                "file_path": file_path.to_string_lossy(),
+                "old_string": "hello",
+                "new_string": "goodbye",
+            }),
+            "test-call-2",
+        )
+        .await
+        .expect("distinct-string edit reaches the tool");
+    assert!(!replacement.output.is_error());
+    let written = mock_fs
+        .get_file(&file_path)
+        .await
+        .expect("replacement file");
+    assert_eq!(String::from_utf8(written).unwrap(), "goodbye from ACP\n");
 }

@@ -40,6 +40,127 @@ const CANCEL_MARKER: &str = "cancelled by the user";
 /// It is present in both the rendered template and the unrendered fallback string.
 const STATIONARITY_NUDGE_MARKER: &str = "stuck in a polling loop";
 
+#[tokio::test(flavor = "current_thread")]
+async fn alternating_invalid_search_replaces_end_the_real_turn() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let server = MockInferenceServer::start()
+                .await
+                .expect("mock inference server");
+            let count = super::turn::MAX_CONSECUTIVE_INVALID_EDITS as usize;
+            for i in 0..count + 2 {
+                let text = if i % 2 == 0 { "alpha" } else { "beta" };
+                let args = serde_json::json!({
+                    "file_path": format!("/tmp/stationary-edit-{i}.txt"),
+                    "old_string": text,
+                    "new_string": text,
+                })
+                .to_string();
+                server.enqueue_response(
+                    "/v1/responses",
+                    ScriptedResponse::sse(responses_api_reasoning_then_tool_call_events(
+                        "edit",
+                        &format!("invalid-{i}"),
+                        "search_replace",
+                        &args,
+                        "test",
+                    )),
+                );
+            }
+            let sampling_cfg = xai_grok_sampler::SamplerConfig {
+                api_key: Some("test-key".into()),
+                base_url: server.url(),
+                model: "test".into(),
+                api_backend: xai_grok_sampler::ApiBackend::Responses,
+                context_window: 256_000,
+                max_retries: Some(0),
+                idle_timeout_secs: Some(30),
+                ..Default::default()
+            };
+            let (sampler_tx, mut sampler_rx) = tokio::sync::mpsc::unbounded_channel();
+            let sampler = xai_grok_sampler::SamplerActor::spawn(
+                sampling_cfg,
+                xai_grok_sampler::RetryPolicy {
+                    max_retries: 0,
+                    ..Default::default()
+                },
+                sampler_tx,
+            );
+            let (gateway_tx, gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            drain_gateway(gateway_rx);
+            let (persistence_tx, persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            drain_persistence(persistence_rx);
+            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            actor.sampler_handle = sampler;
+            *actor.agent.borrow_mut() = test_agent_with_tools(read_and_edit_toolset()).await;
+            let mut config = actor
+                .chat_state_handle
+                .get_sampling_config()
+                .await
+                .expect("config");
+            config.base_url = server.url();
+            config.api_backend = xai_grok_sampling_types::ApiBackend::Responses;
+            config.model = "test".into();
+            actor.chat_state_handle.update_sampling_config(config);
+            let mut credentials = actor.chat_state_handle.get_credentials().await;
+            credentials.api_key = Some("test-key".into());
+            actor.chat_state_handle.update_credentials(credentials);
+            actor
+                .workspace_ops
+                .bind_local_session(
+                    &actor.session_id_string(),
+                    actor.tool_context.cwd.as_path().to_path_buf(),
+                    actor.tool_context.hunk_tracker_handle.clone(),
+                    actor.agent.borrow().tool_bridge().toolset(),
+                    None,
+                )
+                .expect("bind local session");
+            let actor = Arc::new(actor);
+            let drainer = actor.clone();
+            tokio::task::spawn_local(async move {
+                while let Some(event) = sampler_rx.recv().await {
+                    drainer.handle_sampling_event(event).await;
+                }
+            });
+            let outcome = tokio::time::timeout(
+                Duration::from_secs(60),
+                actor.handle_prompt(
+                    "alternating-invalid-edits",
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        "edit".to_string(),
+                    ))],
+                    PromptMode::Agent,
+                    None,
+                    None,
+                    None,
+                    None,
+                    true,
+                    false,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .expect("bounded turn");
+            assert!(outcome.is_ok(), "{outcome:?}");
+            let conversation = actor.chat_state_handle.get_conversation().await;
+            let results = tool_results_by_call_id(&conversation);
+            assert_eq!(
+                results.len(),
+                count,
+                "invalid calls must stop before the remaining scripted responses"
+            );
+            assert!(results.values().all(|items| {
+                items
+                    .iter()
+                    .any(|text| text.contains("Old string and new string are the same"))
+            }));
+        })
+        .await;
+}
+
 fn tool_call_sse(call_id: &str) -> ScriptedResponse {
     ScriptedResponse::sse(responses_api_reasoning_then_tool_call_events(
         "poll",
