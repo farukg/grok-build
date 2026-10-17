@@ -587,10 +587,8 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
                     Tag::Link { .. } | Tag::Image { .. } => Some(None),
                     Tag::CodeBlock(block) => {
                         parent_code_block = Some(match block {
-                            CodeBlockKind::Fenced(lang) if !lang.is_empty() => {
-                                Some(lang.to_owned())
-                            }
-                            _ => None,
+                            CodeBlockKind::Fenced(lang) => Some(lang.to_owned()),
+                            CodeBlockKind::Indented => None,
                         });
                         None
                     }
@@ -600,8 +598,8 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
         } else {
             if let Some(Tag::CodeBlock(block)) = self.tag_stack.last() {
                 parent_code_block = Some(match block {
-                    CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(lang.to_owned()),
-                    _ => None,
+                    CodeBlockKind::Fenced(lang) => Some(lang.to_owned()),
+                    CodeBlockKind::Indented => None,
                 });
             }
             Vec::new()
@@ -645,26 +643,23 @@ impl<'a, 'b, 'syn, 'oc> MarkdownParser<'a, 'b, 'syn, 'oc> {
                     {
                         return;
                     }
-                    let highlighted = match parent_code_block {
-                        Some(lang) => {
-                            if let Some(syn) = self.syntect
-                                && let Some(cache) = self.open_code.as_deref_mut()
-                            {
-                                // Streaming tail: the cache routes between the incremental open-block path and the closed-fence memo
-                                cache.highlight_block(
-                                    syn,
-                                    &lang,
-                                    range.start,
-                                    range.end >= self.text.len(),
-                                    &text,
-                                )
-                            } else {
-                                // Batch render (no streaming caches attached).
-                                syntax_highlight_raw(self.syntect, &lang, &text)
-                            }
+                    let highlighted = parent_code_block.and_then(|fence_info| {
+                        if let Some(syn) = self.syntect
+                            && let Some(cache) = self.open_code.as_deref_mut()
+                        {
+                            // Streaming tail: the cache routes between the incremental open-block path and the closed-fence memo
+                            cache.highlight_block(
+                                syn,
+                                &fence_info,
+                                range.start,
+                                range.end >= self.text.len(),
+                                &text,
+                            )
+                        } else {
+                            // Batch render (no streaming caches attached).
+                            syntax_highlight_raw(self.syntect, &fence_info, &text)
                         }
-                        None => None,
-                    };
+                    });
                     if let Some(highlighted) = highlighted {
                         self.buffers.replaces.push(Replace {
                             highlighted,

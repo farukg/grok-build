@@ -163,13 +163,16 @@ Use compact mode on small screens to maximize content area.
 
 ## Syntax Highlighting
 
-Grok bundles three `.tmTheme` files for code-block syntax highlighting and selects one based on the active theme:
+Grok bundles four `.tmTheme` files for code-block syntax highlighting and selects one based on the active theme:
 
 - `grok-night.tmTheme` -- GrokNight, RosePineMoon, and OscuraMidnight
 - `grok-day.tmTheme` -- GrokDay
 - `tokyo-night.tmTheme` -- TokyoNight
+- `color-dna.tmTheme` -- Color DNA, generated from the workspace Color DNA palette and scope rules
 
 Grok selects the matching file automatically when you switch themes. The `.tmTheme` files are built into the binary, so you cannot replace them with your own.
+
+Code fences with an empty or unrecognized language tag, and Search results whose file extension has no grammar, are highlighted with the DSL grammar. ReScript (`rescript`, `res`, `resi`) has its own grammar.
 
 ---
 

@@ -68,7 +68,7 @@ impl Syntect {
 
     /// Highlighter for a fenced code block *info* string: a language token (`rust`, `python`) or a `lineStart:lineEnd:path` line-range citation.
     /// A citation's path resolves via [`Syntect::find_syntax_by_file_path`].
-    /// When the path has no known syntax, the whole string falls back to [`Syntect::find_syntax_by_token`], so plain ` ```lang` blocks keep working.
+    /// When the path has no known syntax, the whole string is checked as a language token, then falls back to DSL.
     pub fn highlight_lines_for_fence_info(&self, fence_info: &str) -> Option<HighlightLines<'_>> {
         Some(HighlightLines::new(
             self.find_syntax_for_fence_info(fence_info)?,
@@ -86,6 +86,7 @@ impl Syntect {
             return Some(s);
         }
         self.find_syntax_by_token(fence_info)
+            .or_else(|| self.syntax_set.find_syntax_by_extension("dsl"))
     }
 }
 
