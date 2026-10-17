@@ -65,6 +65,20 @@ contexts:
     - match: '^\s*#.*$'
       scope: comment.line.number-sign.dsl
 
+    # ---- fallback aids (NOT dsl-core grammar) ----------------------------
+    #      ```dsl is also the color fallback for unknown fence labels and
+    #      for source files without a grammar (logs, configs, prose). Real dsl
+    #      has no quotes, `=` assignments or boolean literals, so these rules
+    #      never fire on authored dsl; they only color foreign text.
+    - match: '"(?:[^"\\\n]|\\.)*"'
+      scope: string.quoted.double.dsl
+    - match: '\b(?:true|false|null)\b'
+      scope: constant.language.dsl
+    - match: '\b{{STEP_NAME}}(?=\s*=(?![=>]))'
+      scope: entity.other.attribute-name.dsl
+    - match: '(?<![=!<>])=(?![=>])'
+      scope: keyword.operator.assignment.dsl
+
     # ---- i18n sigil (I.5, TRANSITIONAL per 52-i18n-target-syntax) --------
     #      NOTE (v4): inline `""` string literals are KILLED (Faruk 2026-07-17).
     #      There is NO quoted-string form anywhere in authored dsl. Text content
@@ -105,6 +119,18 @@ contexts:
     # ---- identity meta-key: `Route: Example` (UpperCamel + ":") ---------
     - match: '\b{{UPPER_CAMEL}}(?=\s*:(?!:))'
       scope: keyword.other.identity.dsl
+
+    # ---- top-level DEFINITION head: lowerCamel name at column 0 (no indent),
+    #      not a `name:` meta line. Mirrors vscode `definition-head`. ---------
+    - match: '^({{STEP_NAME}})(?![a-zà-öø-ÿA-Za-z0-9\-])(?!\s*:(?!:))'
+      captures:
+        1: entity.name.function.dsl
+
+    # ---- record-field DECLARATION: lowerCamel name at line start whose type
+    #      follows (`label Label?`, `rows [Row]`). Mirrors vscode `field-decl`.
+    - match: '^\s*({{STEP_NAME}})(?=\s+(?:\[\s*)?[A-Z])'
+      captures:
+        1: entity.name.field.dsl
 
     # ---- record-field / meta-line / prop keys (I.10/I.11: lowerCamel ":")
     #      Events are ORDINARY props now (R20): `click: save`, `submit: commit`
