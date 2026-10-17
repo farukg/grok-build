@@ -436,7 +436,7 @@ impl BlockContent for SearchToolCallBlock {
                         let mut highlighter = syntect
                             .highlight_lines_by_file_path(path)
                             .or_else(|| syntect.highlight_lines_for_fence_info(""));
-                        let mut previous_line_number = None;
+                        let mut previous_line_number: Option<usize> = None;
 
                         // File path line
                         lines.push(
