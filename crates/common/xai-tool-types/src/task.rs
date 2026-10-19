@@ -75,14 +75,15 @@ pub struct TaskToolInput {
     /// from the current agent definition. The new task prompt is appended as
     /// the next user message.
     ///
-    /// The source subagent must be completed (not active or unknown) and
-    /// belong to the same parent session.
+    /// The source must belong to the same parent session. A still-running source
+    /// receives the prompt as a queued next turn instead.
     #[schemars(
-        description = "Resume from a previously completed subagent's conversation. \
-            Pass the subagent_id returned by a prior task call. The new subagent \
-            continues the previous one's raw transcript with the new task prompt \
-            appended. The source must be completed (not running) and belong to the \
-            current session."
+        description = "Resume from a previous subagent's conversation. \
+            Pass the subagent_id returned by a prior task call (a unique prefix of \
+            at least 8 characters also works). The new subagent continues the \
+            previous one's raw transcript with the new task prompt appended. If the \
+            subagent is still running, the prompt is queued to it as its next turn \
+            instead. The source must belong to the current session."
     )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_from: Option<String>,
@@ -345,6 +346,55 @@ pub struct SubagentCompletedOutput {
     /// If the subagent used a persona, the persona name to pass when resuming.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_fallback: Option<SubagentResumeFallback>,
+}
+
+/// Why a resumed subagent's isolated worktree could not be restored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorktreeLoss {
+    /// The directory is gone and no snapshot ref was recorded.
+    NoSnapshot,
+    RehydrateFailed { error: String },
+}
+
+/// A resumed subagent could not run where its source ran and fell back to the parent workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubagentResumeFallback {
+    WorktreeLost {
+        worktree_path: String,
+        loss: WorktreeLoss,
+    },
+    SourceCwdMissing {
+        source_cwd: String,
+    },
+}
+
+impl std::fmt::Display for SubagentResumeFallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WorktreeLost {
+                worktree_path,
+                loss: WorktreeLoss::NoSnapshot,
+            } => write!(
+                f,
+                "Resume fallback: the subagent's worktree {worktree_path} no longer exists and has no snapshot, so it ran in the shared parent workspace."
+            ),
+            Self::WorktreeLost {
+                worktree_path,
+                loss: WorktreeLoss::RehydrateFailed { error },
+            } => write!(
+                f,
+                "Resume fallback: the subagent's worktree {worktree_path} could not be rehydrated ({error}), so it ran in the shared parent workspace."
+            ),
+            Self::SourceCwdMissing { source_cwd } => write!(
+                f,
+                "Resume fallback: the subagent's working directory {source_cwd} no longer exists, so it ran in the parent's working directory."
+            ),
+        }
+    }
 }
 
 impl SubagentCompletedOutput {
@@ -356,14 +406,18 @@ impl SubagentCompletedOutput {
     /// Render the full model-facing completion block: the answer text, the
     /// `<subagent_meta>` line, and the `<subagent_result>` resume footer.
     pub fn to_model_text(&self) -> String {
-        format_subagent_completed(
+        let text = format_subagent_completed(
             &self.output,
             &self.subagent_id,
             self.tool_calls,
             self.turns,
             self.duration_ms,
             self.persona.as_deref(),
-        )
+        );
+        match &self.resume_fallback {
+            Some(fallback) => format!("{text}\n\n{fallback}"),
+            None => text,
+        }
     }
 }
 

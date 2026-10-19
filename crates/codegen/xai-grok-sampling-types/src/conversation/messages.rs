@@ -255,18 +255,14 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
                 });
             }
             // `tco_*` blobs carry only `signature`; real reasoning sets `thinking`
+            // Anthropic rejects a thinking block whose signature it did not issue, so reasoning
+            // recorded under another backend (no `encrypted_content`) is not replayed
             ConversationItem::Reasoning(r) => {
                 flush_tool_results(&mut pending_tool_results, &mut messages);
-                let thinking = reasoning_item_text(r);
-                let signature = r
-                    .encrypted_content
-                    .as_deref()
-                    .map(str::to_owned)
-                    .unwrap_or_default();
-                if !thinking.is_empty() || !signature.is_empty() {
+                if let Some(signature) = r.encrypted_content.as_deref().filter(|s| !s.is_empty()) {
                     pending_assistant.push(ContentBlock::Thinking {
-                        thinking,
-                        signature,
+                        thinking: reasoning_item_text(r),
+                        signature: signature.to_owned(),
                     });
                 }
             }

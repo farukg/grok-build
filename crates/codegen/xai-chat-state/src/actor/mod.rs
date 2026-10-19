@@ -225,7 +225,19 @@ impl ChatStateActor {
                 self.increment_prompt_index();
             }
             ChatStateCommand::UpdateSamplingConfig { config } => {
+                if config.model != self.state.sampling_config.model {
+                    self.state.served_route = None;
+                }
                 self.state.sampling_config = *config;
+                self.state.total_tokens = crate::types::TokenCount::Stale {
+                    tokens: self.state.total_tokens.tokens(),
+                };
+                self.send_event(ChatStateEvent::TokensUpdated {
+                    total_tokens: self.state.total_tokens,
+                });
+            }
+            ChatStateCommand::SetContextPolicy { policy } => {
+                self.state.context_policy = *policy;
             }
             ChatStateCommand::RecordAgentEditedPath { path } => {
                 self.state.agent_edited_paths.insert(path);
@@ -350,6 +362,12 @@ impl ChatStateActor {
                 );
                 let _ = reply.send(self.state.conversation.clone());
             }
+            ChatStateCommand::GetContextUsage { reply } => {
+                let _ = reply.send(self.context_usage());
+            }
+            ChatStateCommand::GetContextPolicy { reply } => {
+                let _ = reply.send(self.state.context_policy.clone());
+            }
             ChatStateCommand::GetPromptIndex { reply } => {
                 let _ = reply.send(self.state.prompt_index);
             }
@@ -357,7 +375,7 @@ impl ChatStateActor {
                 let _ = reply.send(self.state.last_compaction_prompt_index);
             }
             ChatStateCommand::GetTotalTokens { reply } => {
-                let _ = reply.send(self.state.total_tokens);
+                let _ = reply.send(self.state.total_tokens.tokens());
             }
             ChatStateCommand::GetLastTurnUsage { reply } => {
                 let _ = reply.send(self.state.last_turn_usage.clone());
@@ -370,7 +388,9 @@ impl ChatStateActor {
             }
             ChatStateCommand::GetEstimatedTotalTokens { reply } => {
                 let _ =
-                    reply.send(self.state.total_tokens + self.state.estimated_tokens_since_model);
+                    reply.send(
+                        self.state.total_tokens.tokens() + self.state.estimated_tokens_since_model,
+                    );
             }
             ChatStateCommand::GetSamplingConfig { reply } => {
                 let _ = reply.send(self.state.sampling_config.clone());
@@ -414,6 +434,9 @@ impl ChatStateActor {
             }
             ChatStateCommand::GetLastModelMetadata { reply } => {
                 let _ = reply.send(self.get_last_model_metadata());
+            }
+            ChatStateCommand::RecordServedRoute { route, reply } => {
+                let _ = reply.send(self.record_served_route(*route));
             }
             ChatStateCommand::TakeTurnMessages { reply } => {
                 let result = self.state.turn_capture.take().map(|cap| {

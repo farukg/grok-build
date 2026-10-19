@@ -253,6 +253,30 @@ impl ChatStateActor {
 
     /// Push any conversation item (user, assistant, or tool result) and persist it.
     pub(super) fn push_message(&mut self, item: ConversationItem) {
+        // A second answer to a call already answered in the trailing result run (the cancel halt text, then the real
+        // backgrounded-command result) is deduped now. Readers such as compaction never run the lazy repair.
+        let answers_answered_call = matches!(
+            &item,
+            ConversationItem::ToolResult(new) if self
+                .state
+                .conversation
+                .iter()
+                .rev()
+                .take_while(|existing| matches!(existing, ConversationItem::ToolResult(_)))
+                .any(|existing| matches!(
+                    existing,
+                    ConversationItem::ToolResult(old) if old.tool_call_id == new.tool_call_id
+                ))
+        );
+        self.push_message_unchecked(item);
+        if answers_answered_call {
+            self.rewrite_history(HistoryRewrite::IntegrityRepair, |conversation| {
+                dedup_duplicate_tool_results(conversation)
+            });
+        }
+    }
+
+    fn push_message_unchecked(&mut self, item: ConversationItem) {
         let count_in_delta = !matches!(item, ConversationItem::Assistant(_));
         if count_in_delta {
             let estimated_tokens = super::state::estimate_item_tokens(&item);
@@ -260,8 +284,9 @@ impl ChatStateActor {
             tracing::debug!(
                 item_kind = item_kind_str(&item),
                 estimated_tokens_delta = estimated_tokens,
-                estimated_total = self.state.total_tokens + self.state.estimated_tokens_since_model,
-                model_reported_total = self.state.total_tokens,
+                estimated_total = self.state.total_tokens.tokens()
+                    + self.state.estimated_tokens_since_model,
+                model_reported_total = self.state.total_tokens.tokens(),
                 "ChatState: push_message updated estimated_tokens_since_model"
             );
         }
@@ -323,8 +348,9 @@ impl ChatStateActor {
         tracing::debug!(
             item_kind = item_kind_str(&item),
             estimated_tokens_delta = estimated_tokens,
-            estimated_total = self.state.total_tokens + self.state.estimated_tokens_since_model,
-            model_reported_total = self.state.total_tokens,
+            estimated_total = self.state.total_tokens.tokens()
+                + self.state.estimated_tokens_since_model,
+            model_reported_total = self.state.total_tokens.tokens(),
             "ChatState: push_user_message updated estimated_tokens_since_model"
         );
         self.persistence.persist_message(&item);
@@ -435,8 +461,12 @@ impl ChatStateActor {
         self.state.estimated_tokens_since_model = 0;
         self.state.estimate_at_last_response =
             super::state::estimate_conversation_tokens(&self.state.conversation);
-        self.state.total_tokens = total_tokens;
-        self.send_event(ChatStateEvent::TokensUpdated { total_tokens });
+        self.state.total_tokens = crate::types::TokenCount::Fresh {
+            tokens: total_tokens,
+        };
+        self.send_event(ChatStateEvent::TokensUpdated {
+            total_tokens: self.state.total_tokens,
+        });
     }
 
     /// Stash the per-turn `TokenUsage` from the most recent model response.
@@ -515,7 +545,7 @@ impl ChatStateActor {
     /// Reseed `total_tokens` after a conversation rewrite.
     /// Scales `base_estimate` by the provider-confirmed ratio, capped at the pre-rewrite total.
     pub(super) fn reseed_total_tokens(&self, base_estimate: u64) -> u64 {
-        let pre_replace_total = self.state.total_tokens;
+        let pre_replace_total = self.state.total_tokens.tokens();
         let mut estimated_tokens =
             if pre_replace_total > 0 && self.state.estimate_at_last_response > 0 {
                 let ratio = pre_replace_total as f64 / self.state.estimate_at_last_response as f64;
@@ -550,14 +580,16 @@ impl ChatStateActor {
         let estimated_tokens = self.reseed_total_tokens(base_estimate);
         self.state.conversation = items;
         self.state.estimated_tokens_since_model = 0;
-        self.state.total_tokens = estimated_tokens;
+        self.state.total_tokens = crate::types::TokenCount::Fresh {
+            tokens: estimated_tokens,
+        };
         self.state.estimate_at_last_response = base_estimate;
         self.rebase_turn_capture_offset();
         self.send_event(ChatStateEvent::ConversationReset {
             new_len: self.state.conversation.len(),
         });
         self.send_event(ChatStateEvent::TokensUpdated {
-            total_tokens: estimated_tokens,
+            total_tokens: self.state.total_tokens,
         });
     }
 
@@ -576,6 +608,17 @@ impl ChatStateActor {
         debug_assert!(changed, "head mismatch must produce a change");
         self.replace_conversation(conversation, false);
         changed
+    }
+
+    pub(super) fn record_served_route(
+        &mut self,
+        route: xai_grok_sampling_types::ServedRoute,
+    ) -> crate::commands::ServedRouteChange {
+        if self.state.served_route.as_ref() == Some(&route) {
+            return crate::commands::ServedRouteChange::Unchanged;
+        }
+        self.state.served_route = Some(route);
+        crate::commands::ServedRouteChange::Changed
     }
 
     /// Restore all state fields from a snapshot.

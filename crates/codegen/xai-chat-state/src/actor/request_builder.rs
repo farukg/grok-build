@@ -1,6 +1,8 @@
 //! ConversationRequest assembly — image compaction, pruning, repair, memory injection.
 
-use xai_grok_sampling_types::{ConversationItem, ConversationRequest, ToolSpec, TraceContext};
+use xai_grok_sampling_types::{
+    ContextCategory, ConversationItem, ConversationRequest, ToolSpec, TraceContext,
+};
 
 use super::ChatStateActor;
 use crate::events::ChatStateEvent;
@@ -73,6 +75,16 @@ impl ChatStateActor {
         if let Some(reminder) = memory_reminder {
             inject_memory_reminder(&mut items, &reminder);
         }
+        items = self.state.context_policy.project(items);
+        let tool_definitions = if self
+            .state
+            .context_policy
+            .includes(ContextCategory::ToolDefinitions)
+        {
+            tool_definitions
+        } else {
+            Vec::new()
+        };
         items = crate::compaction_utils::ModelRequestHistory::from_raw(items).into_items();
 
         // Step 4: Assemble request
@@ -109,7 +121,7 @@ impl ChatStateActor {
         mut items: Vec<ConversationItem>,
     ) -> Vec<ConversationItem> {
         if should_prune(
-            self.state.total_tokens,
+            self.state.estimate_at_last_response + self.state.estimated_tokens_since_model,
             self.state.sampling_config.context_window,
         ) {
             prune_conversation(&mut items, &self.pruning_config);
@@ -124,7 +136,8 @@ impl ChatStateActor {
 
 /// Check whether pruning should run based on context utilization.
 ///
-/// Returns `true` when `total_tokens` exceeds 50% of `context_window`.
+/// Returns `true` when the retained conversation estimate exceeds 50% of `context_window`.
+/// The provider-reported total is no input: it measures the pruned request, so gating on it flips pruning on and off every call.
 pub(crate) fn should_prune(total_tokens: u64, context_window: std::num::NonZeroU64) -> bool {
     total_tokens > context_window.get() / 2
 }

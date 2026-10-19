@@ -66,6 +66,7 @@ pub use code_compaction::{
     SummaryPromptKind, apply_full_replace_compaction, assemble_compacted_history,
     build_summary_prompt, build_summary_prompt_kind, format_compact_summary,
     format_compact_summary_content, is_context_length_error, is_degenerate_summary,
+    named_model_token_limit,
     sample_full_replace_summary, wrap_user_query,
 };
 pub use item::{

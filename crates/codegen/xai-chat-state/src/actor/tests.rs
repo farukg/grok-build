@@ -494,13 +494,48 @@ async fn push_tool_result_appends_and_persists() {
 }
 
 #[tokio::test]
+async fn second_result_for_an_answered_call_replaces_the_first() {
+    use xai_grok_sampling_types::ToolCall;
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("sys"),
+        ConversationItem::user("run it"),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "call_1".into(),
+            name: "run_terminal_command".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result("call_1", "halted by the harness"),
+    ]);
+
+    h.handle.push_tool_result(ConversationItem::tool_result(
+        "call_1",
+        "moved to the background",
+    ));
+
+    let conv = h.handle.get_conversation().await;
+    let results: Vec<_> = conv
+        .iter()
+        .filter_map(|item| match item {
+            ConversationItem::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].tool_call_id, "call_1");
+    assert!(results[0].content.contains("moved to the background"));
+}
+
+#[tokio::test]
 async fn record_token_usage_emits_event() {
     let mut h = TestHarness::new();
     h.handle.record_token_usage(1000);
     let event = h.next_event().await;
     assert!(matches!(
         event,
-        ChatStateEvent::TokensUpdated { total_tokens: 1000 }
+        ChatStateEvent::TokensUpdated {
+            total_tokens: crate::types::TokenCount::Fresh { tokens: 1000 },
+        }
     ));
 
     let tokens = h.handle.get_total_tokens().await;
@@ -1579,7 +1614,10 @@ async fn snapshot_restore_preserves_all_fields() {
         h.handle.get_conversation().await.len(),
         snapshot.conversation.len()
     );
-    assert_eq!(h.handle.get_total_tokens().await, snapshot.total_tokens);
+    assert_eq!(
+        h.handle.get_total_tokens().await,
+        snapshot.total_tokens.tokens()
+    );
     assert_eq!(h.handle.get_prompt_index().await, snapshot.prompt_index);
     assert_eq!(
         h.handle.get_agent_edited_paths().await,
@@ -4653,10 +4691,16 @@ async fn context_window_downgrade_triggers_auto_compact() {
         ..Default::default()
     };
 
-    let h = TestHarness::with_config(vec![], config);
+    let mut h = TestHarness::with_config(vec![], config);
 
     // Simulate 217k tokens of conversation (matching turn 587's total_tokens)
     h.handle.record_token_usage(217_000);
+    assert!(matches!(
+        h.next_event().await,
+        ChatStateEvent::TokensUpdated {
+            total_tokens: crate::types::TokenCount::Fresh { tokens: 217_000 },
+        }
+    ));
 
     // Pre-downgrade: 217k / 500k = 43% — well under auto-compact threshold
     let pre = h.handle.get_sampling_config().await.unwrap();
@@ -4697,6 +4741,13 @@ async fn context_window_downgrade_triggers_auto_compact() {
     let info = trigger.unwrap();
     assert_eq!(info.context_window, NonZeroU64::new(128_000).unwrap());
     assert_eq!(info.total_tokens, 217_000);
+    let event = h.next_event().await;
+    assert!(matches!(
+        event,
+        ChatStateEvent::TokensUpdated {
+            total_tokens: crate::types::TokenCount::Stale { tokens: 217_000 },
+        }
+    ));
     // utilization_percent is u8 so it caps at 255, but we just need >85
     assert!(
         info.utilization_percent > 85,
@@ -5541,7 +5592,7 @@ async fn restore_snapshot_restores_all_fields() {
 
     let snapshot = h.handle.snapshot().await.unwrap();
     assert_eq!(snapshot.prompt_index, 1);
-    assert_eq!(snapshot.total_tokens, 500);
+    assert_eq!(snapshot.total_tokens.tokens(), 500);
     assert_eq!(snapshot.conversation.len(), 1);
 
     // Replace state
@@ -5557,4 +5608,84 @@ async fn restore_snapshot_restores_all_fields() {
     assert_eq!(idx, 1);
     let tokens = h.handle.get_total_tokens().await;
     assert_eq!(tokens, 500);
+}
+
+/// The context policy shapes what a request sends and leaves the canonical history alone,
+/// so switching a category back on sends it again.
+#[tokio::test]
+async fn context_policy_shapes_the_request_and_not_the_history() {
+    use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch, ToolSpec};
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("core"),
+        ConversationItem::project_instructions("project rules"),
+        ConversationItem::user("earlier prompt"),
+        ConversationItem::assistant("earlier answer"),
+        ConversationItem::user("current prompt"),
+    ]);
+    let tool = || ToolSpec {
+        name: "read_file".to_string(),
+        description: Some("Read a file".to_string()),
+        parameters: serde_json::json!({"type": "object"}),
+    };
+    let request = || async {
+        h.handle
+            .build_request(vec![tool()], None, false, None, "c".into(), "r".into())
+            .await
+            .unwrap()
+    };
+    let texts = |request: &xai_grok_sampling_types::ConversationRequest| {
+        request
+            .items
+            .iter()
+            .map(ConversationItem::text_content)
+            .collect::<Vec<_>>()
+    };
+
+    let mut policy = ContextPolicy::default();
+    policy.set(ContextCategory::ProjectInstructions, ContextSwitch::Excluded);
+    policy.set(ContextCategory::UserTurns, ContextSwitch::Excluded);
+    policy.set(ContextCategory::ToolDefinitions, ContextSwitch::Excluded);
+    h.handle.set_context_policy(policy);
+
+    let restricted = request().await;
+    assert_eq!(texts(&restricted), ["core", "earlier answer", "current prompt"]);
+    assert!(restricted.tools.is_empty());
+
+    h.handle.set_context_policy(ContextPolicy::default());
+    let restored = request().await;
+    assert_eq!(
+        texts(&restored),
+        [
+            "core",
+            "project rules",
+            "earlier prompt",
+            "earlier answer",
+            "current prompt"
+        ]
+    );
+    assert_eq!(restored.tools.len(), 1);
+    assert_eq!(h.handle.get_conversation().await.len(), 5);
+}
+
+#[tokio::test]
+async fn context_usage_sums_the_history_by_category() {
+    use xai_grok_sampling_types::ContextCategory;
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system(&"core ".repeat(40)),
+        ConversationItem::user(&"question ".repeat(10)),
+        ConversationItem::assistant(&"answer ".repeat(10)),
+        ConversationItem::user(&"again ".repeat(10)),
+    ]);
+    let usage = h.handle.get_context_usage().await;
+    let tokens = |category| {
+        usage
+            .iter()
+            .find(|entry| entry.category == category)
+            .map(|entry| entry.tokens)
+    };
+    assert!(tokens(ContextCategory::CoreInstructions) > tokens(ContextCategory::AssistantTurns));
+    assert!(tokens(ContextCategory::UserTurns) > tokens(ContextCategory::AssistantTurns));
+    assert_eq!(tokens(ContextCategory::Reasoning), None);
 }

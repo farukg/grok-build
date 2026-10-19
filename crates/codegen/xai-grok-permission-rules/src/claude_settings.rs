@@ -434,7 +434,7 @@ pub fn load_claude_env_with_project(cwd: &Path, project_trusted: bool) -> HashMa
 
 // Gate consumers cannot depend on the shell, so this check stays in this crate.
 
-/// True when the user marked Claude settings imported (`[claude_compat].imported` in config.toml, or the test override).
+/// True when Claude `.claude/settings.json` permissions must not be imported.
 /// Public so callers that mirror this gate elsewhere use the same check.
 pub fn is_claude_import_marked() -> bool {
     // Test escape hatch: shell tests call `refresh_marker_cache(true)`, which lives in xai-grok-shell (inaccessible from here at runtime)

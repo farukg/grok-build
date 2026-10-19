@@ -6,6 +6,46 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 use xai_grok_sampling_types::{ConversationItem, SamplingConfig};
 
+/// Token count relative to the current sampling config / tokenizer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenCount {
+    /// Last provider-reported total for the current model/window.
+    Fresh { tokens: u64 },
+    /// Last known total from a previous model/window; keep the number, do not
+    /// treat it as a measurement of the current config until the next usage.
+    Stale { tokens: u64 },
+}
+
+impl Serialize for TokenCount {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.tokens().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TokenCount {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        u64::deserialize(deserializer).map(|tokens| Self::Fresh { tokens })
+    }
+}
+
+impl TokenCount {
+    pub const fn tokens(self) -> u64 {
+        match self {
+            Self::Fresh { tokens } | Self::Stale { tokens } => tokens,
+        }
+    }
+
+    pub const fn is_stale(self) -> bool {
+        matches!(self, Self::Stale { .. })
+    }
+}
+
+impl Default for TokenCount {
+    fn default() -> Self {
+        Self::Fresh { tokens: 0 }
+    }
+}
+
 /// Canonical marker for an injected memory-context block. Shared by emitter and upsert/detection.
 /// A drift would silently break dedup and let blocks accumulate in the prompt prefix.
 /// Assumes the literal never appears in a system prompt except as an injected block.
@@ -32,8 +72,8 @@ pub struct ChatStateSnapshot {
     pub sampling_config: SamplingConfig,
     /// Current prompt index (incremented per user turn).
     pub prompt_index: usize,
-    /// Accumulated token usage.
-    pub total_tokens: u64,
+        /// Accumulated token usage.
+    pub total_tokens: TokenCount,
     /// Bytes/4 estimate of the conversation as of the last `record_token_usage`.
     /// `0` means unknown (pre-field snapshot); restore re-estimates instead.
     #[serde(default)]
@@ -173,7 +213,7 @@ mod tests {
                 ..Default::default()
             },
             prompt_index: 0,
-            total_tokens: 0,
+            total_tokens: TokenCount::Fresh { tokens: 0 },
             estimate_at_last_response: 0,
             agent_edited_paths: BTreeSet::new(),
             prompt_texts: vec![],
@@ -187,7 +227,7 @@ mod tests {
         let deserialized: ChatStateSnapshot = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(deserialized.prompt_index, 0);
-        assert_eq!(deserialized.total_tokens, 0);
+        assert_eq!(deserialized.total_tokens.tokens(), 0);
         assert!(deserialized.conversation.is_empty());
         assert!(deserialized.agent_edited_paths.is_empty());
         assert!(deserialized.last_compaction_prompt_index.is_none());
@@ -217,7 +257,7 @@ mod tests {
                 ..Default::default()
             },
             prompt_index: 5,
-            total_tokens: 1234,
+            total_tokens: TokenCount::Fresh { tokens: 1234 },
             estimate_at_last_response: 900,
             agent_edited_paths: BTreeSet::from([
                 "src/main.rs".to_string(),
@@ -234,7 +274,7 @@ mod tests {
         let deserialized: ChatStateSnapshot = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(deserialized.prompt_index, 5);
-        assert_eq!(deserialized.total_tokens, 1234);
+        assert_eq!(deserialized.total_tokens.tokens(), 1234);
         assert_eq!(deserialized.conversation.len(), 3);
         assert_eq!(deserialized.agent_edited_paths.len(), 2);
         assert_eq!(deserialized.prompt_texts.len(), 2);

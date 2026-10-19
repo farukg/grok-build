@@ -130,12 +130,15 @@ pub(crate) struct ChatState {
     pub conversation: Vec<ConversationItem>,
     /// Current sampling configuration (model, context window, etc.).
     pub sampling_config: SamplingConfig,
+    /// Categories the session sends to the model; applied to every request.
+    pub context_policy: xai_grok_sampling_types::ContextPolicy,
     /// Current prompt index (incremented per user turn).
     pub prompt_index: usize,
     /// Cached prompt texts for rewind preview.
     pub prompt_texts: Vec<String>,
-    /// Accumulated token usage.
-    pub total_tokens: u64,
+    /// Accumulated token usage (fresh after a model response; stale after a
+    /// sampling-config switch until the next usage lands).
+    pub total_tokens: crate::types::TokenCount,
     /// Timestamp when the current stream started (epoch ms).
     pub stream_start_ms: Option<i64>,
     /// Timestamp when the current turn started (epoch ms).
@@ -175,6 +178,8 @@ pub(crate) struct ChatState {
     /// Uploaded as sibling `turn_{N}` artifacts so orchestrators can discover harness subagents.
     /// Drained by `TakeHarnessTraceTurns` at the end of the user-facing turn.
     pub(super) harness_trace_turns: Vec<Vec<ConversationItem>>,
+    /// Gateway route of the latest response; cleared when the model changes (not persisted).
+    pub served_route: Option<xai_grok_sampling_types::ServedRoute>,
 }
 
 /// Tracks which conversation items belong to the current turn without cloning each push.
@@ -217,9 +222,12 @@ impl ChatState {
         Self {
             conversation,
             sampling_config,
+            context_policy: Default::default(),
             prompt_index: 0,
             prompt_texts: Vec::new(),
-            total_tokens: initial_tokens,
+            total_tokens: crate::types::TokenCount::Fresh {
+                tokens: initial_tokens,
+            },
             stream_start_ms: None,
             turn_start_ms: None,
             agent_edited_paths: BTreeSet::new(),
@@ -233,6 +241,7 @@ impl ChatState {
             turn_capture: None,
             harness_trace_buffer: Vec::new(),
             harness_trace_turns: Vec::new(),
+            served_route: None,
         }
     }
 
@@ -306,7 +315,7 @@ mod tests {
     fn new_state_has_correct_defaults() {
         let state = ChatState::new(vec![], test_sampling_config());
         assert_eq!(state.prompt_index, 0);
-        assert_eq!(state.total_tokens, 0); // empty conversation → 0
+        assert_eq!(state.total_tokens.tokens(), 0);
         assert!(state.conversation.is_empty());
         assert!(state.agent_edited_paths.is_empty());
         assert!(state.prompt_texts.is_empty());
@@ -335,7 +344,7 @@ mod tests {
             ConversationItem::tool_result("call-1", "w".repeat(4000).as_str()),
         ];
         let state = ChatState::new(items, test_sampling_config());
-        assert_eq!(state.total_tokens, 4000); // 4 * (4000/4)
+        assert_eq!(state.total_tokens.tokens(), 4000);
     }
 
     #[test]
