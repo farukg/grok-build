@@ -68,6 +68,14 @@ Copyright:  Copyright (c) 2020-present Christopher Berner;
             Copyright 2013-2019 Andreas Neuhaus (see LICENSE.md)
 
 --------------------------------------------------------------------------------
+ReScript.sublime-syntax (syntax grammar asset)
+--------------------------------------------------------------------------------
+Path:       crates/codegen/xai-grok-markdown/assets/ReScript.sublime-syntax
+License:    MIT
+License file: crates/codegen/xai-grok-markdown/assets/ReScript.sublime-syntax.LICENSE
+Upstream:   https://github.com/rescript-lang/rescript-sublime (commit 8714fabe73203d364e378d42f982019dc9ced480)
+
+--------------------------------------------------------------------------------
 End of notices for vendored third_party/ crates.
 
 Full product notices (all crates.io / git dependencies shipped with the Grok

@@ -1,0 +1,291 @@
+error: expected `;`, found keyword `if`
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:5672:22
+error[E0432]: unresolved import `session_notification::apply_child_view_session_event`
+  --> crates/codegen/xai-grok-pager/src/app/acp_handler/mod.rs:99:16
+error[E0425]: cannot find value `scrollback` in this scope
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:2218:34
+error[E0422]: cannot find struct, variant or union type `ChildLink` in this scope
+  --> crates/codegen/xai-grok-pager/src/app/acp_handler/child_observation.rs:33:26
+error[E0425]: cannot find type `AgentId` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:153:75
+error[E0425]: cannot find type `AgentId` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:168:74
+error[E0425]: cannot find type `AgentId` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:209:58
+error[E0425]: cannot find type `AgentId` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:259:33
+error[E0425]: cannot find type `AgentId` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:261:13
+error[E0425]: cannot find type `AgentId` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:273:40
+error[E0425]: cannot find value `id` in this scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/turn.rs:65:47
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:2627:38
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:2648:33
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:278:4
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:2666:40
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:2672:29
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:278:4
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:2860:74
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:278:4
+error[E0599]: no variant, associated function, or constant named `Agent` found for enum `actions::Category` in the current scope
+    --> crates/codegen/xai-grok-pager/src/actions/defaults.rs:1167:33
+error[E0599]: no variant, associated function, or constant named `Agent` found for enum `actions::Category` in the current scope
+    --> crates/codegen/xai-grok-pager/src/actions/defaults.rs:1180:33
+error[E0599]: no variant, associated function, or constant named `Agent` found for enum `actions::Category` in the current scope
+    --> crates/codegen/xai-grok-pager/src/actions/defaults.rs:1193:33
+error[E0599]: no variant, associated function, or constant named `Agent` found for enum `actions::Category` in the current scope
+    --> crates/codegen/xai-grok-pager/src/actions/defaults.rs:1206:33
+error[E0599]: no method named `intercept_root_tree_input` found for mutable reference `&mut agent_view::AgentView` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/agent_view/input.rs:949:37
+error[E0425]: cannot find function `detach_child_view_content` in this scope
+   --> crates/codegen/xai-grok-pager/src/app/subagent.rs:653:43
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-pager/src/app/subagent.rs:665:48
+   --> crates/codegen/xai-grok-pager/src/app/subagent.rs:674:4
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/workspace_sync.rs:68:10
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-pager/src/app/subagent.rs:756:31
+   --> crates/codegen/xai-grok-shell/src/session/storage/replay.rs:264:8
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:630:45
+error[E0599]: no method named `child_link_at_scrollback_row` found for mutable reference `&mut agent_view::AgentView` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/mouse.rs:714:59
+error[E0599]: no method named `a_subagent_owns_the_frame` found for mutable reference `&mut app_view::AppView` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/status_line_policy.rs:82:17
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/workspace_sync.rs:84:14
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/event_loop.rs:1003:18
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/turn.rs:531:10
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/status.rs:190:25
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/turn.rs:52:29
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs:40:20
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:78:10
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs:1755:35
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs:1131:29
+error[E0599]: no method named `try_open_child_from_selected_row` found for mutable reference `&mut agent_view::AgentView` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/agent_view/selection.rs:1149:26
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/router.rs:1642:25
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs:59:29
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs:282:29
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs:1831:35
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/queue.rs:1102:55
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1879:19
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:115:29
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs:171:48
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:212:17
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1005:19
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:227:9
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1005:19
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/session/foreign.rs:137:14
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/setters.rs:294:34
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:249:13
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1493:12
+error[E0599]: no method named `open_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/agent_view/workflows_overlay.rs:148:34
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:254:59
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1576:12
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs:67:10
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/queue.rs:1175:10
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1096:57
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/mod.rs:60:8
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1098:55
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:999:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1102:13
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/mod.rs:74:15
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs:73:58
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1545:12
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs:341:10
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs:528:33
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1207:37
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:444:29
+error[E0599]: no method named `open_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/agent_view/workflows_overlay.rs:259:38
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-pager/src/app/acp_handler/mod.rs:197:61
+   --> crates/codegen/xai-grok-shell/src/extensions/notification.rs:501:1
+   --> crates/codegen/xai-grok-pager/src/app/acp_handler/child_observation.rs:11:15
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1587:37
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1766:9
+    --> crates/codegen/xai-grok-pager/src/app/workspace_sync.rs:101:19
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1773:9
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/row.rs:116:15
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1795:17
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/row.rs:84:8
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs:75:29
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs:536:33
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/ctx.rs:88:31
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs:891:14
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs:1582:18
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:1764:14
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:2172:18
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/auth.rs:270:29
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs:90:34
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/ui.rs:887:37
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs:1346:31
+error[E0308]: mismatched types
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/settings/mod.rs:23:52
+  --> crates/codegen/xai-grok-pager/src/views/dashboard/preview.rs:27:19
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:35:76
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:999:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:53:9
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1005:19
+error[E0599]: no method named `close_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs:105:15
+error[E0599]: no method named `close_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:2751:39
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/auth.rs:330:37
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:57:58
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1493:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:67:21
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1005:19
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:2227:23
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:2402:76
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:999:12
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/acp_handler/routing.rs:71:10
+error[E0308]: mismatched types
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:88:75
+  --> crates/codegen/xai-grok-pager/src/views/dashboard/preview.rs:27:19
+error[E0277]: `&SessionViews` is not an iterator
+  --> crates/codegen/xai-grok-pager/src/app/acp_handler/routing.rs:83:24
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:90:45
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:230:4
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:196:45
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:230:4
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/session/modal.rs:17:13
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1545:12
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/acp_handler/settings.rs:24:33
+error[E0599]: no method named `close_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:2798:39
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/acp_handler/mcp.rs:218:10
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+ --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard_telemetry.rs:9:39
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/session/modal.rs:21:29
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-pager/src/app/acp_handler/session_notification.rs:600:58
+   --> crates/codegen/xai-grok-pager/src/app/session_views.rs:15:19
+error[E0599]: no method named `close_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:2830:43
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:203:10
+error[E0277]: the size for values of type `[u8]` cannot be known at compilation time
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:206:14
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/acp_handler/settings.rs:87:18
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:250:33
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:4731:57
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:4866:41
+    --> crates/codegen/xai-grok-pager/src/app/workspace_sync.rs:101:19
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:4875:37
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/render.rs:38:15
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/modes.rs:221:29
+error[E0599]: no method named `iter` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/session/modal.rs:45:10
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:269:18
+error[E0599]: no method named `values_mut` found for struct `SessionViews` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/acp_handler/settings.rs:121:33
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:408:33
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0599]: no method named `values` found for struct `SessionViews` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/app_view.rs:5594:14
+error[E0599]: no method named `keys` found for struct `SessionViews` in the current scope
+  --> crates/codegen/xai-grok-pager/src/app/dispatch/session/modal.rs:81:53
+error[E0599]: no method named `close_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:419:23
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:482:33
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:716:33
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:942:41
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1054:38
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1005:4
+error[E0599]: no method named `close_subagent_fullscreen` found for mutable reference `&mut agent_view::AgentView` in the current scope
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1065:15
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-pager/src/app/dispatch/dashboard.rs:1069:33
+    --> crates/codegen/xai-grok-pager/src/views/dashboard/state.rs:1828:12
+error[E0499]: cannot borrow `app.tip_seen_counts` as mutable more than once at a time
+   --> crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs:511:9
+error: could not compile `xai-grok-pager` (lib) due to 124 previous errors
