@@ -1,0 +1,71 @@
+name: linux-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Optional test name filter passed to the pager and chat-state test runs (the shell run defaults to 'remove')"
+        required: false
+        default: ""
+
+concurrency:
+  group: linux-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.repository == 'farukg/grok-build'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+      RUST_MIN_STACK: "16777216"
+      TEST_FILTER: ${{ inputs.filter }}
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-test
+
+      - name: Test pager
+        shell: bash
+        run: cargo test -p xai-grok-pager --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee pager-test.log; exit "${PIPESTATUS[0]}"
+
+      - name: Test shell removal paths
+        if: always()
+        shell: bash
+        run: cargo test -p xai-grok-shell --lib --locked --no-fail-fast -- "${TEST_FILTER:-remove}" 2>&1 | tee shell-test.log; exit "${PIPESTATUS[0]}"
+
+      - name: Test chat state and sampling types
+        if: always()
+        shell: bash
+        run: cargo test -p xai-chat-state -p xai-grok-sampling-types --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee types-test.log; exit "${PIPESTATUS[0]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-test-logs
+          path: |
+            pager-test.log
+            shell-test.log
+            types-test.log
+          retention-days: 14

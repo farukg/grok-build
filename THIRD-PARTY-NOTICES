@@ -16638,6 +16638,38 @@ Additional requirements / notices:
   base.
 
 
+--------------------------------------------------------------------------------
+ReScript (Sublime syntax)
+--------------------------------------------------------------------------------
+Source:  https://github.com/rescript-lang/rescript-sublime
+License: MIT
+Upstream commit: 8714fabe73203d364e378d42f982019dc9ced480
+
+Copyright notice:
+  Copyright (c) rescript-lang/rescript-sublime contributors
+
+License text: see Part II — MIT
+
+Additional requirements / notices:
+  Bundled syntax definition, unmodified:
+    crates/codegen/xai-grok-markdown/assets/ReScript.sublime-syntax
+
+
+--------------------------------------------------------------------------------
+DSL (Sublime syntax)
+--------------------------------------------------------------------------------
+Source:  dsl-core by the SIG CDSE Team (grammar/tooling/sublime/DSL.sublime-syntax)
+License: MIT
+
+Copyright notice:
+  Copyright (c) SIG CDSE Team
+
+License text: see Part II — MIT
+
+Additional requirements / notices:
+  Bundled syntax definition, unmodified:
+    crates/codegen/xai-grok-markdown/assets/DSL.sublime-syntax
+
 
 
 ================================================================================
