@@ -12,6 +12,7 @@
 static DHAT_ALLOC: dhat::Alloc = dhat::Alloc;
 
 use std::sync::Arc;
+use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 use std::time::Duration;
 
 use serde::ser::SerializeMap;
@@ -351,9 +352,7 @@ impl ChildRunner for SoakRunner {
             if !promoted || cancellation.is_cancelled() {
                 return ChildRunOutput {
                     result: SubagentResult {
-                        success: false,
-                        cancelled: true,
-                        error: Some("cancelled before start".to_owned()),
+                        state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "cancelled before start".to_owned() } },
                         subagent_id: request.id.clone(),
                         child_session_id: request.id,
                         ..Default::default()
@@ -368,7 +367,7 @@ impl ChildRunner for SoakRunner {
             }
             ChildRunOutput {
                 result: SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: Arc::from("soak child output"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id,
@@ -435,14 +434,14 @@ async fn run_cycle(backend: &ChannelBackend, i: u64) {
         .spawn(soak_request(format!("fg-{i}"), false), None)
         .await
         .expect("foreground spawn round-trips through the coordinator");
-    assert!(fg.success, "cycle {i}: foreground child must complete");
+    assert!(fg.success(), "cycle {i}: foreground child must complete");
 
     let bg_id = format!("bg-{i}");
     let bg = backend
         .spawn(soak_request(bg_id.clone(), true), None)
         .await
         .expect("background spawn round-trips through the coordinator");
-    assert!(bg.success, "cycle {i}: background child must complete");
+    assert!(bg.success(), "cycle {i}: background child must complete");
 
     let blocking = true;
     let timeout_ms = Some(5_000);
@@ -484,7 +483,7 @@ async fn concurrent_phase(backend: &ChannelBackend, gate: &tokio::sync::Semaphor
     for h in handles {
         let result = h.await.expect("concurrent spawn task");
         assert!(
-            result.expect("concurrent spawn round-trips").success,
+            result.expect("concurrent spawn round-trips").success(),
             "concurrent child must complete"
         );
     }

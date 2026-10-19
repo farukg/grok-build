@@ -1,4 +1,5 @@
 use super::active_message::tests::*;
+use crate::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 use super::tests::*;
 use super::*;
 use crate::implementations::grok_build::task::admission::{LimitBehavior, SubagentLimits};
@@ -174,7 +175,7 @@ async fn completed_wake_waits_for_terminal_publication() {
     harness.wake_runs.recv().await.expect("initial run");
     harness.started.recv().await.expect("initial start");
     let _ = harness.finish.send(());
-    assert!(spawn.await.unwrap().unwrap().success);
+    assert!(spawn.await.unwrap().unwrap().success());
     harness
         .completions
         .recv()
@@ -242,10 +243,10 @@ async fn stopped_session_refuses_parked_wake_before_publication() {
     let backend = parent_backend(&harness);
     let send = park_wake_until_terminal_publication(&mut harness, &backend).await;
 
-    assert_eq!(
-        backend.cancel_parent_session().await,
-        SubagentCancelOutcome::Cancelled
-    );
+    assert!(matches!(
+backend.cancel_parent_session().await,
+ SubagentCancelOutcome::Cancelled { .. }
+));
     assert_eq!(
         send.await.unwrap(),
         ActiveAgentMessageOutcome::NotActiveOrFinalizing
@@ -386,7 +387,7 @@ async fn complete_child(harness: &mut Harness, backend: &ChannelBackend, id: &st
     harness.wake_runs.recv().await.expect("run observed");
     assert_eq!(harness.started.recv().await.as_deref(), Some(id));
     let _ = harness.finish.send(());
-    assert!(spawn.await.unwrap().unwrap().success);
+    assert!(spawn.await.unwrap().unwrap().success());
     harness
         .completions
         .recv()
@@ -441,7 +442,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
             let _ = harness.start.send(());
             harness.started.recv().await.expect("source started");
             let _ = harness.finish.send(());
-            assert!(source.await.unwrap().unwrap().success);
+            assert!(source.await.unwrap().unwrap().success());
             harness.completions.recv().await.expect("source completion");
         }
         let _ = buffered_completions(&harness, Some("parent")).await;
@@ -483,7 +484,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
                         .await
                         .unwrap()
                         .unwrap()
-                        .success
+                        .success()
                 );
                 harness.completions.recv().await.expect("held completion");
                 harness
@@ -518,10 +519,10 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
                 let _ = harness.start.send(());
             }
             PreStartExit::Cancellation => {
-                assert_eq!(
-                    backend.cancel(CHILD_ID).await,
-                    SubagentCancelOutcome::Cancelled
-                );
+                assert!(matches!(
+backend.cancel(CHILD_ID, SubagentActor::Human, SubagentCancelDisposition::Stop).await,
+ SubagentCancelOutcome::Cancelled { .. }
+));
             }
         }
 
@@ -765,4 +766,104 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
     held.await.unwrap().unwrap();
     harness.completions.recv().await.unwrap();
     harness.actor.abort();
+}
+
+fn runner_cancelled_result(id: &str) -> SubagentResult {
+    SubagentResult::interrupted(
+        id,
+        id,
+        InterruptionCause::Error {
+            message: "Subagent was cancelled".to_owned(),
+        },
+    )
+}
+
+fn interrupt_and_finish(cause: InterruptionCause) -> TestCoordinator {
+    let (mut coordinator, _command_tx, admission_tx, _admissions) = fixture();
+    insert_child_with(
+        &mut coordinator,
+        admission_tx,
+        "child",
+        "root",
+        None,
+        SubagentOwner::Task,
+    );
+    assert!(matches!(
+        coordinator.cancel_one("child", Some("root"), cause),
+        SubagentCancelOutcome::Cancelled { .. }
+    ));
+    finish_child_with_result(&mut coordinator, "child", runner_cancelled_result("child"));
+    coordinator
+}
+
+#[tokio::test]
+async fn a_paused_child_records_who_paused_it_and_stays_wakeable() {
+    let cause = InterruptionCause::Paused {
+        actor: SubagentActor::Human,
+    };
+    let coordinator = interrupt_and_finish(cause.clone());
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(completed.result.state, SubagentState::Interrupted { cause });
+    assert!(completed.wake_eligible);
+}
+
+#[tokio::test]
+async fn a_stopped_child_records_who_stopped_it_and_cannot_be_woken() {
+    let cause = InterruptionCause::ExplicitStop {
+        actor: SubagentActor::Human,
+    };
+    let coordinator = interrupt_and_finish(cause.clone());
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(completed.result.state, SubagentState::Interrupted { cause });
+    assert!(!completed.wake_eligible);
+}
+
+#[tokio::test]
+async fn stopping_a_paused_child_ends_its_wakeability() {
+    let mut coordinator = interrupt_and_finish(InterruptionCause::Paused {
+        actor: SubagentActor::Human,
+    });
+    let stop = InterruptionCause::ExplicitStop {
+        actor: SubagentActor::Human,
+    };
+    assert!(matches!(
+        coordinator.cancel_one("child", Some("root"), stop.clone()),
+        SubagentCancelOutcome::Cancelled { .. }
+    ));
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(
+        completed.result.state,
+        SubagentState::Interrupted { cause: stop }
+    );
+    assert!(!completed.wake_eligible);
+}
+
+#[tokio::test]
+async fn a_second_cause_does_not_replace_the_first() {
+    let first = InterruptionCause::ExplicitStop {
+        actor: SubagentActor::Human,
+    };
+    let (mut coordinator, _command_tx, admission_tx, _admissions) = fixture();
+    insert_child_with(
+        &mut coordinator,
+        admission_tx,
+        "child",
+        "root",
+        None,
+        SubagentOwner::Task,
+    );
+    coordinator.cancel_one("child", Some("root"), first.clone());
+    coordinator.cancel_one(
+        "child",
+        Some("root"),
+        InterruptionCause::SessionTeardown {
+            session_id: "root".to_owned(),
+        },
+    );
+    finish_child_with_result(&mut coordinator, "child", runner_cancelled_result("child"));
+    let completed = coordinator.completed.get("child").expect("child finished");
+    assert_eq!(
+        completed.result.state,
+        SubagentState::Interrupted { cause: first }
+    );
 }

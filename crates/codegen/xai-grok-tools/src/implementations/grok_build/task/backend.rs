@@ -14,11 +14,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
-    HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest,
-    SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
+    HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest, SubagentActor,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
     SubagentDescribeRequest, SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest,
     SubagentInspectRequest, SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest,
-    SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest, SubagentResult,
+    SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest,
+    SubagentResolveResumeRequest, SubagentResult, SubagentResumeError, SubagentResumeTarget,
     SubagentSnapshot, SubagentSpawnRequest, SubagentSpawnedRefsRequest,
     SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
 };
@@ -58,8 +59,22 @@ pub trait SubagentBackend: Send + Sync + 'static {
         ActiveAgentMessageOutcome::Unsupported
     }
 
-    /// Request cancellation of a subagent by ID.
-    async fn cancel(&self, id: &str) -> SubagentCancelOutcome;
+    /// Resolve a `resume_from` reference to a subagent owned by `parent_session_id`.
+    async fn resolve_resume(
+        &self,
+        _reference: &str,
+        _parent_session_id: &str,
+    ) -> Result<SubagentResumeTarget, SubagentResumeError> {
+        Err(SubagentResumeError::CoordinatorUnavailable)
+    }
+
+    /// Stop or pause a subagent by ID on behalf of `actor`.
+    async fn cancel(
+        &self,
+        id: &str,
+        actor: SubagentActor,
+        disposition: SubagentCancelDisposition,
+    ) -> SubagentCancelOutcome;
 
     /// Validate a subagent type synchronously before spawning.
     /// Returns `CoordinatorGone` on channel close and `ValidationUnavailable`
@@ -620,14 +635,45 @@ impl SubagentBackend for ChannelBackend {
             .unwrap_or(ActiveAgentMessageOutcome::ChannelClosed)
     }
 
-    async fn cancel(&self, id: &str) -> SubagentCancelOutcome {
+    async fn resolve_resume(
+        &self,
+        reference: &str,
+        parent_session_id: &str,
+    ) -> Result<SubagentResumeTarget, SubagentResumeError> {
+        let (respond_to, response_rx) = oneshot::channel();
+        self.tx
+            .send(SubagentEvent::ResolveResume(SubagentResolveResumeRequest {
+                reference: reference.to_owned(),
+                parent_session_id: self
+                    .parent_session_id
+                    .as_deref()
+                    .unwrap_or(parent_session_id)
+                    .to_owned(),
+                respond_to,
+            }))
+            .map_err(|_| SubagentResumeError::CoordinatorUnavailable)?;
+        response_rx
+            .await
+            .unwrap_or(Err(SubagentResumeError::CoordinatorUnavailable))
+    }
+
+    async fn cancel(
+        &self,
+        id: &str,
+        actor: SubagentActor,
+        disposition: SubagentCancelDisposition,
+    ) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
         let sent = self
             .tx
             .event_sender()
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: self.parent_session_id(),
-                target: SubagentCancelTarget::SubagentId(id.to_string()),
+                target: SubagentCancelTarget::SubagentId {
+                    id: id.to_string(),
+                    actor,
+                    disposition,
+                },
                 respond_to,
             }));
         if sent.is_err() {

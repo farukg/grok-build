@@ -1,4 +1,7 @@
 use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
+use crate::implementations::grok_build::task::types::{
+    InterruptionCause, SubagentActor, SubagentCancelDisposition, SubagentState,
+};
 use super::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -106,7 +109,12 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         None
     }
 
-    async fn cancel(&self, _id: &str) -> SubagentCancelOutcome {
+    async fn cancel(
+        &self,
+        _id: &str,
+        _actor: SubagentActor,
+        _disposition: SubagentCancelDisposition,
+    ) -> SubagentCancelOutcome {
         SubagentCancelOutcome::NotFound
     }
 
@@ -150,7 +158,7 @@ async fn channel_backend_spawn_success() {
         assert_eq!(req.request.prompt, "do something");
         req.result_tx
             .send(SubagentResult {
-                success: true,
+                state: SubagentState::Completed,
                 output: Arc::from("done"),
                 subagent_id: "test-id".to_string(),
                 child_session_id: "test-id".to_string(),
@@ -183,7 +191,7 @@ async fn channel_backend_spawn_success() {
     };
 
     let result = backend.spawn(request, None).await.unwrap();
-    assert!(result.success);
+    assert!(result.success());
     assert_eq!(result.subagent_id, "test-id");
     assert_eq!(result.tool_calls, 3);
 
@@ -526,16 +534,16 @@ async fn channel_backend_cancel_success() {
     let handle = tokio::spawn(async move {
         let req = recv_event!(rx, Cancel);
         match &req.target {
-            SubagentCancelTarget::SubagentId(id) => assert_eq!(id, "sub-cancel"),
+            SubagentCancelTarget::SubagentId { id, .. } => assert_eq!(id, "sub-cancel"),
             other => panic!("Expected SubagentId, got {:?}", other),
         }
         req.respond_to
-            .send(SubagentCancelOutcome::Cancelled)
+            .send(SubagentCancelOutcome::Cancelled { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::Human } })
             .unwrap();
     });
 
-    let outcome = backend.cancel("sub-cancel").await;
-    assert!(matches!(outcome, SubagentCancelOutcome::Cancelled));
+    let outcome = backend.cancel("sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop).await;
+    assert!(matches!(outcome, SubagentCancelOutcome::Cancelled { .. }));
 
     handle.await.unwrap();
 }
@@ -547,7 +555,7 @@ async fn channel_backend_cancel_closed_channel() {
 
     let backend = ChannelBackend::new(tx);
 
-    let outcome = backend.cancel("sub-cancel").await;
+    let outcome = backend.cancel("sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop).await;
     assert!(matches!(outcome, SubagentCancelOutcome::NotFound));
 }
 

@@ -1,6 +1,7 @@
 //! Spawn admission: reparenting, duplicate checks, and the admit decision.
 
 use tokio::sync::oneshot;
+use xai_tool_types::InterruptionCause;
 
 use super::super::admission::{AdmissionDecision, AdmissionError};
 use super::super::coordinator_state::PendingChild;
@@ -43,10 +44,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .spawn_blocked_sessions
                 .contains(&request.parent_session_id)
         {
-            let _ = result_tx.send(rejected_spawn_result(
-                &request.id,
-                "parent session is stopped",
-                true,
+            let _ = result_tx.send(SubagentResult::interrupted(
+                request.id.clone(),
+                request.id.clone(),
+                InterruptionCause::SessionStopped {
+                    session_id: request.parent_session_id.clone(),
+                },
             ));
             return;
         }
@@ -56,10 +59,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             || self.completed.contains_key(&id)
             || self.queued.contains_id(&id)
         {
-            let _ = result_tx.send(rejected_spawn_result(
-                &id,
-                &format!("Subagent id '{id}' already exists"),
-                false,
+            let _ = result_tx.send(SubagentResult::failed(
+                id.clone(),
+                id.clone(),
+                format!("Subagent id '{id}' already exists"),
             ));
             return;
         }
@@ -74,10 +77,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .insert_nested(&id, &request.parent_session_id, spawner)
                     .is_err()
                 {
-                    let _ = result_tx.send(rejected_spawn_result(
-                        &id,
-                        "parent subagent lineage is unknown; refusing to spawn",
-                        true,
+                    let _ = result_tx.send(SubagentResult::interrupted(
+                        id.clone(),
+                        id.clone(),
+                        InterruptionCause::Error {
+                            message: "parent subagent lineage is unknown; refusing to spawn"
+                                .to_owned(),
+                        },
                     ));
                     return;
                 }
@@ -175,10 +181,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         if spawner.cancellation.is_cancelled() {
             // The parent subagent is being torn down, so its late child
             // would be orphaned against the closed scope.
-            return Err(rejected_spawn_result(
-                &request.id,
-                "parent subagent is being torn down",
-                true,
+            return Err(SubagentResult::interrupted(
+                request.id.clone(),
+                request.id.clone(),
+                InterruptionCause::Error {
+                    message: "parent subagent is being torn down".to_owned(),
+                },
             ));
         }
         let root_parent = spawner.request.parent_session_id.clone();
@@ -247,7 +255,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 spawn_reply,
                 foreground_deadline: None,
                 handle_only: request.run_in_background,
-                explicitly_killed: false,
                 disposition: Default::default(),
                 launched: false,
                 attempt_id: xai_message_delivery_core::AttemptId::mint(
@@ -303,11 +310,3 @@ pub(super) enum BackgroundStartAck {
     Hold,
 }
 
-/// A spawn refused before it ever became a child record.
-fn rejected_spawn_result(id: &str, error: &str, cancelled: bool) -> SubagentResult {
-    if cancelled {
-        SubagentResult::cancelled(id, id, error)
-    } else {
-        SubagentResult::failed(id, id, error)
-    }
-}
