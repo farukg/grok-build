@@ -134,13 +134,13 @@ pub(in crate::app::dispatch) fn handle_session_list_loaded(
     if dashboard_request && app.workspace_dashboard_enabled {
         let live_by_session = app
             .agents
-            .iter()
+            .roots()
             .filter_map(|(agent_id, agent)| {
                 agent
                     .session
                     .session_id
                     .as_ref()
-                    .map(|session_id| (session_id.0.as_ref(), (*agent_id, agent)))
+                    .map(|session_id| (session_id.0.as_ref(), (agent_id, agent)))
             })
             .collect::<std::collections::HashMap<_, _>>();
         let workspace = app.workspace_membership.view();

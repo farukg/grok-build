@@ -60,6 +60,11 @@ const THEME_CHOICES: &[EnumChoice] = &[
         description: "Deep dark with warm accents; needs truecolor.",
     },
     EnumChoice {
+        canonical: "color-dna",
+        display: "Color DNA",
+        description: "Faruk color DNA (generated palette); needs truecolor.",
+    },
+    EnumChoice {
         canonical: "terminal",
         display: "Terminal",
         description: "Terminal's own background and text colors.",
@@ -445,6 +450,11 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
+    },
+    EnumChoice {
+        canonical: "color-dna",
+        display: "Color DNA",
+        description: "Faruk color DNA (generated palette); needs truecolor.",
     },
     EnumChoice {
         canonical: "terminal",
@@ -963,6 +973,19 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 default: ui_default.prompt_suggestions.unwrap_or(true),
             },
             restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "system_reminders",
+            category: SettingCategory::Editor,
+            owner: SettingOwner::Shell,
+            label: "Tool-output reminders",
+            description: "Append optional contextual reminders to tool results sent to the model.",
+            keywords: &["reminders", "system", "context", "tools"],
+            kind: SettingKind::Bool {
+                default: ui_default.system_reminders_enabled(),
+            },
+            restart_required: true,
             hidden_in_minimal: false,
         },
         // PAGER-owned, persisted to `[scrollback.scroll].respect_manual_folds` in pager.toml (NOT config.toml)

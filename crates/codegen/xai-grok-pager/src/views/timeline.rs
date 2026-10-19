@@ -10,8 +10,8 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::app::agent_view::ViewSurface;
 use crate::theme::Theme;
+use crate::views::timeline_panel::TimelineMode;
 
 /// Columns reserved for the rail (widest tick).
 pub const RAIL_WIDTH: u16 = 2;
@@ -56,16 +56,19 @@ pub enum TimelineHit {
     Down,
 }
 
-/// Columns to reserve for the rail this frame: the single eligibility policy (setting, view kind, terminal width, turn count).
+/// Columns to reserve for the timeline column this frame: the single eligibility policy (setting, view kind, terminal width, turn count).
+/// The expanded panel lives in its own left column and takes none.
 /// Geometry feasibility (enough rows) stays in [`compute_rail`].
 pub(crate) fn rail_width(
     show_timeline: bool,
-    surface: ViewSurface,
+    mode: &TimelineMode,
     area_width: u16,
     turn_count: usize,
 ) -> u16 {
+    if matches!(mode, TimelineMode::Expanded(_)) {
+        return 0;
+    }
     if show_timeline
-        && surface == ViewSurface::Root
         && area_width >= MIN_TERMINAL_WIDTH
         && turn_count >= MIN_TURNS
     {
@@ -509,15 +512,22 @@ mod tests {
 
     #[test]
     fn rail_width_gates_eligibility() {
+        let rail = TimelineMode::Rail;
         // All conditions met reserves the rail columns
-        assert_eq!(RAIL_WIDTH, rail_width(true, ViewSurface::Root, 80, 5));
-        // Setting off / child surface / narrow terminal / too few turns.
-        assert_eq!(0, rail_width(false, ViewSurface::Root, 80, 5));
-        assert_eq!(0, rail_width(true, ViewSurface::ChildTakeover, 80, 5));
-        assert_eq!(
-            0,
-            rail_width(true, ViewSurface::Root, MIN_TERMINAL_WIDTH - 1, 5)
+        assert_eq!(RAIL_WIDTH, rail_width(true, &rail, 80, 5));
+        assert_eq!(0, rail_width(false, &rail, 80, 5));
+        assert_eq!(0, rail_width(true, &rail, MIN_TERMINAL_WIDTH - 1, 5));
+        assert_eq!(0, rail_width(true, &rail, 80, 1));
+    }
+
+    #[test]
+    fn expanded_mode_takes_no_center_columns() {
+        let panel = TimelineMode::Expanded(
+            crate::views::timeline_panel::TimelinePanelState::open(
+                &crate::scrollback::state::ScrollbackState::new(),
+                None,
+            ),
         );
-        assert_eq!(0, rail_width(true, ViewSurface::Root, 80, 1));
+        assert_eq!(0, rail_width(true, &panel, 120, 5));
     }
 }

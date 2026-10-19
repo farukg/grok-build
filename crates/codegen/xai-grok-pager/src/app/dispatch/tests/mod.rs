@@ -37,7 +37,7 @@ use super::dashboard::{
     dispatch_dashboard_commit_rename, dispatch_dashboard_confirm_worktree,
     dispatch_dashboard_create_new_agent_with_detail, dispatch_dashboard_delete,
     dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
-    dispatch_dashboard_overlay_cycle, dispatch_dashboard_overlay_exit,
+    dispatch_dashboard_overlay_exit, dispatch_session_cycle,
     dispatch_dashboard_overlay_stop, dispatch_dashboard_peek_reply,
     dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
     dispatch_dashboard_question_answer, dispatch_dashboard_stop,
@@ -80,7 +80,6 @@ use crate::scrollback::blocks::{SessionEvent, ToolCallBlock};
 use crate::scrollback::state::ScrollbackState;
 use crate::views::session_picker_surface::SessionPickerHost;
 use agent_client_protocol as acp;
-use indexmap::IndexMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -90,7 +89,7 @@ fn test_app() -> AppView {
         pending_startup: None,
         active_view: ActiveView::Welcome,
         auth_return_view: None,
-        agents: IndexMap::new(),
+        agents: crate::app::session_views::SessionViews::new(),
         next_agent_id: 0,
         models: ModelState::default(),
         registry: crate::actions::ActionRegistry::defaults(),
@@ -135,6 +134,7 @@ fn test_app() -> AppView {
         plan_mode: false,
         chat_mode: false,
         post_turn_plan_review: false,
+        panel_settings_root: None,
         #[cfg(feature = "local-workspace")]
         welcome_workspace_mode: crate::views::welcome::WelcomeWorkspaceMode::Sandbox,
         #[cfg(feature = "local-workspace")]
@@ -324,11 +324,15 @@ fn test_app() -> AppView {
         cancel_rewind_enabled: true,
         session_recap_available: false,
         shell_feedback_trace_offer: false,
+        shell_child_support: crate::acp::ShellChildSupport::FirstClass,
+        follow_resumed_child: None,
         feedback_trace_choice_latched: false,
         tutorial: None,
         dashboard: None,
         dashboard_return: None,
         dashboard_persisted: None,
+        session_cycle: Default::default(),
+        dismissed_sessions: Default::default(),
         keyboard_normalizer: crate::input::KeyboardNormalizer::from_terminal_context(),
         has_claude_import: false,
         voice_mode_enabled: false,
@@ -439,11 +443,10 @@ fn make_test_subagent(child_sid: &str, sa_id: &str) -> crate::app::subagent::Sub
             persona: None,
             role: None,
             model: None,
-            context_source: None,
+            context: xai_grok_shell::extensions::subagent_context::SubagentContext::Unreported,
             resumed_from: None,
             capability_mode: None,
             workflow_run_id: None,
-            context_normalized: false,
             parent_prompt_id: None,
             started_at: now,
             last_progress_at: now,
@@ -460,6 +463,7 @@ fn make_test_subagent(child_sid: &str, sa_id: &str) -> crate::app::subagent::Sub
             tools_used: Vec::new(),
             error_count: None,
             activity_label: None,
+            delivery: Default::default(),
             is_background: false,
             pending_kill: false,
             kill_requested_at: None,

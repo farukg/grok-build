@@ -21,6 +21,173 @@ use super::types::{
     Selectable, SelectionBoundaries, derive_selection_text,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum MessageKind {
+    UserPrompt,
+    AgentMessage,
+    Execute,
+    Read,
+    Edit,
+    ListDir,
+    Search,
+    WebFetch,
+    WebSearch,
+    IntegrationSearch,
+    UseTool,
+    MemorySearch,
+    SentMessage,
+    Skill,
+    OtherTool,
+    Thinking,
+    System,
+    SessionEvent,
+    BgTask,
+    Subagent,
+    Workflow,
+    Btw,
+    ContextInfo,
+    MemoryCapture,
+    Stub,
+}
+
+impl From<&RenderBlock> for MessageKind {
+    fn from(block: &RenderBlock) -> Self {
+        match block {
+            RenderBlock::Stub(_) => Self::Stub,
+            RenderBlock::UserPrompt(_) => Self::UserPrompt,
+            RenderBlock::AgentMessage(_) => Self::AgentMessage,
+            RenderBlock::ToolCall(tool) => match tool {
+                ToolCallBlock::Execute(_) => Self::Execute,
+                ToolCallBlock::Read(_) => Self::Read,
+                ToolCallBlock::Edit(_) => Self::Edit,
+                ToolCallBlock::ListDir(_) => Self::ListDir,
+                ToolCallBlock::Search(_) => Self::Search,
+                ToolCallBlock::WebFetch(_) => Self::WebFetch,
+                ToolCallBlock::WebSearch(_) => Self::WebSearch,
+                ToolCallBlock::IntegrationSearch(_) => Self::IntegrationSearch,
+                ToolCallBlock::UseTool(_) => Self::UseTool,
+                ToolCallBlock::MemorySearch(_) => Self::MemorySearch,
+                ToolCallBlock::SentMessage(_) => Self::SentMessage,
+                ToolCallBlock::Skill(_) => Self::Skill,
+                ToolCallBlock::Other(_) => Self::OtherTool,
+            },
+            RenderBlock::Thinking(_) => Self::Thinking,
+            RenderBlock::System(_) => Self::System,
+            RenderBlock::SessionEvent(_) => Self::SessionEvent,
+            RenderBlock::BgTask(_) => Self::BgTask,
+            RenderBlock::Subagent(_) => Self::Subagent,
+            RenderBlock::Workflow(_) => Self::Workflow,
+            RenderBlock::Btw(_) => Self::Btw,
+            RenderBlock::ContextInfo(_) => Self::ContextInfo,
+            RenderBlock::MemoryCapture(_) => Self::MemoryCapture,
+        }
+    }
+}
+
+impl MessageKind {
+    pub fn settings_kinds() -> &'static [Self] {
+        &[
+            Self::UserPrompt,
+            Self::AgentMessage,
+            Self::Execute,
+            Self::Read,
+            Self::Edit,
+            Self::ListDir,
+            Self::Search,
+            Self::WebFetch,
+            Self::WebSearch,
+            Self::IntegrationSearch,
+            Self::UseTool,
+            Self::MemorySearch,
+            Self::SentMessage,
+            Self::Skill,
+            Self::OtherTool,
+            Self::Thinking,
+            Self::System,
+            Self::SessionEvent,
+            Self::BgTask,
+            Self::Subagent,
+            Self::Workflow,
+            Self::Btw,
+            Self::ContextInfo,
+            Self::MemoryCapture,
+        ]
+    }
+
+    /// The form blocks of this kind start in until the user picks one; only settings rows show it.
+    pub fn starting_form(self) -> super::types::DisplayForm {
+        use super::types::DisplayForm;
+        match self {
+            Self::AgentMessage
+            | Self::System
+            | Self::SessionEvent
+            | Self::ContextInfo
+            | Self::MemoryCapture
+            | Self::Stub => DisplayForm::Expanded,
+            Self::UserPrompt
+            | Self::Execute
+            | Self::Read
+            | Self::Edit
+            | Self::ListDir
+            | Self::Search
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::IntegrationSearch
+            | Self::UseTool
+            | Self::MemorySearch
+            | Self::SentMessage
+            | Self::Skill
+            | Self::OtherTool
+            | Self::Thinking
+            | Self::BgTask
+            | Self::Subagent
+            | Self::Workflow
+            | Self::Btw => DisplayForm::Collapsed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EntryForm {
+    FollowingKind,
+    Override(super::types::DisplayForm),
+}
+
+/// Kind defaults the user chose; a kind without one keeps its block's own display policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DisplayDefaults {
+    forms: Vec<(MessageKind, super::types::DisplayForm)>,
+}
+
+impl DisplayDefaults {
+    pub fn get(&self, kind: MessageKind) -> Option<super::types::DisplayForm> {
+        self.forms
+            .iter()
+            .find_map(|(candidate, form)| (*candidate == kind).then_some(*form))
+    }
+
+    /// What a settings row shows: the user's choice, else the form the kind starts in.
+    pub fn shown(&self, kind: MessageKind) -> super::types::DisplayForm {
+        self.get(kind).unwrap_or_else(|| kind.starting_form())
+    }
+
+    pub fn set(&mut self, kind: MessageKind, form: super::types::DisplayForm) {
+        match self
+            .forms
+            .iter_mut()
+            .find(|(candidate, _)| *candidate == kind)
+        {
+            Some((_, current)) => *current = form,
+            None => self.forms.push((kind, form)),
+        }
+    }
+
+    pub fn remove(&mut self, kind: MessageKind) {
+        self.forms.retain(|(candidate, _)| *candidate != kind);
+    }
+}
+
+
 /// The trailing inline image anchored within a block's rendered output. Mermaid diagrams do not use this path; they
 /// render as a code block plus a text affordance row instead.
 #[derive(Debug, Clone)]
@@ -403,6 +570,9 @@ impl RenderBlock {
 impl BlockContent for RenderBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let mut output = delegate_block!(self, output(ctx));
+        if ctx.mode == DisplayMode::Collapsed && output.lines.len() > 1 {
+            output.lines.truncate(1);
+        }
         if delegate_block!(self, has_bullet(ctx)) {
             let bullet = delegate_block!(self, bullet(ctx));
             prepend_bullet(&mut output, ctx, bullet);
@@ -1446,6 +1616,7 @@ mod searchable_text_tests {
     fn context_info_indexes_model_only() {
         let snapshot = ContextInfo {
             used: 100,
+            used_stale: false,
             total: 1_000,
             system_prompt_tokens: 10,
             tool_definitions_count: 1,

@@ -241,7 +241,7 @@
 
     #[test]
     fn task_backgrounded_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
         let notif =
             make_task_backgrounded_notif("child-sess", "tc-child-1", "task-child-1", "sleep 100");
         let changed = handle_task_backgrounded(&notif, &mut app);
@@ -256,7 +256,7 @@
         );
 
         // Child view must have the bg task.
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(child.scrollback.len(), 1);
         assert!(child.session.bg_tasks.contains_key("task-child-1"));
         assert!(
@@ -279,7 +279,7 @@
         assert_eq!(agent.scrollback.len(), 1);
         assert!(agent.session.bg_tasks.contains_key("task-root-1"));
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(
             child.scrollback.len(),
             0,
@@ -386,7 +386,7 @@
 
     #[test]
     fn task_completed_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
 
         // First, background a task on the child.
         let bg_notif =
@@ -406,7 +406,7 @@
         );
 
         // Child must have both the started and completed blocks.
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(child.scrollback.len(), 2, "child: started + completed");
         let bg = child.session.bg_tasks.get("task-child-2").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Done));
@@ -433,7 +433,7 @@
         let bg = agent.session.bg_tasks.get("task-root-2").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Done));
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(
             child.scrollback.len(),
             0,
@@ -443,7 +443,7 @@
 
     #[test]
     fn task_completed_failure_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
 
         let bg_notif = make_task_backgrounded_notif("child-sess", "tc-fail", "task-fail", "exit 1");
         handle_task_backgrounded(&bg_notif, &mut app);
@@ -459,7 +459,7 @@
             "parent scrollback must not have failure block"
         );
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert_eq!(child.scrollback.len(), 2, "child: started + failed");
         let bg = child.session.bg_tasks.get("task-fail").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Failed));
@@ -468,7 +468,7 @@
 
     #[test]
     fn monitor_event_routes_to_child_session() {
-        let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
+        let mut app = make_app_viewing_child("parent-sess", "child-sess");
 
         // Background a task on the child so monitor event has somewhere to land.
         let bg_notif =
@@ -485,7 +485,7 @@
             "parent must not have the bg task"
         );
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         let task = child.session.bg_tasks.get("task-child-3").unwrap();
         assert_eq!(task.stdout, "new log line");
     }
@@ -507,7 +507,7 @@
         let task = agent.session.bg_tasks.get("task-root-3").unwrap();
         assert_eq!(task.stdout, "root event");
 
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert!(
             child.session.bg_tasks.is_empty(),
             "child must not have the bg task"
@@ -519,13 +519,13 @@
         let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
         // Insert a second agent and switch to it so the first agent is inactive.
         let other = make_agent(Some("other-sess"));
-        app.agents.insert(AgentId(1), other);
+        app.agents.insert(AgentId(2), other);
         crate::app::dispatch::switch_to_agent(
             &mut app,
-            AgentId(1),
+            AgentId(2),
             crate::app::dispatch::SwitchCause::New,
         );
-        assert!(matches!(app.active_view, ActiveView::Agent(AgentId(1))));
+        assert!(matches!(app.active_view, ActiveView::Agent(AgentId(2))));
 
         let notif =
             make_task_backgrounded_notif("child-sess", "tc-bg-inact", "task-bg-inact", "sleep 1");
@@ -535,7 +535,7 @@
 
         // But the bg task state must still land in the child view.
         let agent = app.agents.get(&AgentId(0)).unwrap();
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         assert!(child.session.bg_tasks.contains_key("task-bg-inact"));
         assert_eq!(child.scrollback.len(), 1);
     }
@@ -555,10 +555,10 @@
 
         // Now switch away.
         let other = make_agent(Some("other-sess"));
-        app.agents.insert(AgentId(1), other);
+        app.agents.insert(AgentId(2), other);
         crate::app::dispatch::switch_to_agent(
             &mut app,
-            AgentId(1),
+            AgentId(2),
             crate::app::dispatch::SwitchCause::New,
         );
 
@@ -567,7 +567,7 @@
         assert!(!changed);
 
         let agent = app.agents.get(&AgentId(0)).unwrap();
-        let child = agent.subagent_views.get("child-sess").unwrap();
+        let child = test_subagent(&app, "child-sess");
         let bg = child.session.bg_tasks.get("task-compl-inact").unwrap();
         assert!(matches!(bg.status, BgTaskStatus::Done));
         assert_eq!(child.scrollback.len(), 2);

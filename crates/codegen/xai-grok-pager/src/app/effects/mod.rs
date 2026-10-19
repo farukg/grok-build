@@ -2,9 +2,11 @@
 //! This module takes [`Effect`] values produced by [`super::dispatch`] and spawns them as async tasks on a [`JoinSet`].
 //! When tasks complete, the event loop converts their output into [`TaskResult`] and feeds it back through dispatch.
 mod helpers;
+mod remove_context_items;
 mod session_list;
 use super::actions;
 use super::worktree_session;
+use crate::app::agent_view::PromptTarget;
 #[allow(unused_imports)]
 use super::{agent, dispatch};
 pub use helpers::CompactError;
@@ -1265,6 +1267,7 @@ pub(crate) fn execute(
             text,
             prompt_id,
             skill_token_ranges,
+            target,
         } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1286,7 +1289,7 @@ pub(crate) fn execute(
                     let prompt = vec![plain_prompt_content_block(text, &skill_token_ranges)];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode)
+                            prompt_request_meta(&prompt_id, screen_mode, &target)
                                 .as_object()
                                 .cloned(),
                         );
@@ -1324,6 +1327,7 @@ pub(crate) fn execute(
             prompt_id,
             plan_file_content,
             plan_file_uri,
+            target,
         } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1331,7 +1335,7 @@ pub(crate) fn execute(
             tasks
                 .spawn(async move {
                     let prompt = vec![acp::ContentBlock::Text(acp::TextContent::new(String::new()))];
-                    let mut meta = prompt_request_meta(&prompt_id, screen_mode);
+                    let mut meta = prompt_request_meta(&prompt_id, screen_mode, &target);
                     if let Some(map) = meta.as_object_mut() {
                         let mut execute_plan = serde_json::Map::new();
                         execute_plan
@@ -1370,8 +1374,8 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SendPromptBlocks { agent_id, session_id, blocks, prompt_id }
-        | Effect::SendPromptNow { agent_id, session_id, blocks, prompt_id } => {
+        Effect::SendPromptBlocks { agent_id, session_id, blocks, prompt_id, target }
+        | Effect::SendPromptNow { agent_id, session_id, blocks, prompt_id, target } => {
             let send_now = effect_is_send_now;
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1390,7 +1394,7 @@ pub(crate) fn execute(
                         ),
                     );
                     let send_start = std::time::Instant::now();
-                    let mut meta = prompt_request_meta(&prompt_id, screen_mode);
+                    let mut meta = prompt_request_meta(&prompt_id, screen_mode, &target);
                     if send_now && let Some(map) = meta.as_object_mut() {
                         map.insert("sendNow".into(), serde_json::Value::Bool(true));
                     }
@@ -1434,7 +1438,7 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SendBashCommand { agent_id, session_id, command, prompt_id } => {
+        Effect::SendBashCommand { agent_id, session_id, command, prompt_id, target } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
             let is_api_key_auth = session_flags.is_api_key_auth;
@@ -1464,7 +1468,7 @@ pub(crate) fn execute(
                 )];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode)
+                            prompt_request_meta(&prompt_id, screen_mode, &target)
                                 .as_object()
                                 .cloned(),
                         );
@@ -1712,6 +1716,7 @@ pub(crate) fn execute(
             text,
             prompt_id,
             skill_token_ranges,
+            target,
         } => {
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
@@ -1733,7 +1738,7 @@ pub(crate) fn execute(
                     let prompt = vec![plain_prompt_content_block(text, &skill_token_ranges)];
                     let req = acp::PromptRequest::new(session_id.clone(), prompt)
                         .meta(
-                            prompt_request_meta(&prompt_id, screen_mode)
+                            prompt_request_meta(&prompt_id, screen_mode, &target)
                                 .as_object()
                                 .cloned(),
                         );
@@ -1879,6 +1884,92 @@ pub(crate) fn execute(
                         attempt_id,
                         outcome,
                     }
+                });
+        }
+        Effect::ResumeSubagent { session_id, subagent_id, prompt } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let params = xai_grok_shell::extensions::subagent_resume::ResumeSubagentRequest {
+                        session_id: session_id.0.to_string(),
+                        subagent_id: subagent_id.clone(),
+                        prompt,
+                    };
+                    let outcome = match serde_json::value::to_raw_value(&params) {
+                        Ok(raw) => {
+                            let req = acp::ExtRequest::new("x.ai/subagent/resume", raw.into());
+                            match acp_send(req, &tx).await {
+                                Ok(resp) => parse_ext_outcome(resp.0.get()),
+                                Err(e) => {
+                                    tracing::warn!("Failed to resume subagent: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to encode subagent resume: {e}");
+                            None
+                        }
+                    };
+                    TaskResult::ResumeSubagentComplete { subagent_id, outcome }
+                });
+        }
+        Effect::ContextPolicy {
+            agent_id,
+            session_id,
+            change,
+        } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                use xai_grok_shell::extensions::context_policy::{
+                    ContextPolicyAction, ContextPolicyReport, ContextPolicyRequest,
+                };
+                let action = match change {
+                    actions::ContextPolicyChange::Read => ContextPolicyAction::Get,
+                    actions::ContextPolicyChange::Replace(policy) => ContextPolicyAction::Set { policy },
+                };
+                let request = ContextPolicyRequest {
+                    session_id: session_id.0.to_string(),
+                    action,
+                };
+                let result = match serde_json::value::to_raw_value(&request) {
+                    Ok(raw) => {
+                        let req = acp::ExtRequest::new("x.ai/session/context_policy", raw.into());
+                        match acp_send(req, &tx).await {
+                            Ok(resp) => serde_json::from_str::<ContextPolicyReport>(resp.0.get())
+                                .map_err(|error| error.to_string()),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                    Err(error) => Err(error.to_string()),
+                };
+                TaskResult::ContextPolicyAnswered { agent_id, result }
+            });
+        }
+        Effect::DeliverSubagent { child_session_id } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let params = xai_grok_shell::extensions::subagent_deliver::DeliverSubagentRequest {
+                        session_id: child_session_id.0.to_string(),
+                    };
+                    let outcome = match serde_json::value::to_raw_value(&params) {
+                        Ok(raw) => {
+                            let req = acp::ExtRequest::new("x.ai/subagent/deliver", raw.into());
+                            match acp_send(req, &tx).await {
+                                Ok(resp) => parse_ext_outcome(resp.0.get()),
+                                Err(e) => {
+                                    tracing::warn!("Failed to deliver subagent: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to encode subagent deliver: {e}");
+                            None
+                        }
+                    };
+                    TaskResult::DeliverSubagentComplete { outcome }
                 });
         }
         Effect::DeleteScheduledTask { session_id, task_id } => {
@@ -4658,6 +4749,12 @@ pub(crate) fn execute(
                     cancel_then_fetch_rewind_points(&tx, agent_id, session_id).await
                 });
         }
+        Effect::RemoveContextItems { session_id, items } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                remove_context_items::remove_context_items(session_id, items, &tx).await
+            });
+        }
         Effect::RewindExecute { agent_id, session_id, target_prompt_index } => {
             let tx = acp_tx.clone();
             tasks
@@ -5317,6 +5414,9 @@ fn session_info_fields(
         show_resolved_model,
     );
     push("Model", model_display.to_string(), true);
+    if let Some(route) = &info.data.served_route {
+        push("Served", route.detail().to_string(), true);
+    }
     if info.data.show_model_fingerprint
         && let Some(fp) = info.data.model_fingerprint.as_deref()
     {
@@ -5407,9 +5507,16 @@ fn plain_prompt_content_block(
 fn prompt_request_meta(
     prompt_id: &str,
     screen_mode: Option<&'static str>,
+    target: &PromptTarget,
 ) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("promptId".into(), serde_json::Value::String(prompt_id.into()));
+    match target {
+        PromptTarget::Session => {}
+        PromptTarget::ChildOf(parent) => {
+            map.insert("childOf".into(), serde_json::Value::String(parent.0.to_string()));
+        }
+    }
     if let Some(mode) = screen_mode {
         map.insert("screenMode".into(), serde_json::Value::String(mode.into()));
     }

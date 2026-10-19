@@ -15,6 +15,16 @@ use crate::views::tasks_pane::TaskEntryId;
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+/// The dock is hosted in the F7 sidebar: open it and let the shell "answer" so the frame paints.
+fn open_dock_sidebar(agent: &mut AgentView) {
+    let _ = agent.handle_input(
+        &Event::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::F(7),
+            KeyModifiers::NONE,
+        )),
+        &ActionRegistry::defaults(),
+    );
+}
 fn cell_symbol(buf: &Buffer, x: u16, y: u16) -> String {
     buf.cell((x, y))
         .map(|c| c.symbol().to_string())
@@ -197,17 +207,14 @@ fn insert_running_subagent(agent: &mut AgentView, child_session_id: &str) {
     agent
         .subagent_sessions
         .insert(child_session_id.to_string(), info);
-    agent.insert_test_child(
-        child_session_id.to_string(),
-        Box::new(super::test_fixtures::make_agent()),
-    );
 }
 /// Dock subagent row: hovering reveals `[↗][stop]`; the painted `[stop]` must
-/// kill the subagent and the painted `[↗]` must open it fullscreen.
+/// kill the subagent and the painted `[↗]` must open its session view.
 #[test]
 fn dock_subagent_icons_hover_and_click_where_painted() {
     crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
+    open_dock_sidebar(&mut agent);
     insert_running_subagent(&mut agent, "child-1");
     let area = Rect::new(0, 0, 80, 30);
     let buf = draw_frame(&mut agent, area);
@@ -259,13 +266,8 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
         row_y,
     ));
     assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "clicking the painted [↗] must open the subagent, got {outcome:?}"
-    );
-    assert_eq!(
-        agent.active_subagent.as_deref(),
-        Some("child-1"),
-        "the [↗] click must open the subagent fullscreen"
+        matches!(outcome, InputOutcome::Action(Action::OpenSession(ref sid)) if sid == "child-1"),
+        "clicking the painted [↗] must open the subagent's session, got {outcome:?}"
     );
 }
 /// Dock (remote `dock_enabled`): hovering a task row reveals `[↗][stop]`;
@@ -274,6 +276,7 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
 fn dock_icons_hover_and_click_where_painted() {
     crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
+    open_dock_sidebar(&mut agent);
     insert_running_task(&mut agent, "bg-1");
     let area = Rect::new(0, 0, 80, 30);
     let buf = draw_frame(&mut agent, area);
@@ -288,7 +291,7 @@ fn dock_icons_hover_and_click_where_painted() {
             text.contains("sleep 5")
         })
         .expect("dock task row painted");
-    let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, area.x + 5, row_y));
+    let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, dock.x + 5, row_y));
     let buf = draw_frame(&mut agent, area);
     let row: String = (0..area.width)
         .map(|x| cell_symbol(&buf, x, row_y))
@@ -347,6 +350,7 @@ fn dock_row_has_tasks(buf: &Buffer, dock: Rect) -> bool {
 fn ctrl_g_hides_and_shows_painted_dock() {
     crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
+    open_dock_sidebar(&mut agent);
     insert_running_task(&mut agent, "bg-1");
     let area = Rect::new(0, 0, 80, 30);
     let registry = ActionRegistry::defaults();
@@ -373,4 +377,29 @@ fn ctrl_g_hides_and_shows_painted_dock() {
     let buf = draw_frame(&mut agent, area);
     assert!(agent.dock_shown && !agent.dock_hidden);
     assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
+}
+#[test]
+fn dock_lives_in_the_f7_column_and_goes_with_it() {
+    crate::views::dock::set_enabled_for_test(true);
+    let mut agent = make_agent();
+    insert_running_task(&mut agent, "bg-1");
+    let area = Rect::new(0, 0, 160, 30);
+    let text_of = |buf: &Buffer| -> String {
+        (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| cell_symbol(buf, x, y))
+            .collect()
+    };
+
+    let closed = draw_frame(&mut agent, area);
+    assert!(!agent.dock_shown, "the dock is invisible while F7 is closed");
+    assert!(!text_of(&closed).contains("Run sleep 5"));
+
+    open_dock_sidebar(&mut agent);
+    let open = draw_frame(&mut agent, area);
+    assert!(agent.dock_shown);
+    let dock = agent.pane_areas.dock;
+    assert!(dock.x >= area.width * 6 / 10, "the dock is in the right column: {dock:?}");
+    assert!(dock.right() <= area.width);
+    assert!(text_of(&open).contains("Run sleep 5"));
 }

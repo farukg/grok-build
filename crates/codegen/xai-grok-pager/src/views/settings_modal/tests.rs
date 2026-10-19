@@ -708,6 +708,7 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             "multiline_mode",
             // SHELL-owned prompt_suggestions (Editor; tab autocomplete ghost text, live cache)
             "prompt_suggestions",
+            "system_reminders",
             // voice_keybind_enabled, voice_capture_mode, and voice_stt_language hidden when the voice gate is off
             // SHELL-owned permission_mode (Agent category).
             "permission_mode",
@@ -6760,6 +6761,7 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         crate::theme::ThemeKind::RosePineMoon => crate::theme::Theme::rosepine_moon(),
         // Resolved via `Theme::current()` rather than a constructor because `theme::oscura` is a private module
         crate::theme::ThemeKind::OscuraMidnight => crate::theme::Theme::current(),
+        crate::theme::ThemeKind::ColorDna => crate::theme::Theme::current(),
         // Both bg tokens are Reset (bandless palette), so the two-tone
         // assertion below does not apply — the preview reads via the
         // underline cue instead.

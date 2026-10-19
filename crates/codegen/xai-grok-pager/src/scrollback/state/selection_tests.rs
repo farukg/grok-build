@@ -586,6 +586,89 @@ fn test_respect_manual_folds_off_keeps_old_fold_follow_contract() {
     assert!(h.is_preserve(), "flag off: preserve restored");
 }
 
+/// Expanding a block whose header sits on the viewport's last row scrolls its body into view.
+/// The header stays visible: a short body shows whole, a tall block lands its header on the top row. Collapse keeps the offset.
+#[test]
+fn expand_scrolls_revealed_body_into_view_keeping_header_visible() {
+    crate::appearance::cache::set_group_tool_verbs(false);
+    const VIEWPORT: u16 = 12;
+    let last_row = i64::from(VIEWPORT) - 1;
+
+    let screen_span = |h: &ScrollTestHarness, idx: usize| -> (i64, i64) {
+        let cache = h.state.layout_cache.as_ref().expect("layout cache");
+        let top = at(&cache.virtual_y, idx) as i64 - h.scroll_offset() as i64;
+        let height = i64::from(cache.entries.get(idx).expect("entry layout").height);
+        (top, height)
+    };
+    let header_on_last_row = |output_lines: usize| -> (ScrollTestHarness, usize) {
+        let mut h = ScrollTestHarness::new(80, VIEWPORT);
+        for i in 0..30 {
+            h.push_agent(&format!("filler {i}"));
+        }
+        let output = (0..output_lines)
+            .map(|i| format!("out {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        h.state.push_block(RenderBlock::execute_with_output(
+            "cargo test",
+            output,
+            None::<String>,
+        ));
+        let idx = h.state.len() - 1;
+        for i in 0..30 {
+            h.push_agent(&format!("after {i}"));
+        }
+        // Measures the block's neighbourhood exactly, so the offsets below don't drift on the next settle
+        h.state.scroll_to_entry_top(idx);
+        h.frame();
+        let header_y = h.scroll_offset();
+        h.state.set_scroll_offset(header_y - last_row as usize);
+        h.frame();
+        assert_eq!(
+            screen_span(&h, idx).0,
+            last_row,
+            "header starts on the last row"
+        );
+        h.select(idx);
+        (h, idx)
+    };
+
+    let (mut h, idx) = header_on_last_row(3);
+    h.toggle_fold();
+    h.frame();
+    let (top, height) = screen_span(&h, idx);
+    assert!(height > 1, "expansion revealed body rows");
+    assert!(top >= 0, "header stays visible (row {top})");
+    assert!(
+        top + height <= i64::from(VIEWPORT),
+        "whole short block visible (rows {top}..{})",
+        top + height
+    );
+
+    let (mut h, idx) = header_on_last_row(40);
+    h.toggle_fold();
+    h.frame();
+    let (top, height) = screen_span(&h, idx);
+    assert!(
+        height > i64::from(VIEWPORT),
+        "block taller than the viewport"
+    );
+    assert_eq!(top, 0, "tall block's header pinned to the top row");
+
+    let expanded_offset = h.scroll_offset();
+    h.toggle_fold();
+    h.frame();
+    assert_eq!(
+        h.state.entry(idx).map(|e| e.display_mode),
+        Some(DisplayMode::Collapsed)
+    );
+    assert_eq!(
+        h.scroll_offset(),
+        expanded_offset,
+        "collapse keeps the offset"
+    );
+}
+
 #[test]
 fn test_expand_while_streaming_keeps_viewport_until_follow_resumed() {
     crate::appearance::cache::set_show_thinking_blocks(true);

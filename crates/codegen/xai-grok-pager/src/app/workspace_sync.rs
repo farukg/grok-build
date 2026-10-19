@@ -3,10 +3,10 @@ use super::actions::Effect;
 use super::agent::AgentId;
 use super::agent_view::AgentView;
 use super::app_view::AppView;
+use super::session_views::SessionViews;
 use super::workspace_layout::WorkspaceView;
 use super::workspace_membership::{RemovalCause, RemovalRequestError, WorkspaceMembership};
 use crate::views::dashboard::WorkspaceRowInputs;
-use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::time::UNIX_EPOCH;
 use xai_grok_dashboard_store::{
@@ -65,8 +65,8 @@ pub(crate) fn refresh(app: &mut AppView) -> Vec<Effect> {
 }
 pub(crate) fn live_session_ids(app: &AppView) -> HashSet<SessionId> {
     app.agents
-        .values()
-        .filter_map(|agent| agent.session.session_id.as_ref())
+        .roots()
+        .filter_map(|(_, agent)| agent.session.session_id.as_ref())
         .filter_map(|id| SessionId::new(id.0.to_string()).ok())
         .collect()
 }
@@ -81,8 +81,8 @@ pub(crate) fn drain(app: &mut AppView) -> Vec<Effect> {
         let mut seen = HashSet::new();
         let home = app.home_session_agent;
         app.agents
-            .iter()
-            .filter(|(id, _)| home != Some(**id))
+            .roots()
+            .filter(|(id, _)| home != Some(*id))
             .filter_map(|(_, agent)| agent_to_new_member(agent))
             .filter(|candidate| seen.insert(candidate.key.session_id.clone()))
             .collect()
@@ -99,7 +99,7 @@ pub(crate) struct WorkspaceRowSource {
 }
 impl WorkspaceRowSource {
     pub(crate) fn capture(
-        agents: &IndexMap<AgentId, AgentView>,
+        agents: &SessionViews,
         membership: &WorkspaceMembership,
         home: Option<AgentId>,
         workspace_dashboard_enabled: bool,
@@ -124,7 +124,7 @@ impl WorkspaceRowSource {
 /// Live agents that render as provisional rows: the adoption rules minus the session id, which binds late, and not already covered by a committed member (that row renders through the member path under the same id).
 /// A session with a removal in flight must not resurface, a bound id the store would reject can never persist, and an agent that lost its session to another agent (`clear_stale_session_id`) never rebinds, so none of those get a row.
 fn provisional_agent_ids(
-    agents: &IndexMap<AgentId, AgentView>,
+    agents: &SessionViews,
     membership: &WorkspaceMembership,
     home: Option<AgentId>,
     workspace: Option<&WorkspaceView>,
@@ -138,14 +138,14 @@ fn provisional_agent_ids(
         })
     };
     agents
-        .iter()
-        .filter(|(id, agent)| home != Some(**id) && is_adoptable(agent))
+        .roots()
+        .filter(|(id, agent)| home != Some(*id) && is_adoptable(agent))
         .filter(|(_, agent)| match agent.session.session_id.as_ref() {
             None => agent.session_binding_epoch == 0,
             Some(id) => SessionId::new(id.0.to_string())
                 .is_ok_and(|id| !membership.is_session_hidden(&id) && !is_member(&id)),
         })
-        .map(|(id, _)| *id)
+        .map(|(id, _)| id)
         .collect()
 }
 /// Whether `agent` can ever become a workspace member; the session id is checked separately because it binds late.
@@ -265,7 +265,7 @@ mod tests {
     }
     #[test]
     fn provisional_ids_cover_unbound_dispatch_but_not_hidden_or_ineligible_agents() {
-        let mut agents = IndexMap::new();
+        let mut agents = SessionViews::new();
         let mut dispatched = crate::app::agent_view::test_fixtures::make_agent();
         dispatched.session.cwd = "/tmp/workspace-sync".into();
         dispatched.session.enqueue_prompt("fix the bug".into());

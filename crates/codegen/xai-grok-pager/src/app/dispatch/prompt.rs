@@ -5,7 +5,7 @@ use super::auth::{
     scrollback_has_recent_reauth_prompt, scrollback_has_recent_request_failed,
 };
 use super::billing::is_credit_limit_error;
-use super::ctx::{get_active_agent_mut, visible_agent_mut, with_active_agent};
+use super::ctx::{get_active_agent_mut, with_active_agent};
 use super::interject;
 use super::queue::{
     apply_turn_start_shim, attach_prompt_state_to_last_queued, immediate_server_send_eligible,
@@ -17,7 +17,8 @@ use super::turn::finish_turn_view;
 use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, DoctorFixTarget, Effect};
 use crate::app::agent::{AgentCommand, AgentId, AgentState};
-use crate::app::agent_view::AgentView;
+use crate::app::agent_view::{AgentRole, AgentView};
+use xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome;
 use crate::app::app_view::{ActiveView, AppView};
 use crate::app::cancel_latency::TurnEnd;
 use crate::notifications::{NotificationEvent, NotificationEventKind};
@@ -29,6 +30,7 @@ use xai_grok_telemetry::session_ctx::log_event;
 
 /// Shared by every submit guard that refuses while the session reconnects.
 pub(super) const RECONNECTING_NOTICE: &str = "Reconnecting, please wait...";
+const LEGACY_SHELL_CHILD_NOTICE: &str = "This shell predates subagent prompts; restart the leader";
 
 pub(super) use crate::app::agent_view::{
     BUILD_IN_FLIGHT_ABANDON_NOTICE, BUILD_IN_FLIGHT_REVISE_NOTICE, LEAVE_PLAN_REVISE_NOTICE,
@@ -212,12 +214,14 @@ pub(super) fn dispatch_execute_plan(
     // The daemon's execute-plan kickoff is the initiating message (same as cron/adopt).
     agent.session.tracker.clear_user_echo_skip();
     agent.set_execute_plan_prompt(prompt_id.clone());
+    let target = agent.role.prompt_target();
     vec![Effect::ExecutePlan {
         agent_id: id,
         session_id,
         prompt_id,
         plan_file_content,
         plan_file_uri,
+        target,
     }]
 }
 
@@ -529,7 +533,10 @@ pub(super) fn dispatch_show_word_select_tip(app: &mut AppView) -> Vec<Effect> {
     if crate::appearance::cache::load_keep_text_selection().selects_word() {
         return vec![];
     }
-    let Some(agent) = visible_agent_mut(&mut app.agents, app.active_view) else {
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
         return vec![];
     };
     if agent.show_ephemeral_tip(
@@ -655,6 +662,16 @@ pub(super) fn dispatch_send_prompt_submission(
 
     if app.reconnect_pending {
         app.show_toast(RECONNECTING_NOTICE);
+        return vec![];
+    }
+    if app.shell_child_support == crate::acp::ShellChildSupport::Legacy
+        && matches!(
+            app.active_view,
+            ActiveView::Agent(id)
+                if app.agents.get(&id).is_some_and(|agent| matches!(agent.role, AgentRole::Child(_)))
+        )
+    {
+        app.show_toast(LEGACY_SHELL_CHILD_NOTICE);
         return vec![];
     }
 
@@ -1224,6 +1241,7 @@ pub(super) fn dispatch_send_prompt_submission(
                 .clone()
                 .expect("session_id is_some checked");
             let agent_id = agent.session.id;
+            let target = agent.role.prompt_target();
             let prompt_id = uuid::Uuid::new_v4().to_string();
             // Self-originated: when this prompt becomes the running turn, the ACP gate must treat its deltas as ours, not another client's
             // Adoption happens via the `running_prompt_id` broadcast and the turn-start shim
@@ -1266,6 +1284,7 @@ pub(super) fn dispatch_send_prompt_submission(
                 text,
                 prompt_id,
                 skill_token_ranges,
+                target,
             });
             return effects;
         }
@@ -1379,6 +1398,7 @@ pub(super) fn dispatch_send_bash_command(app: &mut AppView, command: String) -> 
             .clone()
             .expect("session_id is_some checked");
         let agent_id = agent.session.id;
+        let target = agent.role.prompt_target();
         let prompt_id = uuid::Uuid::new_v4().to_string();
         // Self-originated (see the plain immediate-send path): keep this turn's deltas ours in the ACP gate once it becomes the running turn
         agent.note_self_originated_prompt(&prompt_id);
@@ -1397,6 +1417,7 @@ pub(super) fn dispatch_send_bash_command(app: &mut AppView, command: String) -> 
             session_id,
             command,
             prompt_id,
+            target,
         }];
     }
 
@@ -1447,6 +1468,11 @@ pub(super) fn supersede_open_reload_window(
     agent.abort_session_reload();
 }
 
+/// The shell's answer to a prompt that continued a finished subagent as a new one (`_meta.childResume`).
+fn child_resume_outcome(meta: Option<&acp::Meta>) -> Option<ResumeSubagentOutcome> {
+    serde_json::from_value(meta?.get("childResume")?.clone()).ok()
+}
+
 // TaskResult handlers.
 
 pub(super) fn handle_prompt_response(
@@ -1456,6 +1482,12 @@ pub(super) fn handle_prompt_response(
     http_status: Option<u16>,
     prompt_id: Option<String>,
 ) -> Vec<Effect> {
+    if let Ok(response) = &result
+        && let Some(ResumeSubagentOutcome::Resumed { source_id }) =
+            child_resume_outcome(response.meta.as_ref())
+    {
+        app.follow_resumed_child = Some(source_id);
+    }
     // A server-authoritative queued prompt may have drained into the running slot while this turn was still finishing
     // The leader's `running_prompt_id` broadcast can arrive before this `PromptResponse`
     // Take any stashed adoption now; it is applied after `finish_turn` clears `current_prompt_id` below

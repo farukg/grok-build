@@ -76,6 +76,7 @@ pub(super) fn dispatch_enter_plan_mode(
                     text,
                     prompt_id,
                     skill_token_ranges,
+                    target,
                     ..
                 } => {
                     effects.push(Effect::SetModeThenPrompt {
@@ -85,6 +86,7 @@ pub(super) fn dispatch_enter_plan_mode(
                         text,
                         prompt_id,
                         skill_token_ranges,
+                        target,
                     });
                 }
                 other => effects.push(other),
@@ -218,7 +220,7 @@ pub(crate) fn downgrade_displayed_auto_if_gated(app: &mut AppView) {
     if app.auto_mode_gate {
         return;
     }
-    for agent in app.agents.values_mut() {
+    for (_, agent) in app.agents.all_mut() {
         agent.session.auto_mode = false;
     }
     if let Some(dashboard) = app.dashboard.as_mut()

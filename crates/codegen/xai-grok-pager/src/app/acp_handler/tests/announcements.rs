@@ -192,13 +192,13 @@
         );
     }
 
-    /// A mid-session push must open the `/announcements` gate on already-live subagent child views, not just top-level agents. Driven through the
+    /// A mid-session push must open the `/announcements` gate on already-live child sessions. Driven through the
     /// layer-injected seam (no real `~/.grok` reads).
     #[test]
-    fn announcements_update_fans_slash_gate_to_live_subagent_views() {
+    fn announcements_update_fans_slash_gate_to_live_child_sessions() {
         let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
         assert!(
-            !test_subagent(test_agent(&app, AgentId(0)), "child-sess")
+            !test_subagent(&app, "child-sess")
                 .prompt
                 .slash_controller
                 .has_session_announcements(),
@@ -220,7 +220,7 @@
             "parent gate open"
         );
         assert!(
-            test_subagent(agent, "child-sess")
+            test_subagent(&app, "child-sess")
                 .prompt
                 .slash_controller
                 .has_session_announcements(),

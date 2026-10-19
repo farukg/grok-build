@@ -46,6 +46,16 @@ impl ModelChoice {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeStep {
+    Parent,
+    LatestChild,
+}
 /// Synchronous, side-effect-free user intent.
 /// Produced by [`super::input`] from key/mouse events.
 /// Consumed by [`super::dispatch::dispatch`] to mutate state and return effects.
@@ -426,6 +436,15 @@ pub enum Action {
     KillBgTask(String),
     /// Kill (cancel) a subagent by subagent_id.
     KillSubagent(String),
+    /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
+    ResumeSubagent { subagent_id: String, prompt: String },
+    /// Release the active child view's held answer to its caller.
+    DeliverSubagent,
+    /// Ask the shell for the active session's context policy (the F7 sidebar just opened).
+    FetchContextPolicy,
+    /// Replace the active session's context policy.
+    SetContextPolicy(xai_grok_shell::sampling::ContextPolicy),
+    RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
     DemoteToBackground,
@@ -498,6 +517,7 @@ pub enum Action {
     /// Set whether the predicted-next-prompt ghost text (tab autocomplete) is offered after each turn.
     /// SHELL-owned: updates the process-wide cache mirror and persists to `[ui].prompt_suggestions` via `Effect::PersistSetting`.
     SetPromptSuggestions(bool),
+    SetSystemReminders(bool),
     /// Set `[scrollback.scroll].respect_manual_folds`.
     /// PAGER-owned: live-applied via `AppView::set_appearance` and persisted to pager.toml via `Effect::PersistSetting`.
     SetRespectManualFolds(bool),
@@ -858,10 +878,14 @@ pub enum Action {
     /// Returns to the dashboard with the cursor on the previously attached row.
     /// Bound to Esc, Ctrl+\\, and `[Dashboard]` click inside the overlay.
     DashboardOverlayExit,
-    /// Cycle the dashboard's session-overlay to the previous top-level agent in the row list (`‹` click or Ctrl+\[).
-    DashboardOverlayPrev,
-    /// Cycle the dashboard's session-overlay to the next top-level agent in the row list (`›` click or Ctrl+\]).
-    DashboardOverlayNext,
+    /// Previous/next session: the top-level sessions in dashboard row order from a root, the siblings from a child.
+    CycleSessions(Direction),
+    /// Open the parent session, or the most recently started child.
+    NavigateTree(TreeStep),
+    /// Remove the active top-level session from the header switcher and show the next one; the session itself keeps running.
+    DismissActiveSession,
+    /// Open the session view with this session id.
+    OpenSession(String),
     /// Confirmed stop from inside the dashboard's session-overlay: close the attached session and return to the dashboard.
     /// State machine documented at `dispatch_dashboard_overlay_stop`.
     DashboardOverlayStop,
@@ -1404,6 +1428,13 @@ pub enum AfterSessionDelete {
     /// Unused optimistic home husk: remove on-disk data without a toast or view change.
     UnusedHusk,
 }
+/// What an `Effect::ContextPolicy` asks of the shell.
+#[derive(Debug, Clone)]
+pub enum ContextPolicyChange {
+    Read,
+    Replace(xai_grok_shell::sampling::ContextPolicy),
+}
+
 /// Async side effect produced by [`super::dispatch::dispatch`].
 /// The event loop spawns these into a `JoinSet`; completions come back through [`TaskResult`] as `Action::TaskComplete`.
 #[derive(Debug)]
@@ -1558,6 +1589,7 @@ pub enum Effect {
         /// Stamped into the content block `_meta` (`skillTokenRanges`) when non-empty so replay restyles the echo like the composer did.
         /// Contract: the offsets index the block's `text` displayed verbatim, never combined with a `displayText` override.
         skill_token_ranges: Vec<std::ops::Range<usize>>,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// `session/prompt` with `_meta.executePlan` after a post-turn plan approve
     ExecutePlan {
@@ -1567,6 +1599,7 @@ pub enum Effect {
         plan_file_content: String,
         /// File URI of the keep. Omitted on the wire when empty.
         plan_file_uri: Option<String>,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Send a direct bash command to the agent (with typed PromptBlockMeta).
     SendBashCommand {
@@ -1575,6 +1608,7 @@ pub enum Effect {
         command: String,
         /// See [`Effect::SendPrompt::prompt_id`].
         prompt_id: String,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Cancel the current turn.
     CancelTurn {
@@ -1598,6 +1632,20 @@ pub enum Effect {
         session_id: acp::SessionId,
         task_id: String,
         source: xai_grok_shell::extensions::task::TaskKillSource,
+    },
+    /// Continue a subagent with a user prompt via `x.ai/subagent/resume`.
+    ResumeSubagent {
+        session_id: acp::SessionId,
+        subagent_id: String,
+        prompt: String,
+    },
+    /// Release a held child session via `x.ai/subagent/deliver`.
+    DeliverSubagent { child_session_id: acp::SessionId },
+    /// Read (`policy: None`) or replace the session's context policy via `x.ai/session/context_policy`.
+    ContextPolicy {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        change: ContextPolicyChange,
     },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
     KillSubagent {
@@ -1696,6 +1744,7 @@ pub enum Effect {
         blocks: Vec<acp::ContentBlock>,
         /// See [`Effect::SendPrompt::prompt_id`].
         prompt_id: String,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Cancel-and-send: `session/prompt` stamped with `_meta.sendNow`, so the shell cancels the running turn and runs this prompt next.
     /// Background tasks and the rest of the queue survive.
@@ -1706,6 +1755,7 @@ pub enum Effect {
         blocks: Vec<acp::ContentBlock>,
         /// See [`Effect::SendPrompt::prompt_id`].
         prompt_id: String,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Toggle plan mode: fire-and-forget signal to the shell.
     TogglePlanMode { session_id: acp::SessionId },
@@ -1765,6 +1815,7 @@ pub enum Effect {
         prompt_id: String,
         /// See [`Effect::SendPrompt::skill_token_ranges`].
         skill_token_ranges: Vec<std::ops::Range<usize>>,
+        target: crate::app::agent_view::PromptTarget,
     },
     /// Fetch prompt history for the current session from the ACP agent.
     /// `session_id` scopes the per-CWD history file to this session (the agent's `filter_session_id` param).
@@ -2189,6 +2240,10 @@ pub enum Effect {
         agent_id: AgentId,
         session_id: acp::SessionId,
         target_prompt_index: usize,
+    },
+    RemoveContextItems {
+        session_id: acp::SessionId,
+        items: Vec<xai_grok_shell::session::ContextItemRef>,
     },
     /// Fetch billing/credit usage from the agent's `x.ai/billing` extension.
     /// When `silent` is true the result updates `credit_balance` without pushing a system message into scrollback.
@@ -2646,6 +2701,20 @@ pub enum TaskResult {
     /// The answer stands for this run, but nothing on disk holds it, so the notice returns at the next launch.
     ConsentPersistFailed {
         error: String,
+    },
+    /// Response to `x.ai/subagent/deliver`; `None` when the RPC itself failed.
+    /// The shell answered a context policy get or set.
+    ContextPolicyAnswered {
+        agent_id: AgentId,
+        result: Result<xai_grok_shell::extensions::context_policy::ContextPolicyReport, String>,
+    },
+    DeliverSubagentComplete {
+        outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,
+    },
+    /// Response to `x.ai/subagent/resume`; `None` when the RPC itself failed.
+    ResumeSubagentComplete {
+        subagent_id: String,
+        outcome: Option<xai_grok_shell::extensions::subagent_resume::ResumeSubagentOutcome>,
     },
     /// Response to `x.ai/subagent/cancel`; see [`SubagentKillOutcome`].
     KillSubagentComplete {
@@ -3144,6 +3213,10 @@ pub enum TaskResult {
     RewindExecuteFailed {
         agent_id: AgentId,
         error: String,
+    },
+    RemoveContextItemsComplete {
+        session_id: acp::SessionId,
+        outcome: Result<xai_grok_shell::session::RemoveContextItemsOutcome, String>,
     },
     /// Billing data fetched from the agent.
     BillingFetched {

@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
+    use crate::app::session_views::test_support::link_child;
 
     // ── derive_child_cwd ─────────────────────────────────────────────
 
@@ -67,8 +68,13 @@
         let child_sid = "child-sess-1";
         {
             let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            parent
-                .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+            link_child(
+                &mut app.agents,
+                AgentId(0),
+                AgentId(1),
+                make_agent(Some(child_sid)),
+                std::time::Instant::now(),
+            );
         }
 
         let notif = make_git_head_changed_notif(
@@ -81,7 +87,7 @@
 
         assert!(changed);
         let parent = app.agents.get(&AgentId(0)).unwrap();
-        let child_view = parent.subagent_views.get(child_sid).unwrap();
+        let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(
             child_view.current_branch.as_deref(),
             Some("worktree-branch")
@@ -108,12 +114,14 @@
     fn git_head_changed_root_agent_not_affected_when_child_matches() {
         let mut app = make_app_with_agent("sess-A");
         let child_sid = "child-sess-2";
-        {
-            let parent = app.agents.get_mut(&AgentId(0)).unwrap();
-            parent
-                .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
-            parent.current_branch = Some("parent-branch".into());
-        }
+        link_child(
+            &mut app.agents,
+            AgentId(0),
+            AgentId(1),
+            make_agent(Some(child_sid)),
+            std::time::Instant::now(),
+        );
+        app.agents.get_mut(&AgentId(0)).unwrap().current_branch = Some("parent-branch".into());
 
         let notif = make_git_head_changed_notif(child_sid, Some("child-branch"), true, None);
         handle_git_head_changed(&notif, &mut app);
@@ -124,7 +132,7 @@
             Some("parent-branch"),
             "parent's branch must not change when child is updated"
         );
-        let child_view = parent.subagent_views.get(child_sid).unwrap();
+        let child_view = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(child_view.current_branch.as_deref(), Some("child-branch"));
     }
 

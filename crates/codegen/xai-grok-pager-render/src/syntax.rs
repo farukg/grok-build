@@ -22,6 +22,7 @@ use crate::theme::ThemeKind;
 static SYNTECT_GROKNIGHT: OnceLock<Syntect> = OnceLock::new();
 static SYNTECT_TOKYONIGHT: OnceLock<Syntect> = OnceLock::new();
 static SYNTECT_GROKDAY: OnceLock<Syntect> = OnceLock::new();
+static SYNTECT_COLORDNA: OnceLock<Syntect> = OnceLock::new();
 
 /// Convert syntect style to ratatui foreground-only style, quantized for terminal color support (or polarity-safe under the terminal-native lock).
 pub fn syntect_to_ratatui_fg(style: syntect::highlighting::Style) -> Style {
@@ -130,6 +131,8 @@ pub fn get_syntect() -> &'static Syntect {
             .get_or_init(|| Syntect::new(include_bytes!("../assets/tokyo-night.tmTheme"))),
         ThemeKind::GrokDay => SYNTECT_GROKDAY
             .get_or_init(|| Syntect::new(include_bytes!("../assets/grok-day.tmTheme"))),
+        ThemeKind::ColorDna => SYNTECT_COLORDNA
+            .get_or_init(|| Syntect::new(include_bytes!("../assets/color-dna.tmTheme"))),
     }
 }
 
@@ -321,6 +324,58 @@ mod tests {
             assert_eq!(
                 atx_token(&markdown_atx_tokens(bytes, LINE), "Heading").2,
                 want
+            );
+        }
+    }
+
+    /// Fence label → grammar → theme color and font style, for one line of each language, against Color DNA's authored roles.
+    #[test]
+    fn color_dna_keeps_the_signal_roles_across_languages() {
+        use syntect::highlighting::FontStyle;
+        const DECLARATION: (u8, u8, u8) = (0x56, 0x9c, 0xd6);
+        const STRING: (u8, u8, u8) = (0xce, 0x78, 0x78);
+        const COMMENT: (u8, u8, u8) = (0x8f, 0xa2, 0x86);
+        let syn = Syntect::new(include_bytes!("../assets/color-dna.tmTheme"));
+        // `fsharp` and `rescript` scope `let` as plain `keyword`, which Color DNA colors without bold, so they carry no bold keyword probe.
+        let cases: [(&str, &str, &str); 8] = [
+            ("rust", "let s = \"hi\"; // note\n", "let"),
+            ("javascript", "const s = \"hi\"; // note\n", "const"),
+            ("typescript", "const s: string = \"hi\"; // note\n", "const"),
+            ("python", "def f(): return \"hi\"  # note\n", "def"),
+            ("go", "func main() { s := \"hi\" } // note\n", "func"),
+            ("ocaml", "let s = \"hi\" (* note *)\n", "let"),
+            ("fsharp", "let s = \"hi\" // note\n", ""),
+            ("rescript", "let s = \"hi\" // note\n", ""),
+        ];
+        for (fence, line, keyword) in cases {
+            let mut hl = syn
+                .highlight_lines_for_fence_info(fence)
+                .unwrap_or_else(|| panic!("no grammar for {fence}"));
+            let ranges = hl.highlight_line(line, &syn.syntax_set).expect("highlight");
+            let style_of = |needle: &str| {
+                ranges
+                    .iter()
+                    .find(|(_, text)| text.contains(needle))
+                    .map(|(style, _)| *style)
+                    .unwrap_or_else(|| panic!("{fence}: no span with {needle:?} in {ranges:?}"))
+            };
+            let rgb = |style: syntect::highlighting::Style| {
+                (style.foreground.r, style.foreground.g, style.foreground.b)
+            };
+            if !keyword.is_empty() {
+                let style = style_of(keyword);
+                assert_eq!(rgb(style), DECLARATION, "{fence}: {keyword}");
+                assert!(
+                    style.font_style.contains(FontStyle::BOLD),
+                    "{fence}: {keyword}"
+                );
+            }
+            assert_eq!(rgb(style_of("hi")), STRING, "{fence}: string");
+            let style = style_of("note");
+            assert_eq!(rgb(style), COMMENT, "{fence}: comment");
+            assert!(
+                style.font_style.contains(FontStyle::ITALIC),
+                "{fence}: comment"
             );
         }
     }

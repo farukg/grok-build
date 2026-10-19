@@ -140,7 +140,6 @@ use ratatui::text::Line;
 use ratatui::widgets::Widget;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-mod child_action_filter;
 mod cta;
 mod elicitation;
 pub(crate) use elicitation::UnansweredElicitation;
@@ -171,8 +170,9 @@ mod prompt_stash;
 pub(in crate::app) use prompt_stash::prompt_history_text;
 pub use prompt_stash::{PromptStashEntry, StashCause};
 mod queue;
+pub(in crate::app) use queue::QueueRowSendNow;
 mod render;
-pub use render::{AppRenderParams, OverlayHeader};
+pub use render::{AppRenderParams, OverlayHeader, SessionNav};
 #[cfg(test)]
 mod dock_input_tests;
 #[cfg(test)]
@@ -181,16 +181,27 @@ mod header_tests;
 mod model_notice_tests;
 mod rewind;
 mod role;
-pub(crate) use role::{AgentRole, ChildLink, ComposerRoute, ViewSurface};
+pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
 mod selection;
 mod session;
 mod session_mode;
 mod shell_completion;
-mod subagent_takeover;
 #[cfg(test)]
 mod task_icon_mouse_tests;
 #[cfg(test)]
 mod task_status_tests;
+mod context_removal;
+pub(crate) mod removal_verdict;
+#[cfg(test)]
+pub(crate) mod removal_test_support;
+mod context_sidebar;
+mod panel_persistence;
+mod sidebars;
+#[cfg(test)]
+mod sidebars_tests;
+#[cfg(test)]
+mod context_sidebar_tests;
+mod timeline_panel;
 mod viewer;
 mod workflows_overlay;
 use super::actions;
@@ -451,6 +462,10 @@ pub(super) fn is_link_modifier_held(_mouse_modifiers: KeyModifiers) -> bool {
 #[cfg(not(target_os = "macos"))]
 pub(super) fn is_link_modifier_held(mouse_modifiers: KeyModifiers) -> bool {
     mouse_modifiers.contains(KeyModifiers::CONTROL)
+}
+/// Ctrl+Alt+Click on a subagent row opens exactly that child; callers check it before the Ctrl link click.
+pub(super) fn is_open_child_click(mouse_modifiers: KeyModifiers) -> bool {
+    mouse_modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 /// Determine whether the link modifier is held during a key event.
 /// On macOS, polls CoreGraphics directly (independent of the event's modifier bits).
@@ -1077,6 +1092,13 @@ pub struct AgentView {
     pub hit_cwd: HitArea,
     /// `[Dashboard]` on the header row: opens the dashboard, or returns to it when this view is the dashboard's session overlay.
     pub hit_dashboard: HitArea,
+    pub hit_deliver: HitArea,
+    /// `[↑]` of the header's session-tree buttons: opens the parent session.
+    pub hit_session_parent: HitArea,
+    /// `[↓]` of the same buttons: opens the latest subagent.
+    pub hit_session_child: HitArea,
+    /// `[✗]` on the header row: removes this session from the switcher.
+    pub hit_session_dismiss: HitArea,
     /// `‹` of the header's `‹ i/n ›` switcher; painted only inside the dashboard overlay with more than one agent to cycle.
     pub hit_overlay_prev: HitArea,
     /// `›` of the same switcher.
@@ -1220,7 +1242,7 @@ pub struct AgentView {
     pub(crate) export_copy_detector: crate::tips::export_copy::ExportCopyDetector,
     /// Persistent status line (e.g. mouse reporting off). Survives transient
     /// toasts, keypress dismissal, and subagent open/close when propagated
-    /// via [`Self::set_sticky_toast_recursive`].
+    /// via [`Self::set_sticky_toast`].
     pub(crate) sticky_toast: Option<String>,
     /// Transient "Switched to mode: X" banner shown above the prompt after Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then fades out over the final 0.3 s.
     /// Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then
@@ -1387,23 +1409,23 @@ pub struct AgentView {
     /// lands on a tick; borrowed during render so streaming redraws don't
     /// rescan/allocate the prompt every frame.
     pub(crate) timeline_hover_preview: Option<(usize, String)>,
+    /// Rail, or the expanded outline panel occupying the rail's layout column.
+    pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
+    /// The F7 sidebar with the session's context switches.
+    pub(crate) context_sidebar: context_sidebar::ContextSidebar,
+    /// Saved F6/F7 settings and the layer (global or this session) the panels save edits to.
+    pub(crate) panel_persistence: panel_persistence::PanelPersistence,
+    pub(crate) sidebar_heights: sidebars::SidebarHeightsCache,
+    /// Body of the F7 column this frame (empty when F7 is closed): the dock draws into its top rows.
+    pub(crate) f7_body: Rect,
+    /// Rows the dock takes at the top of the F7 body this frame.
+    pub(crate) dock_rows_in_sidebar: u16,
+    /// The dock, painted after the sidebar chrome so the chrome cannot recolor it.
+    pub(crate) pending_dock: Option<sidebars::PendingDock>,
     /// Running agent definition for this session (`x.ai/session/info` `agentName`).
     pub session_agent_name: Option<String>,
-    /// Map of child session IDs to subagent metadata. Populated on `SubagentSpawned` notifications, used for permission routing (which agent owns a session) and provenance display.
-    /// `SubagentSpawned` notifications, used for permission routing
-    /// (which agent owns a session) and provenance display.
     pub subagent_sessions: HashMap<String, SubagentInfo>,
-    /// Child subagent views. Keyed by child_session_id.
-    /// Created eagerly on SubagentSpawned so updates are tracked from the start.
-    /// Insert only through [`Self::insert_subagent_view`], which stamps the child's role.
-    pub(super) subagent_views: HashMap<String, Box<AgentView>>,
-    /// Currently open subagent view (child_session_id). When Some, the scrollback area is replaced by the subagent's framed view.
-    /// scrollback area is replaced by the subagent's framed view.
-    pub active_subagent: Option<String>,
-    /// Root of its session, or a child mirrored under a parent's takeover; every child-specific gate derives from it.
-    role: AgentRole,
-    /// Hit area for the [✗] close button in the subagent frame title bar.
-    pub hit_subagent_frame_close: HitArea,
+    pub(crate) role: AgentRole,
     /// Whether the `/share` slash command is available (mirrors
     /// `AppView::sharing_enabled`). Used to gate palette entries.
     pub sharing_enabled: bool,
@@ -1460,6 +1482,8 @@ pub struct AgentView {
     /// Effects queued by input handlers that cannot return `InputOutcome::Action`.
     /// Drained by `AppView.handle_input` after each event.
     pub(crate) pending_effects: Vec<super::actions::Effect>,
+    /// Sessions with a context removal awaiting the shell's answer (at most one per session; the answer carries no request id).
+    pub(crate) pending_removed_context_items: Vec<agent_client_protocol::SessionId>,
     /// In-flight deferred clipboard attachment probes for this prompt. A send while `> 0` is stashed (see `deferred_send`) so a paste-then-immediate-send never builds content blocks before the image attaches.
     pub(crate) paste_probe_in_flight: usize,
     /// A prompt send / interject deferred until the in-flight paste probe(s)
@@ -1943,6 +1967,7 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         ActionId::FocusScrollback => Action::FocusScrollback,
         ActionId::NextModel => Action::NextModel,
         ActionId::CycleMode => Action::CycleMode,
+        ActionId::DeliverSubagent => Action::DeliverSubagent,
         ActionId::CancelTurn
         | ActionId::Quit
         | ActionId::ExitSession
@@ -1966,6 +1991,8 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         ActionId::OpenSettings => return None,
         ActionId::ToggleTodos
         | ActionId::ToggleTasks
+        | ActionId::ToggleTimelinePanel
+        | ActionId::ToggleContextSidebar
         | ActionId::EditPromptExternal
         | ActionId::ToggleQueue
         | ActionId::OpenSessions
@@ -1987,8 +2014,10 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         | ActionId::DashboardShortcutsHelp
         | ActionId::DashboardExit
         | ActionId::DashboardOverlayExit
-        | ActionId::DashboardOverlayPrev
-        | ActionId::DashboardOverlayNext
+        | ActionId::SessionPrev
+        | ActionId::SessionNext
+        | ActionId::SessionParent
+        | ActionId::SessionLatestChild
         | ActionId::DashboardOverlayStop
         | ActionId::DashboardToggleAutoApprove
         | ActionId::DashboardOpenLocationPicker
@@ -2296,11 +2325,10 @@ pub(crate) mod test_fixtures {
                 persona: None,
                 role: None,
                 model: None,
-                context_source: None,
+                context: xai_grok_shell::extensions::subagent_context::SubagentContext::Unreported,
                 resumed_from: None,
                 capability_mode: None,
                 workflow_run_id: None,
-                context_normalized: false,
                 parent_prompt_id: None,
                 started_at: now,
                 last_progress_at: now,
@@ -2317,6 +2345,7 @@ pub(crate) mod test_fixtures {
                 tools_used: Vec::new(),
                 error_count: None,
                 activity_label: None,
+                delivery: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,
@@ -2504,27 +2533,6 @@ pub(crate) mod test_fixtures {
             },
             ScrollbackState::new(),
         )
-    }
-    impl AgentView {
-        /// Insert `child` the way a spawn does, linked (unaddressable) to this view's own session id.
-        pub(crate) fn insert_test_child(&mut self, child_sid: String, child: Box<AgentView>) {
-            let parent_sid = self
-                .session
-                .session_id
-                .clone()
-                .unwrap_or_else(|| acp::SessionId::new("parent"));
-            self.insert_subagent_view(
-                child_sid,
-                child,
-                super::ChildLink::unaddressable(parent_sid),
-            );
-        }
-    }
-    /// An idle parent with one idle child inserted under `child_sid`.
-    pub(crate) fn parent_with_child(child_sid: &str) -> AgentView {
-        let mut parent = make_agent();
-        parent.insert_test_child(child_sid.to_owned(), Box::new(make_agent()));
-        parent
     }
     /// Interject chord for non–VS Code family tests (`Ctrl+Enter`).
     pub fn force_interject_key() -> KeyEvent {

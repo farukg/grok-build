@@ -79,7 +79,7 @@ pub(crate) fn test_app() -> AppView {
         pending_startup: None,
         active_view: ActiveView::Welcome,
         auth_return_view: None,
-        agents: indexmap::IndexMap::new(),
+        agents: crate::app::session_views::SessionViews::new(),
         next_agent_id: 0,
         models: ModelState::default(),
         registry: ActionRegistry::defaults(),
@@ -126,6 +126,7 @@ pub(crate) fn test_app() -> AppView {
         ask_user: false,
         chat_mode: false,
         post_turn_plan_review: false,
+        panel_settings_root: None,
         #[cfg(feature = "local-workspace")]
         welcome_workspace_mode: crate::views::welcome::WelcomeWorkspaceMode::Sandbox,
         #[cfg(feature = "local-workspace")]
@@ -311,11 +312,15 @@ pub(crate) fn test_app() -> AppView {
         cancel_rewind_enabled: true,
         session_recap_available: false,
         shell_feedback_trace_offer: false,
+        shell_child_support: crate::acp::ShellChildSupport::FirstClass,
+        follow_resumed_child: None,
         feedback_trace_choice_latched: false,
         tutorial: None,
         dashboard: None,
         dashboard_return: None,
         dashboard_persisted: None,
+        session_cycle: Default::default(),
+        dismissed_sessions: Default::default(),
         keyboard_normalizer: KeyboardNormalizer::from_terminal_context(),
         voice_mode_enabled: false,
         distribution: xai_grok_config::Distribution::STOCK,
@@ -1942,12 +1947,17 @@ fn needs_animation_gates_pending_cancel_resend() {
 fn needs_animation_gates_subagent_image_viewer_loading() {
     let mut app = test_app_with_agent();
     let id = super::super::agent::AgentId(0);
+    let child_id = super::super::agent::AgentId(1);
     let child_sid = "child-img-gate";
     let child = idle_child_view(&app, 1, child_sid);
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .insert_test_child(child_sid.to_string(), child);
+    crate::app::session_views::test_support::link_child(
+        &mut app.agents,
+        id,
+        child_id,
+        *child,
+        std::time::Instant::now(),
+    );
+    app.active_view = ActiveView::Agent(child_id);
     assert!(
         !app.needs_animation(),
         "an idle agent with an idle subagent child must not request ticks"
@@ -1956,13 +1966,7 @@ fn needs_animation_gates_subagent_image_viewer_loading() {
         std::path::Path::new("/nonexistent/child_img_gate.png"),
     );
     assert!(viewer.loading, "deferred open must be in loading state");
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .subagent_views
-        .get_mut(child_sid)
-        .unwrap()
-        .image_viewer = Some(viewer);
+    app.agents.get_mut(&child_id).unwrap().image_viewer = Some(viewer);
     assert!(
         app.needs_animation(),
         "a loading image viewer on a subagent CHILD must request ticks (child arm)"
@@ -1970,13 +1974,7 @@ fn needs_animation_gates_subagent_image_viewer_loading() {
     let mut terminal = false;
     for _ in 0..200 {
         app.tick();
-        let child = &app
-            .agents
-            .get(&id)
-            .unwrap_or_else(|| panic!("missing map entry"))
-            .subagent_views
-            .get(child_sid)
-            .unwrap_or_else(|| panic!("missing map entry"));
+        let child = app.agents.get(&child_id).unwrap_or_else(|| panic!("missing child view"));
         if child.image_viewer.is_none()
             || child.toast.is_some()
             || child.image_load_rx.is_some()
@@ -1992,13 +1990,7 @@ fn needs_animation_gates_subagent_image_viewer_loading() {
         "tick() must progress the CHILD image load (shared tick_agent_image_load)"
     );
     {
-        let child = app
-            .agents
-            .get_mut(&id)
-            .unwrap()
-            .subagent_views
-            .get_mut(child_sid)
-            .unwrap();
+        let child = app.agents.get_mut(&child_id).unwrap();
         child.image_viewer = None;
         child.image_load_rx = None;
         child.toast = None;
@@ -2054,13 +2046,16 @@ fn resize_event_closes_tip_show_gate_until_redraw() {
     let mut app = test_app_with_agent();
     let id = super::super::agent::AgentId(0);
     let child_sid = "child-session";
-    {
-        let mut child = idle_child_view(&app, 1, child_sid);
-        child.note_terminal_size((80, 28));
-        let agent = app.agents.get_mut(&id).unwrap();
-        agent.note_terminal_size((80, 30));
-        agent.insert_test_child(child_sid.to_string(), child);
-    }
+    let mut child = idle_child_view(&app, 1, child_sid);
+    child.note_terminal_size((80, 28));
+    app.agents.get_mut(&id).unwrap().note_terminal_size((80, 30));
+    crate::app::session_views::test_support::link_child(
+        &mut app.agents,
+        id,
+        super::super::agent::AgentId(1),
+        *child,
+        std::time::Instant::now(),
+    );
     let _ = app.handle_input(&Event::Resize(120, 50));
     let agent = app.agents.get_mut(&id).unwrap();
     assert_eq!(
@@ -2075,7 +2070,7 @@ fn resize_event_closes_tip_show_gate_until_redraw() {
     };
     assert!(!agent.show_ephemeral_tip(tip(), &mut counts));
     assert!(counts.is_empty(), "stale-size show must not burn a count");
-    let child = agent.subagent_views.get_mut(child_sid).unwrap();
+    let child = app.agents.get_mut(&super::super::agent::AgentId(1)).unwrap();
     assert!(!child.show_ephemeral_tip(tip(), &mut counts));
     assert!(counts.is_empty(), "child stale-size show must not burn");
     child.note_terminal_size((118, 46));
@@ -3413,29 +3408,23 @@ fn prompt_page_actions_target_visible_fullscreen_child_scrollback() {
         panic!("test app must start on an agent");
     };
     let child_sid = "page-target-child";
+    let child_id = super::super::agent::AgentId(1);
     let mut child = idle_child_view(&app, 1, child_sid);
     child.set_active_pane(crate::app::agent_view::AgentPane::Prompt, true);
     make_pageable(&mut child);
-    {
-        let parent = app.agents.get_mut(&id).unwrap();
-        make_pageable(parent);
-        parent.insert_test_child(child_sid.to_owned(), child);
-        parent.active_subagent = Some(child_sid.to_owned());
-    }
+    make_pageable(app.agents.get_mut(&id).unwrap());
+    crate::app::session_views::test_support::link_child(
+        &mut app.agents,
+        id,
+        child_id,
+        *child,
+        std::time::Instant::now(),
+    );
+    app.active_view = ActiveView::Agent(child_id);
     let offsets = |app: &AppView| {
-        let parent = &app
-            .agents
-            .get(&id)
-            .unwrap_or_else(|| panic!("missing map entry"));
         (
-            parent.scrollback.scroll_info().0,
-            parent
-                .subagent_views
-                .get(child_sid)
-                .unwrap_or_else(|| panic!("missing map entry"))
-                .scrollback
-                .scroll_info()
-                .0,
+            app.agents.get(&id).unwrap().scrollback.scroll_info().0,
+            app.agents.get(&child_id).unwrap().scrollback.scroll_info().0,
         )
     };
     let before = offsets(&app);
@@ -5619,9 +5608,16 @@ fn opening_workflow_transcript_cancels_pending_scroll_stream() {
         panic!("test app must start on an agent");
     };
     let child_sid = "workflow-child";
+    let child_id = super::super::agent::AgentId(1);
     let child = idle_child_view(&app, 1, child_sid);
+    crate::app::session_views::test_support::link_child(
+        &mut app.agents,
+        id,
+        child_id,
+        *child,
+        std::time::Instant::now(),
+    );
     let agent = app.agents.get_mut(&id).unwrap();
-    agent.insert_test_child(child_sid.to_owned(), child);
     agent
         .workflow_runs
         .push(crate::views::workflows::WorkflowRunSnapshot {
@@ -5660,16 +5656,12 @@ fn opening_workflow_transcript_cancels_pending_scroll_stream() {
         .on_scroll_event(ScrollDirection::Up, ScrollConfig::default());
     app.last_scroll_pos = Some((30, 12));
     assert!(app.scroll_state.has_active_stream());
-    let out = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(matches!(out, InputOutcome::Changed));
-    assert_eq!(
-        app.agents
-            .get(&id)
-            .unwrap_or_else(|| panic!("missing map entry"))
-            .active_subagent
-            .as_deref(),
-        Some(child_sid)
-    );
+    let InputOutcome::Action(open) = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("Enter on a workflow agent must request its session");
+    };
+    let _ = crate::app::dispatch::dispatch(open, &mut app);
+    assert_eq!(app.active_view, ActiveView::Agent(child_id));
     assert!(!app.scroll_state.has_active_stream());
     assert_eq!(app.last_scroll_pos, None);
 }
@@ -6084,7 +6076,7 @@ fn dashboard_picker_esc_after_search_click_restores_the_selection() {
     }
     let area = Rect::new(0, 0, 100, 28);
     let mut buf = ratatui::buffer::Buffer::empty(area);
-    let mut agents = indexmap::IndexMap::new();
+    let mut agents = crate::app::session_views::SessionViews::new();
     let registry = crate::actions::ActionRegistry::defaults();
     let snapshot = xai_grok_dashboard_store::WorkspaceSnapshot {
         grouping: xai_grok_dashboard_store::Grouping::State,
@@ -7829,7 +7821,7 @@ fn minimal_double_ctrl_c_arms_then_quits() {
 fn handle_input_clears_stale_attached_agent_on_input() {
     let mut app = test_app_with_agent();
     let id = attach_popup(&mut app);
-    app.agents.shift_remove(&id);
+    app.agents.remove_tree(id);
     let _ = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::NONE));
     assert_eq!(
         app.dashboard.as_ref().unwrap().attached_agent,
@@ -7923,9 +7915,6 @@ fn handle_input_exit_session_action_closes_popup() {
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, Some(id));
     if let Some(d) = app.dashboard.as_mut() {
         d.close_popup();
-    }
-    if let Some(agent) = app.agents.get_mut(&id) {
-        agent.close_subagent_fullscreen();
     }
     assert_eq!(app.dashboard.as_ref().unwrap().attached_agent, None);
     assert!(

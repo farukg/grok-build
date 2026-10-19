@@ -581,7 +581,7 @@ fn scrub_error_for_toast_unit() {
 #[test]
 fn set_coding_data_sharing_no_agents_still_emits_effect() {
     let mut app = test_app_with_agent();
-    app.agents.clear();
+    app.agents = crate::app::session_views::SessionViews::new();
     app.active_view = ActiveView::Welcome;
     app.coding_data_retention_opt_out = true;
     let effects = dispatch(Action::SetCodingDataSharing { opted_in: true }, &mut app);
@@ -1834,6 +1834,7 @@ fn context_info_response() -> xai_grok_shell::session::SessionInfoResponse {
             resolved_model_id: None,
             model_fingerprint: None,
             show_model_fingerprint: false,
+            served_route: None,
             api_backend: None,
             conversation_id: None,
             turns: 0,

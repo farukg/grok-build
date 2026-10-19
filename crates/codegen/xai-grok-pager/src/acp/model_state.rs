@@ -6,6 +6,8 @@ use xai_grok_shell::sampling::types::{
     parse_reasoning_effort_meta, parse_reasoning_efforts_meta, supports_reasoning_effort_meta,
 };
 
+use xai_grok_shell::sampling::ServedRoute;
+
 use crate::slash::commands::effort_levels::legacy_effort_options;
 
 fn canonical_effort_if_offered(
@@ -66,6 +68,8 @@ pub struct ModelState {
     /// The model the backend routed the current turn to, when it named one other than `current`.
     /// Footer only; `current` stays the user's selection.
     served_model_name: Option<String>,
+    /// Gateway route that served the latest response of `current`.
+    pub served_route: Option<ServedRoute>,
 }
 
 impl ModelState {
@@ -83,11 +87,22 @@ impl ModelState {
         }
     }
 
-    /// The footer's model label: the served model for a routed turn, else the current model's name.
+    /// `requested → served` for a caller-supplied requested label.
+    pub fn served_label_for(&self, requested: &str) -> String {
+        match &self.served_route {
+            Some(route) => format!("{requested} \u{2192} {route}"),
+            None => requested.to_owned(),
+        }
+    }
+
+    /// The footer's model label: the served model for a routed turn, else the current model's name,
+    /// followed by the gateway route that served it.
     pub fn footer_model_name(&self) -> Option<String> {
-        self.served_model_name
+        let requested = self
+            .served_model_name
             .clone()
-            .or_else(|| self.current_model_name())
+            .or_else(|| self.current_model_name())?;
+        Some(self.served_label_for(&requested))
     }
 
     /// `footer_model_name` with the reasoning effort, which binds to the name rather than the flag row.
@@ -205,6 +220,9 @@ impl ModelState {
         model_id: acp::ModelId,
         effort_override: Option<ReasoningEffort>,
     ) {
+        if self.current.as_ref() != Some(&model_id) {
+            self.served_route = None;
+        }
         self.current = Some(model_id.clone());
         self.served_model_name = None;
         self.reasoning_effort = effort_override.or_else(|| {
@@ -397,6 +415,7 @@ impl From<Option<acp::SessionModelState>> for ModelState {
                     context_window_selection,
                     model_changed_during_switch: false,
                     served_model_name: None,
+                    served_route: None,
                 }
             })
             .unwrap_or_default()

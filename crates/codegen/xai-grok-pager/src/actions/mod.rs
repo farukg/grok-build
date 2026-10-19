@@ -97,6 +97,12 @@ pub enum ActionId {
     OpenSessions,
     OpenExtensions,
     SendToBackground,
+    /// Expand the timeline rail into the navigable outline panel (F6), or fold it back.
+    ToggleTimelinePanel,
+    /// Send a steered subagent's answer to its caller.
+    DeliverSubagent,
+    /// Open or close the right sidebar with the session's context switches (F7).
+    ToggleContextSidebar,
 
     // Prompt
     EditPromptExternal,
@@ -136,8 +142,10 @@ pub enum ActionId {
     DashboardShortcutsHelp,
     DashboardExit,
     DashboardOverlayExit,
-    DashboardOverlayPrev,
-    DashboardOverlayNext,
+    SessionPrev,
+    SessionNext,
+    SessionParent,
+    SessionLatestChild,
     DashboardOverlayStop,
     DashboardToggleAutoApprove,
     DashboardOpenLocationPicker,

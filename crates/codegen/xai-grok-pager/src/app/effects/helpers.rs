@@ -779,7 +779,7 @@ pub(super) fn extract_first_user_prompt(
 pub(super) fn count_chat_history_stats(history_path: &Path) -> (usize, usize) {
     use std::io::BufRead;
     use xai_grok_shell::sampling::{
-        AssistantItem, ConversationItem, SyntheticReason, UserItem,
+        AssistantItem, ConversationItem, UserItem,
     };
     let mut turn_count = 0usize;
     let mut tool_call_count = 0usize;
@@ -788,11 +788,8 @@ pub(super) fn count_chat_history_stats(history_path: &Path) -> (usize, usize) {
     };
     for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
         match serde_json::from_str::<ConversationItem>(&line) {
-            Ok(
-                ConversationItem::User(
-                    UserItem { synthetic_reason: SyntheticReason::Human, .. },
-                ),
-            ) => turn_count += 1,
+            Ok(ConversationItem::User(UserItem { synthetic_reason, .. }))
+                if synthetic_reason.is_legacy_human() => turn_count += 1,
             Ok(ConversationItem::Assistant(AssistantItem { ref tool_calls, .. })) => {
                 tool_call_count += tool_calls.len();
             }
@@ -1309,6 +1306,14 @@ pub(crate) async fn persist_setting(
                 .await
                 .map_err(|e| e.to_string())
         }
+        "system_reminders" => {
+            let SettingValue::Bool(b) = value else {
+                return Err(kind_mismatch("system_reminders", "Bool", &value));
+            };
+            xai_grok_shell::util::config::set_system_reminders(b)
+                .await
+                .map_err(|e| e.to_string())
+        }
         "keep_text_selection" => {
             let SettingValue::Enum(s) = value else {
                 return Err(kind_mismatch("keep_text_selection", "Enum", &value));
@@ -1525,6 +1530,12 @@ pub(super) fn parse_subagent_kill_outcome(resp: &str) -> SubagentKillOutcome {
             }
         }
     }
+}
+/// Read a typed ext-method outcome under `result`; `None` for an error body.
+pub(super) fn parse_ext_outcome<T: serde::Serialize + serde::de::DeserializeOwned>(resp: &str) -> Option<T> {
+    serde_json::from_str::<ExtMethodResult<T>>(resp)
+        .ok()
+        .and_then(|envelope| envelope.result)
 }
 /// Map disk-write outcome and persist variant to the correct `TaskResult`.
 pub(super) fn route_permission_mode_result(

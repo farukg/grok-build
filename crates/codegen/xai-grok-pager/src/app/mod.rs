@@ -13,6 +13,7 @@ pub mod actions;
 pub mod agent;
 pub mod agent_view;
 pub mod app_view;
+pub(crate) mod session_views;
 pub mod bundle;
 pub(crate) mod cancel_latency;
 pub mod cli;
@@ -27,6 +28,7 @@ pub mod edit_highlight_worker;
 /// Off-thread Mermaid diagram render worker (out of process) + per-session cache.
 pub mod mermaid_worker;
 pub(crate) mod prompt_ack;
+pub(crate) mod panel_settings;
 pub(crate) fn is_daemon_session_row(_source: &str) -> bool {
     false
 }

@@ -323,10 +323,14 @@
     fn plugins_off_hides_child_hook_notes() {
         let mut app = make_app_with_agent("sess-hooks");
         let child_sid = "child-hooks-1";
-        app.agents
-            .get_mut(&AgentId(0))
-            .unwrap()
-            .insert_test_child(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+        app.agents.get_mut(&AgentId(0)).unwrap().subagent_sessions.insert(child_sid.into(), make_subagent_info(child_sid));
+        crate::app::session_views::test_support::link_child(
+            &mut app.agents,
+            AgentId(0),
+            AgentId(1),
+            make_agent(Some(child_sid)),
+            std::time::Instant::now(),
+        );
         // `apply_child_hook_annotation` reads `disable_plugins` from the child's scrollback
         let mut appearance = app.appearance.clone();
         appearance.disable_plugins = true;
@@ -344,8 +348,7 @@
         );
 
         assert!(!changed);
-        let child_view = test_agent(&app, AgentId(0)).subagent_views.get(child_sid).unwrap();
-        assert_eq!(child_view.scrollback.len(), 0);
+        assert_eq!(test_agent(&app, AgentId(1)).scrollback.len(), 0);
     }
 
     #[test]

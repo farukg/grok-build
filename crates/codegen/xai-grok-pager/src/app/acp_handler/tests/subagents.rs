@@ -1,6 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
-    use crate::app::agent_view::ChildLink;
+    use crate::app::session_views::test_support::link_child;
 
     #[test]
     fn replayed_subagent_finished_marks_orphan_terminal() {
@@ -125,15 +125,11 @@
             test_subagent_spawned("sess-1", "child-1"),
         );
         assert!(handle(spawn, &mut app));
-        assert_eq!(
-            Some(&ChildLink::unaddressable(acp::SessionId::new("sess-1"))),
-            app.agents
-                .get(&AgentId(0))
-                .unwrap_or_else(|| panic!("missing root agent"))
-                .subagent_view("child-1")
-                .expect("spawn inserts the child view")
-                .child_link()
-        );
+        assert!(matches!(
+            &test_subagent(&app, "child-1").role,
+            crate::app::agent_view::AgentRole::Child(link)
+                if link.parent == AgentId(0) && &*link.parent_session_id.0 == "sess-1"
+        ));
     }
 
     #[test]
@@ -202,7 +198,7 @@
     }
 
     #[test]
-    fn child_spawn_sets_read_only_pane() {
+    fn child_queue_is_editable() {
         use crate::views::queue_mutation::QueueMutation;
 
         let mut app = make_app_with_agent("sess-1");
@@ -215,11 +211,8 @@
             .get(&AgentId(0))
             .unwrap_or_else(|| panic!("missing root agent"));
         assert_eq!(QueueMutation::PerRowKind, root.queue.mutation());
-        let child = root
-            .subagent_views
-            .get("child-1")
-            .unwrap_or_else(|| panic!("missing child view"));
-        assert_eq!(QueueMutation::ReadOnly, child.queue.mutation());
+        let child = test_subagent(&app, "child-1");
+        assert_eq!(QueueMutation::PerRowKind, child.queue.mutation());
     }
 
     #[test]
@@ -255,7 +248,7 @@
                 .count()
         };
         let footer_count = |app: &crate::app::app_view::AppView| {
-            count_turn_markers(app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("child-bg").unwrap_or_else(|| panic!("missing map entry")))
+            count_turn_markers(test_subagent(app, "child-bg"))
         };
         assert_eq!(terminal_rows(&app), 1, "first finish appends one terminal row");
         assert_eq!(footer_count(&app), 1, "first finish appends one footer");
@@ -304,13 +297,7 @@
         ));
         // Seed an intermediate turn marker, then later content, then finalize.
         {
-            let child = app
-                .agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .subagent_views
-                .get_mut("child-multi")
-                .unwrap();
+            let child = app.agents.get_mut(&AgentId(1)).unwrap();
             child
                 .scrollback
                 .push_block(RenderBlock::session_event(SessionEvent::TurnCompleted {
@@ -418,16 +405,12 @@
             );
         }
 
-        let agent = app.agents.get(&AgentId(0)).unwrap();
-        assert_eq!(
-            agent.subagent_views.len(),
-            SUBAGENTS,
-            "every spawn must have created a child view (the leak's unit)"
-        );
-        let daemons = agent
-            .subagent_views
-            .values()
-            .filter(|v| v.prompt.history_search.daemon_built())
+        let children = app.agents.children_of(AgentId(0));
+        assert_eq!(children.len(), SUBAGENTS, "every spawn inserts one child session view");
+        let daemons = children
+            .iter()
+            .filter_map(|id| app.agents.get(id))
+            .filter(|view| view.prompt.history_search.daemon_built())
             .count();
         assert_eq!(
             daemons, 0,
@@ -460,10 +443,13 @@
             .expect("SubagentSpawned must register subagent_sessions");
         assert_eq!(info.description.as_ref(), "scan src/");
         assert_eq!(info.subagent_type.as_ref(), "explore");
-        assert!(
-            agent.subagent_views.contains_key(child_sid),
-            "SubagentSpawned must create subagent_views eagerly"
-        );
+        assert!(matches!(
+            &test_subagent(&app, child_sid).role,
+            crate::app::agent_view::AgentRole::Child(link)
+                if link.parent == AgentId(0)
+                    && link.parent_session_id == acp::SessionId::new("sess-parent")
+                    && link.subagent_id == child_sid
+        ));
         let entry_id = info
             .attempt.scrollback_entry_id
             .expect("spawn must stash scrollback_entry_id on SubagentInfo");
@@ -649,8 +635,7 @@
             .unwrap()
             .scrollback
             .remove_entry(entry_id);
-        let first_view = app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("child-live-duplicate").unwrap_or_else(|| panic!("missing map entry"))
-            .as_ref() as *const AgentView;
+        let first_view = test_subagent(&app, "child-live-duplicate") as *const AgentView;
 
         let duplicate = make_ext_session_notification(
             "sess-parent",
@@ -661,7 +646,7 @@
         let agent = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry"));
         assert!(agent.scrollback.is_empty());
         assert_eq!(
-            agent.subagent_views.get("child-live-duplicate").unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView,
+            test_subagent(&app, "child-live-duplicate") as *const AgentView,
             first_view,
             "live duplicate spawn must not replace the child view"
         );
@@ -694,14 +679,13 @@
         };
 
         assert!(handle_ext_notification(&spawn(), &mut app));
-        let first_view = app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).subagent_views.get("workflow-child").unwrap_or_else(|| panic!("missing map entry"))
-            .as_ref() as *const AgentView;
+        let first_view = test_subagent(&app, "workflow-child") as *const AgentView;
         assert!(!handle_ext_notification(&spawn(), &mut app));
 
         let agent = &app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry"));
         assert!(agent.scrollback.is_empty());
         assert_eq!(
-            agent.subagent_views.get("workflow-child").unwrap_or_else(|| panic!("missing map entry")).as_ref() as *const AgentView,
+            test_subagent(&app, "workflow-child") as *const AgentView,
             first_view,
             "duplicate replay must not replace the workflow child's AgentView"
         );
@@ -808,14 +792,8 @@
             match case {
                 Case::Live => {}
                 Case::ReloadingTranscript => {
-                    app.agents
-                        .get_mut(&AgentId(0))
-                        .unwrap()
-                        .subagent_views
-                        .get_mut(child_sid)
-                        .unwrap()
-                        .session
-                        .loading_replay = true;
+                    let child_id = app.agents.children_of(AgentId(0))[0];
+                    app.agents.get_mut(&child_id).unwrap().session.loading_replay = true;
                 }
                 Case::Unregistered => {
                     app.agents
@@ -852,7 +830,7 @@
                     assert!(!changed, "a delta must be ignored while the child reloads its transcript");
                     assert!(agent.subagent_sessions.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).attempt.activity_label.is_none());
                     assert_eq!(
-                        agent.subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).session.tracker.activity(),
+                        test_subagent(&app, child_sid).session.tracker.activity(),
                         None,
                         "the reloading tracker must not pick up the delta"
                     );
@@ -890,14 +868,8 @@
             let changed = match event {
                 LateEvent::AcpChunk => {
                     // Simulate the race: the child view still looks live after the finish
-                    app.agents
-                        .get_mut(&AgentId(0))
-                        .unwrap()
-                        .subagent_views
-                        .get_mut(child_sid)
-                        .unwrap()
-                        .session
-                        .state = AgentState::TurnRunning;
+                    let child_id = app.agents.children_of(AgentId(0))[0];
+                    app.agents.get_mut(&child_id).unwrap().session.state = AgentState::TurnRunning;
                     handle(
                         make_agent_chunk_with_event(child_sid, "late text", "p-child", None),
                         &mut app,
@@ -957,7 +929,7 @@
                 agent.subagent_sessions.is_empty(),
                 "unexpected replay spawn must not register"
             );
-            assert!(agent.subagent_views.is_empty());
+            assert!(app.agents.children_of(AgentId(0)).is_empty());
         });
     }
 
@@ -1005,7 +977,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "resume spawn must NOT eagerly replay the child transcript"
             );
@@ -1017,13 +989,13 @@
                 "resume spawn must leave the transcript NeedsReplay for the first open"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening the subagent after resume must replay its transcript"
             );
+            let agent = app.agents.get(&AgentId(0)).unwrap();
             assert!(
                 agent
                     .subagent_sessions
@@ -1061,7 +1033,7 @@
             let agent = app.agents.get(&AgentId(0)).unwrap();
             for sid in &child_sids {
                 assert_eq!(
-                    child_scrollback_tool_call_count(agent, sid),
+                    child_scrollback_tool_call_count(&app, sid),
                     0,
                     "a live spawn must not replay the on-disk transcript"
                 );
@@ -1074,16 +1046,15 @@
                 );
             }
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sids.first().unwrap_or_else(|| panic!("missing index")).clone());
+            open_child_view(&mut app, child_sids.first().unwrap_or_else(|| panic!("missing index")));
             assert_eq!(
                 crate::app::subagent::test_support::transcript_reads(),
                 reads_before + 1,
                 "the first open must read exactly the opened child's transcript"
             );
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sids.first().unwrap_or_else(|| panic!("missing index"))), 1);
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sids.first().unwrap_or_else(|| panic!("missing index"))), 1);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sids.get(1).unwrap_or_else(|| panic!("missing index"))),
+                child_scrollback_tool_call_count(&app, child_sids.get(1).unwrap_or_else(|| panic!("missing index"))),
                 0,
                 "opening one child must not read its siblings"
             );
@@ -1112,7 +1083,7 @@
             );
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "a resumed spawn must defer the read like any other"
             );
@@ -1129,15 +1100,14 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "the inherited tool call must be read before the live block lands"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening the child must show the inherited history exactly once"
             );
@@ -1171,7 +1141,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "resume must not eagerly load the finished subagent transcript"
             );
@@ -1184,20 +1154,19 @@
             );
             assert!(
                 matches!(
-                    agent.subagent_views.get(child_sid).unwrap().session.state,
+                    test_subagent(&app, child_sid).session.state,
                     AgentState::Idle
                 ),
                 "finished subagent must be Idle after resume, not TurnRunning"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening a finished subagent after resume must show its transcript"
             );
-            let child = agent.subagent_views.get(child_sid).unwrap();
+            let child = test_subagent(&app, child_sid);
             assert!(
                 (0..child.scrollback.len()).any(|i| child
                     .scrollback
@@ -1230,9 +1199,8 @@
             );
 
             // Open it fullscreen before any transcript exists: the read finds nothing, so the view stays empty
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sid), 0);
+            open_child_view(&mut app, child_sid);
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 0);
 
             // The inherited transcript flushes, then the child finishes while still open, having streamed no live block
             write_child_updates_jsonl(home, child_sid, &(child_tool_line(child_sid) + "\n"));
@@ -1247,7 +1215,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "finishing must hydrate the open resumed child in place, not just stamp a footer"
             );
@@ -1331,16 +1299,21 @@
                 self.open_child(self.child_sid);
             }
 
+            /// Opening from the parent's row: a child already on screen is left first, as the user would.
             fn open_child(&mut self, child_sid: &str) {
-                let sid = child_sid.to_string();
-                self.agent_mut().open_subagent_fullscreen(sid);
+                if self.app.agents.find_by_session_id(child_sid).is_some_and(|id| {
+                    matches!(self.app.active_view, ActiveView::Agent(active) if active == id)
+                }) {
+                    leave_child_view(&mut self.app);
+                }
+                open_child_view(&mut self.app, child_sid);
             }
 
             fn close(&mut self) {
-                self.agent_mut().close_subagent_fullscreen();
+                leave_child_view(&mut self.app);
             }
 
-            /// Deliver a live ACP update on the child's own session id (`SessionMatch::Child`).
+            /// Deliver a live ACP update on the child's own session id.
             fn live_child_update(&mut self, update: acp::SessionUpdate) {
                 let (tx, _rx) = tokio::sync::oneshot::channel();
                 let request =
@@ -1371,13 +1344,10 @@
             }
 
             fn push_child_block(&mut self, block: RenderBlock) {
-                let sid = self.child_sid;
-                self.agent_mut()
-                    .subagent_views
-                    .get_mut(sid)
-                    .unwrap()
-                    .scrollback
-                    .push_block(block);
+                let child_id = self.app.agents.children_of(AgentId(0)).into_iter().find(|id| {
+                    self.app.agents.get(id).is_some_and(|view| view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == self.child_sid))
+                }).unwrap();
+                self.app.agents.get_mut(&child_id).unwrap().scrollback.push_block(block);
             }
 
             fn tool_calls(&self) -> usize {
@@ -1385,19 +1355,19 @@
             }
 
             fn tool_calls_for(&self, child_sid: &str) -> usize {
-                child_scrollback_tool_call_count(self.agent(), child_sid)
+                child_scrollback_tool_call_count(&self.app, child_sid)
             }
 
             fn session_events(&self) -> usize {
-                child_scrollback_session_event_count(self.agent(), self.child_sid)
+                child_scrollback_session_event_count(&self.app, self.child_sid)
             }
 
             fn prompts_matching(&self, prompt: &str) -> usize {
-                child_scrollback_matching_prompt_count(self.agent(), self.child_sid, prompt)
+                child_scrollback_matching_prompt_count(&self.app, self.child_sid, prompt)
             }
 
             fn has_system_block(&self) -> bool {
-                let child = self.agent().subagent_views.get(self.child_sid).unwrap();
+                let child = test_subagent(&self.app, self.child_sid);
                 (0..child.scrollback.len()).any(|i| {
                     matches!(
                         child.scrollback.entry(i).map(|e| &e.block),
@@ -1407,7 +1377,7 @@
             }
 
             fn compaction_markers(&self) -> usize {
-                let child = self.agent().subagent_views.get(self.child_sid).unwrap();
+                let child = test_subagent(&self.app, self.child_sid);
                 (0..child.scrollback.len())
                     .filter(|i| {
                         matches!(
@@ -1481,7 +1451,7 @@
                         s.open();
                         s.close();
                         s.finish();
-                        let child = s.agent().subagent_views.get(child_sid).unwrap();
+                        let child = test_subagent(&s.app, child_sid);
                         assert_eq!(child.scrollback.len(), 0, "finish must evict the transcript");
                         assert!(matches!(child.session.state, AgentState::Idle));
                     }
@@ -1558,22 +1528,22 @@
                 let mut s = Scenario::spawn(child_sid, Some(updates));
 
                 assert!(
-                    s.agent().subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).scrollback.is_empty(),
+                    test_subagent(&s.app, child_sid).scrollback.is_empty(),
                     "spawn seeds nothing and reads nothing"
                 );
                 assert!(
-                    !child_tracker_expects_user_echo(s.agent(), child_sid),
+                    !child_tracker_expects_user_echo(&s.app, child_sid),
                     "spawn arms no echo skip"
                 );
 
                 if matches!(entry, Entry::Evicted) {
                     s.finish();
                     assert!(
-                        s.agent().subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).scrollback.is_empty(),
+                        test_subagent(&s.app, child_sid).scrollback.is_empty(),
                         "eviction resets to the empty baseline"
                     );
                     assert!(
-                        !child_tracker_expects_user_echo(s.agent(), child_sid),
+                        !child_tracker_expects_user_echo(&s.app, child_sid),
                         "eviction arms no echo skip"
                     );
                 }
@@ -1669,7 +1639,7 @@
             let mut s = Scenario { app, child_sid };
 
             assert!(
-                s.agent().subagent_views.get(child_sid).unwrap_or_else(|| panic!("missing map entry")).scrollback.is_empty(),
+                test_subagent(&s.app, child_sid).scrollback.is_empty(),
                 "a resumed spawn seeds nothing and reads nothing"
             );
 
@@ -1944,11 +1914,11 @@
                     "meta.json enrichment for {meta:?}"
                 );
                 assert!(
-                    agent.subagent_views.get(&child_sid).unwrap().scrollback.is_empty(),
+                    test_subagent(&app, &child_sid).scrollback.is_empty(),
                     "spawn leaves the child view empty for {meta:?}"
                 );
                 assert!(
-                    !child_tracker_expects_user_echo(agent, &child_sid),
+                    !child_tracker_expects_user_echo(&app, &child_sid),
                     "spawn arms no echo skip for {meta:?}"
                 );
                 assert_eq!(
@@ -1980,15 +1950,15 @@
 
             let agent = app.agents.get_mut(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "spawn must defer the replay to first open"
             );
-            agent.open_subagent_fullscreen(child_sid.to_string());
-            assert_eq!(child_scrollback_tool_call_count(agent, child_sid), 1);
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, child_sid);
+            assert_eq!(child_scrollback_tool_call_count(&app, child_sid), 1);
+            open_child_view(&mut app, child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "re-opening must not duplicate the replay once the disk copy is recorded"
             );
@@ -2011,7 +1981,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "live spawn must not scan a foreign-cwd transcript"
             );
@@ -2024,10 +1994,9 @@
             );
 
             // The retry on open stays hinted-only for a live child, so the foreign-cwd transcript is still not read
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "opening a live child must not scan a foreign-cwd transcript"
             );
@@ -2062,7 +2031,7 @@
 
             let agent = app.agents.get(&AgentId(0)).unwrap();
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 0,
                 "a resumed spawn must defer the replay like any other"
             );
@@ -2074,10 +2043,9 @@
                 "a resumed spawn must leave the transcript NeedsReplay"
             );
 
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.open_subagent_fullscreen(child_sid.to_string());
+            open_child_view(&mut app, child_sid);
             assert_eq!(
-                child_scrollback_tool_call_count(agent, child_sid),
+                child_scrollback_tool_call_count(&app, child_sid),
                 1,
                 "opening a resumed child must scan for the relocated transcript"
             );
@@ -2151,8 +2119,8 @@
             .get(child_sid)
             .expect("SubagentSpawned must register on inactive agent A");
         assert!(
-            agent_a.subagent_views.contains_key(child_sid),
-            "SubagentSpawned must create subagent_views on inactive agent A"
+            app.agents.children_of(AgentId(0)).iter().any(|id| app.agents.get(id).is_some_and(|view| view.session.session_id.as_ref().is_some_and(|sid| sid.0.as_ref() == child_sid))),
+            "SubagentSpawned must create an independent child session view on inactive agent A"
         );
         assert_eq!(agent_a.scrollback.len(), 1);
         let entry_id = info
@@ -2333,12 +2301,8 @@
                 .status(acp::ToolCallStatus::Completed)
                 .raw_input(Some(serde_json::json!({"subagent_id": target, "text": "follow up"})))
                 .raw_output(Some(accepted.clone()));
-            let child = app
-                .agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .subagent_view_mut(sender)
-                .expect("child view");
+            let child_id = app.agents.find_by_session_id(sender).expect("child view");
+            let child = app.agents.get_mut(&child_id).unwrap();
             child.session.tracker.handle_update(
                 acp::SessionUpdate::ToolCall(send),
                 &NotificationMeta::default(),

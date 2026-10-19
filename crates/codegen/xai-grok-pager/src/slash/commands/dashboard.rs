@@ -1,7 +1,7 @@
 //! `/dashboard`: open the Agent Dashboard view.
 //!
 //! The dashboard shows every running session, top-level and subagents, with peek, attach, and dispatch from one screen.
-//! Attaching to a subagent reuses the existing fullscreen takeover, so attaching never bypasses `active_subagent`.
+//! Child sessions use the same session view as root sessions.
 //!
 //! Like other session-less commands it runs through `Action` only and takes no args.
 //! The command is hidden in the registry until `dashboard_enabled()` reveals it via [`crate::app::agent_view::AgentView::set_dashboard_visible`].

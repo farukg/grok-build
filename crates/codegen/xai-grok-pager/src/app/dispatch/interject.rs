@@ -171,6 +171,7 @@ pub(super) fn dispatch_send_prompt_now(
     };
 
     agent.record_prompt_in_history(&text);
+    let target = agent.role.prompt_target();
 
     let prompt_id = uuid::Uuid::new_v4().to_string();
     // Self-originated: the ACP gate must treat this prompt's deltas as ours.
@@ -201,6 +202,7 @@ pub(super) fn dispatch_send_prompt_now(
         session_id,
         blocks,
         prompt_id,
+        target,
     }]
 }
 

@@ -147,6 +147,13 @@ dashboard; `‹` / `›` cycle agents. The shortcuts bar shows
 `Ctrl+\: back to dashboard`. Gotcha: `Esc` only returns; `/exit` inside the
 agent closes the session (dashboard toast: "Session closed").
 
+Three more header buttons work with the mouse. `[✗]` (on a top-level session)
+removes it from the `‹ i/n ›` list: the counter shrinks and the next session
+opens, or the dashboard when it was the only one. The session keeps running and
+stays in the dashboard; opening it again puts it back in the list, and a
+restart resets the list. `[↓]` opens the session's latest subagent and `[↑]` (shown inside a
+subagent) returns to its parent; they match `Ctrl+Alt+Down` / `Ctrl+Alt+Up`.
+
 Every session with the dashboard enabled shows `[Dashboard]` in its header,
 not just ones opened from the dashboard; clicking it is the same as `Ctrl+\`.
 Disabling the dashboard (see the top of this page) removes the button too.

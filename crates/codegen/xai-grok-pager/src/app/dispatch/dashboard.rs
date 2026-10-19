@@ -20,6 +20,7 @@ use super::turn::dispatch_cancel_turn;
 use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, Effect, PermissionModeKind};
 use crate::app::agent::{AgentId, DeferredModelSwitch};
+use crate::app::actions::Direction;
 use crate::app::agent_view::AgentView;
 use crate::app::app_view::{ActiveView, AppView, DashboardReturn, TrustState};
 use crate::app::cancel_latency::CancelOrigin;
@@ -27,19 +28,21 @@ use agent_client_protocol as acp;
 use xai_grok_telemetry::events::CancellationScope;
 /// Keeps v1 config layout separate from v2 workspace layout.
 fn dashboard_state_for_mode(app: &mut AppView) -> crate::views::dashboard::DashboardState {
-    use crate::views::dashboard::{DashboardState, load_persisted};
+    use crate::views::dashboard::DashboardState;
     if app.workspace_dashboard_enabled {
         return DashboardState::new();
     }
-    if app.dashboard_persisted.is_none() {
-        app.dashboard_persisted = load_persisted();
-    }
-    let persisted = app
-        .dashboard_persisted
-        .clone()
-        .unwrap_or_else(crate::views::dashboard::PersistedDashboard::defaults);
     let resolver = crate::views::dashboard::SessionIdResolver::from_agents(&app.agents);
-    DashboardState::from_persisted(&persisted, &resolver)
+    DashboardState::from_persisted(persisted_dashboard(&mut app.dashboard_persisted), &resolver)
+}
+/// The `[dashboard]` config, read from disk on first use only; a missing section caches the defaults.
+fn persisted_dashboard(
+    slot: &mut Option<crate::views::dashboard::PersistedDashboard>,
+) -> &crate::views::dashboard::PersistedDashboard {
+    slot.get_or_insert_with(|| {
+        crate::views::dashboard::load_persisted()
+            .unwrap_or_else(crate::views::dashboard::PersistedDashboard::defaults)
+    })
 }
 pub(super) fn rebind_workspace_identities(
     app: &mut AppView,
@@ -197,8 +200,8 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     }
     let agent_cwds: Vec<(AgentId, std::path::PathBuf)> = app
         .agents
-        .iter()
-        .map(|(id, a)| (*id, a.session.cwd.clone()))
+        .roots()
+        .map(|(id, a)| (id, a.session.cwd.clone()))
         .collect();
     for (id, cwd) in agent_cwds {
         if let Some(info) = crate::git_info::compute_cwd_git_info(&cwd)
@@ -225,7 +228,7 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     vec![Effect::FetchDashboardSessions]
 }
 fn dashboard_alive_fn<'a>(
-    agents: &'a indexmap::IndexMap<AgentId, AgentView>,
+    agents: &'a crate::app::session_views::SessionViews,
     workspace: Option<&'a crate::app::workspace_layout::WorkspaceView>,
 ) -> impl Fn(&crate::views::dashboard::DashboardRowId) -> bool + 'a {
     move |id| match id {
@@ -263,14 +266,15 @@ pub(super) fn dispatch_exit_dashboard(app: &mut AppView) -> Vec<Effect> {
         Some(t) => (t.agent_id(), t.is_overlay()),
         None => (
             app.agents
-                .keys()
-                .copied()
+                .roots()
+                .map(|(id, _)| id)
                 .find(|id| app.home_session_agent != Some(*id)),
             false,
         ),
     };
     if let Some(id) = return_id {
         app.active_view = ActiveView::Agent(id);
+        app.dismissed_sessions.remove(&id);
         if rearm_overlay {
             rearm_session_overlay(app, id);
         }
@@ -280,18 +284,9 @@ pub(super) fn dispatch_exit_dashboard(app: &mut AppView) -> Vec<Effect> {
     }
     vec![]
 }
-/// Restore session-overlay chrome (`attached_agent` and the row cursor).
-/// A live subagent takeover stays open. A stale one is cleared. The cursor is the top-level row.
+/// Restore dashboard attachment and row selection.
 fn rearm_session_overlay(app: &mut AppView, id: AgentId) {
     use crate::views::dashboard::DashboardRowId;
-    let has_live_child = app.agents.get(&id).is_some_and(|a| {
-        a.active_subagent
-            .as_ref()
-            .is_some_and(|child| a.subagent_sessions.contains_key(child))
-    });
-    if !has_live_child && let Some(agent) = app.agents.get_mut(&id) {
-        agent.close_subagent_fullscreen();
-    }
     if let Some(d) = app.dashboard.as_mut() {
         d.focus_row(DashboardRowId::TopLevel(id));
         d.attached_agent = Some(id);
@@ -420,9 +415,6 @@ pub(super) fn dispatch_dashboard_attach(
                     d.set_error_toast("Session no longer exists");
                 }
                 return vec![];
-            }
-            if let Some(agent) = app.agents.get_mut(&agent_id) {
-                agent.close_subagent_fullscreen();
             }
             if let Some(d) = app.dashboard.as_mut() {
                 d.focus_row(DashboardRowId::TopLevel(agent_id));
@@ -965,73 +957,211 @@ pub(super) fn dispatch_dashboard_confirm_worktree(
     );
     effects
 }
-/// Cycle the dashboard overlay to the prev (-1) / next (+1) agent in the visible row order, wrapping at the ends.
-/// Attaches overlay chrome on the first cycle from a session not opened via the dashboard.
-pub(super) fn dispatch_dashboard_overlay_cycle(app: &mut AppView, delta: i32) -> Vec<Effect> {
-    use crate::views::dashboard::DashboardRowId;
+/// The session-cycle scope shared by dispatch and the visible header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CycleScope {
+    Roots,
+    Siblings(Vec<AgentId>),
+}
+
+pub(crate) fn cycle_scope(app: &AppView, current: AgentId) -> Option<CycleScope> {
+    match app.agents.get(&current).map(|view| &view.role) {
+        Some(crate::app::agent_view::AgentRole::Root) => Some(CycleScope::Roots),
+        Some(crate::app::agent_view::AgentRole::Child(link)) => {
+            Some(CycleScope::Siblings(app.agents.children_of(link.parent)))
+        }
+        None => None,
+    }
+}
+
+/// Applies the session-cycle action to its classified scope.
+pub(super) fn dispatch_session_cycle(app: &mut AppView, direction: Direction) -> Vec<Effect> {
     let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
-    if app.agents.len() <= 1 {
+    let Some(scope) = cycle_scope(app, current) else {
         return vec![];
-    }
-    let order = if app.workspace_dashboard_enabled {
-        let filter = app
-            .dashboard
-            .as_ref()
-            .map_or(&crate::views::dashboard::Filter::None, |d| &d.filter);
-        workspace_rows(app, filter)
-            .0
-            .into_iter()
-            .filter_map(|row| match row.id {
-                DashboardRowId::TopLevel(id) => Some(id),
-                _ => None,
-            })
-            .collect()
-    } else {
-        match app.dashboard.as_ref() {
-            Some(d) => crate::views::dashboard::overlay_cycle_order(d, &app.agents),
-            None => {
-                if !crate::views::dashboard::dashboard_enabled()
-                    || !matches!(app.auth_state, crate::app::app_view::AuthState::Done)
-                {
-                    return vec![];
-                }
-                let transient = dashboard_state_for_mode(app);
-                crate::views::dashboard::overlay_cycle_order(&transient, &app.agents)
+    };
+    match scope {
+        CycleScope::Siblings(order) if order.len() < 2 => {
+            if let Some(view) = app.agents.get_mut(&current) {
+                view.show_toast("No sibling subagent");
             }
+            vec![]
         }
-    };
-    if order.len() <= 1 {
-        return vec![];
+        CycleScope::Siblings(order) => {
+            let Some(target) = cycle_target(&order, current, direction) else {
+                return vec![];
+            };
+            switch_to_agent(app, target, SwitchCause::Navigate);
+            vec![]
+        }
+        CycleScope::Roots => {
+            let cycle = session_cycle(app);
+            dispatch_root_cycle(app, current, direction, cycle)
+        }
     }
-    let Some(idx) = order.iter().position(|id| *id == current) else {
+}
+
+fn cycle_target(order: &[AgentId], current: AgentId, direction: Direction) -> Option<AgentId> {
+    if order.is_empty() {
+        return None;
+    }
+    let index = order.iter().position(|id| *id == current)?;
+    let delta = match direction {
+        Direction::Prev => -1isize,
+        Direction::Next => 1,
+    };
+    let next = (index as isize + delta).rem_euclid(order.len() as isize) as usize;
+    order.get(next).copied()
+}
+
+pub(super) fn dispatch_navigate_tree(app: &mut AppView, step: crate::app::actions::TreeStep) -> Vec<Effect> {
+    let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
-    let n = order.len() as i32;
-    let next_idx = (((idx as i32) + delta).rem_euclid(n)) as usize;
-    let Some(&next_id) = order.get(next_idx) else {
+    let target = match step {
+        crate::app::actions::TreeStep::Parent => match app.agents.parent_of(current) {
+            Some(parent) => Some(parent),
+            None => {
+                app.show_toast("No parent session");
+                None
+            }
+        },
+        crate::app::actions::TreeStep::LatestChild => match app.agents.children_of(current).last() {
+            Some(child) => Some(*child),
+            None => {
+                app.show_toast("No child session");
+                None
+            }
+        },
+    };
+    if let Some(target) = target {
+        switch_to_agent(app, target, SwitchCause::Navigate);
+    }
+    vec![]
+}
+
+fn dispatch_root_cycle(
+    app: &mut AppView,
+    current: AgentId,
+    direction: Direction,
+    cycle: crate::views::dashboard::SessionCycle,
+) -> Vec<Effect> {
+    use crate::views::dashboard::SessionCycle;
+    let SessionCycle::Order(order) = cycle else {
+        return vec![];
+    };
+    let Some(next_id) = cycle_target(&order, current, direction) else {
         return vec![];
     };
     if next_id == current {
         return vec![];
     }
+    attach_root_session(app, next_id);
+    vec![]
+}
+
+/// Shows top-level session `target` the way the switcher does: attached to the dashboard overlay, row focused.
+fn attach_root_session(app: &mut AppView, target: AgentId) {
+    use crate::views::dashboard::DashboardRowId;
     if app.dashboard.is_none() {
         ensure_dashboard_state(app);
         configure_dashboard_state(app);
     }
-    if let Some(agent) = app.agents.get_mut(&next_id) {
-        agent.close_subagent_fullscreen();
-    }
     clear_pending_overlay_stop(app);
     if let Some(d) = app.dashboard.as_mut() {
         d.restore_peek_viewport(&mut app.agents);
-        d.attached_agent = Some(next_id);
-        d.focus_row(DashboardRowId::TopLevel(next_id));
+        d.attached_agent = Some(target);
+        d.focus_row(DashboardRowId::TopLevel(target));
     }
-    app.active_view = ActiveView::Agent(next_id);
-    surface_yolo_launch_block_notice(app, next_id);
+    switch_to_agent(app, target, SwitchCause::Navigate);
+}
+
+/// Removes the active top-level session from the header switcher and shows the next one. Only the switcher changes: the
+/// session keeps running, stays in the dashboard, and rejoins the switcher when the user opens it again.
+/// The only session has no next one, so the dashboard opens instead.
+pub(super) fn dispatch_dismiss_active_session(app: &mut AppView) -> Vec<Effect> {
+    let ActiveView::Agent(current) = app.active_view else {
+        return vec![];
+    };
+    if app.agents.parent_of(current).is_some() {
+        return vec![];
+    }
+    let next = match session_cycle(app) {
+        crate::views::dashboard::SessionCycle::Order(order) => {
+            cycle_target(&order, current, Direction::Next).filter(|id| *id != current)
+        }
+        crate::views::dashboard::SessionCycle::Unavailable => None,
+    };
+    let Some(next) = next else {
+        return dispatch_open_dashboard(app);
+    };
+    attach_root_session(app, next);
+    app.dismissed_sessions.insert(current);
+    app.invalidate_session_cycle();
     vec![]
+}
+/// The one session order behind both the prev/next dispatch and the header's `‹ i/n ›`: the rows the dashboard would
+/// paint (v2 workspace rows or v1 rows), so the switcher never disagrees with the list.
+/// A never-opened dashboard is gated like opening it and uses the persisted layout without a filter.
+fn session_cycle(app: &mut AppView) -> crate::views::dashboard::SessionCycle {
+    use crate::views::dashboard::{Filter, SessionCycle, SessionIdResolver};
+    if app.agents.len() < 2 {
+        return SessionCycle::Unavailable;
+    }
+    if app.dashboard.is_none()
+        && !(matches!(app.auth_state, crate::app::app_view::AuthState::Done)
+            && crate::views::dashboard::dashboard_enabled_by(
+                persisted_dashboard(&mut app.dashboard_persisted).enabled,
+            ))
+    {
+        return SessionCycle::Unavailable;
+    }
+    let order: Vec<AgentId> = if app.workspace_dashboard_enabled {
+        let filter = app.dashboard.as_ref().map_or(&Filter::None, |d| &d.filter);
+        crate::views::dashboard::top_level_ids(&workspace_rows(app, filter).0)
+    } else if let Some(d) = app.dashboard.as_ref() {
+        crate::views::dashboard::overlay_cycle_order(d, &app.agents)
+    } else {
+        let resolver = SessionIdResolver::from_agents(&app.agents);
+        let persisted = persisted_dashboard(&mut app.dashboard_persisted);
+        let (pinned, reorder) = persisted.resolve_layout(&resolver);
+        crate::views::dashboard::cycle_order(
+            &app.agents,
+            &pinned,
+            &reorder,
+            persisted.grouping,
+            &Filter::None,
+        )
+    };
+    let shown_root = match app.active_view {
+        ActiveView::Agent(id) => Some(app.agents.root_of(id)),
+        _ => None,
+    };
+    SessionCycle::from_order(
+        order
+            .into_iter()
+            .filter(|id| !app.dismissed_sessions.contains(id) || Some(*id) == shown_root)
+            .collect(),
+    )
+}
+/// `current`'s `i/n` in [`session_cycle`] for the header switcher, memoized on `app.session_cycle` until it is marked stale.
+pub(crate) fn session_cycle_position(app: &mut AppView, current: AgentId) -> Option<(usize, usize)> {
+    match cycle_scope(app, current)? {
+        CycleScope::Siblings(order) => {
+            crate::views::dashboard::SessionCycle::from_order(order).position(current)
+        }
+        CycleScope::Roots => match &app.session_cycle {
+            crate::views::dashboard::SessionCycleCache::Fresh(cycle) => cycle.position(current),
+            crate::views::dashboard::SessionCycleCache::Stale => {
+                let cycle = session_cycle(app);
+                let position = cycle.position(current);
+                app.session_cycle = crate::views::dashboard::SessionCycleCache::Fresh(cycle);
+                position
+            }
+        }
+    }
 }
 pub(super) fn dispatch_dashboard_dispatch(
     app: &mut AppView,
@@ -1513,6 +1643,7 @@ pub(super) fn dispatch_dashboard_peek_reply(
             d.attached_agent = Some(agent_id);
         }
         app.active_view = ActiveView::Agent(agent_id);
+        app.dismissed_sessions.remove(&agent_id);
         surface_yolo_launch_block_notice(app, agent_id);
     }
     effects
@@ -2093,7 +2224,7 @@ fn archive_dashboard_row(
             let session_id = session_id.0.to_string();
             let loaded_ids = app
                 .agents
-                .iter()
+                .roots()
                 .filter_map(|(candidate_id, candidate)| {
                     (!candidate.conversation_entry
                         && candidate
@@ -2101,7 +2232,7 @@ fn archive_dashboard_row(
                             .session_id
                             .as_ref()
                             .is_some_and(|candidate| candidate.0.as_ref() == session_id.as_str()))
-                    .then_some(*candidate_id)
+                    .then_some(candidate_id)
                 })
                 .collect::<Vec<_>>();
             if loaded_ids.iter().any(|id| {
@@ -2148,8 +2279,8 @@ fn close_dashboard_agents(
         app.agents
             .get(id)
             .and_then(|agent| agent.session.session_id.clone())
-    }) && !app.agents.iter().any(|(id, agent)| {
-        !loaded_ids.contains(id)
+    }) && !app.agents.roots().any(|(id, agent)| {
+        !loaded_ids.contains(&id)
             && agent
                 .session
                 .session_id

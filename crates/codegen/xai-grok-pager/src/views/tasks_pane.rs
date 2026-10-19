@@ -1432,7 +1432,13 @@ impl TasksPane {
         } else {
             model_text.width() as u16 + 1
         };
-        let overlay_w = kill_w + 3 + right_text_w + model_w + badge_w + 1;
+        let tokens_text = info
+            .attempt
+            .token_usage_label()
+            .map(|tokens| format!("\u{b7} {tokens} "))
+            .unwrap_or_default();
+        let tokens_w = tokens_text.width() as u16;
+        let overlay_w = kill_w + 3 + tokens_w + right_text_w + model_w + badge_w + 1;
         clear_overlay_area(buf, area, y, overlay_w);
         let mut rx = area.x + area.width;
         if info.is_running() {
@@ -1477,6 +1483,15 @@ impl TasksPane {
             TaskEntryId::Agent(subagent_id.to_string()),
             Rect::new(rx, y, 3, 1),
         ));
+        if tokens_w > 0 {
+            rx = rx.saturating_sub(tokens_w);
+            buf.set_span(
+                rx,
+                y,
+                &Span::styled(tokens_text, Style::default().fg(theme.gray)),
+                tokens_w,
+            );
+        }
         let right_width = right_text.width() as u16;
         rx = rx.saturating_sub(right_width);
         buf.set_span(rx, y, &Span::styled(right_text, right_style), right_width);
@@ -1602,11 +1617,10 @@ mod tests {
                 persona: None,
                 role: None,
                 model: None,
-                context_source: None,
+                context: xai_grok_shell::extensions::subagent_context::SubagentContext::Unreported,
                 resumed_from: None,
                 capability_mode: None,
                 workflow_run_id: None,
-                context_normalized: false,
                 parent_prompt_id: None,
                 started_at: now,
                 last_progress_at: now,
@@ -1623,6 +1637,7 @@ mod tests {
                 tools_used: Vec::new(),
                 error_count: None,
                 activity_label: None,
+                delivery: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,
@@ -2471,6 +2486,50 @@ mod tests {
             label.contains("grok-3"),
             "label should contain model: {label}",
         );
+    }
+
+    fn render_single_subagent_row(info: SubagentInfo) -> String {
+        let mut pane = TasksPane::new();
+        let mut subagents = HashMap::new();
+        subagents.insert(info.child_session_id.to_string(), info);
+        let bg_tasks = std::collections::BTreeMap::new();
+        pane.sync(&bg_tasks, &subagents, &HashMap::new(), &[]);
+        let area = Rect::new(0, 0, 80, 6);
+        let mut buf = Buffer::empty(area);
+        pane.render(
+            area,
+            &mut buf,
+            false,
+            &crate::appearance::LayoutConfig::default(),
+            &bg_tasks,
+            &subagents,
+            &HashMap::new(),
+        );
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
+                    .collect::<String>()
+            })
+            .find(|row| row.contains("Find API endpoints"))
+            .unwrap_or_else(|| panic!("subagent row not rendered"))
+    }
+
+    #[test]
+    fn subagent_row_shows_tokens_when_known() {
+        let mut info = make_info();
+        info.attempt.tokens_used = Some(45_000);
+        info.attempt.context_window_tokens = Some(256_000);
+        let row = render_single_subagent_row(info);
+        assert!(row.contains("\u{b7} 45K/256K"), "{row:?}");
+    }
+
+    #[test]
+    fn subagent_row_omits_tokens_when_unknown() {
+        let mut info = make_info();
+        info.attempt.context_window_tokens = Some(256_000);
+        let row = render_single_subagent_row(info);
+        assert!(!row.contains("256K"), "{row:?}");
     }
     #[test]
     fn entry_label_no_meta_when_empty() {

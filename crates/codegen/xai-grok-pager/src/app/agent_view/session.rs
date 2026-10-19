@@ -2,9 +2,9 @@
 #[cfg(test)]
 use super::test_agent_view;
 use super::{
-    ActivePane, AgentRole, AgentView, ChildLink, InlineMediaHitAreas, InputMode, PaneAreas,
-    PluginCtaState, PromptInputMode, PromptMode, REWOUND_PROMPT_ID_CAP, ReplayRebuiltState,
-    SELF_ORIGINATED_PROMPT_CAP, SessionReload, ViewSurface,
+    ActivePane, AgentRole, AgentView, InlineMediaHitAreas, InputMode, PaneAreas, PluginCtaState,
+    PromptInputMode, PromptMode, REWOUND_PROMPT_ID_CAP, ReplayRebuiltState,
+    SELF_ORIGINATED_PROMPT_CAP, SessionReload,
 };
 use crate::app::agent::{AgentSession, GoalDisplayStatus};
 use crate::app::app_view::InputOutcome;
@@ -47,6 +47,7 @@ impl AgentView {
             self.clear_kept_plan();
         }
         self.session.session_id = Some(session_id);
+        self.sync_panel_settings();
         self.session_starting_since = None;
         self.session_new_phase = None;
         self.pending_session_id = None;
@@ -82,6 +83,7 @@ impl AgentView {
             self.deferred_subagent_finishes.clear();
             self.clear_minimal_btw_lifecycle();
             self.clear_kept_plan();
+            self.sync_panel_settings();
         }
     }
     /// Record a prompt id this client originated (sent to the agent as the turn driver).
@@ -123,6 +125,9 @@ impl AgentView {
     ) -> Self {
         let mut agent = Self::new(session, scrollback);
         agent.post_turn_plan_review = app.post_turn_plan_review;
+        if let Some(root) = &app.panel_settings_root {
+            agent.open_panel_settings_in(root);
+        }
         agent
     }
     /// Create a new agent view with default UI state.
@@ -285,6 +290,10 @@ impl AgentView {
             hit_response_top_indicator: Default::default(),
             hit_cwd: Default::default(),
             hit_dashboard: Default::default(),
+            hit_deliver: Default::default(),
+            hit_session_parent: Default::default(),
+            hit_session_child: Default::default(),
+            hit_session_dismiss: Default::default(),
             hit_overlay_prev: Default::default(),
             hit_overlay_next: Default::default(),
             hit_cancel_button: Default::default(),
@@ -404,12 +413,16 @@ impl AgentView {
             timeline_rail: None,
             timeline_hover: None,
             timeline_hover_preview: None,
+            timeline_mode: crate::views::timeline_panel::TimelineMode::Rail,
+            context_sidebar: Default::default(),
+            panel_persistence: Default::default(),
+            sidebar_heights: Default::default(),
+            f7_body: Default::default(),
+            dock_rows_in_sidebar: 0,
+            pending_dock: None,
             session_agent_name: None,
             subagent_sessions: HashMap::new(),
-            subagent_views: HashMap::new(),
-            active_subagent: None,
             role: AgentRole::Root,
-            hit_subagent_frame_close: Default::default(),
             sharing_enabled: false,
             memory_mode: None,
             billing_surface_visible: false,
@@ -429,6 +442,7 @@ impl AgentView {
             last_turn_summary: None,
             last_turn_summary_gen: 0,
             pending_effects: Vec::new(),
+            pending_removed_context_items: Vec::new(),
             paste_probe_in_flight: 0,
             deferred_send: None,
             pending_turn_end_reconcile: None,
@@ -461,31 +475,9 @@ impl AgentView {
         view.set_input_mode(mode);
         view
     }
-    /// Register a child view; the sole path that turns a view into a child, so the role is stamped exactly once.
-    /// A child always opens on its transcript, whatever `AgentView::new` chose: `q`/`Esc` close from bare scrollback.
-    /// Its composer stays hidden until a role gives it a route, and its queue pane is a read-only mirror.
-    pub(crate) fn insert_subagent_view(
-        &mut self,
-        child_sid: String,
-        mut child_view: Box<AgentView>,
-        link: ChildLink,
-    ) {
-        child_view.role = AgentRole::Child(link);
-        child_view.active_pane = ActivePane::Scrollback;
-        child_view.queue.set_mutation(QueueMutation::ReadOnly);
-        self.subagent_views.insert(child_sid, child_view);
-    }
     /// The folder the header and the dashboard show, on the session's own computer
     pub(crate) fn location_path(&self) -> &std::path::Path {
         &self.session.cwd
-    }
-    #[cfg(test)]
-    pub(crate) fn subagent_view(&self, child_sid: &str) -> Option<&AgentView> {
-        self.subagent_views.get(child_sid).map(|v| &**v)
-    }
-    #[cfg(test)]
-    pub(crate) fn subagent_view_mut(&mut self, child_sid: &str) -> Option<&mut AgentView> {
-        self.subagent_views.get_mut(child_sid).map(|v| &mut **v)
     }
     /// Called at every turn-termination site; clears the wall anchor so a turn that reuses a prompt id cannot report the prior attempt's wall span.
     pub(crate) fn mark_turn_finished(&mut self, end: TurnEnd) {
@@ -547,7 +539,7 @@ impl AgentView {
             CancellationScope::Turn => self.session.cancel_turn(&mut self.scrollback),
             CancellationScope::Compaction => self.session.cancel_compact_command(),
         }
-        if origin == CancelOrigin::UserGesture && self.surface() == ViewSurface::Root {
+        if origin == CancelOrigin::UserGesture {
             self.cancel_latency
                 .get_or_insert_with(|| CancelLatency::new(now, scope));
         }
@@ -1225,6 +1217,14 @@ impl AgentView {
         }
         self.context_state = Some(next);
     }
+
+    /// Keep the last used count after a model switch; mark it stale until the
+    /// next provider usage. Never reset to 0.
+    pub fn mark_context_used_stale(&mut self) {
+        if let Some(snap) = self.context_state.as_mut() {
+            snap.used_stale = true;
+        }
+    }
     /// Update context state from a streaming notification carrying only `used` and `total` fields.
     ///
     /// No-op for gateway/chat-kind sessions (same policy as [`Self::apply_full_context_info`]).
@@ -1241,6 +1241,7 @@ impl AgentView {
         match self.context_state.as_mut() {
             Some(snap) => {
                 snap.used = used;
+                snap.used_stale = false;
                 if total > 0 {
                     snap.total = total;
                 }
@@ -1974,11 +1975,10 @@ mod resolve_turn_activity_tests {
                     persona: None,
                     role: None,
                     model: None,
-                    context_source: None,
+                    context: xai_grok_shell::extensions::subagent_context::SubagentContext::Unreported,
                     resumed_from: None,
                     capability_mode: None,
                     workflow_run_id: None,
-                    context_normalized: false,
                     parent_prompt_id: None,
                     started_at: now,
                     last_progress_at: now,
@@ -1995,6 +1995,7 @@ mod resolve_turn_activity_tests {
                     tools_used: vec![],
                     error_count: None,
                     activity_label: None,
+                    delivery: Default::default(),
                     is_background: true,
                     pending_kill: false,
                     kill_requested_at: None,

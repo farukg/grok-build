@@ -1,0 +1,177 @@
+//! The two side columns around the session view: the F6 timeline on the left and the F7 context switches on the right.
+//! Both use the shared sidebar component, so header and footer heights and the column split come from one place.
+
+use super::AgentView;
+use crate::views::prompt_widget::PromptWidget;
+use crate::views::sidebar::{
+    HostedSection, Sidebar, SidebarContent, SidebarEdge, SidebarHeights, SidebarLayout,
+    SidebarRender, SidebarSection, SidebarState, SidebarsOpen,
+};
+use crate::views::timeline::MIN_TERMINAL_WIDTH;
+use crate::views::timeline_panel::footer_memo::FooterRowsKey;
+use crate::views::timeline_panel::hint::{footer_lines, footer_rows, status_line};
+use crate::views::timeline_panel::{TimelinePanelState, render_panel};
+use crate::scrollback::state::ScrollbackState;
+use crate::theme::Theme;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::text::Line;
+
+/// Header and footer heights of the sidebars, measured once per column width.
+#[derive(Debug, Default)]
+pub(crate) struct SidebarHeightsCache(Option<(u16, SidebarHeights)>);
+
+impl SidebarHeightsCache {
+    pub(crate) fn heights_for(&mut self, width: u16) -> SidebarHeights {
+        match self.0 {
+            Some((cached, heights)) if cached == width => heights,
+            _ => {
+                let heights = SidebarHeights::from_shared_sources(&PromptWidget::new(), width);
+                self.0 = Some((width, heights));
+                heights
+            }
+        }
+    }
+}
+
+/// The expanded timeline, hosted in the left column's body.
+struct TimelineBody<'a> {
+    panel: &'a TimelinePanelState,
+    scrollback: &'a ScrollbackState,
+    height: u16,
+}
+
+impl HostedSection for TimelineBody<'_> {
+    fn desired_height(&self) -> u16 {
+        self.height
+    }
+
+    fn render(&self, buf: &mut Buffer, _visible_area: Rect, _row_offset: u16, theme: &Theme) {
+        render_panel(buf, self.panel, self.scrollback, theme);
+    }
+}
+
+/// A dock ready to paint into the top rows of the F7 body.
+pub(crate) struct PendingDock {
+    pub(crate) data: crate::views::dock::DockData,
+    pub(crate) rect: Rect,
+    pub(crate) scrollback: Rect,
+    pub(crate) layout_cfg: crate::appearance::LayoutConfig,
+    pub(crate) overlay_focused: bool,
+}
+
+/// Blank rows the dock is painted over.
+pub(super) struct DockSlot(pub(super) u16);
+
+impl HostedSection for DockSlot {
+    fn desired_height(&self) -> u16 {
+        self.0
+    }
+
+    fn render(&self, _buf: &mut Buffer, _visible_area: Rect, _row_offset: u16, _theme: &Theme) {}
+}
+
+impl AgentView {
+    /// Paint the dock into the F7 column, after the sidebar chrome.
+    pub(super) fn draw_pending_dock(&mut self, buf: &mut Buffer) {
+        self.dock_stop_button = None;
+        let Some(PendingDock {
+            data,
+            rect,
+            scrollback,
+            layout_cfg,
+            overlay_focused,
+        }) = self.pending_dock.take()
+        else {
+            return;
+        };
+        let theme = Theme::current();
+        crate::views::dock::render(buf, rect, &theme, &data);
+        self.cache_dock_stop_at(rect, &data);
+        let queue_body = crate::views::dock::queue_body_rect(rect, &data);
+        if queue_body.height > 0 {
+            let queue_focused = self.active_pane == super::ActivePane::Queue && !overlay_focused;
+            self.queue.render(
+                queue_body,
+                buf,
+                queue_focused,
+                &layout_cfg,
+                Some(scrollback),
+                self.can_send_now(),
+            );
+        }
+    }
+
+    /// Which side columns take space this frame. The timeline needs a terminal wide enough for its rail.
+    pub(crate) fn sidebars_open(&self, area_width: u16) -> SidebarsOpen {
+        let timeline = self.timeline_mode.panel().is_some() && area_width >= MIN_TERMINAL_WIDTH;
+        let context = matches!(self.context_sidebar, super::context_sidebar::ContextSidebar::Open(_));
+        match (timeline, context) {
+            (false, false) => SidebarsOpen::None,
+            (true, false) => SidebarsOpen::Left,
+            (false, true) => SidebarsOpen::Right,
+            (true, true) => SidebarsOpen::Both,
+        }
+    }
+
+    /// Draw the expanded timeline into the left column; runs after the session view so its layout is prepared.
+    pub(super) fn draw_timeline_sidebar(&mut self, area: Rect, buf: &mut Buffer) {
+        if self.timeline_mode.panel().is_none() {
+            return;
+        }
+        let theme = Theme::current();
+        let base = self.sidebar_heights.heights_for(area.width);
+        let status = self.panel_persistence.saving_status();
+        let rows_key = FooterRowsKey {
+            column_width: area.width,
+            column_height: area.height,
+            status,
+        };
+        let footer_height = match self.timeline_mode.panel_mut() {
+            Some(panel) => panel.footer_rows_for(rows_key, || {
+                footer_rows(base, area.width, area.height, &theme, status)
+            }),
+            None => base.footer,
+        };
+        let heights = SidebarHeights {
+            footer: footer_height,
+            ..base
+        };
+        let body = SidebarLayout::compute(area, heights).body;
+        self.sync_timeline_panel_frame(if area.width == 0 { Rect::default() } else { body });
+        let context = self.timeline_footer_context();
+        let Some(panel) = self.timeline_mode.panel() else {
+            return;
+        };
+        if area.width == 0 {
+            return;
+        }
+        let hosted = TimelineBody {
+            panel,
+            scrollback: &self.scrollback,
+            height: body.height,
+        };
+        let sections = [SidebarSection::Hosted(&hosted)];
+        let mut state = SidebarState::default();
+        state.rebuild_layout(&sections);
+        let header = [Line::from("Timeline")];
+        let mut footer = footer_lines(area.width, &theme, &context);
+        footer.extend(status_line(area.width, &theme, status));
+        Sidebar::render(
+            SidebarRender {
+                area,
+                content: SidebarContent {
+                    header: &header,
+                    sections: &sections,
+                    footer: &footer,
+                },
+                heights,
+                edge: SidebarEdge::Left,
+                state: &state,
+                hovered: None,
+                theme: &theme,
+            },
+            buf,
+        );
+    }
+}

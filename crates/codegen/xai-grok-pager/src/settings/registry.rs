@@ -649,6 +649,7 @@ pub fn current_value_for(
         "prompt_suggestions" => Some(SettingValue::Bool(
             crate::appearance::cache::load_prompt_suggestions(),
         )),
+        "system_reminders" => Some(SettingValue::Bool(ui.system_reminders_enabled())),
         "respect_manual_folds" => Some(SettingValue::Bool(pager.respect_manual_folds)),
         // SHELL: canonicalized from `[ui].hunk_tracker_mode`
         "hunk_tracker_mode" => Some(SettingValue::Enum(canonical_hunk_tracker_mode(
@@ -1103,6 +1104,9 @@ mod tests {
                         ui.prompt_suggestions.unwrap_or(true),
                         "prompt_suggestions default drifts from UiConfig::default()"
                     );
+                }
+                ("system_reminders", SettingKind::Bool { default }) => {
+                    assert_eq!(*default, ui.system_reminders_enabled());
                 }
                 ("keep_text_selection", SettingKind::Enum { default, .. }) => {
                     // The compile-time default is flash

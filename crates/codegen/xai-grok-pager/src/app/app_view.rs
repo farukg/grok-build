@@ -20,7 +20,6 @@ use crate::views::prompt_widget::PromptWidget;
 use crate::views::welcome::WelcomePromptFocus;
 use agent_client_protocol as acp;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
-use indexmap::IndexMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -504,7 +503,7 @@ pub struct AppView {
     /// `Some` only while a `/login` (or 401-triggered re-auth) initiated from an active session is in progress.
     /// `None` at startup so the normal login-then-load flow is preserved.
     pub auth_return_view: Option<ActiveView>,
-    pub agents: IndexMap<AgentId, AgentView>,
+    pub agents: super::session_views::SessionViews,
     /// Monotonically increasing counter for agent ID allocation.
     /// IDs are never reused after `shift_remove`, to avoid collisions.
     pub next_agent_id: usize,
@@ -654,6 +653,10 @@ pub struct AppView {
     /// Shell-advertised eligibility for the `/feedback` trace-upload offer, exactly as received (initialize meta / auth-meta refreshes).
     /// Read it through [`Self::feedback_trace_offer`], which subtracts the latch.
     pub shell_feedback_trace_offer: bool,
+    /// Whether prompts to subagent views can reach the shell; set from the ACP `initialize` reply.
+    pub shell_child_support: crate::acp::ShellChildSupport,
+    /// The subagent the user resumed from its finished view; the continuation that names it is opened when it spawns.
+    pub follow_resumed_child: Option<String>,
     /// A persisted card answer was made this session; keeps auth-meta refreshes from re-offering before the async config write lands.
     pub feedback_trace_choice_latched: bool,
     /// Stateful prompt widget rendered on the welcome screen (persists input across frames).
@@ -859,6 +862,8 @@ pub struct AppView {
     pub chat_mode: bool,
     /// Post-turn CreatePlan review. ACP connect seed for backends that implement ExecutePlan.
     pub(crate) post_turn_plan_review: bool,
+    /// Where new session views keep their F6/F7 settings; `None` keeps none (set at startup).
+    pub(crate) panel_settings_root: Option<PathBuf>,
     /// Welcome picker mode; ignored when `local_workspace_startup_locked`.
     #[cfg(feature = "local-workspace")]
     pub welcome_workspace_mode: crate::views::welcome::WelcomeWorkspaceMode,
@@ -1062,9 +1067,13 @@ pub struct AppView {
     /// Where to return when leaving the dashboard. See [`DashboardReturn`].
     pub dashboard_return: Option<DashboardReturn>,
     /// Persisted dashboard configuration (pinned rows, reorderings, grouping).
-    /// Loaded once on startup from `~/.grok/config.toml`.
-    /// `None` when the file/section is absent or contained malformed data; falls back to in-memory defaults.
+    /// Read from `~/.grok/config.toml` on first use; `None` until then. An absent or unreadable section caches the defaults.
     pub dashboard_persisted: Option<crate::views::dashboard::PersistedDashboard>,
+    /// The header switcher's session order, rebuilt on the first frame after it goes stale (see [`Self::invalidate_session_cycle`]).
+    pub(crate) session_cycle: crate::views::dashboard::SessionCycleCache,
+    /// Top-level sessions the user removed from the header switcher. They stay loaded and listed in the dashboard; only
+    /// the `‹ i/n ›` walk skips them, until the user opens one again. Pager-process lifetime, so a restart resets it.
+    pub(crate) dismissed_sessions: std::collections::HashSet<AgentId>,
     /// Per-platform key event normalizer.
     ///
     /// New event consumers that bypass `AppView::handle_input` will not get rescued modifiers unless they also normalize.
@@ -1139,6 +1148,11 @@ impl AppView {
     pub(crate) fn alloc_picker_generation(&mut self) -> u64 {
         self.picker_generation_counter += 1;
         self.picker_generation_counter
+    }
+    /// Marks the header switcher's session order stale. Dispatch, non-streaming ACP handling, and the tick reconcilers
+    /// call it, since they own every change to an agent, the dashboard layout, or workspace membership.
+    pub(crate) fn invalidate_session_cycle(&mut self) {
+        self.session_cycle = crate::views::dashboard::SessionCycleCache::Stale;
     }
     pub fn is_zdr_blocked(&self) -> bool {
         self.is_zdr && !self.zdr_access_enabled
@@ -1302,7 +1316,7 @@ impl AppView {
     pub(crate) fn sync_billing_surface_to_agents(&mut self) {
         let billing = self.usage_visible;
         let usage_cmd = !self.has_external_auth_provider;
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent.set_billing_surface_visible(billing);
             agent.set_usage_command_visible(usage_cmd);
         }
@@ -1355,7 +1369,7 @@ impl AppView {
             pending_startup: None,
             active_view: ActiveView::Welcome,
             auth_return_view: None,
-            agents: IndexMap::new(),
+            agents: super::session_views::SessionViews::new(),
             next_agent_id: 0,
             models,
             registry: ActionRegistry::defaults(),
@@ -1477,6 +1491,7 @@ impl AppView {
             ask_user: false,
             chat_mode: false,
             post_turn_plan_review: false,
+            panel_settings_root: None,
             #[cfg(feature = "local-workspace")]
             welcome_workspace_mode: crate::views::welcome::WelcomeWorkspaceMode::Sandbox,
             #[cfg(feature = "local-workspace")]
@@ -1587,11 +1602,15 @@ impl AppView {
             cancel_rewind_enabled: true,
             session_recap_available: false,
             shell_feedback_trace_offer: false,
+            shell_child_support: crate::acp::ShellChildSupport::Legacy,
+            follow_resumed_child: None,
             feedback_trace_choice_latched: false,
             tutorial: None,
             dashboard: None,
             dashboard_return: None,
             dashboard_persisted: None,
+            session_cycle: Default::default(),
+            dismissed_sessions: Default::default(),
             keyboard_normalizer: KeyboardNormalizer::from_terminal_context(),
             voice_mode_enabled: false,
             distribution: xai_grok_config::Distribution::current(),
@@ -1632,7 +1651,7 @@ impl AppView {
     pub fn apply_voice_mode_enabled(&mut self, enabled: bool) {
         self.voice_mode_enabled = enabled;
         crate::app::VOICE_MODE_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent.set_voice_mode_available(enabled);
             match agent.active_modal.as_mut() {
                 Some(crate::views::modal::ActiveModal::Settings { state }) => {
@@ -1657,7 +1676,7 @@ impl AppView {
     /// Call after gate flips, startup, reconnect, and session create/switch (so new agents inherit the gate).
     pub fn sync_permission_mode_slash_gate(&mut self) {
         let available = self.auto_mode_gate;
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent.prompt.set_auto_mode_available(available);
         }
         self.welcome_prompt.set_auto_mode_available(available);
@@ -1680,7 +1699,7 @@ impl AppView {
         } else {
             Vec::new()
         };
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent.set_restricted_commands(&names);
         }
         self.welcome_prompt.set_restricted_commands(&names);
@@ -1706,8 +1725,8 @@ impl AppView {
             crate::views::announcements::has_session_announcements(&self.active_announcements);
         if self
             .agents
-            .values()
-            .any(|a| a.prompt.slash_controller.has_session_announcements() != has)
+            .roots()
+            .any(|(_, a)| a.prompt.slash_controller.has_session_announcements() != has)
         {
             self.sync_session_announcement_slash_gate();
         }
@@ -1717,14 +1736,11 @@ impl AppView {
     pub fn sync_session_announcement_slash_gate(&mut self) {
         let has =
             crate::views::announcements::has_session_announcements(&self.active_announcements);
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent
                 .prompt
                 .slash_controller
                 .set_has_session_announcements(has);
-            for child in agent.subagent_views.values_mut() {
-                child.set_has_session_announcements(has);
-            }
         }
     }
     /// Whether the active view still owns the bound dictation `target`: the box dictation started in is the one currently on screen and selected.
@@ -1853,25 +1869,13 @@ impl AppView {
         match self.active_view {
             ActiveView::Agent(id) => {
                 if let Some(agent) = self.agents.get_mut(&id) {
-                    if let Some(child_sid) = agent.active_subagent.clone()
-                        && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-                    {
-                        if reconnect_success_hides_mismatch(
-                            child.toast.as_ref().map(|(m, _)| m.as_str()),
-                            msg,
-                        ) {
-                            return;
-                        }
-                        child.show_toast(msg);
-                    } else {
-                        if reconnect_success_hides_mismatch(
-                            agent.toast.as_ref().map(|(m, _)| m.as_str()),
-                            msg,
-                        ) {
-                            return;
-                        }
-                        agent.show_toast(msg);
+                    if reconnect_success_hides_mismatch(
+                        agent.toast.as_ref().map(|(m, _)| m.as_str()),
+                        msg,
+                    ) {
+                        return;
                     }
+                    agent.show_toast(msg);
                 }
             }
             ActiveView::AgentDashboard => {
@@ -2033,12 +2037,9 @@ impl AppView {
     /// Apply a (possibly hot-reloaded) appearance config to all agents.
     pub fn set_appearance(&mut self, config: AppearanceConfig) {
         crate::render::bidi::set_enabled(config.scrollback.display.rtl_bidi);
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent.scrollback.set_appearance(config.clone());
-            for child in agent.subagent_views.values_mut() {
-                child.scrollback.set_appearance(config.clone());
-                child.prompt.sync_tab_width_from_appearance();
-            }
+            agent.prompt.sync_tab_width_from_appearance();
             agent
                 .prompt
                 .slash_controller
@@ -2063,7 +2064,7 @@ impl AppView {
         let mut config = self.appearance.clone();
         config.prompt.compact = derived;
         self.set_appearance(config);
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent.prompt.set_compact(derived);
         }
     }
@@ -2072,14 +2073,7 @@ impl AppView {
     /// 0 means unknown (welcome/dashboard views), which keeps the trackpad per-flush cap at its floor.
     fn scroll_viewport_height(&self) -> u16 {
         match self.active_view {
-            ActiveView::Agent(id) => self.agents.get(&id).map_or(0, |agent| {
-                let scrollback = agent
-                    .active_subagent
-                    .as_ref()
-                    .and_then(|sid| agent.subagent_views.get(sid))
-                    .map_or(&agent.scrollback, |child| &child.scrollback);
-                scrollback.scroll_info().1
-            }),
+            ActiveView::Agent(id) => self.agents.get(&id).map_or(0, |agent| agent.scrollback.scroll_info().1),
             _ => 0,
         }
     }
@@ -2098,18 +2092,13 @@ impl AppView {
             .debug_snapshot(&config, std::time::Instant::now());
         let view = match self.active_view {
             ActiveView::Agent(id) => self.agents.get(&id).map(|agent| {
-                let scrollback = agent
-                    .active_subagent
-                    .as_ref()
-                    .and_then(|sid| agent.subagent_views.get(sid))
-                    .map_or(&agent.scrollback, |child| &child.scrollback);
-                let (scroll_offset, viewport, total_height) = scrollback.scroll_info();
+                let (scroll_offset, viewport, total_height) = agent.scrollback.scroll_info();
                 let max_offset = total_height.saturating_sub(viewport as usize);
                 crate::views::scroll_debug_hud::ViewportDebug {
                     scroll_offset,
                     max_offset,
                     total_height,
-                    follow_mode: scrollback.is_follow_mode(),
+                    follow_mode: agent.scrollback.is_follow_mode(),
                     at_bottom: scroll_offset >= max_offset,
                 }
             }),
@@ -2131,12 +2120,6 @@ impl AppView {
         match self.active_view {
             ActiveView::Agent(id) => {
                 if let Some(agent) = self.agents.get_mut(&id) {
-                    if let Some(child_sid) = agent.active_subagent.clone()
-                        && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-                    {
-                        child.handle_scroll(lines, column, row);
-                        return;
-                    }
                     agent.handle_scroll(lines, column, row);
                 }
             }
@@ -2160,12 +2143,6 @@ impl AppView {
                 });
                 if let Some((agent_id, _outer)) = popup_target {
                     if let Some(agent) = self.agents.get_mut(&agent_id) {
-                        if let Some(child_sid) = agent.active_subagent.clone()
-                            && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-                        {
-                            child.handle_scroll(lines, column, row);
-                            return;
-                        }
                         agent.handle_scroll(lines, column, row);
                     }
                     return;
@@ -2237,11 +2214,8 @@ impl AppView {
             _ => None,
         };
         if let Event::Resize(_, rows) = ev {
-            for agent in self.agents.values_mut() {
+            for (_, agent) in self.agents.all_mut() {
                 agent.note_terminal_resize();
-                for child in agent.subagent_views.values_mut() {
-                    child.note_terminal_resize();
-                }
             }
             self.last_known_terminal_rows = *rows;
             self.apply_effective_compact();
@@ -2416,22 +2390,18 @@ impl AppView {
                     .dashboard
                     .as_ref()
                     .is_some_and(|d| d.attached_agent == Some(id));
-                if !overlay_active
-                    && let Event::Key(key) = ev
+                if let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
-                {
-                    match self
-                        .registry
-                        .lookup(key, crate::actions::When::DashboardOverlay)
-                    {
-                        Some(crate::actions::ActionId::DashboardOverlayPrev) => {
-                            return InputOutcome::Action(Action::DashboardOverlayPrev);
-                        }
-                        Some(crate::actions::ActionId::DashboardOverlayNext) => {
-                            return InputOutcome::Action(Action::DashboardOverlayNext);
-                        }
-                        _ => {}
+                    && let Some(action) = self.registry.lookup(key, crate::actions::When::AgentScreen)
+                    && let Some(action) = match action {
+                        crate::actions::ActionId::SessionPrev => Some(Action::CycleSessions(crate::app::actions::Direction::Prev)),
+                        crate::actions::ActionId::SessionNext => Some(Action::CycleSessions(crate::app::actions::Direction::Next)),
+                        crate::actions::ActionId::SessionParent => Some(Action::NavigateTree(crate::app::actions::TreeStep::Parent)),
+                        crate::actions::ActionId::SessionLatestChild => Some(Action::NavigateTree(crate::app::actions::TreeStep::LatestChild)),
+                        _ => None,
                     }
+                {
+                    return InputOutcome::Action(action);
                 }
                 if overlay_active
                     && let Event::Key(key) = ev
@@ -2445,12 +2415,6 @@ impl AppView {
                         Some(crate::actions::ActionId::OpenDashboard)
                         | Some(crate::actions::ActionId::DashboardOverlayExit) => {
                             return InputOutcome::Action(Action::DashboardOverlayExit);
-                        }
-                        Some(crate::actions::ActionId::DashboardOverlayPrev) => {
-                            return InputOutcome::Action(Action::DashboardOverlayPrev);
-                        }
-                        Some(crate::actions::ActionId::DashboardOverlayNext) => {
-                            return InputOutcome::Action(Action::DashboardOverlayNext);
                         }
                         Some(crate::actions::ActionId::DashboardOverlayStop) => {
                             let confirmation_label = if self.workspace_dashboard_enabled {
@@ -2590,7 +2554,6 @@ impl AppView {
                 let prompt_paging = !overlay_active && !self.screen_mode.is_minimal();
                 let outcome = match self.agents.get_mut(&id) {
                     Some(agent) => {
-                        let transcript_before = agent.active_subagent.clone();
                         let workflows_before = agent.show_workflows;
                         let outcome = if self.screen_mode.is_minimal() {
                             agent.handle_minimal_input(ev, &self.registry)
@@ -2599,14 +2562,12 @@ impl AppView {
                         } else {
                             agent.handle_input(ev, &self.registry)
                         };
-                        let transcript_opened =
-                            transcript_before.is_none() && agent.active_subagent.is_some();
                         let workflows_opened = !workflows_before && agent.show_workflows;
                         if let Event::Key(key) = ev {
                             agent.record_input(key, &outcome);
                         }
                         self.pending_effects.append(&mut agent.pending_effects);
-                        if transcript_opened || workflows_opened {
+                        if workflows_opened {
                             self.scroll_state.cancel_stream();
                             self.last_scroll_pos = None;
                         }
@@ -2669,9 +2630,6 @@ impl AppView {
                             if let Some(d) = self.dashboard.as_mut() {
                                 d.close_popup();
                             }
-                            if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                agent.close_subagent_fullscreen();
-                            }
                             return InputOutcome::Changed;
                         }
                     }
@@ -2716,9 +2674,6 @@ impl AppView {
                             if let Some(d) = self.dashboard.as_mut() {
                                 d.close_popup();
                             }
-                            if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                agent.close_subagent_fullscreen();
-                            }
                             return InputOutcome::Changed;
                         }
                         if !in_outer && let Some(target) = row_target {
@@ -2730,17 +2685,14 @@ impl AppView {
                     }
                     match self.agents.get_mut(&agent_id) {
                         Some(agent) => {
-                            let transcript_before = agent.active_subagent.clone();
                             let workflows_before = agent.show_workflows;
                             let outcome = agent.handle_input(ev, &self.registry);
-                            let transcript_opened =
-                                transcript_before.is_none() && agent.active_subagent.is_some();
                             let workflows_opened = !workflows_before && agent.show_workflows;
                             if let Event::Key(key) = ev {
                                 agent.record_input(key, &outcome);
                             }
                             self.pending_effects.append(&mut agent.pending_effects);
-                            if transcript_opened || workflows_opened {
+                            if workflows_opened {
                                 self.scroll_state.cancel_stream();
                                 self.last_scroll_pos = None;
                             }
@@ -2750,9 +2702,6 @@ impl AppView {
                             ) {
                                 if let Some(d) = self.dashboard.as_mut() {
                                     d.close_popup();
-                                }
-                                if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                    agent.close_subagent_fullscreen();
                                 }
                                 return InputOutcome::Changed;
                             }
@@ -4114,7 +4063,7 @@ impl AppView {
     /// Placement id 1 is cleared only when no popup agent is drawn; a popup owns and reuses that slot across consecutive dashboard frames.
     /// (A one-shot sweep per transition, not a per-frame cost.)
     fn dashboard_stale_image_clears(
-        agents: &mut IndexMap<AgentId, AgentView>,
+        agents: &mut super::session_views::SessionViews,
         drawn_agent: Option<AgentId>,
     ) -> Option<crate::terminal::overlay::PostFlush> {
         if crate::terminal::image::prompt_preview_graphics_protocol()
@@ -4124,8 +4073,8 @@ impl AppView {
         }
         let mut clears = crate::terminal::overlay::PostFlush::default();
         let mut has_escapes = false;
-        for (id, agent) in agents.iter_mut() {
-            if Some(*id) == drawn_agent {
+        for (id, agent) in agents.all_mut() {
+            if Some(id) == drawn_agent {
                 continue;
             }
             if let Some(esc) = agent.take_inline_media_clear_escapes() {
@@ -4216,8 +4165,8 @@ impl AppView {
                 let _ = crossterm::execute!(stderr, crossterm::event::EnableMouseCapture);
             });
             super::MOUSE_CAPTURE_ENABLED.store(true, std::sync::atomic::Ordering::Release);
-            for agent in self.agents.values_mut() {
-                agent.set_sticky_toast_recursive(None);
+            for (_, agent) in self.agents.all_mut() {
+                agent.set_sticky_toast(None);
             }
         }
     }
@@ -4289,6 +4238,10 @@ impl AppView {
         });
         let welcome_default_yolo = self.default_yolo;
         let welcome_auto_gate = self.auto_mode_gate;
+        let session_cycle_position = self
+            .active_view
+            .agent_id()
+            .and_then(|id| super::dispatch::session_cycle_position(self, id));
         let Self {
             active_view,
             agents,
@@ -4637,17 +4590,7 @@ impl AppView {
                                 .dashboard
                                 .as_ref()
                                 .is_some_and(|d| d.attached_agent == Some(id));
-                            let position: Option<(usize, usize)> = if overlay_active
-                                && let Some(d) = self.dashboard.as_ref()
-                            {
-                                let order = crate::views::dashboard::overlay_cycle_order(d, agents);
-                                order
-                                    .iter()
-                                    .position(|i| *i == id)
-                                    .map(|idx| (idx + 1, order.len()))
-                            } else {
-                                None
-                            };
+                            let position = session_cycle_position;
                             let overlay_title = overlay_active
                                 .then(|| {
                                     agents
@@ -4655,9 +4598,21 @@ impl AppView {
                                         .and_then(crate::views::session_title::named_title)
                                 })
                                 .flatten();
+                            let child_info = agents.child_info(id);
+                            let kind = child_info
+                                .map(|info| crate::app::subagent::format_subagent_label(info).0);
+                            let session_nav = crate::app::agent_view::SessionNav {
+                                parent: agents.parent_of(id).is_some(),
+                                child: agents.has_children(id),
+                                dismiss: agents.parent_of(id).is_none(),
+                            };
                             let overlay_header = crate::app::agent_view::OverlayHeader {
                                 title: overlay_title.as_deref(),
                                 position,
+                                kind: kind.as_deref(),
+                                awaits_delivery: child_info.is_some_and(
+                                    crate::app::subagent::SubagentInfo::awaits_delivery,
+                                ),
                             };
                             if let Some(d) = self.dashboard.as_mut()
                                 && d.peek_viewport.is_some()
@@ -4716,6 +4671,7 @@ impl AppView {
                                             .workspace_dashboard_enabled,
                                         overlay_header,
                                         overlay_stop_label: None,
+                                        session_nav,
                                     },
                                 );
                                 if let Some(modal) = self.import_claude_modal.as_mut() {
@@ -4987,15 +4943,7 @@ impl AppView {
         }
         self.last_cache_evict_at = Some(now);
         if let Some(agent) = self.agents.get_mut(&id) {
-            let evicted = if let Some(child_sid) = agent.active_subagent.clone() {
-                agent
-                    .subagent_views
-                    .get(&child_sid)
-                    .map(|child| child.scrollback.evict_offscreen_render_caches())
-                    .unwrap_or(0)
-            } else {
-                agent.scrollback.evict_offscreen_render_caches()
-            };
+            let evicted = agent.scrollback.evict_offscreen_render_caches();
             if evicted > 0 {
                 tracing::debug!(evicted, "scrollback.evicted_offscreen_render_caches");
             }
@@ -5051,7 +4999,7 @@ impl AppView {
         resolved: xai_grok_shell::util::config::ResolvedContextualHints,
     ) {
         self.contextual_hints = resolved;
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             agent
                 .prompt
                 .set_contextual_hints(resolved.undo, resolved.plan_mode);
@@ -5246,11 +5194,8 @@ impl AppView {
         }
         let mut bootstrap_commands_update: Option<Vec<agent_client_protocol::AvailableCommand>> =
             None;
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             needs_redraw |= agent.edit_hl_tick();
-            for child in agent.subagent_views.values_mut() {
-                needs_redraw |= child.edit_hl_tick();
-            }
         }
         if let ActiveView::Agent(id) = self.active_view
             && let Some(agent) = self.agents.get_mut(&id)
@@ -5259,19 +5204,6 @@ impl AppView {
             needs_redraw |= agent.todo.list_state.tick();
             needs_redraw |= agent.tasks.tick();
             needs_redraw |= agent.resize_preview_needs_tick();
-            for child_view in agent.subagent_views.values_mut() {
-                needs_redraw |= child_view.scrollback.tick();
-                needs_redraw |= child_view.tick_toast();
-                needs_redraw |= child_view.tick_ephemeral_tip();
-                needs_redraw |= child_view.tick_mode_banner();
-                needs_redraw |= child_view.tick_selection_highlight();
-                needs_redraw |= child_view.tick_drag_autoscroll();
-                needs_redraw |= child_view.poll_link_modifier();
-                needs_redraw |= child_view.poll_scrollback_search();
-                needs_redraw |= child_view.mermaid_tick();
-                needs_redraw |= Self::tick_agent_image_load(child_view);
-                needs_redraw |= Self::tick_agent_block_viewer(child_view);
-            }
             let spinner_frame_tick =
                 agent.scrollback.animation_tick() % crate::views::turn_status::SPINNER_DIVISOR == 0;
             needs_redraw |= !agent.session.state.is_idle() && spinner_frame_tick;
@@ -5335,18 +5267,7 @@ impl AppView {
             needs_redraw |= agent.prompt.history_search.poll();
             needs_redraw |= agent.poll_scrollback_search();
             needs_redraw |= agent.tick_toast();
-            if !self.export_copy_slash_used
-                && let Some(child_sid) = agent.active_subagent.clone()
-                && let Some(child_view) = agent.subagent_views.get_mut(&child_sid)
-            {
-                if child_view.tick_export_copy_detector() {
-                    needs_redraw |= super::dispatch::present_export_copy_tip(
-                        child_view,
-                        &mut self.tip_seen_counts,
-                        self.contextual_hints.export_copy,
-                    );
-                }
-            } else if !self.export_copy_slash_used && agent.tick_export_copy_detector() {
+            if !self.export_copy_slash_used && agent.tick_export_copy_detector() {
                 needs_redraw |= super::dispatch::present_export_copy_tip(
                     agent,
                     &mut self.tip_seen_counts,
@@ -5454,7 +5375,7 @@ impl AppView {
     /// In release-aware (Kitty) mode a key stays latched until its release event arrives.
     /// On window focus loss the active game's release may be dropped, so clear all games' holds to stop runaway motion.
     pub(crate) fn gboom_release_all_games(&mut self) {
-        for agent in self.agents.values_mut() {
+        for (_, agent) in self.agents.all_mut() {
             if let Some(gboom) = agent.gboom.as_mut() {
                 gboom.release_all();
             }
@@ -5468,8 +5389,8 @@ impl AppView {
             ActiveView::Agent(id) => Some(id),
             _ => None,
         };
-        for (id, agent) in self.agents.iter_mut() {
-            if Some(*id) != active
+        for (id, agent) in self.agents.all_mut() {
+            if Some(id) != active
                 && let Some(gboom) = agent.gboom.as_mut()
             {
                 gboom.release_all();
@@ -5561,18 +5482,16 @@ impl AppView {
         }
         if self
             .agents
-            .values()
-            .any(|a| a.pending_turn_end_reconcile.is_some())
+            .all()
+            .any(|(_, a)| a.pending_turn_end_reconcile.is_some())
         {
             return TickDemand::Fast;
         }
-        if self.agents.values().any(|a| {
-            a.pending_cancel_resend.is_some()
-                || a.prompt_ack.is_some()
-                || a.subagent_views
-                    .values()
-                    .any(|c| c.pending_cancel_resend.is_some() || c.prompt_ack.is_some())
-        }) {
+        if self
+            .agents
+            .all()
+            .any(|(_, a)| a.pending_cancel_resend.is_some() || a.prompt_ack.is_some())
+        {
             return TickDemand::Fast;
         }
         if self.deferred_notification.is_some() {
@@ -5584,13 +5503,7 @@ impl AppView {
         if self.session_picker_content_loading {
             return TickDemand::Fast;
         }
-        if self.agents.values().any(|agent| {
-            agent.edit_hl_needs_tick()
-                || agent
-                    .subagent_views
-                    .values()
-                    .any(|c| c.edit_hl_needs_tick())
-        }) {
+        if self.agents.roots().any(|(_, agent)| agent.edit_hl_needs_tick()) {
             return TickDemand::Fast;
         }
         match self.active_view {
@@ -5651,32 +5564,12 @@ impl AppView {
                             *loading,
                             lanes,
                         )
-                    )
-                    || agent.subagent_views.iter().any(|(sid, child)| {
-                        child.toast.is_some()
-                            || child.ephemeral_tip_needs_tick()
-                            || child.mode_switch_banner.is_some()
-                            || child.has_drag_autoscroll()
-                            || child.selection_created_at.is_some()
-                            || (agent.active_subagent.as_deref() == Some(sid.as_str())
-                                && child.scrollback.needs_animation())
-                            || child.any_cancel_pending()
-                            || child.scrollback_search.is_some()
-                            || child.block_viewer.is_some()
-                            || child.image_viewer.as_ref().is_some_and(|v| v.loading)
-                            || child.image_load_rx.is_some()
-                            || child.mermaid_needs_tick()
-                    });
+                    );
+
                 if fast {
                     return TickDemand::Fast;
                 }
-                if cfg!(target_os = "macos")
-                    && (agent.needs_link_modifier_poll()
-                        || agent
-                            .subagent_views
-                            .values()
-                            .any(|child| child.needs_link_modifier_poll()))
-                {
+                if cfg!(target_os = "macos") && agent.needs_link_modifier_poll() {
                     return TickDemand::Slow;
                 }
                 TickDemand::None
@@ -5729,7 +5622,7 @@ impl AppView {
             } else {
                 (None, None, None, false, None, false)
             };
-        let any_agent_has_perms = self.agents.values().any(|a| !a.permission_queue.is_empty());
+        let any_agent_has_perms = self.agents.roots().any(|(_, agent)| !agent.permission_queue.is_empty());
         if !any_agent_has_perms {
             self.notification_service.clear_permission_notification();
         }

@@ -11,8 +11,10 @@ use crate::scrollback::types::{
 };
 
 const USER_PROMPT_BODY_RANGE: u16 = 0;
-/// Max visible lines when a user prompt is collapsed.
-const COLLAPSED_MAX_LINES: usize = 3;
+/// A prompt is foldable only when it exceeds this many visual lines.
+const FOLD_THRESHOLD_LINES: usize = 3;
+/// Visible lines of a collapsed or truncated (pinned header) prompt.
+const COLLAPSED_RENDER_LINES: usize = 1;
 use crate::appearance::AppearanceConfig;
 use crate::theme::Theme;
 
@@ -450,7 +452,12 @@ impl BlockContent for UserPromptBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let max_lines = match ctx.mode {
             DisplayMode::Expanded => None,
-            DisplayMode::Collapsed | DisplayMode::Truncated => Some(COLLAPSED_MAX_LINES),
+            DisplayMode::Collapsed => Some(COLLAPSED_RENDER_LINES),
+            DisplayMode::Truncated => Some(if self.is_foldable() {
+                COLLAPSED_RENDER_LINES
+            } else {
+                FOLD_THRESHOLD_LINES
+            }),
         };
 
         let prompt_cfg = &ctx.appearance.scrollback.blocks.prompt;
@@ -498,7 +505,7 @@ impl BlockContent for UserPromptBlock {
             } else {
                 w.div_ceil(MIN_CONTENT_WIDTH)
             };
-            if visual_lines > COLLAPSED_MAX_LINES {
+            if visual_lines > FOLD_THRESHOLD_LINES {
                 return true;
             }
         }
@@ -1107,6 +1114,60 @@ mod tests {
         let short_line = "a ".repeat(60); // 120 chars wraps to 2 visual lines at 60
         let block = UserPromptBlock::new(short_line);
         assert!(!block.is_foldable());
+    }
+
+    fn render_texts(block: &UserPromptBlock, mode: DisplayMode, width: u16) -> Vec<String> {
+        let ctx = BlockContext {
+            mode,
+            is_running: false,
+            width,
+            raw: false,
+            max_lines: None,
+            appearance: AppearanceConfig::default(),
+            is_selected: false,
+            cwd: None,
+        };
+        block
+            .output(&ctx)
+            .lines
+            .iter()
+            .map(|l| line_text(&l.content))
+            .collect()
+    }
+
+    #[test]
+    fn collapsed_long_prompt_renders_single_line_with_ellipsis() {
+        let _guard = crate::theme::cache::pin_theme();
+        let block = UserPromptBlock::new("word ".repeat(60));
+        assert_eq!(block.default_display_mode(), DisplayMode::Collapsed);
+
+        let width = 24;
+        for mode in [DisplayMode::Collapsed, DisplayMode::Truncated] {
+            let rows = render_texts(&block, mode, width);
+            let [row] = rows.as_slice() else {
+                panic!("{mode:?} prompt must render one row, got {rows:?}");
+            };
+            assert!(row.ends_with(" \u{2026}"), "{mode:?} row lacks ellipsis: {row:?}");
+            assert!(row.width() <= width as usize, "{mode:?} row overflows: {row:?}");
+        }
+        assert!(render_texts(&block, DisplayMode::Expanded, width).len() > 3);
+    }
+
+    #[test]
+    fn collapsed_multiline_prompt_renders_single_line_within_width() {
+        let _guard = crate::theme::cache::pin_theme();
+        let block = UserPromptBlock::new("first line of a long prompt\ntwo\nthree\nfour");
+        assert!(block.is_foldable());
+
+        let width = 16;
+        let rows = render_texts(&block, DisplayMode::Collapsed, width);
+        let [row] = rows.as_slice() else {
+            panic!("collapsed prompt must render one row, got {rows:?}");
+        };
+        assert!(row.starts_with(crate::glyphs::prompt_arrow()));
+        assert!(row.ends_with(" \u{2026}"), "row lacks ellipsis: {row:?}");
+        assert!(row.width() <= width as usize, "row overflows: {row:?}");
+        assert_eq!(render_texts(&block, DisplayMode::Expanded, 80).len(), 4);
     }
 
     #[test]

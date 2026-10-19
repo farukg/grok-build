@@ -58,13 +58,30 @@ impl AccentStyle {
 
 pub use crate::appearance::BlockBackground;
 
-/// How a block is currently displayed.
+/// User-selectable display form for a message kind or entry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum DisplayForm {
+    Collapsed,
+    #[default]
+    Expanded,
+}
+
+/// Current renderer state, including transient truncation while content is live.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum DisplayMode {
     Collapsed,
     Truncated,
     #[default]
     Expanded,
+}
+
+impl From<DisplayForm> for DisplayMode {
+    fn from(form: DisplayForm) -> Self {
+        match form {
+            DisplayForm::Collapsed => Self::Collapsed,
+            DisplayForm::Expanded => Self::Expanded,
+        }
+    }
 }
 
 /// Which parts of a line can be selected for copying.

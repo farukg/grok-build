@@ -371,6 +371,8 @@ pub enum PaletteCommand {
     OpenAgentsModal,
     /// Open the feedback modal directly (every screen mode).
     OpenFeedbackModal,
+    /// Expand the timeline into its outline panel (F6).
+    TimelinePanel,
 }
 /// Build the default set of palette entries with section grouping.
 pub(crate) fn default_palette_entries(
@@ -448,6 +450,11 @@ pub(crate) fn default_palette_entries(
             label: "Context Usage".into(),
             shortcut: "/context".into(),
             command: PaletteCommand::SlashCommand("/context".into()),
+        },
+        PaletteEntry {
+            label: "Timeline".into(),
+            shortcut: "F6".into(),
+            command: PaletteCommand::TimelinePanel,
         },
         PaletteEntry {
             label: "View Plan".into(),

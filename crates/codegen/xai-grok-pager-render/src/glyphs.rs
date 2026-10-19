@@ -322,6 +322,20 @@ pub fn ballot_x_button() -> &'static str {
     }
 }
 
+/// `"[↑]"` (U+2191 is CP437, so legacy ConHost renders it unchanged). Always 3 columns wide.
+///
+/// Jump-to-parent button in the session header.
+pub fn up_button() -> &'static str {
+    "[\u{2191}]"
+}
+
+/// `"[↓]"` (U+2193 is CP437, so legacy ConHost renders it unchanged). Always 3 columns wide.
+///
+/// Jump-to-subagent button in the session header.
+pub fn down_button() -> &'static str {
+    "[\u{2193}]"
+}
+
 /// `"[↗]"` normally, `"[o]"` on legacy ConHost. Always 3 columns wide.
 ///
 /// Pre-composed bracketed sibling of [`ballot_x_button`] for the bg-task view / enlarge button.
@@ -545,8 +559,10 @@ mod tests {
     #[test]
     fn button_variants_have_stable_width() {
         for (fancy, fallback, cols) in [
-            ("[\u{2717}]", "[x]", 3), // ballot_x_button
-            ("[\u{2197}]", "[o]", 3), // enlarge_button
+            ("[\u{2717}]", "[x]", 3),        // ballot_x_button
+            ("[\u{2197}]", "[o]", 3),        // enlarge_button
+            ("[\u{2191}]", "[\u{2191}]", 3), // up_button
+            ("[\u{2193}]", "[\u{2193}]", 3), // down_button
         ] {
             assert_eq!(fancy.width(), cols, "button {fancy:?} must be {cols} cols");
             assert_eq!(

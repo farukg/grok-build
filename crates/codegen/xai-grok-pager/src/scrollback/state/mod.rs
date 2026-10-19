@@ -3,6 +3,7 @@
 //! This combines entries, scroll position, selection, and turn-based navigation into a single state object.
 
 pub mod groups;
+mod kind_default;
 mod layout;
 mod nav;
 mod pin_reserve;
@@ -13,7 +14,8 @@ pub mod verb_group;
 
 pub(crate) use layout::ScrollAnchor;
 pub use layout::compute_paint_window;
-pub use timeline::TimelineEntry;
+pub use timeline::{TimelineEntry, TimelineRow, TimelineRowKey, TimelineRowKind};
+pub(crate) use timeline::prompt_preview;
 pub use types::*;
 
 use layout::{LayoutCache, StructuralScrollAnchor};
@@ -25,7 +27,8 @@ use std::time::Instant;
 use indexmap::IndexMap;
 use ratatui::layout::Rect;
 
-use super::block::{BlockContent, RenderBlock};
+use super::block::{BlockContent, DisplayDefaults, EntryForm, MessageKind, RenderBlock};
+use super::types::DisplayForm;
 use super::blocks::tool::{EditToolCallBlock, ToolCallBlock};
 use super::entry::{EntryId, ScrollbackEntry};
 use super::layout::HorizontalLayout;
@@ -200,6 +203,9 @@ pub struct ScrollbackState {
     /// When a group's first entry ID is in this set, the fold pass (`groups::apply`) marks its span expanded instead of hiding entries.
     expanded_groups: HashSet<EntryId>,
 
+    /// Bumped when the turn structure is rebuilt or a fold pass yields different group spans; keys the timeline outline rebuild.
+    outline_generation: u64,
+
     // Link map
     /// Monotonically increasing counter, bumped when visible link positions or policy inputs change.
     /// Used by `VisibleLinkMap::is_stale()` to skip rebuilds.
@@ -216,6 +222,8 @@ pub struct ScrollbackState {
 
     /// Session/worktree cwd (`AgentSession.cwd`) for Expanded tool paths.
     cwd: Option<std::path::PathBuf>,
+
+    display_defaults: DisplayDefaults,
 }
 
 impl Default for ScrollbackState {
@@ -265,11 +273,13 @@ impl ScrollbackState {
             warm_above: DeferredWarmAbove::Idle,
             ffmpeg_available_snapshot: false,
             expanded_groups: HashSet::new(),
+            outline_generation: 0,
             generation: 0,
             content_generation: 0,
             #[cfg(test)]
             layout_rebuilds: 0,
             cwd: None,
+            display_defaults: DisplayDefaults::default(),
         }
     }
 
@@ -303,8 +313,10 @@ impl ScrollbackState {
         fresh.view_mode = self.view_mode;
         fresh.follow_mode = self.follow_mode;
         fresh.cwd = self.cwd.clone();
+        fresh.display_defaults = self.display_defaults.clone();
         fresh.generation = self.generation.wrapping_add(1);
         fresh.content_generation = self.content_generation.wrapping_add(1);
+        fresh.outline_generation = self.outline_generation.wrapping_add(1);
         fresh
     }
 
@@ -326,6 +338,7 @@ impl ScrollbackState {
         self.generation = self.generation.max(sibling.0);
         self.content_generation = self.content_generation.max(sibling.1);
         self.bump_content_generation();
+        self.outline_generation = self.outline_generation.wrapping_add(1);
     }
 
     /// The invalidation-generation pair, for [`Self::raise_invalidation_floor`].
@@ -398,6 +411,27 @@ impl ScrollbackState {
     pub fn mark_structurally_dirty(&mut self, id: EntryId) {
         self.dirty_heights.insert(id);
         self.gaps_may_be_dirty = true;
+    }
+
+    pub fn display_defaults(&self) -> &DisplayDefaults {
+        &self.display_defaults
+    }
+
+    pub fn set_kind_default(&mut self, kind: MessageKind, form: DisplayForm) {
+        if self.display_defaults.get(kind) == Some(form) {
+            return;
+        }
+        self.display_defaults.set(kind, form);
+        let mode = DisplayMode::from(form);
+        for entry in self.entries.values_mut() {
+            if MessageKind::from(&entry.block) == kind
+                && entry.form == EntryForm::FollowingKind
+            {
+                entry.display_mode = mode;
+                entry.invalidate_cache();
+            }
+        }
+        self.invalidate_heights();
     }
 
     /// Get current appearance config.
@@ -534,7 +568,7 @@ impl ScrollbackState {
         let mut entry = entry;
         entry.id = id;
 
-        self.apply_edit_default_display_mode(&mut entry);
+        self.apply_kind_default(&mut entry);
 
         // Track if this entry is running
         if entry.is_running {
@@ -590,7 +624,7 @@ impl ScrollbackState {
         let Some(index) = self.entries.get_index_of(&anchor) else {
             return self.push_block(block);
         };
-        debug_assert!(
+        assert!(
             !self.committed.contains(&anchor),
             "insert_block_before: anchor {anchor:?} is already committed — the inserted \
              block would print out of order in native scrollback"
@@ -602,7 +636,7 @@ impl ScrollbackState {
         self.next_id += 1;
         let mut entry = ScrollbackEntry::new(block);
         entry.id = id;
-        self.apply_edit_default_display_mode(&mut entry);
+        self.apply_kind_default(&mut entry);
         if entry.is_running {
             self.running.insert(id);
         }
@@ -624,22 +658,31 @@ impl ScrollbackState {
         id
     }
 
-    /// Fresh Edit entries at the block's Collapsed default adopt the state-owned materialize policy.
-    /// An explicit non-Collapsed mode survives.
-    /// An explicit Collapsed is indistinguishable from the default and may be upgraded by the effective expanded default.
-    fn apply_edit_default_display_mode(&self, entry: &mut ScrollbackEntry) {
-        if let RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) = &entry.block
-            && entry.display_mode == DisplayMode::Collapsed
-        {
-            entry.display_mode = edit_default_display_mode(
-                self.appearance
-                    .scrollback
-                    .blocks
-                    .edit
-                    .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks()),
-                edit,
-            );
+    /// A fresh entry still at its block's built-in default takes the kind setting, else the state-owned policy.
+    /// An explicit mode chosen by the producer survives both; a successful untrusted edit summary always expands,
+    /// because its one-liner cannot truthfully compress the change.
+    fn apply_kind_default(&self, entry: &mut ScrollbackEntry) {
+        if entry.display_mode != entry.block.default_display_mode() {
+            return;
         }
+        let setting = self.display_defaults.get(MessageKind::from(&entry.block));
+        entry.display_mode = match (&entry.block, setting) {
+            (RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), setting) => {
+                let expanded_by_default = match setting {
+                    Some(DisplayForm::Expanded) => true,
+                    Some(DisplayForm::Collapsed) => false,
+                    None => self
+                        .appearance
+                        .scrollback
+                        .blocks
+                        .edit
+                        .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks()),
+                };
+                edit_default_display_mode(expanded_by_default, edit)
+            }
+            (_, Some(form)) => DisplayMode::from(form),
+            (block, None) => block.default_display_mode(),
+        };
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -838,6 +881,7 @@ impl ScrollbackState {
         // Note: we don't reset next_id to avoid ID reuse
         self.selected = None;
         self.turns.clear();
+        self.outline_generation = self.outline_generation.wrapping_add(1);
         self.current_turn = None;
         self.scroll_offset = 0;
         self.pin_reserve_active = false;
@@ -1120,12 +1164,8 @@ impl ScrollbackState {
             match &mut entry.block {
                 RenderBlock::AgentMessage(msg) => msg.finish(),
                 RenderBlock::Thinking(thinking) => {
-                    // finish() freezes the local started_at timer into elapsed_time_ms
-                    // Only use server time as a fallback when no local timer exists (e.g., during replay)
                     thinking.finish();
-                    if thinking.elapsed_time_ms().is_none()
-                        && let Some(time_ms) = thinking_time_ms
-                    {
+                    if let Some(time_ms) = thinking_time_ms {
                         thinking.set_elapsed_time_ms(Some(time_ms));
                     }
                 }
@@ -1162,7 +1202,6 @@ impl ScrollbackState {
                     entry.display_mode = thinking_mode;
                 }
             } else if let Some(mode) = entry.block.finished_display_mode() {
-                // Collapsed stays folded; finish must not snap-open
                 if entry.display_mode != DisplayMode::Collapsed {
                     entry.display_mode = mode;
                 }

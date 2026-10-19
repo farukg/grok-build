@@ -14,15 +14,15 @@ use super::dashboard::{
     dispatch_dashboard_confirm_worktree, dispatch_dashboard_create_new_agent_with_detail,
     dispatch_dashboard_delete, dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
     dispatch_dashboard_open_location_picker, dispatch_dashboard_open_session_picker,
-    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_cycle,
-    dispatch_dashboard_overlay_exit, dispatch_dashboard_overlay_stop,
-    dispatch_dashboard_peek_cycle_mode, dispatch_dashboard_peek_reply,
-    dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
-    dispatch_dashboard_pick_session, dispatch_dashboard_question_answer,
-    dispatch_dashboard_reorder, dispatch_dashboard_select, dispatch_dashboard_stop,
-    dispatch_dashboard_toggle_auto_approve, dispatch_dashboard_toggle_grouping,
-    dispatch_dashboard_toggle_pin, dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard,
-    dispatch_open_dashboard,
+    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_exit,
+    dispatch_dashboard_overlay_stop, dispatch_dashboard_peek_cycle_mode,
+    dispatch_dashboard_peek_reply, dispatch_dashboard_permission_followup,
+    dispatch_dashboard_permission_select, dispatch_dashboard_pick_session,
+    dispatch_dashboard_question_answer, dispatch_dashboard_reorder, dispatch_dashboard_select,
+    dispatch_dashboard_stop, dispatch_dashboard_toggle_auto_approve,
+    dispatch_dashboard_toggle_grouping, dispatch_dashboard_toggle_pin,
+    dispatch_dashboard_toggle_worktree, dispatch_dismiss_active_session, dispatch_exit_dashboard,
+    dispatch_navigate_tree, dispatch_open_dashboard, dispatch_session_cycle,
 };
 use super::import_claude::{
     dispatch_dismiss_claude_import, dispatch_import_claude, dispatch_import_claude_cancel,
@@ -54,6 +54,7 @@ use super::rewind::{
     dispatch_rewind_confirm_never_ask, dispatch_rewind_dismiss, dispatch_rewind_dismiss_error,
     dispatch_rewind_picker_select, dispatch_rewind_show_picker,
 };
+use super::rewind_remove::dispatch_remove_context_items;
 use super::session::foreign::dispatch_fetch_session_list;
 use super::session::fork::{
     apply_persist_worktree_mode, dispatch_fork, dispatch_fork_resolved,
@@ -87,6 +88,7 @@ use super::settings::setters::{
     set_invert_scroll, set_keep_text_selection, set_max_thoughts_width, set_multiline_mode,
     set_page_flip_on_send, set_prompt_suggestions, set_remember_tool_approvals, set_render_mermaid,
     set_respect_manual_folds, set_screen_mode, set_scroll_lines, set_scroll_mode, set_scroll_speed,
+    set_system_reminders,
     set_show_thinking_blocks, set_show_tips, set_simple_mode, set_subagent_model_inheritance,
     set_theme, set_timeline, set_timestamps, set_vim_mode, set_voice_capture_mode,
     set_voice_keybind_enabled, set_voice_stt_language,
@@ -112,7 +114,8 @@ use super::transcript::{
 };
 use super::turn::{
     dispatch_cancel_scheduled_task, dispatch_cancel_turn, dispatch_cancel_turn_choice,
-    dispatch_demote_to_background, dispatch_kill_bg_task, dispatch_kill_subagent,
+    dispatch_context_policy, dispatch_deliver_subagent, dispatch_demote_to_background, dispatch_kill_bg_task,
+    dispatch_kill_subagent, dispatch_resume_subagent,
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
 use crate::app::actions::{Action, Effect, ModelChoice};
@@ -154,6 +157,7 @@ pub(in crate::app::dispatch) fn confirmed_quit(app: &mut AppView) -> Vec<Effect>
 /// Only the outermost call shows the image notices the whole tree queued, so a nested action's own
 /// toast cannot bury them and one submission yields one message.
 pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
+    app.invalidate_session_cycle();
     app.dispatch_depth = app.dispatch_depth.saturating_add(1);
     let effects = dispatch_inner(action, app);
     app.dispatch_depth = app.dispatch_depth.saturating_sub(1);
@@ -1080,6 +1084,19 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::CancelTurnChoice(choice) => dispatch_cancel_turn_choice(app, choice),
         Action::KillBgTask(task_id) => dispatch_kill_bg_task(app, task_id),
         Action::KillSubagent(subagent_id) => dispatch_kill_subagent(app, subagent_id),
+        Action::ResumeSubagent {
+            subagent_id,
+            prompt,
+        } => dispatch_resume_subagent(app, subagent_id, prompt),
+        Action::DeliverSubagent => dispatch_deliver_subagent(app),
+        Action::FetchContextPolicy => {
+            dispatch_context_policy(app, crate::app::actions::ContextPolicyChange::Read)
+        }
+        Action::SetContextPolicy(policy) => dispatch_context_policy(
+            app,
+            crate::app::actions::ContextPolicyChange::Replace(policy),
+        ),
+        Action::RemoveContextItems(items) => dispatch_remove_context_items(app, items),
         Action::CancelScheduledTask(task_id) => dispatch_cancel_scheduled_task(app, task_id),
         Action::DemoteToBackground => dispatch_demote_to_background(app),
         Action::RequestBundleStatus => vec![Effect::FetchBundleStatus],
@@ -1154,6 +1171,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::SetGroupToolVerbs(v) => set_group_tool_verbs(app, v),
         Action::SetCollapsedEditBlocks(v) => set_collapsed_edit_blocks(app, v),
         Action::SetPromptSuggestions(v) => set_prompt_suggestions(app, v),
+        Action::SetSystemReminders(v) => set_system_reminders(app, v),
         Action::SetRespectManualFolds(v) => set_respect_manual_folds(app, v),
         Action::SetDefaultSelectedPermission(s) => set_default_selected_permission(app, s),
         Action::SetHunkTrackerMode(s) => set_hunk_tracker_mode(app, s),
@@ -1535,8 +1553,16 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::DashboardReorderUp => dispatch_dashboard_reorder(app, true),
         Action::DashboardReorderDown => dispatch_dashboard_reorder(app, false),
         Action::DashboardOverlayExit => dispatch_dashboard_overlay_exit(app),
-        Action::DashboardOverlayPrev => dispatch_dashboard_overlay_cycle(app, -1),
-        Action::DashboardOverlayNext => dispatch_dashboard_overlay_cycle(app, 1),
+        Action::CycleSessions(direction) => dispatch_session_cycle(app, direction),
+        Action::NavigateTree(step) => dispatch_navigate_tree(app, step),
+        Action::DismissActiveSession => dispatch_dismiss_active_session(app),
+        Action::OpenSession(session_id) => {
+            let id = app.agents.find_by_session_id(&session_id);
+            if let Some(id) = id {
+                super::ctx::switch_to_agent(app, id, super::ctx::SwitchCause::Navigate);
+            }
+            vec![]
+        }
         Action::DashboardOverlayStop => dispatch_dashboard_overlay_stop(app),
         Action::DashboardToggleAutoApprove => dispatch_dashboard_toggle_auto_approve(app),
         Action::DashboardToggleWorktree => dispatch_dashboard_toggle_worktree(app),
@@ -1649,7 +1675,7 @@ pub(crate) fn flush_image_notices(app: &mut AppView) -> bool {
     }
     let target = match app.active_view {
         ActiveView::Agent(id) => app.agents.get_mut(&id),
-        _ => app.agents.values_mut().next(),
+        _ => app.agents.roots_mut().next().map(|(_, agent)| agent),
     };
     let Some(agent) = target else {
         return false;
@@ -1679,12 +1705,6 @@ fn restore_stash_where_the_draft_was_consumed(app: &mut AppView) {
     let Some(agent) = app.agents.get_mut(&id) else {
         return;
     };
-    if let Some(child_sid) = agent.active_subagent.clone()
-        && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-        && child.take_draft_consumed()
-    {
-        child.auto_restore_stash_after_send();
-    }
     if agent.take_draft_consumed() {
         agent.auto_restore_stash_after_send();
     }

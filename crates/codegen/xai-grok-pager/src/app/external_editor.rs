@@ -246,14 +246,9 @@ fn report_config_failure(app: &mut AppView, message: &str) {
         && let ActiveView::Agent(id) = app.active_view
         && let Some(agent) = app.agents.get_mut(&id)
     {
-        let block = RenderBlock::system(message.to_owned());
-        if let Some(child_sid) = agent.active_subagent.clone()
-            && let Some(child) = agent.subagent_views.get_mut(&child_sid)
-        {
-            child.scrollback.push_block(block);
-        } else {
-            agent.scrollback.push_block(block);
-        }
+        agent
+            .scrollback
+            .push_block(RenderBlock::system(message.to_owned()));
     } else {
         app.show_toast(message);
     }

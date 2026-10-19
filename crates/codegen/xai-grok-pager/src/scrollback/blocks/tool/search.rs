@@ -1,5 +1,6 @@
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
+use std::path::Path;
 
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -430,6 +431,13 @@ impl BlockContent for SearchToolCallBlock {
                             lines.push(Line::from("").into());
                         }
 
+                        let syntect = crate::syntax::get_syntect();
+                        let path = Path::new(&file_match.path);
+                        let mut highlighter = syntect
+                            .highlight_lines_by_file_path(path)
+                            .or_else(|| syntect.highlight_lines_for_fence_info(""));
+                        let mut previous_line_number: Option<usize> = None;
+
                         // File path line
                         lines.push(
                             BlockLine::from(Line::from(Span::styled(
@@ -441,16 +449,30 @@ impl BlockContent for SearchToolCallBlock {
 
                         // Match lines: "    42  content..."
                         for m in &file_match.matches {
+                            if previous_line_number
+                                .is_some_and(|line| m.line_number != line.saturating_add(1))
+                            {
+                                highlighter = syntect
+                                    .highlight_lines_by_file_path(path)
+                                    .or_else(|| syntect.highlight_lines_for_fence_info(""));
+                            }
+                            previous_line_number = Some(m.line_number);
                             let line_num_str = format!("{:>4}", m.line_number);
                             let content_trimmed = m.content.trim_end();
+                            let mut spans = vec![
+                                Span::styled(match_indent.to_string(), theme.primary()),
+                                Span::styled(line_num_str, theme.muted()),
+                                Span::styled("  ".to_string(), theme.primary()),
+                            ];
+                            spans.extend(crate::syntax::highlight_line(
+                                content_trimmed,
+                                &mut highlighter,
+                                syntect,
+                                theme.primary(),
+                            ));
                             lines.push(
-                                BlockLine::from(Line::from(vec![
-                                    Span::styled(match_indent.to_string(), theme.primary()),
-                                    Span::styled(line_num_str, theme.muted()),
-                                    Span::styled("  ".to_string(), theme.primary()),
-                                    Span::styled(content_trimmed.to_string(), theme.primary()),
-                                ]))
-                                .with_panel_background(theme.bg_dark),
+                                BlockLine::from(Line::from(spans))
+                                    .with_panel_background(theme.bg_dark),
                             );
                         }
                     }
@@ -533,5 +555,89 @@ impl BlockContent for SearchToolCallBlock {
             DisplayMode::Collapsed => DisplayMode::Expanded,
             _ => DisplayMode::Collapsed,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expanded() -> BlockContext {
+        BlockContext {
+            mode: DisplayMode::Expanded,
+            is_running: false,
+            width: 120,
+            raw: false,
+            max_lines: None,
+            appearance: Default::default(),
+            is_selected: false,
+            cwd: None,
+        }
+    }
+
+    fn row_text(line: &BlockLine) -> String {
+        line.content
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn search_results_highlight_source_without_changing_copy_text() {
+        let code = "fn main() { let answer = 42; }";
+        let block = SearchToolCallBlock::new("answer").with_matches(
+            1,
+            vec![SearchFileMatch {
+                path: "src/main.rs".into(),
+                matches: vec![SearchLineMatch {
+                    line_number: 7,
+                    content: code.into(),
+                }],
+            }],
+        );
+        let output = block.output(&expanded());
+        let line = output
+            .lines
+            .iter()
+            .find(|line| row_text(line).ends_with(code))
+            .expect("search match row");
+        assert_eq!(row_text(line), format!("       7  {code}"));
+        let source_spans = &line.content.spans[3..];
+        assert!(
+            source_spans.len() > 1,
+            "source tokens must have distinct spans"
+        );
+        assert!(
+            source_spans
+                .iter()
+                .any(|span| span.style != Theme::current().primary())
+        );
+        assert_eq!(line.background, Some(Theme::current().bg_dark));
+    }
+
+    #[test]
+    fn unknown_file_extension_uses_dsl_syntax() {
+        let block = SearchToolCallBlock::new("Invoice").with_matches(
+            1,
+            vec![SearchFileMatch {
+                path: "schema/example.unknown".into(),
+                matches: vec![SearchLineMatch {
+                    line_number: 2,
+                    content: "Invoice id BigInt".into(),
+                }],
+            }],
+        );
+        let output = block.output(&expanded());
+        let line = output
+            .lines
+            .iter()
+            .find(|line| row_text(line).ends_with("Invoice id BigInt"))
+            .expect("search match row");
+        assert!(
+            line.content.spans[3..]
+                .iter()
+                .any(|span| span.style != Theme::current().primary())
+        );
     }
 }
