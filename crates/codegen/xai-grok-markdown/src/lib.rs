@@ -42,6 +42,7 @@ mod source_map;
 pub mod streaming;
 pub mod style;
 mod syntax;
+mod visible;
 #[cfg(test)]
 mod syntax_backend_tests;
 mod url_scan;

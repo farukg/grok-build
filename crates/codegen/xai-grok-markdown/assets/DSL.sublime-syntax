@@ -1,0 +1,215 @@
+%YAML 1.2
+---
+# DSL (dsl-core) surface-grammar syntax for bat/delta/syntect (GD-11 interim).
+#
+# Source of truth for the GRAMMAR: ../../surface.ebnf (machine transcription of
+# 04a-SURFACE-GRAMMAR.md, sigma/context-modules.d/500_work.d/cdse.d/
+# dsl-grammar-festzurren.d/). Color-DNA authority: 47c-highlighting-color-dna.reference.md
+# (same dir) + shared/cdse/proposals/cdse/themes/syntax/VsCodeDarkModern.dsl.
+#
+# This is a HAND-WRITTEN interim artifact (GD-11, plan 47 §Wellen). It uses
+# STANDARD TextMate/sublime scope names (not custom color-DNA token classes)
+# so it renders distinctly under any existing bat theme without requiring a
+# bespoke .tmTheme. When GD-1 lands (grammar-as-data), this file is meant to
+# be REGENERATED from the grammar source, not hand-maintained forever — see
+# the drift-coupling note in 47-grammar-as-data.plan.md §GD-11.
+#
+# Known HONEST gaps (grammar constructs this lexical pass cannot resolve
+# without semantic/type info — see report for the full list):
+#   - RawText (S-4 quoteless text after `=>` / text-block) vs an ordinary
+#     expr arm-body is TYPE-DIRECTED (04a I.6) — cannot be told apart by a
+#     regex-only pass. Both render as plain default-foreground text/tokens.
+#   - Variant vs TypeConstructor (both lexically UpperCamel) — 47c splits
+#     these into two token classes (gold vs teal-bold) but the distinction is
+#     positional/semantic (sum-child vs the type head itself), not lexical.
+#     This syntax renders ALL UpperCamel identifiers as entity.name.type.
+#   - Reference/Konstanten (SHAs, E_* codes) has no reserved lexical marker
+#     in dsl-core source (those are diagnostic-registry codes, not authored
+#     tokens) — no dedicated match; falls through to plain identifier scope.
+#   - Reaction glyphs (👀/👍/👎) are a capability-profile CONCEPT (43g), not a
+#     lexical token; they only ever appear as ordinary Unicode string content
+#     if authored at all — the string scope already carries full Unicode, so
+#     no dedicated scope is added.
+#   - stepName (S-17α) is technically "any Unicode char sequence, not
+#     starting uppercase, excluding sigils" — effectively unbounded. This
+#     syntax approximates it with ASCII + Latin-1 letters + hyphen + the
+#     common stdlib symbol-names (+ - * !). Exotic Unicode names or other
+#     symbol names fall through unscoped (still readable, just not colored).
+
+name: DSL
+file_extensions:
+  - dsl
+scope: source.dsl
+
+variables:
+  # S-17α stepName approximation (see header gap note): lower-initial word,
+  # ASCII + Latin-1 letters, digits, hyphen (to-* convention, S-17α "-" legal).
+  STEP_NAME: '[a-zà-öø-ÿ][a-zà-öø-ÿA-Za-z0-9\-]*'
+  # Stdlib symbol-names (Core/@/BigInt/+/{other}.dsl family, S-17α): the
+  # arithmetic/compare op def-names + - * ! and the two-char `==`.
+  SYMBOL_NAME: '(?:==|[+\-*!])'
+  UPPER_CAMEL: '[A-Z][A-Za-z0-9]*'
+
+contexts:
+  main:
+    # ---- chat-only comment lines (NOT dsl-core grammar) -----------------
+    # dsl-core itself has NO comments (G-6, CLOSED 2026-07-06 — `//` in real
+    # authored source is a typed rejection). These rules exist ONLY so that
+    # `//`- or `#`-prefixed ANNOTATION lines that Faruk/agents add when talking
+    # ABOUT dsl in chat/docs render as comments (Faruk 2026-07-12). They are a
+    # transitional highlighting aid, never a grammar feature. Anchored to line
+    # start (optional leading whitespace) so a mid-line `#sigil` i18n reference
+    # is NOT swallowed — only a line that BEGINS with the marker is a comment.
+    - match: '^\s*//.*$'
+      scope: comment.line.double-slash.dsl
+    - match: '^\s*#.*$'
+      scope: comment.line.number-sign.dsl
+
+    # ---- fallback aids (NOT dsl-core grammar) ----------------------------
+    #      ```dsl is also the color fallback for unknown fence labels and
+    #      for source files without a grammar (logs, configs, prose). Real dsl
+    #      has no quotes, `=` assignments or boolean literals, so these rules
+    #      never fire on authored dsl; they only color foreign text.
+    - match: '"(?:[^"\\\n]|\\.)*"'
+      scope: string.quoted.double.dsl
+    - match: '\b(?:true|false|null)\b'
+      scope: constant.language.dsl
+    - match: '\b{{STEP_NAME}}(?=\s*=(?![=>]))'
+      scope: entity.other.attribute-name.dsl
+    - match: '(?<![=!<>])=(?![=>])'
+      scope: keyword.operator.assignment.dsl
+
+    # ---- i18n sigil (I.5, TRANSITIONAL per 52-i18n-target-syntax) --------
+    #      NOTE (v4): inline `""` string literals are KILLED (Faruk 2026-07-17).
+    #      There is NO quoted-string form anywhere in authored dsl. Text content
+    #      is i18n-only (raw quoteless blocks under I18n/@/<Locale>/). So there
+    #      is no string context at all — only the #sigil reference survives.
+    - match: '#{{STEP_NAME}}(?:\.{{STEP_NAME}})*'
+      scope: constant.other.reference.dsl
+
+    # ---- numbers (I.1: INT / DECIMAL; also S-18c type-param numerals) ----
+    - match: '\b[0-9]+(\.[0-9]+)?\b'
+      scope: constant.numeric.dsl
+
+    # ---- literal interpolation-brace escapes (i18n raw text `{{` `}}`) ---
+    - match: '\{\{|\}\}'
+      scope: constant.character.escape.dsl
+
+    # ---- `..` splice / rest / arm-spread range (rule 19 + S-21) ---------
+    #      The ONE native collection op: `[head, ..rest]`, `[..a, ..b]`, and
+    #      the match-arm range `| First | .. | Last =>`. Must come BEFORE the
+    #      `.` accessor rule so `..` wins over two separate dots.
+    - match: '\.\.'
+      scope: keyword.control.splice.dsl
+
+    # ---- path chains: root/segment/segment... (I.2 path-signature, S-5
+    #      interim canon "/ = namespace"). Trigger on a leading `/` OR an
+    #      identifier immediately followed (no whitespace) by `/`. Path-DNA
+    #      colors the WHOLE chain as a green anchor (47c §1c, Option A),
+    #      overriding the per-segment UpperCamel/lowerCamel coloring below.
+    - match: |-
+        (?=/[A-Za-z@]|(?:[A-Za-z@]|\{{{STEP_NAME}}\}){{SYMBOL_NAME}}?[^\s(),\[\]<>.:]*?/)
+      push: path-chain
+
+    # ---- interpolation / {param} binder segments outside a path chain
+    #      (I.2 S-18 {param} def-signature segments) -----------------------
+    - match: '\{{{STEP_NAME}}\}'
+      scope: variable.parameter.dsl
+
+    # ---- identity meta-key: `Route: Example` (UpperCamel + ":") ---------
+    - match: '\b{{UPPER_CAMEL}}(?=\s*:(?!:))'
+      scope: keyword.other.identity.dsl
+
+    # ---- top-level DEFINITION head: lowerCamel name at column 0 (no indent),
+    #      not a `name:` meta line. Mirrors vscode `definition-head`. ---------
+    - match: '^({{STEP_NAME}})(?![a-zà-öø-ÿA-Za-z0-9\-])(?!\s*:(?!:))'
+      captures:
+        1: entity.name.function.dsl
+
+    # ---- record-field DECLARATION: lowerCamel name at line start whose type
+    #      follows (`label Label?`, `rows [Row]`). Mirrors vscode `field-decl`.
+    - match: '^\s*({{STEP_NAME}})(?=\s+(?:\[\s*)?[A-Z])'
+      captures:
+        1: entity.name.field.dsl
+
+    # ---- record-field / meta-line / prop keys (I.10/I.11: lowerCamel ":")
+    #      Events are ORDINARY props now (R20): `click: save`, `submit: commit`
+    #      — same attribute-name scope, no dedicated event scope.
+    - match: '\b{{STEP_NAME}}(?=\s*:(?!:))'
+      scope: entity.other.attribute-name.dsl
+
+    # ---- freestanding match scrutinee (I.1 MATCH-AT: `@ ` + WS) ----------
+    #      v4: `@` is the MATCH scrutinee marker ONLY. The old glued `@click`
+    #      event form is DEAD. `@` may open MULTIPLE scrutinees (`@ a b`).
+    - match: '@(?=\s)'
+      scope: keyword.control.match.dsl
+
+    # ---- match-arm pipe (I.7) / kernel type-decl-tree has no `|` (S-20) --
+    - match: '\|'
+      scope: keyword.operator.pattern.dsl
+
+    # ---- arrow (I.7 arm-body, effect wiring) -----------------------------
+    - match: '=>'
+      scope: keyword.control.arrow.dsl
+
+    # ---- presence marker `?` (I.4 type-expr "?"; S-22: the ONLY legal `?`
+    #      left in the kernel after expr-position coalesce died) -----------
+    - match: '\?'
+      scope: keyword.operator.presence.dsl
+
+    # ---- name-sep WS-rendered symbol names outside a path (S-18b:
+    #      `wert + steuer` ≡ `wert.+(steuer)`) ------------------------------
+    - match: '(?<=\s){{SYMBOL_NAME}}(?=\s)'
+      scope: variable.other.dsl
+
+    # ---- type/constructor/node-head identifiers (UpperCamel world, I.1) --
+    - match: '\b{{UPPER_CAMEL}}\b'
+      scope: entity.name.type.dsl
+
+    # ---- ordinary bindings / step names (name world, I.1/S-17α) ----------
+    - match: '{{STEP_NAME}}'
+      scope: variable.other.dsl
+
+    # ---- punctuation / sigils -------------------------------------------
+    - match: ':'
+      scope: punctuation.separator.key-value.dsl
+    - match: ','
+      scope: punctuation.separator.dsl
+    - match: '\.'
+      scope: punctuation.accessor.dsl
+    - match: '/'
+      scope: punctuation.accessor.path.dsl
+    - match: '\('
+      scope: punctuation.section.parens.begin.dsl
+    - match: '\)'
+      scope: punctuation.section.parens.end.dsl
+    - match: '\['
+      scope: punctuation.section.brackets.begin.dsl
+    - match: '\]'
+      scope: punctuation.section.brackets.end.dsl
+    - match: '<'
+      scope: punctuation.section.angle-brackets.begin.dsl
+    - match: '>'
+      scope: punctuation.section.angle-brackets.end.dsl
+    - match: '\{'
+      scope: punctuation.section.braces.begin.dsl
+    - match: '\}'
+      scope: punctuation.section.braces.end.dsl
+
+  path-chain:
+    # Consumes one full `/`-joined chain (I.2/I.5 postfix `sep stepName`
+    # with sep="/"); pops back to main on any chain-terminating character.
+    - match: '/'
+      scope: punctuation.accessor.path.dsl
+    - match: '\{{{STEP_NAME}}\}'
+      scope: variable.parameter.dsl
+    - match: '@'
+      scope: string.special.path.dsl
+    - match: '{{UPPER_CAMEL}}'
+      scope: string.special.path.dsl
+    - match: '{{SYMBOL_NAME}}'
+      scope: string.special.path.dsl
+    - match: '{{STEP_NAME}}'
+      scope: string.special.path.dsl
+    - match: '(?=[\s,()\[\]<>.]|$)'
+      pop: true

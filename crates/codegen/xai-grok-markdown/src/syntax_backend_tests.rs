@@ -35,6 +35,9 @@ const CASES: &[(&str, &str)] = &[
     ),
     ("cpp", "template<class T> T answer(T x) { return x + 1; }\n"),
     ("yaml", "name: café\nmessage: |\n  日本語\n  😀\n"),
+    ("dsl", "Invoice\n  id BigInt\n  status Status\n"),
+    ("res", "type media = Image | Video\nlet label = \"café\"\n"),
+    ("resi", "type media = Image | Video\n"),
     (
         "swift",
         "let s = \"\"\"\n{\"name\": \"buddy\"}\\(x)\n\"\"\"\n// MARK: after\n",
@@ -111,6 +114,13 @@ fn resolves_extension_to_expected_grammar() {
         ("js", "JavaScript (Babel)"),
         ("jsx", "JavaScript (Babel)"),
         ("ps1", "PowerShell"),
+        ("dsl", "DSL"),
+        ("res", "ReScript"),
+        ("resi", "ReScript"),
+        ("re", "ReScript"),
+        ("rei", "ReScript"),
+        ("fs", "F#"),
+        ("ml", "OCaml"),
     ] {
         assert_eq!(
             name,
@@ -118,6 +128,44 @@ fn resolves_extension_to_expected_grammar() {
                 .find_syntax_by_file_path(Path::new(&format!("example.{extension}")))
                 .unwrap()
                 .name
+        );
+    }
+}
+
+#[test]
+fn unknown_and_empty_fences_use_dsl_while_known_fences_keep_their_grammar() {
+    let syntect = test_syntect();
+    for (fence, expected) in [
+        ("dsl", "DSL"),
+        ("", "DSL"),
+        ("javasript", "DSL"),
+        ("37:65:src/unknown.extension", "DSL"),
+        ("rescript", "ReScript"),
+        ("reason", "ReScript"),
+        ("ReasonML", "ReScript"),
+        ("fsharp", "F#"),
+        ("F#", "F#"),
+        ("ocaml", "OCaml"),
+        ("rust", "Rust"),
+    ] {
+        assert_eq!(
+            syntect
+                .find_syntax_for_fence_info(fence)
+                .map(|s| s.name.as_str()),
+            Some(expected),
+            "fence: {fence}"
+        );
+    }
+
+    for fence in ["", "javasript", "rescript"] {
+        let source = format!("```{fence}\nlet media = Image\n```\n");
+        let expected =
+            render_markdown_ratatui_full(&source, MarkdownStyle::default(), true, Some(syntect)).0;
+        let mut renderer = StreamingMarkdownRenderer::new(MarkdownStyle::default(), true);
+        renderer.push_and_render(&source, Some(syntect));
+        assert_eq!(
+            expected.lines.as_slice(),
+            renderer.finish(Some(syntect)).lines
         );
     }
 }

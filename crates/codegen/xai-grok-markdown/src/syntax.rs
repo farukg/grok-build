@@ -39,7 +39,8 @@ impl Syntect {
         if is_swift_token(ext) {
             return patched_swift(&self.syntax_set);
         }
-        self.syntax_set.find_syntax_by_extension(ext)
+        self.syntax_set
+            .find_syntax_by_extension(canonical_token(ext))
     }
 
     /// Find a syntax definition by language token (e.g., "rust", "python").
@@ -47,7 +48,7 @@ impl Syntect {
         if is_swift_token(token) {
             return patched_swift(&self.syntax_set);
         }
-        self.syntax_set.find_syntax_by_token(token)
+        self.syntax_set.find_syntax_by_token(canonical_token(token))
     }
 
     /// Create a highlighter for the given file path.
@@ -68,7 +69,7 @@ impl Syntect {
 
     /// Highlighter for a fenced code block *info* string: a language token (`rust`, `python`) or a `lineStart:lineEnd:path` line-range citation.
     /// A citation's path resolves via [`Syntect::find_syntax_by_file_path`].
-    /// When the path has no known syntax, the whole string falls back to [`Syntect::find_syntax_by_token`], so plain ` ```lang` blocks keep working.
+    /// When the path has no known syntax, the whole string is checked as a language token, then falls back to DSL.
     pub fn highlight_lines_for_fence_info(&self, fence_info: &str) -> Option<HighlightLines<'_>> {
         Some(HighlightLines::new(
             self.find_syntax_for_fence_info(fence_info)?,
@@ -86,6 +87,7 @@ impl Syntect {
             return Some(s);
         }
         self.find_syntax_by_token(fence_info)
+            .or_else(|| self.syntax_set.find_syntax_by_extension("dsl"))
     }
 }
 
@@ -97,6 +99,22 @@ fn syntax_set() -> SyntaxSet {
 fn load_syntax_set() -> SyntaxSet {
     from_uncompressed_data(include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.bin")))
         .expect("syntax dump")
+}
+
+/// Language labels without a grammar token of their own, mapped to the extension of the grammar that renders them.
+/// Reason has no grammar in the bundled set (two-face ships none); its syntax is close enough for the ReScript grammar to color it.
+fn canonical_token(token: &str) -> &str {
+    const ALIASES: [(&str, &str); 5] = [
+        ("fsharp", "fs"),
+        ("reason", "res"),
+        ("reasonml", "res"),
+        ("re", "res"),
+        ("rei", "resi"),
+    ];
+    ALIASES
+        .iter()
+        .find(|(alias, _)| alias.eq_ignore_ascii_case(token))
+        .map_or(token, |(_, target)| target)
 }
 
 fn is_swift_token(token: &str) -> bool {
