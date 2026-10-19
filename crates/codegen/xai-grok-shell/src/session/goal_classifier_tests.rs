@@ -1,4 +1,5 @@
 use super::*;
+use xai_grok_tools::implementations::grok_build::task::types::{SubagentState};
 use crate::session::goal_role_tools::tests::{assert_no_tool_placeholders, summary_with};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
@@ -153,7 +154,7 @@ async fn channel_spawner_applies_per_index_model_to_request() {
     );
     // A failed explicit spawn would fail open and retry, sending a second Spawn this test does not service
     let _ = request.result_tx.send(SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from("ok"),
         ..Default::default()
     });
@@ -2943,8 +2944,7 @@ async fn cold_fallback_after_resume_failure_carries_pool0_model_on_request() {
             if resume.is_some() {
                 // The resume attempt (and its inherit retry) both fail, so run_one_skeptic downgrades to a cold spawn
                 let _ = req.result_tx.send(SubagentResult {
-                    success: false,
-                    error: Some("stale prior session".into()),
+                    state: SubagentState::Failed { message: "stale prior session".into() },
                     ..Default::default()
                 });
             } else {
@@ -2957,7 +2957,7 @@ async fn cold_fallback_after_resume_failure_carries_pool0_model_on_request() {
                     .await;
                 }
                 let _ = req.result_tx.send(SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: Arc::from("Not Refuted"),
                     ..Default::default()
                 });
@@ -3322,7 +3322,7 @@ async fn channel_spawner_blocks_until_subagent_result() {
         let result_tx = req.result_tx;
         release_task.notified().await;
         let _ = result_tx.send(SubagentResult {
-            success: true,
+            state: SubagentState::Completed,
             output: Arc::from("Achieved"),
             subagent_id: id.clone(),
             child_session_id: id,

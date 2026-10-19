@@ -14,6 +14,7 @@
 use crate::agent::config::{resolve_credentials, sampling_config_for_model};
 use crate::agent::remote_config::resolve_catalog_key;
 use crate::extensions::notification::{SessionNotification, SessionUpdate};
+use crate::extensions::subagent_context::{ForkFailure, ForkMode, SubagentContext};
 use crate::session::{
     self, SessionCommand, SessionHandle, commands::PromptTurnResult as SubagentPromptTurnResult,
     fs_watch::FsWatchCapabilities, info::Info as SessionInfo,
@@ -59,7 +60,7 @@ mod prompt_turn_result;
 mod resume_window;
 pub(crate) use child_runtime::{
     ShellChildRuntime, UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT, UnpromotedResourceFate,
-    await_session_thread_exit,
+    await_session_thread_exit, parent_telemetry_ctx,
 };
 pub(crate) use handle_request::run_shell_child;
 pub(crate) use prompt_turn_receipt::PromptTurnReceipt;
@@ -67,17 +68,6 @@ pub(crate) use prompt_turn_receipt::PromptTurnReceipt;
 /// See [`SubagentsConfig::resolve_sampling_limit`].
 /// [`SubagentsConfig::resolve_sampling_limit`]: crate::config::SubagentsConfig::resolve_sampling_limit
 pub(crate) const MAX_SUBAGENT_SAMPLING_LIMIT: usize = 512;
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum InitialContextSource {
-    /// Fresh session: no inherited history.
-    New,
-    /// Parent history as `<background_context>` (harness-only chat-prefix fork).
-    Forked,
-    /// Resumed from a previously completed peer subagent.
-    /// The child inherits the source's raw transcript, tool state, and model.
-    /// System prompt and prompt context are freshly rendered from the current agent definition.
-    Resumed,
-}
 /// Captured parent-side tier inputs for resolving `auto_compact_threshold_percent` once the subagent's actual model id is known.
 /// Stored on [`SubagentSpawnContext`] so the resolver can run at spawn time and the per-model lookup honors the SUBAGENT's model, not the parent's.
 #[derive(Debug, Clone, Default)]
@@ -114,7 +104,7 @@ impl AutoCompactThresholdTiers {
 pub(crate) struct SpawnerAddressTarget {
     pub session_id: String,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub(crate) enum SubagentSetupFailure {
     SamplingClient {
@@ -125,7 +115,7 @@ pub(crate) enum SubagentSetupFailure {
         persistence_dir: std::path::PathBuf,
     },
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl SubagentSetupFailure {
     fn meta_dir(&self) -> &Path {
         match self {
@@ -141,13 +131,13 @@ impl SubagentSetupFailure {
         }
     }
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitialAttemptBehavior {
     Normal,
     CompleteBeforeAdmission,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub(crate) struct RunShellChildHarnessConfig {
     meta_dir: std::path::PathBuf,
@@ -156,7 +146,7 @@ pub(crate) struct RunShellChildHarnessConfig {
     hold_wake_abort_flush_ack: bool,
     reject_deferred_start_commit: bool,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl RunShellChildHarnessConfig {
     fn new(meta_dir: std::path::PathBuf, initial_attempt_behavior: InitialAttemptBehavior) -> Self {
         Self {
@@ -190,11 +180,11 @@ pub(crate) struct SubagentSpawnContext {
     /// Filled by the coordinator after the context is built (an async snapshot from the parent session actor).
     pub client_hooks: crate::extensions::hooks::ClientHooks,
     pub sampling_config: xai_grok_sampler::SamplerConfig,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub setup_failure: Option<SubagentSetupFailure>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub run_shell_child_harness: Option<RunShellChildHarnessConfig>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fail_start_metadata_write: bool,
     pub managed_mcp_proxy_base_url: String,
     /// The staging auth header value propagated from the parent.
@@ -971,15 +961,39 @@ fn resolve_model_override_to_config(
     Some((config, canonical_model_id))
 }
 struct InitialContext {
-    source: InitialContextSource,
-    copy_error: Option<String>,
+    context: SubagentContext,
     prefix_len: Option<usize>,
     conversation: Vec<xai_grok_sampling_types::conversation::ConversationItem>,
     force_compact: bool,
-    /// True only for a verbatim mirror-fork (parent items copied byte-for-byte).
-    /// Gates sending the parent tool snapshot so the child's full request prefix matches the parent.
-    /// A summarized-fork fallback leaves this false.
-    verbatim_fork: bool,
+}
+impl InitialContext {
+    fn fresh(context: SubagentContext) -> Self {
+        Self {
+            context,
+            prefix_len: None,
+            conversation: vec![],
+            force_compact: false,
+        }
+    }
+    fn fork_failed(failure: ForkFailure) -> Self {
+        Self::fresh(SubagentContext::ForkFailed(failure))
+    }
+    fn forked(
+        mode: ForkMode,
+        conversation: Vec<xai_grok_sampling_types::conversation::ConversationItem>,
+        prefix_len: usize,
+    ) -> Self {
+        Self {
+            context: SubagentContext::Forked(mode),
+            prefix_len: Some(prefix_len),
+            conversation,
+            force_compact: false,
+        }
+    }
+    /// Only a verbatim mirror-fork sends the parent tool snapshot, so the child's full request prefix matches the parent.
+    fn is_verbatim_fork(&self) -> bool {
+        matches!(self.context, SubagentContext::Forked(ForkMode::Verbatim))
+    }
 }
 /// Resume bootstrap: preserve only the System head (see `resume_inherited_prefix_len`).
 fn resume_initial_context(
@@ -987,49 +1001,26 @@ fn resume_initial_context(
     force_compact: bool,
 ) -> InitialContext {
     InitialContext {
-        source: InitialContextSource::Resumed,
-        copy_error: None,
+        context: SubagentContext::Resumed,
         prefix_len: Some(resume_window::resume_inherited_prefix_len(&conversation)),
         conversation,
         force_compact,
-        verbatim_fork: false,
     }
 }
-/// Apply `fork_filter_chat` then normalize; empty or System-only input (no `<background_context>` produced) fails open to `New`.
+/// Apply `fork_filter_chat` then normalize; empty or System-only input (no `<background_context>` produced) fails open to a fresh child.
 fn forked_initial_context(
     mut items: Vec<xai_grok_sampling_types::conversation::ConversationItem>,
 ) -> InitialContext {
     crate::sampling::fork_filter_chat(&mut items);
     if items.is_empty() {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("empty parent conversation".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::EmptyParent);
     }
     let (conversation, prefix_len) =
         xai_grok_subagent_resolution::context::normalize_forked_context(items);
     if prefix_len < 2 {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("no inheritable parent content".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::NoInheritableContent);
     }
-    InitialContext {
-        source: InitialContextSource::Forked,
-        copy_error: None,
-        prefix_len: Some(prefix_len),
-        conversation,
-        force_compact: false,
-        verbatim_fork: false,
-    }
+    InitialContext::forked(ForkMode::Summarized, conversation, prefix_len)
 }
 /// A verbatim mirror requires a coherent tail: the conversation must end on a plain assistant text response (a clean turn boundary).
 /// A dangling assistant (unanswered tool calls), a trailing ToolResult (mid-turn), or a trailing user/reasoning means the prefix would be incoherent.
@@ -1053,28 +1044,14 @@ fn verbatim_or_normalize_fork(
         .iter()
         .any(|i| !matches!(i, ConversationItem::System(_)))
     {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("forked parent conversation has no inheritable content".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::NoInheritableContent);
     }
     let estimated_tokens = xai_chat_state::estimate_conversation_tokens(&items);
     const SAFE_FORK_PERCENT: u64 = 80;
     let threshold = child_context_window * SAFE_FORK_PERCENT / 100;
     if estimated_tokens <= threshold && conversation_tail_is_complete(&items) {
         let prefix_len = items.len();
-        return InitialContext {
-            source: InitialContextSource::Forked,
-            copy_error: None,
-            prefix_len: Some(prefix_len),
-            conversation: items,
-            force_compact: false,
-            verbatim_fork: true,
-        };
+        return InitialContext::forked(ForkMode::Verbatim, items, prefix_len);
     }
     let mut filtered = items;
     crate::sampling::fork_filter_chat(&mut filtered);
@@ -1082,30 +1059,11 @@ fn verbatim_or_normalize_fork(
         .iter()
         .any(|i| !matches!(i, ConversationItem::System(_)))
     {
-        return InitialContext {
-            source: InitialContextSource::New,
-            copy_error: Some("no inheritable parent content after filtering".to_string()),
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        };
+        return InitialContext::fork_failed(ForkFailure::NoInheritableContent);
     }
     let (conversation, prefix_len) =
         xai_grok_subagent_resolution::context::normalize_forked_context(filtered);
-    InitialContext {
-        source: InitialContextSource::Forked,
-        copy_error: None,
-        prefix_len: Some(prefix_len),
-        conversation,
-        force_compact: false,
-        verbatim_fork: false,
-    }
-}
-/// `true` only when the fork actually summarized (ran `normalize_forked_context`).
-/// A verbatim mirror-fork inherits items as-is and never normalizes, so it reports `false` even though its source is `Forked`.
-fn fork_context_normalized(source: &InitialContextSource, verbatim_fork: bool) -> bool {
-    matches!(source, InitialContextSource::Forked) && !verbatim_fork
+    InitialContext::forked(ForkMode::Summarized, conversation, prefix_len)
 }
 /// Stamp `subagent_fork` / `forked` on the child summary (live path; disk copy already stamps).
 fn stamp_live_fork_session_metadata(
@@ -1145,6 +1103,39 @@ fn stamp_live_fork_session_metadata(
     {
         tracing::warn!(error = %e, "live fork: failed to write forked session summary");
     }
+}
+/// The policy a child starts under: its resume source's own, else its parent's as of now. Afterwards it is independent.
+async fn context_policy_to_inherit(
+    resume_source: Option<&ResumeSourceData>,
+    parent_chat_state: Option<&xai_chat_state::ChatStateHandle>,
+) -> Option<xai_grok_sampling_types::ContextPolicy> {
+    match resume_source {
+        Some(source) => Some(crate::session::helpers::context_policy_store::load(
+            &crate::session::persistence::session_dir(&SessionInfo {
+                id: acp::SessionId::new(source.child_session_id.clone()),
+                cwd: source.child_cwd.clone(),
+            }),
+        )),
+        None => match parent_chat_state {
+            Some(chat_state) => Some(chat_state.get_context_policy().await),
+            None => None,
+        },
+    }
+}
+
+/// Only a restricted policy is written; the session actor reads the file when it starts, so the default path costs nothing.
+fn write_inherited_context_policy(
+    child_session_dir: &Path,
+    policy: &xai_grok_sampling_types::ContextPolicy,
+) {
+    if policy.is_unrestricted() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(child_session_dir) {
+        tracing::warn!(%error, "could not create the child session dir for its inherited context policy");
+        return;
+    }
+    crate::session::helpers::context_policy_store::save(child_session_dir, policy);
 }
 enum BootstrapInitialContext {
     Ready(InitialContext),
@@ -1276,14 +1267,7 @@ async fn bootstrap_initial_context(
         return BootstrapInitialContext::Ready(resume_initial_context(conversation, force_compact));
     }
     if !request.fork_context {
-        return BootstrapInitialContext::Ready(InitialContext {
-            source: InitialContextSource::New,
-            copy_error: None,
-            prefix_len: None,
-            conversation: vec![],
-            force_compact: false,
-            verbatim_fork: false,
-        });
+        return BootstrapInitialContext::Ready(InitialContext::fresh(SubagentContext::Fresh));
     }
     let live_items = match ctx.parent_chat_state.as_ref() {
         Some(chat_state) => {
@@ -1298,15 +1282,13 @@ async fn bootstrap_initial_context(
             subagent_id = %request.id,
             subagent_type = %request.subagent_type,
             loaded_items = ctx_out.conversation.len(),
-            source = ?ctx_out.source,
-            verbatim = ctx_out.verbatim_fork,
+            context = ?ctx_out.context,
             "Forked context from live parent_chat_state"
         );
-        if matches!(ctx_out.source, InitialContextSource::Forked) {
-            let marker = if ctx_out.verbatim_fork {
-                "forked_verbatim"
-            } else {
-                "forked_summarized"
+        if let SubagentContext::Forked(mode) = ctx_out.context {
+            let marker = match mode {
+                ForkMode::Verbatim => "forked_verbatim",
+                ForkMode::Summarized => "forked_summarized",
             };
             stamp_live_fork_session_metadata(
                 child_session_info,
@@ -1369,14 +1351,9 @@ async fn bootstrap_initial_context(
                     error = %e,
                     "Failed to fork-copy parent session, falling back to fresh"
                 );
-                BootstrapInitialContext::Ready(InitialContext {
-                    source: InitialContextSource::New,
-                    copy_error: Some(err_msg),
-                    prefix_len: None,
-                    conversation: vec![],
-                    force_compact: false,
-                    verbatim_fork: false,
-                })
+                BootstrapInitialContext::Ready(InitialContext::fork_failed(
+                    ForkFailure::CopyFailed(err_msg),
+                ))
             }
         };
     }
@@ -1385,14 +1362,7 @@ async fn bootstrap_initial_context(
         subagent_type = %request.subagent_type,
         "fork_context=true but no live parent conversation or parent_session_info; falling back to fresh"
     );
-    BootstrapInitialContext::Ready(InitialContext {
-        source: InitialContextSource::New,
-        copy_error: Some("parent conversation unavailable".to_string()),
-        prefix_len: None,
-        conversation: vec![],
-        force_compact: false,
-        verbatim_fork: false,
-    })
+    BootstrapInitialContext::Ready(InitialContext::fork_failed(ForkFailure::ParentUnavailable))
 }
 /// Resolve the effective working directory for a child session.
 /// Precedence: worktree path > `override_cwd` (non-empty) > parent cwd.
@@ -1425,6 +1395,18 @@ fn resume_inherited_cwd(source: Option<&ResumeSourceData>) -> Option<&str> {
     }
     Some(source.child_cwd.as_str())
 }
+/// The source cwd a resumed child could not inherit because the directory is gone.
+fn resume_cwd_fallback(
+    source: Option<&ResumeSourceData>,
+) -> Option<xai_tool_types::SubagentResumeFallback> {
+    let source = source?;
+    (source.worktree_path.is_none()
+        && !source.child_cwd.is_empty()
+        && resume_inherited_cwd(Some(source)).is_none())
+    .then(|| xai_tool_types::SubagentResumeFallback::SourceCwdMissing {
+        source_cwd: source.child_cwd.clone(),
+    })
+}
 /// Select the cwd override for a child: a resume inherits the source's cwd (never its own `request.cwd`); a fresh spawn uses `request.cwd`.
 fn select_override_cwd<'a>(
     resume_source: Option<&'a ResumeSourceData>,
@@ -1436,33 +1418,89 @@ fn select_override_cwd<'a>(
         request_cwd
     }
 }
+fn parent_subagents_dir(parent_session_id: &str, parent_cwd: &Path) -> PathBuf {
+    let parent_info = SessionInfo {
+        id: acp::SessionId::new(parent_session_id),
+        cwd: parent_cwd.to_string_lossy().into_owned(),
+    };
+    session::persistence::session_dir(&parent_info).join("subagents")
+}
+/// Subagent directory names under the parent that equal `reference` or start with it.
+/// Reads directory names only; no `meta.json` is opened.
+pub(crate) fn durable_resume_candidates(
+    reference: &str,
+    parent_session_id: &str,
+    parent_cwd: &Path,
+) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(parent_subagents_dir(parent_session_id, parent_cwd)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with(reference))
+        .collect()
+}
 fn durable_resume_source_for(
     id: &str,
     parent_session_id: &str,
     parent_cwd: &Path,
 ) -> Option<ResumeSourceData> {
-    let parent_info = SessionInfo {
-        id: acp::SessionId::new(parent_session_id),
-        cwd: parent_cwd.to_string_lossy().into_owned(),
-    };
-    let meta_path = session::persistence::session_dir(&parent_info)
-        .join("subagents")
+    durable_resume_source(id, parent_session_id, parent_cwd).ok()
+}
+pub(crate) fn durable_resume_source(
+    id: &str,
+    parent_session_id: &str,
+    parent_cwd: &Path,
+) -> Result<ResumeSourceData, SubagentResumeError> {
+    let meta_path = parent_subagents_dir(parent_session_id, parent_cwd)
         .join(id)
         .join("meta.json");
-    durable_resume_source_from_meta(&meta_path, parent_session_id)
+    durable_resume_source_at(&meta_path, id, parent_session_id)
 }
+#[cfg(test)]
 fn durable_resume_source_from_meta(
     meta_path: &Path,
     parent_session_id: &str,
 ) -> Option<ResumeSourceData> {
-    let data = std::fs::read_to_string(meta_path).ok()?;
-    let meta: SubagentMeta = serde_json::from_str(&data).ok()?;
-    if meta.parent_session_id != parent_session_id
-        || !matches!(meta.status.as_str(), "completed" | "failed" | "cancelled")
-    {
-        return None;
+    durable_resume_source_at(meta_path, "", parent_session_id).ok()
+}
+fn durable_resume_source_at(
+    meta_path: &Path,
+    id: &str,
+    parent_session_id: &str,
+) -> Result<ResumeSourceData, SubagentResumeError> {
+    let unreadable = |reason: String| SubagentResumeError::MetaUnreadable {
+        subagent_id: id.to_owned(),
+        reason,
+    };
+    let data = match std::fs::read_to_string(meta_path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SubagentResumeError::NotFound {
+                reference: id.to_owned(),
+            });
+        }
+        Err(error) => return Err(unreadable(error.to_string())),
+    };
+    let meta: SubagentMeta =
+        serde_json::from_str(&data).map_err(|error| unreadable(error.to_string()))?;
+    if meta.parent_session_id != parent_session_id {
+        return Err(SubagentResumeError::ForeignParent {
+            subagent_id: meta.subagent_id,
+        });
     }
-    Some(ResumeSourceData {
+    match meta.status {
+        SubagentMetaStatus::Running => {
+            return Err(SubagentResumeError::NotTerminal {
+                subagent_id: meta.subagent_id,
+            });
+        }
+        SubagentMetaStatus::Completed
+        | SubagentMetaStatus::Failed
+        | SubagentMetaStatus::Cancelled => {}
+    }
+    Ok(ResumeSourceData {
         subagent_id: meta.subagent_id,
         child_session_id: meta.child_session_id,
         child_cwd: meta.child_cwd.unwrap_or_default(),
@@ -1850,7 +1888,13 @@ fn failure_result(request: &SubagentRequest, error: &str) -> SubagentResult {
     SubagentResult::failed(request.id.clone(), request.id.clone(), error)
 }
 fn cancelled_result(request: &SubagentRequest, error: &str) -> SubagentResult {
-    SubagentResult::cancelled(request.id.clone(), request.id.clone(), error)
+    SubagentResult::interrupted(
+        request.id.clone(),
+        request.id.clone(),
+        InterruptionCause::Error {
+            message: error.to_owned(),
+        },
+    )
 }
 fn child_run_output(
     result: SubagentResult,
@@ -1912,7 +1956,13 @@ impl UnpromotedChildDisposition {
         match self {
             Self::Cancelled => SubagentResult {
                 duration_ms,
-                ..SubagentResult::cancelled(subagent_id, child_session_id, "Subagent was cancelled")
+                ..SubagentResult::interrupted(
+                    subagent_id,
+                    child_session_id,
+                    InterruptionCause::Error {
+                        message: "Subagent was cancelled".to_owned(),
+                    },
+                )
             },
             Self::AdmissionTimedOut => SubagentResult {
                 duration_ms,
@@ -2013,17 +2063,23 @@ pub(crate) fn spawn_progress_publisher(
     started_at: std::time::Instant,
     cancel_token: tokio_util::sync::CancellationToken,
     parent_cmd_tx: Option<mpsc::UnboundedSender<SessionCommand>>,
+    mut delivery: tokio::sync::watch::Receiver<crate::extensions::notification::SubagentDelivery>,
 ) -> tokio_util::task::AbortOnDropHandle<()> {
     tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let mut interval = tokio::time::interval(PROGRESS_PUBLISH_INTERVAL);
         interval.tick().await;
         let mut last_signature: ProgressSignature = (0, 0, 0, 0, 0);
+        let mut last_delivery = *delivery.borrow();
+        let mut is_delivery_open = true;
         let mut last_emit_at = tokio::time::Instant::now();
         let heartbeat_max = tokio::time::Duration::from_secs(8);
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => break,
                 _ = interval.tick() => {}
+                changed = delivery.changed(), if is_delivery_open => {
+                    is_delivery_open = changed.is_ok();
+                }
             }
             let signals = match signals_handle.snapshot().await {
                 Some(s) => s,
@@ -2037,10 +2093,14 @@ pub(crate) fn spawn_progress_publisher(
                 signals.context_tokens_used,
             );
             let heartbeat_due = last_emit_at.elapsed() >= heartbeat_max;
-            if !progress_tick_should_emit(last_signature, sig, heartbeat_due) {
+            let current_delivery = *delivery.borrow();
+            if current_delivery == last_delivery
+                && !progress_tick_should_emit(last_signature, sig, heartbeat_due)
+            {
                 continue;
             }
             last_signature = sig;
+            last_delivery = current_delivery;
             last_emit_at = tokio::time::Instant::now();
             let duration_ms = started_at.elapsed().as_millis() as u64;
             let update = SessionUpdate::SubagentProgress {
@@ -2056,6 +2116,7 @@ pub(crate) fn spawn_progress_publisher(
                 context_usage_pct: signals.context_window_usage,
                 tools_used: signals.tools_used,
                 error_count: signals.error_count,
+                delivery: current_delivery,
             };
             let notification = SessionNotification {
                 session_id: acp::SessionId::new(parent_session_id.clone()),
@@ -2094,6 +2155,37 @@ mod progress_publisher_tests {
         assert!(progress_tick_should_emit(BASE, BASE, true));
     }
 }
+/// Lifecycle status persisted in `meta.json`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum SubagentMetaStatus {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+impl SubagentMetaStatus {
+    pub(crate) fn of_result(result: &SubagentResult) -> Self {
+        if result.is_interrupted() {
+            Self::Cancelled
+        } else if result.success() {
+            Self::Completed
+        } else {
+            Self::Failed
+        }
+    }
+}
 /// Metadata stored as `meta.json` in the child session directory.
 /// Links the child session back to its parent.
 /// For the GCS-persisted artifact (`subagent.json`), see [`SubagentSessionMetadata`].
@@ -2107,8 +2199,7 @@ pub(crate) struct SubagentMeta {
     pub subagent_type: String,
     pub description: String,
     pub prompt: String,
-    /// "running" | "completed" | "failed" | "cancelled"
-    pub status: String,
+    pub status: SubagentMetaStatus,
     pub started_at: chrono::DateTime<chrono::Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -2120,15 +2211,9 @@ pub(crate) struct SubagentMeta {
     pub turns: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Effective context source after bootstrap: "new" or "resumed".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effective_context_source: Option<String>,
-    /// True only for a summarized (normalized) fork; false for verbatim mirror-forks, resume, and new sessions.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub context_normalized: bool,
-    /// Error message if fork-copy failed and fell back to fresh.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fork_copy_error: Option<String>,
+    /// Context the child actually started with (wire: `effective_context_source` / `context_normalized` / `fork_copy_error`).
+    #[serde(flatten)]
+    pub context: SubagentContext,
     /// Named persona applied to this subagent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona: Option<String>,
@@ -2241,7 +2326,7 @@ impl SubagentSessionMetadata {
             description: meta.description.clone(),
             role: role.map(str::to_string),
             persona: meta.persona.clone(),
-            context_normalized: meta.context_normalized,
+            context_normalized: meta.context.is_summarized_fork(),
             capability_mode: capability_mode.map(str::to_string),
             reasoning_effort: reasoning_effort.map(str::to_string),
             model_id: model_id.map(str::to_string),
@@ -2251,12 +2336,12 @@ impl SubagentSessionMetadata {
             depth,
             started_at: meta.started_at.to_rfc3339(),
             completed_at: meta.completed_at.map(|t| t.to_rfc3339()),
-            status: meta.status.clone(),
+            status: meta.status.to_string(),
             duration_ms: meta.duration_ms,
             tool_calls: meta.tool_calls,
             turns: meta.turns,
             error: meta.error.clone(),
-            fork_copy_error: meta.fork_copy_error.clone(),
+            fork_copy_error: meta.context.fork_failure().map(ToString::to_string),
             resumed_from: meta.resumed_from.clone(),
         }
     }
@@ -2342,7 +2427,11 @@ struct GcsUploadContext {
 /// Persist the durable worktree `snapshot_ref` into the on-disk `meta.json` after completion. `resumable_source_for` can then rehydrate the disposed worktree on resume. Returns `true` only when the ref is persisted to disk.
 /// Any read/parse/write failure is `warn!`-logged (this is the critical resume pointer). The caller then keeps the worktree rather than removing it without a recoverable ref. Also re-asserts the terminal `status`.
 /// A failed `persist_subagent_completion` write otherwise leaves a non-terminal record that `resumable_source_for` rejects once the worktree is gone.
-fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str, status: &str) -> bool {
+fn update_subagent_meta_snapshot_ref(
+    dir: &Path,
+    snapshot_ref: &str,
+    status: SubagentMetaStatus,
+) -> bool {
     let meta_path = dir.join("meta.json");
     let mut meta = match std::fs::read_to_string(&meta_path) {
         Ok(data) => match serde_json::from_str::<SubagentMeta>(&data) {
@@ -2358,12 +2447,12 @@ fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str, status: &st
         }
     };
     meta.snapshot_ref = Some(snapshot_ref.to_string());
-    meta.status = status.to_string();
+    meta.status = status;
     write_subagent_meta(dir, &meta)
 }
 #[must_use]
 fn persist_subagent_output(dir: &Path, result: &SubagentResult) -> Option<PathBuf> {
-    (result.success && !result.output.is_empty() && write_subagent_output(dir, &result.output))
+    (result.success() && !result.output.is_empty() && write_subagent_output(dir, &result.output))
         .then(|| dir.to_path_buf())
 }
 fn persist_subagent_completion(dir: &Path, result: &SubagentResult, gcs_ctx: &GcsUploadContext) {
@@ -2371,12 +2460,12 @@ fn persist_subagent_completion(dir: &Path, result: &SubagentResult, gcs_ctx: &Gc
     if let Ok(data) = std::fs::read_to_string(&meta_path)
         && let Ok(mut meta) = serde_json::from_str::<SubagentMeta>(&data)
     {
-        meta.status = result.status().to_string();
+        meta.status = SubagentMetaStatus::of_result(result);
         meta.completed_at = Some(chrono::Utc::now());
         meta.duration_ms = Some(result.duration_ms);
         meta.tool_calls = Some(result.tool_calls);
         meta.turns = Some(result.turns);
-        meta.error = result.error.clone();
+        meta.error = result.error().clone();
         write_subagent_meta(dir, &meta);
         if let (Some(bucket), Some(method)) = (&gcs_ctx.bucket_url, &gcs_ctx.upload_method) {
             let gcs_meta = SubagentSessionMetadata::from_meta(
@@ -2438,7 +2527,7 @@ fn finalize_orphaned_subagent(
     }
     let completed_at = chrono::Utc::now();
     let duration_ms = (completed_at - meta.started_at).num_milliseconds().max(0) as u64;
-    meta.status = "cancelled".to_string();
+    meta.status = SubagentMetaStatus::Cancelled;
     meta.completed_at = Some(completed_at);
     meta.duration_ms = Some(duration_ms);
     meta.tool_calls = Some(0);
@@ -2479,10 +2568,13 @@ fn persist_running_meta_as_finish(
     else {
         return false;
     };
+    let Ok(status) = status.parse::<SubagentMetaStatus>() else {
+        return false;
+    };
     if !is_on_disk_meta_running(subagent_meta_dir) {
         return false;
     }
-    meta.status = status.clone();
+    meta.status = status;
     meta.completed_at = Some(chrono::Utc::now());
     meta.duration_ms = Some(*duration_ms);
     meta.tool_calls = Some(*tool_calls);
@@ -2494,14 +2586,15 @@ fn is_on_disk_meta_running(subagent_meta_dir: &Path) -> bool {
     let Ok(data) = std::fs::read_to_string(subagent_meta_dir.join("meta.json")) else {
         return false;
     };
-    serde_json::from_str::<SubagentMeta>(&data).is_ok_and(|meta| meta.status == "running")
+    serde_json::from_str::<SubagentMeta>(&data)
+        .is_ok_and(|meta| meta.status == SubagentMetaStatus::Running)
 }
 /// Parse `meta_path` and return it only when it is a stale `running` orphan owned by `parent_session_id` and not tracked live.
 /// Malformed metas yield `None`.
 fn running_orphan_meta(meta_path: &Path, parent_session_id: &str) -> Option<SubagentMeta> {
     let data = std::fs::read_to_string(meta_path).ok()?;
     let meta: SubagentMeta = serde_json::from_str(&data).ok()?;
-    if meta.status != "running" || meta.parent_session_id != parent_session_id {
+    if meta.status != SubagentMetaStatus::Running || meta.parent_session_id != parent_session_id {
         return None;
     }
     Some(meta)
@@ -2515,7 +2608,9 @@ fn completed_finish_from_inspection(
             tool_calls, turns, ..
         } => ("completed", None, *tool_calls, *turns),
         SubagentSnapshotStatus::Failed { error } => ("failed", Some(error.clone()), 0, 0),
-        SubagentSnapshotStatus::Cancelled { reason } => ("cancelled", reason.clone(), 0, 0),
+        SubagentSnapshotStatus::Cancelled { cause } => {
+            ("cancelled", Some(cause.model_text()), 0, 0)
+        }
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
             return None;
         }
@@ -2583,7 +2678,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
             .and_then(|data| serde_json::from_str::<SubagentMeta>(&data).ok());
         match meta {
             Some(m) if m.parent_session_id != parent_session_id => {}
-            Some(m) if m.status == "running" => {
+            Some(m) if m.status == SubagentMetaStatus::Running => {
                 if let Some(finish) = inspection.as_ref().and_then(|inspection| {
                     completed_finish_from_inspection(inspection, m.attempt_id.clone())
                 }) {
@@ -2632,7 +2727,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
                         attempt_id: m.attempt_id,
                         subagent_id,
                         child_session_id: m.child_session_id,
-                        status: m.status,
+                        status: m.status.to_string(),
                         error: m.error,
                         tool_calls: m.tool_calls.unwrap_or(0),
                         turns: m.turns.unwrap_or(0),

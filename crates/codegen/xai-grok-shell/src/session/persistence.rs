@@ -2193,6 +2193,7 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     if let Err(e) = result {
                         tracing::warn!(?e, "failed to replace chat history");
+                        self.note_write_failure(&e);
                     }
                 }
                 PersistenceMsg::ReplaceChatHistoryForStripAndAck {

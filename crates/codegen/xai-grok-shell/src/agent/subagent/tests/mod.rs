@@ -109,7 +109,7 @@ async fn usage_ack_precedes_terminal_presentation() {
     );
     completion_data.mark_spawned_notification_emitted();
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "usage-order".to_string(),
         child_session_id: "usage-order".to_string(),
         ..Default::default()
@@ -319,7 +319,7 @@ async fn cancelled_attempt_fails_closed_when_the_signals_read_never_answers() {
         .expect(
             "a cancelled attempt must complete in bounded time under a wedged child",
         );
-    assert!(outcome.result.cancelled);
+    assert!(outcome.result.is_interrupted());
     assert!(
             outcome.cancellation_may_hide_usage,
             "an unanswered signals read must not pass for 'no work done'"
@@ -776,8 +776,8 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
         final_text: "follow-up result".to_string(),
         was_cancelled: false,
     });
-    assert!(folded.result.success);
-    assert!(!folded.result.cancelled);
+    assert!(folded.result.success());
+    assert!(!folded.result.is_interrupted());
     let request = auto_wake_test_request("sa-followup");
     let completion = ChildCompletion {
         snapshot: test_snapshot(&request, &folded.result),
@@ -833,7 +833,7 @@ fn inject_subagent_completed_prompt_sends_prompt() {
     let mut request = auto_wake_test_request("sa-1");
     request.runtime_overrides.loop_task_id = Some("loop-123".into());
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from("PING"),
         subagent_id: "sa-1".into(),
         child_session_id: "sa-1".into(),
@@ -881,7 +881,7 @@ fn inject_subagent_completed_prompt_copies_capped_task_output() {
     let output = "x".repeat(20_000);
     let request = auto_wake_test_request("sa-1");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from(output.as_str()),
         subagent_id: "sa-1".into(),
         child_session_id: "sa-1".into(),
@@ -928,7 +928,7 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
     let request = auto_wake_test_request("sa-no-loop");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "sa-no-loop".into(),
         child_session_id: "sa-no-loop".into(),
         ..Default::default()
@@ -960,7 +960,7 @@ fn inject_subagent_completed_prompt_bails_when_goal_loop_activates_in_gap() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
     let request = auto_wake_test_request("sa-goal");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "sa-goal".into(),
         child_session_id: "sa-goal".into(),
         ..Default::default()
@@ -986,7 +986,7 @@ fn inject_subagent_completed_prompt_bails_when_parent_closed() {
     let (trace_tx, mut trace_rx) = mpsc::unbounded_channel();
     let request = auto_wake_test_request("sa-closed");
     let result = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         subagent_id: "sa-closed".into(),
         child_session_id: "sa-closed".into(),
         ..Default::default()
@@ -1009,7 +1009,7 @@ fn inject_subagent_completed_prompt_bails_when_parent_closed() {
 fn persist_gate_only_persists_successful_nonempty_outputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ok = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         output: std::sync::Arc::from("text"),
         ..Default::default()
     };
@@ -1018,12 +1018,12 @@ fn persist_gate_only_persists_successful_nonempty_outputs() {
             Some(dir.path().to_path_buf())
         );
     let empty = SubagentResult {
-        success: true,
+        state: SubagentState::Completed,
         ..Default::default()
     };
     assert_eq!(persist_subagent_output(dir.path(), &empty), None);
     let failed = SubagentResult {
-        success: false,
+        state: SubagentState::Failed { message: "Unknown error".to_owned() },
         output: std::sync::Arc::from("partial"),
         ..Default::default()
     };
@@ -1301,8 +1301,7 @@ fn forked_initial_context_normalizes_parent_history() {
             ConversationItem::assistant("noted"),
         ];
     let ctx = forked_initial_context(items);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
-    assert!(ctx.copy_error.is_none());
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert_eq!(ctx.prefix_len, Some(2));
     assert_eq!(ctx.conversation.len(), 2);
     if let Some(ConversationItem::User(u)) = ctx.conversation.get(1) {
@@ -1337,7 +1336,7 @@ fn forked_initial_context_inherits_parent_across_reasoning() {
             ConversationItem::assistant("ack"),
         ];
     let ctx = forked_initial_context(items);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert_eq!(ctx.prefix_len, Some(2));
     assert_eq!(ctx.conversation.len(), 2);
     if let Some(ConversationItem::User(u)) = ctx.conversation.get(1) {
@@ -1366,9 +1365,8 @@ fn forked_initial_context_inherits_parent_across_reasoning() {
 #[test]
 fn forked_initial_context_empty_fails_open_to_new() {
     let ctx = forked_initial_context(vec![]);
-    assert_eq!(ctx.source, InitialContextSource::New);
+    assert_eq!(ctx.context, SubagentContext::ForkFailed(ForkFailure::EmptyParent));
     assert!(ctx.conversation.is_empty());
-    assert!(ctx.copy_error.is_some());
 }
 #[test]
 fn resume_vs_fork_helper_shapes_differ() {
@@ -1380,8 +1378,8 @@ fn resume_vs_fork_helper_shapes_differ() {
         ];
     let resumed = resume_initial_context(resume_items.clone(), false);
     let forked = forked_initial_context(resume_items);
-    assert_eq!(resumed.source, InitialContextSource::Resumed);
-    assert_eq!(forked.source, InitialContextSource::Forked);
+    assert_eq!(resumed.context, SubagentContext::Resumed);
+    assert_eq!(forked.context, SubagentContext::Forked(ForkMode::Summarized));
     assert!(resumed.conversation.len() > forked.conversation.len());
     assert!(!matches!(
             resumed.conversation.get(1),
@@ -1403,7 +1401,7 @@ fn forked_initial_context_applies_fork_filter_before_normalize() {
             ConversationItem::user("INCOMPLETE_TRAILING"),
         ];
     let ctx = forked_initial_context(items);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     if let Some(ConversationItem::User(u)) = ctx.conversation.get(1) {
         let text: String = u
             .content
@@ -1445,9 +1443,8 @@ fn verbatim_fork_keeps_items_byte_for_byte_when_small() {
             ConversationItem::assistant("ack"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
     assert!(
-            ctx.verbatim_fork,
+            ctx.is_verbatim_fork(),
             "a small, complete-tail parent must mirror verbatim"
         );
     assert_eq!(ctx.prefix_len, Some(5));
@@ -1512,9 +1509,9 @@ fn verbatim_fork_falls_back_to_summary_on_incomplete_tail() {
             }),
         ];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert!(
-            !ctx.verbatim_fork,
+            !ctx.is_verbatim_fork(),
             "an incomplete (dangling tool call) tail must fall back to summary"
         );
     assert_eq!(ctx.prefix_len, Some(2));
@@ -1536,10 +1533,8 @@ fn summarized_fork_is_not_a_verbatim_mirror() {
             ConversationItem::assistant("ack"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 1);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
-    assert!(!ctx.verbatim_fork);
-    let verbatim_mirror_fork = ctx.source == InitialContextSource::Forked
-        && ctx.verbatim_fork;
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
+    let verbatim_mirror_fork = ctx.is_verbatim_fork();
     assert!(
             !verbatim_mirror_fork,
             "a summarized fork must NOT be treated as a verbatim mirror"
@@ -1554,9 +1549,9 @@ fn verbatim_fork_falls_back_to_summary_when_oversize() {
             ConversationItem::assistant("ack one"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 1);
-    assert_eq!(ctx.source, InitialContextSource::Forked);
+    assert_eq!(ctx.context, SubagentContext::Forked(ForkMode::Summarized));
     assert!(
-            !ctx.verbatim_fork,
+            !ctx.is_verbatim_fork(),
             "oversize parent must fall back to summary"
         );
     assert_eq!(ctx.prefix_len, Some(2));
@@ -1578,34 +1573,24 @@ fn verbatim_fork_empty_after_filter_fails_open_to_new() {
     use xai_grok_sampling_types::conversation::ConversationItem;
     let items = vec![ConversationItem::user("/goal do the thing")];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
-    assert_eq!(ctx.source, InitialContextSource::New);
-    assert!(!ctx.verbatim_fork);
+    assert_eq!(
+        ctx.context,
+        SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
+    );
     assert!(ctx.conversation.is_empty());
 }
 #[test]
 fn forked_initial_context_system_only_fails_open_to_new() {
     use xai_grok_sampling_types::conversation::ConversationItem;
     let ctx = forked_initial_context(vec![ConversationItem::system("sys")]);
-    assert_eq!(ctx.source, InitialContextSource::New);
-    assert!(!ctx.verbatim_fork);
+    assert_eq!(
+        ctx.context,
+        SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
+    );
     assert!(ctx.conversation.is_empty());
-    assert!(ctx.copy_error.is_some());
 }
 #[test]
 fn fork_context_normalized_only_for_summarized() {
-    assert!(!fork_context_normalized(
-            &InitialContextSource::Forked,
-            true
-        ));
-    assert!(fork_context_normalized(
-            &InitialContextSource::Forked,
-            false
-        ));
-    assert!(!fork_context_normalized(&InitialContextSource::New, false));
-    assert!(!fork_context_normalized(
-            &InitialContextSource::Resumed,
-            false
-        ));
     use xai_grok_sampling_types::conversation::ConversationItem;
     let verbatim = verbatim_or_normalize_fork(
         vec![
@@ -1615,11 +1600,8 @@ fn fork_context_normalized_only_for_summarized() {
             ],
         256_000,
     );
-    assert!(verbatim.verbatim_fork);
-    assert!(!fork_context_normalized(
-            &verbatim.source,
-            verbatim.verbatim_fork
-        ));
+    assert_eq!(verbatim.context, SubagentContext::Forked(ForkMode::Verbatim));
+    assert!(!verbatim.context.is_summarized_fork());
     let summarized = verbatim_or_normalize_fork(
         vec![
                 ConversationItem::system("sys"),
@@ -1628,11 +1610,80 @@ fn fork_context_normalized_only_for_summarized() {
             ],
         1,
     );
-    assert!(!summarized.verbatim_fork);
-    assert!(fork_context_normalized(
-            &summarized.source,
-            summarized.verbatim_fork
-        ));
+    assert!(summarized.context.is_summarized_fork());
+}
+fn background_text(ctx: &InitialContext) -> String {
+    use xai_grok_sampling_types::conversation::{ContentPart, ConversationItem};
+    ctx.conversation
+        .iter()
+        .filter_map(|item| match item {
+            ConversationItem::User(u) => Some(u.content.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+#[test]
+fn planner_fork_with_dangling_tool_call_stays_forked() {
+    use xai_grok_sampling_types::conversation::{AssistantItem, ConversationItem, ToolCall};
+    let items = vec![
+        ConversationItem::system("parent system"),
+        ConversationItem::user("UNIQUE_RUNNING_TURN_MARKER migrate the clean planner"),
+        ConversationItem::Assistant(AssistantItem {
+            content: "checking the build".into(),
+            tool_calls: vec![ToolCall {
+                id: "tc-running".into(),
+                name: "run_terminal_command".into(),
+                arguments: "{}".into(),
+            }],
+            model_id: None,
+            model_fingerprint: None,
+            reasoning_effort: None,
+        }),
+    ];
+    let ctx = verbatim_or_normalize_fork(items, 256_000);
+    assert!(
+        ctx.context.is_summarized_fork(),
+        "an unfinished tool call must not cost the whole fork: {:?}",
+        ctx.context
+    );
+    assert!(background_text(&ctx).contains("UNIQUE_RUNNING_TURN_MARKER"));
+}
+#[test]
+fn planner_fork_right_after_compaction_stays_forked() {
+    use xai_grok_sampling_types::conversation::{
+        ContentPart, ConversationItem, SyntheticReason, UserItem,
+    };
+    let synthetic = |text: &str, reason: SyntheticReason| {
+        ConversationItem::User(UserItem {
+            content: vec![ContentPart::Text { text: text.into() }],
+            synthetic_reason: reason,
+            ..Default::default()
+        })
+    };
+    let items = vec![
+        ConversationItem::system("parent system"),
+        synthetic("<user_info>os</user_info>", SyntheticReason::CompactionMeta),
+        ConversationItem::user("latest build result"),
+        synthetic(
+            "This session is being continued. UNIQUE_COMPACTION_SUMMARY_MARKER",
+            SyntheticReason::CompactionMeta,
+        ),
+        synthetic("<system-reminder>skills</system-reminder>", SyntheticReason::SystemReminder),
+    ];
+    let ctx = verbatim_or_normalize_fork(items, 256_000);
+    assert!(
+        ctx.context.is_summarized_fork(),
+        "a freshly compacted parent must still fork its summary: {:?}",
+        ctx.context
+    );
+    let text = background_text(&ctx);
+    assert!(text.contains("UNIQUE_COMPACTION_SUMMARY_MARKER"), "{text}");
+    assert!(!text.contains("skills"), "runtime reminders stay out: {text}");
 }
 fn bootstrap_test_request(fork_context: bool) -> SubagentRequest {
     SubagentRequest {
@@ -1702,7 +1753,7 @@ async fn bootstrap_in_place_resume_reads_existing_transcript() {
         .await;
     match out {
         BootstrapInitialContext::Ready(initial) => {
-            assert_eq!(initial.source, InitialContextSource::Resumed);
+            assert_eq!(initial.context, SubagentContext::Resumed);
             assert_eq!(initial.conversation.len(), 2);
         }
         BootstrapInitialContext::ResumeAbort(message) => {
@@ -1733,9 +1784,8 @@ async fn bootstrap_no_fork_is_new() {
         .await;
     match out {
         BootstrapInitialContext::Ready(ic) => {
-            assert_eq!(ic.source, InitialContextSource::New);
+            assert_eq!(ic.context, SubagentContext::Fresh);
             assert!(ic.conversation.is_empty());
-            assert!(ic.copy_error.is_none());
         }
         BootstrapInitialContext::ResumeAbort(m) => panic!("unexpected abort: {m}"),
     }
@@ -1765,8 +1815,10 @@ async fn bootstrap_fork_without_parent_fails_open() {
         .await;
     match out {
         BootstrapInitialContext::Ready(ic) => {
-            assert_eq!(ic.source, InitialContextSource::New);
-            assert!(ic.copy_error.is_some());
+            assert_eq!(
+                ic.context,
+                SubagentContext::ForkFailed(ForkFailure::ParentUnavailable)
+            );
         }
         BootstrapInitialContext::ResumeAbort(m) => {
             panic!("fork must fail open, not abort: {m}")
@@ -1808,10 +1860,8 @@ async fn bootstrap_fork_live_parent_chat_state_is_forked_with_marker() {
         .await;
     match out {
         BootstrapInitialContext::Ready(ic) => {
-            assert_eq!(ic.source, InitialContextSource::Forked);
-            assert!(ic.copy_error.is_none());
             assert!(
-                    ic.verbatim_fork,
+                    ic.is_verbatim_fork(),
                     "small complete-tail parent must mirror verbatim"
                 );
             assert_eq!(ic.conversation.len(), 3);
@@ -2243,8 +2293,8 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
-    assert!(!result.success);
+    assert!(result.is_interrupted());
+    assert!(!result.success());
     let completion_data = ShellCompletionData::from_context(
         &ctx,
         xai_message_delivery_core::AttemptId::mint(1),
@@ -2321,7 +2371,7 @@ async fn run_promote_cancel_with_worktree(
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
 }
 /// A pending cancel removes a freshly-created worktree but preserves a resumed child worktree owned by its source.
 #[tokio::test]
@@ -2412,7 +2462,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(result.cancelled);
+    assert!(result.is_interrupted());
     assert!(
             worktree.path().exists(),
             "worktree must stay when actor exit is not proven"
@@ -2422,7 +2472,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
                 .expect("read meta"),
         )
         .expect("parse meta");
-    assert_eq!(meta.status, "cancelled");
+    assert_eq!(meta.status, SubagentMetaStatus::Cancelled);
     assert!(meta.completed_at.is_some());
     assert_eq!(meta.error.as_deref(), Some("Subagent was cancelled"));
     drop(hold_tx);
@@ -2459,11 +2509,11 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             child_cmd_rx.try_recv(),
             Ok(SessionCommand::Shutdown(_))
         ));
-    assert!(!result.cancelled);
-    assert!(!result.success);
+    assert!(!result.is_interrupted());
+    assert!(!result.success());
     assert_eq!(result.status(), "failed");
     assert_eq!(
-            result.error.as_deref(),
+            result.error().as_deref(),
             Some("Subagent initial prompt was not admitted before the deadline")
         );
     let meta: SubagentMeta = serde_json::from_str(
@@ -2471,7 +2521,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
                 .expect("read meta"),
         )
         .expect("parse meta");
-    assert_eq!(meta.status, "failed");
+    assert_eq!(meta.status, SubagentMetaStatus::Failed);
     let completion_data = ShellCompletionData::from_context(
         &ctx,
         xai_message_delivery_core::AttemptId::mint(1),
@@ -2752,6 +2802,7 @@ fn spawn_test_parent_chat_state(model_slug: &str) -> xai_chat_state::ChatStateHa
     )
 }
 mod rest;
+mod resume;
 mod wake;
 #[tokio::test]
 async fn panicked_announced_foreground_child_emits_one_typed_finish() {
@@ -2775,8 +2826,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
             inner,
             ChildRunOutput {
                 result: SubagentResult {
-                    success: false,
-                    error: Some("Subagent runtime panicked".to_owned()),
+                    state: SubagentState::Failed { message: "Subagent runtime panicked".to_owned() },
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),
                     ..Default::default()

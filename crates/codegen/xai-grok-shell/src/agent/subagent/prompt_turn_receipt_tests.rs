@@ -48,7 +48,12 @@ fn start_drain(
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     (
         handoff_tx,
-        PromptTurnReceiptDrain::start(handoff_rx, cmd_tx, cancel_token),
+        PromptTurnReceiptDrain::start(
+            handoff_rx,
+            cmd_tx,
+            cancel_token,
+            watch::channel(SubagentDelivery::OnTurnEnd).1,
+        ),
         cmd_rx,
     )
 }
@@ -126,6 +131,48 @@ async fn active_drain_accepts_more_than_handoff_capacity() {
     assert_eq!(settled.disposition, PromptTurnReceiptDisposition::Completed);
 }
 
+#[tokio::test]
+async fn a_held_drain_takes_prompts_after_the_turn_until_delivered() {
+    let (handoff_tx, handoff_rx) = mpsc::channel(4);
+    let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+    let (delivery, delivery_rx) = watch::channel(SubagentDelivery::Held);
+    let drain =
+        PromptTurnReceiptDrain::start(handoff_rx, cmd_tx, CancellationToken::new(), delivery_rx);
+    let mut settling = tokio::spawn(drain.settle(AdmissionSettlement::Settled));
+
+    let (steer_tx, steer) = receipt("human-steer");
+    await_with_timeout(handoff_tx.send(steer))
+        .await
+        .expect("a held child takes prompts after its own turn ended");
+    steer_tx
+        .send(crate::session::commands::ok_end_turn(7, None))
+        .expect("the steering turn settles");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut settling)
+            .await
+            .is_err(),
+        "nothing reaches the caller before deliver"
+    );
+
+    delivery.send_replace(SubagentDelivery::OnTurnEnd);
+    let settled = await_with_timeout(settling).await.expect("drain task");
+    let Some(FinalPromptTurnReceipt {
+        prompt_id,
+        outcome: PromptTurnReceiptOutcome::Settled(receipt),
+        ..
+    }) = settled.final_receipt
+    else {
+        panic!("expected the steering turn as the final receipt");
+    };
+    let Ok(Ok(result)) = *receipt else {
+        panic!("expected a successful steering turn");
+    };
+    assert_eq!(
+        (prompt_id.as_str(), result.total_tokens, settled.disposition),
+        ("human-steer", 7, PromptTurnReceiptDisposition::Completed)
+    );
+}
+
 fn dropped_oneshot_error() -> oneshot::error::RecvError {
     let (tx, rx) = oneshot::channel::<crate::session::commands::PromptTurnResult>();
     drop(tx);
@@ -173,8 +220,8 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
             "follow-up result",
             true,
         ),
-        (None, false, false, true, None, "kept", false),
-        (None, true, false, true, None, "kept", false),
+        (None, false, false, true, Some("cancelled"), "kept", false),
+        (None, true, false, true, Some("cancelled"), "kept", false),
     ];
 
     for (
@@ -189,7 +236,11 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
     {
         let folded = reduce_prompt_turn_settlement(PromptTurnSettlementInput {
             result: SubagentResult {
-                cancelled: true,
+                state: SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: "cancelled".to_owned(),
+                    },
+                },
                 output: std::sync::Arc::from("kept"),
                 ..Default::default()
             },
@@ -201,9 +252,9 @@ fn completed_settlement_preserves_successful_followup_for_parent_wake() {
 
         assert_eq!(
             (
-                folded.result.success,
-                folded.result.cancelled,
-                folded.result.error.as_deref(),
+                folded.result.success(),
+                folded.result.is_interrupted(),
+                folded.result.error().as_deref(),
                 folded.result.output.as_ref(),
                 folded.cancellation_may_hide_usage,
             ),
@@ -238,7 +289,7 @@ fn unclean_settlement_dispositions_map_to_cancelled_results() {
     for (disposition, expected_error) in cases {
         let folded = reduce_prompt_turn_settlement(PromptTurnSettlementInput {
             result: SubagentResult {
-                success: true,
+                state: SubagentState::Completed,
                 ..Default::default()
             },
             disposition,
@@ -249,9 +300,9 @@ fn unclean_settlement_dispositions_map_to_cancelled_results() {
 
         assert_eq!(
             (
-                folded.result.success,
-                folded.result.cancelled,
-                folded.result.error.as_deref(),
+                folded.result.success(),
+                folded.result.is_interrupted(),
+                folded.result.error().as_deref(),
                 folded.result.output.as_ref(),
                 folded.result.output_usage_incomplete,
                 folded.cancellation_may_hide_usage,

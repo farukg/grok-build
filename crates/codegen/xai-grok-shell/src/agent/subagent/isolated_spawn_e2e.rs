@@ -41,11 +41,8 @@ fn spawn_ctx(parent_cwd: PathBuf) -> SubagentSpawnContext {
             context_window: 256_000,
             ..Default::default()
         },
-        #[cfg(test)]
         setup_failure: None,
-        #[cfg(test)]
         run_shell_child_harness: None,
-        #[cfg(test)]
         fail_start_metadata_write: false,
         alpha_test_key: None,
         auth_method_id: acp::AuthMethodId::new("test"),
@@ -177,7 +174,17 @@ impl ChildRunner for Runner {
         let ctx = self.ctx.lock().take().expect("run context");
         let gateway = self.gateway.clone();
         let completion_data = ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), None);
-        Box::pin(async move { run_shell_child(run, ctx, completion_data, gateway, None).await })
+        Box::pin(async move {
+            run_shell_child(
+                run,
+                ctx,
+                completion_data,
+                gateway,
+                None,
+                tokio::sync::oneshot::channel().0,
+            )
+            .await
+        })
     }
     fn validate_type(
         &self,
@@ -266,9 +273,9 @@ pub async fn spawn_isolated_subagent_for_e2e(
     usage_ack.abort();
     match spawned {
         Ok(Ok(result)) => IsolatedSubagentSpawn {
-            success: result.success,
+            success: result.success(),
+            error: result.error(),
             worktree_path: result.worktree_path.map(PathBuf::from),
-            error: result.error,
         },
         Ok(Err(e)) => IsolatedSubagentSpawn {
             success: false,

@@ -2850,11 +2850,17 @@ impl MvpAgent {
     pub(crate) async fn cancel_subagent(
         &self,
         subagent_id: &str,
+        disposition: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition,
     ) -> xai_grok_tools::implementations::grok_build::task::types::SubagentCancelOutcome {
+        use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend as _;
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
                 self.subagent_event_tx.event_sender().0,
             )
-            .cancel(subagent_id)
+            .cancel(
+                subagent_id,
+                xai_grok_tools::implementations::grok_build::task::types::SubagentActor::Human,
+                disposition,
+            )
             .await
     }
     pub(crate) async fn list_running_subagents(
@@ -3413,14 +3419,11 @@ impl MvpAgent {
             .models_manager
             .model_supports_reasoning_effort(model_id.0.as_ref());
         let effort_options: Vec<ReasoningEffortOption> = if supports_effort {
-            let options = self
-                .models_manager
-                .model_reasoning_efforts(model_id.0.as_ref());
-            if options.is_empty() {
-                session_config::legacy_session_effort_options()
-            } else {
-                options
-            }
+            xai_grok_sampling_types::reasoning_effort_menu(
+                &self
+                    .models_manager
+                    .model_reasoning_efforts(model_id.0.as_ref()),
+            )
         } else {
             Vec::new()
         };

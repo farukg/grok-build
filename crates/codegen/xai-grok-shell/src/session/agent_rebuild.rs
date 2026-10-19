@@ -102,6 +102,7 @@ pub(crate) struct AgentRebuildSpec {
     pub task_model_selection: LatchedTaskModelSelection,
     pub compaction_policy: CompactionPolicy,
     pub reminder_policy: ReminderPolicy,
+    pub system_reminders_enabled: bool,
     pub memory_enabled: bool,
     pub memory_global_path: Option<String>,
     pub memory_workspace_path: Option<String>,
@@ -126,6 +127,7 @@ pub(crate) struct AgentRebuildSpec {
     pub subagent_toggle: HashMap<String, bool>,
     pub background_workflows_enabled: bool,
     pub ask_user_question_enabled: bool,
+    pub feedback_enabled: bool,
     pub persona_summaries: Vec<String>,
     pub prompt_audience: PromptAudience,
     pub role_instructions: Option<String>,
@@ -217,6 +219,7 @@ impl AgentRebuildSpec {
             task_model_selection,
             compaction_policy,
             reminder_policy,
+            system_reminders_enabled,
             memory_enabled,
             memory_global_path,
             memory_workspace_path,
@@ -237,6 +240,7 @@ impl AgentRebuildSpec {
             subagent_toggle,
             background_workflows_enabled,
             ask_user_question_enabled,
+            feedback_enabled,
             persona_summaries,
             prompt_audience,
             role_instructions,
@@ -308,6 +312,7 @@ impl AgentRebuildSpec {
         .from_definition(definition)
         .with_compaction_policy(compaction_policy.clone())
         .with_reminder_policy(reminder_policy.clone())
+        .with_system_reminders_enabled(*system_reminders_enabled)
         .with_memory_enabled(*memory_enabled)
         .with_memory_paths(memory_global_path.clone(), memory_workspace_path.clone())
         .with_memory_v2_access(memory_v2_access.get(), *memory_v2_exposed)
@@ -331,6 +336,7 @@ impl AgentRebuildSpec {
         .with_task_model_slugs(presentation.model_slugs.clone())
         .with_task_model_selection(presentation.selection)
         .with_ask_user_question_enabled(*ask_user_question_enabled)
+        .with_feedback_enabled(*feedback_enabled)
         .with_persona_summaries(persona_summaries.clone())
         .with_prompt_audience(*prompt_audience)
         .with_role_instructions(role_instructions.clone())
@@ -501,6 +507,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         task_model_selection: LatchedTaskModelSelection::default(),
         compaction_policy: CompactionPolicy::default(),
         reminder_policy: ReminderPolicy::default(),
+        system_reminders_enabled: false,
         memory_enabled: false,
         memory_global_path: None,
         memory_workspace_path: None,
@@ -521,6 +528,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         subagent_toggle: HashMap::new(),
         background_workflows_enabled: false,
         ask_user_question_enabled: true,
+        feedback_enabled: true,
         persona_summaries: vec![],
         prompt_audience: PromptAudience::Primary,
         role_instructions: None,

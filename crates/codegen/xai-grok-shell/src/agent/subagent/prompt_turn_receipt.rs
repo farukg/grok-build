@@ -5,13 +5,16 @@
 use std::sync::Arc;
 
 use futures::{FutureExt, stream::FuturesUnordered, stream::StreamExt};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
+use crate::extensions::notification::SubagentDelivery;
 use crate::session::{
     CancelOptions, CancelTrigger, SessionCommand, ShutdownKind, commands::PromptTurnResult,
 };
-use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
+use xai_grok_tools::implementations::grok_build::task::types::{
+    InterruptionCause, SubagentResult, SubagentState,
+};
 
 pub(super) const ACTIVE_MESSAGE_RECEIPT_CAPACITY: usize = 64;
 const CANCELLED_RECEIPT_SETTLEMENT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -99,8 +102,8 @@ pub(super) fn reduce_prompt_turn_settlement(
         return PromptTurnSettlementOutput {
             settlement_status: crate::session::telemetry::classify_completed_settlement(
                 crate::session::telemetry::ActiveAgentMessageCompletedSettlement {
-                    is_result_success: result.success,
-                    is_result_cancelled: result.cancelled,
+                    is_result_success: result.success(),
+                    is_result_cancelled: result.is_interrupted(),
                     is_final_receipt_closed,
                 },
             ),
@@ -120,9 +123,11 @@ pub(super) fn reduce_prompt_turn_settlement(
         }
     };
 
-    result.success = false;
-    result.cancelled = true;
-    result.error = Some(error.to_string());
+    result.state = SubagentState::Interrupted {
+        cause: InterruptionCause::Error {
+            message: error.to_string(),
+        },
+    };
     result.output = Arc::from(final_text);
     result.output_usage_incomplete = true;
     PromptTurnSettlementOutput {
@@ -162,6 +167,7 @@ impl PromptTurnReceiptDrain {
         receipt_stream: mpsc::Receiver<PromptTurnReceipt>,
         child_cmd_tx: mpsc::UnboundedSender<SessionCommand>,
         cancel_token: CancellationToken,
+        delivery: watch::Receiver<SubagentDelivery>,
     ) -> Self {
         let (finalization, finalization_rx) = oneshot::channel();
         let (settlement_tx, settlement) = oneshot::channel();
@@ -171,6 +177,7 @@ impl PromptTurnReceiptDrain {
                 &child_cmd_tx,
                 cancel_token,
                 finalization_rx,
+                delivery,
             )
             .await;
             let _ = settlement_tx.send(settlement);
@@ -212,9 +219,11 @@ async fn drain_prompt_turn_receipts(
     child_cmd_tx: &mpsc::UnboundedSender<SessionCommand>,
     cancel_token: CancellationToken,
     mut finalization: oneshot::Receiver<AdmissionSettlement>,
+    mut delivery: watch::Receiver<SubagentDelivery>,
 ) -> PromptTurnReceiptSettlement {
     let mut pending = FuturesUnordered::new();
     let mut is_stream_open = true;
+    let mut is_delivery_open = true;
     let mut disposition = None;
     let mut deadline = None;
     let mut final_receipt = None;
@@ -223,7 +232,18 @@ async fn drain_prompt_turn_receipts(
     let mut latest_settlement = 0u64;
 
     loop {
-        if disposition.is_some() && !is_stream_open && pending.is_empty() {
+        // A held child keeps taking human prompts after its own turn ended; only `deliver` or a
+        // cancel lets a completed settlement finish.
+        let is_held = disposition == Some(PromptTurnReceiptDisposition::Completed)
+            && is_delivery_open
+            && *delivery.borrow() == SubagentDelivery::Held;
+        if is_stream_open
+            && disposition == Some(PromptTurnReceiptDisposition::Completed)
+            && !is_held
+        {
+            receipt_stream.close();
+        }
+        if disposition.is_some() && !is_stream_open && pending.is_empty() && !is_held {
             return PromptTurnReceiptSettlement {
                 final_receipt,
                 disposition: disposition
@@ -234,7 +254,6 @@ async fn drain_prompt_turn_receipts(
         tokio::select! {
             biased;
             admission = &mut finalization, if disposition.is_none() => {
-                receipt_stream.close();
                 let next_disposition = match admission.unwrap_or(AdmissionSettlement::Uncertain) {
                     AdmissionSettlement::Settled if !cancel_token.is_cancelled() => {
                         PromptTurnReceiptDisposition::Completed
@@ -246,6 +265,7 @@ async fn drain_prompt_turn_receipts(
                 };
                 // WHY: Completed deliberately arms no deadline (admitted work may run long); termination relies on the receipt sender always being dropped or sent when the turn ends.
                 if next_disposition != PromptTurnReceiptDisposition::Completed {
+                    receipt_stream.close();
                     cancel_shell_child_turn(child_cmd_tx);
                     deadline = Some(
                         tokio::time::Instant::now() + CANCELLED_RECEIPT_SETTLEMENT_GRACE,
@@ -254,6 +274,7 @@ async fn drain_prompt_turn_receipts(
                 disposition = Some(next_disposition);
             }
             _ = cancel_token.cancelled(), if disposition == Some(PromptTurnReceiptDisposition::Completed) => {
+                receipt_stream.close();
                 disposition = Some(PromptTurnReceiptDisposition::Cancelled);
                 cancel_shell_child_turn(child_cmd_tx);
                 deadline = Some(
@@ -280,6 +301,11 @@ async fn drain_prompt_turn_receipts(
                         });
                     }
                     None => is_stream_open = false,
+                }
+            }
+            changed = delivery.changed(), if is_delivery_open => {
+                if changed.is_err() {
+                    is_delivery_open = false;
                 }
             }
             Some((admission, settled)) = pending.next(), if !pending.is_empty() => {

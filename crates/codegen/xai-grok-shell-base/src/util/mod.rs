@@ -427,6 +427,7 @@ mod tests {
         assert!(is_xai_api_bearer_url("https://api.x.ai/v1"));
         assert!(!is_xai_api_bearer_url("http://api.x.ai/v1"));
         assert!(!is_xai_api_bearer_url("http://localhost:11434/v1"));
+        assert!(!is_xai_api_bearer_url("http://127.0.0.1:6790/v1"));
         {
             assert!(!is_xai_api_bearer_url("https://localhost:11434/v1"));
             assert!(!is_xai_api_bearer_url("https://127.0.0.2:11434/v1"));

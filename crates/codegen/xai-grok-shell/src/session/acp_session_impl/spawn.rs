@@ -646,7 +646,9 @@ pub(crate) async fn spawn_session_actor(
             snap.prompt_index = initial_prompt_texts.len();
             snap.prompt_texts = initial_prompt_texts;
             if initial_total_tokens > 0 {
-                snap.total_tokens = initial_total_tokens;
+                snap.total_tokens = xai_chat_state::TokenCount::Fresh {
+                    tokens: initial_total_tokens,
+                };
             }
             snap.last_compaction_prompt_index = initial_last_compaction;
             chat_state_handle.restore_snapshot(snap);
@@ -656,6 +658,9 @@ pub(crate) async fn spawn_session_actor(
     .await;
     drop(chat_state_timer);
     chat_state_handle.update_credentials(credentials);
+    chat_state_handle.set_context_policy(crate::session::helpers::context_policy_store::load(
+        &crate::session::persistence::session_dir(&session_info),
+    ));
     let state = TokioMutex::new(State {
         running_task: None,
         finalization_gate: Default::default(),
@@ -1187,6 +1192,12 @@ pub(crate) async fn spawn_session_actor(
         },
         task_model_selection: task_model_selection.clone(),
         compaction_policy,
+        system_reminders_enabled: crate::config::load_effective_config()
+            .ok()
+            .and_then(|raw| crate::agent::config::Config::new_from_toml_cfg(&raw).ok())
+            .unwrap_or_default()
+            .ui
+            .system_reminders_enabled(),
         reminder_policy,
         memory_enabled: memory_config
             .as_ref()
@@ -1226,6 +1237,7 @@ pub(crate) async fn spawn_session_actor(
         subagent_toggle: subagent_toggle.clone(),
         background_workflows_enabled,
         ask_user_question_enabled,
+        feedback_enabled: feedback_flags.enabled,
         persona_summaries: persona_summaries.clone(),
         prompt_audience,
         role_instructions: role_instructions.clone(),

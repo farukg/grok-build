@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::session::commands::{PromptCompletionKind, PromptTurnResult};
-use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
+use xai_grok_tools::implementations::grok_build::task::types::{
+    InterruptionCause, SubagentResult, SubagentState,
+};
 
 pub(super) enum PromptTurnResultMode {
     Initial { requires_structured_output: bool },
@@ -57,9 +59,7 @@ pub(super) fn reduce_prompt_turn_result(
                         },
                         Some(Ok(value)),
                     ) => {
-                        result.success = true;
-                        result.cancelled = false;
-                        result.error = None;
+                        result.state = SubagentState::Completed;
                         result.output = Arc::from(value.to_string());
                     }
                     (
@@ -68,12 +68,12 @@ pub(super) fn reduce_prompt_turn_result(
                         },
                         Some(Err(error)),
                     ) => {
-                        result.success = false;
-                        result.cancelled = false;
-                        result.error = Some(with_truncation_error(
+                        result.state = SubagentState::Failed {
+                            message: with_truncation_error(
                             format!("structured output validation failed: {error}"),
                             truncated,
-                        ));
+                        ),
+                        };
                         result.output = Arc::from(final_text);
                     }
                     (
@@ -82,12 +82,12 @@ pub(super) fn reduce_prompt_turn_result(
                         },
                         None,
                     ) => {
-                        result.success = false;
-                        result.cancelled = false;
-                        result.error = Some(with_truncation_error(
+                        result.state = SubagentState::Failed {
+                            message: with_truncation_error(
                             "structured output requested but none produced".to_string(),
                             truncated,
-                        ));
+                        ),
+                        };
                         result.output = Arc::from(final_text);
                     }
                     (
@@ -96,89 +96,101 @@ pub(super) fn reduce_prompt_turn_result(
                         },
                         _,
                     ) => {
-                        result.success = true;
-                        result.cancelled = false;
-                        result.error = None;
+                        result.state = SubagentState::Completed;
                         result.output = with_truncation_note(
                             text_or_summary(&final_text, summaries.success),
                             truncated,
                         );
                     }
                     (PromptTurnResultMode::ParentFollowup, None) => {
-                        result.success = true;
-                        result.cancelled = false;
-                        result.error = None;
+                        result.state = SubagentState::Completed;
                         result.output = with_truncation_note(
                             text_or_summary(&final_text, summaries.success),
                             truncated,
                         );
                     }
                     (PromptTurnResultMode::ParentFollowup, Some(_)) => {
-                        result.success = false;
-                        result.cancelled = false;
-                        result.error = Some(with_truncation_error(
+                        result.state = SubagentState::Failed {
+                            message: with_truncation_error(
                             "Parent follow-up unexpectedly produced structured output".to_string(),
                             truncated,
-                        ));
+                        ),
+                        };
                         result.output = Arc::from(final_text);
                         result.output_usage_incomplete = true;
                     }
                 }
             }
             PromptCompletionKind::Cancelled { category, context } => {
-                result.success = false;
-                result.cancelled = true;
-                result.error = Some(super::cancellation_error_message(
+                result.state = SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: super::cancellation_error_message(
                     category,
                     context.as_ref(),
-                ));
+                ),
+                    },
+                };
                 result.output = text_or_summary(&final_text, summaries.cancelled);
                 result.output_usage_incomplete = true;
                 cancellation_may_hide_usage = true;
             }
             PromptCompletionKind::MaxTurnsReached { limit } => {
-                result.success = false;
-                result.cancelled = true;
-                result.error = Some(format!("max turns reached (limit: {limit})"));
+                result.state = SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: format!("max turns reached (limit: {limit})"),
+                    },
+                };
                 result.output = text_or_summary(&final_text, || (summaries.max_turns)(limit));
                 result.output_usage_incomplete = true;
             }
             PromptCompletionKind::Rewound => {
-                result.success = false;
-                result.cancelled = true;
-                result.error = Some("Subagent turn was rewound".to_string());
+                result.state = SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: "Subagent turn was rewound".to_string(),
+                    },
+                };
                 result.output = Arc::from(final_text);
                 result.output_usage_incomplete = true;
                 cancellation_may_hide_usage = true;
             }
             PromptCompletionKind::RemovedFromQueue => {
-                result.success = false;
-                result.cancelled = true;
-                result.error = Some("Subagent turn was removed before it ran".to_string());
+                result.state = SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: "Subagent turn was removed before it ran".to_string(),
+                    },
+                };
                 result.output = Arc::from(final_text);
                 result.output_usage_incomplete = true;
             }
         },
         Ok(Err(error)) => {
-            result.success = false;
-            result.cancelled = was_cancelled;
-            result.error = Some(if was_cancelled {
-                "Subagent was cancelled".to_string()
+            result.state = if was_cancelled {
+                SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: "Subagent was cancelled".to_string(),
+                    },
+                }
             } else {
-                format!("Session error: {error}")
-            });
+                SubagentState::Failed {
+                    message: format!("Session error: {error}"),
+                }
+            };
             result.output = Arc::from(final_text);
             result.output_usage_incomplete = true;
             cancellation_may_hide_usage = was_cancelled;
         }
         Err(_) => {
-            result.success = false;
-            result.cancelled = was_cancelled;
-            result.error = Some(if was_cancelled {
-                "Subagent was cancelled".to_string()
+            result.state = if was_cancelled {
+                SubagentState::Interrupted {
+                    cause: InterruptionCause::Error {
+                        message: "Subagent was cancelled".to_string(),
+                    },
+                }
             } else {
-                "Child session dropped unexpectedly".to_string()
-            });
+                SubagentState::Failed {
+                    message: "Child session dropped unexpectedly".to_string(),
+                }
+            };
             result.output = Arc::from(final_text);
             result.output_usage_incomplete = true;
             cancellation_may_hide_usage = true;

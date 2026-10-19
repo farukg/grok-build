@@ -52,7 +52,7 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         {
             return Box::pin(std::future::ready(ChildRunOutput {
                 result: SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("prior output"),
                     subagent_id: run.request.id.clone(),
                     child_session_id: run.request.id,
@@ -68,7 +68,17 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         let ctx = self.contexts.lock().pop_front().expect("run context");
         let gateway = self.gateway.clone();
         let completion_data = ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), None);
-        Box::pin(async move { run_shell_child(run, ctx, completion_data, gateway, None).await })
+        Box::pin(async move {
+            run_shell_child(
+                run,
+                ctx,
+                completion_data,
+                gateway,
+                None,
+                tokio::sync::oneshot::channel().0,
+            )
+            .await
+        })
     }
 
     fn validate_type(
@@ -111,16 +121,14 @@ fn prior_wake_meta(id: &str, model_id: &str) -> SubagentMeta {
         subagent_type: "general-purpose".to_owned(),
         description: "prior description".to_owned(),
         prompt: "prior prompt".to_owned(),
-        status: "completed".to_owned(),
+        status: SubagentMetaStatus::Completed,
         started_at: chrono::Utc::now(),
         completed_at: Some(chrono::Utc::now()),
         duration_ms: Some(7),
         tool_calls: Some(2),
         turns: Some(1),
         error: None,
-        effective_context_source: Some("new".to_owned()),
-        context_normalized: false,
-        fork_copy_error: None,
+        context: crate::extensions::subagent_context::SubagentContext::Fresh,
         persona: None,
         resumed_from: None,
         child_cwd: Some("/tmp".to_owned()),
@@ -204,7 +212,7 @@ async fn assert_wake_setup_failure_preserves_prior_durable_state(
             .spawn(auto_wake_test_request(&id), None)
             .await
             .expect("prior spawn")
-            .success
+            .success()
     );
     while parent_cmd_rx.try_recv().is_ok() {}
     while gateway_rx.try_recv().is_ok() {}
@@ -403,7 +411,7 @@ async fn unpublished_wake_completion_preserves_prior_durable_state_and_worktree(
                     .spawn(auto_wake_test_request(&id), None)
                     .await
                     .expect("prior spawn")
-                    .success
+                    .success()
             );
             while gateway_rx.try_recv().is_ok() {}
 
@@ -511,7 +519,7 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
             let result = backend.spawn(request, None).await.expect("ordinary spawn");
-            assert!(result.success);
+            assert!(result.success());
             let output = result.output.to_string();
             assert_eq!(
                 read_subagent_output(&meta_dir).as_deref(),
@@ -521,7 +529,7 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
                 &std::fs::read_to_string(meta_dir.join("meta.json")).expect("completion meta"),
             )
             .expect("metadata");
-            assert_eq!(persisted.status, "completed");
+            assert_eq!(persisted.status, SubagentMetaStatus::Completed);
             let worktree = persisted.worktree_path.as_deref().expect("worktree path");
             assert!(!std::path::Path::new(worktree).exists());
             assert!(persisted.snapshot_ref.is_some());
@@ -585,12 +593,12 @@ async fn ordinary_spawn_disposes_worktree_when_only_remote_settings_enable_snaps
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
             let result = backend.spawn(request, None).await.expect("ordinary spawn");
-            assert!(result.success);
+            assert!(result.success());
             let persisted: SubagentMeta = serde_json::from_str(
                 &std::fs::read_to_string(meta_dir.join("meta.json")).expect("completion meta"),
             )
             .expect("metadata");
-            assert_eq!(persisted.status, "completed");
+            assert_eq!(persisted.status, SubagentMetaStatus::Completed);
             let worktree = persisted.worktree_path.as_deref().expect("worktree path");
             assert!(
                 !std::path::Path::new(worktree).exists(),
@@ -671,7 +679,7 @@ async fn ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn(
             );
             server.release_agent_completions();
             let result = spawned.await.expect("spawn task").expect("ordinary spawn");
-            assert!(result.success);
+            assert!(result.success());
             assert!(
                 workspace.session(&id).is_none(),
                 "teardown releases the child's binding"
@@ -742,9 +750,9 @@ async fn unacked_wake_start_and_abort_fail_closed_without_parking_runner() {
                 .await
                 .expect("ordinary spawn");
             assert!(
-                ordinary.success,
+                ordinary.success(),
                 "ordinary spawn failed: {:?}",
-                ordinary.error
+                ordinary.error()
             );
             let child_info = SessionInfo {
                 id: acp::SessionId::new(id.clone()),
@@ -871,9 +879,9 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
                 .await
                 .expect("ordinary spawn");
             assert!(
-                ordinary.success,
+                ordinary.success(),
                 "ordinary spawn failed: {:?}",
-                ordinary.error
+                ordinary.error()
             );
             let child_info = SessionInfo {
                 id: acp::SessionId::new(id.clone()),
@@ -996,9 +1004,9 @@ async fn started_wake_with_failed_metadata_write_preserves_prior_durable_artifac
                 .await
                 .expect("ordinary spawn");
             assert!(
-                ordinary.success,
+                ordinary.success(),
                 "ordinary spawn failed: {:?}",
-                ordinary.error
+                ordinary.error()
             );
             let child_info = SessionInfo {
                 id: acp::SessionId::new(id.clone()),

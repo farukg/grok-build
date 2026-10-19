@@ -286,11 +286,67 @@ impl SessionPresence {
         matches!(self, Self::Evicted { thread: None })
     }
 }
+/// Root sessions and children share ACP addressing; the host identifies parent accounting only.
+#[derive(Clone)]
+pub(crate) enum SessionHost {
+    Root,
+    Child(ChildHost),
+}
+
+#[derive(Clone)]
+pub(crate) struct ChildHost {
+    pub(crate) parent_session_id: acp::SessionId,
+    pub(crate) reach: ChildReach,
+}
+
+impl ChildHost {
+    pub(crate) fn running_handle(&self) -> Option<&SessionHandle> {
+        match &self.reach {
+            ChildReach::Addressed {
+                residence: ChildResidence::Running(running),
+                ..
+            } => Some(&running.handle),
+            ChildReach::Addressed {
+                residence: ChildResidence::Finished,
+                ..
+            }
+            | ChildReach::Unaddressed => None,
+        }
+    }
+}
+
+/// The coordinator mints an agent address for every child except workflow-owned ones.
+#[derive(Clone)]
+pub(crate) enum ChildReach {
+    Addressed {
+        address: xai_grok_tools::implementations::grok_build::task::types::AgentAddress,
+        residence: ChildResidence,
+    },
+    Unaddressed,
+}
+
+#[derive(Clone)]
+pub(crate) enum ChildResidence {
+    Running(Box<RunningChild>),
+    Finished,
+}
+
+/// What the child's worker hands the agent once the coordinator has promoted the child.
+#[derive(Clone)]
+pub(crate) struct RunningChild {
+    pub(crate) handle: SessionHandle,
+    pub(crate) turns: tokio::sync::mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+    pub(crate) parent_prompt_index: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    pub(crate) delivery:
+        tokio::sync::watch::Sender<crate::extensions::notification::SubagentDelivery>,
+}
+
 /// The per-session state this registry owns: retained, resident resources, presence (thread and liveness), unavailable model, and bridge.
 /// Load guards, rewind snapshots, local workspaces, and the handle map are owned elsewhere.
 /// A new field belongs here only if `release` should drop it with the rest.
 #[derive(Default)]
 struct SessionResources {
+    host: Option<SessionHost>,
     retained: Option<RetainedResources>,
     /// Cleared at idle-unload; survives a reload rebuild.
     resident: Option<ResidentResources>,
@@ -326,6 +382,16 @@ impl SessionRegistry {
         let Some(mut released) = entries.remove(id) else {
             return;
         };
+        let mut released_parents = vec![id.clone()];
+        while let Some(parent) = released_parents.pop() {
+            entries.retain(|child_id, entry| match &entry.host {
+                Some(SessionHost::Child(child)) if child.parent_session_id == parent => {
+                    released_parents.push(child_id.clone());
+                    false
+                }
+                Some(SessionHost::Child(_) | SessionHost::Root) | None => true,
+            });
+        }
         let running = released
             .presence
             .as_mut()
@@ -337,6 +403,7 @@ impl SessionRegistry {
             entries.insert(
                 id.clone(),
                 SessionResources {
+                    host: None,
                     presence: Some(SessionPresence::Evicted { thread: running }),
                     retired_threads,
                     retained: None,
@@ -481,11 +548,55 @@ impl SessionRegistry {
     }
     /// Hosted actor handle, if any.
     /// Mid-attach registration counts: the handle lands before the attach finishes, and callers already treat that as resident for lookup and sweep.
+    pub(super) fn host(&self, id: &acp::SessionId) -> Option<SessionHost> {
+        self.with(id, |entry| entry.host.clone()).flatten()
+    }
+    pub(super) fn set_host(&self, id: &acp::SessionId, host: SessionHost) {
+        self.edit(id, |entry| entry.host = Some(host));
+    }
+    pub(super) fn clear_host(&self, id: &acp::SessionId) {
+        self.clear(id, |entry| entry.host = None);
+    }
+    /// A finished child stays promptable by id until its parent session is released; a child
+    /// that outlived its parent leaves nothing behind.
+    pub(super) fn finish_child(&self, id: &acp::SessionId) {
+        let mut entries = self.sessions.borrow_mut();
+        let Some(entry) = entries.get(id) else {
+            return;
+        };
+        let parent_open = match &entry.host {
+            Some(SessionHost::Child(child)) => entries
+                .get(&child.parent_session_id)
+                .is_some_and(|parent| parent.host.is_some()),
+            Some(SessionHost::Root) | None => return,
+        };
+        if !parent_open {
+            entries.remove(id);
+            return;
+        }
+        if let Some(SessionResources {
+            host:
+                Some(SessionHost::Child(ChildHost {
+                    reach: ChildReach::Addressed { residence, .. },
+                    ..
+                })),
+            ..
+        }) = entries.get_mut(id)
+        {
+            *residence = ChildResidence::Finished;
+        }
+    }
+    /// The actor handle behind a session id: a hosted root, or a child that is still running.
+    /// Enumerations below stay root-only.
     pub(super) fn resident_handle(&self, id: &acp::SessionId) -> Option<SessionHandle> {
         self.with(id, |e| {
             e.presence
                 .as_ref()
                 .and_then(SessionPresence::hosted_handle)
+                .or(match &e.host {
+                    Some(SessionHost::Child(child)) => child.running_handle(),
+                    Some(SessionHost::Root) | None => None,
+                })
                 .cloned()
         })
         .flatten()
@@ -1176,6 +1287,7 @@ impl SessionRegistry {
         for entry in self.sessions.borrow().values() {
             counts.entries += 1;
             let SessionResources {
+                host: _,
                 retained,
                 resident,
                 presence,
@@ -1250,6 +1362,7 @@ impl SessionResources {
             presence,
             retired_threads,
             unavailable_model,
+            host,
         } = self;
         let chat_vacant = true;
         let presence_vacant = match presence {
@@ -1261,6 +1374,7 @@ impl SessionResources {
             && presence_vacant
             && retired_threads.is_empty()
             && unavailable_model.is_none()
+            && host.is_none()
             && chat_vacant
     }
 }

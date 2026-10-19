@@ -73,6 +73,9 @@ struct ListTasksResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CancelSubagentRequest {
     pub subagent_id: String,
+    /// Older clients omit it and stop the subagent.
+    #[serde(default)]
+    pub mode: xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition,
 }
 
 /// Wire mirror of the coordinator's [`SubagentCancelOutcome`], `kind`-tagged so a client can branch and read the already-finished `status`.
@@ -103,8 +106,10 @@ impl SubagentCancelOutcomeDto {
 impl From<SubagentCancelOutcome> for SubagentCancelOutcomeDto {
     fn from(outcome: SubagentCancelOutcome) -> Self {
         match outcome {
-            SubagentCancelOutcome::Cancelled => Self::Cancelled,
-            SubagentCancelOutcome::AlreadyFinished { status } => Self::AlreadyFinished { status },
+            SubagentCancelOutcome::Cancelled { .. } => Self::Cancelled,
+            SubagentCancelOutcome::AlreadyFinished { state } => Self::AlreadyFinished {
+                status: state.legacy_status().to_owned(),
+            },
             SubagentCancelOutcome::NotFound => Self::NotFound,
         }
     }
@@ -256,6 +261,9 @@ struct SubagentSnapshotDto {
     failure_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cancel_reason: Option<String>,
+    /// Who or what interrupted the subagent; `cancel_reason` is its wording for older clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interruption: Option<xai_grok_tools::implementations::grok_build::task::types::InterruptionCause>,
     // ── Fork/resume provenance ─────────────────────────────────
     #[serde(skip_serializing_if = "Option::is_none")]
     fork_context_source: Option<String>,
@@ -295,6 +303,7 @@ impl SubagentSnapshotDto {
             worktree_path: None,
             failure_error: None,
             cancel_reason: None,
+            interruption: None,
             fork_context_source: None,
             fork_parent_prompt_id: provenance.fork_parent_prompt_id,
             resumed_from: provenance.resumed_from,
@@ -337,9 +346,10 @@ impl SubagentSnapshotDto {
                 dto.status = "failed".into();
                 dto.failure_error = Some(error);
             }
-            SubagentSnapshotStatus::Cancelled { reason } => {
+            SubagentSnapshotStatus::Cancelled { cause } => {
                 dto.status = "cancelled".into();
-                dto.cancel_reason = reason;
+                dto.cancel_reason = Some(cause.model_text());
+                dto.interruption = Some(cause);
             }
         }
         dto
@@ -423,11 +433,13 @@ pub(crate) async fn handle_scheduler(agent: &MvpAgent, args: &acp::ExtRequest) -
 pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     match args.method.as_ref() {
         "x.ai/subagent/message" => crate::extensions::subagent_message::handle(agent, args).await,
+        "x.ai/subagent/resume" => crate::extensions::subagent_resume::handle(agent, args).await,
+        "x.ai/subagent/deliver" => crate::extensions::subagent_deliver::handle(agent, args).await,
         "x.ai/subagent/cancel" => {
             let req: CancelSubagentRequest = parse(args)?;
             tracing::info!(subagent_id = %req.subagent_id, "Cancelling subagent via ext method");
             let outcome =
-                SubagentCancelOutcomeDto::from(agent.cancel_subagent(&req.subagent_id).await);
+                SubagentCancelOutcomeDto::from(agent.cancel_subagent(&req.subagent_id, req.mode).await);
             respond(Ok::<_, String>(CancelSubagentResponse {
                 subagent_id: req.subagent_id,
                 cancelled: outcome.cancelled_bool(),
@@ -483,6 +495,7 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentActor, SubagentState};
 
     #[test]
     fn delete_scheduled_task_request_deserializes_camel_case() {
@@ -717,7 +730,9 @@ mod tests {
             duration_ms: 50,
             persona: None,
             status: SubagentSnapshotStatus::Cancelled {
-                reason: Some("user cancelled".into()),
+                cause: InterruptionCause::ExplicitStop {
+                    actor: SubagentActor::Human,
+                },
             },
         };
         let dto =
@@ -726,12 +741,16 @@ mod tests {
         assert_eq!(json.get("status"), Some(&serde_json::json!("cancelled")));
         assert_eq!(
             json.get("cancelReason"),
-            Some(&serde_json::json!("user cancelled"))
+            Some(&serde_json::json!("Subagent was stopped by human user."))
+        );
+        assert_eq!(
+            json.get("interruption"),
+            Some(&serde_json::json!({"kind": "explicit_stop", "actor": {"kind": "human"}}))
         );
     }
 
     #[test]
-    fn snapshot_dto_cancelled_without_reason_omits_field() {
+    fn snapshot_dto_cancelled_by_restart_names_its_cause() {
         let snap = SubagentSnapshot {
             subagent_id: "sub-5".into(),
             subagent_type: "explore".into(),
@@ -739,13 +758,18 @@ mod tests {
             started_at_epoch_ms: 0,
             duration_ms: 50,
             persona: None,
-            status: SubagentSnapshotStatus::Cancelled { reason: None },
+            status: SubagentSnapshotStatus::Cancelled {
+                cause: InterruptionCause::ProcessRestart,
+            },
         };
         let dto =
             SubagentSnapshotDto::from_snapshot(snap, "p".into(), "c".into(), Default::default());
         let json = serde_json::to_value(&dto).expect("should serialize");
         assert_eq!(json.get("status"), Some(&serde_json::json!("cancelled")));
-        assert!(json.get("cancelReason").is_none());
+        assert_eq!(
+            json.get("interruption"),
+            Some(&serde_json::json!({"kind": "process_restart"}))
+        );
     }
 
     #[test]
@@ -910,13 +934,17 @@ mod tests {
     #[test]
     fn subagent_cancel_outcome_dto_maps_from_coordinator_outcome() {
         // Cancelled maps to legacy bool true (a real finish is coming)
-        let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::Cancelled);
+        let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::Cancelled {
+            cause: InterruptionCause::ExplicitStop {
+                actor: SubagentActor::Human,
+            },
+        });
         assert_eq!(dto, SubagentCancelOutcomeDto::Cancelled);
         assert!(dto.cancelled_bool());
 
         // AlreadyFinished carries the terminal status; the legacy bool is false
         let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::AlreadyFinished {
-            status: "completed".into(),
+            state: SubagentState::Completed,
         });
         assert_eq!(
             dto,

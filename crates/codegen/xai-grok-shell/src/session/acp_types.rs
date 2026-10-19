@@ -462,6 +462,10 @@ pub fn count_detail(count: u64, noun: &str) -> String {
 #[serde(default, rename_all = "camelCase")]
 pub struct ContextInfo {
     pub used: u64,
+    /// Last known used count belongs to a previous model/window until the next
+    /// provider usage lands. Keep `used`; do not zero it.
+    #[serde(default)]
+    pub used_stale: bool,
     pub total: u64,
     pub system_prompt_tokens: u64,
     pub tool_definitions_count: u64,
@@ -523,6 +527,9 @@ pub struct SessionInfoData {
     /// Sole control: the client keeps no built-in per-slug default, so turning this off in the catalog hides both.
     #[serde(default)]
     pub show_model_fingerprint: bool,
+    /// Gateway route that served the latest response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_route: Option<xai_grok_sampling_types::ServedRoute>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
     /// Gateway chat conversation id when this session is gateway-proxied.

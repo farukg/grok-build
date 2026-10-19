@@ -658,6 +658,10 @@ impl GoalTracker {
         self.planner_run.take()
     }
 
+    pub(crate) fn planner_running(&self) -> bool {
+        self.planner_run.is_some()
+    }
+
     pub(crate) fn steer_planner(&mut self, steering: String) {
         let Some(run) = self.planner_run.as_mut() else {
             return;

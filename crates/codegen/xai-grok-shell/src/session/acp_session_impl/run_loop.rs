@@ -1306,6 +1306,20 @@ pub(super) async fn run_session(
                                 let _ = respond_to.send(result);
                             });
                         }
+                        SessionCommand::RemoveContextItems { request, respond_to } => {
+                            let s = session.clone();
+                            tokio::task::spawn_local(async move {
+                                let outcome = s.handle_remove_context_items(request).await;
+                                let _ = respond_to.send(outcome);
+                            });
+                        }
+                        SessionCommand::SetContextPolicy { policy, respond_to } => {
+                            session.set_context_policy(policy);
+                            let _ = respond_to.send(session.context_policy_report().await);
+                        }
+                        SessionCommand::GetContextPolicy { respond_to } => {
+                            let _ = respond_to.send(session.context_policy_report().await);
+                        }
                         SessionCommand::GetRewindPoints { respond_to } => {
                             let response = session.get_rewind_points().await;
                             let _ = respond_to.send(response);
@@ -2433,7 +2447,8 @@ pub(super) fn slash_feedback_last_turn(
     }) {
         return Some(n);
     }
-    let mut seen_unmarked_preamble = false;
+    let mut seen_unmarked_preamble =
+        xai_grok_sampling_types::has_typed_session_prefix(conversation);
     let mut n = 0usize;
     for item in conversation {
         let ConversationItem::User(u) = item else {
@@ -2479,7 +2494,8 @@ pub(super) fn turn_texts_for_feedback(
     {
         (i, true)
     } else {
-        let mut seen_unmarked_preamble = false;
+        let mut seen_unmarked_preamble =
+        xai_grok_sampling_types::has_typed_session_prefix(conversation);
         let mut n = 0usize;
         let mut i = None;
         for (idx, item) in conversation.iter().enumerate() {

@@ -29,8 +29,7 @@ fn spawned(
         child_session_id: subagent_id.to_owned(),
         subagent_type: "general-purpose".to_owned(),
         description: "continue work".to_owned(),
-        effective_context_source: Some("resumed".to_owned()),
-        context_normalized: false,
+        context: crate::extensions::subagent_context::SubagentContext::Resumed,
         capability_mode: None,
         persona: None,
         role: None,
@@ -38,6 +37,7 @@ fn spawned(
         resumed_from: resumed_from.map(str::to_owned),
         workflow_run_id: None,
         agent_address: None,
+        resume_fallback: None,
     }
 }
 
@@ -80,6 +80,7 @@ fn progress(subagent_id: &str, attempt_id: Option<&str>, tokens_used: u64) -> Xa
         context_usage_pct: 1,
         tools_used: vec!["read_file".to_owned()],
         error_count: 0,
+        delivery: Default::default(),
     }
 }
 

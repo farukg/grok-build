@@ -109,6 +109,64 @@ impl MvpAgent {
             .send_active_message(request)
             .await
     }
+    /// Human resume (`x.ai/subagent/resume`): the same routing as `task(resume_from)`. A running
+    /// target gets the prompt queued; a finished one is woken under its own id, and only one that
+    /// cannot be woken (on disk only, including children interrupted by a restart) continues
+    /// through the `resume_from` spawn.
+    pub(crate) async fn resume_subagent(
+        &self,
+        parent_session_id: &str,
+        reference: &str,
+        prompt: String,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::resume::SubagentResumeRoute,
+        xai_grok_tools::implementations::grok_build::task::resume::SubagentResumeError,
+    > {
+        use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend;
+        use xai_grok_tools::implementations::grok_build::task::resume::{
+            SubagentResumeError, SubagentResumeRoute, human_resume_request, route_subagent_resume,
+        };
+        if self
+            .session_handle_waiting_for_load(&acp::SessionId::new(parent_session_id))
+            .await
+            .is_none()
+        {
+            return Err(SubagentResumeError::ParentSessionUnavailable {
+                session_id: parent_session_id.to_owned(),
+            });
+        }
+        let backend =
+            xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::for_coordinator_session(
+                self.subagent_event_tx.clone(),
+                parent_session_id,
+            );
+        let source_id =
+            match route_subagent_resume(&backend, reference, &prompt, parent_session_id).await? {
+                SubagentResumeRoute::Spawn { source_id } => source_id,
+                delivered @ (SubagentResumeRoute::Delivered { .. }
+                | SubagentResumeRoute::Woken { .. }) => return Ok(delivered),
+            };
+        let route = SubagentResumeRoute::Spawn {
+            source_id: source_id.clone(),
+        };
+        let request = human_resume_request(source_id, prompt, parent_session_id.to_owned());
+        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+        let spawn_backend = backend.clone();
+        let spawn = tokio::spawn(async move {
+            spawn_backend.spawn(request, Some(registered_tx)).await
+        });
+        if registered_rx.await.is_ok() {
+            return Ok(route);
+        }
+        let reason = match spawn.await {
+            Ok(Ok(result)) => result
+                .error()
+                .unwrap_or_else(|| "the coordinator did not register the spawn".to_owned()),
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        };
+        Err(SubagentResumeError::SpawnRejected { reason })
+    }
     /// Test-only infallible wrapper; production uses the fallible variant.
     #[cfg(test)]
     pub(super) fn build_subagent_spawn_context(
@@ -253,11 +311,11 @@ impl MvpAgent {
             process_scope: parent_process_scope,
             client_hooks: Default::default(),
             sampling_config: self.sampling_config.borrow().clone(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             setup_failure: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             run_shell_child_harness: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             fail_start_metadata_write: false,
             managed_mcp_proxy_base_url: parent_managed_mcp_proxy_base_url
                 .unwrap_or_else(|| self.cli_chat_proxy_base_url()),

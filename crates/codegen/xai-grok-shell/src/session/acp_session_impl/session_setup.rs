@@ -160,7 +160,7 @@ impl SessionActor {
         };
         let mut conversation = self.chat_state_handle.get_conversation().await;
         let insert_at = conversation.len().min(1);
-        conversation.insert(insert_at, ConversationItem::user(prefix));
+        conversation.insert(insert_at, ConversationItem::session_prefix(prefix));
         if !self.startup_hints.preserve_inherited_system
             && !conversation_has_project_instructions(&conversation)
             && let Some(agents_md_reminder) = self.agent.borrow().agents_md_user_reminder()
@@ -178,7 +178,7 @@ impl SessionActor {
                     conversation
                         .iter()
                         .position(|item| {
-                            matches!(item, ConversationItem::User(u) if u.synthetic_reason.is_human())
+                            matches!(item, ConversationItem::User(u) if u.synthetic_reason.is_legacy_human())
                         })
                         .unwrap_or(conversation.len()),
                 );
@@ -391,7 +391,10 @@ impl SessionActor {
         };
         let current_model = &current_config.model;
         let base_url = &current_config.base_url;
-        if !crate::util::is_cli_chat_proxy_url(base_url) {
+        // Loopback is `is_cli_chat_proxy_url` (local mock / sigma-gateway) but
+        // is not the official proxy. `/models-v2` 404s there and must not
+        // brick idle-resume. Trusted HTTPS cli-chat-proxy only.
+        if !crate::util::is_trusted_cli_chat_proxy_url(base_url) {
             return;
         }
         tracing::info!(
@@ -514,6 +517,9 @@ impl SessionActor {
         if let Some(ref etag) = metadata.models_etag {
             self.models_manager.refresh_if_new_etag(etag.clone()).await;
         }
+        if let Some(route) = metadata.served_route {
+            self.publish_served_route(route).await;
+        }
         let current_config = match self.chat_state_handle.get_sampling_config().await {
             Some(cfg) => cfg,
             None => return,
@@ -525,21 +531,13 @@ impl SessionActor {
             && current_config.context_window != new_cw
             && !self.is_context_window_fixed(current_config.context_window)
         {
-            if new_cw < current_config.context_window {
-                tracing::warn!(
-                    current_context_window = current_config.context_window.get(),
-                    header_context_window = new_cw.get(),
-                    "Ignoring context_window downgrade from response header"
-                );
-            } else {
-                tracing::info!(
-                    old_context_window = current_config.context_window.get(),
-                    new_context_window = new_cw.get(),
-                    "Model context_window upgraded via response header"
-                );
-                new_context_window = new_cw;
-                config_changed = true;
-            }
+            tracing::info!(
+                old_context_window = current_config.context_window.get(),
+                new_context_window = new_cw.get(),
+                "Model context_window updated via response header"
+            );
+            new_context_window = new_cw;
+            config_changed = true;
         }
         if let Some(new_mct) = metadata.max_completion_tokens
             && current_config.max_completion_tokens != Some(new_mct)
@@ -594,6 +592,17 @@ impl SessionActor {
                 &self.compaction.context_window_selection,
             ) == Some(current)
     }
+    async fn publish_served_route(&self, route: xai_grok_sampling_types::ServedRoute) {
+        match self.chat_state_handle.record_served_route(route.clone()).await {
+            Some(xai_chat_state::ServedRouteChange::Changed) => {
+                self.send_xai_notification(
+                    crate::extensions::notification::SessionUpdate::ModelServed { route },
+                )
+                .await;
+            }
+            Some(xai_chat_state::ServedRouteChange::Unchanged) | None => {}
+        }
+    }
     /// Inject the actor's managed Read-deny globs into the current ToolBridge so the Grep tool excludes policy-forbidden paths.
     /// No-op when empty.
     /// Called on session setup and re-called after an agent rebuild (the rebuilt bridge
@@ -623,6 +632,7 @@ impl SessionActor {
         let turn_index = self.chat_state_handle.get_prompt_index().await as u64;
         tracing::info!(turn_index, turns, resolved_model_id = ?model_metadata.resolved_model_id, model_fingerprint = ?model_metadata.model_fingerprint, "build_session_info");
         let model_fingerprint = model_metadata.model_fingerprint;
+        let served_route = model_metadata.served_route;
         let show_model_fingerprint = model
             .as_deref()
             .map(|id| self.models_manager.model_show_model_fingerprint(id))
@@ -664,6 +674,7 @@ impl SessionActor {
             resolved_model_id,
             model_fingerprint,
             show_model_fingerprint,
+            served_route,
             api_backend,
             conversation_id,
             agent_name: Some(agent_name),
@@ -671,6 +682,7 @@ impl SessionActor {
             turn_index,
             context: ContextInfo {
                 used: total_tokens,
+                used_stale: false,
                 total: context_window,
                 system_prompt_tokens,
                 tool_definitions_count: tool_definitions_count as u64,

@@ -512,6 +512,16 @@ pub enum AutoCompactCancelReason {
 /// `Switching model…` loader (family-switch compact runs with no turn in flight).
 pub const MODEL_FAMILY_SWITCH_COMPACT_BANNER: &str = "Switching model. Compacting…";
 
+/// When a running subagent's answer goes to its caller: when its turn ends, or, once a human has
+/// prompted it, only after the human delivers it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentDelivery {
+    #[default]
+    OnTurnEnd,
+    Held,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
 pub enum SessionUpdate {
@@ -725,6 +735,10 @@ pub enum SessionUpdate {
         /// When the rewind occurred.
         created_at: String,
     },
+    ContextItemsRemoved {
+        items: Vec<crate::session::ContextItemRef>,
+        created_at: String,
+    },
     /// Task completed notification
     TaskCompleted {
         task_snapshot: TaskSnapshot,
@@ -752,12 +766,9 @@ pub enum SessionUpdate {
         subagent_type: String,
         /// Short human-readable description of the task.
         description: String,
-        /// Effective context source after bootstrap: "new" or "resumed".
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        effective_context_source: Option<String>,
-        /// Whether the forked context was normalized into <background_context>.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        context_normalized: bool,
+        /// Context the child actually started with, including why a requested fork fell back to fresh.
+        #[serde(flatten)]
+        context: crate::extensions::subagent_context::SubagentContext,
         /// Capability mode applied to this subagent (e.g. "read-only").
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capability_mode: Option<String>,
@@ -783,6 +794,9 @@ pub enum SessionUpdate {
             skip_serializing_if = "Option::is_none"
         )]
         agent_address: Option<String>,
+        /// Set when a resumed child could not run where its source ran.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_fallback: Option<xai_tool_types::SubagentResumeFallback>,
     },
     /// Periodic progress update for a running subagent. Sent on the PARENT session's notification channel, rate-limited (every ~2s while the subagent is active). Stops automatically when the subagent completes or is cancelled.
     /// The TUI merges these into the same state path used by ACP poll responses.
@@ -811,6 +825,8 @@ pub enum SessionUpdate {
         tools_used: Vec<String>,
         /// Number of errors encountered so far.
         error_count: u32,
+        #[serde(default)]
+        delivery: SubagentDelivery,
     },
     /// A subagent session has finished (success, failure, or cancellation).
     ///
@@ -938,6 +954,11 @@ pub enum SessionUpdate {
     ServedModel {
         /// The served model's display name as the backend reports it (e.g. "Grok 4.7 Fast"), which may match no catalog row.
         display_name: String,
+    },
+    /// A routing gateway served the session's latest response through a different route than the previous one.
+    /// Emitted only on change; cleared by the client on a model switch.
+    ModelServed {
+        route: xai_grok_sampling_types::ServedRoute,
     },
     /// Streaming chunk of a tool call's arguments. Behaves like `acp::SessionUpdate::AgentMessageChunk` / `AgentThoughtChunk`. It flows through the replay buffer and merges with adjacent chunks for the same `tool_call_id`.
     /// It is debounced at the session's buffering interval. Only persisted as a full `acp::SessionUpdate::ToolCall`.
@@ -1684,6 +1705,7 @@ mod tests {
             context_usage_pct: 35,
             tools_used: vec!["bash".into(), "grep".into()],
             error_count: 1,
+            delivery: SubagentDelivery::OnTurnEnd,
         };
         let json = serde_json::to_value(&update).unwrap();
         assert_eq!(
@@ -1731,6 +1753,7 @@ mod tests {
             context_usage_pct: 1,
             tools_used: vec![],
             error_count: 0,
+            delivery: SubagentDelivery::OnTurnEnd,
         };
         let json_str = serde_json::to_string(&update).unwrap();
         let parsed: SessionUpdate = serde_json::from_str(&json_str).unwrap();
@@ -1749,8 +1772,7 @@ mod tests {
             child_session_id: "c".into(),
             subagent_type: "explore".into(),
             description: "d".into(),
-            effective_context_source: None,
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Unreported,
             capability_mode: None,
             persona: None,
             role: None,
@@ -1758,6 +1780,7 @@ mod tests {
             resumed_from: None,
             workflow_run_id: None,
             agent_address: None,
+            resume_fallback: None,
         })
         .unwrap();
         let progress = serde_json::to_value(SessionUpdate::SubagentProgress {
@@ -1773,6 +1796,7 @@ mod tests {
             context_usage_pct: 0,
             tools_used: vec![],
             error_count: 0,
+            delivery: SubagentDelivery::OnTurnEnd,
         })
         .unwrap();
         let finished = serde_json::to_value(SessionUpdate::SubagentFinished {
@@ -1805,6 +1829,30 @@ mod tests {
     }
 
     #[test]
+    fn subagent_spawned_carries_fork_copy_error() {
+        use crate::extensions::subagent_context::{ForkFailure, SubagentContext};
+        let persisted = serde_json::json!({
+            "sessionUpdate": "subagent_spawned",
+            "subagent_id": "s",
+            "parent_session_id": "p",
+            "child_session_id": "c",
+            "subagent_type": "general-purpose",
+            "description": "goal plan writer",
+            "effective_context_source": "new",
+            "fork_copy_error": "no inheritable parent content after filtering"
+        });
+        let update: SessionUpdate = serde_json::from_value(persisted.clone()).expect("replays");
+        let SessionUpdate::SubagentSpawned { ref context, .. } = update else {
+            panic!("expected SubagentSpawned: {update:?}");
+        };
+        assert_eq!(
+            *context,
+            SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
+        );
+        assert_eq!(serde_json::to_value(&update).expect("serializes"), persisted);
+    }
+
+    #[test]
     fn subagent_spawned_agent_address_serializes_as_typed_camel_case() {
         let update = SessionUpdate::SubagentSpawned {
             attempt_id: None,
@@ -1814,8 +1862,7 @@ mod tests {
             child_session_id: "c".into(),
             subagent_type: "explore".into(),
             description: "d".into(),
-            effective_context_source: None,
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Unreported,
             capability_mode: None,
             persona: None,
             role: None,
@@ -1823,6 +1870,7 @@ mod tests {
             resumed_from: None,
             workflow_run_id: None,
             agent_address: Some("opaque-address".into()),
+            resume_fallback: None,
         };
         let json = serde_json::to_value(&update).unwrap();
         assert_eq!(

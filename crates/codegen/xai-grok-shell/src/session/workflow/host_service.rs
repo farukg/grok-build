@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use xai_grok_tools::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use xai_grok_tools::implementations::grok_build::task::types::{
     ModelOverrideProvenance, SubagentCancelRequest, SubagentCancelTarget, SubagentEvent,
+    SubagentState,
     SubagentOwner, SubagentRequest, SubagentRuntimeOverrides,
 };
 use xai_workflow::{AgentOpts, AgentResult, BudgetState, HostError, WorkflowHostRequest};
@@ -647,22 +648,22 @@ impl HostService {
             }
 
             let Some(validator) = schema_validator.as_ref() else {
-                let output = if result.success {
+                let output = if result.success() {
                     serde_json::Value::String(result.output.to_string())
                 } else {
                     serde_json::Value::String(
                         result
-                            .error
+                            .error()
                             .clone()
                             .unwrap_or_else(|| result.output.to_string()),
                     )
                 };
                 break (result, output);
             };
-            if !result.success {
+            if !result.success() {
                 let output = serde_json::Value::String(
                     result
-                        .error
+                        .error()
                         .clone()
                         .unwrap_or_else(|| result.output.to_string()),
                 );
@@ -684,7 +685,9 @@ impl HostService {
                 }
                 Err(err) => {
                     let mut result = result;
-                    result.success = false;
+                    result.state = SubagentState::Failed {
+                        message: format!("structured output validation failed: {err}"),
+                    };
                     let output = serde_json::Value::String(format!(
                         "structured output validation failed: {err}"
                     ));
@@ -694,7 +697,7 @@ impl HostService {
         };
 
         row.finish(
-            if result.success { "done" } else { "failed" },
+            if result.success() { "done" } else { "failed" },
             total_tokens,
             total_duration,
         );
@@ -702,9 +705,9 @@ impl HostService {
 
         Ok(AgentResult {
             agent_id: id,
-            success: result.success,
+            success: result.success(),
             output,
-            cancelled: result.cancelled,
+            cancelled: result.is_interrupted(),
             tokens_used: total_tokens,
             duration_ms: total_duration,
         })
@@ -1183,7 +1186,7 @@ mod tests {
             spawn
                 .respond_with(|request| {
                     xai_grok_tools::implementations::grok_build::task::types::SubagentResult {
-                        success: true,
+                        state: SubagentState::Completed,
                         output: Arc::from("done"),
                         subagent_id: request.id.clone(),
                         child_session_id: request.id.clone(),

@@ -37,6 +37,7 @@ fn summary(
         loop_task_id: None,
         tool_calls: tools,
         full_output_bytes: output.len(),
+        resume_fallback: None,
         output: std::sync::Arc::from(output),
     }
 }

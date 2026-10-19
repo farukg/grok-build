@@ -76,12 +76,9 @@ impl ChildControl for ShellChildRuntime {
                 delivery,
             ),
         );
-        let parent_prompt_index = self
-            .active_message_parent_prompt_index
-            .load(std::sync::atomic::Ordering::Acquire);
-        let parent_telemetry_ctx = xai_grok_telemetry::TelemetryCtx::new(
-            self.active_message_parent_session_id.clone(),
-            std::sync::Arc::new(tokio::sync::Mutex::new(parent_prompt_index)),
+        let parent_telemetry_ctx = parent_telemetry_ctx(
+            &self.active_message_parent_session_id,
+            &self.active_message_parent_prompt_index,
         );
         Box::pin(async move {
             message_delivery
@@ -93,6 +90,19 @@ impl ChildControl for ShellChildRuntime {
     fn cancel(&self) {
         cancel_shell_child_turn(&self.child_cmd_tx);
     }
+}
+
+/// Telemetry context of the parent turn a message into the child is attributed to.
+pub(crate) fn parent_telemetry_ctx(
+    parent_session_id: &str,
+    parent_prompt_index: &std::sync::atomic::AtomicUsize,
+) -> xai_grok_telemetry::TelemetryCtx {
+    xai_grok_telemetry::TelemetryCtx::new(
+        parent_session_id.to_owned(),
+        std::sync::Arc::new(tokio::sync::Mutex::new(
+            parent_prompt_index.load(std::sync::atomic::Ordering::Acquire),
+        )),
+    )
 }
 
 const SESSION_THREAD_EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(10);

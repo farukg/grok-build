@@ -20,7 +20,7 @@ use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
 use xai_grok_telemetry::region::Region;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{self, ChildCompletion};
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentRequest, SubagentResult, SubagentSnapshot,
+    SubagentRequest, SubagentResult, SubagentResumeError, SubagentSnapshot,
 };
 /// Floor keeps the pool responsive when `available_parallelism` is tiny.
 const MIN_WORKER_THREADS: usize = 2;
@@ -106,6 +106,30 @@ impl coordinator::ChildRunner for ShellChildRunner {
             .get_session_cwd(&acp::SessionId::new(parent_session_id))?;
         super::durable_resume_source_for(resume_id, parent_session_id, &cwd)
             .map(|source| source.subagent_type)
+    }
+    fn durable_resume_candidates(&self, reference: &str, parent_session_id: &str) -> Vec<String> {
+        let Some(cwd) = self
+            .agent_ref
+            .get()
+            .get_session_cwd(&acp::SessionId::new(parent_session_id))
+        else {
+            return Vec::new();
+        };
+        super::durable_resume_candidates(reference, parent_session_id, &cwd)
+    }
+    fn durable_resume_check(
+        &self,
+        subagent_id: &str,
+        parent_session_id: &str,
+    ) -> Result<(), SubagentResumeError> {
+        let cwd = self
+            .agent_ref
+            .get()
+            .get_session_cwd(&acp::SessionId::new(parent_session_id))
+            .ok_or_else(|| SubagentResumeError::ParentSessionUnavailable {
+                session_id: parent_session_id.to_owned(),
+            })?;
+        super::durable_resume_source(subagent_id, parent_session_id, &cwd).map(|_| ())
     }
     fn run(&self, mut run: coordinator::ChildRunRequest<Self::Control>) -> Self::RunFuture {
         let agent_ref = self.agent_ref.clone();
@@ -205,6 +229,9 @@ impl coordinator::ChildRunner for ShellChildRunner {
             let completion_data =
                 ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), turn_number);
             let panic_completion_data = completion_data.clone();
+            let child_parent_session_id = acp::SessionId::new(parent_sid.clone());
+            let child_address = run.agent_address.clone();
+            let (residence_tx, residence_rx) = tokio::sync::oneshot::channel();
             let task = {
                 let _region = Region::from_span(tracing::info_span!(
                     parent: &root_parent,
@@ -218,22 +245,48 @@ impl coordinator::ChildRunner for ShellChildRunner {
                     completion_data,
                     gateway,
                     root_span,
+                    residence_tx,
                 ))
             };
             drop(root_parent);
-            join_worker_task(
-                task,
-                coordinator::ChildRunOutput {
-                    result: SubagentResult::failed(
-                        panic_request.id.clone(),
-                        panic_request.id,
-                        "Subagent runtime panicked",
-                    ),
-                    completion_data: panic_completion_data,
-                    snapshot_ref: None,
-                },
-            )
-            .await
+            let register = async {
+                let Ok(running) = residence_rx.await else {
+                    return;
+                };
+                let reach = match child_address {
+                    Some(address) => crate::agent::mvp_agent::ChildReach::Addressed {
+                        address,
+                        residence: crate::agent::mvp_agent::ChildResidence::Running(Box::new(
+                            running,
+                        )),
+                    },
+                    None => crate::agent::mvp_agent::ChildReach::Unaddressed,
+                };
+                this.register_child_session(
+                    &child_session_id,
+                    crate::agent::mvp_agent::ChildHost {
+                        parent_session_id: child_parent_session_id,
+                        reach,
+                    },
+                );
+            };
+            let ((), output) = tokio::join!(
+                register,
+                join_worker_task(
+                    task,
+                    coordinator::ChildRunOutput {
+                        result: SubagentResult::failed(
+                            panic_request.id.clone(),
+                            panic_request.id,
+                            "Subagent runtime panicked",
+                        ),
+                        completion_data: panic_completion_data,
+                        snapshot_ref: None,
+                    },
+                )
+            );
+            this.finish_child_session(&child_session_id);
+            output
         })
     }
     fn validate_type(
@@ -408,12 +461,12 @@ pub(crate) fn present_child_completion(
                 attempt_id: completion_data.attempt_id.as_ref().map(ToString::to_string),
                 child_session_id: result.child_session_id.clone(),
                 status: result.status().to_owned(),
-                error: result.error.clone(),
+                error: result.error().clone(),
                 tool_calls: result.tool_calls,
                 turns: result.turns,
                 duration_ms: result.duration_ms,
                 tokens_used: completion_data.telemetry_tokens(),
-                output: result.success.then(|| result.output.to_string()),
+                output: result.success().then(|| result.output.to_string()),
                 will_wake,
             },
             completion_data.parent_cmd_tx.as_ref(),
@@ -449,7 +502,7 @@ impl AutoWakeInputs {
     pub(crate) fn from_completion(completion: &ChildCompletion<ShellCompletionData>) -> Self {
         Self {
             run_in_background: completion.disposition.backgrounded,
-            cancelled: completion.result.cancelled,
+            cancelled: completion.result.is_interrupted(),
             auto_wake_enabled: completion.completion_data.auto_wake_enabled,
             block_waited: completion.disposition.waiter_delivered,
             explicitly_killed: completion.disposition.explicitly_killed,
@@ -614,8 +667,7 @@ mod address_tests {
             child_session_id: "child-1".into(),
             subagent_type: "explore".into(),
             description: "d".into(),
-            effective_context_source: None,
-            context_normalized: false,
+            context: crate::extensions::subagent_context::SubagentContext::Unreported,
             capability_mode: None,
             persona: None,
             role: None,
@@ -623,6 +675,7 @@ mod address_tests {
             resumed_from: None,
             workflow_run_id: None,
             agent_address,
+            resume_fallback: None,
         }
     }
     #[tokio::test]

@@ -3886,6 +3886,75 @@ async fn bash_turn_sets_committed_flag_before_running_the_command() {
         .await;
 }
 
+/// A terminal whose command succeeds with fixed output.
+struct EchoTerminal;
+
+#[async_trait::async_trait]
+impl crate::terminal::AsyncTerminalRunner for EchoTerminal {
+    async fn run(
+        &self,
+        _request: crate::terminal::runner::TerminalRunRequest,
+    ) -> Result<crate::terminal::runner::TerminalRunResult, crate::terminal::runner::TerminalError>
+    {
+        Ok(crate::terminal::runner::TerminalRunResult {
+            combined_output: "hello".to_string(),
+            exit_code: Some(0),
+            truncated: false,
+            signal: None,
+            timed_out: false,
+        })
+    }
+}
+
+/// The `!cmd` history message is a user turn of its own origin, not typed text.
+#[tokio::test(flavor = "current_thread")]
+async fn bash_turn_records_a_direct_bash_history_item() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, mut persistence_rx) =
+                tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            tokio::task::spawn_local(async move {
+                while let Some(message) = persistence_rx.recv().await {
+                    if let PersistenceMsg::FlushAndAck { respond_to } = message {
+                        let _ = respond_to.send(Ok(()));
+                    }
+                }
+            });
+            let (actor, _ev) = create_test_actor_with_terminal(
+                0,
+                256_000,
+                85,
+                gateway_tx,
+                persistence_tx,
+                std::sync::Arc::new(EchoTerminal),
+            )
+            .await;
+
+            let _ = actor
+                .handle_direct_bash_command(
+                    "bash-1",
+                    "echo hello".to_string(),
+                    &[acp::ContentBlock::Text(acp::TextContent::new("!echo hello"))],
+                )
+                .await;
+
+            let conversation = actor.chat_state_handle.get_conversation().await;
+            let Some(xai_grok_sampling_types::ConversationItem::User(user)) = conversation.last()
+            else {
+                panic!("the bash turn ends with its history message: {conversation:?}");
+            };
+            assert_eq!(
+                user.synthetic_reason,
+                xai_grok_sampling_types::SyntheticReason::DirectBash
+            );
+            assert!(user.synthetic_reason.starts_prompt_turn());
+        })
+        .await;
+}
+
 /// Builtin turns carry no user message; they commit at intake so a send-now can cancel a long-running builtin like `/compact`.
 #[tokio::test(flavor = "current_thread")]
 async fn builtin_turn_commits_immediately() {
@@ -4265,6 +4334,111 @@ async fn goal_yield_runs_queued_row_next_then_resumes_goal() {
             if let Some(task) = state.running_task.as_ref() {
                 task.handle.abort();
             }
+        })
+        .await;
+}
+
+/// Goal turn parked in the planner's foreground wait, with Steer on and an empty held queue: the auto-send-now window.
+async fn actor_waiting_on_goal_planner() -> (
+    std::sync::Arc<SessionActor>,
+    tokio_util::sync::CancellationToken,
+) {
+    crate::util::config::set_follow_up_steer_cache(true);
+    let (actor, _rx) = build_actor().await;
+    {
+        let mut state = actor.state.lock().await;
+        state.pending_inputs.push_back(user_item("goal-turn", "A"));
+        state.running_task = Some(running_task_stub("goal-turn"));
+        state.front_message_committed = true;
+    }
+    *actor
+        .current_prompt_id
+        .lock()
+        .expect("current_prompt_id mutex poisoned") = Some("goal-turn".into());
+    let planner_cancel = tokio_util::sync::CancellationToken::new();
+    {
+        let mut tracker = actor.goal_tracker.lock();
+        tracker.create_goal(
+            "goal".into(),
+            "objective".into(),
+            None,
+            0,
+            "2026-01-01T00:00:00Z".into(),
+            None,
+        );
+        tracker.start_planner_run(planner_cancel.clone());
+    }
+    actor.tool_context.blocking_wait_depth.set_depth_for_test(1);
+    (actor, planner_cancel)
+}
+
+#[tokio::test]
+#[serial_test::serial(follow_up_steer_cache)]
+async fn message_during_planning_queues_without_cancel() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, planner_cancel) = actor_waiting_on_goal_planner().await;
+
+            let _ = prompt_queue::take_queued_commit_count();
+            let (respond_to, _p) = oneshot::channel();
+            let cancel = actor
+                .queue_input(queue_input_request(
+                    vec![acp::ContentBlock::Text(acp::TextContent::new("later"))],
+                    "during-planning",
+                    respond_to,
+                ))
+                .await;
+
+            assert!(!cancel, "a message during planning must not cancel the turn");
+            assert!(
+                !planner_cancel.is_cancelled(),
+                "a message during planning must not restart the planner"
+            );
+            assert_eq!(prompt_queue::take_queued_commit_count(), 1);
+            assert!(actor.pending_interjections.is_empty());
+            let state = actor.state.lock().await;
+            assert_eq!(
+                ids(&actor.build_queue_wire(&state)),
+                vec!["during-planning"],
+                "the message waits as a queue row until the planner is done"
+            );
+            drop(state);
+            let run = actor.goal_tracker.lock().take_planner_run();
+            assert!(run.is_some_and(|run| run.steering.is_empty()));
+        })
+        .await;
+}
+
+#[tokio::test]
+#[serial_test::serial(follow_up_steer_cache)]
+async fn send_now_during_planning_still_restarts_with_steering() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, planner_cancel) = actor_waiting_on_goal_planner().await;
+            actor
+                .state
+                .lock()
+                .await
+                .pending_inputs
+                .push_back(user_item("queued-steer", "A"));
+
+            let _ = actor
+                .handle_interject_queued_prompt("queued-steer", 0, None, None)
+                .await;
+
+            assert!(
+                planner_cancel.is_cancelled(),
+                "explicit send-now restarts the planner"
+            );
+            let run = actor.goal_tracker.lock().take_planner_run();
+            assert_eq!(
+                run.map(|run| run.steering),
+                Some(vec!["text for queued-steer".to_string()])
+            );
+            let state = actor.state.lock().await;
+            assert!(ids(&actor.build_queue_wire(&state)).is_empty());
         })
         .await;
 }

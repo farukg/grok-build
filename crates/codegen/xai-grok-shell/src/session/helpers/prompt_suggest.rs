@@ -162,7 +162,7 @@ pub(crate) fn build_transcript(conversation: &[ConversationItem]) -> Option<Stri
 
     for item in conversation.iter().rev() {
         let line = match item {
-            ConversationItem::User(u) if u.synthetic_reason.is_human() => {
+            ConversationItem::User(u) if u.synthetic_reason.is_user_input() => {
                 let Some(line) = transcript_line("User", &item.text_content(), MESSAGE_CAP_CHARS)
                 else {
                     continue;

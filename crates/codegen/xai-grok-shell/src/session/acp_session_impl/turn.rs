@@ -324,6 +324,11 @@ pub(super) fn record_failed_sample_on_turn_span(
     };
     record_last_sample(span, stop_reason, false, 0);
 }
+/// What the user's own input becomes in the conversation.
+enum UserInputKind {
+    Typed,
+    GoalSetup,
+}
 /// How the turn's per-block user-message echo is published to clients / `updates.jsonl`.
 /// Turns whose content must not render as a user prompt (notification drain) are hidden by the *pager* via the `hideFromScrollback` chunk meta.
 /// The persisted line is never omitted.
@@ -689,6 +694,7 @@ impl SessionActor {
                 }
             }
         };
+        let mut user_input_kind = UserInputKind::Typed;
         let prompt_blocks = match resolved {
             Ok(blocks) => blocks,
             Err(SlashCommandOutcome::Builtin(action)) => {
@@ -712,6 +718,7 @@ impl SessionActor {
                         xai_grok_telemetry::session_ctx::log_event(slash_used);
                         match self.setup_goal(&objective, token_budget).await {
                             GoalSetupOutcome::Inference { reminder } => {
+                                user_input_kind = UserInputKind::GoalSetup;
                                 vec![text_block(reminder)]
                             }
                             GoalSetupOutcome::Message(msg) => {
@@ -1213,9 +1220,11 @@ impl SessionActor {
                 }
                 super::super::PromptOrigin::PlanResume => ConversationItem::user(user_message),
                 super::super::PromptOrigin::User => {
-                    let mut item = ConversationItem::user(
-                        self.maybe_apply_interrupt_envelope(user_message, verbatim),
-                    );
+                    let text = self.maybe_apply_interrupt_envelope(user_message, verbatim);
+                    let mut item = match user_input_kind {
+                        UserInputKind::Typed => ConversationItem::user(text),
+                        UserInputKind::GoalSetup => ConversationItem::goal_setup(text),
+                    };
                     if let Some(interrupt) = self
                         .events
                         .take_prior_interrupt_category()
@@ -2421,24 +2430,42 @@ impl SessionActor {
             ));
         StructuredOutputStep::Complete(validated)
     }
-    /// Single shell tool call whose parsed command is `true` (via ToolBridge).
-    async fn is_run_true_step(
+    /// Classify non-actionable tool calls using the same typed parse as dispatch.
+    async fn stationary_step_class(
         &self,
         tool_calls: &[xai_grok_sampling_types::conversation::ToolCall],
-    ) -> bool {
-        let [tc] = tool_calls else {
-            return false;
-        };
-        let Ok(args) = serde_json::from_str::<serde_json::Value>(tc.arguments.as_ref()) else {
-            return false;
-        };
-        let Ok(input) = self.tool_bridge_handle().try_parse(&tc.name, args).await else {
-            return false;
-        };
-        match input {
-            ToolInput::Bash(b) => command_is_true(&b.command),
-            _ => false,
+        problematically_repeating: bool,
+    ) -> StationarityClass {
+        let bridge = self.tool_bridge_handle();
+        if tool_calls.is_empty() {
+            return StationarityClass::Exact {
+                problematically_repeating,
+            };
         }
+        for tc in tool_calls {
+            let Ok(args) = serde_json::from_str::<serde_json::Value>(tc.arguments.as_ref()) else {
+                return StationarityClass::Exact {
+                    problematically_repeating,
+                };
+            };
+            let Ok(input) = bridge.try_parse(&tc.name, args).await else {
+                return StationarityClass::Exact {
+                    problematically_repeating,
+                };
+            };
+            match input {
+                ToolInput::Bash(b) if tool_calls.len() == 1 && command_is_true(&b.command) => {
+                    return StationarityClass::TrueNoop;
+                }
+                ToolInput::SearchReplace(edit) if edit.old_string == edit.new_string => {}
+                _ => {
+                    return StationarityClass::Exact {
+                        problematically_repeating,
+                    };
+                }
+            }
+        }
+        StationarityClass::InvalidEdit
     }
     async fn persist_live_usage(&self) {
         let Some(signals) = self.signals_handle().snapshot().await else {
@@ -2750,7 +2777,10 @@ impl SessionActor {
             if identical_tool_calls.run_len >= identical_tool_calls.hard_stop_threshold() {
                 let run_len = identical_tool_calls.run_len;
                 let tool_name = identical_tool_calls.tool_name.clone();
-                let true_noop = identical_tool_calls.is_true_noop_run;
+                let true_noop = matches!(
+                    identical_tool_calls.class,
+                    Some(StationarityClass::TrueNoop)
+                );
                 let problematically_repeating = identical_tool_calls.is_problematically_repeating();
                 tracing::warn!(
                     session_id = %self.session_info.id,
@@ -3014,7 +3044,16 @@ impl SessionActor {
             if structured_output_native {
                 request.json_schema = json_schema.clone();
             }
-            request.hosted_tools = self.hosted_tools_for_turn();
+            request.hosted_tools = if self
+                .chat_state_handle
+                .get_context_policy()
+                .await
+                .includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions)
+            {
+                self.hosted_tools_for_turn()
+            } else {
+                Vec::new()
+            };
             request.max_output_tokens = self
                 .tool_context
                 .clamp_task_model_request(request.max_output_tokens)
@@ -3779,15 +3818,14 @@ impl SessionActor {
                 .iter()
                 .map(|tc| tool_bridge.tool_kind(&tc.name))
                 .collect::<Vec<_>>();
-            let step_problematic = step_is_problematically_repeating(&step_tool_kinds);
-            let is_true_noop = self.is_run_true_step(&tool_calls).await;
-            identical_tool_calls.observe(
-                &step_signature,
-                &step_tool_name,
-                step_problematic,
-                is_true_noop,
-            );
-            if is_true_noop {
+            let step_class = self
+                .stationary_step_class(
+                    &tool_calls,
+                    step_is_problematically_repeating(&step_tool_kinds),
+                )
+                .await;
+            identical_tool_calls.observe(&step_signature, &step_tool_name, step_class);
+            if matches!(step_class, StationarityClass::TrueNoop) {
                 xai_grok_telemetry::session_ctx::log_event(
                     xai_grok_telemetry::events::ShellTrueNoop {
                         tool_name: step_tool_name.clone(),
@@ -3898,6 +3936,7 @@ pub(super) const NUDGE_AFTER_IDENTICAL_TOOL_CALLS: u32 = 8;
 pub(super) const MAX_CONSECUTIVE_IDENTICAL_PROBLEMATIC_TOOL_CALLS: u32 = 8;
 pub(super) const MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS: u32 = 12;
 const MAX_CONSECUTIVE_TRUE_NOOPS: u32 = 4;
+pub(super) const MAX_CONSECUTIVE_INVALID_EDITS: u32 = 4;
 const _: () = assert!(
     NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS < MAX_CONSECUTIVE_IDENTICAL_PROBLEMATIC_TOOL_CALLS
 );
@@ -3956,68 +3995,77 @@ fn step_signature(tool_calls: &[xai_grok_sampling_types::conversation::ToolCall]
     parts.sort();
     parts.join("\u{1e}")
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StationarityClass {
+    Exact { problematically_repeating: bool },
+    TrueNoop,
+    InvalidEdit,
+}
+
 #[derive(Default)]
 struct IdenticalToolCallRun {
     last_signature_hash: Option<u64>,
     tool_name: String,
-    /// Whether the repeated step is in the tight threshold tier.
-    /// Decided by the registered kinds of every call in it (see [`step_is_problematically_repeating`]).
-    problematically_repeating_step: bool,
+    class: Option<StationarityClass>,
     run_len: u32,
-    is_true_noop_run: bool,
     nudged: bool,
 }
 impl IdenticalToolCallRun {
-    fn observe(
-        &mut self,
-        signature: &str,
-        tool_name: &str,
-        problematically_repeating_step: bool,
-        is_true_noop: bool,
-    ) -> u32 {
-        let hash = hash_step_signature(if is_true_noop {
-            "\0true_noop"
-        } else {
-            signature
-        });
-        if self.last_signature_hash == Some(hash) {
+    fn observe(&mut self, signature: &str, tool_name: &str, class: StationarityClass) -> u32 {
+        let hash = match class {
+            StationarityClass::Exact { .. } => hash_step_signature(signature),
+            StationarityClass::TrueNoop => hash_step_signature("\0true_noop"),
+            StationarityClass::InvalidEdit => hash_step_signature("\0invalid_edit"),
+        };
+        if self.last_signature_hash == Some(hash) && self.class == Some(class) {
             self.run_len += 1;
         } else {
             self.run_len = 1;
             self.last_signature_hash = Some(hash);
-            self.is_true_noop_run = is_true_noop;
+            self.class = Some(class);
             self.nudged = false;
         }
         self.tool_name = tool_name.to_string();
-        self.problematically_repeating_step = problematically_repeating_step;
         self.run_len
     }
-    /// Whether this run gets the tighter nudge and hard-stop thresholds (see [`step_is_problematically_repeating`]).
     fn is_problematically_repeating(&self) -> bool {
-        !self.is_true_noop_run && self.problematically_repeating_step
+        matches!(
+            self.class,
+            Some(StationarityClass::Exact {
+                problematically_repeating: true
+            })
+        )
     }
     fn nudge_threshold(&self) -> u32 {
-        if self.is_problematically_repeating() {
-            NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS
-        } else {
-            NUDGE_AFTER_IDENTICAL_TOOL_CALLS
+        match self.class {
+            Some(StationarityClass::Exact {
+                problematically_repeating: true,
+            }) => NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS,
+            Some(StationarityClass::Exact {
+                problematically_repeating: false,
+            }) => NUDGE_AFTER_IDENTICAL_TOOL_CALLS,
+            Some(StationarityClass::TrueNoop | StationarityClass::InvalidEdit) | None => u32::MAX,
         }
     }
     /// Once per identical run at/after the nudge threshold. Call only after results are committed.
     ///
-    /// `true` keepalive runs are exempt: they end the turn silently at [`MAX_CONSECUTIVE_TRUE_NOOPS`] rather than being told to stop polling.
+    /// Non-actionable runs end the turn without a polling nudge.
     fn take_nudge(&mut self) -> bool {
-        let fire = !self.is_true_noop_run && self.run_len >= self.nudge_threshold() && !self.nudged;
+        let fire = self.run_len >= self.nudge_threshold() && !self.nudged;
         self.nudged |= fire;
         fire
     }
     fn hard_stop_threshold(&self) -> u32 {
-        if self.is_true_noop_run {
-            MAX_CONSECUTIVE_TRUE_NOOPS
-        } else if self.is_problematically_repeating() {
-            MAX_CONSECUTIVE_IDENTICAL_PROBLEMATIC_TOOL_CALLS
-        } else {
-            MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
+        match self.class {
+            Some(StationarityClass::TrueNoop) => MAX_CONSECUTIVE_TRUE_NOOPS,
+            Some(StationarityClass::InvalidEdit) => MAX_CONSECUTIVE_INVALID_EDITS,
+            Some(StationarityClass::Exact {
+                problematically_repeating: true,
+            }) => MAX_CONSECUTIVE_IDENTICAL_PROBLEMATIC_TOOL_CALLS,
+            Some(StationarityClass::Exact {
+                problematically_repeating: false,
+            })
+            | None => MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS,
         }
     }
 }
@@ -4025,21 +4073,86 @@ impl IdenticalToolCallRun {
 mod identical_tool_call_run_tests {
     use super::{
         IdenticalToolCallRun, MAX_CONSECUTIVE_IDENTICAL_PROBLEMATIC_TOOL_CALLS,
-        MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS, MAX_CONSECUTIVE_TRUE_NOOPS,
-        NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS, NUDGE_AFTER_IDENTICAL_TOOL_CALLS, ToolKind,
-        command_is_true, step_is_problematically_repeating, step_signature,
+        MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS, MAX_CONSECUTIVE_INVALID_EDITS,
+        MAX_CONSECUTIVE_TRUE_NOOPS, NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS,
+        NUDGE_AFTER_IDENTICAL_TOOL_CALLS, StationarityClass, ToolKind, command_is_true,
+        step_is_problematically_repeating, step_signature,
     };
     #[test]
     fn identical_non_true_resets_and_caps_at_the_hard_limit() {
         let mut run = IdenticalToolCallRun::default();
-        assert_eq!(run.observe("a", "a", false, false), 1);
-        assert_eq!(run.observe("a", "a", false, false), 2);
-        assert_eq!(run.observe("b", "b", false, false), 1);
+        assert_eq!(
+            run.observe(
+                "a",
+                "a",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
+            1
+        );
+        assert_eq!(
+            run.observe(
+                "a",
+                "a",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
+            2
+        );
+        assert_eq!(
+            run.observe(
+                "b",
+                "b",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
+            1
+        );
         let mut last = 0;
         for _ in 0..MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS {
-            last = run.observe("same", "same", false, false);
+            last = run.observe(
+                "same",
+                "same",
+                StationarityClass::Exact {
+                    problematically_repeating: false,
+                },
+            );
         }
         assert_eq!(last, MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS);
+        assert_eq!(
+            run.hard_stop_threshold(),
+            MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
+        );
+    }
+    #[test]
+    fn alternating_invalid_edits_end_without_stopping_a_valid_edit() {
+        let mut run = IdenticalToolCallRun::default();
+        for index in 1..=MAX_CONSECUTIVE_INVALID_EDITS {
+            let signature = if index % 2 == 0 {
+                "same-old-new-a"
+            } else {
+                "same-old-new-b"
+            };
+            assert_eq!(
+                run.observe(signature, "search_replace", StationarityClass::InvalidEdit),
+                index
+            );
+            assert!(!run.take_nudge());
+        }
+        assert_eq!(run.hard_stop_threshold(), MAX_CONSECUTIVE_INVALID_EDITS);
+        assert_eq!(
+            run.observe(
+                "distinct-old-new",
+                "search_replace",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
+            1
+        );
         assert_eq!(
             run.hard_stop_threshold(),
             MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
@@ -4049,12 +4162,24 @@ mod identical_tool_call_run_tests {
     fn true_noops_chain_across_args_and_stop_at_4() {
         let mut run = IdenticalToolCallRun::default();
         for i in 1..=4 {
-            assert_eq!(run.observe(&format!("sig{i}"), "bash", false, true), i);
+            assert_eq!(
+                run.observe(&format!("sig{i}"), "bash", StationarityClass::TrueNoop),
+                i
+            );
         }
-        assert!(run.is_true_noop_run);
+        assert_eq!(run.class, Some(StationarityClass::TrueNoop));
         assert_eq!(run.hard_stop_threshold(), MAX_CONSECUTIVE_TRUE_NOOPS);
-        assert_eq!(run.observe("squeue", "bash", false, false), 1);
-        assert!(!run.is_true_noop_run);
+        assert_eq!(
+            run.observe(
+                "squeue",
+                "bash",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
+            1
+        );
+        assert_ne!(run.class, Some(StationarityClass::TrueNoop));
     }
     /// Reordering argument keys, or reordering the calls within one step, is the same step.
     /// Otherwise a loop could evade the counter by shuffling either one.
@@ -4106,24 +4231,54 @@ mod identical_tool_call_run_tests {
     fn nudge_latch_fires_once_per_run_after_threshold() {
         let mut run = IdenticalToolCallRun::default();
         for i in 1..NUDGE_AFTER_IDENTICAL_TOOL_CALLS {
-            assert_eq!(run.observe("poll", "get_task_output", false, false), i);
+            assert_eq!(
+                run.observe(
+                    "poll",
+                    "get_task_output",
+                    StationarityClass::Exact {
+                        problematically_repeating: false
+                    }
+                ),
+                i
+            );
             assert!(
                 !run.take_nudge(),
                 "must not nudge before threshold; run_len={i}"
             );
         }
         assert_eq!(
-            run.observe("poll", "get_task_output", false, false),
+            run.observe(
+                "poll",
+                "get_task_output",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
             NUDGE_AFTER_IDENTICAL_TOOL_CALLS
         );
         assert!(run.take_nudge());
         assert!(!run.take_nudge());
         assert_eq!(
-            run.observe("poll", "get_task_output", false, false),
+            run.observe(
+                "poll",
+                "get_task_output",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
             NUDGE_AFTER_IDENTICAL_TOOL_CALLS + 1
         );
         assert!(!run.take_nudge());
-        assert_eq!(run.observe("other", "bash", false, false), 1);
+        assert_eq!(
+            run.observe(
+                "other",
+                "bash",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
+            1
+        );
         assert!(!run.nudged);
         assert!(!run.take_nudge());
     }
@@ -4134,11 +4289,26 @@ mod identical_tool_call_run_tests {
         for tool in ["read_file", "todo_write"] {
             let mut run = IdenticalToolCallRun::default();
             for i in 1..NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS {
-                assert_eq!(run.observe("same", tool, true, false), i);
+                assert_eq!(
+                    run.observe(
+                        "same",
+                        tool,
+                        StationarityClass::Exact {
+                            problematically_repeating: true
+                        }
+                    ),
+                    i
+                );
                 assert!(!run.take_nudge(), "{tool} must not nudge at run_len={i}");
             }
             assert_eq!(
-                run.observe("same", tool, true, false),
+                run.observe(
+                    "same",
+                    tool,
+                    StationarityClass::Exact {
+                        problematically_repeating: true
+                    }
+                ),
                 NUDGE_AFTER_IDENTICAL_PROBLEMATIC_TOOL_CALLS
             );
             assert!(run.take_nudge(), "{tool} must nudge at its own threshold");
@@ -4150,14 +4320,29 @@ mod identical_tool_call_run_tests {
         }
         let mut run = IdenticalToolCallRun::default();
         for i in 1..NUDGE_AFTER_IDENTICAL_TOOL_CALLS {
-            assert_eq!(run.observe("same", "run_terminal_command", false, false), i);
+            assert_eq!(
+                run.observe(
+                    "same",
+                    "run_terminal_command",
+                    StationarityClass::Exact {
+                        problematically_repeating: false
+                    }
+                ),
+                i
+            );
             assert!(
                 !run.take_nudge(),
                 "loose tier must not nudge at run_len={i}"
             );
         }
         assert_eq!(
-            run.observe("same", "run_terminal_command", false, false),
+            run.observe(
+                "same",
+                "run_terminal_command",
+                StationarityClass::Exact {
+                    problematically_repeating: false
+                }
+            ),
             NUDGE_AFTER_IDENTICAL_TOOL_CALLS
         );
         assert!(run.take_nudge());
@@ -4189,7 +4374,10 @@ mod identical_tool_call_run_tests {
     fn true_noop_runs_are_never_nudged() {
         let mut run = IdenticalToolCallRun::default();
         for i in 1..=MAX_CONSECUTIVE_TRUE_NOOPS {
-            assert_eq!(run.observe(&format!("sig{i}"), "bash", false, true), i);
+            assert_eq!(
+                run.observe(&format!("sig{i}"), "bash", StationarityClass::TrueNoop),
+                i
+            );
             assert!(
                 !run.take_nudge(),
                 "keepalive run must not nudge; run_len={i}"
@@ -4198,7 +4386,13 @@ mod identical_tool_call_run_tests {
         assert_eq!(run.hard_stop_threshold(), MAX_CONSECUTIVE_TRUE_NOOPS);
         let mut last = 0;
         for _ in 0..NUDGE_AFTER_IDENTICAL_TOOL_CALLS {
-            last = run.observe("poll", "get_task_output", false, false);
+            last = run.observe(
+                "poll",
+                "get_task_output",
+                StationarityClass::Exact {
+                    problematically_repeating: false,
+                },
+            );
         }
         assert_eq!(last, NUDGE_AFTER_IDENTICAL_TOOL_CALLS);
         assert!(run.take_nudge());

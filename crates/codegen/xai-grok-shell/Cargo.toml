@@ -17,6 +17,7 @@ test-support = [
     "xai-grok-login/test-support",
     "xai-grok-sampler/test-support",
     "xai-grok-workspace/test-support",
+    "xai-grok-shell-base/test-support",
 ]
 test-util = []
 # Local Computer Hub workspace_server (own/attach + crash-restart). Requires

@@ -1,16 +1,8 @@
 use agent_client_protocol as acp;
 use serde::Serialize;
-use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption, effort_label};
+use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
 
 use crate::session::unified_list::SessionKind;
-
-pub(crate) const SELECTABLE_REASONING_EFFORTS: [ReasoningEffort; 5] = [
-    ReasoningEffort::Minimal,
-    ReasoningEffort::Low,
-    ReasoningEffort::Medium,
-    ReasoningEffort::High,
-    ReasoningEffort::Xhigh,
-];
 
 pub(crate) const CONFIG_ID_MODEL: &str = "model";
 pub(crate) const CONFIG_ID_REASONING_EFFORT: &str = "reasoning_effort";
@@ -52,21 +44,6 @@ impl GrokSessionDetail {
             title,
         }
     }
-}
-
-/// The built-in session-picker modes used when the model has no server list.
-/// Reproduces the historical five rows and their labels.
-pub(crate) fn legacy_session_effort_options() -> Vec<ReasoningEffortOption> {
-    SELECTABLE_REASONING_EFFORTS
-        .iter()
-        .map(|&effort| ReasoningEffortOption {
-            id: effort.as_ref().to_string(),
-            value: effort,
-            label: effort_label(effort),
-            description: None,
-            default: false,
-        })
-        .collect()
 }
 
 fn model_display_name(model: &acp::ModelInfo) -> String {
@@ -197,7 +174,7 @@ mod tests {
         let opts = build_session_config_options(
             &models,
             &current,
-            &legacy_session_effort_options(),
+            &xai_grok_sampling_types::fallback_reasoning_effort_options(),
             Some(ReasoningEffort::High),
         );
 
@@ -211,7 +188,10 @@ mod tests {
         assert_eq!(selected_model.id, "grok-build");
 
         let mode_opts: Vec<_> = opts.iter().filter(|o| o.category == "mode").collect();
-        assert_eq!(mode_opts.len(), SELECTABLE_REASONING_EFFORTS.len());
+        assert_eq!(
+            mode_opts.len(),
+            xai_grok_sampling_types::FALLBACK_REASONING_EFFORTS.len()
+        );
         let selected_modes: Vec<_> = mode_opts.iter().filter(|o| o.selected).collect();
         assert_eq!(selected_modes.len(), 1);
         let Some(selected_mode) = selected_modes.first() else {
@@ -223,13 +203,15 @@ mod tests {
 
     #[test]
     fn none_effort_is_not_a_user_selectable_mode() {
-        assert!(!SELECTABLE_REASONING_EFFORTS.contains(&ReasoningEffort::None));
+        assert!(
+            !xai_grok_sampling_types::FALLBACK_REASONING_EFFORTS.contains(&ReasoningEffort::None)
+        );
         let models = [model("grok-build", "Grok Build")];
         let current = acp::ModelId::from("grok-build");
         let opts = build_session_config_options(
             &models,
             &current,
-            &legacy_session_effort_options(),
+            &xai_grok_sampling_types::fallback_reasoning_effort_options(),
             Some(ReasoningEffort::None),
         );
         let modes: Vec<_> = opts.iter().filter(|o| o.category == "mode").collect();

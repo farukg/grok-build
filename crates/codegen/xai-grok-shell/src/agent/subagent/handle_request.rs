@@ -360,6 +360,7 @@ pub(crate) async fn run_shell_child(
     mut completion_data: ShellCompletionData,
     gateway: GatewaySender,
     mut spawn_root: Option<tracing::Span>,
+    residence: oneshot::Sender<crate::agent::mvp_agent::RunningChild>,
 ) -> ChildRunOutput<ShellCompletionData> {
     if let Some(tp) = run.request.spawn_root.traceparent() {
         xai_grok_otel::link_current_span_to_meta(&serde_json::json!({ "traceparent": tp }));
@@ -446,24 +447,22 @@ pub(crate) async fn run_shell_child(
             .await
         {
             SubagentResumeLookup::Active => {
-                let error = format!(
-                    "Cannot resume from subagent '{resume_id}': it is still running. \
-                     Wait for it to complete before resuming."
+                let error = SubagentResumeError::StillRunning {
+                    subagent_id: resume_id.to_owned(),
+                };
+                return child_run_output(
+                    failure_result(&request, &error.to_string()),
+                    completion_data,
+                    None,
                 );
-                return child_run_output(failure_result(&request, &error), completion_data, None);
             }
             SubagentResumeLookup::Completed(info) => Some(ResumeSourceData::from(*info)),
             SubagentResumeLookup::Missing => {
-                match durable_resume_source_for(resume_id, &ctx.parent_session_id, &ctx.parent_cwd)
-                {
-                    Some(info) => Some(info),
-                    None => {
-                        let error = format!(
-                            "Cannot resume from subagent '{resume_id}': not found. \
-                             The subagent may have been evicted or the ID is invalid."
-                        );
+                match durable_resume_source(resume_id, &ctx.parent_session_id, &ctx.parent_cwd) {
+                    Ok(info) => Some(info),
+                    Err(error) => {
                         return child_run_output(
-                            failure_result(&request, &error),
+                            failure_result(&request, &error.to_string()),
                             completion_data,
                             None,
                         );
@@ -591,6 +590,7 @@ pub(crate) async fn run_shell_child(
         };
         return child_run_output(failure_result(&request, &message), completion_data, None);
     }
+    let mut resume_fallback = resume_cwd_fallback(resume_source.as_ref());
     let worktree_path = if let Some(ref source) = resume_source {
         if effective_runtime.isolation != xai_tool_types::SubagentIsolationMode::None
             && source.worktree_path.is_none()
@@ -631,6 +631,13 @@ pub(crate) async fn run_shell_child(
                                     error = %e,
                                     "Failed to rehydrate subagent worktree, falling back to shared workspace"
                                 );
+                                resume_fallback =
+                                    Some(xai_tool_types::SubagentResumeFallback::WorktreeLost {
+                                        worktree_path: dest.to_string_lossy().into_owned(),
+                                        loss: xai_tool_types::WorktreeLoss::RehydrateFailed {
+                                            error: e.to_string(),
+                                        },
+                                    });
                                 None
                             }
                         }
@@ -641,6 +648,11 @@ pub(crate) async fn run_shell_child(
                             worktree = %dest.display(),
                             "Resumed subagent worktree dir missing with no snapshot; using shared workspace"
                         );
+                        resume_fallback =
+                            Some(xai_tool_types::SubagentResumeFallback::WorktreeLost {
+                                worktree_path: dest.to_string_lossy().into_owned(),
+                                loss: xai_tool_types::WorktreeLoss::NoSnapshot,
+                            });
                         None
                     }
                 }
@@ -942,14 +954,7 @@ pub(crate) async fn run_shell_child(
         "subagent_spawn.context_bootstrap",
         Parent::Explicit(spawn_prepare_span.span())
     );
-    let InitialContext {
-        source: context_source,
-        copy_error: fork_copy_error,
-        prefix_len: inherited_prefix_len,
-        conversation: forked_conversation,
-        force_compact: force_compact_on_first_turn,
-        verbatim_fork: context_verbatim_fork,
-    } = match bootstrap_initial_context(
+    let initial_context = match bootstrap_initial_context(
         &request,
         resume_source.as_ref(),
         &ctx,
@@ -974,12 +979,22 @@ pub(crate) async fn run_shell_child(
         }
     };
     context_bootstrap_span.close();
-    let verbatim_mirror_fork =
-        context_source == InitialContextSource::Forked && context_verbatim_fork;
+    if let Some(policy) =
+        context_policy_to_inherit(resume_source.as_ref(), ctx.parent_chat_state.as_ref()).await
+    {
+        write_inherited_context_policy(&child_session_dir, &policy);
+    }
+    let verbatim_mirror_fork = initial_context.is_verbatim_fork();
+    let InitialContext {
+        context: context_source,
+        prefix_len: inherited_prefix_len,
+        conversation: forked_conversation,
+        force_compact: force_compact_on_first_turn,
+    } = initial_context;
     let task_prompt_text = prompt.clone();
     let (mut forked_conversation, mut inherited_prefix_len) =
         (forked_conversation, inherited_prefix_len.unwrap_or(0));
-    if context_source != InitialContextSource::Resumed
+    if context_source != SubagentContext::Resumed
         && !verbatim_mirror_fork
         && let Some(ref pi) = effective_runtime.persona_instructions
     {
@@ -990,11 +1005,6 @@ pub(crate) async fn run_shell_child(
         forked_conversation.insert(insert_at, reminder);
         inherited_prefix_len += 1;
     }
-    let effective_source_str = match &context_source {
-        InitialContextSource::New => "new",
-        InitialContextSource::Forked => "forked",
-        InitialContextSource::Resumed => "resumed",
-    };
     let subagent_meta = SubagentMeta {
         subagent_id: subagent_id.clone(),
         attempt_id: attempt_id.clone(),
@@ -1003,16 +1013,13 @@ pub(crate) async fn run_shell_child(
         subagent_type: request.subagent_type.clone(),
         description: request.description.clone(),
         prompt: request.prompt.clone(),
-        status: "running".to_string(),
         started_at: chrono::Utc::now(),
         completed_at: None,
         duration_ms: None,
         tool_calls: None,
         turns: None,
         error: None,
-        effective_context_source: Some(effective_source_str.to_string()),
-        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
-        fork_copy_error: fork_copy_error.clone(),
+        context: context_source.clone(),
         persona: effective_runtime.persona.clone(),
         resumed_from: request.resume_from.clone(),
         child_cwd: Some(child_session_info.cwd.clone()),
@@ -1021,6 +1028,7 @@ pub(crate) async fn run_shell_child(
             .map(|p| p.to_string_lossy().to_string()),
         snapshot_ref: None,
         effective_model_id: Some(effective_model_id.0.to_string()),
+        status: SubagentMetaStatus::Running,
     };
     let gcs_upload_ctx = GcsUploadContext {
         bucket_url: ctx.gcs_bucket_url.clone(),
@@ -1051,8 +1059,7 @@ pub(crate) async fn run_shell_child(
         parent_prompt_id: request.parent_prompt_id.clone(),
         subagent_type: request.subagent_type.clone(),
         description: request.description.clone(),
-        effective_context_source: Some(effective_source_str.to_string()),
-        context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
+        context: context_source.clone(),
         capability_mode: effective_runtime
             .capability_mode
             .and_then(|m| serde_json::to_value(m).ok())
@@ -1063,6 +1070,7 @@ pub(crate) async fn run_shell_child(
         resumed_from: request.resume_from.clone(),
         workflow_run_id: request.owner.workflow_run_id().map(str::to_string),
         agent_address: advertised_address.clone(),
+        resume_fallback: resume_fallback.clone(),
     };
     let publication_boundary = if is_wake {
         PublicationBoundary::Started
@@ -1449,7 +1457,7 @@ pub(crate) async fn run_shell_child(
         queued_ms: queued_for.map(|queued| u64::try_from(queued.as_millis()).unwrap_or(u64::MAX)),
         session_running: u32::try_from(session_running).unwrap_or(u32::MAX),
         persona: request.runtime_overrides.persona.clone(),
-        fork_context: matches!(context_source, InitialContextSource::Forked),
+        fork_context: matches!(context_source, SubagentContext::Forked(_)),
         resume_from: request.resume_from.clone(),
         isolated_worktree: worktree_path.is_some(),
         mcp_inherited_count,
@@ -1691,10 +1699,13 @@ pub(crate) async fn run_shell_child(
     );
     let ready_to_first_turn_span = phase_region(SubagentSpawnPhase::ReadyToFirstTurn);
     let (receipt_sink, receipt_stream) = mpsc::channel(ACTIVE_MESSAGE_RECEIPT_CAPACITY);
+    let (delivery, delivery_rx) =
+        tokio::sync::watch::channel(crate::extensions::notification::SubagentDelivery::OnTurnEnd);
     let receipt_drain = PromptTurnReceiptDrain::start(
         receipt_stream,
         child_handle.cmd_tx.clone(),
         cancel_token.clone(),
+        delivery_rx.clone(),
     );
     let (prompt_admitted, prompt_admitted_rx) = oneshot::channel();
     super::resume_window::arm_force_compact(
@@ -1743,6 +1754,7 @@ pub(crate) async fn run_shell_child(
     let mut restore_wake_after_teardown = false;
     let promoted = match readiness {
         InitialChildPromptReadiness::Admitted(release) => {
+            let child_turns = receipt_sink.clone();
             let child = StartedChild {
                 child_session_id: child_session_id.0.to_string(),
                 persona: effective_runtime.persona.clone(),
@@ -1874,6 +1886,12 @@ pub(crate) async fn run_shell_child(
                         if start_artifacts.publish_at(PublicationBoundary::Started) {
                             completion_data.mark_spawned_notification_emitted();
                         }
+                        let _ = residence.send(crate::agent::mvp_agent::RunningChild {
+                            handle: child_handle.clone(),
+                            turns: child_turns,
+                            parent_prompt_index: ctx.active_message_parent_prompt_index.clone(),
+                            delivery: delivery.clone(),
+                        });
                         let _ = release.send(());
                         true
                     }
@@ -1929,6 +1947,7 @@ pub(crate) async fn run_shell_child(
         start,
         cancel_token.clone(),
         goal_tick_cmd_tx(ctx.goal_enabled, ctx.parent_cmd_tx.as_ref()),
+        delivery_rx,
     );
     spawn_timer.record(
         SubagentSpawnPhase::ReadyToFirstTurn,
@@ -2064,7 +2083,7 @@ pub(crate) async fn run_shell_child(
         let turn_messages = take_child_turn_messages(&child_handle.cmd_tx, upload_deadline).await;
         let child_committed = child_stop_reason
             .map(crate::upload::turn::stop_reason_commits_turn)
-            .unwrap_or(result.success);
+            .unwrap_or(result.success());
         let streaming_partial = take_child_streaming_partial(
             &child_handle.cmd_tx,
             upload_deadline,
@@ -2074,7 +2093,7 @@ pub(crate) async fn run_shell_child(
         )
         .await
         .map(|mut cap| {
-            cap.reason = Some(if result.cancelled {
+            cap.reason = Some(if result.is_interrupted() {
                 "subagent_cancel".to_string()
             } else {
                 "subagent_non_completed".to_string()
@@ -2169,7 +2188,7 @@ pub(crate) async fn run_shell_child(
             input_tokens: final_turn_tokens.map(|tokens| tokens.0),
             cached_input_tokens: final_turn_tokens.map(|tokens| tokens.1),
             output_tokens: final_turn_tokens.map(|tokens| tokens.2),
-            error: result.error.clone(),
+            error: result.error().clone(),
             finished_at: chrono::Utc::now().to_rfc3339(),
             signals: None,
             turn_delta: None,
@@ -2211,10 +2230,10 @@ pub(crate) async fn run_shell_child(
             .set_persisted_output_dir(persist_subagent_output(&subagent_meta_dir, &result));
         persist_subagent_completion(&subagent_meta_dir, &result, &gcs_upload_ctx);
     }
-    let final_status = result.status().to_string();
+    let final_status = SubagentMetaStatus::of_result(&result);
     let snapshot_dispose_enabled =
         terminal_persistence_allowed && ctx.resolve_subagent_worktree_snapshot_enabled();
-    let telemetry_tokens = if result.tool_calls > 0 || result.success {
+    let telemetry_tokens = if result.tool_calls > 0 || result.success() {
         child_actor_query(
             "total_tokens",
             child_handle.chat_state_handle.get_total_tokens(),
@@ -2250,9 +2269,9 @@ pub(crate) async fn run_shell_child(
         )
         .await;
     }
-    let outcome = if result.success {
+    let outcome = if result.success() {
         xai_grok_telemetry::events::Outcome::Completed
-    } else if result.cancelled {
+    } else if result.is_interrupted() {
         xai_grok_telemetry::events::Outcome::Cancelled
     } else {
         xai_grok_telemetry::events::Outcome::Error
@@ -2359,7 +2378,7 @@ pub(crate) async fn run_shell_child(
                 wt_path,
                 &resolve_subagent_source_repo(&ctx),
                 &subagent_meta_dir,
-                &final_status,
+                final_status,
                 &request.id,
             )
             .await;
@@ -2376,7 +2395,7 @@ pub(crate) async fn run_shell_child(
     if worktree_removed {
         result.worktree_path = None;
     }
-    let success = result.success && !result.cancelled;
+    let success = result.success() && !result.is_interrupted();
     let preview = crate::util::truncate(&result.output, 200);
     let level_fn = if success {
         xai_grok_telemetry::unified_log::info
@@ -2395,15 +2414,16 @@ pub(crate) async fn run_shell_child(
             "subagent_type": &request.subagent_type,
             "effective_model": tracker_model_id,
             "success": success,
-            "cancelled": result.cancelled,
+            "cancelled": result.is_interrupted(),
             "duration_ms": result.duration_ms,
             "turns": result.turns,
             "tool_calls": result.tool_calls,
             "output_preview": preview,
-            "error": &result.error,
+            "error": &result.error(),
         })),
     );
     crate::waterfall::mark(&request.id, crate::waterfall::stage::CHILD_DONE);
+    result.resume_fallback = resume_fallback;
     child_run_output(result, completion_data, disposed_snapshot_ref)
 }
 pub(crate) enum Disposal {
@@ -2435,7 +2455,7 @@ pub(crate) async fn dispose_worktree_after_completion(
     worktree: &std::path::Path,
     source_repo: &std::path::Path,
     meta_dir: &std::path::Path,
-    final_status: &str,
+    final_status: SubagentMetaStatus,
     subagent_id: &str,
 ) -> Disposal {
     let ref_name = format!("refs/grok/subagents/{subagent_id}");
