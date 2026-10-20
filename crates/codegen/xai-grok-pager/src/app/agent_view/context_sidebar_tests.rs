@@ -200,10 +200,27 @@ fn disclosure(agent: &AgentView) -> SectionDisclosure {
     }
 }
 
-fn every_kind_shows(agent: &AgentView, form: DisplayForm) -> bool {
-    MessageKind::settings_kinds()
+fn every_bulk_kind_shows(agent: &AgentView, form: DisplayForm) -> bool {
+    MessageKind::bulk_kinds()
         .iter()
         .all(|&kind| agent.scrollback.display_defaults().shown(kind) == form)
+}
+
+fn never_bulk_toggled_stay(agent: &AgentView, before: &[(MessageKind, DisplayForm)]) -> bool {
+    before
+        .iter()
+        .all(|&(kind, form)| agent.scrollback.display_defaults().shown(kind) == form)
+}
+
+fn never_bulk_toggled_snapshot(agent: &AgentView) -> Vec<(MessageKind, DisplayForm)> {
+    [
+        MessageKind::UserPrompt,
+        MessageKind::AgentMessage,
+        MessageKind::MemoryCapture,
+    ]
+    .into_iter()
+    .map(|kind| (kind, agent.scrollback.display_defaults().shown(kind)))
+    .collect()
 }
 
 fn toast(agent: &AgentView) -> String {
@@ -365,19 +382,25 @@ fn f7_clicks_hit_the_right_row_after_end_scrolls() {
 }
 
 #[test]
-fn f7_shift_enter_on_a_message_row_sets_every_kind_to_one_form_and_reverts() {
+fn f7_shift_enter_on_a_message_row_sets_the_other_bulk_kinds_and_reverts() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::End);
-    assert!(!every_kind_shows(&agent, DisplayForm::Expanded));
+    // The cursor sits on the last display row (MemoryCapture): the gesture leaves it,
+    // and the user and assistant rows, exactly as they were.
+    let before = never_bulk_toggled_snapshot(&agent);
 
     assert!(matches!(
         press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT),
         InputOutcome::Changed
     ));
-    for &kind in MessageKind::settings_kinds() {
+    for &kind in MessageKind::bulk_kinds() {
+        if kind == MessageKind::MemoryCapture {
+            continue;
+        }
         assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Expanded, "{kind:?}");
     }
+    assert!(never_bulk_toggled_stay(&agent, &before));
     assert!(disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
 
@@ -385,47 +408,66 @@ fn f7_shift_enter_on_a_message_row_sets_every_kind_to_one_form_and_reverts() {
         press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT),
         InputOutcome::Changed
     ));
-    for &kind in MessageKind::settings_kinds() {
+    for &kind in MessageKind::bulk_kinds() {
+        if kind == MessageKind::MemoryCapture {
+            continue;
+        }
         assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Collapsed, "{kind:?}");
     }
+    assert!(never_bulk_toggled_stay(&agent, &before));
     let buf = draw(&mut agent);
     assert!(sidebar_row(&buf, "File reads").contains("1 line"));
 }
 
 #[test]
-fn f7_shift_click_on_a_message_row_sets_every_kind() {
+fn f7_shift_click_on_a_message_row_sets_the_other_bulk_kinds() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
+    let before = never_bulk_toggled_snapshot(&agent);
     assert!(matches!(
         click_row_with(&mut agent, &buf, "File reads", KeyModifiers::SHIFT),
         InputOutcome::Changed
     ));
-    assert!(every_kind_shows(&agent, DisplayForm::Expanded));
+    for &kind in MessageKind::bulk_kinds() {
+        if kind == MessageKind::Read {
+            continue;
+        }
+        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Expanded, "{kind:?}");
+    }
+    assert!(never_bulk_toggled_stay(&agent, &before), "user, assistant and the clicked kind stay untouched");
     let buf = draw(&mut agent);
     let _ = click_row_with(&mut agent, &buf, "File reads", KeyModifiers::SHIFT);
-    assert!(every_kind_shows(&agent, DisplayForm::Collapsed));
+    for &kind in MessageKind::bulk_kinds() {
+        if kind == MessageKind::Read {
+            continue;
+        }
+        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Collapsed, "{kind:?}");
+    }
+    assert!(never_bulk_toggled_stay(&agent, &before));
 }
 
 #[test]
-fn f7_plus_and_minus_open_and_close_all_message_kinds_and_say_when_nothing_changes() {
+fn f7_plus_and_minus_open_and_close_all_bulk_kinds_and_say_when_nothing_changes() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::End);
+    let before = never_bulk_toggled_snapshot(&agent);
 
     let _ = press(&mut agent, KeyCode::Char('+'));
-    assert!(every_kind_shows(&agent, DisplayForm::Expanded));
+    assert!(every_bulk_kind_shows(&agent, DisplayForm::Expanded));
+    assert!(never_bulk_toggled_stay(&agent, &before), "user and assistant rows are never bulk-toggled");
     let _ = press(&mut agent, KeyCode::Char('+'));
     assert_eq!(toast(&agent), "All message kinds already show full");
 
     let _ = press(&mut agent, KeyCode::Char('-'));
-    assert!(every_kind_shows(&agent, DisplayForm::Collapsed));
+    assert!(every_bulk_kind_shows(&agent, DisplayForm::Collapsed));
     let _ = press(&mut agent, KeyCode::Char('-'));
     assert_eq!(toast(&agent), "All message kinds already show one line");
 }
 
 #[test]
-fn f7_shift_enter_on_a_title_folds_and_unfolds_all_sections() {
+fn f7_shift_enter_on_a_title_folds_the_other_sections_and_reverts() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::Home);
@@ -435,10 +477,11 @@ fn f7_shift_enter_on_a_title_folds_and_unfolds_all_sections() {
         .collect();
 
     let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
-    assert!(!disclosure(&agent).is_expanded(SectionId::Context));
+    // The cursor is on the Context title: it stays open, the other sections fold.
+    assert!(disclosure(&agent).is_expanded(SectionId::Context));
     assert!(!disclosure(&agent).is_expanded(SectionId::Display));
     let buf = draw(&mut agent);
-    assert!(!screen(&buf).contains("Core instructions") && !screen(&buf).contains("File reads"));
+    assert!(!screen(&buf).contains("File reads"));
 
     let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
     assert!(disclosure(&agent).is_expanded(SectionId::Context));
@@ -451,26 +494,40 @@ fn f7_shift_enter_on_a_title_folds_and_unfolds_all_sections() {
 }
 
 #[test]
-fn f7_ctrl_enter_and_star_toggle_every_section_and_every_kind() {
+fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::End);
+    let before = never_bulk_toggled_snapshot(&agent);
 
     let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::CONTROL);
-    assert!(every_kind_shows(&agent, DisplayForm::Expanded), "a collapsed kind exists, so it opens");
+    for &kind in MessageKind::bulk_kinds() {
+        if kind == MessageKind::MemoryCapture {
+            continue;
+        }
+        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Expanded, "{kind:?}");
+    }
+    assert!(never_bulk_toggled_stay(&agent, &before), "the cursor kind and user/assistant rows keep their form");
+    assert!(!disclosure(&agent).is_expanded(SectionId::Context), "the other section folded");
+    assert!(disclosure(&agent).is_expanded(SectionId::Display), "the cursor row's own section stays open");
+
+    let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::CONTROL);
+    for &kind in MessageKind::bulk_kinds() {
+        if kind == MessageKind::MemoryCapture {
+            continue;
+        }
+        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Collapsed, "{kind:?}");
+    }
+    assert!(never_bulk_toggled_stay(&agent, &before));
     assert!(disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
-
-    let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::CONTROL);
-    assert!(every_kind_shows(&agent, DisplayForm::Collapsed));
-    assert!(!disclosure(&agent).is_expanded(SectionId::Context));
-    assert!(!disclosure(&agent).is_expanded(SectionId::Display));
-    assert_eq!(cursor(&agent), Some(SectionId::Display.title_line()), "the cursor left the hidden row");
+    assert_eq!(cursor(&agent), Some(SectionId::Display.row_line(MessageKind::settings_kinds().len() - 1)), "the cursor row stayed visible");
 
     let _ = press(&mut agent, KeyCode::Char('*'));
-    assert!(every_kind_shows(&agent, DisplayForm::Expanded));
+    assert!(every_bulk_kind_shows(&agent, DisplayForm::Expanded), "* sweeps the whole scope, cursor kind included");
     assert!(disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
+    assert!(never_bulk_toggled_stay(&agent, &before), "user and assistant rows stay out of every bulk gesture");
 }
 
 #[test]

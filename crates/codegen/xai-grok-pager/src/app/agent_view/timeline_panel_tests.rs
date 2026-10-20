@@ -11,7 +11,7 @@ use crate::scrollback::state::{TimelineRowKey, TimelineRowKind};
 use crate::views::timeline_panel::gesture::BulkRequest;
 use crate::views::timeline_panel::hint::FooterContext;
 use crate::views::timeline_panel::{PanelFocus, TimelinePanelInput, timeline_panel_key};
-use crate::views::tree_nav::BulkScope;
+use crate::views::tree_nav::{BulkAnchor, BulkScope};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -708,7 +708,7 @@ fn plus_and_minus_force_the_siblings_open_or_closed() {
 }
 
 #[test]
-fn shift_arrows_open_and_close_the_subtree() {
+fn shift_arrows_open_and_close_the_subtree_below_the_cursor() {
     let mut agent = conversation();
     let ids = open_panel(&mut agent);
     go_to(&mut agent, TimelineRowKey::Turn(id_at(&ids, 0)));
@@ -716,7 +716,10 @@ fn shift_arrows_open_and_close_the_subtree() {
     assert!(group_expanded(&agent));
     press_with(&mut agent, KeyCode::Left, KeyModifiers::SHIFT);
     assert!(!group_expanded(&agent));
-    assert!(!turn_expanded(&agent, id_at(&ids, 0)));
+    assert!(
+        turn_expanded(&agent, id_at(&ids, 0)),
+        "the subtree gesture leaves the cursor row alone"
+    );
 }
 
 #[test]
@@ -747,15 +750,15 @@ fn only_ctrl_enter_of_the_chords_reaches_the_panel() {
     );
     assert_eq!(
         timeline_panel_key(&ctrl(KeyCode::Enter)),
-        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::Subtree))
+        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::Subtree, BulkAnchor::Exclude))
     );
     assert_eq!(
         timeline_panel_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
-        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::Siblings))
+        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::Siblings, BulkAnchor::Exclude))
     );
     assert_eq!(
         timeline_panel_key(&KeyEvent::new(KeyCode::Char('*'), KeyModifiers::SHIFT)),
-        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::All)),
+        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::All, BulkAnchor::Include)),
         "terminals report * with Shift"
     );
 }
@@ -795,21 +798,30 @@ fn click_on_the_glyph_toggles_and_elsewhere_only_selects() {
 }
 
 #[test]
-fn modifier_clicks_reach_siblings_and_subtree_anywhere_on_the_row() {
+fn modifier_clicks_reach_the_rows_around_the_clicked_one() {
     let mut agent = conversation();
     let ids = open_panel(&mut agent);
+    // Outline row 0 is Turn 0: every modifier gesture leaves it alone and reaches the rows around it.
     click(&mut agent, 0, 9, KeyModifiers::SHIFT);
     assert!(
-        !turn_expanded(&agent, id_at(&ids, 0)) && !turn_expanded(&agent, id_at(&ids, 6)),
-        "shift+click: siblings"
+        turn_expanded(&agent, id_at(&ids, 0)),
+        "shift+click leaves the clicked row alone"
+    );
+    assert!(
+        !turn_expanded(&agent, id_at(&ids, 6)),
+        "shift+click toggles the siblings"
     );
     click(&mut agent, 0, 9, KeyModifiers::SHIFT);
-    assert!(turn_expanded(&agent, id_at(&ids, 0)) && turn_expanded(&agent, id_at(&ids, 6)));
-    click(&mut agent, 0, 9, KeyModifiers::CONTROL);
-    assert!(group_expanded(&agent), "ctrl+click: subtree");
-    click(&mut agent, 0, 9, KeyModifiers::CONTROL);
-    assert!(!group_expanded(&agent) && !turn_expanded(&agent, id_at(&ids, 0)));
     assert!(turn_expanded(&agent, id_at(&ids, 6)));
+    click(&mut agent, 0, 9, KeyModifiers::CONTROL);
+    assert!(group_expanded(&agent), "ctrl+click opens the rows below the clicked one");
+    assert!(turn_expanded(&agent, id_at(&ids, 0)));
+    click(&mut agent, 0, 9, KeyModifiers::CONTROL);
+    assert!(!group_expanded(&agent));
+    assert!(
+        turn_expanded(&agent, id_at(&ids, 0)),
+        "the clicked turn keeps its state throughout"
+    );
 }
 
 #[test]

@@ -7,7 +7,8 @@ use crate::app::app_view::InputOutcome;
 use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
 use crate::views::tree_nav::{
-    BulkDirection, BulkScope, TreeKey, TreeStep, bulk_set, bulk_toggle, navigate, toggle,
+    BulkAnchor, BulkDirection, BulkScope, TreeKey, TreeStep, bulk_set, bulk_toggle, navigate,
+    toggle,
 };
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
 
@@ -129,7 +130,7 @@ impl AgentView {
         match command {
             SidebarCommand::Tree(key) => self.navigate_sidebar(key),
             SidebarCommand::Activate => self.activate_cursor(),
-            SidebarCommand::Bulk { spread, goal } => self.bulk_sidebar(spread, goal),
+            SidebarCommand::Bulk { spread, goal, anchor } => self.bulk_sidebar(spread, goal, anchor),
             SidebarCommand::ToggleEditLayer => {
                 self.toggle_panel_edit_layer();
                 InputOutcome::Changed
@@ -194,7 +195,9 @@ impl AgentView {
     }
 
     /// Open or close sections and message kinds together. Context switches are never part of it.
-    fn bulk_sidebar(&mut self, spread: Spread, goal: Goal) -> InputOutcome {
+    /// User and assistant message rows are never reached, and a modifier activation leaves the
+    /// cursor line's own section and kind alone.
+    fn bulk_sidebar(&mut self, spread: Spread, goal: Goal, anchor: BulkAnchor) -> InputOutcome {
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return InputOutcome::Unchanged;
         };
@@ -210,13 +213,23 @@ impl AgentView {
             Spread::Peers => BulkScope::Siblings,
             Spread::Everything => BulkScope::All,
         };
+        // The kinds this gesture may flip: the bulk kinds, without the cursor line's own kind
+        // when the gesture leaves that line alone.
+        let anchor_kind = match (anchor, target) {
+            (BulkAnchor::Exclude, CursorTarget::Row(RowTarget::Display(kind))) => Some(kind),
+            _ => None,
+        };
+        let kinds = MessageKind::bulk_kinds()
+            .iter()
+            .copied()
+            .filter(|&kind| Some(kind) != anchor_kind);
         let direction = match goal {
             Goal::Set(direction) => direction,
             Goal::Toggle => {
                 let section_closed = reached.sections()
-                    && bulk_toggle(outline.rows(), at, scope).direction == BulkDirection::Expand;
+                    && bulk_toggle(outline.rows(), at, scope, anchor).direction == BulkDirection::Expand;
                 let kind_closed = reached.kinds()
-                    && MessageKind::settings_kinds().iter().any(|&kind| {
+                    && kinds.clone().any(|kind| {
                         self.scrollback.display_defaults().shown(kind) == DisplayForm::Collapsed
                     });
                 if section_closed || kind_closed {
@@ -229,7 +242,7 @@ impl AgentView {
         let mut changed = false;
         if reached.sections() {
             let expanded = direction == BulkDirection::Expand;
-            for &index in &bulk_set(outline.rows(), at, scope, direction).indices {
+            for &index in &bulk_set(outline.rows(), at, scope, direction, anchor).indices {
                 if let Some(section) = outline.section_of_title(index) {
                     open.disclosure.set_expanded(section, expanded);
                     changed = true;
@@ -241,7 +254,7 @@ impl AgentView {
                 BulkDirection::Expand => DisplayForm::Expanded,
                 BulkDirection::Collapse => DisplayForm::Collapsed,
             };
-            for &kind in MessageKind::settings_kinds() {
+            for kind in kinds {
                 // An unset kind renders by its block's own policy, so it is set even when `shown` already says `form`.
                 if self.scrollback.display_defaults().get(kind) != Some(form) {
                     self.scrollback.set_kind_default(kind, form);

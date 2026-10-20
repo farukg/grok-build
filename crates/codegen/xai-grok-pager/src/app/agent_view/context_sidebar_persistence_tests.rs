@@ -313,7 +313,7 @@ fn an_explicit_one_line_choice_for_edits_survives_a_restart() {
 }
 
 #[test]
-fn a_bulk_gesture_stores_every_kind_the_user_set() {
+fn a_bulk_gesture_stores_every_bulk_kind_and_never_the_chat_messages() {
     let _theme = crate::theme::cache::pin_theme();
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("panel-settings");
@@ -325,8 +325,8 @@ fn a_bulk_gesture_stores_every_kind_the_user_set() {
     let table = message_display_table(&global_file(&root));
     assert_eq!(
         table.len(),
-        24,
-        "every kind of the settings list: {table:?}"
+        MessageKind::bulk_kinds().len(),
+        "only the bulk kinds are stored: {table:?}"
     );
     assert!(
         table
@@ -337,14 +337,14 @@ fn a_bulk_gesture_stores_every_kind_the_user_set() {
         table.get("edit").and_then(toml::Value::as_str),
         Some("collapsed")
     );
-    assert_eq!(
-        table.get("agent_message").and_then(toml::Value::as_str),
-        Some("collapsed")
+    assert!(
+        table.get("agent_message").is_none() && table.get("user_prompt").is_none(),
+        "user and assistant messages are never stored by a bulk gesture"
     );
 
     let _ = press(&mut agent, KeyCode::Char('+'));
     let table = message_display_table(&global_file(&root));
-    assert_eq!(table.len(), 24);
+    assert_eq!(table.len(), MessageKind::bulk_kinds().len());
     assert!(
         table
             .values()
@@ -353,12 +353,15 @@ fn a_bulk_gesture_stores_every_kind_the_user_set() {
     drop(agent);
 
     let restored = view(&root, Some("sess-a"));
-    for &kind in MessageKind::settings_kinds() {
+    for &kind in MessageKind::bulk_kinds() {
         assert_eq!(
             form(&restored, kind),
             Some(DisplayForm::Expanded),
             "{kind:?}"
         );
+    }
+    for &kind in &[MessageKind::UserPrompt, MessageKind::AgentMessage] {
+        assert_eq!(form(&restored, kind), None, "{kind:?} was never persisted");
     }
 }
 

@@ -66,6 +66,19 @@ pub enum BulkScope {
     All,
 }
 
+/// Whether a bulk gesture includes the row it starts from.
+///
+/// A plain bulk key (`+`, `-`, `*`) sweeps its whole scope. A modifier activation
+/// (Shift/Ctrl+Enter or +click) acts on the rows around the cursor: the clicked row
+/// keeps its own state so the gesture never doubles as the row's own action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkAnchor {
+    /// The scope covers the cursor row like any other.
+    Include,
+    /// The cursor row keeps its own state; only the other rows of the scope change.
+    Exclude,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BulkDirection {
     Expand,
@@ -138,8 +151,13 @@ pub fn toggle(rows: &[TreeRow], index: usize) -> TreeStep {
 }
 
 /// Toggle-all: expand every collapsed targeted branch if any is collapsed, else collapse all targeted branches.
-pub fn bulk_toggle(rows: &[TreeRow], cursor: usize, scope: BulkScope) -> BulkChange {
-    let targets = scope_targets(rows, cursor, scope);
+pub fn bulk_toggle(
+    rows: &[TreeRow],
+    cursor: usize,
+    scope: BulkScope,
+    anchor: BulkAnchor,
+) -> BulkChange {
+    let targets = targeted(rows, cursor, scope, anchor);
     let any_collapsed = targets
         .iter()
         .filter_map(|&i| rows.get(i))
@@ -158,8 +176,18 @@ pub fn bulk_set(
     cursor: usize,
     scope: BulkScope,
     direction: BulkDirection,
+    anchor: BulkAnchor,
 ) -> BulkChange {
-    changes_for(rows, scope_targets(rows, cursor, scope), direction)
+    changes_for(rows, targeted(rows, cursor, scope, anchor), direction)
+}
+
+/// The scope's branches, minus the cursor row when the gesture leaves it alone.
+fn targeted(rows: &[TreeRow], cursor: usize, scope: BulkScope, anchor: BulkAnchor) -> Vec<usize> {
+    let mut targets = scope_targets(rows, cursor, scope);
+    if anchor == BulkAnchor::Exclude {
+        targets.retain(|&i| i != cursor);
+    }
+    targets
 }
 
 fn step_from_visible(rows: &[TreeRow], at: usize, key: TreeKey) -> TreeStep {

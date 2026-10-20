@@ -60,10 +60,16 @@ impl TimelinePanelState {
     /// The branches a bulk gesture changes, and how, relative to the cursor row.
     pub fn plan_bulk(&self, request: BulkRequest) -> BulkChange {
         match request.goal {
-            BulkGoal::Toggle => bulk_toggle(self.view.tree(), self.cursor, request.scope),
-            BulkGoal::Set(direction) => {
-                bulk_set(self.view.tree(), self.cursor, request.scope, direction)
+            BulkGoal::Toggle => {
+                bulk_toggle(self.view.tree(), self.cursor, request.scope, request.anchor)
             }
+            BulkGoal::Set(direction) => bulk_set(
+                self.view.tree(),
+                self.cursor,
+                request.scope,
+                direction,
+                request.anchor,
+            ),
         }
     }
 

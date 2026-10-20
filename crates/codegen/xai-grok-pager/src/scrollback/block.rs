@@ -114,6 +114,35 @@ impl MessageKind {
         ]
     }
 
+    /// The kinds a bulk gesture may flip: the settings kinds without user and
+    /// assistant messages, which are turned one by one, never in bulk.
+    pub fn bulk_kinds() -> &'static [Self] {
+        &[
+            Self::Execute,
+            Self::Read,
+            Self::Edit,
+            Self::ListDir,
+            Self::Search,
+            Self::WebFetch,
+            Self::WebSearch,
+            Self::IntegrationSearch,
+            Self::UseTool,
+            Self::MemorySearch,
+            Self::SentMessage,
+            Self::Skill,
+            Self::OtherTool,
+            Self::Thinking,
+            Self::System,
+            Self::SessionEvent,
+            Self::BgTask,
+            Self::Subagent,
+            Self::Workflow,
+            Self::Btw,
+            Self::ContextInfo,
+            Self::MemoryCapture,
+        ]
+    }
+
     /// The form blocks of this kind start in until the user picks one; only settings rows show it.
     pub fn starting_form(self) -> super::types::DisplayForm {
         use super::types::DisplayForm;
