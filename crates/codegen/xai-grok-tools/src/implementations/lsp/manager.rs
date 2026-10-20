@@ -9,6 +9,8 @@ use async_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Url};
 
 use super::client::LspClient;
 use super::config::LspServerConfig;
+// Not dead: `ensure_started_background` below resolves through this trait import.
+use super::LspBackend;
 use super::pending::{PendingEdits, PendingPolicy};
 use super::{DiagnosticsNotify, file_uri};
 use crate::util::ProcessScope;
