@@ -2467,6 +2467,25 @@ impl SessionActor {
                 vec![],
                 vec![],
             ),
+            ToolInput::ControlSubagent(control) => {
+                use xai_grok_tools::implementations::grok_build::task::types::SubagentCancelDisposition;
+                let verb = match control.action {
+                    SubagentCancelDisposition::Stop => "Stop",
+                    SubagentCancelDisposition::Pause => "Pause",
+                };
+                (
+                    format!("{verb} subagent: {}", control.subagent_id),
+                    acp::ToolKind::Other,
+                    vec![],
+                    vec![],
+                )
+            }
+            ToolInput::ListSubagents(_) => (
+                "List subagents".to_string(),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
             ToolInput::Skill(skill) => {
                 xai_grok_telemetry::session_ctx::log_event(
                     xai_grok_telemetry::events::SkillDispatched {

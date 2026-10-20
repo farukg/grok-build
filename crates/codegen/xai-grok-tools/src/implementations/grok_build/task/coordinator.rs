@@ -14,6 +14,7 @@ mod agent_quotas;
 mod agent_targets;
 mod completion;
 mod graph;
+mod list_owned;
 mod query;
 mod queue;
 mod resume;
@@ -470,6 +471,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
             SubagentEvent::ListRunning(request) => {
                 self.handle_list_running(request.parent_session_id, request.respond_to);
+            }
+            SubagentEvent::ListOwned(request) => {
+                self.handle_list_owned(request.parent_session_id.as_deref(), request.respond_to);
             }
             SubagentEvent::Completions(request) => {
                 // Suppressed owned completions stay buffered for the requester's next unsuppressed request

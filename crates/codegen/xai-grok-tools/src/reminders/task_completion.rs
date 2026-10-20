@@ -491,6 +491,9 @@ fn outcome_words(c: &SubagentCompletionSummary) -> (&'static str, &'static str) 
             ("completed successfully", "completed successfully")
         }
         SubagentSnapshotStatus::Failed { .. } => ("completed with failure", "failed"),
+        SubagentSnapshotStatus::Cancelled {
+            cause: xai_tool_types::InterruptionCause::Paused { .. },
+        } => ("was paused", "paused"),
         SubagentSnapshotStatus::Cancelled { .. } => ("was cancelled", "cancelled"),
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
             ("is still running", "running")
@@ -653,6 +656,7 @@ pub fn consumed_completion_ids(output: &ToolOutput) -> Vec<&str> {
             ids.push(r.task_id.as_str());
         }
         ToolOutput::KillTask(KillTaskOutput::TaskNotFound(_)) => {}
+        ToolOutput::ControlSubagent(output) => ids.extend(output.consumed_completion_id()),
         ToolOutput::SubagentCompleted(SubagentCompletedOutput { subagent_id, .. }) => {
             ids.push(subagent_id.as_str());
         }
@@ -679,6 +683,7 @@ pub fn consumed_completion_ids(output: &ToolOutput) -> Vec<&str> {
         | ToolOutput::ExitPlanMode(_)
         | ToolOutput::AskUserQuestion(_)
         | ToolOutput::SendSubagentMessage(_)
+        | ToolOutput::ListSubagents(_)
         | ToolOutput::Monitor(_)
         | ToolOutput::SchedulerCreate(_)
         | ToolOutput::SchedulerDelete(_)

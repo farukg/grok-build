@@ -118,6 +118,10 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         SubagentCancelOutcome::NotFound
     }
 
+    async fn list_owned(&self) -> Vec<super::super::types::SubagentInspection> {
+        Vec::new()
+    }
+
     async fn validate_type(
         &self,
         _subagent_type: &str,

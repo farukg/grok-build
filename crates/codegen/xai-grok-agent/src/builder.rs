@@ -889,6 +889,11 @@ impl AgentBuilder {
                 .tools
                 .retain(|tool| !is_active_agent_message(tool));
         }
+        crate::subagent_control_tools::offer(
+            &mut tool_config,
+            self.active_agent_messages_enabled && self.prompt_audience == PromptAudience::Primary,
+            definition.inject_default_tools,
+        );
         if self.memory_backend.is_none() {
             let grok_build_ns = xai_grok_tools::types::tool::ToolNamespace::GrokBuild.to_string();
             let mem_search_id = format!(
@@ -1153,6 +1158,8 @@ impl AgentBuilder {
                             ToolKind::BackgroundTaskAction
                                 | ToolKind::KillTaskAction
                                 | ToolKind::WaitTasksAction
+                                | ToolKind::SubagentControl
+                                | ToolKind::SubagentList
                         )
                     )
             });

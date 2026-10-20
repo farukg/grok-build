@@ -1,6 +1,6 @@
 # M11 — agent and human control over subagents
 
-Branch: `grb/m11` (based on `main` `b540b07e`; merge `main` before continuing).
+Branch: `grb/m11`, squashed onto `main` (2026-10-20).
 
 ## Goal
 The calling agent and the human can see and control subagents: queue or steer messages,
@@ -19,12 +19,13 @@ caused it (agent or human). Plan and file:line evidence: `docs/fork/recon/m11-su
   `mode: stop|pause` (default stop); `SubagentSnapshotDto` carries `interruption` (`cancelReason` keeps the wording).
 - The old uncompiled draft is archived as `archive/m11-b1-draft`; `archive/m11-full-wip` is the older experiment.
 
+## State (2026-10-20, squashed onto `main`)
+- B3 `control_subagent { subagent_id, action: pause|stop }` on `main` (`T/../grok_build/control_subagent.rs`), riding
+  the same backend path as `kill_task`'s `ExplicitStop { ParentModel }`; `pause` keeps the child resumable under its id.
+- B4 `list_subagents` on a coordinator `ListOwned` query (`list_subagents.rs`, `task/coordinator/list_owned.rs`);
+  `reminders/task_completion.rs` names pause vs cancel outcomes per cause.
+- B2 `delivery` on `SendSubagentMessageRequest` through `resolve_delivery` (`send_subagent_message.rs`).
+
 ## Next steps
-1. B3 model tool `control_subagent { subagent_id, action: pause|stop }` (gated), `kill_task` already goes through the
-   same backend call as `ExplicitStop { ParentModel }`. Resume of a paused child = `send_subagent_message` (wakes) or
-   `task(resume_from)`, which now wakes a finished child under its own id.
-2. B4 visibility: `list_subagents` on a coordinator `ListOwned` query; `outcome_words` in `T/../reminders/task_completion.rs`
-   still says "was cancelled" for every cause (use `InterruptionCause::model_text`); `SessionUpdate::SubagentFinished`
-   should carry `interruption`; persisted `SubagentMeta.status` is still a string (old metas must keep loading).
-3. B2 human `delivery` field on `SendSubagentMessageRequest` through `resolve_delivery`.
-4. Pager: parse `interruption` in task rows and the child header, `Action::PauseSubagent` next to `KillSubagent`.
+1. B4 remainder: `SessionUpdate::SubagentFinished` carries `interruption`; persisted `SubagentMeta.status` is still a string (old metas must keep loading).
+2. Pager: parse `interruption` in task rows and the child header, `Action::PauseSubagent` next to `KillSubagent`.

@@ -55,6 +55,12 @@ impl SubagentBackend for FixedActiveMessageBackend {
         SubagentCancelOutcome::NotFound
     }
 
+    async fn list_owned(
+        &self,
+    ) -> Vec<xai_grok_tools::implementations::grok_build::task::types::SubagentInspection> {
+        Vec::new()
+    }
+
     async fn validate_type(&self, _: &str, _: &str) -> SubagentValidateTypeOutcome {
         SubagentValidateTypeOutcome::ValidationUnavailable
     }

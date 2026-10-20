@@ -597,6 +597,8 @@ pub enum ToolOutput {
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListOutput),
     UpdateGoal(crate::implementations::grok_build::update_goal::UpdateGoalOutput),
     Workflow(crate::implementations::grok_build::workflow::WorkflowToolOutput),
+    ControlSubagent(crate::implementations::grok_build::control_subagent::ControlSubagentOutput),
+    ListSubagents(crate::implementations::grok_build::list_subagents::ListSubagentsOutput),
     /// Dynamic output for runtime-registered tools (MCP, test tools, etc.)
     Dynamic(DynamicOutput),
     /// Generic text output for tools that produce simple formatted text
@@ -648,6 +650,7 @@ impl ToolOutput {
                 TodoWriteOutput::DuplicateId(_) | TodoWriteOutput::InvalidArgument(_),
             ) => true,
             ToolOutput::GrepSearch(g) => g.exit_code > 1,
+            ToolOutput::ControlSubagent(output) => output.is_error(),
             _ => false,
         }
     }
@@ -912,6 +915,8 @@ impl ToolOutput {
                 | AskUserQuestionOutput::UserAnswered { message },
             ) => message.clone(),
             ToolOutput::SendSubagentMessage(output) => output.to_string(),
+            ToolOutput::ControlSubagent(output) => output.to_string(),
+            ToolOutput::ListSubagents(output) => output.to_string(),
             ToolOutput::Monitor(o) => {
                 if o.persistent {
                     format!(

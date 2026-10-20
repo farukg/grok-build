@@ -51,6 +51,16 @@ impl SubagentState {
         }
     }
 
+    /// The sentence a model reads about this state; an interruption names its cause.
+    pub fn model_text(&self) -> String {
+        match self {
+            Self::Running => "Subagent is running.".to_owned(),
+            Self::Completed => "Subagent completed.".to_owned(),
+            Self::Failed { message } => format!("Subagent failed: {message}"),
+            Self::Interrupted { cause } => cause.model_text(),
+        }
+    }
+
     pub fn interruption(&self) -> Option<&InterruptionCause> {
         match self {
             Self::Interrupted { cause } => Some(cause),
@@ -133,6 +143,11 @@ impl InterruptionCause {
 }
 
 impl SubagentActor {
+    /// A model tool call acts for its owner session; without one the runtime acts.
+    pub fn model_tool(owner_session_id: Option<String>) -> Self {
+        owner_session_id.map_or(Self::Runtime, |session_id| Self::ParentModel { session_id })
+    }
+
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Human => "human user",

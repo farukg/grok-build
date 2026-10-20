@@ -226,14 +226,13 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                         .cloned()
                 };
                 if let Some(backend) = backend {
-                    let actor = my_owner
-                        .clone()
-                        .map_or(SubagentActor::Runtime, |session_id| {
-                            SubagentActor::ParentModel { session_id }
-                        });
                     let outcome = backend
                         .backend()
-                        .cancel(&input.task_id, actor, SubagentCancelDisposition::Stop)
+                        .cancel(
+                            &input.task_id,
+                            SubagentActor::model_tool(my_owner.clone()),
+                            SubagentCancelDisposition::Stop,
+                        )
                         .await;
                     return Ok(match outcome {
                         SubagentCancelOutcome::Cancelled { .. } => {

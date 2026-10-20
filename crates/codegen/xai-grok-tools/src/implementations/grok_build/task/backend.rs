@@ -76,6 +76,9 @@ pub trait SubagentBackend: Send + Sync + 'static {
         disposition: SubagentCancelDisposition,
     ) -> SubagentCancelOutcome;
 
+    /// Every subagent this session can reach: queued, starting, running and retained finished ones.
+    async fn list_owned(&self) -> Vec<SubagentInspection>;
+
     /// Validate a subagent type synchronously before spawning.
     /// Returns `CoordinatorGone` on channel close and `ValidationUnavailable`
     /// on responder drop / timeout.
@@ -680,6 +683,20 @@ impl SubagentBackend for ChannelBackend {
             return SubagentCancelOutcome::NotFound;
         }
         response_rx.await.unwrap_or(SubagentCancelOutcome::NotFound)
+    }
+
+    async fn list_owned(&self) -> Vec<SubagentInspection> {
+        let (respond_to, response_rx) = oneshot::channel();
+        let sent = self.tx.send(SubagentEvent::ListOwned(
+            super::types::SubagentListOwnedRequest {
+                parent_session_id: self.parent_session_id(),
+                respond_to,
+            },
+        ));
+        if sent.is_err() {
+            return Vec::new();
+        }
+        response_rx.await.unwrap_or_default()
     }
 
     async fn validate_type(

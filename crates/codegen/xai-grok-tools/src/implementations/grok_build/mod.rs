@@ -12,6 +12,7 @@
 pub mod app_builder;
 pub mod ask_user_question;
 pub mod bash;
+pub mod control_subagent;
 #[path = "deploy_app_stub.rs"]
 pub mod deploy_app;
 pub mod enter_plan_mode;
@@ -23,6 +24,7 @@ pub mod image_gen;
 pub mod init_or_update_app;
 pub mod kill_task;
 pub mod list_dir;
+pub mod list_subagents;
 pub mod lsp;
 pub mod media_bearer;
 pub mod monitor;
@@ -43,6 +45,7 @@ pub mod workflow;
 pub use app_builder::AppBuilderDeployerConfig;
 pub use ask_user_question::AskUserQuestionTool;
 pub use bash::BashTool;
+pub use control_subagent::{CONTROL_SUBAGENT_TOOL_NAME, ControlSubagentTool};
 pub use deploy_app::DEPLOY_APP_TOOL_NAME;
 pub use enter_plan_mode::EnterPlanModeTool;
 pub use exit_plan_mode::ExitPlanModeTool;
@@ -55,6 +58,7 @@ pub use image_gen::{
 pub use init_or_update_app::INIT_OR_UPDATE_APP_TOOL_NAME;
 pub use kill_task::{KillTaskTool, KillTerminalCommandTool};
 pub use list_dir::ListDirTool;
+pub use list_subagents::{LIST_SUBAGENTS_TOOL_NAME, ListSubagentsTool};
 pub use lsp::LspTool;
 pub use monitor::tool::MonitorTool;
 pub use read_file::ReadFileTool;

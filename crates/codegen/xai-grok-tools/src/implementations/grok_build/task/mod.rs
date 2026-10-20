@@ -1585,7 +1585,7 @@ mod tests {
             assert_eq!("general-purpose", request.subagent_type);
             request
                 .respond_with(|request| SubagentResult {
-                    success: true,
+                    state: SubagentState::Completed,
                     output: std::sync::Arc::from("ok"),
                     subagent_id: request.id.clone(),
                     child_session_id: request.id.clone(),

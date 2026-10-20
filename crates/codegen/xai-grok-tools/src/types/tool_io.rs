@@ -88,6 +88,8 @@ pub enum ToolInput {
     #[serde(alias = "SendAgentMessage")]
     SendSubagentMessage(SendSubagentMessageInput),
     SendFeedback(SendFeedbackInput),
+    ControlSubagent(crate::implementations::grok_build::control_subagent::ControlSubagentInput),
+    ListSubagents(crate::implementations::grok_build::list_subagents::ListSubagentsInput),
     Lsp(LspToolInput),
     Monitor(crate::implementations::grok_build::monitor::types::MonitorInput),
     SchedulerCreate(crate::implementations::grok_build::scheduler::create::SchedulerCreateInput),

@@ -70,6 +70,8 @@ impl ToolKind {
             ToolKind::GoalUpdate => "Update Goal",
             ToolKind::Workflow => "Workflow",
             ToolKind::Feedback => "Feedback",
+            ToolKind::SubagentControl => "Control Subagent",
+            ToolKind::SubagentList => "List Subagents",
             ToolKind::Other => "Tool",
         }
     }
@@ -114,6 +116,8 @@ impl ToolKind {
             | ToolKind::GoalUpdate
             | ToolKind::Workflow
             | ToolKind::Feedback
+            | ToolKind::SubagentControl
+            | ToolKind::SubagentList
             | ToolKind::Other => false,
         }
     }

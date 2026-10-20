@@ -13,6 +13,7 @@ pub mod error;
 pub mod plugins;
 pub mod prompt;
 pub mod repo;
+mod subagent_control_tools;
 pub mod system_reminder;
 pub mod timing;
 pub mod tool_list;

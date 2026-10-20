@@ -210,6 +210,7 @@ impl crate::types::tool_metadata::ToolMetadata for SendSubagentMessageTool {
          An eligible completed subagent resumes with the same identity. \
          Use this tool to add a fact or correct a wrong target. \
          Do not use this tool to tell a subagent to stop, send its result now, or stop reading and start writing. \
+         To pause or stop a subagent, use control_subagent. \
          There is no time limit, whatever the subagent shows. \
          Trust the subagent and let it run to completion, unless it needs guidance or more information."
     }

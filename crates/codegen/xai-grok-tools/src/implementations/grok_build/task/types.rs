@@ -671,6 +671,19 @@ impl SubagentSnapshotStatus {
             Self::Completed { .. } | Self::Failed { .. } | Self::Cancelled { .. }
         )
     }
+
+    pub fn state(&self) -> SubagentState {
+        match self {
+            Self::Initializing | Self::Running { .. } => SubagentState::Running,
+            Self::Completed { .. } => SubagentState::Completed,
+            Self::Failed { error } => SubagentState::Failed {
+                message: error.clone(),
+            },
+            Self::Cancelled { cause } => SubagentState::Interrupted {
+                cause: cause.clone(),
+            },
+        }
+    }
 }
 
 // Cancel protocol
@@ -691,7 +704,17 @@ pub enum SubagentCancelTarget {
 
 /// What a cancel of one subagent leaves behind: a stopped child can only be continued as a new child (`resume_from`),
 /// a paused one is woken under its own id by the next message.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentCancelDisposition {
     #[default]
@@ -709,7 +732,8 @@ pub struct SubagentCancelRequest {
     pub respond_to: oneshot::Sender<SubagentCancelOutcome>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum SubagentCancelOutcome {
     Cancelled { cause: InterruptionCause },
     AlreadyFinished { state: SubagentState },
@@ -840,6 +864,15 @@ pub struct SubagentInspectRequest {
 #[educe(Debug)]
 pub struct SubagentListRunningRequest {
     pub parent_session_id: String,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+}
+
+/// Request for every subagent a session can reach: queued, starting, running and retained finished ones.
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentListOwnedRequest {
+    pub parent_session_id: Option<String>,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
 }
@@ -1008,6 +1041,7 @@ pub enum SubagentEvent {
     Cancel(SubagentCancelRequest),
     ListActive(SubagentListActiveRequest),
     ListRunning(SubagentListRunningRequest),
+    ListOwned(SubagentListOwnedRequest),
     Completions(SubagentCompletionsRequest),
     /// `Completions` without draining; the requester's ledger discards the copies at a later drain. `suppress_ids` is ignored.
     PeekCompletions(SubagentCompletionsRequest),

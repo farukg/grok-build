@@ -96,6 +96,8 @@ pub enum ToolKind {
     GoalUpdate,
     Workflow,
     Feedback,
+    SubagentControl,
+    SubagentList,
     #[serde(other)]
     Other,
 }

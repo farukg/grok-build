@@ -164,22 +164,33 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             })
             .map(|child| child.request.id.clone())
             .collect();
+        self.respond_with_active_progress(Vec::new(), ids, respond_to);
+    }
+
+    pub(super) fn respond_with_active_progress(
+        &mut self,
+        mut slots: Vec<Option<SubagentInspection>>,
+        ids: Vec<String>,
+        respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+    ) {
         if ids.is_empty() {
-            let _ = respond_to.send(Vec::new());
+            let _ = respond_to.send(slots.into_iter().flatten().collect());
             return;
         }
+        let first_active = slots.len();
+        slots.resize(first_active + ids.len(), None);
 
         let request_id = self.next_list_request_id;
         self.next_list_request_id = self.next_list_request_id.wrapping_add(1);
         self.list_requests.insert(
             request_id,
             ListRequest {
-                slots: vec![None; ids.len()],
+                slots,
                 remaining: ids.len(),
                 respond_to,
             },
         );
-        for (index, id) in ids.into_iter().enumerate() {
+        for (index, id) in (first_active..).zip(ids) {
             self.queue_active_progress(&id, ProgressTarget::List { request_id, index });
         }
     }

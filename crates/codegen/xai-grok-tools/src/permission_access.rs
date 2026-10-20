@@ -24,6 +24,8 @@ impl From<&crate::types::ToolInput> for AccessKind {
             | ToolInput::TaskOutput(_)
             | ToolInput::WaitTasks(_)
             | ToolInput::KillTask(_)
+            | ToolInput::ControlSubagent(_)
+            | ToolInput::ListSubagents(_)
             | ToolInput::Skill(_)
             | ToolInput::MemorySearch(_)
             | ToolInput::SearchTool(_)
