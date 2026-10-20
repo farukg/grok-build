@@ -17,9 +17,12 @@ Branch: `grb/w3`. Shell side is W1-S/W1-H (on `main`).
 ## Open
 1. Finished children: set_model/compact/mode answer `unknown session id` (accepted by Faruk). A fix
    would remember the choice in the registry entry and pass it as a resume override.
-2. Fork / new worktree from a child view: children are normal session dirs
-   (`sessions/<cwd>/<child id>`, `S/agent/subagent/handle_request.rs:931`), so `x.ai/session/fork` with the
-   child's id and cwd should already fork the child's conversation. Not verified live.
-3. End-to-end tests with a fake ACP peer (`child_session_full_parity_roundtrip`,
-   `parent_sees_final_response_after_human_turns`).
+2. ~~Fork from a child view.~~ Verified by code: children persist like root sessions
+   (`sessions/<cwd>/<child id>`, `S/agent/subagent/handle_request.rs:931`), `x.ai/session/fork` copies from disk
+   by id and cwd (`S/session/fork.rs`, `storage/jsonl/copy.rs:270`), and the pager forks with the child view's
+   id and effective cwd. Pinned by `fork_from_a_child_view_forks_the_child_session_in_its_cwd`. Not run live.
+3. ~~End-to-end tests.~~ Pager side: `prompting_a_finished_child_ends_in_its_continuation_view` (prompt with
+   `childOf` -> `childResume` answer -> spawn with `resumed_from` -> continuation view open). Shell side
+   (`parent_sees_final_response_after_human_turns`) is covered by `child_prompt_tests.rs` through `MvpAgent::prompt`.
+   A woken child (`_meta.childWake`) needs no pager handler: the wake re-emits `SubagentSpawned`.
 4. ~~`!cmd`, execute-plan and bash prompts from a child view do not carry `childOf`.~~ Done: `Effect::SendBashCommand`, `ExecutePlan` and `SetModeThenPrompt` carry the view's `PromptTarget`.

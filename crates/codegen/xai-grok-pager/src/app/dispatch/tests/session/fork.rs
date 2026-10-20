@@ -1703,3 +1703,41 @@ fn handle_ask_user_question_pushes_system_block_when_displaced_local_fork_modal(
         "exactly one system block pushed"
     );
 }
+
+#[test]
+fn fork_from_a_child_view_forks_the_child_session_in_its_cwd() {
+    use crate::app::agent_view::{AgentRole, ChildLink};
+
+    let mut app = fork_test_app();
+    let parent_id = AgentId(0);
+    let parent_session_id = app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap();
+    let child_id = AgentId(1);
+    let mut child_session = make_test_agent_session(&app, child_id, "child-sess");
+    child_session.cwd = PathBuf::from("/tmp/child-cwd");
+    let mut child = AgentView::new(child_session, ScrollbackState::new());
+    child.role = AgentRole::Child(ChildLink {
+        parent: parent_id,
+        parent_session_id,
+        subagent_id: "child-sess".to_owned(),
+        started_at: std::time::Instant::now(),
+    });
+    app.agents.insert(child_id, child);
+    app.next_agent_id = 2;
+    switch_to_agent(&mut app, child_id, SwitchCause::New);
+
+    let effects = dispatch(Action::Fork(fork_args(Some(false), None)), &mut app);
+
+    match effects.as_slice() {
+        [
+            Effect::ForkSession {
+                parent_session_id,
+                parent_cwd,
+                ..
+            },
+        ] => {
+            assert_eq!(parent_session_id.0.as_ref(), "child-sess");
+            assert_eq!(parent_cwd, std::path::Path::new("/tmp/child-cwd"));
+        }
+        other => panic!("expected ForkSession, got {other:?}"),
+    }
+}

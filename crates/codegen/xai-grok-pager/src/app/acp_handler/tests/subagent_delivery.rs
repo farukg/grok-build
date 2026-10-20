@@ -104,6 +104,52 @@
     }
 
     #[test]
+    fn prompting_a_finished_child_ends_in_its_continuation_view() {
+        use crate::app::actions::TaskResult;
+        let mut app = make_app_viewing_child("sess-parent", "sess-child");
+        let sent = dispatch(Action::SendPrompt("look again".into()), &mut app);
+        assert!(
+            sent.iter().any(|effect| matches!(
+                effect,
+                Effect::SendPrompt { target: PromptTarget::ChildOf(parent), .. } if parent.0.as_ref() == "sess-parent"
+            )),
+            "{sent:?}"
+        );
+
+        let answer = acp::PromptResponse::new(acp::StopReason::EndTurn).meta(
+            serde_json::json!({ "childResume": { "kind": "resumed", "sourceId": "sess-child" } })
+                .as_object()
+                .cloned(),
+        );
+        let _ = dispatch(
+            Action::TaskComplete(TaskResult::PromptResponse {
+                agent_id: AgentId(1),
+                result: Ok(answer),
+                http_status: None,
+                prompt_id: None,
+            }),
+            &mut app,
+        );
+        let mut spawned = test_subagent_spawned("sess-parent", "sess-continued");
+        let XaiSessionUpdate::SubagentSpawned { resumed_from, .. } = &mut spawned else {
+            unreachable!("test_subagent_spawned builds a spawn update")
+        };
+        *resumed_from = Some("sess-child".into());
+        let _ = handle(
+            make_ext_session_notification_with_method("sess-parent", "x.ai/session/update", spawned),
+            &mut app,
+        );
+
+        let ActiveView::Agent(opened) = app.active_view else {
+            panic!("an agent view is active");
+        };
+        assert_eq!(
+            app.agents.get(&opened).and_then(|view| view.session.session_id.as_ref()).map(|sid| sid.0.as_ref()),
+            Some("sess-continued")
+        );
+    }
+
+    #[test]
     fn deliver_key_releases_only_a_held_child() {
         let mut app = make_app_viewing_child("sess-parent", "sess-child");
         assert!(press_deliver_key(&mut app).is_empty(), "nothing is held before a human prompt");
