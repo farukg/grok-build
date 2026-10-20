@@ -23,12 +23,15 @@ impl AgentView {
         match focus {
             None => {
                 let at = self.scrollback.timeline_follow_index();
-                self.open_timeline_panel_at(at)
+                let outcome = self.open_timeline_panel_at(at);
+                self.clear_context_sidebar_focus();
+                outcome
             }
             Some(PanelFocus::Chat) => {
                 if let Some(panel) = self.timeline_mode.panel_mut() {
                     panel.focus = PanelFocus::Panel;
                 }
+                self.clear_context_sidebar_focus();
                 InputOutcome::Changed
             }
             Some(PanelFocus::Panel) => {

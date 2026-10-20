@@ -2042,6 +2042,7 @@ fn main() {
     if let Some(code) = xai_grok_pager::voice::maybe_run_capture_subprocess() {
         std::process::exit(code);
     }
+    xai_grok_shell::session::install_preserving_file_accelerator();
     set_release_channel(ReleaseChannel::from_label(
         xai_grok_update::channel_name().unwrap_or_default(),
     ));

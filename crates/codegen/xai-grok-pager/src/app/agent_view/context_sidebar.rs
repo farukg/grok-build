@@ -251,6 +251,93 @@ impl AgentView {
         SidebarLayout::compute(column, heights).body
     }
 
+    pub(crate) fn sidebar_open_flags(&self) -> (bool, bool) {
+        (
+            self.timeline_mode.panel().is_some(),
+            matches!(self.context_sidebar, ContextSidebar::Open(_)),
+        )
+    }
+
+    pub(crate) fn f6_panel_focused(&self) -> bool {
+        self.timeline_mode
+            .panel()
+            .is_some_and(|panel| panel.focus == crate::views::timeline_panel::PanelFocus::Panel)
+    }
+
+    pub(crate) fn clear_context_sidebar_focus(&mut self) {
+        if let ContextSidebar::Open(open) = &mut self.context_sidebar {
+            open.focus = SidebarFocus::Chat;
+        }
+    }
+
+    fn clear_timeline_panel_focus(&mut self) {
+        if let Some(panel) = self.timeline_mode.panel_mut() {
+            panel.focus = crate::views::timeline_panel::PanelFocus::Chat;
+        }
+    }
+
+    pub(crate) fn f7_sidebar_focused(&self) -> bool {
+        matches!(
+            &self.context_sidebar,
+            ContextSidebar::Open(open) if open.focus == SidebarFocus::Sidebar
+        )
+    }
+
+    /// Match this session to the pager-wide F6/F7 open state. Contents stay this session's.
+    /// `true` means F7 was just opened and needs a policy read.
+    pub(crate) fn adopt_global_sidebars(
+        &mut self,
+        f6_open: bool,
+        f7_open: bool,
+        f6_focused: bool,
+        f7_focused: bool,
+    ) -> bool {
+        if self.is_minimal_mode() {
+            return false;
+        }
+        let f6_focused = f6_focused && !f7_focused;
+        if f6_open {
+            if self.timeline_mode.panel().is_none() {
+                let _ = self.open_timeline_panel_at(self.scrollback.timeline_follow_index());
+            }
+            if let Some(panel) = self.timeline_mode.panel_mut() {
+                panel.focus = if f6_focused {
+                    crate::views::timeline_panel::PanelFocus::Panel
+                } else {
+                    crate::views::timeline_panel::PanelFocus::Chat
+                };
+            }
+        } else if self.timeline_mode.panel().is_some() {
+            self.timeline_mode = crate::views::timeline_panel::TimelineMode::Rail;
+        }
+        if f7_open {
+            let focus = if f7_focused {
+                SidebarFocus::Sidebar
+            } else {
+                SidebarFocus::Chat
+            };
+            if matches!(self.context_sidebar, ContextSidebar::Closed) {
+                self.context_sidebar = ContextSidebar::Open(OpenContextSidebar {
+                    focus,
+                    sidebar: SidebarState::default(),
+                    layout: None,
+                    policy: PolicyState::Loading,
+                    disclosure: self.restored_section_disclosure(),
+                    reveal_pending: f7_focused,
+                });
+            } else if let ContextSidebar::Open(open) = &mut self.context_sidebar {
+                open.focus = focus;
+                open.policy = PolicyState::Loading;
+            }
+            true
+        } else {
+            if matches!(self.context_sidebar, ContextSidebar::Open(_)) {
+                self.context_sidebar = ContextSidebar::Closed;
+            }
+            false
+        }
+    }
+
     /// F7: open the sidebar and ask the shell for the policy, or close it.
     pub(crate) fn toggle_context_sidebar(&mut self) -> InputOutcome {
         if self.is_minimal_mode() {
@@ -266,6 +353,7 @@ impl AgentView {
                     disclosure: self.restored_section_disclosure(),
                     reveal_pending: false,
                 });
+                self.clear_timeline_panel_focus();
                 InputOutcome::Action(Action::FetchContextPolicy)
             }
             ContextSidebar::Open(_) => {
@@ -318,11 +406,17 @@ impl AgentView {
                     )) => {
                         open.focus = SidebarFocus::Sidebar;
                         open.sidebar.cursor = Some(line);
+                        if let Some(panel) = self.timeline_mode.panel_mut() {
+                            panel.focus = crate::views::timeline_panel::PanelFocus::Chat;
+                        }
                         Some(self.run_sidebar_command_saving(gesture::activation(mouse.modifiers)))
                     }
                     Some(SidebarHit::Line(SidebarLine::Hosted(_))) => None,
                     Some(SidebarHit::Header | SidebarHit::Footer) => {
                         open.focus = SidebarFocus::Sidebar;
+                        if let Some(panel) = self.timeline_mode.panel_mut() {
+                            panel.focus = crate::views::timeline_panel::PanelFocus::Chat;
+                        }
                         Some(InputOutcome::Changed)
                     }
                     None => {
@@ -451,6 +545,7 @@ impl AgentView {
                 edge: SidebarEdge::Right,
                 state: &open.sidebar,
                 hovered: None,
+                focused: open.focus == SidebarFocus::Sidebar,
                 theme: &theme,
             },
             buf,

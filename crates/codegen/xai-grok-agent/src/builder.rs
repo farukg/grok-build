@@ -3104,6 +3104,79 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn lsp_tool_is_advertised_only_when_a_backend_is_attached() {
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::implementations::lsp::{
+            DiskChangeKind, FileDiagnosticEntry, LspBackend, LspToolInput, LspToolResult,
+        };
+        use xai_grok_tools::notification::ToolNotificationHandle;
+
+        struct SilentServer;
+        #[async_trait::async_trait]
+        impl LspBackend for SilentServer {
+            fn ensure_started_background(&self) {}
+            async fn ensure_ready(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn is_ready(&self) -> bool {
+                true
+            }
+            async fn dispatch(&self, _input: &LspToolInput) -> LspToolResult {
+                LspToolResult {
+                    text: String::new(),
+                    is_error: false,
+                }
+            }
+            async fn drain_diagnostics(
+                &self,
+                _timeout: std::time::Duration,
+            ) -> Option<xai_grok_tools::implementations::lsp::DiagnosticsSummary> {
+                None
+            }
+            async fn notify_file_changed(&self, _path: &std::path::Path, _content: &str) {}
+            async fn notify_file_event(
+                &self,
+                _path: &std::path::Path,
+                _content: Option<&str>,
+                _kind: DiskChangeKind,
+            ) {
+            }
+            async fn read_diagnostics(
+                &self,
+                _paths: &[std::path::PathBuf],
+            ) -> Vec<FileDiagnosticEntry> {
+                Vec::new()
+            }
+        }
+
+        async fn names(attach: bool) -> Vec<String> {
+            let mut definition = crate::config::AgentDefinition::default_grok_build();
+            definition.tools = vec!["read_file".into(), "lsp".into()];
+            let mut builder = AgentBuilder::new(
+                std::env::temp_dir(),
+                std::sync::Arc::new(LocalTerminalBackend::new()),
+                ToolNotificationHandle::noop(),
+            )
+            .from_definition(definition);
+            if attach {
+                builder = builder.with_lsp(std::sync::Arc::new(SilentServer));
+            }
+            builder
+                .build()
+                .await
+                .expect("agent")
+                .tool_definitions()
+                .await
+                .iter()
+                .map(|definition| definition.function.name.clone())
+                .collect()
+        }
+        let without = names(false).await;
+        assert!(!without.iter().any(|name| name == "lsp"), "{without:?}");
+        let with = names(true).await;
+        assert!(with.iter().any(|name| name == "lsp"), "{with:?}");
+    }
+    #[tokio::test]
     async fn skill_allowlist_maps_to_read() {
         let agent = build_with_tools(vec!["Skill".into()], vec![]).await;
         let names: Vec<String> = agent

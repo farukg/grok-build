@@ -495,10 +495,22 @@ impl AuthIdentity {
     }
 }
 /// Root view component: owns all application state.
+/// Open and focus of the F6 and F7 columns, shared by every session in this pager.
+#[derive(Debug, Default)]
+pub(crate) struct SidebarChrome {
+    f6_open: bool,
+    f7_open: bool,
+    f6_focused: bool,
+    f7_focused: bool,
+    applied_to: Option<AgentId>,
+}
+
 pub struct AppView {
     /// Taken by whichever path reaches a usable session (or interactive idle) first.
     pub pending_startup: Option<xai_grok_telemetry::startup::PendingStartup>,
     pub active_view: ActiveView,
+    /// Pager-wide F6/F7 open and focus. Session switches keep the columns and refresh their contents.
+    pub(crate) sidebar_chrome: SidebarChrome,
     /// View to return to after a mid-session login flow completes or is cancelled.
     /// `Some` only while a `/login` (or 401-triggered re-auth) initiated from an active session is in progress.
     /// `None` at startup so the normal login-then-load flow is preserved.
@@ -1368,6 +1380,7 @@ impl AppView {
         Self {
             pending_startup: None,
             active_view: ActiveView::Welcome,
+            sidebar_chrome: SidebarChrome::default(),
             auth_return_view: None,
             agents: super::session_views::SessionViews::new(),
             next_agent_id: 0,
@@ -2551,7 +2564,7 @@ impl AppView {
                 {
                     return outcome;
                 }
-                let prompt_paging = !overlay_active && !self.screen_mode.is_minimal();
+                let prompt_paging = !self.screen_mode.is_minimal();
                 let outcome = match self.agents.get_mut(&id) {
                     Some(agent) => {
                         let workflows_before = agent.show_workflows;
@@ -4201,6 +4214,7 @@ impl AppView {
             }
         }
         self.sync_native_selection_mouse();
+        self.reconcile_sidebar_chrome();
         if let ActiveView::Agent(id) = self.active_view
             && let Some(agent) = self.agents.get_mut(&id)
         {
@@ -5644,6 +5658,94 @@ impl AppView {
         }
     }
 }
+
+impl AppView {
+    /// Copy the active session's sidebar flags before the next event, so a toggle
+    /// is not lost when a later event in the same batch switches sessions.
+    pub(crate) fn capture_sidebar_chrome(&mut self) {
+        let Some(id) = self.active_view.agent_id() else {
+            return;
+        };
+        if self.sidebar_chrome.applied_to != Some(id) {
+            return;
+        }
+        let Some(agent) = self.agents.get(&id) else {
+            return;
+        };
+        let (f6_open, f7_open) = agent.sidebar_open_flags();
+        self.sidebar_chrome.f6_open = f6_open;
+        self.sidebar_chrome.f7_open = f7_open;
+        self.sidebar_chrome.f6_focused = agent.f6_panel_focused();
+        self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
+    }
+
+    /// Keep F6/F7 open or closed across session switches. The newly shown session supplies the rows.
+    fn reconcile_sidebar_chrome(&mut self) {
+        let Some(id) = self.active_view.agent_id() else {
+            return;
+        };
+        if self.sidebar_chrome.applied_to == Some(id) {
+            if let Some(agent) = self.agents.get(&id) {
+                let (f6_open, f7_open) = agent.sidebar_open_flags();
+                self.sidebar_chrome.f6_open = f6_open;
+                self.sidebar_chrome.f7_open = f7_open;
+                self.sidebar_chrome.f6_focused = agent.f6_panel_focused();
+                self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
+            }
+            return;
+        }
+        let first = self.sidebar_chrome.applied_to.is_none();
+        if first {
+            self.sidebar_chrome.applied_to = Some(id);
+            if let Some(agent) = self.agents.get(&id) {
+                let (f6_open, f7_open) = agent.sidebar_open_flags();
+                self.sidebar_chrome.f6_open = f6_open;
+                self.sidebar_chrome.f7_open = f7_open;
+                self.sidebar_chrome.f6_focused = agent.f6_panel_focused();
+                self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
+            }
+            return;
+        }
+        // A minimal-mode session cannot adopt the chrome. Keep it pending so
+        // `capture_sidebar_chrome` cannot overwrite the pager-wide flags from
+        // that session; its first non-minimal paint adopts them.
+        if self
+            .agents
+            .get(&id)
+            .is_some_and(|agent| agent.is_minimal_mode())
+        {
+            return;
+        }
+        self.sidebar_chrome.applied_to = Some(id);
+        let SidebarChrome {
+            f6_open,
+            f7_open,
+            f6_focused,
+            f7_focused,
+            ..
+        } = self.sidebar_chrome;
+        let opened_f7 = self.agents.get_mut(&id).is_some_and(|agent| {
+            agent.adopt_global_sidebars(f6_open, f7_open, f6_focused, f7_focused)
+        });
+        if !opened_f7 {
+            return;
+        }
+        let Some(session_id) = self
+            .agents
+            .get(&id)
+            .and_then(|agent| agent.session.session_id.clone())
+        else {
+            return;
+        };
+        self.pending_effects
+            .push(crate::app::actions::Effect::ContextPolicy {
+                agent_id: id,
+                session_id,
+                change: crate::app::actions::ContextPolicyChange::Read,
+            });
+    }
+}
+
 #[cfg(test)]
 #[path = "app_view_tests.rs"]
 pub(crate) mod tests;

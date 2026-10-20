@@ -479,6 +479,81 @@ pub(in crate::app::dispatch) fn dispatch_toggle_vim_mode(app: &mut AppView) -> V
     }]
 }
 
+/// What `/dock` does given the gate's inputs. Pure so the precedence
+/// (a pin refuses; an env override only changes the report) is testable
+/// without touching the process environment or the merged requirements.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::app::dispatch) enum DockTogglePlan {
+    /// `requirements.toml` pins the gate; the command changes nothing.
+    Pinned(bool),
+    /// Flip the runtime gate to `next`. `env_wins` marks a `GROK_DOCK`/`GROK_DOCK_V2`
+    /// override that outranks the persisted `[features].dock` on restart.
+    Flip { next: bool, env_wins: bool },
+}
+
+pub(in crate::app::dispatch) fn plan_dock_toggle(
+    pin: Option<bool>,
+    env: Option<bool>,
+    runtime_on: bool,
+) -> DockTogglePlan {
+    match pin {
+        Some(pinned) => DockTogglePlan::Pinned(pinned),
+        None => DockTogglePlan::Flip {
+            next: !runtime_on,
+            env_wins: env.is_some(),
+        },
+    }
+}
+
+/// Toggle the experimental dock (`/dock`).
+/// PAGER-owned: the runtime gate flips immediately, then an explicit `[features].dock`
+/// override is persisted so the choice survives a restart. A `requirements.toml` pin
+/// outranks the command and is reported instead; a failed write toasts without
+/// rolling the runtime gate back.
+pub(in crate::app::dispatch) fn dispatch_toggle_dock(app: &mut AppView) -> Vec<Effect> {
+    let plan = plan_dock_toggle(
+        crate::app::dock_requirement_pin(),
+        crate::app::dock_env_override(),
+        crate::views::dock::enabled(),
+    );
+    let (msg, effect) = match plan {
+        DockTogglePlan::Pinned(pinned) => (
+            format!(
+                "Dock: requirements.toml pins it {}; /dock cannot change it",
+                if pinned { "on" } else { "off" }
+            ),
+            None,
+        ),
+        DockTogglePlan::Flip { next, env_wins } => {
+            crate::views::dock::set_enabled(next);
+            tracing::info!(target: "settings", dock = next, "dock toggled");
+            let note = if env_wins {
+                " (GROK_DOCK wins on restart)"
+            } else {
+                ""
+            };
+            (
+                format!("Dock: {}{note}", if next { "on" } else { "off" }),
+                Some(Effect::PersistFeatureOverride {
+                    feature: xai_grok_shell::agent::config::Feature::Dock,
+                    saved: Some(next),
+                }),
+            )
+        }
+    };
+    match app.active_view {
+        ActiveView::Agent(id) => {
+            if let Some(agent) = app.agents.get_mut(&id) {
+                agent.scrollback.push_block(RenderBlock::system(msg));
+            }
+        }
+        _ => {
+            app.show_toast(&msg);
+        }
+    }
+    effect.into_iter().collect()
+}
+
 /// Toggle timestamps (Ctrl+? keybinding path).
 /// Delegates to the registry-driven `set_timestamps` so persistence, the cache, and UI reconciliation all flow through a single code path.
 pub(in crate::app::dispatch) fn dispatch_toggle_timestamps(app: &mut AppView) -> Vec<Effect> {

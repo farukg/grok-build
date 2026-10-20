@@ -266,7 +266,8 @@ pub fn render(buf: &mut Buffer, area: Rect, theme: &Theme, data: &DockData) {
     let selected_at = |idx: usize| data.focused && idx == data.cursor;
     let highlight = |buf: &mut Buffer, y: u16, selected: bool, hovered: bool| {
         if selected {
-            highlight_row(buf, area, y, theme.bg_highlight);
+            highlight_row(buf, area, y, theme.bg_visual);
+            mark_keyboard_focus(buf, area, y, theme);
         } else if hovered {
             highlight_row(buf, area, y, theme.row_hover_bg());
         }
@@ -340,6 +341,16 @@ pub fn render(buf: &mut Buffer, area: Rect, theme: &Theme, data: &DockData) {
             }
         }
         y += 1;
+    }
+}
+
+fn mark_keyboard_focus(buf: &mut Buffer, area: Rect, y: u16, theme: &Theme) {
+    let mark = Style::default()
+        .fg(theme.selection_border)
+        .add_modifier(Modifier::BOLD);
+    if let Some(cell) = buf.cell_mut((area.x, y)) {
+        cell.set_symbol(">");
+        cell.set_style(mark);
     }
 }
 
@@ -692,7 +703,8 @@ mod tests {
             first.trim_end().ends_with(&subagent_hover_actions()),
             "{first}"
         );
-        assert_eq!(buf.cell((0, 1)).map(|c| c.bg), Some(theme.bg_highlight));
+        assert_eq!(buf.cell((0, 1)).map(|c| c.bg), Some(theme.bg_visual));
+        assert_eq!(buf.cell((0, 1)).map(|c| c.symbol()), Some(">"));
 
         let mut data = sample();
         data.hovered = Some(DockItem::Row(Section::Subagents, 0));
@@ -1930,7 +1942,7 @@ mod tests {
         render(&mut buf, area, &theme, &data);
         assert_eq!(
             buf.cell((0, 1)).map(|c| c.bg),
-            Some(theme.bg_highlight),
+            Some(theme.bg_visual),
             "selection wins over hover"
         );
     }

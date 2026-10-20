@@ -3348,6 +3348,7 @@ async fn drain_and_process(
             }
             return false;
         }
+        app.capture_sidebar_chrome();
         let is_resize = matches!(ev, Event::Resize(_, _));
         let _rescue_guard = routed
             .is_startup_replay

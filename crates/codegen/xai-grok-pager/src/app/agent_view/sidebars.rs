@@ -10,7 +10,7 @@ use crate::views::sidebar::{
 use crate::views::timeline::MIN_TERMINAL_WIDTH;
 use crate::views::timeline_panel::footer_memo::FooterRowsKey;
 use crate::views::timeline_panel::hint::{footer_lines, footer_rows, status_line};
-use crate::views::timeline_panel::{TimelinePanelState, render_panel};
+use crate::views::timeline_panel::{PanelFocus, TimelinePanelState, render_panel};
 use crate::scrollback::state::ScrollbackState;
 use crate::theme::Theme;
 use ratatui::buffer::Buffer;
@@ -169,6 +169,7 @@ impl AgentView {
                 edge: SidebarEdge::Left,
                 state: &state,
                 hovered: None,
+                focused: panel.focus == PanelFocus::Panel,
                 theme: &theme,
             },
             buf,

@@ -3152,21 +3152,8 @@ fn dashboard_stop_with_peek_open_moves_selection_and_peek_down_one() {
         app.dashboard.as_ref().unwrap().peek.is_some(),
         "peek must auto-open for the selected row",
     );
-    let ctrl_x = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
     for _ in 0..2 {
-        let outcome = app
-            .dashboard
-            .as_mut()
-            .unwrap()
-            .handle_input(&ctrl_x, &app.registry);
-        match outcome {
-            crate::app::app_view::InputOutcome::Action(
-                crate::app::actions::Action::DashboardStop,
-            ) => {
-                let _ = dispatch(crate::app::actions::Action::DashboardStop, &mut app);
-            }
-            other => panic!("Ctrl+X must produce DashboardStop, got {other:?}"),
-        }
+        let _ = dispatch(crate::app::actions::Action::DashboardStop, &mut app);
     }
     let crate::views::dashboard::DashboardRowId::TopLevel(first_id) = &first else {
         panic!("first row should be top-level");
@@ -3202,66 +3189,33 @@ fn dashboard_stop_with_peek_open_moves_selection_and_peek_down_one() {
         "peek must follow the selection onto the next row",
     );
 }
-/// Regression: the same Ctrl+X double-press path driven END-TO-END through `DashboardState::handle_input`.
-/// That wipes the just-set `delete_confirm`, so the dispatcher sees a fresh state and sets it again instead of deleting.
-/// The session never deletes no matter how many times the user presses Ctrl+X.
+/// Ctrl+X is not the dashboard stop key.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
-fn dashboard_stop_double_press_via_handle_key_deletes_top_level() {
+fn dashboard_ctrl_x_does_not_stop() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     let mut app = test_app();
     let _ = dispatch_new_session_inner(&mut app, None);
-    let _ = dispatch_new_session_inner(&mut app, None);
     open_dashboard(&mut app);
     let target = app.agents.all().next().unwrap().0;
-    app.agents.get_mut(&target).unwrap().session.session_id = Some(acp::SessionId::new("s-target"));
     if let Some(d) = app.dashboard.as_mut() {
         d.selected = Some(crate::views::dashboard::DashboardRowId::TopLevel(target));
     }
     let ctrl_x = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    let outcome1 = app
+    let outcome = app
         .dashboard
         .as_mut()
         .unwrap()
         .handle_input(&ctrl_x, &app.registry);
-    match outcome1 {
-        crate::app::app_view::InputOutcome::Action(crate::app::actions::Action::DashboardStop) => {
-            let _ = dispatch(crate::app::actions::Action::DashboardStop, &mut app);
-        }
-        other => panic!("first Ctrl+X must produce DashboardStop, got {other:?}"),
-    }
     assert!(
-        app.dashboard.as_ref().unwrap().delete_confirm.is_some(),
-        "first Ctrl+X must arm delete_confirm"
+        !matches!(
+            outcome,
+            crate::app::app_view::InputOutcome::Action(crate::app::actions::Action::DashboardStop)
+        ),
+        "Ctrl+X must not stop a dashboard row, got {outcome:?}",
     );
-    let outcome2 = app
-        .dashboard
-        .as_mut()
-        .unwrap()
-        .handle_input(&ctrl_x, &app.registry);
-    match outcome2 {
-        crate::app::app_view::InputOutcome::Action(crate::app::actions::Action::DashboardStop) => {
-            let effects = dispatch(crate::app::actions::Action::DashboardStop, &mut app);
-            assert!(matches!(effects.last(), Some(Effect::DeleteSession { .. })));
-        }
-        other => panic!("second Ctrl+X must produce DashboardStop, got {other:?}"),
-    }
     assert!(app.dashboard.as_ref().unwrap().delete_confirm.is_none());
-    let session_id = expect_agent(&app, target)
-        .session
-        .session_id
-        .as_ref()
-        .expect("session id")
-        .to_string();
-    let _ = dispatch_task_result(
-        crate::app::actions::TaskResult::DeleteSessionComplete {
-            source: "current".into(),
-            session_id,
-            after: crate::app::actions::AfterSessionDelete::Dashboard,
-        },
-        &mut app,
-    );
-    assert!(!app.agents.contains_key(&target));
+    assert!(app.agents.contains_key(&target));
 }
 /// Top-level resolver round-trip via real AgentView.
 #[test]

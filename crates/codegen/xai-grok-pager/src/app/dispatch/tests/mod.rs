@@ -3,6 +3,7 @@ mod auth;
 mod billing;
 mod cta_e2e;
 mod dashboard;
+mod dock_toggle;
 mod jump;
 mod mid_text_btw;
 mod mid_text_goal;
@@ -88,6 +89,7 @@ fn test_app() -> AppView {
     AppView {
         pending_startup: None,
         active_view: ActiveView::Welcome,
+        sidebar_chrome: crate::app::app_view::SidebarChrome::default(),
         auth_return_view: None,
         agents: crate::app::session_views::SessionViews::new(),
         next_agent_id: 0,

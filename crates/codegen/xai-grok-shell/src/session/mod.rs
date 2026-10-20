@@ -527,6 +527,15 @@ pub mod export;
 pub mod feedback;
 pub mod feedback_manager;
 pub(crate) mod file_acceleration;
+pub use file_acceleration::{
+    client_owned_files_skip_acceleration, decide_gate, gate, preserving_factory_start_notice,
+    read_local_acceleration, record_off_sandbox_profile, select_session_fs, FileAccelerationSettings,
+    GateDecision, GateInputs,
+};
+pub use xai_grok_tools::computer::file_acceleration::{
+    apply_accelerator, install_preserving_file_accelerator, local_fs, preserving_file_accelerator,
+    AcceleratedFs, AccelerationArm, AccelerationContext, AccelerationNotice, FileAccelerationGate,
+};
 pub mod file_system;
 pub mod fork;
 pub(crate) mod fs_watch;

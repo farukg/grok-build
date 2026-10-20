@@ -142,9 +142,9 @@ pub(super) fn default_actions(
         ActionDef {
             id: ActionId::PrevResponse,
             label: "turn",
-            description: "Jump to previous turn at viewport top",
+            description: "Jump to the previous user message",
             default_key: key!('K'),
-            alt_keys: vec![],
+            alt_keys: vec![key!(Home)],
             category: Category::ConversationNav,
             context: When::ScrollbackFocused,
             hint_priority: None,
@@ -168,9 +168,9 @@ pub(super) fn default_actions(
         ActionDef {
             id: ActionId::GotoBottom,
             label: "bottom",
-            description: "Go to bottom",
+            description: "Go to bottom and follow new output",
             default_key: key!('G'),
-            alt_keys: vec![],
+            alt_keys: vec![key!(End)],
             category: Category::ConversationNav,
             context: When::ScrollbackFocused,
             hint_priority: None,
@@ -1003,7 +1003,8 @@ pub(super) fn default_actions(
             id: ActionId::DashboardStop,
             label: "delete",
             description: "Stop / Delete agent",
-            default_key: key!('x', CONTROL),
+            // No key. Ctrl+C cancels a turn; the list button still stops or deletes.
+            default_key: key!(Null),
             alt_keys: vec![],
             category: Category::Dashboard,
             context: When::DashboardFocused,
@@ -1011,7 +1012,7 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "On a busy top-level row, Ctrl+X cancels the running turn.\nOnce the row is idle, press Ctrl+X again within 2s to permanently delete the session.",
+                "Stops or deletes the selected session from the list button.\nA running turn is cancelled with Ctrl+C.\nCtrl+X is not bound to this.",
             ),
         },
         ActionDef {
@@ -1083,17 +1084,21 @@ pub(super) fn default_actions(
             label: "shortcuts",
             description: "Show shortcuts overlay",
             // Ctrl+. / `?` dual-bound; primary follows ctrl_dot_unreliable.
-            // Ctrl+X is DashboardStop, never an alt here
+            // Ctrl+X opens this cheatsheet on the dashboard list too.
             default_key: if ctrl_dot_unreliable {
                 key!('?')
             } else {
                 key!('.', CONTROL)
             },
-            alt_keys: vec![if ctrl_dot_unreliable {
-                key!('.', CONTROL)
-            } else {
-                key!('?')
-            }],
+            alt_keys: {
+                let mut keys = vec![if ctrl_dot_unreliable {
+                    key!('.', CONTROL)
+                } else {
+                    key!('?')
+                }];
+                keys.push(key!('x', CONTROL));
+                keys
+            },
             category: Category::Dashboard,
             context: When::DashboardFocused,
             hint_priority: None,
@@ -1185,7 +1190,7 @@ pub(super) fn default_actions(
             hint_key_display: Some("Ctrl+\\"),
             requires_confirmation: false,
             long_help: Some(
-                "Leaves the attached session overlay and returns to the dashboard list, without stopping the agent.\nAlso reachable via q on the scrollback, a neutral Esc, or the close button.\nTo stop the agent instead of just detaching, use Ctrl+X.",
+                "Leaves the attached session overlay and returns to the dashboard list, without stopping the agent.\nAlso reachable via q on the scrollback, a neutral Esc, or the close button.\nA running turn is cancelled with Ctrl+C.",
             ),
         },
         ActionDef {
@@ -1240,21 +1245,20 @@ pub(super) fn default_actions(
             requires_confirmation: false,
             long_help: None,
         },
-        // Stop with dashboard parity inside the session overlay; the state machine is documented at `dispatch_dashboard_overlay_stop`
-        // Intentionally shadows the agent view's `ShortcutsHelp` alt binding (Ctrl+X) inside the overlay; Ctrl+. still opens the cheatsheet there.
+        // The stop action stays for the close button. It has no key: Ctrl+C cancels, Ctrl+X opens shortcuts.
         ActionDef {
             id: ActionId::DashboardOverlayStop,
             label: "stop",
             description: "Stop agent, close session (back to dashboard)",
-            default_key: key!('x', CONTROL),
+            default_key: key!(Null),
             alt_keys: vec![],
             category: Category::Dashboard,
             context: When::DashboardOverlay,
             hint_priority: None,
-            hint_key_display: Some("Ctrl+x"),
+            hint_key_display: None,
             requires_confirmation: true,
             long_help: Some(
-                "Inside a session overlay, stops the attached agent and closes it, returning you to the dashboard list.\nRequires confirmation: press Ctrl+X twice.\nCtrl+. still opens the cheatsheet here; only Ctrl+X is taken over by stop.",
+                "Stops the attached agent and closes the overlay, returning to the dashboard list.\nReached from the close button, not from a key.\nCtrl+C cancels a running turn. Ctrl+X opens the keyboard cheatsheet.",
             ),
         },
     ]);

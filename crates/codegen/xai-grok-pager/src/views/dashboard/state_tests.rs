@@ -4808,16 +4808,19 @@ fn nav_key_disarms_pending_delete_confirm() {
         "a nav keypress must disarm the pending delete confirm",
     );
 
-    // Control — Ctrl+X itself preserves the armed confirm so the
-    // dispatcher can observe it and delete.
+    // Ctrl+X opens the cheatsheet and is not the stop key, so it disarms a pending delete.
     state.arm_delete(DashboardRowId::TopLevel(AgentId(0)));
-    let _ = state.handle_key(
+    let outcome = state.handle_key(
         &KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
         &reg,
     );
     assert!(
-        state.delete_confirm.is_some(),
-        "Ctrl+X must preserve the armed confirm for the dispatcher",
+        matches!(outcome, InputOutcome::Action(Action::DashboardOpenShortcutsHelp)),
+        "Ctrl+X on the dashboard list must open the cheatsheet, got {outcome:?}",
+    );
+    assert!(
+        state.delete_confirm.is_none(),
+        "Ctrl+X must not keep a delete confirm armed",
     );
 
     // The actual repro path: peek is open by default for a selected row, and `handle_peek_key`
@@ -4911,12 +4914,14 @@ fn ctrl_x_key_repeat_is_ignored() {
         state.handle_input(&repeat, &reg),
         InputOutcome::Unchanged
     ));
-    // A real press still resolves to the stop action.
     let press = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(
-        state.handle_input(&press, &reg),
-        InputOutcome::Action(Action::DashboardStop)
-    ));
+    assert!(
+        !matches!(
+            state.handle_input(&press, &reg),
+            InputOutcome::Action(Action::DashboardStop)
+        ),
+        "Ctrl+X must not stop a dashboard row",
+    );
 }
 
 /// An empty Enter within a second of a send is an echo of that send (key auto-repeat, a bouncing key switch, a double tap).
@@ -5058,10 +5063,9 @@ fn cmd_x_does_not_stop_or_delete_on_dashboard() {
     assert!(peek.delete_confirm.is_none());
 }
 
-/// Ctrl+X still stops when the dispatch (or peek reply) has a highlight.
-/// The new cut path must not steal the registry stop chord.
+/// Ctrl+X is not the dashboard stop chord, including when a draft has a highlight.
 #[test]
-fn ctrl_x_still_stops_with_a_prompt_highlight() {
+fn ctrl_x_does_not_stop_with_a_prompt_highlight() {
     let mut state = DashboardState::new();
     let reg = crate::actions::ActionRegistry::defaults();
     state.focus_row(DashboardRowId::TopLevel(AgentId(0)));
@@ -5069,30 +5073,23 @@ fn ctrl_x_still_stops_with_a_prompt_highlight() {
     state.dispatch.textarea.set_selection(0, 5);
     let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
     assert!(
-        matches!(
+        !matches!(
             state.handle_key(&ctrl_x, &reg),
             InputOutcome::Action(Action::DashboardStop)
         ),
-        "Ctrl+X must stay DashboardStop even with a dispatch highlight",
+        "Ctrl+X must not stop",
     );
-    assert_eq!(
-        state.dispatch.text(),
-        "hello world",
-        "Ctrl+X must not cut the dispatch highlight",
-    );
-    assert_eq!(state.dispatch.textarea.selection_range(), Some(0..5));
 
     let mut peek = state_with_open_peek();
     peek.peek_reply.set_text("reply draft");
     peek.peek_reply.textarea.set_selection(0, 5);
     assert!(
-        matches!(
+        !matches!(
             peek.handle_key(&ctrl_x, &reg),
             InputOutcome::Action(Action::DashboardStop)
         ),
-        "Ctrl+X with peek highlight must still stop",
+        "Ctrl+X with peek highlight must not stop",
     );
-    assert_eq!(peek.peek_reply.text(), "reply draft");
 }
 
 /// `gc_stale_refs` dropping the selected row (session left the list)

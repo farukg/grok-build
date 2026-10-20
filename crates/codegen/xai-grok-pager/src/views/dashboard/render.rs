@@ -2762,7 +2762,9 @@ fn render_footer(
             HintItem::new(key!(Tab), "input"),
         ];
         if show_ctrl_x {
-            hints.push(HintItem::new(stop, stop_label).pinned());
+            if stop != key!(Null) {
+                hints.push(HintItem::new(stop, stop_label).pinned());
+            }
         }
 
         ShortcutsBar::new(&hints)
@@ -2851,7 +2853,9 @@ fn render_footer(
                 esc_hint,
             ];
             if show_ctrl_x {
-                h.push(HintItem::new(stop, stop_label).pinned());
+                if stop != key!(Null) {
+                    h.push(HintItem::new(stop, stop_label).pinned());
+                }
             }
             h
         } else if vim_mode && !peek_focused {
@@ -2872,7 +2876,9 @@ fn render_footer(
                 h.insert(1, HintItem::new(send_open, "send+open"));
             }
             if show_ctrl_x {
-                h.push(HintItem::new(stop, stop_label).pinned());
+                if stop != key!(Null) {
+                    h.push(HintItem::new(stop, stop_label).pinned());
+                }
             }
             h
         } else if has_pending_question {
@@ -2884,7 +2890,9 @@ fn render_footer(
                 esc_hint,
             ];
             if show_ctrl_x {
-                h.push(HintItem::new(stop, stop_label).pinned());
+                if stop != key!(Null) {
+                    h.push(HintItem::new(stop, stop_label).pinned());
+                }
             }
             h
         } else if peek_focused && !reply_empty {
@@ -2900,7 +2908,9 @@ fn render_footer(
             let open_key = if peek_focused { send_key } else { enter };
             let mut h = vec![HintItem::new(open_key, "open"), tab_hint, esc_hint];
             if show_ctrl_x {
-                h.push(HintItem::new(stop, stop_label).pinned());
+                if stop != key!(Null) {
+                    h.push(HintItem::new(stop, stop_label).pinned());
+                }
             }
             h
         }
@@ -2968,7 +2978,9 @@ fn render_footer(
             h.push(HintItem::new(send_open, "send+open"));
         }
         if show_ctrl_x {
-            h.push(HintItem::new(stop, stop_label).pinned());
+            if stop != key!(Null) {
+                    h.push(HintItem::new(stop, stop_label).pinned());
+                }
         }
         h
     } else {

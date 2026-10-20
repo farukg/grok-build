@@ -38,6 +38,7 @@ default = []
 default-bazel = []
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }

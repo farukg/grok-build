@@ -496,17 +496,13 @@ impl AgentView {
         {
             hints.push(def.hint());
         }
-        if self.in_dashboard_overlay {
-            hints.insert(
-                0,
-                HintItem::new(
-                    registry
-                        .find(ActionId::DashboardOverlayStop)
-                        .map(|def| def.default_key)
-                        .unwrap_or(key!('x', CONTROL)),
-                    self.overlay_stop_label(),
-                ),
-            );
+        if self.in_dashboard_overlay
+            && let Some(key) = registry
+                .find(ActionId::DashboardOverlayStop)
+                .map(|def| def.default_key)
+                .filter(|key| *key != key!(Null))
+        {
+            hints.insert(0, HintItem::new(key, self.overlay_stop_label()));
         }
         if self.overlay_can_cycle {
             hints.insert(
@@ -3253,16 +3249,7 @@ impl AgentView {
                     .render(layout.shortcuts, buf);
             }
             ShortcutsBarContent::Pane(hints) => {
-                let help_hint = registry.find(ActionId::ShortcutsHelp).map(|def| {
-                    let mut hint = def.hint();
-                    if in_dashboard_overlay
-                        && def.default_key == key!('x', CONTROL)
-                        && let Some(alt) = def.alt_keys.first()
-                    {
-                        hint.keys = vec![*alt];
-                    }
-                    hint
-                });
+                let help_hint = registry.find(ActionId::ShortcutsHelp).map(|def| def.hint());
                 ShortcutsBar::new(&hints)
                     .compact(5, help_hint)
                     .with_pending(pending_hint)

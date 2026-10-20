@@ -212,13 +212,18 @@ pub(crate) fn dock_requirement_pin() -> Option<bool> {
 pub(crate) fn dock_config_value() -> Option<bool> {
     dock_flag_in(&xai_grok_shell::config::load_effective_config().ok()?)
 }
+/// `GROK_DOCK` / `GROK_DOCK_V2` process-env override for the dock gate.
+pub(crate) fn dock_env_override() -> Option<bool> {
+    use xai_grok_shell::agent::config::{Feature, FeatureSources};
+    FeatureSources::from_process_env(Feature::Dock)
+        .env
+        .or_else(|| xai_grok_config::env_bool("GROK_DOCK_V2"))
+}
 /// Registry precedence: pin, `GROK_DOCK` / `GROK_DOCK_V2`, config, remote `dock_enabled`, default off.
 pub(crate) fn resolve_dock_enabled(remote: Option<bool>) -> bool {
     use xai_grok_shell::agent::config::{Feature, FeatureSources};
     let mut sources = FeatureSources::from_process_env(Feature::Dock);
-    if sources.env.is_none() {
-        sources.env = xai_grok_config::env_bool("GROK_DOCK_V2");
-    }
+    sources.env = dock_env_override();
     sources.pin = dock_requirement_pin();
     sources.config = dock_config_value();
     sources.remote = remote;

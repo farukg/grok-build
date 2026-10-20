@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 use xai_grok_config_types::{
-    ENV_FILE_ACCELERATION_ROUTES, Feature, resolve_file_acceleration_routes,
+    resolve_file_acceleration_routes, Feature, ENV_FILE_ACCELERATION_ROUTES,
 };
 use xai_grok_telemetry::events::{
     FileAccelerationArm, FileAccelerationSessionEnded, FileAccelerationSessionStarted,
@@ -26,12 +26,12 @@ use crate::agent::config::Config;
 
 /// The `file_acceleration` feature and route override a session spawns with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct FileAccelerationSettings {
-    pub(crate) is_enabled: bool,
-    pub(crate) routes: Option<Arc<str>>,
+pub struct FileAccelerationSettings {
+    pub is_enabled: bool,
+    pub routes: Option<Arc<str>>,
 }
 
-pub(crate) fn settings(config: &Config) -> FileAccelerationSettings {
+pub fn settings(config: &Config) -> FileAccelerationSettings {
     FileAccelerationSettings {
         is_enabled: config.is_feature_enabled(Feature::FileAcceleration),
         routes: resolve_file_acceleration_routes(
@@ -48,7 +48,7 @@ pub(crate) fn settings(config: &Config) -> FileAccelerationSettings {
 /// The session's file system and the owner of its accelerator summary. `acp_fs` is the client-backed file system
 /// when the client serves files; `None` means the local disk. Only the local disk reaches the accelerator, and
 /// `gate` is not built at all for an ACP session.
-pub(crate) fn select_session_fs(
+pub fn select_session_fs(
     acp_fs: Option<Arc<dyn AsyncFileSystem>>,
     gate: impl FnOnce() -> FileAccelerationGate,
 ) -> AcceleratedFs {
@@ -59,7 +59,7 @@ pub(crate) fn select_session_fs(
 }
 
 /// The gate for one local session, reading the process's sandbox state.
-pub(crate) fn gate(settings: FileAccelerationSettings, session_id: &str) -> FileAccelerationGate {
+pub fn gate(settings: FileAccelerationSettings, session_id: &str) -> FileAccelerationGate {
     let decision = decide_gate(GateInputs {
         is_feature_enabled: settings.is_enabled,
         configured_profile: xai_grok_sandbox::configured_profile_name(),
@@ -95,18 +95,18 @@ pub(crate) fn gate(settings: FileAccelerationSettings, session_id: &str) -> File
 
 /// What the gate reads, passed in so [`decide_gate`] depends on nothing else.
 #[derive(Debug, Clone, Copy)]
-struct GateInputs<'a> {
-    is_feature_enabled: bool,
+pub struct GateInputs<'a> {
+    pub is_feature_enabled: bool,
     /// The profile recorded at startup, `off` included; `None` when startup recorded none.
-    configured_profile: Option<&'a str>,
+    pub configured_profile: Option<&'a str>,
     /// The confining profile this process was started with, if any.
-    requested_confinement: Option<&'a str>,
+    pub requested_confinement: Option<&'a str>,
     /// This process is the child of a sandbox's bwrap re-exec.
-    is_inside_bwrap: bool,
+    pub is_inside_bwrap: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GateDecision {
+pub enum GateDecision {
     Enabled,
     FeatureOff,
     /// No profile was recorded, so there is no positive signal that nothing confines this process.
@@ -115,7 +115,7 @@ enum GateDecision {
     InsideBwrap,
 }
 
-fn decide_gate(inputs: GateInputs<'_>) -> GateDecision {
+pub fn decide_gate(inputs: GateInputs<'_>) -> GateDecision {
     if !inputs.is_feature_enabled {
         return GateDecision::FeatureOff;
     }
@@ -127,6 +127,90 @@ fn decide_gate(inputs: GateInputs<'_>) -> GateDecision {
         (Some(_), Some(_)) => GateDecision::SandboxRequested,
         (Some(_), None) => GateDecision::Enabled,
     }
+}
+
+/// Records the unconfined startup profile. The process lock accepts the first call only.
+pub fn record_off_sandbox_profile() {
+    xai_grok_sandbox::set_configured_profile("off");
+}
+
+/// The file system a local session gets after the sandbox gate. `has_session` is true only when
+/// the process accelerator wrapped it.
+pub async fn read_local_acceleration(
+    feature_enabled: bool,
+    session_id: &str,
+    path: &std::path::Path,
+) -> Result<(bool, Vec<u8>), String> {
+    let settings = FileAccelerationSettings {
+        is_enabled: feature_enabled,
+        routes: None,
+    };
+    let accelerated = select_session_fs(None, || gate(settings, session_id));
+    let has_session = accelerated.session.is_some();
+    let bytes = accelerated
+        .fs
+        .read_file(path)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok((has_session, bytes))
+}
+
+/// A client-owned file system never builds the gate and never wraps.
+pub fn client_owned_files_skip_acceleration() -> bool {
+    let owned: std::sync::Arc<dyn AsyncFileSystem> =
+        std::sync::Arc::new(file_acceleration_client_fs());
+    let mut gate_built = false;
+    let selected = select_session_fs(Some(owned), || {
+        gate_built = true;
+        xai_grok_tools::computer::file_acceleration::FileAccelerationGate::Disabled
+    });
+    !gate_built && selected.session.is_none()
+}
+
+fn file_acceleration_client_fs() -> impl AsyncFileSystem {
+    xai_grok_tools::computer::local::MockFs::new()
+}
+
+/// The preserving factory, on a fresh slot, emits a session-started notice and serves the inner bytes.
+pub async fn preserving_factory_start_notice(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    use std::sync::Mutex;
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&notices);
+    let sink = Arc::new(move |notice| {
+        notices_push(&recorded, notice);
+    });
+    let accelerated = xai_grok_tools::computer::file_acceleration::apply_accelerator(
+        xai_grok_tools::computer::file_acceleration::preserving_file_accelerator(),
+        xai_grok_tools::computer::file_acceleration::FileAccelerationGate::Enabled(
+            xai_grok_tools::computer::file_acceleration::AccelerationContext { routes: None, sink },
+        ),
+    );
+    let started = {
+        let guard = notices.lock().unwrap_or_else(|poison| poison.into_inner());
+        matches!(
+            guard.first(),
+            Some(
+                xai_grok_tools::computer::file_acceleration::AccelerationNotice::SessionStarted { .. }
+            )
+        )
+    };
+    if !started || accelerated.session.is_none() {
+        return Err("preserving factory did not start a session".to_string());
+    }
+    accelerated
+        .fs
+        .read_file(path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn notices_push(
+    slot: &std::sync::Mutex<Vec<xai_grok_tools::computer::file_acceleration::AccelerationNotice>>,
+    notice: xai_grok_tools::computer::file_acceleration::AccelerationNotice,
+) {
+    slot.lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .push(notice);
 }
 
 /// One notice as the event it is logged as.

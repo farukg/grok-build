@@ -481,6 +481,10 @@ pub enum Action {
     /// Toggle vim-style scrollback keybindings (j/k, h/l, g/G, y/Y, etc.).
     /// Delegates to `set_vim_mode` so the new value is persisted to `[ui].vim_mode` in config.toml, the same path as the settings modal.
     ToggleVimMode,
+    /// Toggle the experimental dock (`/dock` slash-command path). PAGER-owned: flips the runtime
+    /// gate at once and persists an explicit `[features].dock` override via `Effect::PersistFeatureOverride`.
+    /// A `requirements.toml` pin outranks the command and is reported instead.
+    ToggleDock,
     /// Set vim-style scrollback keybindings. SHELL-owned: persisted to `[ui].vim_mode` in config.toml via `Effect::PersistSetting`.
     /// Used by the settings modal; the `ToggleVimMode` variant covers the `/vim-mode` slash-command path.
     SetVimMode(bool),

@@ -799,11 +799,9 @@ fn build_entries_dims_dashboard_list_vs_overlay() {
     );
 }
 
-/// `DashboardStop` (list) and `DashboardOverlayStop` (overlay) share. CtrlCtrl+X and the Dashboard
-/// category. The per-category dedup must keep whichever matches the active surface (lit) instead of
-/// always keeping the first-registered (list) def.
+/// Stop and close have no key, so they do not shadow the cheatsheet's Ctrl+X.
 #[test]
-fn build_entries_overlay_stop_wins_dedup_and_shadows_cheatsheet_ctrl_x() {
+fn cheatsheet_keeps_ctrl_x_when_stop_is_unbound() {
     let registry = ActionRegistry::defaults();
     let ctrl_x = crate::key!('x', CONTROL);
     // Match the two Ctrl+X rows by ActionId: the list and overlay stops carry different labels ("delete" vs "stop")
@@ -853,50 +851,19 @@ fn build_entries_overlay_stop_wins_dedup_and_shadows_cheatsheet_ctrl_x() {
             .expect("the ShortcutsHelp row must be present")
     };
 
-    // Dashboard LIST: the list stop survives, lit; the cheatsheet row keeps Ctrl+X (no overlay up)
     let list = build_entries(&[When::DashboardFocused, When::Always], &registry, true);
-    assert_eq!(
-        stop_rows(&list),
-        vec![("Stop / Delete agent".to_string(), false)],
-    );
-    assert_eq!(
-        stop_id(&list),
-        Some(ActionId::DashboardStop),
-        "the lit list `stop` is inserted first and never replaced — keeps DashboardStop",
-    );
-    assert!(
-        help_keys(&list).contains(&ctrl_x),
-        "without an overlay the cheatsheet row keeps its Ctrl+X binding",
-    );
+    assert!(stop_rows(&list).is_empty());
+    assert_eq!(stop_id(&list), None);
+    assert!(help_keys(&list).contains(&ctrl_x));
 
-    // Session OVERLAY: the overlay stop survives, lit; the cheatsheet row drops the shadowed Ctrl+X but keeps Ctrl+
     let overlay = build_entries(
         &[When::AgentScreen, When::Always, When::DashboardOverlay],
         &registry,
         true,
     );
-    assert_eq!(
-        stop_rows(&overlay),
-        vec![(
-            "Stop agent, close session (back to dashboard)".to_string(),
-            false
-        )],
-        "the overlay must show exactly the overlay `stop`, lit",
-    );
-    assert_eq!(
-        stop_id(&overlay),
-        Some(ActionId::DashboardOverlayStop),
-        "the lit overlay `stop` replaces the dimmed list row — carries DashboardOverlayStop",
-    );
-    let keys = help_keys(&overlay);
-    assert!(
-        !keys.contains(&ctrl_x),
-        "inside the overlay the cheatsheet row must drop the shadowed Ctrl+X",
-    );
-    assert!(
-        !keys.is_empty(),
-        "the cheatsheet row must keep its non-shadowed binding (Ctrl+.)",
-    );
+    assert!(stop_rows(&overlay).is_empty());
+    assert_eq!(stop_id(&overlay), None);
+    assert!(help_keys(&overlay).contains(&ctrl_x));
 }
 
 #[test]

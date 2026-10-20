@@ -13604,6 +13604,7 @@ dependencies = [
 name = "xai-grok-agent"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "dunce",
  "fs2",

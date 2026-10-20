@@ -162,6 +162,32 @@ impl LspManager {
         self.process_scope = scope;
         self
     }
+}
+
+/// Starts the servers from disk config. An empty map leaves the LSP tool unattached.
+pub fn start_lsp_backend(
+    servers: BTreeMap<String, LspServerConfig>,
+    workspace: PathBuf,
+    process_scope: Option<ProcessScope>,
+) -> Option<Arc<dyn super::LspBackend>> {
+    if servers.is_empty() {
+        return None;
+    }
+    let manager = Arc::new(tokio::sync::Mutex::new(
+        LspManager::new(
+            servers,
+            workspace,
+            true,
+            crate::notification::ToolNotificationHandle::noop(),
+        )
+        .with_process_scope(process_scope),
+    ));
+    let adapter = Arc::new(super::LspBackendAdapter::new(manager));
+    adapter.ensure_started_background();
+    Some(adapter)
+}
+
+impl LspManager {
 
     pub fn is_initialized(&self) -> bool {
         self.initialized

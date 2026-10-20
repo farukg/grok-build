@@ -78,6 +78,7 @@ pub(crate) fn test_app() -> AppView {
     AppView {
         pending_startup: None,
         active_view: ActiveView::Welcome,
+        sidebar_chrome: crate::app::app_view::SidebarChrome::default(),
         auth_return_view: None,
         agents: crate::app::session_views::SessionViews::new(),
         next_agent_id: 0,
@@ -3357,9 +3358,9 @@ fn prompt_paging_scope_matches_agent_surface() {
         (
             "dashboard session overlay",
             Surface::DashboardOverlay,
-            false,
+            true,
         ),
-        ("dashboard attached popup", Surface::DashboardPopup, false),
+        ("dashboard attached popup", Surface::DashboardPopup, true),
     ] {
         let screen_mode = match surface {
             Surface::Agent(mode) => mode,
@@ -7497,305 +7498,84 @@ fn overlay_esc_clears_matcher_before_exiting_plan_preview() {
         "once the matcher is cleared, Esc must back out, got {outcome2:?}",
     );
 }
-/// Overlay Ctrl+X on an agent with a RUNNING turn routes to the agent view's existing cancel (`Action::CancelTurn`, same as Ctrl+C).
-/// It never arms the close confirm: mashing Ctrl+X to stop a turn must not be able to close the session.
+/// Ctrl+X opens shortcuts. It must not cancel or close an overlay session. Ctrl+C does that.
 #[test]
-fn overlay_ctrl_x_busy_agent_cancels_turn_without_arming() {
+fn overlay_ctrl_x_does_not_stop_or_close() {
     let (mut app, id) = neutral_overlay_app();
     app.agents.get_mut(&id).unwrap().session.state = crate::app::agent::AgentState::TurnRunning;
-    for _ in 0..2 {
-        let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-        assert!(
-            matches!(outcome, InputOutcome::Action(Action::CancelTurn)),
-            "Ctrl+X on a busy agent must cancel the turn, got {outcome:?}",
-        );
-        assert!(
-            app.pending_action.is_none(),
-            "Ctrl+X on a busy agent must not arm the close confirm",
-        );
-    }
-    assert!(
-        app.agents.get(&id).unwrap().active_modal.is_none(),
-        "Ctrl+X must be intercepted before the agent sees it",
-    );
-}
-/// Overlay Ctrl+X during `/compact` cancels compaction (same as `[stop]`).
-#[test]
-fn overlay_ctrl_x_compact_running_cancels_without_arming() {
-    use crate::app::agent::{AgentCommand, AgentState};
-    let (mut app, id) = neutral_overlay_app();
-    app.agents.get_mut(&id).unwrap().session.state = AgentState::CommandRunning {
-        command: AgentCommand::Compact,
-        started_at: std::time::Instant::now(),
-    };
     let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
     assert!(
-        matches!(outcome, InputOutcome::Action(Action::CancelTurn)),
-        "Ctrl+X during /compact must cancel, got {outcome:?}",
+        !matches!(
+            outcome,
+            InputOutcome::Action(Action::CancelTurn | Action::DashboardOverlayStop)
+        ),
+        "Ctrl+X must not stop the overlay session, got {outcome:?}",
     );
-    assert!(
-        app.pending_action.is_none(),
-        "Ctrl+X during /compact must not arm close confirm",
-    );
-}
-#[test]
-fn v1_overlay_ctrl_x_command_or_cancelling_agent_arms_close() {
-    use crate::app::agent::{AgentCommand, AgentState};
-    let states = [
-        AgentState::TurnCancelling,
-        AgentState::CommandCancelling {
-            command: AgentCommand::Compact,
-        },
-    ];
-    for state in states {
-        let (mut app, id) = neutral_overlay_app();
-        app.agents.get_mut(&id).unwrap().session.state = state.clone();
-        let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-        assert!(
-            matches!(outcome, InputOutcome::Changed),
-            "v1 Ctrl+X on a {state:?} agent must arm close, got {outcome:?}",
-        );
-        assert!(
-            app.pending_action
-                .as_ref()
-                .is_some_and(|pending| matches!(pending.action, Action::DashboardOverlayStop)),
-            "v1 Ctrl+X on a {state:?} agent must retain its old close confirmation",
-        );
-    }
-}
-#[test]
-fn v2_overlay_ctrl_x_command_or_cancelling_agent_stops_without_arming_archive() {
-    use crate::app::agent::{AgentCommand, AgentState};
-    let states = [
-        AgentState::TurnCancelling,
-        AgentState::CommandCancelling {
-            command: AgentCommand::Compact,
-        },
-    ];
-    for state in states {
-        let (mut app, id) = neutral_overlay_app();
-        app.workspace_dashboard_enabled = true;
-        app.agents.get_mut(&id).unwrap().session.state = state.clone();
-        let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-        assert!(
-            matches!(outcome, InputOutcome::Action(Action::DashboardOverlayStop)),
-            "v2 Ctrl+X on a {state:?} agent must stop before archive, got {outcome:?}",
-        );
-        assert!(app.pending_action.is_none());
-    }
-}
-#[test]
-fn overlay_ctrl_x_needs_input_can_still_confirm_archive() {
-    let (mut app, id) = neutral_overlay_app();
-    app.workspace_dashboard_enabled = true;
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .permission_queue
-        .push_back(crate::app::agent_view::test_fixtures::make_followup_permission_state());
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(outcome, InputOutcome::Changed));
-    assert!(
-        app.pending_action
-            .as_ref()
-            .is_some_and(|pending| matches!(pending.action, Action::DashboardOverlayStop)),
-        "NeedsInput with nothing concrete to stop must retain confirmed archive"
-    );
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    let InputOutcome::Action(action @ Action::DashboardOverlayStop) = outcome else {
-        panic!("second Ctrl+X must confirm archive, got {outcome:?}");
-    };
-    let effects = super::super::dispatch::dispatch(action, &mut app);
-    assert!(!app.agents.contains_key(&id));
-    assert!(effects.iter().any(|effect| matches!(
-        effect,
-        crate::app::actions::Effect::UnregisterActiveSession { .. }
-    )));
-}
-#[test]
-fn overlay_ctrl_x_background_work_dispatches_stop_without_arming_archive() {
-    let (mut app, id) = neutral_overlay_app();
-    app.workspace_dashboard_enabled = true;
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .session
-        .scheduled_tasks
-        .insert(
-            "loop-1".into(),
-            crate::app::agent::ScheduledTaskInfo {
-                task_id: "loop-1".into(),
-                prompt: "keep going".into(),
-                human_schedule: "every 5m".into(),
-                created_at: std::time::Instant::now(),
-                next_fire_at: None,
-                tag: "loop".into(),
-                last_subagent_id: None,
-            },
-        );
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(
-        outcome,
-        InputOutcome::Action(Action::DashboardOverlayStop)
-    ));
-    assert!(
-        app.pending_action.is_none(),
-        "background work must be stopped before archive can arm"
-    );
-}
-#[test]
-fn v1_overlay_ctrl_x_background_work_retains_close_confirmation() {
-    let (mut app, id) = neutral_overlay_app();
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .session
-        .scheduled_tasks
-        .insert(
-            "loop-1".into(),
-            crate::app::agent::ScheduledTaskInfo {
-                task_id: "loop-1".into(),
-                prompt: "keep going".into(),
-                human_schedule: "every 5m".into(),
-                created_at: std::time::Instant::now(),
-                next_fire_at: None,
-                tag: "loop".into(),
-                last_subagent_id: None,
-            },
-        );
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(outcome, InputOutcome::Changed));
-    assert!(app.pending_action.is_some());
-    assert_eq!(
-        app.agents
-            .get(&id)
-            .unwrap_or_else(|| panic!("missing map entry"))
-            .session
-            .scheduled_tasks
-            .len(),
-        1
-    );
-}
-#[test]
-fn v2_overlay_ctrl_x_replay_is_consumed_without_arming_archive() {
-    let (mut app, id) = neutral_overlay_app();
-    app.workspace_dashboard_enabled = true;
-    let agent = app.agents.get_mut(&id).unwrap();
-    agent.session.loading_replay = true;
-    agent.session.state = crate::app::agent::AgentState::TurnRunning;
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(outcome, InputOutcome::Changed));
     assert!(app.pending_action.is_none());
+    assert!(app.agents.contains_key(&id));
 }
+
+/// A minimal-mode session cannot adopt the pager-wide F6/F7 chrome. The chrome
+/// stays pending instead, so a capture from that session cannot overwrite the
+/// global flags, and its first non-minimal paint adopts them.
 #[test]
-fn v2_overlay_ctrl_x_confirms_local_close_for_unbound_working_agent() {
-    let (mut app, id) = neutral_overlay_app();
-    app.workspace_dashboard_enabled = true;
-    let agent = app.agents.get_mut(&id).unwrap();
-    agent.session.session_id = None;
-    agent.session.state = crate::app::agent::AgentState::CommandRunning {
-        command: crate::app::agent::AgentCommand::RestoreCode,
-        started_at: std::time::Instant::now(),
-    };
-    let first = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(first, InputOutcome::Changed));
-    assert_eq!(
-        app.pending_action
-            .as_ref()
-            .and_then(|pending| pending.label),
-        Some("close this session")
-    );
-    let second = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    let InputOutcome::Action(action @ Action::DashboardOverlayStop) = second else {
-        panic!("second Ctrl+X must confirm local close, got {second:?}");
-    };
-    let effects = super::super::dispatch::dispatch(action, &mut app);
-    assert!(effects.is_empty());
-    assert!(!app.agents.contains_key(&id));
-}
-#[test]
-fn overlay_ctrl_x_idle_agent_arms_close_confirm() {
-    let (mut app, _id) = neutral_overlay_app();
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "first Ctrl+X on an idle agent must arm (not fire), got {outcome:?}",
-    );
-    let pending = app.pending_action.as_ref().expect("confirm must be armed");
-    assert!(
-        matches!(pending.action, Action::DashboardOverlayStop),
-        "pending action must be the overlay stop",
-    );
-    assert_eq!(pending.label, Some("close this session"));
-    assert!(
-        !pending.expired(),
-        "the confirm window must still be live right after arming",
-    );
-    assert!(
-        app.pending_effects.is_empty(),
-        "no CancelTurn for an idle agent",
-    );
-}
-#[test]
-fn workspace_overlay_ctrl_x_uses_archive_confirmation_copy() {
-    let (mut app, id) = neutral_overlay_app();
-    app.workspace_dashboard_enabled = true;
-    app.agents.get_mut(&id).unwrap().session.session_id =
-        Some(acp::SessionId::new("workspace-archive"));
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(matches!(outcome, InputOutcome::Changed));
-    let pending = app.pending_action.as_ref().expect("confirm must be armed");
-    assert!(matches!(pending.action, Action::DashboardOverlayStop));
-    assert_eq!(pending.label, Some("archive this session"));
-}
-#[test]
-fn overlay_ctrl_x_second_press_fires_overlay_stop() {
-    let (mut app, _id) = neutral_overlay_app();
-    let _ = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(app.pending_action.is_some(), "first press must arm");
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(
-        matches!(outcome, InputOutcome::Action(Action::DashboardOverlayStop)),
-        "second Ctrl+X must fire the confirmed stop, got {outcome:?}",
-    );
-    assert!(
-        app.pending_action.is_none(),
-        "firing must consume the pending confirm",
-    );
-}
-/// Overlay Ctrl+X then ANY other key: the pending-action fast path disarms the confirm, and the other key is still processed normally.
-/// (The dashboard's stop-confirm rule: any other press cancels.)
-#[test]
-fn overlay_ctrl_x_other_key_disarms_confirm() {
-    let (mut app, _id) = neutral_overlay_app();
-    let _ = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(app.pending_action.is_some(), "first press must arm");
-    let _ = app.handle_input(&key_event(KeyCode::Char('a'), KeyModifiers::NONE));
-    assert!(
-        app.pending_action.is_none(),
-        "any other key must disarm the pending stop confirm",
-    );
-    let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "Ctrl+X after a disarm must re-arm, not fire, got {outcome:?}",
-    );
-}
-/// OUTSIDE the overlay (a plain agent view, no dashboard attach), Ctrl+X must keep its existing agent-screen behaviour.
-/// The overlay stop binding lives in `When::DashboardOverlay` only.
-#[test]
-fn plain_agent_ctrl_x_does_not_arm_overlay_stop() {
+fn minimal_session_keeps_pending_sidebar_chrome_until_it_leaves_minimal() {
     let mut app = test_app_with_agent();
-    let id = super::super::agent::AgentId(0);
-    app.active_view = ActiveView::Agent(id);
-    let _ = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::CONTROL));
+    let root = super::super::agent::AgentId(0);
+    let child_id = super::super::agent::AgentId(1);
+    let child = idle_child_view(&app, 1, "chrome-minimal-child");
+    crate::app::session_views::test_support::link_child(
+        &mut app.agents,
+        root,
+        child_id,
+        *child,
+        std::time::Instant::now(),
+    );
+
+    // The root session adopts first; simulate a pager-wide F7 toggle.
+    app.reconcile_sidebar_chrome();
+    app.sidebar_chrome.f7_open = true;
+    app.sidebar_chrome.f7_focused = true;
+
+    // Switch to a minimal child: no adoption, and no capture clobber.
+    app.active_view = ActiveView::Agent(child_id);
+    app.agents
+        .get_mut(&child_id)
+        .unwrap()
+        .prompt
+        .set_screen_mode(ScreenMode::Minimal);
+    app.reconcile_sidebar_chrome();
     assert!(
-        !app.pending_action
-            .as_ref()
-            .is_some_and(|p| matches!(p.action, Action::DashboardOverlayStop)),
-        "overlay stop must not arm outside the dashboard overlay",
+        app.sidebar_chrome.applied_to == Some(root),
+        "the chrome must stay pending on the last applied session"
+    );
+    assert!(
+        !app.agents.get(&child_id).unwrap().sidebar_open_flags().1,
+        "a minimal session must not adopt the chrome"
+    );
+    app.capture_sidebar_chrome();
+    assert!(
+        app.sidebar_chrome.f7_open,
+        "a capture from the minimal session must not overwrite the pending chrome"
+    );
+
+    // The first non-minimal paint adopts the chrome.
+    app.agents
+        .get_mut(&child_id)
+        .unwrap()
+        .prompt
+        .set_screen_mode(ScreenMode::Fullscreen);
+    app.reconcile_sidebar_chrome();
+    assert!(app.sidebar_chrome.applied_to == Some(child_id));
+    assert!(
+        app.agents.get(&child_id).unwrap().sidebar_open_flags().1,
+        "the former minimal session adopts the pager-wide F7 state"
     );
 }
+
+
+
+
 /// When the attached agent disappears externally,
 /// the `handle_input` filter must clear `attached_agent`
 /// immediately rather than waiting for the next draw frame.

@@ -336,7 +336,7 @@ impl AgentView {
             }
         }
 
-        if prompt_paging && self.prompt_mode == PromptMode::Normal {
+        if prompt_paging {
             let page_action = [ActionId::PageUp, ActionId::PageDown]
                 .into_iter()
                 .find(|id| registry.matches_id(*id, key));

@@ -320,6 +320,8 @@ pub struct SidebarRender<'a> {
     pub edge: SidebarEdge,
     pub state: &'a SidebarState,
     pub hovered: Option<SidebarLine>,
+    /// Keyboard focus. The frame uses the selection color only while this column has it.
+    pub focused: bool,
     pub theme: &'a Theme,
 }
 
@@ -332,6 +334,7 @@ impl Sidebar {
             edge,
             state,
             hovered,
+            focused,
             theme,
         } = params;
         let layout = SidebarLayout::compute(area, heights);
@@ -342,7 +345,7 @@ impl Sidebar {
             .border_type(BorderType::Rounded)
             .border_style(
                 Style::default()
-                    .fg(if state.cursor.is_some() {
+                    .fg(if focused {
                         theme.selection_border
                     } else {
                         theme.gray_dim

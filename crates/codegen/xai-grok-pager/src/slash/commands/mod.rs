@@ -13,6 +13,7 @@ pub mod copy;
 pub mod dashboard;
 pub mod debug;
 pub mod delete;
+pub mod dock;
 pub mod docs;
 pub mod doctor;
 pub mod edit_prompt;
@@ -135,6 +136,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(compact_mode::CompactModeCommand),
         Arc::new(timestamps::TimestampsCommand),
         Arc::new(toggle_mouse_reporting::ToggleMouseReportingCommand),
+        Arc::new(dock::DockCommand),
         // Screen-mode switchers: visible only in the opposite mode.
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::minimal()),
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::fullscreen()),
@@ -230,6 +232,7 @@ mod tests {
             reg.get("vim-mode").is_some(),
             "/vim-mode should be registered"
         );
+        assert!(reg.get("dock").is_some(), "/dock should be registered");
         assert!(reg.get("find").is_some(), "/find should be registered");
     }
     #[test]

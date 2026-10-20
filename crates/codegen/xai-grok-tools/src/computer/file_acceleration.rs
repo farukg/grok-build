@@ -33,6 +33,102 @@ pub fn install_file_accelerator(factory: FileAcceleratorFactory) {
     FILE_ACCELERATOR.install(factory);
 }
 
+/// Byte-preserving wrapper installed for local sessions. Reads, writes, and searches
+/// are the inner file system's; the wrapper only records that a session started.
+pub fn preserving_file_accelerator() -> FileAcceleratorFactory {
+    Box::new(|inner, context| {
+        let sink = Arc::clone(&context.sink);
+        sink(AccelerationNotice::SessionStarted {
+            arm: AccelerationArm::Treatment,
+        });
+        let finish = Arc::clone(&context.sink);
+        AcceleratedFs {
+            fs: Arc::new(PreservingFs { inner }),
+            session: Some(AccelerationSession::new(move || {
+                finish(AccelerationNotice::SessionEnded {
+                    arm: AccelerationArm::Treatment,
+                    duration_ms: 0,
+                    served: 0,
+                    declined: BTreeMap::new(),
+                    failed: BTreeMap::new(),
+                    served_latency: [0; LATENCY_BUCKET_EDGES_MS.len() + 1],
+                    saturated: 0,
+                });
+            })),
+        }
+    })
+}
+
+/// Installs [`preserving_file_accelerator`] on the process slot. Later installs are ignored.
+pub fn install_preserving_file_accelerator() {
+    install_file_accelerator(preserving_file_accelerator());
+}
+
+/// Runs `factory` against a new slot, so a test can see a start notice without touching the process slot.
+pub fn apply_accelerator(
+    factory: FileAcceleratorFactory,
+    gate: FileAccelerationGate,
+) -> AcceleratedFs {
+    let slot = AcceleratorSlot(OnceLock::new());
+    slot.install(factory);
+    slot.local_fs(gate)
+}
+
+struct PreservingFs {
+    inner: Arc<dyn AsyncFileSystem>,
+}
+
+#[async_trait::async_trait]
+impl AsyncFileSystem for PreservingFs {
+    async fn read_file(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<Vec<u8>, crate::computer::types::ComputerError> {
+        self.inner.read_file(path).await
+    }
+
+    fn supports_bounded_read(&self) -> bool {
+        self.inner.supports_bounded_read()
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &std::path::Path,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, crate::computer::types::ComputerError> {
+        self.inner.read_file_bounded(path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        path: &std::path::Path,
+        data: &[u8],
+    ) -> Result<(), crate::computer::types::ComputerError> {
+        self.inner.write_file(path, data).await
+    }
+
+    async fn delete_file(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<(), crate::computer::types::ComputerError> {
+        self.inner.delete_file(path).await
+    }
+
+    async fn file_exists(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<bool, crate::computer::types::ComputerError> {
+        self.inner.file_exists(path).await
+    }
+
+    fn offer_content_search(
+        &self,
+        request: &crate::computer::content_search::ContentSearchRequest,
+    ) -> Option<crate::computer::content_search::ContentSearchJob> {
+        self.inner.offer_content_search(request)
+    }
+}
+
 /// The session's local file system, wrapped only when `gate` is enabled and an accelerator is installed.
 #[must_use]
 pub fn local_fs(gate: FileAccelerationGate) -> AcceleratedFs {
