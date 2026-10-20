@@ -1,6 +1,6 @@
 # Fork status
 
-As of 2026-10-19. Upstream base: `origin/main` = `2bdd1d6a` (`xai-org/grok-build`).
+As of 2026-10-20. Upstream base: `origin/main` = `2bdd1d6a` (`xai-org/grok-build`).
 `main` is the integration branch: everything that compiles and passes its tests lands here.
 On 2026-10-19 Faruk ordered a one-time history fold: `main`'s fork delta over `2bdd1d6a`
 was re-committed as the seven thematic fold commits below with a byte-identical tree.
@@ -55,6 +55,7 @@ The pre-fold history (all commit shas cited below as "pre-fold") is preserved in
 | M15 F6/F7 settings saved globally and per session (`panel-settings/`, `g` target, `t` turn default), restored after restart | f4 · `app/panel_settings/` |
 | Fix: chat-state replaces the first answer when a tool call is answered twice (double `tool_result` → Anthropic 400) | f2 |
 | CI: `linux-build` builds `grok` on every push to `main`; manual `linux-test` runs pager, shell-removal, chat-state and sampling-types tests | f1 |
+| LSP attach (config-driven backend, tool only with a server) + preserving file-acceleration factory install with session gate; pager-global F6/F7 chrome with focus-coloured frames (minimal sessions defer adoption), prompt PgUp/PgDn paging incl. overlays, Home/End = previous user message / bottom+follow, Ctrl+X unbound from stop/close and opens the cheatsheet, dock keyboard-focus row, `/dock` runtime toggle persisting `features.dock` | f2, f3, f4, f6 · goal session 2026-10-20, skeptic-verified from source |
 
 Pre-fold test evidence (old history, `archive/pre-fold-main`): full `xai-grok-pager`,
 `xai-grok-shell`, `xai-grok-sampling-types` runs green except the known failures below;
@@ -130,6 +131,8 @@ content reached `main` through squashes before the fold. Each was verified and d
 | `grb/f1request` (`3b54b425`) | same tip as `grb/f1core`; request-projection worktree branch; deleted |
 | `grb/f1display` (`8475aa9c`) | Message Display rows on `main`; old renderer WIP rejected (`reviews/f1display.md`); deleted |
 | `grb/m11` (`bb27844e`) | B1 on `main` via M11 squash; open M11 items are TODO; deleted |
+| `grb/f1core` (`acc62327`, second cut) | mixed sections squashed onto `main` (`5c36f151`, 2026-10-20) |
+| `grb/m11` (`6400f9b0`, second cut) | B2+B3+list/outcome squashed onto `main` (`33db3eb8`, 2026-10-20) |
 
 ## Archive branches (history only, do not build on them)
 - `archive/pre-fold-main` — the complete pre-fold `main` history (2026-10-19, tip `3da4bf09`+docs);
