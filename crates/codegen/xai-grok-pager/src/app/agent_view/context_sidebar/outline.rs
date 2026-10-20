@@ -6,7 +6,7 @@ use crate::scrollback::block::MessageKind;
 use crate::views::sidebar::{RowIdx, SectionIdx, SidebarLine};
 use crate::views::tree_nav::{TreeRow, visible_anchor};
 use strum::IntoEnumIterator;
-use xai_grok_shell::sampling::switchable_categories;
+use xai_grok_shell::sampling::all_categories;
 
 /// A foldable section of the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
@@ -36,7 +36,7 @@ impl SectionId {
 
     pub(super) fn row_count(self) -> usize {
         match self {
-            Self::Context => switchable_categories().len(),
+            Self::Context => all_categories().len(),
             Self::Display => MessageKind::settings_kinds().len(),
         }
     }

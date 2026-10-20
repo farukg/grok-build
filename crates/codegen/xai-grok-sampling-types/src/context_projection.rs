@@ -1,4 +1,4 @@
-use crate::{ContextCategory, ContextPolicy, ConversationItem};
+use crate::{ContextCategory, ContextPolicy, ConversationItem, Sections, UserItem};
 
 impl ContextPolicy {
     /// The history one request sends under this policy.
@@ -60,7 +60,12 @@ impl ContextPolicy {
                         projected.push(item);
                     }
                 }
-                ConversationItem::System(_) | ConversationItem::User(_) => {
+                ConversationItem::User(user) => {
+                    if let Some(user) = self.project_user(user) {
+                        projected.push(ConversationItem::User(user));
+                    }
+                }
+                ConversationItem::System(_) => {
                     if self.includes(item.context_category()) {
                         projected.push(item);
                     }
@@ -68,6 +73,30 @@ impl ContextPolicy {
             }
         }
         projected
+    }
+
+    /// The parts of a user item whose category this policy includes; `None` when none is left.
+    fn project_user(&self, mut user: UserItem) -> Option<UserItem> {
+        match &user.sections {
+            Sections::Whole => self
+                .includes(user.synthetic_reason.context_category())
+                .then_some(user),
+            Sections::Split(_) => {
+                let (content, categories): (Vec<_>, Vec<_>) = user
+                    .content
+                    .iter()
+                    .cloned()
+                    .zip(user.part_categories())
+                    .filter(|(_, category)| self.includes(*category))
+                    .unzip();
+                if content.is_empty() {
+                    return None;
+                }
+                user.content = content;
+                user.sections = Sections::Split(categories);
+                Some(user)
+            }
+        }
     }
 }
 

@@ -5689,3 +5689,65 @@ async fn context_usage_sums_the_history_by_category() {
     assert!(tokens(ContextCategory::UserTurns) > tokens(ContextCategory::AssistantTurns));
     assert_eq!(tokens(ContextCategory::Reasoning), None);
 }
+
+/// Memory off withholds the injected manifest from the request; the stored head keeps it.
+#[tokio::test]
+async fn memory_off_withholds_the_manifest_and_keeps_the_history() {
+    use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch};
+
+    let head = "core\n\n<memory-context>\nstored note\n</memory-context>";
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system(head),
+        ConversationItem::user("prompt"),
+    ]);
+    let mut policy = ContextPolicy::default();
+    policy.set(ContextCategory::Memory, ContextSwitch::Excluded);
+    h.handle.set_context_policy(policy);
+    let fresh = "<memory-context>\nfresh note\n</memory-context>".to_string();
+    let request = h
+        .handle
+        .build_request(vec![], Some(fresh), false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    let sent: Vec<_> = request
+        .items
+        .iter()
+        .map(ConversationItem::text_content)
+        .collect();
+    assert_eq!(sent, ["core", "prompt"]);
+    let stored = h.handle.get_conversation().await;
+    assert_eq!(
+        stored
+            .first()
+            .map(ConversationItem::text_content)
+            .as_deref(),
+        Some(head)
+    );
+}
+
+#[tokio::test]
+async fn context_usage_counts_each_section_under_its_own_category() {
+    use xai_grok_sampling_types::ContextCategory;
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system(format!(
+            "{}\n\n<memory-context>\n{}</memory-context>",
+            "core ".repeat(40),
+            "note ".repeat(20)
+        )),
+        ConversationItem::session_prefix_with_rules("env ".repeat(20), "rule ".repeat(60)),
+        ConversationItem::user("prompt"),
+    ]);
+    let usage = h.handle.get_context_usage().await;
+    let tokens = |category| {
+        usage
+            .iter()
+            .find(|entry| entry.category == category)
+            .map(|entry| entry.tokens)
+            .unwrap_or(0)
+    };
+    assert!(tokens(ContextCategory::CoreInstructions) > tokens(ContextCategory::Memory));
+    assert!(tokens(ContextCategory::Memory) > 0);
+    assert!(tokens(ContextCategory::ProjectInstructions) > tokens(ContextCategory::Environment));
+    assert!(tokens(ContextCategory::Environment) > 0);
+}

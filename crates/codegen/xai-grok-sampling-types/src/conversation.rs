@@ -60,6 +60,7 @@ use crate::types::{
     ImageUrl, MessageContent, Role, ToolCallRequest, ToolChoice, ToolDefinition, TraceContext,
     Usage,
 };
+use crate::{ContextCategory, Sections};
 
 // ============================================================================
 // Core Conversation Types
@@ -167,6 +168,10 @@ pub enum SyntheticReason {
     /// The goal rules and tracking policy that accompany a `/goal` objective.
     /// Reserved ahead of its producer; today rules and objective share one untagged `Human` item.
     GoalSetup,
+    /// The skill and workflow catalog, or a change to it, announced in a `<system-reminder>`.
+    SkillCatalog,
+    /// The connected MCP servers, or a change to them, announced in a `<system-reminder>`.
+    McpCatalog,
     /// Catch-all for unknown/future variants.
     #[serde(other)]
     Unknown,
@@ -197,6 +202,15 @@ impl SyntheticReason {
         self.is_user_input() || *self == Self::SessionPrefix
     }
 
+    /// Every origin the runtime wraps in a `<system-reminder>`, which sessions written before the catalogs were typed
+    /// store as [`Self::SystemReminder`].
+    pub fn is_system_reminder(&self) -> bool {
+        matches!(
+            self,
+            Self::SystemReminder | Self::SkillCatalog | Self::McpCatalog
+        )
+    }
+
     /// Whether an item with this reason **starts a prompt turn**, meaning the turn pipeline pushed it while consuming a `prompt_index` slot.
     /// That covers real prompts, auto-wake and other server-initiated turns, as opposed to a mid-turn injection that never incremented the index.
     /// Unknown future reasons fail safe as boundaries so older readers cannot merge a newer conversational origin into a prior turn.
@@ -224,7 +238,9 @@ impl SyntheticReason {
             | Self::Interjection
             | Self::GoalSummary
             | Self::StopHookFeedback
-            | Self::WorkingDirectorySwitch => false,
+            | Self::WorkingDirectorySwitch
+            | Self::SkillCatalog
+            | Self::McpCatalog => false,
         }
     }
 }
@@ -267,6 +283,8 @@ pub struct UserItem {
     /// The recount can drift from this coordinate (interjection echoes, image-only prompts).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Sections::is_whole")]
+    pub sections: Sections,
 }
 
 /// Assistant response with tool calls.
@@ -991,6 +1009,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1002,6 +1021,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1015,6 +1035,32 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
+        })
+    }
+
+    /// The startup prefix rendered as its environment and its rules, each part under its own category.
+    pub fn session_prefix_with_rules(
+        environment: impl Into<String>,
+        rules: impl Into<String>,
+    ) -> Self {
+        Self::User(UserItem {
+            content: vec![
+                ContentPart::Text {
+                    text: Arc::<str>::from(environment.into()),
+                },
+                ContentPart::Text {
+                    text: Arc::<str>::from(rules.into()),
+                },
+            ],
+            synthetic_reason: SyntheticReason::SessionPrefix,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+            sections: Sections::Split(vec![
+                ContextCategory::Environment,
+                ContextCategory::ProjectInstructions,
+            ]),
         })
     }
 
@@ -1028,6 +1074,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1041,6 +1088,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1056,6 +1104,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1071,6 +1120,35 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
+        })
+    }
+
+    /// The skill and workflow catalog reminder, tagged [`SyntheticReason::SkillCatalog`].
+    pub fn skill_catalog(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: SyntheticReason::SkillCatalog,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+            sections: Sections::Whole,
+        })
+    }
+
+    /// The MCP server catalog reminder, tagged [`SyntheticReason::McpCatalog`].
+    pub fn mcp_catalog(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: SyntheticReason::McpCatalog,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1084,6 +1162,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1111,6 +1190,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1124,6 +1204,7 @@ impl ConversationItem {
             cwd_generation: Some(cwd_generation),
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1137,6 +1218,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1152,6 +1234,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1167,6 +1250,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1181,6 +1265,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1194,6 +1279,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1207,6 +1293,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1220,6 +1307,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1233,6 +1321,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1248,6 +1337,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1261,6 +1351,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 
@@ -1274,6 +1365,7 @@ impl ConversationItem {
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
+            sections: Sections::Whole,
         })
     }
 

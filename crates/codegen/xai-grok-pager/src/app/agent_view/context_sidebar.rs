@@ -18,7 +18,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
-use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, switchable_categories};
+use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, all_categories};
 
 mod commands;
 mod footer;
@@ -43,7 +43,7 @@ enum RowTarget {
 
 fn row_target(section: SectionIdx, RowIdx(index): RowIdx) -> Option<RowTarget> {
     if section == CONTEXT_SECTION {
-        switchable_categories().get(index).copied().map(RowTarget::Context)
+        all_categories().get(index).copied().map(RowTarget::Context)
     } else if section == DISPLAY_SECTION {
         MessageKind::settings_kinds().get(index).copied().map(RowTarget::Display)
     } else {
@@ -479,7 +479,7 @@ impl AgentView {
         }
         let theme = Theme::current();
         let heights = footer::heights(&mut self.sidebar_heights, area);
-        let categories = switchable_categories();
+        let categories = all_categories();
         let consequences: Vec<[Line<'static>; 1]> = categories
             .iter()
             .map(|&category| [Line::from(consequence(category))])

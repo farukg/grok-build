@@ -325,7 +325,9 @@ async fn idle_human_steer_queues_one_verbatim_protected_row() {
     await_with_timeout(local.run_until(async {
         let (actor, _) = await_with_timeout(super::super::support::build_actor()).await;
         actor.deferred_prefix.arm(
-            tokio::task::spawn_local(async { "PARENT_PREFIX_READY".to_owned() }),
+            tokio::task::spawn_local(async {
+                ConversationItem::session_prefix("PARENT_PREFIX_READY")
+            }),
             false,
         );
         actor.state.lock().await.arm_hook_block_hold();
@@ -890,7 +892,9 @@ async fn committed_delivery_queues_protected_fifo_row_with_typed_receipt_identit
     await_with_timeout(local.run_until(async {
         let (actor, _) = await_with_timeout(super::super::support::build_actor()).await;
         actor.deferred_prefix.arm(
-            tokio::task::spawn_local(async { "PARENT_PREFIX_READY".to_string() }),
+            tokio::task::spawn_local(async {
+                ConversationItem::session_prefix("PARENT_PREFIX_READY")
+            }),
             false,
         );
         let (completion_tx, _completion_rx) = mpsc::unbounded_channel();

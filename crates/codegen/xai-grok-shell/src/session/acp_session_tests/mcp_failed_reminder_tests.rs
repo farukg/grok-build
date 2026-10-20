@@ -573,11 +573,11 @@ async fn publish_body() {
     );
     let prefix = a.build_user_message_prefix().await;
     assert!(
-        prefix.contains("mcp servers:"),
+        prefix.text_content().contains("mcp servers:"),
         "the templated path must render"
     );
     assert!(
-        !prefix.contains("failsrv"),
+        !prefix.text_content().contains("failsrv"),
         "a failed server must not render as available"
     );
     let appended = announce_and_collect(&a, "failsrv", "probe").await;

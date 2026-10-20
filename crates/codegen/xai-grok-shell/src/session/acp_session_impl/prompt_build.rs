@@ -474,7 +474,7 @@ mod install_system_prompt_tests {
         ];
         super::SessionActor::rewrite_zero_turn_prefix(
             &mut conv,
-            "<user_info>new</user_info>".into(),
+            ConversationItem::session_prefix("<user_info>new</user_info>"),
             false,
         );
         assert_eq!(conv.len(), 2, "the legacy prefix slot is replaced, not duplicated");
@@ -516,7 +516,7 @@ impl SessionActor {
     /// When `drop_startup_skill_reminder` is true, also strips the synthetic `<system-reminder>` user item.
     pub(super) fn rewrite_zero_turn_prefix(
         conversation: &mut Vec<ConversationItem>,
-        new_prefix: String,
+        new_prefix: ConversationItem,
         drop_startup_skill_reminder: bool,
     ) {
         let is_prefix_slot = matches!(
@@ -525,25 +525,23 @@ impl SessionActor {
         );
         if is_prefix_slot {
             if let Some(slot) = conversation.get_mut(1) {
-                *slot = ConversationItem::session_prefix(new_prefix);
+                *slot = new_prefix;
             }
         } else {
             let insert_at = conversation.len().min(1);
-            conversation.insert(insert_at, ConversationItem::session_prefix(new_prefix));
+            conversation.insert(insert_at, new_prefix);
         }
         if drop_startup_skill_reminder {
             conversation.retain(|item| {
                 !matches!(
                     item,
-                    ConversationItem::User(u)
-                        if u.synthetic_reason
-                            == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                    ConversationItem::User(u) if u.synthetic_reason.is_system_reminder()
                 )
             });
         }
     }
     #[tracing::instrument(skip_all)]
-    pub(super) async fn build_user_message_prefix(&self) -> String {
+    pub(super) async fn build_user_message_prefix(&self) -> ConversationItem {
         let display_path = self
             .display_cwd
             .get()
@@ -560,7 +558,7 @@ impl SessionActor {
             )
         };
         let mut prefix_carries_fallback_date = false;
-        let (mut out, uses_legacy_prefix) = if !matches!(template, UserMessageTemplate::Default) {
+        let (out, uses_legacy_prefix) = if !matches!(template, UserMessageTemplate::Default) {
             if let Some(rendered) = self
                 .build_templated_user_message(cwd, template.clone())
                 .await
@@ -576,7 +574,7 @@ impl SessionActor {
         } else {
             (self.construct_legacy_prefix(cwd), true)
         };
-        if uses_legacy_prefix {
+        let prefix = if uses_legacy_prefix {
             let (workspace_rules, discovered_user_rules) = if include_verification {
                 self.gather_partitioned_rules()
             } else {
@@ -588,17 +586,21 @@ impl SessionActor {
                     .extend(xai_grok_agent::prompt::browser_verification::synthetic_user_rules());
                 user_rules.extend(discovered_user_rules);
             }
-            xai_grok_agent::prompt::user_message::append_rules_section(
-                &mut out,
+            match xai_grok_agent::prompt::user_message::format_rules_section(
                 &workspace_rules,
                 &user_rules,
-            );
-        }
+            ) {
+                Some(rules) => ConversationItem::session_prefix_with_rules(out, rules),
+                None => ConversationItem::session_prefix(out),
+            }
+        } else {
+            ConversationItem::session_prefix(out)
+        };
         self.last_announced_local_date
             .set(chrono::Local::now().date_naive());
         self.prefix_carries_fallback_date
             .set(prefix_carries_fallback_date);
-        out
+        prefix
     }
     fn gather_partitioned_rules(
         &self,

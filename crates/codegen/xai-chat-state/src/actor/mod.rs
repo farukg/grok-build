@@ -5,6 +5,7 @@
 //! - `mutations`: State mutation handlers (push_user_message, replace_conversation, etc.)
 //! - `queries`: Read-only query handlers (get_conversation, snapshot, etc.)
 
+mod context_sections;
 mod mutations;
 mod queries;
 pub(crate) mod request_builder;

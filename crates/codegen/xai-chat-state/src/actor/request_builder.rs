@@ -75,6 +75,9 @@ impl ChatStateActor {
         if let Some(reminder) = memory_reminder {
             inject_memory_reminder(&mut items, &reminder);
         }
+        if !self.state.context_policy.includes(ContextCategory::Memory) {
+            super::context_sections::withhold_memory_context(&mut items);
+        }
         items = self.state.context_policy.project(items);
         let tool_definitions = if self
             .state
@@ -212,20 +215,19 @@ pub(super) fn inject_memory_reminder(items: &mut Vec<ConversationItem>, reminder
     }
 }
 
-fn upsert_memory_reminder_text(system_prompt: &mut std::sync::Arc<str>, reminder: &str) -> bool {
-    let existing_start = system_prompt.find(MEMORY_CONTEXT_OPEN_TAG).map(|idx| {
-        system_prompt
-            .get(..idx)
-            .unwrap_or("")
-            .trim_end_matches('\n')
-            .len()
-    });
+/// The system head as its prompt and, when one was injected, the memory manifest that follows it.
+pub(super) fn split_memory_context(system: &str) -> (&str, Option<&str>) {
+    match system
+        .find(MEMORY_CONTEXT_OPEN_TAG)
+        .and_then(|start| system.split_at_checked(start))
+    {
+        Some((prompt, manifest)) => (prompt.trim_end_matches('\n'), Some(manifest)),
+        None => (system, None),
+    }
+}
 
-    let updated: String = if let Some(prefix_len) = existing_start {
-        let prefix = system_prompt
-            .get(..prefix_len)
-            .unwrap_or("")
-            .trim_end_matches('\n');
+fn upsert_memory_reminder_text(system_prompt: &mut std::sync::Arc<str>, reminder: &str) -> bool {
+    let updated: String = if let (prefix, Some(_)) = split_memory_context(system_prompt) {
         if prefix.is_empty() {
             reminder.to_string()
         } else {

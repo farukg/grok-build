@@ -38,7 +38,39 @@ Design: `docs/fork/design/f6-f7.md` §1, §2, §7 and waves A1/A2/B1.
   session dir only when restricted, so the default path does no I/O; `context_policy_to_inherit` in `S/agent/subagent/mod.rs`). Hosted tools
   already follow ToolDefinitions (`turn.rs`).
 
+- Mixed sections (branch `grb/f1core`, squashed onto `main`): every category has a producer, so F7 lists all
+  of them (`switchable_categories()` is gone; rows = `all_categories()`).
+  - `UserItem.sections: Sections::{Whole, Split(Vec<ContextCategory>)}` (`ST/context_provenance.rs`), one category per
+    content part; `Whole` is the serde default and is never written, so old sessions load and re-serialize byte-identical.
+    The whole-item category stays derived (`context_category()`); only the split is stored.
+  - Startup prefix (Default template): `build_user_message_prefix` returns the typed item
+    `ConversationItem::session_prefix_with_rules(environment, rules)` = `[Environment, ProjectInstructions]`
+    (`S/session/acp_session_impl/prompt_build.rs`). Rewrite/insert paths take the item as is.
+  - Skills/workflow catalog and MCP server listing: whole items with new origins `SyntheticReason::{SkillCatalog,
+    McpCatalog}` (baseline + update skill reminder in `session_setup.rs`, MCP reminder in `mcp.rs`).
+    `SyntheticReason::is_system_reminder()` keeps the two startup strips (`session_setup.rs`, `prompt_build.rs`)
+    removing the same items as before.
+  - Memory: the injected `<memory-context>` manifest on the system head is derived, not stored: chat-state is its only
+    producer and the tag is its canonical delimiter (`CS/types.rs` `MEMORY_CONTEXT_OPEN_TAG`, split once by
+    `split_memory_context` in `CS/actor/request_builder.rs`, shared with the upsert). Memory OFF withholds it
+    from the request (`CS/actor/context_sections.rs` `withhold_memory_context`); the canonical history keeps it. Storing a split on `SystemItem` was rejected: seven head writers replace
+    `sys.content` directly (`prompt_build.rs:324,356`, `session_mode.rs:156`, `model_switch.rs:135,139`,
+    `CS/conversation_util.rs:29`, `ST/conversation.rs` `transform_conversation_cwd`) and would leave a stale split.
+  - Usage (`x.ai/session/context_policy` report): `category_tokens` counts each section under its own category.
+  - Tests: `ST/context_projection_tests.rs` (catalogs per category, split prefix, reload + old wire),
+    `CS/actor/tests.rs` `memory_off_withholds_the_manifest_and_keeps_the_history`,
+    `context_usage_counts_each_section_under_its_own_category`.
+
 ## Next steps
 1. B1 shell, remaining: the `changed` notification.
-2. Mixed sections (`Sections::Split`) for the prefix (rules/skills/MCP/memory), system prompt fragments and
-   the memory reminder; until then Skills/Mcp/Memory switches have no producer.
+2. Custom `user_message_template` prefixes (MiniJinja) render rules/skills/MCP in one string and stay `Whole`
+   (`Environment`); splitting them needs section output from `UserMessageContext::render` (`A/prompt/user_message.rs`).
+3. Post-compaction the prefix is re-rendered as `CompactionMeta` text (`CS/compaction_utils.rs:932`), so the split
+   ends at the first compaction (as before for `Environment`).
+
+## Open questions
+- Old binaries read the new origins `skill_catalog`/`mcp_catalog` as `Unknown`, which counts as a prompt-turn
+  boundary there (`ST/conversation.rs` `starts_prompt_turn`); new binaries read every old session unchanged.
+- Workflow launch/status/completion reminders stay `SystemReminder` (runtime notices, not catalog), per design §1.
+- Cross-compaction rewind restores the prefix as a `Human` item (`S/session/acp_session_impl/rewind.rs:333`,
+  pre-existing); the captured text now keeps every prefix part (`S/session/compaction.rs`).

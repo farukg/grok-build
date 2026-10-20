@@ -27,6 +27,7 @@ impl From<ChatRequestMessage> for ConversationItem {
                     cwd_generation: None,
                     prior_turn_interrupt: None,
                     prompt_index: None,
+                    sections: Sections::Whole,
                 })
             }
             Role::Assistant => {

@@ -8,7 +8,7 @@ pub(super) fn escape_reminder_tags(content: &str, tag: &str) -> String {
         .replace(&format!("</{tag}"), &format!("<\\/{tag}"))
         .replace(&format!("<{tag}"), &format!("<\\{tag}"))
 }
-fn reminder_text(content: &str, tag: &str) -> String {
+pub(super) fn reminder_text(content: &str, tag: &str) -> String {
     xai_grok_tools::reminders::wrap_reminder_with_tag(&escape_reminder_close_tag(content, tag), tag)
 }
 pub(super) fn wrap_in_reminder_tag(content: &str, tag: &str) -> ConversationItem {

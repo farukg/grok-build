@@ -451,7 +451,7 @@ impl<T> TaskSlot<T> {
 
 /// The background prefix build plus the wait it was started with, so the consumer sizes its budget from what the task is actually doing.
 pub(crate) struct DeferredPrefix {
-    task: TaskSlot<String>,
+    task: TaskSlot<ConversationItem>,
     full_mcp_wait: std::cell::Cell<bool>,
 }
 
@@ -463,13 +463,17 @@ impl DeferredPrefix {
         }
     }
 
-    pub(crate) fn arm(&self, handle: tokio::task::JoinHandle<String>, full_mcp_wait: bool) {
+    pub(crate) fn arm(
+        &self,
+        handle: tokio::task::JoinHandle<ConversationItem>,
+        full_mcp_wait: bool,
+    ) {
         self.full_mcp_wait.set(full_mcp_wait);
         self.task.arm(handle);
     }
 
     /// The pending build and whether it holds the full MCP wait.
-    pub(crate) fn take(&self) -> Option<(tokio::task::JoinHandle<String>, bool)> {
+    pub(crate) fn take(&self) -> Option<(tokio::task::JoinHandle<ConversationItem>, bool)> {
         let handle = self.task.take()?;
         Some((handle, self.full_mcp_wait.get()))
     }

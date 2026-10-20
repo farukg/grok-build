@@ -798,7 +798,10 @@ impl SessionActor {
             text.push_str(hint);
         }
         if let Some(text) = reminder_text {
-            self.push_system_reminder_with_tag(&text, self.reminder_wrapper_tag());
+            self.chat_state_handle
+                .push_user_message(ConversationItem::mcp_catalog(
+                    super::reminders::reminder_text(&text, self.reminder_wrapper_tag()),
+                ));
             tracing::info!(
                 servers = server_summaries.len(),
                 has_failed,

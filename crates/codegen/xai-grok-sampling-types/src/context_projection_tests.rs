@@ -39,7 +39,9 @@ fn answer(text: &str, calls: Vec<ToolCall>) -> Item {
 fn history() -> Vec<Item> {
     vec![
         Item::system("core"),
-        Item::session_prefix("environment"),
+        Item::session_prefix_with_rules("environment", "prefix rules"),
+        Item::skill_catalog("skills"),
+        Item::mcp_catalog("servers"),
         Item::project_instructions("rules"),
         Item::user_meta("summary"),
         Item::user("old prompt"),
@@ -117,6 +119,8 @@ fn every_category_off_removes_only_its_own_items_and_leaves_valid_history() {
         (ContextCategory::CoreInstructions, &["core"]),
         (ContextCategory::Environment, &["environment"]),
         (ContextCategory::ProjectInstructions, &["rules"]),
+        (ContextCategory::SkillsWorkflows, &["skills"]),
+        (ContextCategory::McpCatalog, &["servers"]),
         (ContextCategory::CompactionSummary, &["summary"]),
         (ContextCategory::UserTurns, &["old prompt"]),
         (
@@ -197,5 +201,55 @@ fn every_category_off_still_sends_the_current_turn() {
         texts(&projected),
         ["current prompt", "thinking r3", "", "current result"],
         "{projected:?}"
+    );
+}
+
+#[test]
+fn a_split_prefix_sends_the_sections_whose_category_is_on() {
+    let prefix = || {
+        vec![
+            Item::session_prefix_with_rules("environment", "prefix rules"),
+            Item::user("prompt"),
+        ]
+    };
+    let sent = |category| texts(&without(category).project(prefix()));
+    assert_eq!(
+        sent(ContextCategory::ProjectInstructions),
+        ["environment", "prompt"]
+    );
+    assert_eq!(
+        sent(ContextCategory::Environment),
+        ["prefix rules", "prompt"]
+    );
+    let mut neither = without(ContextCategory::Environment);
+    neither.set(
+        ContextCategory::ProjectInstructions,
+        ContextSwitch::Excluded,
+    );
+    assert_eq!(texts(&neither.project(prefix())), ["prompt"]);
+}
+
+#[test]
+fn a_reloaded_split_prefix_keeps_its_sections_and_an_old_item_loads_whole() {
+    let stored = serde_json::to_string(&Item::session_prefix_with_rules(
+        "environment",
+        "prefix rules",
+    ))
+    .unwrap();
+    let reloaded: Item = serde_json::from_str(&stored).unwrap();
+    assert_eq!(
+        texts(
+            &without(ContextCategory::ProjectInstructions)
+                .project(vec![reloaded, Item::user("prompt")])
+        ),
+        ["environment", "prompt"]
+    );
+
+    let old = r#"{"type":"user","content":[{"type":"text","text":"<user_info>"}],"synthetic_reason":"session_prefix"}"#;
+    let loaded: Item = serde_json::from_str(old).unwrap();
+    assert_eq!(serde_json::to_string(&loaded).unwrap(), old);
+    assert_eq!(
+        texts(&without(ContextCategory::Environment).project(vec![loaded, Item::user("prompt")])),
+        ["prompt"]
     );
 }

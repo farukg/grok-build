@@ -97,7 +97,7 @@ fetch. Upstream `xai-org/grok-build` is `origin`; the fork base is `2bdd1d6a`.
 | W3 pager consumes child sessions | on `main` (f3, f4); fork and roundtrip pinned by tests; open: set_model/compact/mode on a finished child (accepted) | `streams/w3-pager-child-sessions.md` |
 | M11 agent + human control over subagents | B1 on `main` (f2, f6); next: `control_subagent` tool, `list_subagents`, pager pause/cause display | `streams/m11-subagent-control.md` |
 | F1-display per-kind one-line renderers | Message Display rows on `main` (f2, f4); old renderer WIP rejected (`reviews/f1display.md`); open: better first lines per block, golden tests | `streams/f1-display.md` |
-| F1-core context provenance | A1+A2+B1 on `main` (f2, f3); next: mixed sections (prefix/system fragments/memory) so Skills/MCP/Memory get rows | `streams/f1-context-provenance.md` |
+| F1-core context provenance | A1+A2+B1+mixed sections on `main` (f2, f3); open: custom `user_message_template` prefixes stay `Whole` | `streams/f1-context-provenance.md` |
 | F2/F3 F6/F7 sidebars wired into the view | on `main` (f4); open: F6/F7 hang on very large sessions (see stream file), dock glyph/hover polish | `streams/f2-f3-sidebars.md` |
 | F6/F7 trees, removal, colours, saved panel settings (GRB-001 M12–M15) | on `main` (f3, f4), CI green 2026-10-19; open points in the stream file | `streams/f6-f7-trees.md` |
 

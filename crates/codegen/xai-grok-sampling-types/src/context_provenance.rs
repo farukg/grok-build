@@ -1,4 +1,38 @@
-use crate::{ContextCategory, ConversationItem, RuntimeNotice, SyntheticReason};
+use serde::{Deserialize, Serialize};
+
+use crate::{ContextCategory, ConversationItem, RuntimeNotice, SyntheticReason, UserItem};
+
+/// The context categories inside one user item whose parts come from different sources.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Sections {
+    /// Every part belongs to the item's own category.
+    #[default]
+    Whole,
+    /// Part `i` belongs to category `i`; parts past the list belong to the item's own category.
+    Split(Vec<ContextCategory>),
+}
+
+impl Sections {
+    pub fn is_whole(&self) -> bool {
+        matches!(self, Self::Whole)
+    }
+}
+
+impl UserItem {
+    /// The context category of each content part, in order.
+    pub fn part_categories(&self) -> impl Iterator<Item = ContextCategory> + '_ {
+        let split = match &self.sections {
+            Sections::Whole => &[][..],
+            Sections::Split(categories) => categories.as_slice(),
+        };
+        split
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(self.synthetic_reason.context_category()))
+            .take(self.content.len())
+    }
+}
 
 impl ConversationItem {
     /// The context category a whole item belongs to, derived from its variant and synthetic origin.
@@ -17,7 +51,7 @@ impl ConversationItem {
 }
 
 impl SyntheticReason {
-    fn context_category(&self) -> ContextCategory {
+    pub(crate) fn context_category(&self) -> ContextCategory {
         let notice = ContextCategory::RuntimeNotices;
         match self {
             Self::Human | Self::ParentHumanMessage | Self::DirectBash | Self::GoalSetup => {
@@ -41,6 +75,8 @@ impl SyntheticReason {
             Self::SchedulerFired => notice(RuntimeNotice::SchedulerFired),
             Self::StopHookFeedback => notice(RuntimeNotice::StopHookFeedback),
             Self::WorkingDirectorySwitch => notice(RuntimeNotice::WorkingDirectorySwitch),
+            Self::SkillCatalog => ContextCategory::SkillsWorkflows,
+            Self::McpCatalog => ContextCategory::McpCatalog,
             Self::Unknown => ContextCategory::OtherRuntime,
         }
     }

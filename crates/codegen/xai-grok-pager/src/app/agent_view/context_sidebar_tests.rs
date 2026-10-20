@@ -83,7 +83,7 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
     else {
         panic!("space asks the shell for the change");
     };
-    let first = xai_grok_shell::sampling::switchable_categories()[0];
+    let first = xai_grok_shell::sampling::all_categories()[0];
     assert!(!requested.includes(first), "the cursor starts on the first row, which was ON");
     assert!(!requested.includes(ContextCategory::Reasoning), "the rest of the policy is unchanged");
     assert!(
@@ -673,7 +673,7 @@ fn f7_a_restored_fold_moves_a_hidden_cursor_to_its_title() {
 fn f7_titles_summarise_their_section_while_folded() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let categories = xai_grok_shell::sampling::switchable_categories().len();
+    let categories = xai_grok_shell::sampling::all_categories().len();
     let kinds = MessageKind::settings_kinds().len();
     let buf = draw(&mut agent);
     assert!(sidebar_row(&buf, "\u{25BE} Context").contains(&format!("{categories}/{categories} ON")));

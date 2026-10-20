@@ -167,7 +167,7 @@ async fn baseline_reminder_lists_workflows_under_skills() {
                         item,
                         ConversationItem::User(u)
                             if u.synthetic_reason
-                                == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                                == xai_grok_sampling_types::SyntheticReason::SkillCatalog
                     )
                     .then(|| item.text_content())
                 })
@@ -206,7 +206,7 @@ async fn baseline_reminder_lists_workflows_when_there_are_no_skills() {
                         item,
                         ConversationItem::User(u)
                             if u.synthetic_reason
-                                == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                                == xai_grok_sampling_types::SyntheticReason::SkillCatalog
                     )
                     .then(|| item.text_content())
                 })
@@ -238,7 +238,7 @@ async fn subagent_session_does_not_list_workflows() {
                         item,
                         ConversationItem::User(u)
                             if u.synthetic_reason
-                                == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                                == xai_grok_sampling_types::SyntheticReason::SkillCatalog
                     )
                     .then(|| item.text_content())
                 })

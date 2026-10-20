@@ -549,6 +549,7 @@ pub(crate) mod chat_rebuild {
                 cwd_generation: None,
                 prior_turn_interrupt: None,
                 prompt_index: None,
+                sections: xai_grok_sampling_types::Sections::Whole,
             });
             self.item_count += 1;
             Some(item)

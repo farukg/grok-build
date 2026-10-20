@@ -104,7 +104,7 @@ async fn grace_body() {
         "Default prefix skips MCP waits, took {prefix_wait:?}"
     );
     assert!(
-        !prefix.contains("linear"),
+        !prefix.text_content().contains("linear"),
         "Default prefix carries no MCP content"
     );
 
@@ -488,7 +488,7 @@ async fn absent_inputs_omit_the_status_block() {
             let (persist_tx, _persist_rx) = tokio::sync::mpsc::unbounded_channel();
             let actor = create_test_actor(100, 256_000, 80, gw_tx, persist_tx).await;
 
-            let prefix = actor.build_user_message_prefix().await;
+            let prefix = actor.build_user_message_prefix().await.text_content();
 
             assert!(
                 !prefix.contains("<git_status>") && !prefix.contains("<jj_status>"),
@@ -519,7 +519,7 @@ async fn discovered_repo_root_omits_the_status_block() {
             let mut actor = create_test_actor(100, 256_000, 80, gw_tx, persist_tx).await;
             actor.vcs_root = discover_vcs_root(repo.path());
 
-            let prefix = actor.build_user_message_prefix().await;
+            let prefix = actor.build_user_message_prefix().await.text_content();
 
             assert!(
                 !prefix.contains("<git_status>") && !prefix.contains("<jj_status>"),

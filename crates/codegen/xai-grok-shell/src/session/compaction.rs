@@ -1357,7 +1357,7 @@ impl SessionActor {
             }
         };
         let generate_session_compact = compact_output.content.clone();
-        let user_message_prefix = self.build_user_message_prefix().await;
+        let user_message_prefix = self.build_user_message_prefix().await.text_content();
         let conversation = self.chat_state_handle.get_conversation().await;
         let (discovered_agents_md, all_skills_for_compaction, _edited_paths, mut state_context) =
             if use_short_prompt {
@@ -1920,13 +1920,8 @@ impl SessionActor {
             .get_conversation_item_at(1)
             .await
             .and_then(|item| match item {
-                ConversationItem::User(parts) => {
-                    parts.content.into_iter().next().and_then(|p| match p {
-                        xai_grok_sampling_types::ContentPart::Text { text } => {
-                            Some(text.as_ref().to_owned())
-                        }
-                        _ => None,
-                    })
+                ConversationItem::User(_) => {
+                    Some(item.text_content()).filter(|text| !text.is_empty())
                 }
                 _ => None,
             });

@@ -65,9 +65,7 @@ impl SessionActor {
         conversation.retain(|item| {
             !matches!(
                 item,
-                ConversationItem::User(u)
-                    if u.synthetic_reason
-                        == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                ConversationItem::User(u) if u.synthetic_reason.is_system_reminder()
             )
         });
         let effects = bridge.apply_pending_skill_update().await;
@@ -83,7 +81,7 @@ impl SessionActor {
             self.workflow_listing_for_prompt().as_deref(),
         ) {
             let tag = self.reminder_wrapper_tag();
-            conversation.push(ConversationItem::system_reminder(format!(
+            conversation.push(ConversationItem::skill_catalog(format!(
                 "<{tag}>\n{body}\n</{tag}>"
             )));
         }
@@ -93,7 +91,7 @@ impl SessionActor {
     /// otherwise the prefix waits only the startup grace. Callers that defer the build pass the same flag to
     /// [`DeferredPrefix`], so the budget in [`Self::ensure_prefix_ready`] cannot disagree with the wait taken here.
     #[tracing::instrument(skip_all)]
-    pub(super) async fn build_prefix_after_mcp_wait(&self, full_wait: bool) -> String {
+    pub(super) async fn build_prefix_after_mcp_wait(&self, full_wait: bool) -> ConversationItem {
         let start = std::time::Instant::now();
         if full_wait {
             let deadline = tokio::time::Instant::now() + self.delivery_prefix_wait();
@@ -160,7 +158,7 @@ impl SessionActor {
         };
         let mut conversation = self.chat_state_handle.get_conversation().await;
         let insert_at = conversation.len().min(1);
-        conversation.insert(insert_at, ConversationItem::session_prefix(prefix));
+        conversation.insert(insert_at, prefix);
         if !self.startup_hints.preserve_inherited_system
             && !conversation_has_project_instructions(&conversation)
             && let Some(agents_md_reminder) = self.agent.borrow().agents_md_user_reminder()
@@ -309,7 +307,7 @@ impl SessionActor {
         }
         let text = effects.system_reminder.as_deref()?;
         let tag = self.reminder_wrapper_tag();
-        Some(ConversationItem::system_reminder(format!(
+        Some(ConversationItem::skill_catalog(format!(
             "<{tag}>\n{text}\n</{tag}>"
         )))
     }

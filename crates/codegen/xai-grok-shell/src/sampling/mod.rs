@@ -9,7 +9,6 @@ pub use self::error::{ResponseModelMetadata, Result, SamplingError};
 pub use xai_grok_sampling_types::ServedRoute;
 pub use xai_grok_sampling_types::{
     CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice, all_categories,
-    switchable_categories,
 };
 pub use self::types::*;
 pub use xai_grok_sampler::ApiBackend;
