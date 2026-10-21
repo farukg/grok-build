@@ -70,9 +70,9 @@ pub(super) fn reduce_prompt_turn_result(
                     ) => {
                         result.state = SubagentState::Failed {
                             message: with_truncation_error(
-                            format!("structured output validation failed: {error}"),
-                            truncated,
-                        ),
+                                format!("structured output validation failed: {error}"),
+                                truncated,
+                            ),
                         };
                         result.output = Arc::from(final_text);
                     }
@@ -84,9 +84,9 @@ pub(super) fn reduce_prompt_turn_result(
                     ) => {
                         result.state = SubagentState::Failed {
                             message: with_truncation_error(
-                            "structured output requested but none produced".to_string(),
-                            truncated,
-                        ),
+                                "structured output requested but none produced".to_string(),
+                                truncated,
+                            ),
                         };
                         result.output = Arc::from(final_text);
                     }
@@ -112,9 +112,10 @@ pub(super) fn reduce_prompt_turn_result(
                     (PromptTurnResultMode::ParentFollowup, Some(_)) => {
                         result.state = SubagentState::Failed {
                             message: with_truncation_error(
-                            "Parent follow-up unexpectedly produced structured output".to_string(),
-                            truncated,
-                        ),
+                                "Parent follow-up unexpectedly produced structured output"
+                                    .to_string(),
+                                truncated,
+                            ),
                         };
                         result.output = Arc::from(final_text);
                         result.output_usage_incomplete = true;
@@ -124,10 +125,7 @@ pub(super) fn reduce_prompt_turn_result(
             PromptCompletionKind::Cancelled { category, context } => {
                 result.state = SubagentState::Interrupted {
                     cause: InterruptionCause::Error {
-                        message: super::cancellation_error_message(
-                    category,
-                    context.as_ref(),
-                ),
+                        message: super::cancellation_error_message(category, context.as_ref()),
                     },
                 };
                 result.output = text_or_summary(&final_text, summaries.cancelled);

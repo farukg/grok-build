@@ -213,6 +213,7 @@ impl ShellToolsetConfig {
             request_compression: Default::default(),
             extra_headers: indexmap::IndexMap::new(),
             extra_response_includes: Vec::new(),
+            gateway_capabilities_header: false,
             query_params: indexmap::IndexMap::new(),
             env_http_headers: indexmap::IndexMap::new(),
             context_window: 256_000,

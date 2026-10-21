@@ -46,6 +46,26 @@ jobs:
         with:
           shared-key: linux-test
 
+      - name: Check sampler and shell formatting
+        run: cargo +nightly-2026-08-13 fmt -p xai-grok-sampler -p xai-grok-shell -- --check
+
+      - name: Test gateway-compatible sampler events and request shape
+        if: always()
+        run: |
+          cargo test -p xai-grok-sampler --lib --locked deserialize_response_event
+          cargo test -p xai-grok-sampler --lib --locked responses_stream_skips_unknown_events_without_ending_the_stream
+          cargo test -p xai-grok-sampler --lib --locked grok_request_headers_follow_sampler_capability_opt_in
+          cargo test -p xai-grok-sampler --lib --locked response_call_sites_emit_final_includes_and_stream_fields
+          cargo test -p xai-grok-sampler --lib --locked function_call_
+          cargo test -p xai-grok-sampler --lib --locked config_without_doom_loop_recovery_deserializes_to_none
+
+      - name: Test gateway-compatible shell routing
+        if: always()
+        run: |
+          cargo test -p xai-grok-shell --lib --locked gateway_capabilities_follow_backend_and_route
+          cargo test -p xai-grok-shell --lib --locked session_resolver_is_not_stamped_onto_third_party_samplers
+          cargo test -p xai-grok-shell --lib --locked read_parent_sampling_config
+
       - name: Test pager
         shell: bash
         run: cargo test -p xai-grok-pager --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee pager-test.log; exit "${PIPESTATUS[0]}"

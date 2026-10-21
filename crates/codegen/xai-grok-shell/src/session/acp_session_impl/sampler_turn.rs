@@ -742,6 +742,8 @@ impl SessionActor {
             &cfg.base_url,
         );
         let request_compression = crate::util::config::request_compression_for_url(&cfg.base_url);
+        let gateway_capabilities_header =
+            crate::agent::config::gateway_capabilities_for_route(&cfg.api_backend, &cfg.base_url);
         SamplingConfig {
             api_key,
             base_url: cfg.base_url,
@@ -756,6 +758,7 @@ impl SessionActor {
             extra_headers,
             conversation_group_id: cfg.conversation_group_id,
             extra_response_includes,
+            gateway_capabilities_header,
             query_params: cfg.query_params.clone(),
             env_http_headers: cfg.env_http_headers.clone(),
             context_window: cfg.context_window.get(),

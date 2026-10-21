@@ -4615,6 +4615,8 @@ pub(crate) fn stamp_session_local_sampler_fields(
     cfg.client_identifier = client_identifier;
     cfg.conversation_group_id = active_session_config.conversation_group_id.clone();
     cfg.attribution_callback = active_session_config.attribution_callback.clone();
+    cfg.gateway_capabilities_header =
+        gateway_capabilities_for_route(&cfg.api_backend, &cfg.base_url);
     if crate::util::is_xai_api_bearer_url(&cfg.base_url) {
         cfg.bearer_resolver = active_session_config.bearer_resolver.clone();
     }
@@ -4677,6 +4679,16 @@ pub(crate) fn response_include_extensions(
     }
     includes
 }
+pub(crate) fn gateway_capabilities_for_route(api_backend: &ApiBackend, base_url: &str) -> bool {
+    match api_backend {
+        ApiBackend::Responses | ApiBackend::ChatCompletions => {
+            !(crate::util::is_trusted_cli_chat_proxy_url(base_url)
+                || crate::util::is_trusted_xai_https_url(base_url))
+        }
+        ApiBackend::Messages => false,
+    }
+}
+
 pub(crate) fn sampling_config_for_model(
     model: &ModelEntry,
     credentials: ResolvedCredentials,
@@ -4702,9 +4714,8 @@ pub(crate) fn sampling_config_for_model(
         &api_backend,
         &credentials.base_url,
     );
-    let gateway_capabilities_header = matches!(api_backend, ApiBackend::Responses | ApiBackend::ChatCompletions)
-        && !(crate::util::is_trusted_cli_chat_proxy_url(&credentials.base_url)
-            || crate::util::is_trusted_xai_https_url(&credentials.base_url));
+    let gateway_capabilities_header =
+        gateway_capabilities_for_route(&api_backend, &credentials.base_url);
     let request_compression =
         crate::util::config::request_compression_for_url(&credentials.base_url);
     SamplerConfig {

@@ -778,6 +778,10 @@ async fn read_parent_sampling_config(
                 &cfg.api_backend,
                 &cfg.base_url,
             );
+            let gateway_capabilities_header = crate::agent::config::gateway_capabilities_for_route(
+                &cfg.api_backend,
+                &cfg.base_url,
+            );
             let inherited = xai_grok_sampler::SamplerConfig {
                 api_key: creds.api_key,
                 base_url: cfg.base_url,
@@ -793,6 +797,7 @@ async fn read_parent_sampling_config(
                 ),
                 extra_headers,
                 extra_response_includes,
+                gateway_capabilities_header,
                 conversation_group_id: cfg.conversation_group_id,
                 query_params: cfg.query_params.clone(),
                 env_http_headers: cfg.env_http_headers.clone(),
@@ -1403,9 +1408,11 @@ fn resume_cwd_fallback(
     (source.worktree_path.is_none()
         && !source.child_cwd.is_empty()
         && resume_inherited_cwd(Some(source)).is_none())
-    .then(|| xai_tool_types::SubagentResumeFallback::SourceCwdMissing {
-        source_cwd: source.child_cwd.clone(),
-    })
+    .then(
+        || xai_tool_types::SubagentResumeFallback::SourceCwdMissing {
+            source_cwd: source.child_cwd.clone(),
+        },
+    )
 }
 /// Select the cwd override for a child: a resume inherits the source's cwd (never its own `request.cwd`); a fresh spawn uses `request.cwd`.
 fn select_override_cwd<'a>(

@@ -2,6 +2,28 @@ use super::*;
 use serial_test::serial;
 use xai_grok_test_support::EnvGuard;
 #[test]
+fn gateway_capabilities_follow_backend_and_route() {
+    for backend in [ApiBackend::Responses, ApiBackend::ChatCompletions] {
+        assert!(gateway_capabilities_for_route(
+            &backend,
+            "http://localhost:8080/v1"
+        ));
+        assert!(!gateway_capabilities_for_route(
+            &backend,
+            "https://api.x.ai/v1"
+        ));
+        assert!(!gateway_capabilities_for_route(
+            &backend,
+            &EndpointsConfig::default().resolve_inference_base_url(),
+        ));
+    }
+    assert!(!gateway_capabilities_for_route(
+        &ApiBackend::Messages,
+        "http://localhost:8080/v1",
+    ));
+}
+
+#[test]
 fn coding_data_opt_out_does_not_block_uploads_to_own_bucket() {
     let normal = xai_grok_login::GrokAuth::test_default();
     let opted_out = xai_grok_login::GrokAuth {
@@ -3873,10 +3895,7 @@ fn official_xai_switch_clears_gateway_endpoint_pins() {
     assert!(endpoints.has_custom_endpoint());
     endpoints.apply_official_xai_endpoints();
     assert!(!endpoints.has_custom_endpoint());
-    assert_eq!(
-        endpoints.proxy_url(),
-        CLI_CHAT_PROXY_BASE_URL_DEFAULT
-    );
+    assert_eq!(endpoints.proxy_url(), CLI_CHAT_PROXY_BASE_URL_DEFAULT);
     let mut cfg = Config {
         models: ModelsConfig {
             default: Some("sigma/default".to_owned()),

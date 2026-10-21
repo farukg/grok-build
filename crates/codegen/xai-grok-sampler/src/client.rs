@@ -99,62 +99,93 @@ impl GrokRequestHeaders<'_> {
 
 /// Deserialize a known Responses SSE event, stripping unknown tools and rewriting terminal `total_tokens` from `context_details`.
 pub(crate) fn deserialize_response_event(data: &str) -> Result<Option<rs::ResponseStreamEvent>> {
-    let value: serde_json::Value = serde_json::from_str(data)
-        .map_err(SamplingError::Serialization)?;
-    let event_type = value.get("type").and_then(serde_json::Value::as_str);
-    let event_error = match serde_json::from_value::<rs::ResponseStreamEvent>(value.clone()) {
-        Ok(event) => {
+    let event_error = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
+        Ok(mut event) => {
             apply_terminal_event_overrides(&mut event, data);
             return Ok(Some(event));
         }
         Err(error) => error,
     };
-    let known_event = matches!(event_type,
-        Some("response.created" | "response.in_progress" | "response.completed" | "response.failed" | "response.incomplete"
-        | "response.output_item.added" | "response.output_item.done" | "response.content_part.added" | "response.content_part.done"
-        | "response.output_text.delta" | "response.output_text.done" | "response.refusal.delta" | "response.refusal.done"
-        | "response.function_call_arguments.delta" | "response.function_call_arguments.done"
-        | "response.file_search_call.in_progress" | "response.file_search_call.searching" | "response.file_search_call.completed"
-        | "response.web_search_call.in_progress" | "response.web_search_call.searching" | "response.web_search_call.completed"
-        | "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done" | "response.reasoning_summary_text.delta" | "response.reasoning_summary_text.done"
-        | "response.reasoning_text.delta" | "response.reasoning_text.done"
-        | "response.image_generation_call.completed" | "response.image_generation_call.generating" | "response.image_generation_call.in_progress" | "response.image_generation_call.partial_image"
-        | "response.mcp_call_arguments.delta" | "response.mcp_call_arguments.done" | "response.mcp_call.completed" | "response.mcp_call.failed" | "response.mcp_call.in_progress"
-        | "response.mcp_list_tools.completed" | "response.mcp_list_tools.failed" | "response.mcp_list_tools.in_progress"
-        | "response.code_interpreter_call.in_progress" | "response.code_interpreter_call.interpreting" | "response.code_interpreter_call.completed" | "response.code_interpreter_call_code.delta" | "response.code_interpreter_call_code.done"
-        | "response.output_text.annotation.added" | "response.queued" | "response.custom_tool_call_input.delta" | "response.custom_tool_call_input.done" | "error"));
+    let mut value: serde_json::Value = match serde_json::from_str(data) {
+        Ok(value) => value,
+        Err(_) => return Err(SamplingError::Serialization(event_error)),
+    };
+    let event_type = value.get("type").and_then(serde_json::Value::as_str);
+    let known_event = matches!(
+        event_type,
+        Some(
+            "response.created"
+                | "response.in_progress"
+                | "response.completed"
+                | "response.failed"
+                | "response.incomplete"
+                | "response.output_item.added"
+                | "response.output_item.done"
+                | "response.content_part.added"
+                | "response.content_part.done"
+                | "response.output_text.delta"
+                | "response.output_text.done"
+                | "response.refusal.delta"
+                | "response.refusal.done"
+                | "response.function_call_arguments.delta"
+                | "response.function_call_arguments.done"
+                | "response.file_search_call.in_progress"
+                | "response.file_search_call.searching"
+                | "response.file_search_call.completed"
+                | "response.web_search_call.in_progress"
+                | "response.web_search_call.searching"
+                | "response.web_search_call.completed"
+                | "response.reasoning_summary_part.added"
+                | "response.reasoning_summary_part.done"
+                | "response.reasoning_summary_text.delta"
+                | "response.reasoning_summary_text.done"
+                | "response.reasoning_text.delta"
+                | "response.reasoning_text.done"
+                | "response.image_generation_call.completed"
+                | "response.image_generation_call.generating"
+                | "response.image_generation_call.in_progress"
+                | "response.image_generation_call.partial_image"
+                | "response.mcp_call_arguments.delta"
+                | "response.mcp_call_arguments.done"
+                | "response.mcp_call.completed"
+                | "response.mcp_call.failed"
+                | "response.mcp_call.in_progress"
+                | "response.mcp_list_tools.completed"
+                | "response.mcp_list_tools.failed"
+                | "response.mcp_list_tools.in_progress"
+                | "response.code_interpreter_call.in_progress"
+                | "response.code_interpreter_call.interpreting"
+                | "response.code_interpreter_call.completed"
+                | "response.code_interpreter_call_code.delta"
+                | "response.code_interpreter_call_code.done"
+                | "response.output_text.annotation.added"
+                | "response.queued"
+                | "response.custom_tool_call_input.delta"
+                | "response.custom_tool_call_input.done"
+                | "error"
+        )
+    );
     if event_type.is_some() && !known_event {
         tracing::debug!(event_type = ?event_type, "Ignoring unknown Responses stream event");
         return Ok(None);
     }
-    let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
-        Ok(event) => event,
-        Err(_second_err) => {
-            // Try sanitizing: parse as Value, strip unknown tools, retry.
-            if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
-                // Strip tools that async_openai's rs::Tool can't deserialize (e.g., xAI-specific "x_search")
-                // Instead of maintaining a hardcoded allowlist, try deserializing each tool entry; if it fails, drop it
-                if let Some(tools) = value
-                    .pointer_mut("/response/tools")
-                    .and_then(|v| v.as_array_mut())
-                {
-                    tools.retain(|t| serde_json::from_value::<rs::Tool>(t.clone()).is_ok());
-                }
-                if let Ok(mut event) = serde_json::from_value::<rs::ResponseStreamEvent>(value) {
-                    apply_terminal_event_overrides(&mut event, data);
-                    return Ok(Some(event));
-                }
-            }
-            tracing::error!(
-                error = %event_error,
-                raw_data = %data,
-                "Failed to deserialize ResponseStreamEvent from stream"
-            );
-            return Err(SamplingError::Serialization(event_error));
+    // Preserve the existing compatibility path for xAI-specific tools such as x_search.
+    if let Some(tools) = value
+        .pointer_mut("/response/tools")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        tools.retain(|tool| serde_json::from_value::<rs::Tool>(tool.clone()).is_ok());
+        if let Ok(mut event) = serde_json::from_value::<rs::ResponseStreamEvent>(value) {
+            apply_terminal_event_overrides(&mut event, data);
+            return Ok(Some(event));
         }
-    };
-    apply_terminal_event_overrides(&mut event, data);
-    Ok(Some(event))
+    }
+    tracing::error!(
+        error = %event_error,
+        raw_data = %data,
+        "Failed to deserialize ResponseStreamEvent from stream"
+    );
+    Err(SamplingError::Serialization(event_error))
 }
 
 /// On `response.completed` / `response.incomplete`, rewrite `usage.total_tokens` to the live context length from `context_details`.
@@ -2434,7 +2465,10 @@ mod tests {
     fn missing_route_headers_leave_route_none() {
         let mut headers = HeaderMap::new();
         headers.insert("x-sigma-context-window", HeaderValue::from_static("262144"));
-        headers.insert("x-sigma-routed-model", HeaderValue::from_static("gpt-5.6-sol"));
+        headers.insert(
+            "x-sigma-routed-model",
+            HeaderValue::from_static("gpt-5.6-sol"),
+        );
         headers.insert("x-sigma-identity", HeaderValue::from_static("team-a"));
         let metadata = extract_model_metadata(&headers).expect("window header");
         assert_eq!(metadata.context_window, Some(262144));
@@ -2621,6 +2655,7 @@ mod tests {
             base_url: format!("http://{addr}/v1"),
             api_backend: ApiBackend::Responses,
             extra_response_includes: vec!["no_inline_citations".to_owned()],
+            stream_tool_calls: true,
             ..minimal_config()
         })
         .unwrap();
@@ -2669,6 +2704,11 @@ mod tests {
             stream.get("include"),
         );
         assert_eq!(Some(true), stream.get("stream").and_then(|v| v.as_bool()));
+        assert_eq!(
+            stream.get("stream_tool_calls"),
+            Some(&serde_json::json!(true))
+        );
+        assert!(unary.get("stream_tool_calls").is_none());
         assert!(
             stream
                 .get("tools")
@@ -3468,10 +3508,15 @@ mod tests {
     }
 
     #[test]
-    fn grok_request_headers_send_capabilities_only_for_non_xai_routes() {
+    fn grok_request_headers_follow_sampler_capability_opt_in() {
         fn has_capabilities_header(capabilities_opt_in: bool) -> bool {
+            let client = SamplingClient::new(SamplerConfig {
+                gateway_capabilities_header: capabilities_opt_in,
+                ..minimal_config()
+            })
+            .expect("client builds");
             let headers = GrokRequestHeaders {
-                capabilities_opt_in,
+                capabilities_opt_in: client.defaults.gateway_capabilities_header,
                 conv_id: "conv",
                 req_id: "req",
                 model_id: "grok-4.6",
@@ -3495,19 +3540,76 @@ mod tests {
 
     #[test]
     fn deserialize_response_event_ignores_unknown_event_types() {
-        assert!(deserialize_response_event(r#"{"type":"response.metadata","response_id":"resp_1"}"#)
-            .expect("unknown metadata event is ignored")
-            .is_none());
-        assert!(deserialize_response_event(r#"{"type":"response.future_extension","payload":{}}"#)
-            .expect("unknown future event is ignored")
-            .is_none());
+        assert!(
+            deserialize_response_event(r#"{"type":"response.metadata","response_id":"resp_1"}"#)
+                .expect("unknown metadata event is ignored")
+                .is_none()
+        );
+        assert!(
+            deserialize_response_event(r#"{"type":"response.future_extension","payload":{}}"#)
+                .expect("unknown future event is ignored")
+                .is_none()
+        );
     }
 
     #[test]
     fn deserialize_response_event_keeps_known_event_payload_errors() {
-        let error = deserialize_response_event(r#"{"type":"response.completed","response":{}}"#)
-            .expect_err("known event with malformed payload remains an error");
-        assert!(matches!(error, SamplingError::Serialization(_)));
+        for data in [
+            r#"{"type":"response.completed","response":{}}"#,
+            r#"{"type":"response.function_call_arguments.delta","delta":7}"#,
+            r#"{"type":"error","message":7}"#,
+            r#"{"type":null}"#,
+            r#"{"type":42}"#,
+            r#"{}"#,
+            r#"{"type":"response.metadata""#,
+        ] {
+            let error =
+                deserialize_response_event(data).expect_err("invalid payload remains an error");
+            assert!(matches!(error, SamplingError::Serialization(_)), "{data}");
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_stream_skips_unknown_events_without_ending_the_stream() {
+        let app = Router::new().route(
+            "/v1/responses",
+            post(|| async {
+                axum::response::Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(axum::body::Body::from(concat!(
+                        "data: {\"type\":\"response.metadata\",\"response_id\":\"resp_1\"}\n\n",
+                        "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":0,\"item_id\":\"item_1\",\"output_index\":0,\"content_index\":0,\"delta\":\"hello\"}\n\n",
+                        "data: {\"type\":\"response.future_extension\"}\n\n",
+                        "data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":7}\n\n",
+                        "data: [DONE]\n\n",
+                    )))
+                    .unwrap()
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let client = SamplingClient::new(SamplerConfig {
+            base_url: format!("http://{addr}/v1"),
+            ..minimal_config()
+        })
+        .unwrap();
+        let (mut events, _, _) = client
+            .create_response_stream(CreateResponseWrapper::new(rs::CreateResponse::default()))
+            .await
+            .unwrap();
+        assert!(matches!(
+            events.next().await,
+            Some(Ok(rs::ResponseStreamEvent::ResponseOutputTextDelta(event))) if event.delta == "hello"
+        ));
+        assert!(matches!(
+            events.next().await,
+            Some(Err(SamplingError::Serialization(_)))
+        ));
+        assert!(events.next().await.is_none());
+        server.abort();
     }
 
     /// `response.completed` carrying `usage.context_details.{input_tokens, output_tokens}` rewrites `usage.total_tokens` in place.
@@ -3538,7 +3640,9 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse").expect("known event");
+        let event = deserialize_response_event(sse)
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3575,7 +3679,9 @@ mod tests {
             )
         };
 
-        let event = deserialize_response_event(&make(78)).expect("parse").expect("known event");
+        let event = deserialize_response_event(&make(78))
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3589,7 +3695,9 @@ mod tests {
         );
 
         // The REST mapper backfills 0 for unbilled requests: no stash.
-        let event = deserialize_response_event(&make(0)).expect("parse").expect("known event");
+        let event = deserialize_response_event(&make(0))
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3619,7 +3727,9 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse").expect("known event");
+        let event = deserialize_response_event(sse)
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3653,7 +3763,9 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse").expect("known event");
+        let event = deserialize_response_event(sse)
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3673,7 +3785,9 @@ mod tests {
             "delta": "hello",
             "logprobs": []
         }"#;
-        let event = deserialize_response_event(sse).expect("non-terminal event parses");
+        let event = deserialize_response_event(sse)
+            .expect("non-terminal event parses")
+            .expect("known event");
         assert!(matches!(
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
