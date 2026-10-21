@@ -234,53 +234,148 @@ fn toggle_flips_branches_and_ignores_leaves() {
 #[test]
 fn siblings_target_branches_sharing_the_parent() {
     let rows = sample();
-    let from_group = bulk_set(&rows, 1, BulkScope::Siblings, BulkDirection::Expand, BulkAnchor::Include);
+    let from_group = bulk_set(
+        &rows,
+        1,
+        BulkScope::Siblings,
+        BulkDirection::Expand,
+        BulkAnchor::Include,
+    );
     assert_eq!(from_group.indices, [4]);
-    let from_other_group = bulk_set(&rows, 4, BulkScope::Siblings, BulkDirection::Collapse, BulkAnchor::Include);
+    let from_other_group = bulk_set(
+        &rows,
+        4,
+        BulkScope::Siblings,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(from_other_group.indices, [1]);
-    let turns = bulk_set(&rows, 0, BulkScope::Siblings, BulkDirection::Collapse, BulkAnchor::Include);
+    let turns = bulk_set(
+        &rows,
+        0,
+        BulkScope::Siblings,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(turns.indices, [0, 11]);
-    let nested = bulk_set(&rows, 9, BulkScope::Siblings, BulkDirection::Collapse, BulkAnchor::Include);
+    let nested = bulk_set(
+        &rows,
+        9,
+        BulkScope::Siblings,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(nested.indices, [9]);
 }
 
 #[test]
 fn subtree_targets_cursor_and_branch_descendants() {
     let rows = sample();
-    let turn = bulk_set(&rows, 0, BulkScope::Subtree, BulkDirection::Collapse, BulkAnchor::Include);
+    let turn = bulk_set(
+        &rows,
+        0,
+        BulkScope::Subtree,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(turn.indices, [0, 1]);
-    let turn_expand = bulk_set(&rows, 0, BulkScope::Subtree, BulkDirection::Expand, BulkAnchor::Include);
+    let turn_expand = bulk_set(
+        &rows,
+        0,
+        BulkScope::Subtree,
+        BulkDirection::Expand,
+        BulkAnchor::Include,
+    );
     assert_eq!(turn_expand.indices, [4]);
-    let collapsed_turn = bulk_set(&rows, 8, BulkScope::Subtree, BulkDirection::Collapse, BulkAnchor::Include);
+    let collapsed_turn = bulk_set(
+        &rows,
+        8,
+        BulkScope::Subtree,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(collapsed_turn.indices, [9]);
-    let leaf = bulk_set(&rows, 2, BulkScope::Subtree, BulkDirection::Collapse, BulkAnchor::Include);
+    let leaf = bulk_set(
+        &rows,
+        2,
+        BulkScope::Subtree,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert!(leaf.indices.is_empty());
 }
 
 #[test]
 fn all_targets_every_branch() {
     let rows = sample();
-    let collapse = bulk_set(&rows, 2, BulkScope::All, BulkDirection::Collapse, BulkAnchor::Include);
+    let collapse = bulk_set(
+        &rows,
+        2,
+        BulkScope::All,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(collapse.indices, [0, 1, 9, 11]);
-    let expand = bulk_set(&rows, 2, BulkScope::All, BulkDirection::Expand, BulkAnchor::Include);
+    let expand = bulk_set(
+        &rows,
+        2,
+        BulkScope::All,
+        BulkDirection::Expand,
+        BulkAnchor::Include,
+    );
     assert_eq!(expand.indices, [4, 8]);
 }
 
 #[test]
 fn excluded_anchor_keeps_the_cursor_row_out_of_every_scope() {
     let rows = sample();
-    let turns = bulk_set(&rows, 0, BulkScope::Siblings, BulkDirection::Collapse, BulkAnchor::Exclude);
+    let turns = bulk_set(
+        &rows,
+        0,
+        BulkScope::Siblings,
+        BulkDirection::Collapse,
+        BulkAnchor::Exclude,
+    );
     assert_eq!(turns.indices, [11], "the cursor turn keeps its state");
-    let below = bulk_set(&rows, 0, BulkScope::Subtree, BulkDirection::Collapse, BulkAnchor::Exclude);
-    assert_eq!(below.indices, [1], "the subtree reaches only what is below the cursor row");
-    let all = bulk_set(&rows, 8, BulkScope::All, BulkDirection::Collapse, BulkAnchor::Exclude);
-    assert_eq!(all.indices, [0, 1, 9, 11], "cursor 8 is the only branch left out");
+    let below = bulk_set(
+        &rows,
+        0,
+        BulkScope::Subtree,
+        BulkDirection::Collapse,
+        BulkAnchor::Exclude,
+    );
+    assert_eq!(
+        below.indices,
+        [1],
+        "the subtree reaches only what is below the cursor row"
+    );
+    let all = bulk_set(
+        &rows,
+        8,
+        BulkScope::All,
+        BulkDirection::Collapse,
+        BulkAnchor::Exclude,
+    );
+    assert_eq!(
+        all.indices,
+        [0, 1, 9, 11],
+        "cursor 8 is the only branch left out"
+    );
     // The direction heuristic ignores the anchor too: 8 is collapsed, but 9 under it is open.
     let subtree = bulk_toggle(&rows, 8, BulkScope::Subtree, BulkAnchor::Exclude);
     assert_eq!(subtree.direction, BulkDirection::Collapse);
     assert_eq!(subtree.indices, [9]);
-    let only_sibling = bulk_set(&rows, 9, BulkScope::Siblings, BulkDirection::Collapse, BulkAnchor::Exclude);
-    assert!(only_sibling.indices.is_empty(), "a lone branch stays untouched");
+    let only_sibling = bulk_set(
+        &rows,
+        9,
+        BulkScope::Siblings,
+        BulkDirection::Collapse,
+        BulkAnchor::Exclude,
+    );
+    assert!(
+        only_sibling.indices.is_empty(),
+        "a lone branch stays untouched"
+    );
 }
 
 #[test]
@@ -359,7 +454,13 @@ fn visible_anchor_prefers_the_outermost_collapsed_ancestor() {
 #[test]
 fn cursor_repair_after_bulk_collapse() {
     let mut rows = sample();
-    let change = bulk_set(&rows, 0, BulkScope::Subtree, BulkDirection::Collapse);
+    let change = bulk_set(
+        &rows,
+        0,
+        BulkScope::Subtree,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(change.indices, [0, 1]);
     for index in change.indices {
         set_expanded(&mut rows, index, false);
@@ -377,7 +478,7 @@ fn empty_list_is_inert() {
     assert_eq!(navigate(&rows, 0, TreeKey::Down), TreeStep::Stay);
     assert_eq!(navigate(&rows, 0, TreeKey::End), TreeStep::Stay);
     assert_eq!(toggle(&rows, 0), TreeStep::Stay);
-    let change = bulk_toggle(&rows, 0, BulkScope::All);
+    let change = bulk_toggle(&rows, 0, BulkScope::All, BulkAnchor::Include);
     assert!(change.indices.is_empty());
 }
 
@@ -388,17 +489,24 @@ fn cursor_beyond_the_end_is_handled() {
     assert_eq!(navigate(&rows, 12, TreeKey::Up), TreeStep::Stay);
     assert_eq!(navigate(&rows, 99, TreeKey::Home), TreeStep::Stay);
     assert!(
-        bulk_toggle(&rows, 12, BulkScope::Siblings)
+        bulk_toggle(&rows, 12, BulkScope::Siblings, BulkAnchor::Include)
             .indices
             .is_empty()
     );
     assert!(
-        bulk_toggle(&rows, 12, BulkScope::Subtree)
+        bulk_toggle(&rows, 12, BulkScope::Subtree, BulkAnchor::Include)
             .indices
             .is_empty()
     );
     assert_eq!(
-        bulk_set(&rows, 12, BulkScope::All, BulkDirection::Expand).indices,
+        bulk_set(
+            &rows,
+            12,
+            BulkScope::All,
+            BulkDirection::Expand,
+            BulkAnchor::Include
+        )
+        .indices,
         [4, 8]
     );
 }
@@ -436,13 +544,19 @@ fn large_list_is_handled_in_single_calls() {
     );
     assert_eq!(visible_anchor(&rows, 99_999), Some(99_900));
 
-    let expand = bulk_toggle(&rows, 0, BulkScope::All);
+    let expand = bulk_toggle(&rows, 0, BulkScope::All, BulkAnchor::Include);
     assert_eq!(expand.direction, BulkDirection::Expand);
     assert_eq!(expand.indices.len(), 500);
     assert_eq!(expand.indices.get(..2), Some(&[100, 300][..]));
     assert_eq!(expand.indices.get(499), Some(&99_900));
 
-    let siblings = bulk_set(&rows, 200, BulkScope::Siblings, BulkDirection::Collapse);
+    let siblings = bulk_set(
+        &rows,
+        200,
+        BulkScope::Siblings,
+        BulkDirection::Collapse,
+        BulkAnchor::Include,
+    );
     assert_eq!(siblings.indices.len(), 500);
     assert_eq!(siblings.indices.get(..2), Some(&[0, 200][..]));
 }
