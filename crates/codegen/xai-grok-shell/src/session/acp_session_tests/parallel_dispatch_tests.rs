@@ -5,7 +5,9 @@
 //! - Post-tool hooks and followups
 
 use super::*;
-use xai_grok_tools::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
+use xai_grok_tools::implementations::grok_build::task::types::{
+    SubagentActor, SubagentCancelDisposition,
+};
 
 fn at<T>(xs: &[T], i: usize) -> &T {
     let Some(x) = xs.get(i) else {

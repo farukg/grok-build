@@ -1020,8 +1020,9 @@ async fn test_compact_on_error_kimi_token_limit_without_model_metadata() {
             let unrelated = xai_grok_sampler::SamplingErrorInfo {
                 kind: xai_grok_sampler::SamplingErrorKind::Api,
                 status_code: Some(400),
-                message: "invalid_request_error: field description says request too large sometimes"
-                    .into(),
+                message:
+                    "invalid_request_error: field description says request too large sometimes"
+                        .into(),
                 is_retryable: false,
                 retry_after_secs: None,
                 should_retry: None,

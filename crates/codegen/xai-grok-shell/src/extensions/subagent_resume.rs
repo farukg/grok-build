@@ -29,10 +29,17 @@ pub struct ResumeSubagentRequest {
 )]
 pub enum ResumeSubagentOutcome {
     /// The prompt is queued as the next turn of the same subagent (woken first when it had finished).
-    Queued { subagent_id: String, message_id: String },
+    Queued {
+        subagent_id: String,
+        message_id: String,
+    },
     /// A continuation was spawned from the finished subagent; it reports as a new subagent.
-    Resumed { source_id: String },
-    Refused { reason: SubagentResumeError },
+    Resumed {
+        source_id: String,
+    },
+    Refused {
+        reason: SubagentResumeError,
+    },
 }
 
 impl From<Result<SubagentResumeRoute, SubagentResumeError>> for ResumeSubagentOutcome {

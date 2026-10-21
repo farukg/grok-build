@@ -1,8 +1,8 @@
 use super::*;
-use xai_grok_tools::implementations::grok_build::task::types::{SubagentState};
 use crate::session::goal_role_tools::tests::{assert_no_tool_placeholders, summary_with};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
+use xai_grok_tools::implementations::grok_build::task::types::SubagentState;
 
 /// A miss here silently re-runs a cancelled explicit-pair skeptic on the current model.
 #[test]
@@ -2944,7 +2944,9 @@ async fn cold_fallback_after_resume_failure_carries_pool0_model_on_request() {
             if resume.is_some() {
                 // The resume attempt (and its inherit retry) both fail, so run_one_skeptic downgrades to a cold spawn
                 let _ = req.result_tx.send(SubagentResult {
-                    state: SubagentState::Failed { message: "stale prior session".into() },
+                    state: SubagentState::Failed {
+                        message: "stale prior session".into(),
+                    },
                     ..Default::default()
                 });
             } else {

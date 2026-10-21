@@ -1,14 +1,17 @@
 use super::*;
-use crate::session::{ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest};
-use crate::session::persistence::PersistenceMsg;
 use crate::extensions::notification::SessionUpdate as XaiSessionUpdate;
+use crate::session::persistence::PersistenceMsg;
+use crate::session::{ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest};
 
 impl SessionActor {
     pub(super) async fn handle_remove_context_items(
         &self,
         request: RemoveItemsRequest,
     ) -> RemoveContextItemsOutcome {
-        if self.session_turn_active.load(std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .session_turn_active
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             return RemoveContextItemsOutcome::TurnRunning;
         }
         let Some(snapshot) = self.chat_state_handle.snapshot().await else {
@@ -20,22 +23,40 @@ impl SessionActor {
             return RemoveContextItemsOutcome::BeforeCompaction;
         }
         let mut conversation = snapshot.conversation;
-        let removal = crate::session::storage::remove_filter::remove_from_conversation(&mut conversation, &request.items);
-        if removal.removed.is_empty() { return removal.refusal(); }
-        if self.session_turn_active.load(std::sync::atomic::Ordering::SeqCst) {
+        let removal = crate::session::storage::remove_filter::remove_from_conversation(
+            &mut conversation,
+            &request.items,
+        );
+        if removal.removed.is_empty() {
+            return removal.refusal();
+        }
+        if self
+            .session_turn_active
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             return RemoveContextItemsOutcome::TurnRunning;
         }
         self.chat_state_handle.replace_conversation(conversation);
         if !self.removal_is_durable(&removal.removed).await {
-            return RemoveContextItemsOutcome::PersistFailed { removed: removal.removed };
+            return RemoveContextItemsOutcome::PersistFailed {
+                removed: removal.removed,
+            };
         }
-        RemoveContextItemsOutcome::Removed { removed: removal.removed, skipped: removal.skipped }
+        RemoveContextItemsOutcome::Removed {
+            removed: removal.removed,
+            skipped: removal.skipped,
+        }
     }
 
     /// The history rewrite is acknowledged before the replay marker is written, so a marker never outlives a rewrite that did not land.
     async fn removal_is_durable(&self, removed: &[ContextItemRef]) -> bool {
         // Chat-state commands run in order: this reply proves the replace has run and queued its rewrite ahead of the barrier.
-        if self.chat_state_handle.try_get_estimated_total_tokens().await.is_none() {
+        if self
+            .chat_state_handle
+            .try_get_estimated_total_tokens()
+            .await
+            .is_none()
+        {
             return false;
         }
         if !self.persistence_barrier().await {
@@ -50,7 +71,12 @@ impl SessionActor {
 
     async fn persistence_barrier(&self) -> bool {
         let (flush_tx, flush_rx) = tokio::sync::oneshot::channel();
-        self.notifications.persistence_tx.send(PersistenceMsg::FlushAndAck { respond_to: flush_tx }).is_ok()
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::FlushAndAck {
+                respond_to: flush_tx,
+            })
+            .is_ok()
             && matches!(flush_rx.await, Ok(Ok(())))
     }
 }

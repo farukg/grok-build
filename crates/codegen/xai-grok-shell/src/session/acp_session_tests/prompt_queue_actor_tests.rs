@@ -3937,7 +3937,9 @@ async fn bash_turn_records_a_direct_bash_history_item() {
                 .handle_direct_bash_command(
                     "bash-1",
                     "echo hello".to_string(),
-                    &[acp::ContentBlock::Text(acp::TextContent::new("!echo hello"))],
+                    &[acp::ContentBlock::Text(acp::TextContent::new(
+                        "!echo hello",
+                    ))],
                 )
                 .await;
 
@@ -4390,7 +4392,10 @@ async fn message_during_planning_queues_without_cancel() {
                 ))
                 .await;
 
-            assert!(!cancel, "a message during planning must not cancel the turn");
+            assert!(
+                !cancel,
+                "a message during planning must not cancel the turn"
+            );
             assert!(
                 !planner_cancel.is_cancelled(),
                 "a message during planning must not restart the planner"

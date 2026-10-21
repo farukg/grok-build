@@ -1,6 +1,6 @@
 pub mod chat;
-pub mod context_policy_store;
 pub mod compaction_context;
+pub mod context_policy_store;
 pub mod full_replace_compaction;
 pub mod memory_context;
 pub mod memory_flush_window;

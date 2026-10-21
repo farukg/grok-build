@@ -1712,7 +1712,9 @@ fn filter_rewind_by<T>(items: Vec<T>, classify: impl Fn(&T) -> RewindStep) -> Ve
     survivors.into_kept()
 }
 
-pub(super) fn parse_removed_items(raw: Option<&serde_json::value::RawValue>) -> Vec<ContextItemRef> {
+pub(super) fn parse_removed_items(
+    raw: Option<&serde_json::value::RawValue>,
+) -> Vec<ContextItemRef> {
     raw.and_then(|items| serde_json::from_str(items.get()).ok())
         .unwrap_or_default()
 }
@@ -1764,10 +1766,17 @@ fn rewind_step_for_line(line: &str) -> RewindStep {
 fn rewind_step_for_update(update: &SessionUpdate) -> RewindStep {
     if let SessionUpdate::Xai(n) = update {
         match &n.update {
-            crate::extensions::notification::SessionUpdate::RewindMarker { target_prompt_index, .. } => {
-                return RewindStep::Rewind { target: *target_prompt_index };
+            crate::extensions::notification::SessionUpdate::RewindMarker {
+                target_prompt_index,
+                ..
+            } => {
+                return RewindStep::Rewind {
+                    target: *target_prompt_index,
+                };
             }
-            crate::extensions::notification::SessionUpdate::ContextItemsRemoved { items, .. } => {
+            crate::extensions::notification::SessionUpdate::ContextItemsRemoved {
+                items, ..
+            } => {
                 return RewindStep::RemoveItems(items.clone());
             }
             _ => {}
@@ -1795,7 +1804,10 @@ fn rewind_step_for_update(update: &SessionUpdate) -> RewindStep {
 /// Canonical raw-line rewind filter used by the initial and delta replay paths.
 /// Skips parsing entirely when no rewind or removal markers are present.
 pub(crate) fn filter_rewind_lines(lines: Vec<&str>) -> Vec<&str> {
-    if !lines.iter().any(|line| line.contains(&*REWIND_MARKER) || line.contains(&*CONTEXT_ITEMS_REMOVED)) {
+    if !lines
+        .iter()
+        .any(|line| line.contains(&*REWIND_MARKER) || line.contains(&*CONTEXT_ITEMS_REMOVED))
+    {
         return lines;
     }
     filter_rewind_by(lines, |line| rewind_step_for_line(line))
@@ -2275,7 +2287,10 @@ pub(crate) struct ContentMetaPeek<'a> {
 /// Always returns an event: `NotUserMessage` for lines unrelated to prompts and history markers.
 /// Fast path: user chunks and internal history markers are checked by their discriminant before parsing.
 pub(crate) fn parse_prompt_extract_event(line: &str) -> PromptExtractEvent {
-    if !line.contains(&*USER_MESSAGE_CHUNK) && !line.contains(&*REWIND_MARKER) && !line.contains(&*CONTEXT_ITEMS_REMOVED) {
+    if !line.contains(&*USER_MESSAGE_CHUNK)
+        && !line.contains(&*REWIND_MARKER)
+        && !line.contains(&*CONTEXT_ITEMS_REMOVED)
+    {
         return PromptExtractEvent::NotUserMessage;
     }
 
@@ -3773,7 +3788,8 @@ mod tests {
             .collect();
         assert_eq!(via_lines, via_updates);
 
-        let prompts = collect_prompts_from_events(lines.iter().map(|line| parse_prompt_extract_event(line)));
+        let prompts =
+            collect_prompts_from_events(lines.iter().map(|line| parse_prompt_extract_event(line)));
         assert_eq!(prompts, ["p1"]);
     }
 

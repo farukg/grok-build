@@ -74,15 +74,11 @@ impl CountingLoopDetector {
 impl LoopToken {
     fn same_loop_as(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                Self::Counter { k: k0, n: n0 },
-                Self::Counter { k: k1, n: n1 },
-            ) => {
+            (Self::Counter { k: k0, n: n0 }, Self::Counter { k: k1, n: n1 }) => {
                 // Same fraction repeated (`197/197. 197/197.`) or a strictly
                 // incrementing counter (`1/6. 2/6.` / `1/1. 2/2.`).
                 (*k0 == *k1 && *n0 == *n1)
-                    || (*k1 == k0.saturating_add(1)
-                        && (*n1 == *n0 || *n1 == n0.saturating_add(1)))
+                    || (*k1 == k0.saturating_add(1) && (*n1 == *n0 || *n1 == n0.saturating_add(1)))
             }
             (Self::Identical { text: a }, Self::Identical { text: b }) => a == b,
             _ => false,
@@ -106,9 +102,7 @@ fn tokenize_visible(text: &str) -> Vec<LoopToken> {
         }
         words.push(trimmed.to_ascii_lowercase());
     }
-    if counters.is_empty()
-        && !words.is_empty()
-        && words.iter().all(|word| is_identical_tail(word))
+    if counters.is_empty() && !words.is_empty() && words.iter().all(|word| is_identical_tail(word))
     {
         return vec![LoopToken::Identical {
             text: words.join(" "),
@@ -135,7 +129,6 @@ fn is_identical_tail(token: &str) -> bool {
         matches!(word, "owned" | "0" | "complete" | "remaining" | "sites")
     }) && any
 }
-
 
 #[cfg(test)]
 mod tests {

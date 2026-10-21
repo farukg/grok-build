@@ -45,9 +45,15 @@ async fn served_route_reaches_session_update_meta() {
                 ..Default::default()
             };
 
-            actor.handle_model_metadata_update(metadata("gpt-5.6-sol")).await;
-            actor.handle_model_metadata_update(metadata("gpt-5.6-sol")).await;
-            actor.handle_model_metadata_update(metadata("gpt-5.6-luna")).await;
+            actor
+                .handle_model_metadata_update(metadata("gpt-5.6-sol"))
+                .await;
+            actor
+                .handle_model_metadata_update(metadata("gpt-5.6-sol"))
+                .await;
+            actor
+                .handle_model_metadata_update(metadata("gpt-5.6-luna"))
+                .await;
 
             assert_eq!(
                 served_routes_on_wire(&mut gateway_rx),

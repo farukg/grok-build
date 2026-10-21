@@ -16,7 +16,11 @@ pub(crate) struct ConversationRemoval {
 impl ConversationRemoval {
     /// The outcome of a pass that removed nothing: `WouldOrphan` when some ref matched an exchange that could not be taken out whole, else `NotFound`.
     pub(crate) fn refusal(&self) -> RemoveContextItemsOutcome {
-        if self.skipped.iter().any(|skipped| skipped.reason != SkipReason::NotInContext) {
+        if self
+            .skipped
+            .iter()
+            .any(|skipped| skipped.reason != SkipReason::NotInContext)
+        {
             return RemoveContextItemsOutcome::WouldOrphan;
         }
         RemoveContextItemsOutcome::NotFound
@@ -42,11 +46,21 @@ impl ExchangeFacts {
         items.iter().fold(Self::default(), |mut facts, item| {
             match item {
                 ConversationItem::Assistant(assistant) => {
-                    facts.calls += assistant.tool_calls.iter().filter(|call| call.id.as_ref() == id).count();
+                    facts.calls += assistant
+                        .tool_calls
+                        .iter()
+                        .filter(|call| call.id.as_ref() == id)
+                        .count();
                 }
-                ConversationItem::ToolResult(result) => facts.results += usize::from(result.tool_call_id == id),
-                ConversationItem::BackendToolCall(call) => facts.backend_calls += usize::from(call.id() == id),
-                ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::Reasoning(_) => {}
+                ConversationItem::ToolResult(result) => {
+                    facts.results += usize::from(result.tool_call_id == id)
+                }
+                ConversationItem::BackendToolCall(call) => {
+                    facts.backend_calls += usize::from(call.id() == id)
+                }
+                ConversationItem::System(_)
+                | ConversationItem::User(_)
+                | ConversationItem::Reasoning(_) => {}
             }
             facts
         })
@@ -66,10 +80,19 @@ impl ExchangeFacts {
 /// The user item with `prompt_index` up to the next user item with a larger prompt index.
 fn turn_range(items: &[ConversationItem], prompt_index: usize) -> Option<Range<usize>> {
     let start = items.iter().position(|item| matches!(item, ConversationItem::User(user) if user.prompt_index == Some(prompt_index)))?;
-    let end = items.iter().enumerate().skip(start + 1).find_map(|(idx, item)| match item {
-        ConversationItem::User(user) if user.prompt_index.is_some_and(|index| index > prompt_index) => Some(idx),
-        _ => None,
-    }).unwrap_or(items.len());
+    let end = items
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(idx, item)| match item {
+            ConversationItem::User(user)
+                if user.prompt_index.is_some_and(|index| index > prompt_index) =>
+            {
+                Some(idx)
+            }
+            _ => None,
+        })
+        .unwrap_or(items.len());
     Some(start..end)
 }
 
@@ -85,7 +108,8 @@ impl RemovalPlan {
     fn add_turn(&mut self, items: &[ConversationItem], range: Range<usize>) {
         for item in items.iter().take(range.end).skip(range.start) {
             if let ConversationItem::Assistant(assistant) = item {
-                self.tool_ids.extend(assistant.tool_calls.iter().map(|call| call.id.clone()));
+                self.tool_ids
+                    .extend(assistant.tool_calls.iter().map(|call| call.id.clone()));
             }
         }
         self.ranges.push(range);
@@ -94,19 +118,33 @@ impl RemovalPlan {
     fn apply(&self, items: &mut Vec<ConversationItem>) {
         let mut dropped = vec![false; items.len()];
         for range in &self.ranges {
-            dropped.iter_mut().take(range.end).skip(range.start).for_each(|flag| *flag = true);
+            dropped
+                .iter_mut()
+                .take(range.end)
+                .skip(range.start)
+                .for_each(|flag| *flag = true);
         }
         for (item, flag) in items.iter_mut().zip(dropped.iter_mut()) {
             match item {
-                ConversationItem::ToolResult(result) => *flag |= self.tool_ids.contains(result.tool_call_id.as_str()),
-                ConversationItem::BackendToolCall(call) => *flag |= self.backend_ids.contains(call.id()),
+                ConversationItem::ToolResult(result) => {
+                    *flag |= self.tool_ids.contains(result.tool_call_id.as_str())
+                }
+                ConversationItem::BackendToolCall(call) => {
+                    *flag |= self.backend_ids.contains(call.id())
+                }
                 ConversationItem::Assistant(assistant) => {
                     let original_calls = assistant.tool_calls.len();
-                    assistant.tool_calls.retain(|call| !self.tool_ids.contains(call.id.as_ref()));
+                    assistant
+                        .tool_calls
+                        .retain(|call| !self.tool_ids.contains(call.id.as_ref()));
                     let removed_call = assistant.tool_calls.len() < original_calls;
-                    *flag |= removed_call && assistant.content.is_empty() && assistant.tool_calls.is_empty();
+                    *flag |= removed_call
+                        && assistant.content.is_empty()
+                        && assistant.tool_calls.is_empty();
                 }
-                ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::Reasoning(_) => {}
+                ConversationItem::System(_)
+                | ConversationItem::User(_)
+                | ConversationItem::Reasoning(_) => {}
             }
         }
         self.drop_backend_reasoning(items, &mut dropped);
@@ -118,8 +156,14 @@ impl RemovalPlan {
     /// A removed backend call takes its sealed `tco_*` blob wherever it sits among the response's siblings.
     fn drop_backend_reasoning(&self, items: &[ConversationItem], dropped: &mut [bool]) {
         for (index, item) in items.iter().enumerate() {
-            let ConversationItem::Reasoning(reasoning) = item else { continue };
-            if self.backend_ids.iter().any(|call_id| is_sealed_blob_of(&reasoning.id, call_id)) {
+            let ConversationItem::Reasoning(reasoning) = item else {
+                continue;
+            };
+            if self
+                .backend_ids
+                .iter()
+                .any(|call_id| is_sealed_blob_of(&reasoning.id, call_id))
+            {
                 mark(dropped, index);
             }
         }
@@ -129,24 +173,49 @@ impl RemovalPlan {
 /// The server mints a backend call `<kind>_<response>_call-<n>` and its sealed blob `tco_<response>_call-<n>`,
 /// so the blob belongs to the call whose id has the same part after the first underscore.
 fn is_sealed_blob_of(reasoning_id: &str, call_id: &str) -> bool {
-    let Some(blob_part) = reasoning_id.strip_prefix("tco_") else { return false };
-    call_id.split_once('_').is_some_and(|(_, call_part)| call_part == blob_part)
+    let Some(blob_part) = reasoning_id.strip_prefix("tco_") else {
+        return false;
+    };
+    call_id
+        .split_once('_')
+        .is_some_and(|(_, call_part)| call_part == blob_part)
 }
 
 /// A response is `[Reasoning | BackendToolCall]* Assistant`. When its assistant is dropped and no backend call of the response is kept,
 /// its reasoning goes too: it would otherwise bind to the next response in the request (same rule as `ContextPolicy::project`).
 fn drop_unanswered_reasoning(items: &[ConversationItem], dropped: &mut [bool]) {
     for (assistant_at, item) in items.iter().enumerate() {
-        if !matches!(item, ConversationItem::Assistant(_)) || !dropped.get(assistant_at).is_some_and(|flag| *flag) { continue; }
-        let run = items.iter().enumerate().take(assistant_at).rev()
-            .take_while(|(_, sibling)| matches!(sibling, ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_)))
+        if !matches!(item, ConversationItem::Assistant(_))
+            || !dropped.get(assistant_at).is_some_and(|flag| *flag)
+        {
+            continue;
+        }
+        let run = items
+            .iter()
+            .enumerate()
+            .take(assistant_at)
+            .rev()
+            .take_while(|(_, sibling)| {
+                matches!(
+                    sibling,
+                    ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_)
+                )
+            })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         let answered = run.iter().any(|index| {
-            matches!(items.get(*index), Some(ConversationItem::BackendToolCall(_))) && dropped.get(*index).is_some_and(|flag| !*flag)
+            matches!(
+                items.get(*index),
+                Some(ConversationItem::BackendToolCall(_))
+            ) && dropped.get(*index).is_some_and(|flag| !*flag)
         });
-        if answered { continue; }
-        for index in run.into_iter().filter(|index| matches!(items.get(*index), Some(ConversationItem::Reasoning(_)))) {
+        if answered {
+            continue;
+        }
+        for index in run
+            .into_iter()
+            .filter(|index| matches!(items.get(*index), Some(ConversationItem::Reasoning(_))))
+        {
             mark(dropped, index);
         }
     }
@@ -168,7 +237,10 @@ pub(crate) fn remove_from_conversation(
     refs: &[ContextItemRef],
 ) -> ConversationRemoval {
     let mut plan = RemovalPlan::default();
-    let mut removal = ConversationRemoval { removed: Vec::new(), skipped: Vec::new() };
+    let mut removal = ConversationRemoval {
+        removed: Vec::new(),
+        skipped: Vec::new(),
+    };
     let mut seen = HashSet::new();
     for reference in refs.iter().filter(|reference| seen.insert(*reference)) {
         let skip = match reference {
@@ -179,21 +251,26 @@ pub(crate) fn remove_from_conversation(
                 }
                 None => Some(SkipReason::NotInContext),
             },
-            ContextItemRef::ToolExchange { tool_call_id } => match ExchangeFacts::of(items, tool_call_id.as_str()).verdict() {
-                ExchangeVerdict::ClientPair => {
-                    plan.tool_ids.insert(Arc::from(tool_call_id.as_str()));
-                    None
+            ContextItemRef::ToolExchange { tool_call_id } => {
+                match ExchangeFacts::of(items, tool_call_id.as_str()).verdict() {
+                    ExchangeVerdict::ClientPair => {
+                        plan.tool_ids.insert(Arc::from(tool_call_id.as_str()));
+                        None
+                    }
+                    ExchangeVerdict::BackendCall => {
+                        plan.backend_ids.insert(tool_call_id.as_str().to_owned());
+                        None
+                    }
+                    ExchangeVerdict::Skip(reason) => Some(reason),
                 }
-                ExchangeVerdict::BackendCall => {
-                    plan.backend_ids.insert(tool_call_id.as_str().to_owned());
-                    None
-                }
-                ExchangeVerdict::Skip(reason) => Some(reason),
-            },
+            }
         };
         match skip {
             None => removal.removed.push(reference.clone()),
-            Some(reason) => removal.skipped.push(SkippedItem { item: reference.clone(), reason }),
+            Some(reason) => removal.skipped.push(SkippedItem {
+                item: reference.clone(),
+                reason,
+            }),
         }
     }
     plan.apply(items);

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 use xai_grok_config_types::{
-    resolve_file_acceleration_routes, Feature, ENV_FILE_ACCELERATION_ROUTES,
+    ENV_FILE_ACCELERATION_ROUTES, Feature, resolve_file_acceleration_routes,
 };
 use xai_grok_telemetry::events::{
     FileAccelerationArm, FileAccelerationSessionEnded, FileAccelerationSessionStarted,

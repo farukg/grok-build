@@ -1,5 +1,4 @@
 use super::support::*;
-use xai_grok_tools::implementations::grok_build::task::types::{SubagentState};
 use super::*;
 use crate::extensions::prompt_meta::PromptBlockMeta;
 use crate::session::{InputAuthority, InputPolicy};
@@ -7,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use xai_grok_test_support::sse::responses_api_script_exact;
 use xai_grok_test_support::{MockInferenceServer, ScriptedResponse};
+use xai_grok_tools::implementations::grok_build::task::types::SubagentState;
 
 #[derive(Default)]
 struct PolicyRecorder(std::cell::Cell<Option<InputAuthority>>);
@@ -775,7 +775,9 @@ async fn goal_set_with_failed_planner_makes_no_inference_request() {
                 while let Some(ev) = rx.recv().await {
                     if let SubagentEvent::Spawn(req) = ev {
                         let result = SubagentResult {
-                            state: SubagentState::Failed { message: "planner crashed".into() },
+                            state: SubagentState::Failed {
+                                message: "planner crashed".into(),
+                            },
                             subagent_id: req.id.clone(),
                             child_session_id: req.id.clone(),
                             ..Default::default()
@@ -991,14 +993,23 @@ async fn context_policy_decides_what_the_next_request_sends() {
                 .await
                 .expect("second turn");
             let restricted = last_request();
-            assert!(restricted.contains("second prompt"), "the current prompt is always sent");
-            assert!(!restricted.contains("first prompt"), "an excluded category is not sent");
+            assert!(
+                restricted.contains("second prompt"),
+                "the current prompt is always sent"
+            );
+            assert!(
+                !restricted.contains("first prompt"),
+                "an excluded category is not sent"
+            );
 
             actor.set_context_policy(ContextPolicy::default());
             run_parent_turn(&actor, human_request("third prompt"))
                 .await
                 .expect("third turn");
-            assert!(last_request().contains("first prompt"), "switching a category back on sends it again");
+            assert!(
+                last_request().contains("first prompt"),
+                "switching a category back on sends it again"
+            );
         })
         .await;
 }

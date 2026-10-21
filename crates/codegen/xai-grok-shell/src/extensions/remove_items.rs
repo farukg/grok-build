@@ -33,7 +33,9 @@ pub(crate) async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResul
     handle
         .cmd_tx
         .send(SessionCommand::RemoveContextItems {
-            request: RemoveItemsRequest { items: request.items },
+            request: RemoveItemsRequest {
+                items: request.items,
+            },
             respond_to: tx,
         })
         .map_err(|_| acp::Error::internal_error().data("failed to send remove-items command"))?;

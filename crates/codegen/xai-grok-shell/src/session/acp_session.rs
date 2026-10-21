@@ -248,10 +248,10 @@ mod context_policy;
 mod context_snapshot;
 #[path = "acp_session_impl/recap.rs"]
 mod recap;
-#[path = "acp_session_impl/rewind.rs"]
-mod rewind;
 #[path = "acp_session_impl/remove_items.rs"]
 mod remove_items;
+#[path = "acp_session_impl/rewind.rs"]
+mod rewind;
 #[path = "acp_session_impl/session_setup.rs"]
 mod session_setup;
 #[path = "acp_session_impl/side_call.rs"]
@@ -1505,11 +1505,11 @@ mod managed_hooks_tests;
 #[path = "acp_session_tests/model_switch_label_tests.rs"]
 mod model_switch_label_tests;
 #[cfg(test)]
-#[path = "acp_session_tests/served_route_tests.rs"]
-mod served_route_tests;
-#[cfg(test)]
 #[path = "acp_session_tests/replace_system_prompt_tests.rs"]
 mod replace_system_prompt_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/served_route_tests.rs"]
+mod served_route_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/support.rs"]
 mod support;

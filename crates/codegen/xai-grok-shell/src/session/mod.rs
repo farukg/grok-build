@@ -13,9 +13,12 @@ pub(crate) mod message_delivery;
 pub mod notifications;
 pub mod pending_interaction;
 pub mod prompt_queue;
-pub(crate) mod resume_status;
 mod remove_items;
-pub use self::remove_items::{ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest, SkipReason, SkippedItem, ToolCallId};
+pub(crate) mod resume_status;
+pub use self::remove_items::{
+    ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest, SkipReason, SkippedItem,
+    ToolCallId,
+};
 pub mod two_pass;
 pub mod user_echo;
 pub mod visibility;
@@ -528,13 +531,13 @@ pub mod feedback;
 pub mod feedback_manager;
 pub(crate) mod file_acceleration;
 pub use file_acceleration::{
-    client_owned_files_skip_acceleration, decide_gate, gate, preserving_factory_start_notice,
-    read_local_acceleration, record_off_sandbox_profile, select_session_fs, FileAccelerationSettings,
-    GateDecision, GateInputs,
+    FileAccelerationSettings, GateDecision, GateInputs, client_owned_files_skip_acceleration,
+    decide_gate, gate, preserving_factory_start_notice, read_local_acceleration,
+    record_off_sandbox_profile, select_session_fs,
 };
 pub use xai_grok_tools::computer::file_acceleration::{
-    apply_accelerator, install_preserving_file_accelerator, local_fs, preserving_file_accelerator,
     AcceleratedFs, AccelerationArm, AccelerationContext, AccelerationNotice, FileAccelerationGate,
+    apply_accelerator, install_preserving_file_accelerator, local_fs, preserving_file_accelerator,
 };
 pub mod file_system;
 pub mod fork;

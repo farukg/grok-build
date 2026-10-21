@@ -1849,7 +1849,10 @@ mod tests {
             *context,
             SubagentContext::ForkFailed(ForkFailure::NoInheritableContent)
         );
-        assert_eq!(serde_json::to_value(&update).expect("serializes"), persisted);
+        assert_eq!(
+            serde_json::to_value(&update).expect("serializes"),
+            persisted
+        );
     }
 
     #[test]

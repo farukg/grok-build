@@ -2,11 +2,11 @@
 //! Uses the same single-thread runtime and LocalSet pattern as the verification-stage e2e suite.
 
 use super::support::*;
-use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 use super::*;
 use std::sync::Arc as StdArc;
 use std::sync::atomic::{AtomicUsize, Ordering as SeqOrd};
 use tempfile::TempDir;
+use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCancelTarget, SubagentEvent, SubagentResult, SubagentSpawnRequest,
 };
@@ -125,7 +125,11 @@ fn spawn_planner_coordinator_capturing(
                         if spawn <= *cancels {
                             req.cancel_token.cancelled().await;
                             SubagentResult {
-                                state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "cancelled".into() } },
+                                state: SubagentState::Interrupted {
+                                    cause: InterruptionCause::Error {
+                                        message: "cancelled".into(),
+                                    },
+                                },
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
                                 ..Default::default()
@@ -160,7 +164,9 @@ fn spawn_planner_coordinator_capturing(
                     SpawnBehaviour::RuntimeThenWritePlan { message, body } => {
                         if count_task.load(SeqOrd::SeqCst) == 1 {
                             SubagentResult {
-                                state: SubagentState::Failed { message: message.clone() },
+                                state: SubagentState::Failed {
+                                    message: message.clone(),
+                                },
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
                                 ..Default::default()
@@ -1123,7 +1129,9 @@ async fn lifecycle_fail_pause_resume_retry_success() {
                         }
                         let result = if n == 0 {
                             SubagentResult {
-                                state: SubagentState::Failed { message: "planner failed".into() },
+                                state: SubagentState::Failed {
+                                    message: "planner failed".into(),
+                                },
                                 subagent_id: req.id.clone(),
                                 child_session_id: req.id.clone(),
                                 ..Default::default()

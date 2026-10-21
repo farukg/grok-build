@@ -1390,13 +1390,8 @@ pub async fn connect_or_spawn(
         let lock = LeaderLock::new(&env_urls.grok_ws_url);
         let sock_path = lock.socket_path().clone();
         loop {
-            match wait_for_socket_connectable(
-                &sock_path,
-                client_type,
-                mode,
-                capabilities.clone(),
-            )
-            .await
+            match wait_for_socket_connectable(&sock_path, client_type, mode, capabilities.clone())
+                .await
             {
                 Ok(conn) => return Ok(conn),
                 Err(e) => {

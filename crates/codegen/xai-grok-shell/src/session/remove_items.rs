@@ -12,11 +12,18 @@ pub struct RemoveItemsRequest {
 /// `{"kind":"removed","removed":[{"kind":"tool_exchange","toolCallId":"call_a"}],"skipped":[{"item":{"kind":"turn","promptIndex":2},"reason":"not_in_context"}]}`
 /// or a bare `{"kind":"turn_running"}` for the unit variants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoveContextItemsOutcome {
     /// Everything the shell actually dropped from the model context, plus what it left alone and why.
     /// `removed` is never empty; a `Turn` ref covers the user item through the next prompt-indexed user item.
-    Removed { removed: Vec<ContextItemRef>, skipped: Vec<SkippedItem> },
+    Removed {
+        removed: Vec<ContextItemRef>,
+        skipped: Vec<SkippedItem>,
+    },
     /// A turn is active; nothing changed.
     TurnRunning,
     /// No requested ref matched anything in the model context.
@@ -56,14 +63,18 @@ mod tests {
     #[test]
     fn outcome_wire_shapes_are_stable() {
         let removed = RemoveContextItemsOutcome::Removed {
-            removed: vec![ContextItemRef::ToolExchange { tool_call_id: "call_a".into() }],
+            removed: vec![ContextItemRef::ToolExchange {
+                tool_call_id: "call_a".into(),
+            }],
             skipped: vec![
                 SkippedItem {
                     item: ContextItemRef::Turn { prompt_index: 2 },
                     reason: SkipReason::NotInContext,
                 },
                 SkippedItem {
-                    item: ContextItemRef::ToolExchange { tool_call_id: "call_b".into() },
+                    item: ContextItemRef::ToolExchange {
+                        tool_call_id: "call_b".into(),
+                    },
                     reason: SkipReason::CallWithoutResult,
                 },
             ],

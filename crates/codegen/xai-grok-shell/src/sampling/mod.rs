@@ -6,13 +6,13 @@ pub mod types;
 // The two have identical method sets, so call sites compile unchanged
 pub use self::conversation::*;
 pub use self::error::{ResponseModelMetadata, Result, SamplingError};
+pub use self::types::*;
+pub use xai_grok_sampler::ApiBackend;
+pub use xai_grok_sampler::SamplingClient as Client;
 pub use xai_grok_sampling_types::ServedRoute;
 pub use xai_grok_sampling_types::{
     CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice, all_categories,
 };
-pub use self::types::*;
-pub use xai_grok_sampler::ApiBackend;
-pub use xai_grok_sampler::SamplingClient as Client;
 
 // Re-export async-openai Responses API types under `rs` namespace
 pub use async_openai::types::responses as rs;

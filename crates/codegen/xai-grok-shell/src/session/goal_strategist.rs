@@ -10,7 +10,6 @@
 //! A restore I/O failure or a symlink planted at the path is refused and surfaced via `GoalStrategistContractRestoreFailed` telemetry.
 
 use crate::session::events::{Event, GoalStrategistFailReason, GoalStrategistRestoreFailReason};
-use xai_grok_tools::implementations::grok_build::task::types::{SubagentState};
 use crate::session::goal_planner::{
     GOAL_ROLE_SUBAGENT_TYPE, RoleRenderedPrompt, RoleSpawnOverride, SpawnError,
     parse_terminal_response, spawn_with_fail_open_retry,
@@ -20,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use xai_grok_session_events::EventWriter;
 use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
+use xai_grok_tools::implementations::grok_build::task::types::SubagentState;
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentOwner, SubagentRequest, SubagentRuntimeOverrides,
 };
@@ -197,7 +197,9 @@ impl ChannelSpawner {
             });
         }
         if !result.success() {
-            let message = result.error().unwrap_or_else(|| "unknown error".to_string());
+            let message = result
+                .error()
+                .unwrap_or_else(|| "unknown error".to_string());
             return Err(SpawnError::Runtime {
                 message,
                 cancelled: result.is_interrupted(),

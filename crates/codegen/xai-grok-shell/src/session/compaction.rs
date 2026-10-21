@@ -231,7 +231,10 @@ impl SessionActor {
     }
     /// Two-pass compaction summarizes the stored history; a restricted context policy summarizes less.
     async fn compacts_the_whole_history(&self) -> bool {
-        self.chat_state_handle.get_context_policy().await.is_unrestricted()
+        self.chat_state_handle
+            .get_context_policy()
+            .await
+            .is_unrestricted()
     }
     async fn run_prefire_pass1_inner(self: &Arc<Self>) -> PrefirePass1Run {
         if !self.two_pass_active() || !self.compacts_the_whole_history().await {

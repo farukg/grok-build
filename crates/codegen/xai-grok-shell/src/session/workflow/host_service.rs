@@ -8,8 +8,7 @@ use tokio_util::sync::CancellationToken;
 use xai_grok_tools::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use xai_grok_tools::implementations::grok_build::task::types::{
     ModelOverrideProvenance, SubagentCancelRequest, SubagentCancelTarget, SubagentEvent,
-    SubagentState,
-    SubagentOwner, SubagentRequest, SubagentRuntimeOverrides,
+    SubagentOwner, SubagentRequest, SubagentRuntimeOverrides, SubagentState,
 };
 use xai_workflow::{AgentOpts, AgentResult, BudgetState, HostError, WorkflowHostRequest};
 

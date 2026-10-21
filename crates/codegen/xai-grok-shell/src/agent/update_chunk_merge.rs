@@ -1066,7 +1066,8 @@ mod tests {
             panic!("expected merged arguments_delta");
         };
         assert_eq!(merged, full);
-        let parsed: serde_json::Value = serde_json::from_str(&merged).expect("valid JSON after merge");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&merged).expect("valid JSON after merge");
         assert_eq!(
             parsed.get("old_string").and_then(|v| v.as_str()),
             Some("fn foo() {\n    let x = 1;\n}")

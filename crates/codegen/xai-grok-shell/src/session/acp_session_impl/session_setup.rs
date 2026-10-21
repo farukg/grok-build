@@ -591,7 +591,11 @@ impl SessionActor {
             ) == Some(current)
     }
     async fn publish_served_route(&self, route: xai_grok_sampling_types::ServedRoute) {
-        match self.chat_state_handle.record_served_route(route.clone()).await {
+        match self
+            .chat_state_handle
+            .record_served_route(route.clone())
+            .await
+        {
             Some(xai_chat_state::ServedRouteChange::Changed) => {
                 self.send_xai_notification(
                     crate::extensions::notification::SessionUpdate::ModelServed { route },

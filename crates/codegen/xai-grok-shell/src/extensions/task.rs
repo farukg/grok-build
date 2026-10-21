@@ -263,7 +263,8 @@ struct SubagentSnapshotDto {
     cancel_reason: Option<String>,
     /// Who or what interrupted the subagent; `cancel_reason` is its wording for older clients.
     #[serde(skip_serializing_if = "Option::is_none")]
-    interruption: Option<xai_grok_tools::implementations::grok_build::task::types::InterruptionCause>,
+    interruption:
+        Option<xai_grok_tools::implementations::grok_build::task::types::InterruptionCause>,
     // ── Fork/resume provenance ─────────────────────────────────
     #[serde(skip_serializing_if = "Option::is_none")]
     fork_context_source: Option<String>,
@@ -438,8 +439,9 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
         "x.ai/subagent/cancel" => {
             let req: CancelSubagentRequest = parse(args)?;
             tracing::info!(subagent_id = %req.subagent_id, "Cancelling subagent via ext method");
-            let outcome =
-                SubagentCancelOutcomeDto::from(agent.cancel_subagent(&req.subagent_id, req.mode).await);
+            let outcome = SubagentCancelOutcomeDto::from(
+                agent.cancel_subagent(&req.subagent_id, req.mode).await,
+            );
             respond(Ok::<_, String>(CancelSubagentResponse {
                 subagent_id: req.subagent_id,
                 cancelled: outcome.cancelled_bool(),
@@ -495,7 +497,9 @@ pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentActor, SubagentState};
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        InterruptionCause, SubagentActor, SubagentState,
+    };
 
     #[test]
     fn delete_scheduled_task_request_deserializes_camel_case() {

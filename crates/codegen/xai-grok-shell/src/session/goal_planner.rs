@@ -332,7 +332,9 @@ impl ChannelSpawner {
             });
         }
         if !result.success() {
-            let message = result.error().unwrap_or_else(|| "unknown error".to_string());
+            let message = result
+                .error()
+                .unwrap_or_else(|| "unknown error".to_string());
             return Err(SpawnError::Runtime {
                 message,
                 cancelled: result.is_interrupted(),
@@ -485,9 +487,11 @@ fn record_fail_closed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
     use crate::session::goal_role_tools::tests::{assert_no_tool_placeholders, summary_with};
     use std::sync::{Arc, Mutex};
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        InterruptionCause, SubagentState,
+    };
     use xai_grok_tools::types::tool::ToolKind;
 
     #[test]
@@ -1323,7 +1327,9 @@ mod tests {
                 };
                 if req.runtime_overrides.model.is_some() {
                     let _ = req.result_tx.send(SubagentResult {
-                        state: SubagentState::Failed { message: "bad configured model".into() },
+                        state: SubagentState::Failed {
+                            message: "bad configured model".into(),
+                        },
                         ..Default::default()
                     });
                 } else {
@@ -1391,7 +1397,11 @@ mod tests {
                 };
                 spawns_coord.fetch_add(1, Ordering::SeqCst);
                 let _ = req.result_tx.send(SubagentResult {
-                    state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "user aborted".into() } },
+                    state: SubagentState::Interrupted {
+                        cause: InterruptionCause::Error {
+                            message: "user aborted".into(),
+                        },
+                    },
                     ..Default::default()
                 });
             }

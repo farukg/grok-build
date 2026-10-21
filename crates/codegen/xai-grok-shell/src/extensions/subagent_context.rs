@@ -66,9 +66,7 @@ impl ForkFailure {
             "empty parent conversation" => Self::EmptyParent,
             "no inheritable parent content after filtering"
             | "no inheritable parent content"
-            | "forked parent conversation has no inheritable content" => {
-                Self::NoInheritableContent
-            }
+            | "forked parent conversation has no inheritable content" => Self::NoInheritableContent,
             "parent conversation unavailable" => Self::ParentUnavailable,
             _ => Self::CopyFailed(reason),
         }

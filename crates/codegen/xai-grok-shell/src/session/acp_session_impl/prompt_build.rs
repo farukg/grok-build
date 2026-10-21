@@ -477,7 +477,11 @@ mod install_system_prompt_tests {
             ConversationItem::session_prefix("<user_info>new</user_info>"),
             false,
         );
-        assert_eq!(conv.len(), 2, "the legacy prefix slot is replaced, not duplicated");
+        assert_eq!(
+            conv.len(),
+            2,
+            "the legacy prefix slot is replaced, not duplicated"
+        );
         let Some(ConversationItem::User(prefix)) = conv.get(1) else {
             panic!("slot 1 holds a user item: {conv:?}");
         };

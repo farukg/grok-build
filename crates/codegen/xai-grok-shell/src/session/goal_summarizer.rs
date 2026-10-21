@@ -182,7 +182,9 @@ impl ChannelSpawner {
             });
         }
         if !result.success() {
-            let message = result.error().unwrap_or_else(|| "unknown error".to_string());
+            let message = result
+                .error()
+                .unwrap_or_else(|| "unknown error".to_string());
             return Err(SpawnError::Runtime {
                 message,
                 cancelled: result.is_interrupted(),
