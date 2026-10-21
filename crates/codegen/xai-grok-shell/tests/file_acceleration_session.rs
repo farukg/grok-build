@@ -1,9 +1,9 @@
 //! One process: the session gate, a missing factory, then the preserving factory.
 
 use xai_grok_shell::session::{
-    client_owned_files_skip_acceleration, decide_gate, install_preserving_file_accelerator,
-    preserving_factory_start_notice, read_local_acceleration, record_off_sandbox_profile,
-    GateDecision, GateInputs,
+    GateDecision, GateInputs, client_owned_files_skip_acceleration, decide_gate,
+    install_preserving_file_accelerator, preserving_factory_start_notice, read_local_acceleration,
+    record_off_sandbox_profile,
 };
 
 #[tokio::test]
