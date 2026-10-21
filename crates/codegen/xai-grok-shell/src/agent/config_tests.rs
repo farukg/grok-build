@@ -1231,27 +1231,43 @@ fn sampling_config_scopes_no_inline_citations_include() {
             true,
             ApiBackend::Responses,
             crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
-            true,
+            vec![
+                "reasoning.encrypted_content",
+                NO_INLINE_CITATIONS_RESPONSE_INCLUDE,
+            ],
         ),
-        (true, ApiBackend::Responses, "https://api.x.ai/v1", true),
-        (false, ApiBackend::Responses, "https://api.x.ai/v1", false),
+        (
+            true,
+            ApiBackend::Responses,
+            "https://api.x.ai/v1",
+            vec![
+                "reasoning.encrypted_content",
+                NO_INLINE_CITATIONS_RESPONSE_INCLUDE,
+            ],
+        ),
+        (
+            false,
+            ApiBackend::Responses,
+            "https://api.x.ai/v1",
+            vec!["reasoning.encrypted_content"],
+        ),
         (
             true,
             ApiBackend::ChatCompletions,
             "https://api.x.ai/v1",
-            false,
+            vec![],
         ),
         (
             true,
             ApiBackend::Responses,
             "https://api.openai.com/v1",
-            false,
+            vec![],
         ),
         (
             true,
             ApiBackend::Responses,
             "http://localhost:11434/v1",
-            false,
+            vec![],
         ),
     ] {
         let mut model = test_model_entry("test-model", base_url, None, None, None);
@@ -1266,8 +1282,7 @@ fn sampling_config_scopes_no_inline_citations_include() {
             None,
         );
         assert_eq!(
-            expected,
-            config.extra_response_includes == [NO_INLINE_CITATIONS_RESPONSE_INCLUDE],
+            expected, config.extra_response_includes,
             "{base_url} using {:?} with supports_search={supports_search}",
             model.info.api_backend,
         );

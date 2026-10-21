@@ -2191,7 +2191,10 @@ async fn read_parent_sampling_config_keeps_auto_when_catalog_has_slug_key_only()
     assert_eq!(config.model, "grok-4.5");
     assert_eq!(model_id.0.as_ref(), "auto");
     assert!(config.supports_backend_search);
-    assert_eq!(config.extra_response_includes, ["no_inline_citations"]);
+    assert_eq!(
+        config.extra_response_includes,
+        ["reasoning.encrypted_content", "no_inline_citations"]
+    );
     assert_eq!(config.request_compression, xai_grok_sampler::RequestCompression::Zstd);
 }
 #[tokio::test]
@@ -2397,7 +2400,10 @@ async fn read_parent_sampling_config_fallback_resolves_backend_search_from_catal
     let (config, model_id) = read_parent_sampling_config(&ctx).await;
     assert_eq!(model_id.0.as_ref(), "auto");
     assert!(config.supports_backend_search);
-    assert_eq!(config.extra_response_includes, ["no_inline_citations"]);
+    assert_eq!(
+        config.extra_response_includes,
+        ["reasoning.encrypted_content", "no_inline_citations"]
+    );
 }
 #[tokio::test]
 async fn read_parent_sampling_config_resolves_compactions_remaining_from_catalog() {
