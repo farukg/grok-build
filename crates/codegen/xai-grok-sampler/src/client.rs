@@ -57,6 +57,7 @@ const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
 
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
+    capabilities_opt_in: bool,
     conv_id: &'a str,
     req_id: &'a str,
     model_id: &'a str,
@@ -77,6 +78,9 @@ impl GrokRequestHeaders<'_> {
             .header("x-grok-model-override", self.model_id)
             .header("x-grok-session-id", self.session_id)
             .header("x-grok-agent-id", self.agent_id);
+        if self.capabilities_opt_in {
+            b = b.header("x-grok-client-capabilities", "sigma-gateway-v2");
+        }
         if let Some(idx) = self.turn_idx {
             b = b.header("x-grok-turn-idx", idx);
         }
@@ -93,11 +97,39 @@ impl GrokRequestHeaders<'_> {
     }
 }
 
-/// Deserialize a Responses SSE event, stripping unknown tools and rewriting terminal `total_tokens` from `context_details`.
-pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+/// Deserialize a known Responses SSE event, stripping unknown tools and rewriting terminal `total_tokens` from `context_details`.
+pub(crate) fn deserialize_response_event(data: &str) -> Result<Option<rs::ResponseStreamEvent>> {
+    let value: serde_json::Value = serde_json::from_str(data)
+        .map_err(SamplingError::Serialization)?;
+    let event_type = value.get("type").and_then(serde_json::Value::as_str);
+    let event_error = match serde_json::from_value::<rs::ResponseStreamEvent>(value.clone()) {
+        Ok(event) => {
+            apply_terminal_event_overrides(&mut event, data);
+            return Ok(Some(event));
+        }
+        Err(error) => error,
+    };
+    let known_event = matches!(event_type,
+        Some("response.created" | "response.in_progress" | "response.completed" | "response.failed" | "response.incomplete"
+        | "response.output_item.added" | "response.output_item.done" | "response.content_part.added" | "response.content_part.done"
+        | "response.output_text.delta" | "response.output_text.done" | "response.refusal.delta" | "response.refusal.done"
+        | "response.function_call_arguments.delta" | "response.function_call_arguments.done"
+        | "response.file_search_call.in_progress" | "response.file_search_call.searching" | "response.file_search_call.completed"
+        | "response.web_search_call.in_progress" | "response.web_search_call.searching" | "response.web_search_call.completed"
+        | "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done" | "response.reasoning_summary_text.delta" | "response.reasoning_summary_text.done"
+        | "response.reasoning_text.delta" | "response.reasoning_text.done"
+        | "response.image_generation_call.completed" | "response.image_generation_call.generating" | "response.image_generation_call.in_progress" | "response.image_generation_call.partial_image"
+        | "response.mcp_call_arguments.delta" | "response.mcp_call_arguments.done" | "response.mcp_call.completed" | "response.mcp_call.failed" | "response.mcp_call.in_progress"
+        | "response.mcp_list_tools.completed" | "response.mcp_list_tools.failed" | "response.mcp_list_tools.in_progress"
+        | "response.code_interpreter_call.in_progress" | "response.code_interpreter_call.interpreting" | "response.code_interpreter_call.completed" | "response.code_interpreter_call_code.delta" | "response.code_interpreter_call_code.done"
+        | "response.output_text.annotation.added" | "response.queued" | "response.custom_tool_call_input.delta" | "response.custom_tool_call_input.done" | "error"));
+    if event_type.is_some() && !known_event {
+        tracing::debug!(event_type = ?event_type, "Ignoring unknown Responses stream event");
+        return Ok(None);
+    }
     let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
         Ok(event) => event,
-        Err(first_err) => {
+        Err(_second_err) => {
             // Try sanitizing: parse as Value, strip unknown tools, retry.
             if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
                 // Strip tools that async_openai's rs::Tool can't deserialize (e.g., xAI-specific "x_search")
@@ -110,19 +142,19 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
                 }
                 if let Ok(mut event) = serde_json::from_value::<rs::ResponseStreamEvent>(value) {
                     apply_terminal_event_overrides(&mut event, data);
-                    return Ok(event);
+                    return Ok(Some(event));
                 }
             }
             tracing::error!(
-                error = %first_err,
+                error = %event_error,
                 raw_data = %data,
                 "Failed to deserialize ResponseStreamEvent from stream"
             );
-            return Err(SamplingError::Serialization(first_err));
+            return Err(SamplingError::Serialization(event_error));
         }
     };
     apply_terminal_event_overrides(&mut event, data);
-    Ok(event)
+    Ok(Some(event))
 }
 
 /// On `response.completed` / `response.incomplete`, rewrite `usage.total_tokens` to the live context length from `context_details`.
@@ -386,6 +418,7 @@ struct ClientDefaults {
     stream_tool_calls: bool,
     reasoning_summary: Option<xai_grok_sampling_types::ReasoningSummary>,
     extra_response_includes: Vec<String>,
+    gateway_capabilities_header: bool,
     doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
 }
 
@@ -693,6 +726,7 @@ impl SamplingClient {
             stream_tool_calls: config.stream_tool_calls,
             reasoning_summary: config.reasoning_summary,
             extra_response_includes: config.extra_response_includes,
+            gateway_capabilities_header: config.gateway_capabilities_header,
             doom_loop_recovery: config.doom_loop_recovery,
         };
 
@@ -978,6 +1012,7 @@ impl SamplingClient {
         );
 
         let grok_headers = GrokRequestHeaders {
+            capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
             req_id: x_grok_req_id,
             model_id: &model_id,
@@ -1116,6 +1151,7 @@ impl SamplingClient {
         };
 
         let grok_headers = GrokRequestHeaders {
+            capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
             req_id: x_grok_req_id,
             model_id: &model_id,
@@ -1345,6 +1381,7 @@ impl SamplingClient {
         tracing::debug!("endpoint: {:?}", self.endpoint("responses"));
 
         let grok_headers = GrokRequestHeaders {
+            capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
             req_id: x_grok_req_id,
             model_id: &model_id,
@@ -1486,6 +1523,7 @@ impl SamplingClient {
         );
 
         let grok_headers = GrokRequestHeaders {
+            capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
             req_id: x_grok_req_id,
             model_id: &model_id,
@@ -1640,7 +1678,11 @@ impl SamplingClient {
                         } else if let Some(stream_error) = try_parse_stream_error(data) {
                             Some(Some(Err(stream_error)))
                         } else {
-                            Some(Some(deserialize_response_event(data)))
+                            match deserialize_response_event(data) {
+                                Ok(Some(parsed)) => Some(Some(Ok(parsed))),
+                                Ok(None) => Some(None),
+                                Err(error) => Some(Some(Err(error))),
+                            }
                         }
                     }
                     Err(e) => {
@@ -1712,6 +1754,7 @@ impl SamplingClient {
         tracing::debug!("endpoint: {:?}", self.endpoint("messages"));
 
         let grok_headers = GrokRequestHeaders {
+            capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
             req_id: x_grok_req_id,
             model_id: &model_id,
@@ -1838,6 +1881,7 @@ impl SamplingClient {
         );
 
         let grok_headers = GrokRequestHeaders {
+            capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
             req_id: x_grok_req_id,
             model_id: &model_id,
@@ -3423,6 +3467,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn grok_request_headers_send_capabilities_only_for_non_xai_routes() {
+        fn has_capabilities_header(capabilities_opt_in: bool) -> bool {
+            let headers = GrokRequestHeaders {
+                capabilities_opt_in,
+                conv_id: "conv",
+                req_id: "req",
+                model_id: "grok-4.6",
+                session_id: "session",
+                turn_idx: None,
+                transient_retry: None,
+                agent_id: "agent",
+                deployment_id: None,
+                user_id: None,
+            };
+            let request = headers
+                .apply(reqwest::Client::new().post("https://example.test"))
+                .build()
+                .expect("request builds");
+            request.headers().contains_key("x-grok-client-capabilities")
+        }
+
+        assert!(!has_capabilities_header(false));
+        assert!(has_capabilities_header(true));
+    }
+
+    #[test]
+    fn deserialize_response_event_ignores_unknown_event_types() {
+        assert!(deserialize_response_event(r#"{"type":"response.metadata","response_id":"resp_1"}"#)
+            .expect("unknown metadata event is ignored")
+            .is_none());
+        assert!(deserialize_response_event(r#"{"type":"response.future_extension","payload":{}}"#)
+            .expect("unknown future event is ignored")
+            .is_none());
+    }
+
+    #[test]
+    fn deserialize_response_event_keeps_known_event_payload_errors() {
+        let error = deserialize_response_event(r#"{"type":"response.completed","response":{}}"#)
+            .expect_err("known event with malformed payload remains an error");
+        assert!(matches!(error, SamplingError::Serialization(_)));
+    }
+
     /// `response.completed` carrying `usage.context_details.{input_tokens, output_tokens}` rewrites `usage.total_tokens` in place.
     /// The new value is the live context length (`ctx.input + ctx.output`).
     /// Billing fields stay on the wire's cumulative values.
@@ -3451,7 +3538,7 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse");
+        let event = deserialize_response_event(sse).expect("parse").expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3488,7 +3575,7 @@ mod tests {
             )
         };
 
-        let event = deserialize_response_event(&make(78)).expect("parse");
+        let event = deserialize_response_event(&make(78)).expect("parse").expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3502,7 +3589,7 @@ mod tests {
         );
 
         // The REST mapper backfills 0 for unbilled requests: no stash.
-        let event = deserialize_response_event(&make(0)).expect("parse");
+        let event = deserialize_response_event(&make(0)).expect("parse").expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3532,7 +3619,7 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse");
+        let event = deserialize_response_event(sse).expect("parse").expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3566,7 +3653,7 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse");
+        let event = deserialize_response_event(sse).expect("parse").expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };

@@ -598,6 +598,7 @@ fn session_resolver_is_not_stamped_onto_third_party_samplers() {
             .map(|id| id.as_ref()),
         Some("root-group")
     );
+    assert!(third_party.gateway_capabilities_header);
     let mut first_party = SamplerConfig {
         base_url: EndpointsConfig::default().resolve_inference_base_url(),
         ..SamplerConfig::default()
@@ -607,6 +608,7 @@ fn session_resolver_is_not_stamped_onto_third_party_samplers() {
         first_party.bearer_resolver.is_some(),
         "first-party aux samplers keep the session refresh behavior"
     );
+    assert!(!first_party.gateway_capabilities_header);
     assert_eq!(
         first_party
             .conversation_group_id

@@ -4702,6 +4702,9 @@ pub(crate) fn sampling_config_for_model(
         &api_backend,
         &credentials.base_url,
     );
+    let gateway_capabilities_header = matches!(api_backend, ApiBackend::Responses | ApiBackend::ChatCompletions)
+        && !(crate::util::is_trusted_cli_chat_proxy_url(&credentials.base_url)
+            || crate::util::is_trusted_xai_https_url(&credentials.base_url));
     let request_compression =
         crate::util::config::request_compression_for_url(&credentials.base_url);
     SamplerConfig {
@@ -4717,6 +4720,7 @@ pub(crate) fn sampling_config_for_model(
         request_compression,
         extra_headers,
         extra_response_includes,
+        gateway_capabilities_header,
         query_params: info.query_params.clone(),
         env_http_headers: info.env_http_headers.clone(),
         context_window: info.context_window.get(),

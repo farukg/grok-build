@@ -56,6 +56,9 @@ pub struct SamplerConfig {
     /// Additional Responses API `include` values not represented by the typed client.
     #[serde(default)]
     pub extra_response_includes: Vec<String>,
+    /// Opts into Sigma gateway response capabilities on non-xAI routes.
+    #[serde(default)]
+    pub gateway_capabilities_header: bool,
     /// Query parameters folded into every request URL (percent-encoded).
     #[serde(default)]
     pub query_params: IndexMap<String, String>,
@@ -140,6 +143,7 @@ impl Default for SamplerConfig {
             request_compression: RequestCompression::default(),
             extra_headers: IndexMap::new(),
             extra_response_includes: Vec::new(),
+            gateway_capabilities_header: false,
             query_params: IndexMap::new(),
             env_http_headers: IndexMap::new(),
             context_window: 0,
@@ -235,11 +239,13 @@ mod tests {
         let object = stripped.as_object_mut().unwrap();
         object.remove("doom_loop_recovery");
         object.remove("extra_response_includes");
+        object.remove("gateway_capabilities_header");
         object.remove("mtls_cert_dir");
         object.remove("rate_limit_retry_threshold");
         let config: SamplerConfig = serde_json::from_value(stripped).unwrap();
         assert!(config.doom_loop_recovery.is_none());
         assert!(config.extra_response_includes.is_empty());
+        assert!(!config.gateway_capabilities_header);
         assert!(config.mtls_cert_dir.is_none());
         assert!(config.rate_limit_retry_threshold.is_none());
 
