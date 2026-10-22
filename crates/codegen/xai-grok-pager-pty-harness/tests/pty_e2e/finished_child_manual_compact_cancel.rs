@@ -33,6 +33,10 @@ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
         .wait_for_text(TAKEOVER_HINT, ROW_TIMEOUT)
         .expect("finished child view opened");
     scenario.wait_for_row("CHILD_DONE");
+    scenario
+        .harness
+        .wait_for_turn_idle(ROW_TIMEOUT)
+        .expect("child turn is idle before administrative compaction");
 
     // The shell tags compaction summary requests xai-compact-<uuid>; hold that auxiliary specifically.
     scenario
