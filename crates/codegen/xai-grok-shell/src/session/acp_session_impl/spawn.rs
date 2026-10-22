@@ -1416,13 +1416,15 @@ pub(crate) async fn spawn_session_actor(
     save_prompt_context(&session_info, &prompt_context);
     let is_subagent_spawn = startup_hints.is_subagent;
     let session_non_interactive = startup_hints.non_interactive;
-    install_system_prompt(
-        &mut conversation,
-        &mut startup_hints.inherited_prefix_len,
-        is_subagent_spawn,
-        startup_hints.preserve_inherited_system,
-        &system_prompt,
-    );
+    if !(is_subagent_spawn && startup_hints.preserve_inherited_system && !conversation.is_empty()) {
+        install_system_prompt(
+            &mut conversation,
+            &mut startup_hints.inherited_prefix_len,
+            is_subagent_spawn,
+            startup_hints.preserve_inherited_system,
+            &system_prompt,
+        );
+    }
     if !is_subagent_spawn && reconcile_resumed_memory_section(&mut conversation, &system_prompt) {
         tracing::info!(
             target: xai_grok_telemetry::memory_log::TARGET,

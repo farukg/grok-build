@@ -223,6 +223,12 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
         let cwd = tempfile::tempdir().unwrap();
         let child = super::new_root_session(&agent, cwd.path()).await;
         let handle = agent.resident_handle(&child).unwrap();
+        let (respond_to, initialized) = tokio::sync::oneshot::channel();
+        handle
+            .cmd_tx
+            .send(SessionCommand::FlushComplete { respond_to })
+            .unwrap();
+        initialized.await.unwrap().unwrap();
         let conversation = vec![crate::sampling::ConversationItem::user(
             "saved child context",
         )];
@@ -249,6 +255,14 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             crate::util::grok_home::grok_home(),
         );
         let saved_identity = storage.load_summary(&info).await.unwrap();
+        let saved_history = storage
+            .load_chat_history_from_dir(&crate::session::persistence::session_dir(&info))
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(saved_history).unwrap(),
+            serde_json::to_value(&conversation).unwrap(),
+            "the handler fixture must already be durable before administrative reload"
+        );
         let saved_model = handle.model_id.clone();
         handle
             .cmd_tx
@@ -375,6 +389,7 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
 
 #[test]
 fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_delivery() {
+    xai_test_utils::require_git!();
     run_local_for_bridge_test(|| async {
         use crate::session::storage::StorageAdapter as _;
         use xai_grok_tools::implementations::grok_build::task::backend::{
@@ -395,14 +410,21 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
         entry.api_key = Some("mock-key".into());
         agent.models_manager.insert_test_entry("test-model", entry);
         let cwd = tempfile::tempdir().unwrap();
-        let parent = super::new_root_session(&agent, cwd.path()).await;
+        let (repository, _remote) = xai_test_utils::git::seed_repo_with_remote(cwd.path());
+        agent.cfg.borrow_mut().feature_values.insert(
+            crate::agent::config::Feature::SubagentWorktreeSnapshot,
+            true,
+        );
+        let parent = super::new_root_session(&agent, &repository).await;
         agent.start_subagent_coordinator();
         let id = uuid::Uuid::now_v7().to_string();
         let backend = ChannelBackend::for_coordinator_session(
             agent.subagent_event_tx.clone(),
             parent.0.to_string(),
         );
-        let result = backend
+        server.hold_agent_completions();
+        let child = acp::SessionId::new(id.clone());
+        let spawning = backend
             .spawn(
                 SubagentRequest {
                     id: id.clone(),
@@ -413,7 +435,10 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
                     parent_prompt_id: None,
                     resume_from: None,
                     cwd: None,
-                    runtime_overrides: Default::default(),
+                    runtime_overrides: xai_grok_tools::implementations::grok_build::task::types::SubagentRuntimeOverrides {
+                        isolation: Some(xai_tool_types::SubagentIsolationMode::Worktree),
+                        ..Default::default()
+                    },
                     run_in_background: false,
                     surface_completion: true,
                     await_to_completion: true,
@@ -424,9 +449,26 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
                     tool_call_id: None,
                 },
                 None,
+            );
+        let observe_original = async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                server.wait_until_a_reply_is_held(),
             )
             .await
-            .unwrap();
+            .expect("mock inference reaches a held model reply");
+            let live = agent
+                .resident_handle(&child)
+                .expect("coordinator registers the held child");
+            let tools = live.snapshot_tool_definitions().await.unwrap();
+            let schemas = serde_json::to_value(&tools.specs).unwrap();
+            let policy = live.chat_state_handle.get_context_policy().await;
+            server.release_agent_completions();
+            (schemas, policy)
+        };
+        let (result, (original_schemas, original_policy)) =
+            tokio::join!(spawning, observe_original);
+        let result = result.unwrap();
         assert!(
             result.success(),
             "coordinator child must finish: {result:?}"
@@ -437,9 +479,21 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
         let source = crate::agent::subagent::durable_resume_source(
             child.0.as_ref(),
             parent.0.as_ref(),
-            cwd.path(),
+            &repository,
         )
         .unwrap();
+        let worktree = source
+            .worktree_path
+            .as_ref()
+            .expect("isolated child records its worktree");
+        assert!(
+            source.snapshot_ref.is_some(),
+            "coordinator completion persists a restorable worktree snapshot"
+        );
+        assert!(
+            !worktree.exists(),
+            "normal completion disposes the original child worktree"
+        );
         let info = crate::session::info::Info {
             id: child.clone(),
             cwd: source.child_cwd,
@@ -454,14 +508,24 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
         .unwrap()
         .expect("coordinator child persists its effective management recipe");
         let restored = agent.management_session(&child).await.unwrap();
+        assert!(
+            worktree.is_dir(),
+            "shipped management reload rehydrates the disposed child worktree"
+        );
+        assert_eq!(restored.handle.info.cwd, info.cwd);
         let restored_tools = restored.handle.snapshot_tool_definitions().await.unwrap();
         let stored_definition = prior
             .agent_profile()
             .expect("child saves the effective agent recipe");
         assert_eq!(restored.handle.agent_name, stored_definition.name);
-        assert!(
-            !restored_tools.specs.is_empty(),
-            "administrative reload constructs the actual child toolset"
+        assert_eq!(
+            serde_json::to_value(&restored_tools.specs).unwrap(),
+            original_schemas,
+            "administrative reload must preserve the original child tool schemas exactly"
+        );
+        assert_eq!(
+            restored.handle.chat_state_handle.get_context_policy().await,
+            original_policy
         );
         assert!(recipe.inherited_mcp_servers.is_empty());
         drop(restored);
@@ -488,6 +552,51 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
         assert_eq!(after.agent_id, prior.agent_id);
         assert_eq!(after.attempt_id, prior.attempt_id);
         assert_eq!(after.next_trace_turn, prior.next_trace_turn);
+        let checkpoint_before_cancel = serde_json::to_value(
+            crate::session::helpers::replay::find_latest_compaction_checkpoint(&updates)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        server.hold_agent_completions();
+        let cancelling = agent.ext_method(acp::ExtRequest::new(
+            "x.ai/compact_conversation",
+            std::sync::Arc::from(
+                serde_json::value::to_raw_value(&json!({ "sessionId": child.0 })).unwrap(),
+            ),
+        ));
+        let cancel_stream = async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                server.wait_until_a_reply_is_held(),
+            )
+            .await
+            .expect("mock inference reaches a held model reply");
+            agent
+                .cancel(acp::CancelNotification::new(child.clone()))
+                .await
+                .unwrap();
+        };
+        let (cancelled, ()) = tokio::join!(cancelling, cancel_stream);
+        assert_eq!(
+            crate::session::helpers::session_compact::compact_error_kind(&cancelled.unwrap_err()),
+            Some(crate::session::helpers::session_compact::CompactErrorKind::Cancelled)
+        );
+        server.release_agent_completions();
+        agent.drain_old_session_thread(&child).await;
+        assert!(
+            !agent.child_writer_is_active(&child),
+            "cancelled compact actor must finish before inspecting durable checkpoints"
+        );
+        let checkpoint_after_cancel =
+            crate::session::helpers::replay::find_latest_compaction_checkpoint(&updates)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            serde_json::to_value(&checkpoint_after_cancel).unwrap(),
+            checkpoint_before_cancel,
+            "cancel during the model stream must not commit a new checkpoint"
+        );
         assert_eq!(
             serde_json::to_value(parent_handle.chat_state_handle.get_conversation().await).unwrap(),
             serde_json::to_value(&parent_before).unwrap(),
