@@ -88,6 +88,12 @@ fetch. Upstream `xai-org/grok-build` is `origin`; the fork base is `2bdd1d6a`.
 - Expect the known failures listed above and the environment-dependent shell tests; `streams/f6-f7-trees.md` records what green means in CI.
 - Commit-sha citations in the stream files and `plan/grb-001.md` refer to pre-fold history (`archive/pre-fold-main` locally); the fold legend above maps areas to the new fold commits.
 
+## Context reporting and tool-call diagnosis
+
+F7 currently reports zero tool-definition tokens because its usage query counts conversation history only. Existing session prefixes/catalogs can also put workspace rules under Environment and skills under SystemReminder, leaving their intended rows at zero. Findings, acceptance criteria and open fixes are maintained in `streams/f1-context-provenance.md` under “Verified defects and TODO”.
+
+Intermittent model claims of missing tools are reproduced independently of those display errors: the gateway's outbound capture contains all 29 declarations, and identical fresh-session payloads can produce either a denial or a successful call. A causal regression in Grok CLI or the gateway has not yet been isolated.
+
 ## Work streams
 
 | Stream | State | Stream file |

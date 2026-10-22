@@ -74,15 +74,13 @@ Standing rules that go with them:
 
 ## Build and test
 
+- Verification for this fork runs on GitHub Actions. Check the implementation statically, commit and push to `farukg/grok-build`, then observe the exact commit's `linux-build.yml` run. Fix build errors and publish the correction until that run succeeds. Local Grok CLI builds and test runs are excluded from this workflow.
+- After a successful GitHub build, use `/home/fg/projects/org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --run-id <id> --commit <full-sha>` to download, verify and stage that exact artifact when staging is requested. Preserve running sessions; the script prints restart instructions.
 - Toolchain: pinned in `rust-toolchain.toml` (nightly); `rustup` installs it.
 - `protoc` is required. Either install DotSlash (`cargo install dotslash`) so `bin/protoc` works,
   or install protoc from the OS (`apt-get install -y protobuf-compiler`) and export
   `PROTOC=$(command -v protoc)`.
-- Scope every command to the crates you touch, for example
-  `cargo check -p xai-grok-pager -p xai-grok-shell`, `cargo test -p xai-grok-pager <filter>`,
-  `cargo clippy -p xai-grok-pager -p xai-grok-shell -p xai-grok-tools --tests`.
-  The pager crate has about 10,000 tests: use test filters while iterating and run the full
-  crate once before you report an increment as done.
+- `linux-build.yml` builds the release artifact on pushes to `main`. Use `linux-test.yml` for explicitly requested CI tests; scope test filters to the changed behavior.
 - Known failures that are not yours: four `doctor` tests fail on upstream too (see
   `docs/fork/STATUS.md`).
 
@@ -100,10 +98,7 @@ Standing rules that go with them:
   work; commit work in progress before you switch context.
 - Push only to this fork (`farukg/grok-build`). **Never push to, or open a pull request against,
   `xai-org/grok-build`.** Check the target repository of every push.
-- A stream is finished only when `main` contains its progress. Integrating means: once the
-  stream's build and tests are green, bring its work onto `main` yourself (a squash of the stream
-  into a few clean commits on top of `main`, pushed as a fast-forward) and update
-  `docs/fork/STATUS.md`. No pull request, no waiting for a merge.
+- A stream is finished when its progress is on `main` and the exact commit's GitHub build is green. Publish scoped commits as a normal fast-forward to `farukg/grok-build`, observe CI, and fix failures in follow-up commits. Update `docs/fork/STATUS.md` with the verified outcome.
 - If your environment only lets you push to a `claude/…` branch, push the work there and say so;
   `main` still has to receive it before the stream counts as done.
 

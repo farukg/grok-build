@@ -2934,45 +2934,7 @@ impl SessionActor {
                 backend_search_active,
                 "backend_search: turn tool resolution"
             );
-            let bridge = self.agent.borrow().tool_bridge().clone();
-            let messaging_grant = if bridge
-                .read_resource::<
-                    xai_grok_tools::implementations::grok_build::task::types::AgentMessageSenderResource,
-                >()
-                .await
-                .is_some()
-                && bridge
-                    .tool_for_kind(
-                        xai_grok_tools::types::tool::ToolKind::ActiveAgentMessage,
-                    )
-                    .await
-                    .is_some()
-            {
-                child_tool_projection::ChildMessagingGrant::Granted
-            } else {
-                child_tool_projection::ChildMessagingGrant::Ungranted
-            };
-            let mut effective_tools: Vec<ToolSpec> =
-                if let Some(ref override_tools) = self.forked_tool_override {
-                    child_tool_projection::child_safe_tool_specs(
-                        override_tools.clone(),
-                        child_tool_projection::ChildToolProjection::VerbatimMirror,
-                        messaging_grant,
-                        |name| bridge.tool_kind(name),
-                    )
-                } else {
-                    let tools = self.turn_base_tool_specs(&tool_definitions);
-                    if self.startup_hints.is_subagent {
-                        child_tool_projection::child_safe_tool_specs(
-                            tools,
-                            child_tool_projection::ChildToolProjection::Rebuilt,
-                            messaging_grant,
-                            |name| bridge.tool_kind(name),
-                        )
-                    } else {
-                        tools
-                    }
-                };
+            let mut effective_tools = self.effective_function_tools(&tool_definitions).await;
             if structured_output_tool && let Some(schema) = json_schema.clone() {
                 effective_tools.push(ToolSpec {
                     name: STRUCTURED_OUTPUT_TOOL.to_string(),

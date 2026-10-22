@@ -61,6 +61,15 @@ Design: `docs/fork/design/f6-f7.md` §1, §2, §7 and waves A1/A2/B1.
     `CS/actor/tests.rs` `memory_off_withholds_the_manifest_and_keeps_the_history`,
     `context_usage_counts_each_section_under_its_own_category`.
 
+## Verified defects and TODO
+
+- [ ] Verify the implemented F7 function-tool accounting fix in GitHub CI and the staged artifact. `CS/actor/queries.rs::context_usage` counts only conversation items; schemas are supplied separately. The shell report now adds their estimate using the same child-safe tool projection as inference. A regression test covers schemas outside history and the disabled row's retained potential cost. Hosted-tool accounting and fresh/resumed/child UI verification remain open.
+- [ ] Repair provenance for existing session prefixes and skill catalogs. Session `01a156e0-6d32-7921-a14a-f77e1b67e1be` contains workspace rules and a skill catalog while F7 reports Project rules/Skills as zero and attributes their content to Environment/SystemReminder. Preserve authored content and validate request filtering as well as counts; keep ambiguous legacy content explicit.
+- [ ] Verify provenance across compaction and custom templates using the same category owners as request projection.
+- [ ] Diagnose intermittent tool-availability denials on `sigma/openai/gpt-6.1-sol`. Failing session `01a1630d-01e3-72d3-a159-c84308b6dfd8` forwarded all 29 declarations through the gateway. Two fresh CLI probes with identical outbound bodies except `prompt_cache_key` produced a denial and a successful `pwd` call. Repeated cache-key probes produced both outcomes with and without a key. F7 zero counts are a separate reporting defect; upstream visibility and request-shape causality remain unresolved.
+
+Session `01a16318-1171-7422-88a6-bdf49e87b11a` eventually called tools after context toggles/compaction. Its first `read_file` used `path`; runtime validation required `target_file`, and the corrected call succeeded. `list_dir` similarly corrected `directory` to `target_directory`. This proves execution and argument validation work; it does not prove which context operation changed the model's behavior.
+
 ## Next steps
 1. B1 shell, remaining: the `changed` notification.
 2. Custom `user_message_template` prefixes (MiniJinja) render rules/skills/MCP in one string and stay `Whole`

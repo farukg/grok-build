@@ -352,6 +352,45 @@ impl SessionActor {
             .collect()
     }
 
+    pub(super) async fn effective_function_tools(&self, defs: &[ToolDefinition]) -> Vec<ToolSpec> {
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        let messaging_grant = if bridge
+            .read_resource::<
+                xai_grok_tools::implementations::grok_build::task::types::AgentMessageSenderResource,
+            >()
+            .await
+            .is_some()
+            && bridge
+                .tool_for_kind(xai_grok_tools::types::tool::ToolKind::ActiveAgentMessage)
+                .await
+                .is_some()
+        {
+            child_tool_projection::ChildMessagingGrant::Granted
+        } else {
+            child_tool_projection::ChildMessagingGrant::Ungranted
+        };
+        if let Some(ref override_tools) = self.forked_tool_override {
+            child_tool_projection::child_safe_tool_specs(
+                override_tools.clone(),
+                child_tool_projection::ChildToolProjection::VerbatimMirror,
+                messaging_grant,
+                |name| bridge.tool_kind(name),
+            )
+        } else {
+            let tools = self.turn_base_tool_specs(defs);
+            if self.startup_hints.is_subagent {
+                child_tool_projection::child_safe_tool_specs(
+                    tools,
+                    child_tool_projection::ChildToolProjection::Rebuilt,
+                    messaging_grant,
+                    |name| bridge.tool_kind(name),
+                )
+            } else {
+                tools
+            }
+        }
+    }
+
     /// Hosted tools with overrides applied, plus the applied overrides to echo, in one pass.
     fn resolve_hosted(
         &self,
