@@ -1710,7 +1710,14 @@ fn fork_from_a_child_view_forks_the_child_session_in_its_cwd() {
 
     let mut app = fork_test_app();
     let parent_id = AgentId(0);
-    let parent_session_id = app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap();
+    let parent_session_id = app
+        .agents
+        .get(&parent_id)
+        .unwrap()
+        .session
+        .session_id
+        .clone()
+        .unwrap();
     let child_id = AgentId(1);
     let mut child_session = make_test_agent_session(&app, child_id, "child-sess");
     child_session.cwd = PathBuf::from("/tmp/child-cwd");

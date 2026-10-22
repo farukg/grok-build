@@ -392,14 +392,20 @@ fn dock_lives_in_the_f7_column_and_goes_with_it() {
     };
 
     let closed = draw_frame(&mut agent, area);
-    assert!(!agent.dock_shown, "the dock is invisible while F7 is closed");
+    assert!(
+        !agent.dock_shown,
+        "the dock is invisible while F7 is closed"
+    );
     assert!(!text_of(&closed).contains("Run sleep 5"));
 
     open_dock_sidebar(&mut agent);
     let open = draw_frame(&mut agent, area);
     assert!(agent.dock_shown);
     let dock = agent.pane_areas.dock;
-    assert!(dock.x >= area.width * 6 / 10, "the dock is in the right column: {dock:?}");
+    assert!(
+        dock.x >= area.width * 6 / 10,
+        "the dock is in the right column: {dock:?}"
+    );
     assert!(dock.right() <= area.width);
     assert!(text_of(&open).contains("Run sleep 5"));
 }

@@ -1037,10 +1037,15 @@ impl MvpAgent {
         );
         if op == AttachOperation::ManageChild {
             use crate::session::storage::StorageAdapter as _;
-            let storage = crate::session::storage::JsonlStorageAdapter::with_root(crate::util::grok_home::grok_home());
-            let saved = storage.load_summary(&session_info).await
+            let storage = crate::session::storage::JsonlStorageAdapter::with_root(
+                crate::util::grok_home::grok_home(),
+            );
+            let saved = storage
+                .load_summary(&session_info)
+                .await
                 .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
-            load_session_sampling = self.resolve_sampling_config_for_model(&saved.current_model_id, origin_client.clone());
+            load_session_sampling = self
+                .resolve_sampling_config_for_model(&saved.current_model_id, origin_client.clone());
         }
         let (summary_client, summary_model) = self.build_summary_client(&load_session_sampling)?;
         let relay_sync = self.start_relay_sync(&session_id, &session_info);
@@ -1171,17 +1176,18 @@ impl MvpAgent {
                 .emit_local_background_tasks
                 .store(false, std::sync::atomic::Ordering::Release);
         }
-        let interrupted_turn = if self.is_resident(&session_id) || op == AttachOperation::ManageChild {
-            None
-        } else {
-            self.record_interrupted_turn(
-                &session_id,
-                &summary,
-                updates_file_path.as_deref(),
-                &persistence,
-            )
-            .await
-        };
+        let interrupted_turn =
+            if self.is_resident(&session_id) || op == AttachOperation::ManageChild {
+                None
+            } else {
+                self.record_interrupted_turn(
+                    &session_id,
+                    &summary,
+                    updates_file_path.as_deref(),
+                    &persistence,
+                )
+                .await
+            };
         let (initial_total_tokens, unfinished_subagents) = self
             .replay_transcript_gate(
                 &session_id,
@@ -1223,7 +1229,9 @@ impl MvpAgent {
                 }
                 AttachOperation::ManageChild => _persisted_root_identity
                     .as_ref()
-                    .ok_or_else(|| acp::Error::invalid_request().data("saved child identity is unavailable"))?
+                    .ok_or_else(|| {
+                        acp::Error::invalid_request().data("saved child identity is unavailable")
+                    })?
                     .to_session_identity(),
             };
             let cold_root_identity = super::agent_directory::PendingRootIdentity::parse(
@@ -1252,17 +1260,22 @@ impl MvpAgent {
                 Some(crate::session::persistence::PersistedAgent::Inline(_)) => {
                     (summary.agent_profile().cloned(), None)
                 }
-                Some(crate::session::persistence::PersistedAgent::Named(name)) => {
-                    match op {
-                        AttachOperation::Load | AttachOperation::Resume => (None, Some(name.clone())),
-                        AttachOperation::ManageChild => {
-                            let definition = xai_grok_agent::discovery::by_name_in_cwd_with_plugins(
-                                name, cwd.as_path(), self.plugin_registry_handle.snapshot().as_deref(),
-                            ).ok_or_else(|| acp::Error::invalid_request().data(format!("saved child agent definition is unavailable: {name}")))?;
-                            (Some(definition), None)
-                        }
+                Some(crate::session::persistence::PersistedAgent::Named(name)) => match op {
+                    AttachOperation::Load | AttachOperation::Resume => (None, Some(name.clone())),
+                    AttachOperation::ManageChild => {
+                        let definition = xai_grok_agent::discovery::by_name_in_cwd_with_plugins(
+                            name,
+                            cwd.as_path(),
+                            self.plugin_registry_handle.snapshot().as_deref(),
+                        )
+                        .ok_or_else(|| {
+                            acp::Error::invalid_request().data(format!(
+                                "saved child agent definition is unavailable: {name}"
+                            ))
+                        })?;
+                        (Some(definition), None)
                     }
-                }
+                },
                 None => (
                     None,
                     self.resolve_model_id(&summary.current_model_id)
@@ -1360,33 +1373,50 @@ impl MvpAgent {
             false
         };
         if op == AttachOperation::ManageChild {
-            let handle = self.resident_handle(&session_id)
-                .ok_or_else(|| acp::Error::internal_error().data("saved child actor is unavailable"))?;
-            let mut sampling = self.resolve_sampling_config_for_model(&summary.current_model_id, origin_client);
+            let handle = self.resident_handle(&session_id).ok_or_else(|| {
+                acp::Error::internal_error().data("saved child actor is unavailable")
+            })?;
+            let mut sampling =
+                self.resolve_sampling_config_for_model(&summary.current_model_id, origin_client);
             sampling.reasoning_effort = summary.reasoning_effort;
             let model = self.resolve_model_id(&summary.current_model_id)?;
             let supported_context_windows = std::iter::once(model.info().context_window)
-                .chain(model.info().context_windows.iter().copied()).collect();
+                .chain(model.info().context_windows.iter().copied())
+                .collect();
             #[cfg(test)]
             super::test_hooks::pause_at(super::test_hooks::AttachPause::AfterInstall).await;
             let (responds_to, reply) = oneshot::channel();
-            handle.cmd_tx.send(SessionCommand::SetSessionModel {
-                switch: crate::session::commands::SessionModelSwitch {
-                    sampling_config: sampling,
-                    use_concise: false,
-                    is_family_switch: false,
-                    apply_prompt_override: false,
-                    skip_prompt_rewrite: true,
-                    auto_compact_threshold_percent: crate::util::config::resolve_auto_compact_threshold_percent(
-                        &self.cfg.borrow(), summary.current_model_id.0.as_ref(), Some(model.info()),
-                    ),
-                    system_prompt_label: xai_grok_agent::DEFAULT_SYSTEM_PROMPT_LABEL.to_string(),
-                    context_window_selection: crate::session::commands::SwitchContextWindow::Set(summary.context_window),
-                    supported_context_windows,
-                },
-                responds_to,
-            }).map_err(|_| acp::Error::internal_error().data("saved child command channel is closed"))?;
-            reply.await.map_err(|_| acp::Error::internal_error().data("saved child model restore did not respond"))??;
+            handle
+                .cmd_tx
+                .send(SessionCommand::SetSessionModel {
+                    switch: crate::session::commands::SessionModelSwitch {
+                        sampling_config: sampling,
+                        use_concise: false,
+                        is_family_switch: false,
+                        apply_prompt_override: false,
+                        skip_prompt_rewrite: true,
+                        auto_compact_threshold_percent:
+                            crate::util::config::resolve_auto_compact_threshold_percent(
+                                &self.cfg.borrow(),
+                                summary.current_model_id.0.as_ref(),
+                                Some(model.info()),
+                            ),
+                        system_prompt_label: xai_grok_agent::DEFAULT_SYSTEM_PROMPT_LABEL
+                            .to_string(),
+                        context_window_selection:
+                            crate::session::commands::SwitchContextWindow::Set(
+                                summary.context_window,
+                            ),
+                        supported_context_windows,
+                    },
+                    responds_to,
+                })
+                .map_err(|_| {
+                    acp::Error::internal_error().data("saved child command channel is closed")
+                })?;
+            reply.await.map_err(|_| {
+                acp::Error::internal_error().data("saved child model restore did not respond")
+            })??;
             return Ok(acp::LoadSessionResponse::new());
         }
         if gateway_backed {

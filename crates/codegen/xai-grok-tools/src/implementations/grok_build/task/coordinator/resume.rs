@@ -19,8 +19,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             });
         }
         let owned = |id: &str| self.graph.is_reachable_from(id, parent_session_id);
-        match match_subagent_reference(reference, self.resume_keys().filter(|&(_, id)| owned(id)))
-        {
+        match match_subagent_reference(reference, self.resume_keys().filter(|&(_, id)| owned(id))) {
             SubagentReferenceMatch::Unique(subagent_id) => {
                 return Ok(self.classify_live_or_finished(subagent_id));
             }
@@ -41,10 +40,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let on_disk = self
             .runner
             .durable_resume_candidates(reference, disk_parent);
-        match match_subagent_reference(reference, on_disk.iter().map(|id| (id.as_str(), id.as_str())))
-        {
+        match match_subagent_reference(
+            reference,
+            on_disk.iter().map(|id| (id.as_str(), id.as_str())),
+        ) {
             SubagentReferenceMatch::Unique(subagent_id) => {
-                self.runner.durable_resume_check(&subagent_id, disk_parent)?;
+                self.runner
+                    .durable_resume_check(&subagent_id, disk_parent)?;
                 Ok(SubagentResumeTarget::Finished { subagent_id })
             }
             SubagentReferenceMatch::Ambiguous(candidates) => Err(SubagentResumeError::Ambiguous {

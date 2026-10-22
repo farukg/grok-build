@@ -24,11 +24,7 @@ struct MeasureLiveTailContent<'a> {
 }
 
 impl DashboardState {
-    pub(crate) fn set_preview_enabled(
-        &mut self,
-        enabled: bool,
-        agents: &mut SessionViews,
-    ) {
+    pub(crate) fn set_preview_enabled(&mut self, enabled: bool, agents: &mut SessionViews) {
         self.preview_enabled = enabled;
         if !enabled {
             self.set_peek(None);
@@ -155,10 +151,7 @@ impl DashboardState {
         }
     }
 
-    fn peeked_agent_cwd(
-        selected: &DashboardRowId,
-        agents: &SessionViews,
-    ) -> Option<PathBuf> {
+    fn peeked_agent_cwd(selected: &DashboardRowId, agents: &SessionViews) -> Option<PathBuf> {
         let reply_agent = match selected {
             DashboardRowId::TopLevel(id) => Some(*id),
             DashboardRowId::Roster { .. } | DashboardRowId::Workspace { .. } => None,

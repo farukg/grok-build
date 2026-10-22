@@ -59,7 +59,9 @@ impl AccentStyle {
 pub use crate::appearance::BlockBackground;
 
 /// User-selectable display form for a message kind or entry.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum DisplayForm {
     Collapsed,
     #[default]

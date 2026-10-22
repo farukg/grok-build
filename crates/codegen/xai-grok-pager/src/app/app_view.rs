@@ -2086,7 +2086,10 @@ impl AppView {
     /// 0 means unknown (welcome/dashboard views), which keeps the trackpad per-flush cap at its floor.
     fn scroll_viewport_height(&self) -> u16 {
         match self.active_view {
-            ActiveView::Agent(id) => self.agents.get(&id).map_or(0, |agent| agent.scrollback.scroll_info().1),
+            ActiveView::Agent(id) => self
+                .agents
+                .get(&id)
+                .map_or(0, |agent| agent.scrollback.scroll_info().1),
             _ => 0,
         }
     }
@@ -2405,12 +2408,21 @@ impl AppView {
                     .is_some_and(|d| d.attached_agent == Some(id));
                 if let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
-                    && let Some(action) = self.registry.lookup(key, crate::actions::When::AgentScreen)
+                    && let Some(action) =
+                        self.registry.lookup(key, crate::actions::When::AgentScreen)
                     && let Some(action) = match action {
-                        crate::actions::ActionId::SessionPrev => Some(Action::CycleSessions(crate::app::actions::Direction::Prev)),
-                        crate::actions::ActionId::SessionNext => Some(Action::CycleSessions(crate::app::actions::Direction::Next)),
-                        crate::actions::ActionId::SessionParent => Some(Action::NavigateTree(crate::app::actions::TreeStep::Parent)),
-                        crate::actions::ActionId::SessionLatestChild => Some(Action::NavigateTree(crate::app::actions::TreeStep::LatestChild)),
+                        crate::actions::ActionId::SessionPrev => {
+                            Some(Action::CycleSessions(crate::app::actions::Direction::Prev))
+                        }
+                        crate::actions::ActionId::SessionNext => {
+                            Some(Action::CycleSessions(crate::app::actions::Direction::Next))
+                        }
+                        crate::actions::ActionId::SessionParent => {
+                            Some(Action::NavigateTree(crate::app::actions::TreeStep::Parent))
+                        }
+                        crate::actions::ActionId::SessionLatestChild => Some(Action::NavigateTree(
+                            crate::app::actions::TreeStep::LatestChild,
+                        )),
                         _ => None,
                     }
                 {
@@ -5517,7 +5529,11 @@ impl AppView {
         if self.session_picker_content_loading {
             return TickDemand::Fast;
         }
-        if self.agents.roots().any(|(_, agent)| agent.edit_hl_needs_tick()) {
+        if self
+            .agents
+            .roots()
+            .any(|(_, agent)| agent.edit_hl_needs_tick())
+        {
             return TickDemand::Fast;
         }
         match self.active_view {
@@ -5636,7 +5652,10 @@ impl AppView {
             } else {
                 (None, None, None, false, None, false)
             };
-        let any_agent_has_perms = self.agents.roots().any(|(_, agent)| !agent.permission_queue.is_empty());
+        let any_agent_has_perms = self
+            .agents
+            .roots()
+            .any(|(_, agent)| !agent.permission_queue.is_empty());
         if !any_agent_has_perms {
             self.notification_service.clear_permission_notification();
         }

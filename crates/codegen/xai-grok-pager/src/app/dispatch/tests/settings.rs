@@ -118,7 +118,14 @@ fn toggle_vim_mode_propagates_to_resident_child_sessions() {
     child.vim_mode = false;
     child.role = AgentRole::Child(ChildLink {
         parent: parent_id,
-        parent_session_id: app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap(),
+        parent_session_id: app
+            .agents
+            .get(&parent_id)
+            .unwrap()
+            .session
+            .session_id
+            .clone()
+            .unwrap(),
         subagent_id: "child-1".to_owned(),
         started_at: std::time::Instant::now(),
     });

@@ -40,9 +40,7 @@ pub fn match_subagent_reference<'a>(
     match prefixed.as_slice() {
         [] => SubagentReferenceMatch::NoMatch,
         [only] => SubagentReferenceMatch::Unique((*only).to_owned()),
-        many => {
-            SubagentReferenceMatch::Ambiguous(many.iter().map(|id| (*id).to_owned()).collect())
-        }
+        many => SubagentReferenceMatch::Ambiguous(many.iter().map(|id| (*id).to_owned()).collect()),
     }
 }
 
@@ -159,7 +157,10 @@ impl std::fmt::Display for SubagentResumeError {
                 f.write_str("Cannot resume the subagent: the subagent coordinator is unavailable.")
             }
             Self::SpawnRejected { reason } => {
-                write!(f, "Cannot resume the subagent: the spawn was rejected ({reason}).")
+                write!(
+                    f,
+                    "Cannot resume the subagent: the spawn was rejected ({reason})."
+                )
             }
         }
     }

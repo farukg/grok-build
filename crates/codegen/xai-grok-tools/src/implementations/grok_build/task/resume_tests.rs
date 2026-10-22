@@ -1,5 +1,5 @@
+use crate::implementations::grok_build::task::types::SubagentState;
 use tokio::sync::mpsc;
-use crate::implementations::grok_build::task::types::{SubagentState};
 
 use super::*;
 use crate::implementations::grok_build::task::TaskTool;
@@ -166,8 +166,7 @@ fn harness() -> Harness {
 impl Harness {
     /// Spawn a child with `id`; a [`HOLD`] prompt keeps it running.
     async fn spawn_child(&mut self, id: &str, prompt: &str) {
-        let mut request =
-            human_resume_request(String::new(), prompt.to_owned(), PARENT.to_owned());
+        let mut request = human_resume_request(String::new(), prompt.to_owned(), PARENT.to_owned());
         request.id = id.to_owned();
         request.resume_from = None;
         let backend = self.backend.clone();

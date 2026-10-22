@@ -111,10 +111,12 @@ impl SubagentAttemptInfo {
     /// Context tokens as `used/window`, or `used` alone while the window is unknown; `None` before any report.
     pub(crate) fn token_usage_label(&self) -> Option<String> {
         let used = fmt_tokens(self.tokens_used?);
-        Some(match self.context_window_tokens.filter(|&window| window > 0) {
-            Some(window) => format!("{used}/{}", fmt_tokens(window)),
-            None => used,
-        })
+        Some(
+            match self.context_window_tokens.filter(|&window| window > 0) {
+                Some(window) => format!("{used}/{}", fmt_tokens(window)),
+                None => used,
+            },
+        )
     }
 
     pub(crate) fn terminal_update(

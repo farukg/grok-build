@@ -186,7 +186,8 @@ impl ClusterClient {
     fn latest_agent(&self) -> &AgentView {
         self.app
             .agents
-            .all().map(|(_, a)| a)
+            .all()
+            .map(|(_, a)| a)
             .last()
             .expect("client has no agent view yet")
     }
@@ -194,7 +195,8 @@ impl ClusterClient {
     fn agent_for_session(&self, sid: &str) -> &AgentView {
         self.app
             .agents
-            .all().map(|(_, a)| a)
+            .all()
+            .map(|(_, a)| a)
             .find(|a| {
                 a.session
                     .session_id
@@ -209,7 +211,8 @@ impl ClusterClient {
         self.act(Action::NewSession);
         self.pump_until("session/new completes", |app| {
             app.agents
-                .all().map(|(_, a)| a)
+                .all()
+                .map(|(_, a)| a)
                 .any(|a| a.session.session_id.is_some() && !a.session.loading_replay)
         })
         .await;

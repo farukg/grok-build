@@ -2669,10 +2669,7 @@ neutTest_set);
         match result {
             SearchReplaceOutput::EditsApplied(_) => {
                 let written = std::fs::read_to_string(tmp.path().join("f.txt")).unwrap();
-                assert_eq!(
-                    written,
-                    format!("{token}\nmarkdown docs\n{token} r'abc'\n")
-                );
+                assert_eq!(written, format!("{token}\nmarkdown docs\n{token} r'abc'\n"));
             }
             other => panic!("Expected EditsApplied, got {:?}", other),
         }

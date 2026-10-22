@@ -130,7 +130,11 @@ impl AgentView {
         match command {
             SidebarCommand::Tree(key) => self.navigate_sidebar(key),
             SidebarCommand::Activate => self.activate_cursor(),
-            SidebarCommand::Bulk { spread, goal, anchor } => self.bulk_sidebar(spread, goal, anchor),
+            SidebarCommand::Bulk {
+                spread,
+                goal,
+                anchor,
+            } => self.bulk_sidebar(spread, goal, anchor),
             SidebarCommand::ToggleEditLayer => {
                 self.toggle_panel_edit_layer();
                 InputOutcome::Changed
@@ -227,7 +231,8 @@ impl AgentView {
             Goal::Set(direction) => direction,
             Goal::Toggle => {
                 let section_closed = reached.sections()
-                    && bulk_toggle(outline.rows(), at, scope, anchor).direction == BulkDirection::Expand;
+                    && bulk_toggle(outline.rows(), at, scope, anchor).direction
+                        == BulkDirection::Expand;
                 let kind_closed = reached.kinds()
                     && kinds.clone().any(|kind| {
                         self.scrollback.display_defaults().shown(kind) == DisplayForm::Collapsed

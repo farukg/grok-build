@@ -1,5 +1,5 @@
-use std::future::Future;
 use crate::implementations::grok_build::task::types::{SubagentActor, SubagentState};
+use std::future::Future;
 
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -1383,7 +1383,13 @@ async fn cancel_pending_rejects_parked_human_as_terminal() {
         "human send parks while starting"
     );
     assert!(matches!(
-        coordinator.cancel_one("child", Some("parent"), InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+        coordinator.cancel_one(
+            "child",
+            Some("parent"),
+            InterruptionCause::ExplicitStop {
+                actor: SubagentActor::Human
+            }
+        ),
         crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(

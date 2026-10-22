@@ -15,13 +15,13 @@ use tokio::sync::{mpsc, oneshot};
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
     HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest, SubagentActor,
-    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
-    SubagentDescribeRequest, SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest,
-    SubagentInspectRequest, SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest,
-    SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest,
-    SubagentResolveResumeRequest, SubagentResult, SubagentResumeError, SubagentResumeTarget,
-    SubagentSnapshot, SubagentSpawnRequest, SubagentSpawnedRefsRequest,
-    SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget,
+    SubagentDescribeOutcome, SubagentDescribeRequest, SubagentEvent, SubagentEventSender,
+    SubagentHandOffForegroundRequest, SubagentInspectRequest, SubagentInspection,
+    SubagentListRunningRequest, SubagentQueryRequest, SubagentRegistryCounts,
+    SubagentRegistryCountsRequest, SubagentRequest, SubagentResolveResumeRequest, SubagentResult,
+    SubagentResumeError, SubagentResumeTarget, SubagentSnapshot, SubagentSpawnRequest,
+    SubagentSpawnedRefsRequest, SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
 };
 use crate::register_resource;
 use xai_tool_runtime::ToolError;

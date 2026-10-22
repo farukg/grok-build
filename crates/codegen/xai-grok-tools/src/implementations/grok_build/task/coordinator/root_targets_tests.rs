@@ -7,8 +7,6 @@ use tokio::sync::mpsc;
 use xai_message_delivery_core::{AgentId, AttemptId};
 
 use super::*;
-use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
-use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor, SubagentState};
 use crate::implementations::grok_build::task::coordinator::active_message::tests::{
     TestCoordinator, finish_child, fixture, insert_child_with, insert_pending, promote_pending,
     recv_with_timeout, release_admission, response_outcome,
@@ -17,12 +15,16 @@ use crate::implementations::grok_build::task::coordinator::agent_targets::tests:
 use crate::implementations::grok_build::task::coordinator::{
     ActiveMessageAdmission, SendBoxFuture,
 };
+use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
 use crate::implementations::grok_build::task::root_control::{
     RootReceiptSink, UserInputGeneration,
 };
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageOperation, ActiveAgentMessageRequest, ActiveMessageSenderContext,
     ActiveMessageTarget, SubagentActiveMessageRequest, SubagentOwner,
+};
+use crate::implementations::grok_build::task::types::{
+    InterruptionCause, SubagentActor, SubagentState,
 };
 
 const ROOT_A: &str = "019b0000-0000-7000-8000-000000000011";
@@ -328,7 +330,10 @@ async fn peer_root_reaches_another_roots_child_in_every_state() {
             );
         }
         if state == "completed_killed" {
-            c.active.get_mut(CHILD).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human });
+            c.active.get_mut(CHILD).unwrap().disposition =
+                PendingDisposition::Interrupted(InterruptionCause::ExplicitStop {
+                    actor: SubagentActor::Human,
+                });
         }
         if state.starts_with("completed") {
             finish_child(&mut c, CHILD);

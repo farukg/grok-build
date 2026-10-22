@@ -3149,7 +3149,12 @@ fn dashboard_plan_description_transforms_snapshot_and_chip_ranges() {
         dashboard.dispatch.text().to_owned()
     };
     let _ = dispatch_dashboard_dispatch_slash(&mut app, command);
-    let agent = app.agents.all().next().map(|(_, a)| a).expect("plan session");
+    let agent = app
+        .agents
+        .all()
+        .next()
+        .map(|(_, a)| a)
+        .expect("plan session");
     let queued = agent.session.pending_prompts.back().expect("plan prompt");
     assert!(!queued.text.starts_with("/plan"));
     assert!(queued.text.starts_with("line one"));
@@ -4654,7 +4659,9 @@ fn dashboard_return_selects_attached_root_row() {
     let _ = dispatch_exit_dashboard(&mut app);
     assert_eq!(app.active_view, ActiveView::Agent(parent));
     assert_eq!(
-        app.dashboard.as_ref().and_then(|dashboard| dashboard.selected.clone()),
+        app.dashboard
+            .as_ref()
+            .and_then(|dashboard| dashboard.selected.clone()),
         Some(crate::views::dashboard::DashboardRowId::TopLevel(parent))
     );
 }
@@ -5356,7 +5363,10 @@ fn three_sessions_opened_directly() -> AppView {
     mark_agent_nonempty(&mut app, AgentId(0));
     for (n, sid) in [(1, "second"), (2, "third")] {
         let id = AgentId(n);
-        let mut agent = AgentView::new(make_test_agent_session(&app, id, sid), ScrollbackState::new());
+        let mut agent = AgentView::new(
+            make_test_agent_session(&app, id, sid),
+            ScrollbackState::new(),
+        );
         agent.generated_session_title = Some(format!("Session {n}"));
         app.agents.insert(id, agent);
     }
@@ -5381,7 +5391,8 @@ fn painted_switcher_row(app: &mut AppView) -> Option<String> {
         .find(|row| row.contains(crate::glyphs::chevron_left()))
 }
 fn press(app: &mut AppView, code: KeyCode, modifiers: KeyModifiers) {
-    if let InputOutcome::Action(action) = app.handle_input(&Event::Key(KeyEvent::new(code, modifiers)))
+    if let InputOutcome::Action(action) =
+        app.handle_input(&Event::Key(KeyEvent::new(code, modifiers)))
     {
         let _ = dispatch(action, app);
     }
@@ -5390,12 +5401,17 @@ fn press(app: &mut AppView, code: KeyCode, modifiers: KeyModifiers) {
 #[test]
 fn direct_open_session_renders_cycle_switcher_like_dashboard_open() {
     let mut direct = three_sessions_opened_directly();
-    assert_eq!(direct.dashboard.as_ref().and_then(|d| d.attached_agent), None);
+    assert_eq!(
+        direct.dashboard.as_ref().and_then(|d| d.attached_agent),
+        None
+    );
     let direct_row = painted_switcher_row(&mut direct);
     let mut via_dashboard = three_sessions_opened_directly();
     let _ = dispatch(Action::OpenDashboard, &mut via_dashboard);
     let _ = dispatch(
-        Action::DashboardAttach(crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0))),
+        Action::DashboardAttach(crate::views::dashboard::DashboardRowId::TopLevel(AgentId(
+            0,
+        ))),
         &mut via_dashboard,
     );
     assert_eq!(via_dashboard.active_view, ActiveView::Agent(AgentId(0)));
@@ -5407,7 +5423,10 @@ fn direct_open_session_renders_cycle_switcher_like_dashboard_open() {
             Some(row[start..end].trim().to_owned())
         })
     };
-    assert!(switcher(&dashboard_row).is_some(), "dashboard-opened session paints a switcher: {dashboard_row:?}");
+    assert!(
+        switcher(&dashboard_row).is_some(),
+        "dashboard-opened session paints a switcher: {dashboard_row:?}"
+    );
     assert_eq!(
         switcher(&direct_row),
         switcher(&dashboard_row),
@@ -5427,8 +5446,16 @@ fn session_cycle_order_matches_dispatch_with_workspace_rows() {
     let order = crate::views::dashboard::top_level_ids(
         &super::super::dashboard::workspace_rows(&app, &crate::views::dashboard::Filter::None).0,
     );
-    assert_eq!(order.len(), 3, "precondition: all three sessions are rows: {order:?}");
-    assert_eq!(order.first(), Some(&AgentId(1)), "precondition: the store pin leads the workspace rows");
+    assert_eq!(
+        order.len(),
+        3,
+        "precondition: all three sessions are rows: {order:?}"
+    );
+    assert_eq!(
+        order.first(),
+        Some(&AgentId(1)),
+        "precondition: the store pin leads the workspace rows"
+    );
     let mut walked = Vec::new();
     for _ in 0..order.len() {
         let ActiveView::Agent(current) = app.active_view else {
@@ -5436,7 +5463,11 @@ fn session_cycle_order_matches_dispatch_with_workspace_rows() {
         };
         let position = super::super::dashboard::session_cycle_position(&mut app, current);
         walked.push((current, position));
-        press(&mut app, KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT);
+        press(
+            &mut app,
+            KeyCode::Right,
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
     }
     let start = order.iter().position(|id| *id == AgentId(0)).unwrap();
     let expected: Vec<_> = (0..order.len())
@@ -5445,7 +5476,10 @@ fn session_cycle_order_matches_dispatch_with_workspace_rows() {
             (order[idx], Some((idx + 1, order.len())))
         })
         .collect();
-    assert_eq!(walked, expected, "header `i/n` and Ctrl+Alt+Right follow the workspace row order");
+    assert_eq!(
+        walked, expected,
+        "header `i/n` and Ctrl+Alt+Right follow the workspace row order"
+    );
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
@@ -5456,9 +5490,20 @@ fn ctrl_alt_right_cycles_sessions_without_takeover() {
         crate::views::dashboard::overlay_cycle_order(app.dashboard.as_ref().unwrap(), &app.agents);
     app.dashboard = None;
     let start = order.iter().position(|id| *id == AgentId(0)).unwrap();
-    press(&mut app, KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT);
-    assert_eq!(app.active_view, ActiveView::Agent(order[(start + 1) % order.len()]));
-    press(&mut app, KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    press(
+        &mut app,
+        KeyCode::Right,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    assert_eq!(
+        app.active_view,
+        ActiveView::Agent(order[(start + 1) % order.len()])
+    );
+    press(
+        &mut app,
+        KeyCode::Left,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
     assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
@@ -5491,10 +5536,16 @@ fn cycle_in_child_is_siblings_in_root_is_roots() {
     let roots =
         crate::views::dashboard::overlay_cycle_order(app.dashboard.as_ref().unwrap(), &app.agents);
     app.dashboard = None;
-    assert!(!roots.iter().any(|id| children.contains(id)), "children are never cycle rows: {roots:?}");
+    assert!(
+        !roots.iter().any(|id| children.contains(id)),
+        "children are never cycle rows: {roots:?}"
+    );
     let start = roots.iter().position(|id| *id == AgentId(0)).unwrap();
     press(&mut app, KeyCode::Char(']'), KeyModifiers::CONTROL);
-    assert_eq!(app.active_view, ActiveView::Agent(roots[(start + 1) % roots.len()]));
+    assert_eq!(
+        app.active_view,
+        ActiveView::Agent(roots[(start + 1) % roots.len()])
+    );
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
@@ -5515,7 +5566,11 @@ fn ctrl_alt_up_from_child_opens_parent() {
         std::time::Instant::now(),
     );
     app.active_view = ActiveView::Agent(child);
-    press(&mut app, KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    press(
+        &mut app,
+        KeyCode::Up,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
     assert_eq!(app.active_view, ActiveView::Agent(parent));
 }
 /// Dismissing the active top-level session removes it from the switcher only: it stays loaded and the others remain.
@@ -8475,9 +8530,19 @@ fn child_renders_composer_and_kind_label() {
         make_test_agent_session(&app, child, "child-render"),
         ScrollbackState::new(),
     );
-    link_child(&mut app.agents, parent, child, view, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent,
+        child,
+        view,
+        std::time::Instant::now(),
+    );
     switch_to_agent(&mut app, child, SwitchCause::Navigate);
-    app.agents.get_mut(&child).unwrap().prompt.set_text("child draft text");
+    app.agents
+        .get_mut(&child)
+        .unwrap()
+        .prompt
+        .set_text("child draft text");
     let (mut terminal, _frames) = crate::test_util::test_terminal();
     terminal
         .resize(ratatui::layout::Rect::new(0, 0, 140, 30))
@@ -8491,7 +8556,13 @@ fn child_renders_composer_and_kind_label() {
                 .collect()
         })
         .collect();
-    assert!(rows.iter().any(|row| row.contains("child draft text")), "composer: {rows:#?}");
-    assert!(rows.iter().any(|row| row.contains("Explorer")), "kind label: {rows:#?}");
+    assert!(
+        rows.iter().any(|row| row.contains("child draft text")),
+        "composer: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Explorer")),
+        "kind label: {rows:#?}"
+    );
     assert!(app.agents.get(&child).unwrap().pane_areas.prompt.height > 0);
 }

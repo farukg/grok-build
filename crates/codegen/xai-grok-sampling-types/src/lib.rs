@@ -20,9 +20,7 @@ pub mod tool_overrides;
 pub mod types;
 
 pub use self::context_policy::{
-    all_categories, CategoryTokens, ContextCategory, ContextPolicy,
-    ContextSwitch,
-    RuntimeNotice,
+    CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice, all_categories,
 };
 pub use self::context_provenance::Sections;
 pub use self::conversation::*;

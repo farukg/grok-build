@@ -60,7 +60,8 @@ fn the_side_columns_follow_which_panels_are_open() {
 
     press(&mut agent, KeyCode::F(7));
     let both = draw(&mut agent);
-    let context_x = column_of(&both, "Context sent").unwrap_or_else(|| panic!("F7 header: {}", row_text(&both, 1)));
+    let context_x = column_of(&both, "Context sent")
+        .unwrap_or_else(|| panic!("F7 header: {}", row_text(&both, 1)));
     assert!(
         (usize::from(WIDTH) * 3 / 4 - 2..=usize::from(WIDTH) * 3 / 4 + 3).contains(&context_x),
         "the right column starts at 75%: {context_x}"
@@ -72,7 +73,8 @@ fn the_side_columns_follow_which_panels_are_open() {
     assert_eq!(column_of(&context_only, "Timeline"), None);
     let context_x = column_of(&context_only, "Context sent").expect("F7 header");
     assert!(
-        (usize::from(WIDTH) * 65 / 100 - 2..=usize::from(WIDTH) * 65 / 100 + 3).contains(&context_x),
+        (usize::from(WIDTH) * 65 / 100 - 2..=usize::from(WIDTH) * 65 / 100 + 3)
+            .contains(&context_x),
         "the right column starts at 65%: {context_x}"
     );
 }

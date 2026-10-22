@@ -610,12 +610,24 @@ impl AcpUpdateTracker {
             .get(tool_call_id)
             .and_then(|t| t.entry_id)
     }
-    pub fn context_tool_call_id_for_entry(&self, entry_id: EntryId) -> Option<xai_grok_shell::session::ToolCallId> {
-        self.tool_context_ids.get(&entry_id).cloned().or_else(|| self.pending_tools.values().find(|tool| tool.entry_id == Some(entry_id)).map(|tool| tool.context_id.clone()))
+    pub fn context_tool_call_id_for_entry(
+        &self,
+        entry_id: EntryId,
+    ) -> Option<xai_grok_shell::session::ToolCallId> {
+        self.tool_context_ids.get(&entry_id).cloned().or_else(|| {
+            self.pending_tools
+                .values()
+                .find(|tool| tool.entry_id == Some(entry_id))
+                .map(|tool| tool.context_id.clone())
+        })
     }
     pub fn tool_call_ids_by_entry(&self) -> HashMap<EntryId, xai_grok_shell::session::ToolCallId> {
         let mut ids = self.tool_context_ids.clone();
-        ids.extend(self.pending_tools.values().filter_map(|tool| tool.entry_id.map(|id| (id, tool.context_id.clone()))));
+        ids.extend(
+            self.pending_tools
+                .values()
+                .filter_map(|tool| tool.entry_id.map(|id| (id, tool.context_id.clone()))),
+        );
         ids
     }
     pub fn remove_context_tool_call_ids(&mut self, entry_ids: &[EntryId]) {
@@ -1281,7 +1293,10 @@ impl AcpUpdateTracker {
                 &self.subagent_labels.borrow(),
             );
             let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
-            self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids.insert(
+                entry_id,
+                xai_grok_shell::session::ToolCallId::new(tc_id.as_str()),
+            );
             return true;
         }
         let is_completed = matches!(
@@ -1295,7 +1310,10 @@ impl AcpUpdateTracker {
                 &self.subagent_labels.borrow(),
             );
             let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
-            self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids.insert(
+                entry_id,
+                xai_grok_shell::session::ToolCallId::new(tc_id.as_str()),
+            );
         } else {
             let block = tool_call_to_block(
                 &tc,
@@ -1305,7 +1323,8 @@ impl AcpUpdateTracker {
             let id = scrollback.push_block(block);
             scrollback.set_last_running(true);
             let started_at = Some(std::time::Instant::now());
-            self.tool_context_ids.insert(id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids
+                .insert(id, xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
             self.pending_tools.insert(
                 tc_id.clone(),
                 PendingTool {
@@ -1379,7 +1398,10 @@ impl AcpUpdateTracker {
                             &self.subagent_labels.borrow(),
                         );
                         let entry_id = self.finish_completed_tool(block, scrollback, is_replay);
-                        self.tool_context_ids.insert(entry_id, xai_grok_shell::session::ToolCallId::new(tc_id_str.as_str()));
+                        self.tool_context_ids.insert(
+                            entry_id,
+                            xai_grok_shell::session::ToolCallId::new(tc_id_str.as_str()),
+                        );
                         return true;
                     }
                 }

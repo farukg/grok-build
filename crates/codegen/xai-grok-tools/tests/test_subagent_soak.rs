@@ -12,8 +12,8 @@
 static DHAT_ALLOC: dhat::Alloc = dhat::Alloc;
 
 use std::sync::Arc;
-use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 use std::time::Duration;
+use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -352,7 +352,11 @@ impl ChildRunner for SoakRunner {
             if !promoted || cancellation.is_cancelled() {
                 return ChildRunOutput {
                     result: SubagentResult {
-                        state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "cancelled before start".to_owned() } },
+                        state: SubagentState::Interrupted {
+                            cause: InterruptionCause::Error {
+                                message: "cancelled before start".to_owned(),
+                            },
+                        },
                         subagent_id: request.id.clone(),
                         child_session_id: request.id,
                         ..Default::default()

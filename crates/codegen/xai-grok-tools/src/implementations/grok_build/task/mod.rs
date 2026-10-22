@@ -1212,7 +1212,9 @@ mod tests {
             let request = unwrap_spawn(rx.recv().await.unwrap());
             request
                 .respond_with(|_| SubagentResult {
-                    state: SubagentState::Failed { message: "Child session crashed".to_string() },
+                    state: SubagentState::Failed {
+                        message: "Child session crashed".to_string(),
+                    },
                     ..Default::default()
                 })
                 .unwrap();
@@ -1975,7 +1977,9 @@ mod tests {
         let drain = tokio::spawn(async move {
             if let Some(SubagentEvent::Spawn(boxed)) = rx.recv().await {
                 let _ = boxed.respond_with(|boxed| SubagentResult {
-                    state: SubagentState::Failed { message: "worktree creation failed".to_string() },
+                    state: SubagentState::Failed {
+                        message: "worktree creation failed".to_string(),
+                    },
                     subagent_id: boxed.id.clone(),
                     ..Default::default()
                 });

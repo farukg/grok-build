@@ -55,7 +55,11 @@ async fn a_paused_subagent_stays_listed_with_its_cause_next_to_a_running_one() {
     )
     .await
     .expect("control_subagent runs");
-    harness.completions.recv().await.expect("paused child settles");
+    harness
+        .completions
+        .recv()
+        .await
+        .expect("paused child settles");
 
     let listed = list(backend, "parent").await;
     assert_eq!(
@@ -78,9 +82,11 @@ async fn a_paused_subagent_stays_listed_with_its_cause_next_to_a_running_one() {
             ),
         ]
     );
-    assert!(listed.to_string().ends_with(
-        "Subagent was paused by parent model; send it a message to resume it."
-    ));
+    assert!(
+        listed
+            .to_string()
+            .ends_with("Subagent was paused by parent model; send it a message to resume it.")
+    );
 
     let foreign = ChannelBackend::for_coordinator_session(
         harness

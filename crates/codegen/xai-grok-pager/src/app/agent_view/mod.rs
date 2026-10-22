@@ -182,25 +182,25 @@ mod model_notice_tests;
 mod rewind;
 mod role;
 pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
+mod context_removal;
+mod context_sidebar;
+#[cfg(test)]
+mod context_sidebar_tests;
+mod panel_persistence;
+#[cfg(test)]
+pub(crate) mod removal_test_support;
+pub(crate) mod removal_verdict;
 mod selection;
 mod session;
 mod session_mode;
 mod shell_completion;
-#[cfg(test)]
-mod task_icon_mouse_tests;
-#[cfg(test)]
-mod task_status_tests;
-mod context_removal;
-pub(crate) mod removal_verdict;
-#[cfg(test)]
-pub(crate) mod removal_test_support;
-mod context_sidebar;
-mod panel_persistence;
 mod sidebars;
 #[cfg(test)]
 mod sidebars_tests;
 #[cfg(test)]
-mod context_sidebar_tests;
+mod task_icon_mouse_tests;
+#[cfg(test)]
+mod task_status_tests;
 mod timeline_panel;
 mod viewer;
 mod workflows_overlay;

@@ -77,7 +77,11 @@ fn assert_tool_pairs_hold(items: &[Item]) {
         match item {
             Item::Assistant(assistant) => {
                 assert!(open.is_empty(), "calls without results before {item:?}");
-                open = assistant.tool_calls.iter().map(|c| c.id.to_string()).collect();
+                open = assistant
+                    .tool_calls
+                    .iter()
+                    .map(|c| c.id.to_string())
+                    .collect();
             }
             Item::ToolResult(result) => {
                 let position = open.iter().position(|id| *id == result.tool_call_id);
@@ -87,7 +91,10 @@ fn assert_tool_pairs_hold(items: &[Item]) {
             _ => {}
         }
     }
-    assert!(open.is_empty(), "calls without results at the end: {open:?}");
+    assert!(
+        open.is_empty(),
+        "calls without results at the end: {open:?}"
+    );
 }
 
 /// A reasoning item is followed by an output item of its response.
@@ -144,17 +151,26 @@ fn every_category_off_removes_only_its_own_items_and_leaves_valid_history() {
         let projected = without(*category).project(baseline.clone());
         let kept = texts(&projected);
         for text in *gone {
-            assert!(!kept.iter().any(|t| t.contains(text)), "{category:?} keeps {text}");
+            assert!(
+                !kept.iter().any(|t| t.contains(text)),
+                "{category:?} keeps {text}"
+            );
         }
         for text in ["current prompt", "current result"] {
-            assert!(kept.iter().any(|t| t.contains(text)), "{category:?} drops {text}");
+            assert!(
+                kept.iter().any(|t| t.contains(text)),
+                "{category:?} drops {text}"
+            );
         }
         let untouched = texts(&baseline)
             .into_iter()
             .filter(|text| !gone.iter().any(|g| text.contains(g)))
             .filter(|text| !text.is_empty())
             .all(|text| kept.contains(&text));
-        assert!(untouched, "{category:?} removed more than its own items: {kept:?}");
+        assert!(
+            untouched,
+            "{category:?} removed more than its own items: {kept:?}"
+        );
         assert_tool_pairs_hold(&projected);
         assert_reasoning_is_answered(&projected);
     }
@@ -179,7 +195,11 @@ fn a_response_that_loses_all_output_loses_its_reasoning() {
     policy.set(ContextCategory::ToolExchanges, ContextSwitch::Excluded);
     let projected = policy.project(history());
     assert_reasoning_is_answered(&projected);
-    assert!(!projected.iter().any(|item| matches!(item, Item::Reasoning(r) if r.id == "r1" || r.id == "r2")));
+    assert!(
+        !projected
+            .iter()
+            .any(|item| matches!(item, Item::Reasoning(r) if r.id == "r1" || r.id == "r2"))
+    );
 }
 
 #[test]

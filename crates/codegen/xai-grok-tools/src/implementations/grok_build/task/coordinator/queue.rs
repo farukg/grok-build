@@ -204,8 +204,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         // Token observers must see command-path cancels too.
         request.cancel_token.cancel();
-        let result =
-            SubagentResult::interrupted(request.id.clone(), request.id.clone(), cause);
+        let result = SubagentResult::interrupted(request.id.clone(), request.id.clone(), cause);
         self.finish_never_started(
             *request,
             caller.into_spawn_reply(),

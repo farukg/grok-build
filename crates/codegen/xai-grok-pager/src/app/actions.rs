@@ -437,7 +437,10 @@ pub enum Action {
     /// Kill (cancel) a subagent by subagent_id.
     KillSubagent(String),
     /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
-    ResumeSubagent { subagent_id: String, prompt: String },
+    ResumeSubagent {
+        subagent_id: String,
+        prompt: String,
+    },
     /// Release the active child view's held answer to its caller.
     DeliverSubagent,
     /// Ask the shell for the active session's context policy (the F7 sidebar just opened).

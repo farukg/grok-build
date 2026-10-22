@@ -221,7 +221,9 @@ enum TerminalCommand {
     /// (`ProcessState::draining`), the exact flag the kill paths gate on via
     /// `is_running()`.
     #[cfg(test)]
-    AnyTaskDraining { reply: oneshot::Sender<bool> },
+    AnyTaskDraining {
+        reply: oneshot::Sender<bool>,
+    },
 
     /// Unblocks the foreground waiter with signal="backgrounded".
     BackgroundForeground {
@@ -2756,8 +2758,6 @@ impl TerminalBackend for LocalTerminalBackend {
             .send(TerminalCommand::KillForegroundCommands)
             .await;
     }
-
-
 
     async fn kill_all_background_tasks(&self) {
         let tasks = self.list_tasks().await;

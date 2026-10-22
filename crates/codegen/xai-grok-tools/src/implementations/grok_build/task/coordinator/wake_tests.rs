@@ -1,10 +1,10 @@
 use super::active_message::tests::*;
-use crate::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 use super::tests::*;
 use super::*;
 use crate::implementations::grok_build::task::admission::{LimitBehavior, SubagentLimits};
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::types::*;
+use crate::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 use tokio::sync::oneshot;
 
 const CHILD_ID: &str = "019b0000-0000-7000-8000-000000000001";
@@ -244,9 +244,9 @@ async fn stopped_session_refuses_parked_wake_before_publication() {
     let send = park_wake_until_terminal_publication(&mut harness, &backend).await;
 
     assert!(matches!(
-backend.cancel_parent_session().await,
- SubagentCancelOutcome::Cancelled { .. }
-));
+        backend.cancel_parent_session().await,
+        SubagentCancelOutcome::Cancelled { .. }
+    ));
     assert_eq!(
         send.await.unwrap(),
         ActiveAgentMessageOutcome::NotActiveOrFinalizing
@@ -520,9 +520,15 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
             }
             PreStartExit::Cancellation => {
                 assert!(matches!(
-backend.cancel(CHILD_ID, SubagentActor::Human, SubagentCancelDisposition::Stop).await,
- SubagentCancelOutcome::Cancelled { .. }
-));
+                    backend
+                        .cancel(
+                            CHILD_ID,
+                            SubagentActor::Human,
+                            SubagentCancelDisposition::Stop
+                        )
+                        .await,
+                    SubagentCancelOutcome::Cancelled { .. }
+                ));
             }
         }
 

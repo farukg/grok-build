@@ -152,9 +152,8 @@ impl MvpAgent {
         let request = human_resume_request(source_id, prompt, parent_session_id.to_owned());
         let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
         let spawn_backend = backend.clone();
-        let spawn = tokio::spawn(async move {
-            spawn_backend.spawn(request, Some(registered_tx)).await
-        });
+        let spawn =
+            tokio::spawn(async move { spawn_backend.spawn(request, Some(registered_tx)).await });
         if registered_rx.await.is_ok() {
             return Ok(route);
         }

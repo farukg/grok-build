@@ -66,7 +66,9 @@ fn conversation() -> AgentView {
     crate::appearance::cache::set_show_thinking_blocks(true);
     let mut agent = make_agent();
     agent.scrollback.push_block(RenderBlock::user_prompt("Q1"));
-    agent.scrollback.push_block(RenderBlock::thinking("pondering"));
+    agent
+        .scrollback
+        .push_block(RenderBlock::thinking("pondering"));
     for path in ["a.rs", "b.rs", "c.rs"] {
         agent.scrollback.push_block(RenderBlock::read(path, None));
     }
@@ -133,14 +135,31 @@ fn f6_opens_timeline_in_child() {
         started_at: std::time::Instant::now(),
     });
     let area = AREA;
-    assert!(matches!(press(&mut child, KeyCode::F(6)), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut child, KeyCode::F(6)),
+        InputOutcome::Changed
+    ));
     draw_frame(&mut child);
     assert!(child.timeline_mode.panel().is_some());
     let mut buffer = Buffer::empty(area);
     let mut scratch = ScratchBuffer::new();
-    child.draw(area, &mut buffer, &ActionRegistry::defaults(), &mut scratch, None, false, BannerSlotParams::none(), false, &mut Vec::new(), AppRenderParams::default());
+    child.draw(
+        area,
+        &mut buffer,
+        &ActionRegistry::defaults(),
+        &mut scratch,
+        None,
+        false,
+        BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        AppRenderParams::default(),
+    );
     let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
-    assert!(!text.trim().is_empty(), "timeline panel view is painted for child: {text}");
+    assert!(
+        !text.trim().is_empty(),
+        "timeline panel view is painted for child: {text}"
+    );
 }
 
 #[test]
@@ -149,12 +168,18 @@ fn f6_toggles_timeline_panel() {
     let chat_width = agent.pane_areas.scrollback.width;
     press(&mut agent, KeyCode::F(6));
     draw_frame(&mut agent);
-    let panel = agent.timeline_mode.panel().expect("F6 expands the timeline");
+    let panel = agent
+        .timeline_mode
+        .panel()
+        .expect("F6 expands the timeline");
     assert!(panel.area.width > 2, "panel is wider than the tick rail");
 
     press(&mut agent, KeyCode::F(6));
     draw_frame(&mut agent);
-    assert!(agent.timeline_mode.panel().is_none(), "F6 folds back to the rail");
+    assert!(
+        agent.timeline_mode.panel().is_none(),
+        "F6 folds back to the rail"
+    );
     assert_eq!(agent.pane_areas.scrollback.width, chat_width);
 }
 
@@ -187,8 +212,15 @@ fn panel_cursor_down_scrolls_scrollback() {
     }
     assert_eq!(cursor_entry(&agent), Some(last), "↓ reaches the last entry");
     let idx = agent.scrollback.index_of_id(last).expect("last entry");
-    assert_eq!(agent.scrollback.selected(), Some(idx), "cursor selects its entry");
-    assert!(agent.scrollback.scroll_offset() > top, "chat scrolled to the cursor");
+    assert_eq!(
+        agent.scrollback.selected(),
+        Some(idx),
+        "cursor selects its entry"
+    );
+    assert!(
+        agent.scrollback.scroll_offset() > top,
+        "chat scrolled to the cursor"
+    );
 }
 
 #[test]
@@ -225,8 +257,16 @@ fn group_row_expand_toggles_scrollback_group() {
     let Some(TimelineRowKind::Group { first_id }) = cursor_kind(&agent) else {
         panic!("the read run is listed as a group row");
     };
-    let first = agent.scrollback.index_of_id(first_id).expect("first member");
-    let members = agent.scrollback.span_at(first).expect("folded").range.clone();
+    let first = agent
+        .scrollback
+        .index_of_id(first_id)
+        .expect("first member");
+    let members = agent
+        .scrollback
+        .span_at(first)
+        .expect("folded")
+        .range
+        .clone();
     assert!(members.len() >= 3);
 
     press(&mut agent, KeyCode::Right);
@@ -252,8 +292,15 @@ fn group_row_expand_toggles_scrollback_group() {
 fn alt_click_opens_panel_on_clicked_entry() {
     let mut agent = conversation();
     let answer = 5;
-    assert!(matches!(alt_click(&mut agent, answer), InputOutcome::Changed));
-    let id = agent.scrollback.iter_entries().nth(answer).map(|(id, _)| id);
+    assert!(matches!(
+        alt_click(&mut agent, answer),
+        InputOutcome::Changed
+    ));
+    let id = agent
+        .scrollback
+        .iter_entries()
+        .nth(answer)
+        .map(|(id, _)| id);
     assert_eq!(cursor_entry(&agent), id);
 }
 
@@ -274,7 +321,10 @@ fn panel_copy_dispatches_copy_for_cursor_entry() {
     let answer = 5;
     alt_click(&mut agent, answer);
     let outcome = press(&mut agent, KeyCode::Char('y'));
-    assert!(matches!(outcome, InputOutcome::Action(Action::CopyBlockContent)));
+    assert!(matches!(
+        outcome,
+        InputOutcome::Action(Action::CopyBlockContent)
+    ));
     assert_eq!(agent.scrollback.selected(), Some(answer));
 }
 
@@ -754,7 +804,10 @@ fn only_ctrl_enter_of_the_chords_reaches_the_panel() {
     );
     assert_eq!(
         timeline_panel_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
-        TimelinePanelInput::Bulk(BulkRequest::toggle(BulkScope::Siblings, BulkAnchor::Exclude))
+        TimelinePanelInput::Bulk(BulkRequest::toggle(
+            BulkScope::Siblings,
+            BulkAnchor::Exclude
+        ))
     );
     assert_eq!(
         timeline_panel_key(&KeyEvent::new(KeyCode::Char('*'), KeyModifiers::SHIFT)),
@@ -814,7 +867,10 @@ fn modifier_clicks_reach_the_rows_around_the_clicked_one() {
     click(&mut agent, 0, 9, KeyModifiers::SHIFT);
     assert!(turn_expanded(&agent, id_at(&ids, 6)));
     click(&mut agent, 0, 9, KeyModifiers::CONTROL);
-    assert!(group_expanded(&agent), "ctrl+click opens the rows below the clicked one");
+    assert!(
+        group_expanded(&agent),
+        "ctrl+click opens the rows below the clicked one"
+    );
     assert!(turn_expanded(&agent, id_at(&ids, 0)));
     click(&mut agent, 0, 9, KeyModifiers::CONTROL);
     assert!(!group_expanded(&agent));

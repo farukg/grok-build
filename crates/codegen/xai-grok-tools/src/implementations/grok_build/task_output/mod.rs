@@ -1107,11 +1107,11 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::*;
     use super::*;
-    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
     use crate::computer::types::{
         BackgroundHandle, KillOutcome, TaskSnapshot, TerminalBackend, TerminalRunRequest,
         TerminalRunResult,
     };
+    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
     use crate::types::resources::Resources;
     use crate::types::tool_metadata::ToolMetadata;
     use crate::types::tool_metadata::test_ctx;

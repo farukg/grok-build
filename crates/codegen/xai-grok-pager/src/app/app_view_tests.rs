@@ -1975,7 +1975,10 @@ fn needs_animation_gates_subagent_image_viewer_loading() {
     let mut terminal = false;
     for _ in 0..200 {
         app.tick();
-        let child = app.agents.get(&child_id).unwrap_or_else(|| panic!("missing child view"));
+        let child = app
+            .agents
+            .get(&child_id)
+            .unwrap_or_else(|| panic!("missing child view"));
         if child.image_viewer.is_none()
             || child.toast.is_some()
             || child.image_load_rx.is_some()
@@ -2049,7 +2052,10 @@ fn resize_event_closes_tip_show_gate_until_redraw() {
     let child_sid = "child-session";
     let mut child = idle_child_view(&app, 1, child_sid);
     child.note_terminal_size((80, 28));
-    app.agents.get_mut(&id).unwrap().note_terminal_size((80, 30));
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .note_terminal_size((80, 30));
     crate::app::session_views::test_support::link_child(
         &mut app.agents,
         id,
@@ -2071,7 +2077,10 @@ fn resize_event_closes_tip_show_gate_until_redraw() {
     };
     assert!(!agent.show_ephemeral_tip(tip(), &mut counts));
     assert!(counts.is_empty(), "stale-size show must not burn a count");
-    let child = app.agents.get_mut(&super::super::agent::AgentId(1)).unwrap();
+    let child = app
+        .agents
+        .get_mut(&super::super::agent::AgentId(1))
+        .unwrap();
     assert!(!child.show_ephemeral_tip(tip(), &mut counts));
     assert!(counts.is_empty(), "child stale-size show must not burn");
     child.note_terminal_size((118, 46));
@@ -3355,11 +3364,7 @@ fn prompt_paging_scope_matches_agent_surface() {
             true,
         ),
         ("minimal agent", Surface::Agent(ScreenMode::Minimal), false),
-        (
-            "dashboard session overlay",
-            Surface::DashboardOverlay,
-            true,
-        ),
+        ("dashboard session overlay", Surface::DashboardOverlay, true),
         ("dashboard attached popup", Surface::DashboardPopup, true),
     ] {
         let screen_mode = match surface {
@@ -3425,7 +3430,12 @@ fn prompt_page_actions_target_visible_fullscreen_child_scrollback() {
     let offsets = |app: &AppView| {
         (
             app.agents.get(&id).unwrap().scrollback.scroll_info().0,
-            app.agents.get(&child_id).unwrap().scrollback.scroll_info().0,
+            app.agents
+                .get(&child_id)
+                .unwrap()
+                .scrollback
+                .scroll_info()
+                .0,
         )
     };
     let before = offsets(&app);
@@ -5657,7 +5667,8 @@ fn opening_workflow_transcript_cancels_pending_scroll_stream() {
         .on_scroll_event(ScrollDirection::Up, ScrollConfig::default());
     app.last_scroll_pos = Some((30, 12));
     assert!(app.scroll_state.has_active_stream());
-    let InputOutcome::Action(open) = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE))
+    let InputOutcome::Action(open) =
+        app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE))
     else {
         panic!("Enter on a workflow agent must request its session");
     };
@@ -7572,9 +7583,6 @@ fn minimal_session_keeps_pending_sidebar_chrome_until_it_leaves_minimal() {
         "the former minimal session adopts the pager-wide F7 state"
     );
 }
-
-
-
 
 /// When the attached agent disappears externally,
 /// the `handle_input` filter must clear `attached_agent`

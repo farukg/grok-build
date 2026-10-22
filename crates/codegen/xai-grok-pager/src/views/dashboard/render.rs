@@ -2979,8 +2979,8 @@ fn render_footer(
         }
         if show_ctrl_x {
             if stop != key!(Null) {
-                    h.push(HintItem::new(stop, stop_label).pinned());
-                }
+                h.push(HintItem::new(stop, stop_label).pinned());
+            }
         }
         h
     } else {

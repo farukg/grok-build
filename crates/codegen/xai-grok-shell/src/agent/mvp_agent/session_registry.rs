@@ -391,10 +391,19 @@ impl SessionRegistry {
                     if let Some(operation) = &entry.management {
                         operation.cancel.request_cancel();
                     }
-                    if let Some(handle) = entry.presence.as_ref().and_then(SessionPresence::hosted_handle) {
-                        let _ = handle.cmd_tx.send(SessionCommand::Shutdown(ShutdownKind::Graceful));
+                    if let Some(handle) = entry
+                        .presence
+                        .as_ref()
+                        .and_then(SessionPresence::hosted_handle)
+                    {
+                        let _ = handle
+                            .cmd_tx
+                            .send(SessionCommand::Shutdown(ShutdownKind::Graceful));
                     }
-                    let thread = entry.presence.as_mut().and_then(SessionPresence::take_thread);
+                    let thread = entry
+                        .presence
+                        .as_mut()
+                        .and_then(SessionPresence::take_thread);
                     if let Some(thread) = thread.filter(|thread| !thread.is_finished()) {
                         released.retired_threads.push(thread);
                     }
@@ -613,10 +622,16 @@ impl SessionRegistry {
         })
         .flatten()
     }
-    pub(super) fn management(&self, id: &acp::SessionId) -> Option<Rc<super::child_management::ChildManagement>> {
+    pub(super) fn management(
+        &self,
+        id: &acp::SessionId,
+    ) -> Option<Rc<super::child_management::ChildManagement>> {
         self.with(id, |entry| entry.management.clone()).flatten()
     }
-    pub(super) fn begin_management(&self, id: &acp::SessionId) -> Rc<super::child_management::ChildManagement> {
+    pub(super) fn begin_management(
+        &self,
+        id: &acp::SessionId,
+    ) -> Rc<super::child_management::ChildManagement> {
         self.edit(id, |entry| entry.management.get_or_insert_default().clone())
     }
     pub(super) fn is_resident(&self, id: &acp::SessionId) -> bool {
@@ -885,7 +900,10 @@ impl SessionRegistry {
         match self.host(id) {
             Some(SessionHost::Child(_)) => {
                 self.clear(id, |entry| {
-                    let thread = entry.presence.as_mut().and_then(SessionPresence::take_thread);
+                    let thread = entry
+                        .presence
+                        .as_mut()
+                        .and_then(SessionPresence::take_thread);
                     entry.presence = Some(SessionPresence::Dormant { thread });
                 });
             }

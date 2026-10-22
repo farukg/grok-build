@@ -2,6 +2,8 @@
 //! Both use the shared sidebar component, so header and footer heights and the column split come from one place.
 
 use super::AgentView;
+use crate::scrollback::state::ScrollbackState;
+use crate::theme::Theme;
 use crate::views::prompt_widget::PromptWidget;
 use crate::views::sidebar::{
     HostedSection, Sidebar, SidebarContent, SidebarEdge, SidebarHeights, SidebarLayout,
@@ -11,8 +13,6 @@ use crate::views::timeline::MIN_TERMINAL_WIDTH;
 use crate::views::timeline_panel::footer_memo::FooterRowsKey;
 use crate::views::timeline_panel::hint::{footer_lines, footer_rows, status_line};
 use crate::views::timeline_panel::{PanelFocus, TimelinePanelState, render_panel};
-use crate::scrollback::state::ScrollbackState;
-use crate::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -105,7 +105,10 @@ impl AgentView {
     /// Which side columns take space this frame. The timeline needs a terminal wide enough for its rail.
     pub(crate) fn sidebars_open(&self, area_width: u16) -> SidebarsOpen {
         let timeline = self.timeline_mode.panel().is_some() && area_width >= MIN_TERMINAL_WIDTH;
-        let context = matches!(self.context_sidebar, super::context_sidebar::ContextSidebar::Open(_));
+        let context = matches!(
+            self.context_sidebar,
+            super::context_sidebar::ContextSidebar::Open(_)
+        );
         match (timeline, context) {
             (false, false) => SidebarsOpen::None,
             (true, false) => SidebarsOpen::Left,
@@ -138,7 +141,11 @@ impl AgentView {
             ..base
         };
         let body = SidebarLayout::compute(area, heights).body;
-        self.sync_timeline_panel_frame(if area.width == 0 { Rect::default() } else { body });
+        self.sync_timeline_panel_frame(if area.width == 0 {
+            Rect::default()
+        } else {
+            body
+        });
         let context = self.timeline_footer_context();
         let Some(panel) = self.timeline_mode.panel() else {
             return;

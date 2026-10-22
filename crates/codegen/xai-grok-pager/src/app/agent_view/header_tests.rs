@@ -25,15 +25,22 @@ fn child_header_shows_kind_before_title() {
         subagent_id: "explorer".into(),
         started_at: std::time::Instant::now(),
     });
-    let buf = draw(&mut child, &ActionRegistry::defaults(), false, OverlayHeader {
-        title: Some("Header target title"),
-        position: None,
-        kind: Some("Explorer"),
-        awaits_delivery: false,
-    });
+    let buf = draw(
+        &mut child,
+        &ActionRegistry::defaults(),
+        false,
+        OverlayHeader {
+            title: Some("Header target title"),
+            position: None,
+            kind: Some("Explorer"),
+            awaits_delivery: false,
+        },
+    );
     let row = header_row(&child, &buf);
     let kind = row.find("Explorer").expect("session kind");
-    let title = row.find("Header target title").expect("existing session title");
+    let title = row
+        .find("Header target title")
+        .expect("existing session title");
     assert!(kind < title, "kind precedes title: {row:?}");
 }
 /// `/dashboard` is pinned visible so the plain-session `[Dashboard]` gate does not read `GROK_AGENT_DASHBOARD` or the

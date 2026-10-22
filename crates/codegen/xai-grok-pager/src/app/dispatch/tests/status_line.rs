@@ -118,7 +118,10 @@ fn owed_refresh_is_deferred_never_dropped_and_consumed_by_the_first_run() {
     let mut app = settled_refresh_timer_app(now);
     now += Duration::from_secs(300);
     app.note_status_line_refresh_due_at(now);
-    assert!(queued_a_run(&app), "the active session view owns its status line");
+    assert!(
+        queued_a_run(&app),
+        "the active session view owns its status line"
+    );
     assert!(!app.status_line.refresh_due(), "consumed, not re-demanded");
 
     let mut now = Instant::now();

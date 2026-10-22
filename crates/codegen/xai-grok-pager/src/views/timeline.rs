@@ -68,10 +68,7 @@ pub(crate) fn rail_width(
     if matches!(mode, TimelineMode::Expanded(_)) {
         return 0;
     }
-    if show_timeline
-        && area_width >= MIN_TERMINAL_WIDTH
-        && turn_count >= MIN_TURNS
-    {
+    if show_timeline && area_width >= MIN_TERMINAL_WIDTH && turn_count >= MIN_TURNS {
         RAIL_WIDTH
     } else {
         0
@@ -522,12 +519,10 @@ mod tests {
 
     #[test]
     fn expanded_mode_takes_no_center_columns() {
-        let panel = TimelineMode::Expanded(
-            crate::views::timeline_panel::TimelinePanelState::open(
-                &crate::scrollback::state::ScrollbackState::new(),
-                None,
-            ),
-        );
+        let panel = TimelineMode::Expanded(crate::views::timeline_panel::TimelinePanelState::open(
+            &crate::scrollback::state::ScrollbackState::new(),
+            None,
+        ));
         assert_eq!(0, rail_width(true, &panel, 120, 5));
     }
 }

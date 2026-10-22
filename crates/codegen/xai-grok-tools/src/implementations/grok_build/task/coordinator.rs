@@ -42,9 +42,10 @@ use super::coordinator_state::{
 };
 use super::types::{
     ActiveAgentMessageOutcome, AgentAddress, HandedOffForegroundSubagent, SpawnedSubagentRef,
-    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome, SubagentEvent,
-    SubagentOutstandingReply, SubagentRegistryCounts, SubagentRequest, SubagentResult,
-    SubagentResumeLookup, SubagentResumeSource, SubagentValidateTypeOutcome,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelTarget,
+    SubagentDescribeOutcome, SubagentEvent, SubagentOutstandingReply, SubagentRegistryCounts,
+    SubagentRequest, SubagentResult, SubagentResumeLookup, SubagentResumeSource,
+    SubagentValidateTypeOutcome,
 };
 pub use active_message::ActiveChildGeneration;
 use active_message::{ActiveMessageFuture, ActiveMessageLifecycle, SpawnReadyMessages};
@@ -418,11 +419,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     disposition,
                 } => {
                     let cause = match disposition {
-                        SubagentCancelDisposition::Stop => InterruptionCause::ExplicitStop { actor },
+                        SubagentCancelDisposition::Stop => {
+                            InterruptionCause::ExplicitStop { actor }
+                        }
                         SubagentCancelDisposition::Pause => InterruptionCause::Paused { actor },
                     };
-                    let outcome =
-                        self.cancel_one(&id, request.parent_session_id.as_deref(), cause);
+                    let outcome = self.cancel_one(&id, request.parent_session_id.as_deref(), cause);
                     let _ = request.respond_to.send(outcome);
                 }
                 SubagentCancelTarget::ParentPromptId(prompt_id) => {
@@ -1524,8 +1526,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 queued.request.surface_completion = false;
             }
         }
-        cancelled +=
-            self.remove_queued(&cause, |request| request.parent_session_id == parent_session_id);
+        cancelled += self.remove_queued(&cause, |request| {
+            request.parent_session_id == parent_session_id
+        });
         if cancelled > 0 {
             tracing::info!(
                 parent_session_id,

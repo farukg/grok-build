@@ -4815,7 +4815,10 @@ fn nav_key_disarms_pending_delete_confirm() {
         &reg,
     );
     assert!(
-        matches!(outcome, InputOutcome::Action(Action::DashboardOpenShortcutsHelp)),
+        matches!(
+            outcome,
+            InputOutcome::Action(Action::DashboardOpenShortcutsHelp)
+        ),
         "Ctrl+X on the dashboard list must open the cheatsheet, got {outcome:?}",
     );
     assert!(
@@ -6961,7 +6964,11 @@ fn workspace_identity_keeps_removed_selection_as_repair_anchor() {
     let mut dashboard = DashboardState::new();
     dashboard.focus_row(old_row.clone());
 
-    dashboard.rebind_workspace_identities(&old, &new, &mut crate::app::session_views::SessionViews::new());
+    dashboard.rebind_workspace_identities(
+        &old,
+        &new,
+        &mut crate::app::session_views::SessionViews::new(),
+    );
 
     assert_eq!(dashboard.selected, Some(old_row));
 }

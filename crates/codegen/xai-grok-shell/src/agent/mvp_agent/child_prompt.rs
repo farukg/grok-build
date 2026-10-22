@@ -10,8 +10,8 @@ use super::{ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild, Sessi
 use crate::agent::subagent::PromptTurnReceipt;
 use crate::extensions::notification::SubagentDelivery;
 use crate::extensions::subagent_deliver::DeliverSubagentOutcome;
-use crate::extensions::subagent_resume::ResumeSubagentOutcome;
 use crate::extensions::subagent_message::{SendSubagentMessageOutcome, literal_text};
+use crate::extensions::subagent_resume::ResumeSubagentOutcome;
 use crate::session::SessionHandle;
 use crate::session::commands::PromptTurnResult;
 
@@ -177,7 +177,8 @@ impl MvpAgent {
             .await
         {
             ActiveAgentMessageOutcome::Unsupported => {
-                self.continue_child_with_prompt(parent_session_id, child, text).await
+                self.continue_child_with_prompt(parent_session_id, child, text)
+                    .await
             }
             outcome @ ActiveAgentMessageOutcome::Accepted { .. } => {
                 let wake =
@@ -201,16 +202,16 @@ impl MvpAgent {
         text: String,
     ) -> Result<acp::PromptResponse, acp::Error> {
         let outcome = ResumeSubagentOutcome::from(
-            self.resume_subagent(&parent_session_id.0, &child.0, text).await,
+            self.resume_subagent(&parent_session_id.0, &child.0, text)
+                .await,
         );
         let body = serde_json::json!({ "childResume": outcome });
         match outcome {
             ResumeSubagentOutcome::Queued { .. } | ResumeSubagentOutcome::Resumed { .. } => {
-                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn).meta(body.as_object().cloned()))
+                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)
+                    .meta(body.as_object().cloned()))
             }
-            ResumeSubagentOutcome::Refused { .. } => {
-                Err(acp::Error::invalid_request().data(body))
-            }
+            ResumeSubagentOutcome::Refused { .. } => Err(acp::Error::invalid_request().data(body)),
         }
     }
 }

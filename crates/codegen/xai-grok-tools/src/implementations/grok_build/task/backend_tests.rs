@@ -1,8 +1,8 @@
 use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
+use super::*;
 use crate::implementations::grok_build::task::types::{
     InterruptionCause, SubagentActor, SubagentCancelDisposition, SubagentState,
 };
-use super::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -542,11 +542,21 @@ async fn channel_backend_cancel_success() {
             other => panic!("Expected SubagentId, got {:?}", other),
         }
         req.respond_to
-            .send(SubagentCancelOutcome::Cancelled { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::Human } })
+            .send(SubagentCancelOutcome::Cancelled {
+                cause: InterruptionCause::ExplicitStop {
+                    actor: SubagentActor::Human,
+                },
+            })
             .unwrap();
     });
 
-    let outcome = backend.cancel("sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop).await;
+    let outcome = backend
+        .cancel(
+            "sub-cancel",
+            SubagentActor::Human,
+            SubagentCancelDisposition::Stop,
+        )
+        .await;
     assert!(matches!(outcome, SubagentCancelOutcome::Cancelled { .. }));
 
     handle.await.unwrap();
@@ -559,7 +569,13 @@ async fn channel_backend_cancel_closed_channel() {
 
     let backend = ChannelBackend::new(tx);
 
-    let outcome = backend.cancel("sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop).await;
+    let outcome = backend
+        .cancel(
+            "sub-cancel",
+            SubagentActor::Human,
+            SubagentCancelDisposition::Stop,
+        )
+        .await;
     assert!(matches!(outcome, SubagentCancelOutcome::NotFound));
 }
 

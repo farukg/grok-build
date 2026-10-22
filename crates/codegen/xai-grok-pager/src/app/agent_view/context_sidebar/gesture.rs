@@ -60,7 +60,13 @@ pub(super) fn command_for(key: &KeyEvent, page: usize) -> Option<SidebarCommand>
     let plain = !key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-    let bulk = |spread, goal| Some(SidebarCommand::Bulk { spread, goal, anchor: BulkAnchor::Include });
+    let bulk = |spread, goal| {
+        Some(SidebarCommand::Bulk {
+            spread,
+            goal,
+            anchor: BulkAnchor::Include,
+        })
+    };
     match key.code {
         KeyCode::Up => Some(SidebarCommand::Tree(TreeKey::Up)),
         KeyCode::Down => Some(SidebarCommand::Tree(TreeKey::Down)),

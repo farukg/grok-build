@@ -18,9 +18,7 @@ pub mod workspace_open;
 mod tests;
 
 pub use dispatch::LspBackendAdapter;
-pub use manager::{
-    start_lsp_backend, DiagnosticsSummary, LspManager, drain_lsp_diagnostics,
-};
+pub use manager::{DiagnosticsSummary, LspManager, drain_lsp_diagnostics, start_lsp_backend};
 pub use restart::restart_monitor;
 pub use types::{
     DiagnosticEntry, DiagnosticSeverityLevel, DiskChangeKind, FileDiagnosticEntry, LspBackend,

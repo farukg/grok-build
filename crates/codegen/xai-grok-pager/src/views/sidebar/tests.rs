@@ -1,9 +1,9 @@
+use super::layout::part;
 use super::*;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use super::layout::part;
 
 struct TestHosted {
     height: u16,
@@ -193,7 +193,10 @@ fn cursor_remains_visible_when_moving_in_both_directions() {
     assert_eq!(state.cursor, Some(SidebarLine::SectionTitle(SectionIdx(0))));
     state.move_cursor(3, 2);
     assert_eq!(state.scroll, 2);
-    assert_eq!(state.cursor, Some(SidebarLine::Row(SectionIdx(0), RowIdx(2))));
+    assert_eq!(
+        state.cursor,
+        Some(SidebarLine::Row(SectionIdx(0), RowIdx(2)))
+    );
     state.move_cursor(-2, 2);
     assert_eq!(state.scroll, 1);
 }
@@ -372,7 +375,10 @@ fn cursor_and_hover_overlays_add_a_background_and_keep_span_colours() {
     assert_eq!(buffer[(x, y)].bg, theme.bg_base);
     let right_x = layout.body.right() - 1 - 2;
     assert_eq!(buffer[(right_x, y + 1)].fg, Color::Green);
-    assert_eq!(Some(buffer[(right_x, y + 1)].bg), theme.selection_overlay().bg);
+    assert_eq!(
+        Some(buffer[(right_x, y + 1)].bg),
+        theme.selection_overlay().bg
+    );
 
     let (buffer, layout) = render_rows(&rows, Some(title), None);
     assert_eq!(buffer[(layout.body.x, layout.body.y)].fg, Color::Blue);
@@ -441,5 +447,8 @@ fn reveal_cursor_scrolls_the_cursor_line_into_view() {
     assert_eq!(state.scroll, 0);
     state.scroll = 2;
     state.clamp_scroll(2);
-    assert_eq!(state.scroll, 1, "three lines in a two-line viewport scroll at most one");
+    assert_eq!(
+        state.scroll, 1,
+        "three lines in a two-line viewport scroll at most one"
+    );
 }

@@ -5,8 +5,8 @@ use super::paste::paste_key_tests;
 use super::test_fixtures;
 use super::{
     AgentPane, AgentView, BlockingCard, CtaPhase, EscStep, InputMode, KeyOwner,
-    MULTI_CLICK_TIMEOUT_MS, PromptInputMode, active_contexts_for_pane,
-    format_key_for_log, is_link_modifier_for_key, is_mouse_reporting_toggle_chord, resolve_action,
+    MULTI_CLICK_TIMEOUT_MS, PromptInputMode, active_contexts_for_pane, format_key_for_log,
+    is_link_modifier_for_key, is_mouse_reporting_toggle_chord, resolve_action,
 };
 use crate::actions::{ActionId, ActionRegistry, When};
 use crate::app::actions::Action;
@@ -931,7 +931,11 @@ impl AgentView {
         if let Some(outcome) = self.route_timeline_panel_input(ev) {
             if let (Event::Key(key), InputOutcome::ArmPending { .. }) = (ev, &outcome)
                 && crate::app::agent_view::context_removal::is_remove_key(key)
-                && let Some(row) = self.timeline_mode.panel().and_then(|panel| panel.cursor_row()).copied()
+                && let Some(row) = self
+                    .timeline_mode
+                    .panel()
+                    .and_then(|panel| panel.cursor_row())
+                    .copied()
             {
                 return self.run_timeline_item_remove(row, key);
             }
@@ -1235,10 +1239,10 @@ impl AgentView {
             }
             ActionId::SendToBackground => {
                 if self
-                        .session
-                        .tracker
-                        .running_execute_tool_call_id()
-                        .is_some()
+                    .session
+                    .tracker
+                    .running_execute_tool_call_id()
+                    .is_some()
                 {
                     InputOutcome::Action(Action::DemoteToBackground)
                 } else {

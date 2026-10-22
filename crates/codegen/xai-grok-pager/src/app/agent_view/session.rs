@@ -1975,7 +1975,8 @@ mod resolve_turn_activity_tests {
                     persona: None,
                     role: None,
                     model: None,
-                    context: xai_grok_shell::extensions::subagent_context::SubagentContext::Unreported,
+                    context:
+                        xai_grok_shell::extensions::subagent_context::SubagentContext::Unreported,
                     resumed_from: None,
                     capability_mode: None,
                     workflow_run_id: None,

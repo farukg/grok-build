@@ -191,11 +191,7 @@ pub trait ChildRunner: 'static {
     }
 
     /// On-disk subagent ids of `parent_session_id` that equal `reference` or start with it.
-    fn durable_resume_candidates(
-        &self,
-        _reference: &str,
-        _parent_session_id: &str,
-    ) -> Vec<String> {
+    fn durable_resume_candidates(&self, _reference: &str, _parent_session_id: &str) -> Vec<String> {
         Vec::new()
     }
 

@@ -1134,7 +1134,9 @@ impl AgentView {
                     .hit_session_parent
                     .update_hover(mouse.column, mouse.row);
                 changed |= self.hit_session_child.update_hover(mouse.column, mouse.row);
-                changed |= self.hit_session_dismiss.update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .hit_session_dismiss
+                    .update_hover(mouse.column, mouse.row);
                 changed |= self.hit_overlay_prev.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_overlay_next.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_upgrade_cta.update_hover(mouse.column, mouse.row);

@@ -4,14 +4,14 @@
 use super::AgentView;
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
-use crate::theme::Theme;
-use crate::views::context_bar::fmt_tokens;
 use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
+use crate::theme::Theme;
+use crate::views::context_bar::fmt_tokens;
 use crate::views::row_style::{SidebarRowClass, sidebar_style};
 use crate::views::sidebar::{
-    RowIdx, SectionIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout, SidebarLine,
-    SidebarRender, SidebarRow, SidebarSection, SidebarState,
+    RowIdx, SectionIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout,
+    SidebarLine, SidebarRender, SidebarRow, SidebarSection, SidebarState,
 };
 use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -45,7 +45,10 @@ fn row_target(section: SectionIdx, RowIdx(index): RowIdx) -> Option<RowTarget> {
     if section == CONTEXT_SECTION {
         all_categories().get(index).copied().map(RowTarget::Context)
     } else if section == DISPLAY_SECTION {
-        MessageKind::settings_kinds().get(index).copied().map(RowTarget::Display)
+        MessageKind::settings_kinds()
+            .get(index)
+            .copied()
+            .map(RowTarget::Display)
     } else {
         None
     }
@@ -81,7 +84,9 @@ pub(crate) enum PolicyState {
     Loading,
     Ready(ContextPolicyReport),
     /// A change is with the shell; `shown` stays on screen until it answers.
-    Applying { shown: ContextPolicyReport },
+    Applying {
+        shown: ContextPolicyReport,
+    },
     Unavailable,
 }
 
@@ -391,7 +396,9 @@ impl AgentView {
             return None;
         };
         match ev {
-            Event::Key(key) if key.kind != KeyEventKind::Release && open.focus == SidebarFocus::Sidebar => {
+            Event::Key(key)
+                if key.kind != KeyEventKind::Release && open.focus == SidebarFocus::Sidebar =>
+            {
                 let viewport = open.layout.map_or(1, |layout| layout.body.height as usize);
                 let command = gesture::command_for(key, viewport)?;
                 Some(self.run_sidebar_command_saving(command))

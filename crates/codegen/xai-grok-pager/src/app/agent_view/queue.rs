@@ -1545,7 +1545,9 @@ mod queue_edit_routing_tests {
                 .unwrap_or_else(|| panic!("missing index")),
         );
         match agent.handle_queue_key(&force_interject_key(), &registry) {
-            InputOutcome::Action(Action::SendPromptNow { text, .. }) => assert_eq!(text, "/compact"),
+            InputOutcome::Action(Action::SendPromptNow { text, .. }) => {
+                assert_eq!(text, "/compact")
+            }
             other => panic!("expected SendPromptNow for /compact, got {other:?}"),
         }
         assert!(agent.session.pending_prompts.is_empty());
@@ -1557,7 +1559,9 @@ mod queue_edit_routing_tests {
         agent.prompt.set_text("");
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         match agent.handle_prompt_key_for_test(&enter) {
-            InputOutcome::Action(Action::SendPromptNow { text, .. }) => assert_eq!(text, "/compact"),
+            InputOutcome::Action(Action::SendPromptNow { text, .. }) => {
+                assert_eq!(text, "/compact")
+            }
             other => panic!("expected SendPromptNow for /compact, got {other:?}"),
         }
         assert!(agent.session.pending_prompts.is_empty());

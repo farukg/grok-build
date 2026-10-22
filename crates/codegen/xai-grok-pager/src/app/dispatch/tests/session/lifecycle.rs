@@ -2311,10 +2311,19 @@ fn dispatch_new_session_repoints_attach_while_child_view_open() {
         ScrollbackState::new(),
     );
     app.agents.insert(parent, parent_view);
-    link_child(&mut app.agents, parent, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.next_agent_id = 6;
     app.active_view = ActiveView::Agent(child_id);
-    assert_eq!(get_active_agent(&app).map(|agent| agent.session.id), Some(child_id));
+    assert_eq!(
+        get_active_agent(&app).map(|agent| agent.session.id),
+        Some(child_id)
+    );
     ensure_dashboard_state(&mut app);
     app.dashboard.as_mut().unwrap().attached_agent = Some(parent);
     dispatch(Action::NewSession, &mut app);
@@ -3620,7 +3629,12 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "bypass stays until process_effects LoadSession"
         );
-        let agent = app.agents.all().next().map(|(_, a)| a).expect("placeholder agent");
+        let agent = app
+            .agents
+            .all()
+            .next()
+            .map(|(_, a)| a)
+            .expect("placeholder agent");
         assert!(
             agent.chat_kind,
             "sticky --chat keeps agent.chat_kind for already-open focus matching"
@@ -4007,7 +4021,12 @@ mod welcome_workspace_mode {
             app.welcome_history_load_as_build,
             "bypass kept until follow-up LoadSession"
         );
-        let agent = app.agents.all().next().map(|(_, a)| a).expect("restore placeholder");
+        let agent = app
+            .agents
+            .all()
+            .next()
+            .map(|(_, a)| a)
+            .expect("restore placeholder");
         assert_eq!(
             agent.workspace_mode,
             WelcomeWorkspaceMode::LocalWorkspace,

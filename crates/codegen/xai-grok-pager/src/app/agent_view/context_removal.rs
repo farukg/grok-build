@@ -7,7 +7,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 use xai_grok_shell::session::ContextItemRef;
 
 impl AgentView {
-    pub(super) fn run_timeline_item_remove(&mut self, row: TimelineRow, key: &KeyEvent) -> InputOutcome {
+    pub(super) fn run_timeline_item_remove(
+        &mut self,
+        row: TimelineRow,
+        key: &KeyEvent,
+    ) -> InputOutcome {
         let removal_in_flight = self
             .session
             .session_id
@@ -39,7 +43,9 @@ impl AgentView {
 /// Toast shown when a removal is armed: names what the second press does.
 fn confirm_hint(row: TimelineRow, refs: &[ContextItemRef], skipped: usize) -> String {
     let what = match (row.kind, refs) {
-        (TimelineRowKind::Turn { turn_idx, .. }, [ContextItemRef::Turn { .. }]) => format!("turn {}", turn_idx + 1),
+        (TimelineRowKind::Turn { turn_idx, .. }, [ContextItemRef::Turn { .. }]) => {
+            format!("turn {}", turn_idx + 1)
+        }
         (_, [ContextItemRef::ToolExchange { .. }]) => "1 tool call".to_owned(),
         (_, refs) => items_phrase(refs.len()),
     };

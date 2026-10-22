@@ -1931,15 +1931,16 @@ impl AgentView {
             self.hit_queue_close.clear();
         }
         self.dock_stop_button = None;
-        self.pending_dock = dock_data.take().filter(|_| dock_rect.height > 0).map(|data| {
-            super::sidebars::PendingDock {
+        self.pending_dock = dock_data
+            .take()
+            .filter(|_| dock_rect.height > 0)
+            .map(|data| super::sidebars::PendingDock {
                 data,
                 rect: dock_rect,
                 scrollback: layout.scrollback,
                 layout_cfg: *layout_cfg,
                 overlay_focused,
-            }
-        });
+            });
         self.last_btw_selection_model = ResolvedSelectionModel::default();
         self.last_btw_area = Rect::default();
         if btw_height > 0
