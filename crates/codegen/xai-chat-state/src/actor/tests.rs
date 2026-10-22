@@ -4259,20 +4259,25 @@ async fn apply_turn_request_pruning_soft_trims_old_results_over_half_window() {
 async fn apply_turn_request_pruning_is_noop_under_half_window() {
     use crate::actor::ChatStateActor;
     use crate::persistence::MockChatPersistence;
+    use crate::types::PruningConfig;
 
     let (mock, _rx) = MockChatPersistence::new();
     let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
     let token = tokio_util::sync::CancellationToken::new();
+    let config = PruningConfig {
+        keep_last_n_turns: 1,
+        ..Default::default()
+    };
     let handle = ChatStateActor::spawn_with_pruning(
         vec![],
         test_config_with_window(10_000),
-        Default::default(),
+        config,
         Box::new(mock),
         event_tx,
         token,
     );
 
-    push_turns(&handle, 5, 8_000).await;
+    push_turns(&handle, 2, 8_000).await;
     handle.record_token_usage(4_000);
     let _ = handle.get_total_tokens().await;
 
@@ -4283,6 +4288,52 @@ async fn apply_turn_request_pruning_is_noop_under_half_window() {
         other => panic!("expected ToolResult at index 2, got {other:?}"),
     };
     assert_eq!(oldest, 8_000);
+}
+
+#[tokio::test]
+async fn turn_request_pruning_stays_active_after_pruned_provider_usage_falls() {
+    use crate::actor::ChatStateActor;
+    use crate::persistence::MockChatPersistence;
+    use crate::types::PruningConfig;
+
+    let (mock, _rx) = MockChatPersistence::new();
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let token = tokio_util::sync::CancellationToken::new();
+    let config = PruningConfig {
+        keep_last_n_turns: 2,
+        soft_trim_threshold: 4000,
+        soft_trim_head: 20,
+        soft_trim_tail: 20,
+        hard_clear_age_turns: 10,
+        ..Default::default()
+    };
+    let handle = ChatStateActor::spawn_with_pruning(
+        vec![],
+        test_config_with_window(10_000),
+        config,
+        Box::new(mock),
+        event_tx,
+        token,
+    );
+    push_turns(&handle, 5, 8_000).await;
+
+    for provider_total in [6_001, 4_000] {
+        handle.record_token_usage(provider_total);
+        assert_eq!(handle.get_total_tokens().await, provider_total);
+        let retained = handle.get_conversation().await;
+        let request = handle.apply_turn_request_pruning(retained.clone()).await;
+        match (retained.get(2), request.get(2)) {
+            (
+                Some(ConversationItem::ToolResult(stored)),
+                Some(ConversationItem::ToolResult(projected)),
+            ) => {
+                assert_eq!(stored.content.len(), 8_000);
+                assert!(projected.content.contains("[…trimmed…]"));
+                assert!(projected.content.len() < 8_000);
+            }
+            other => panic!("expected stored and projected tool results, got {other:?}"),
+        }
+    }
 }
 
 #[tokio::test]
@@ -5643,13 +5694,19 @@ async fn context_policy_shapes_the_request_and_not_the_history() {
     };
 
     let mut policy = ContextPolicy::default();
-    policy.set(ContextCategory::ProjectInstructions, ContextSwitch::Excluded);
+    policy.set(
+        ContextCategory::ProjectInstructions,
+        ContextSwitch::Excluded,
+    );
     policy.set(ContextCategory::UserTurns, ContextSwitch::Excluded);
     policy.set(ContextCategory::ToolDefinitions, ContextSwitch::Excluded);
     h.handle.set_context_policy(policy);
 
     let restricted = request().await;
-    assert_eq!(texts(&restricted), ["core", "earlier answer", "current prompt"]);
+    assert_eq!(
+        texts(&restricted),
+        ["core", "earlier answer", "current prompt"]
+    );
     assert!(restricted.tools.is_empty());
 
     h.handle.set_context_policy(ContextPolicy::default());
