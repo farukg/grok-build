@@ -70,6 +70,7 @@ jobs:
         if: always()
         run: |
           cargo test -p xai-grok-shell --lib --locked child_prompt_tests
+          cargo test -p xai-grok-shell --lib --locked management_recipe
           cargo test -p xai-grok-shell --lib --locked compact
           cargo test -p xai-grok-pager --lib --locked compact
 

@@ -4143,7 +4143,7 @@ impl MvpAgent {
         let SessionSpawnOptions {
             session_info,
             cwd,
-            mcp_servers,
+            mut mcp_servers,
             initial_client_mcp_servers,
             mcp_meta_config_map,
             persistence,
@@ -4234,10 +4234,15 @@ impl MvpAgent {
             Some(SessionHost::Child(child)) => self.resident_handle(&child.parent_session_id),
             Some(SessionHost::Root) | None => None,
         };
-        let parent_mcp_pool = match &child_parent {
+        let mut parent_mcp_pool = match &child_parent {
             Some(parent) => parent.snapshot_mcp_pool().await,
             None => None,
         };
+        let child_recipe = if child_parent.is_some() {
+            crate::agent::subagent::management_recipe::ChildManagementRecipe::load(
+                &crate::session::persistence::session_dir(&session_info),
+            ).map_err(|error| acp::Error::internal_error().data(format!("cannot load child management recipe: {error}")))?
+        } else { None };
         let parent_terminal_backend = child_parent.as_ref().and_then(|parent| parent.terminal_backend.clone());
         let parent_scheduler_handle = child_parent.as_ref().and_then(|parent| parent.scheduler_handle.clone());
         let fs: Arc<dyn xai_grok_workspace::file_system::AsyncFileSystem> = if use_acp_fs {
@@ -4396,7 +4401,10 @@ impl MvpAgent {
                     )
             })?;
         tool_ctx.subagent_event_tx = Some(self.subagent_event_tx.event_sender().0);
-        tool_ctx.subagent_coordinator_sender = Some(self.subagent_event_tx.clone());
+        tool_ctx.subagent_coordinator_sender = match &child_parent {
+            Some(_) => None,
+            None => Some(self.subagent_event_tx.clone()),
+        };
         tool_ctx.synthetic_trace_tx = self
             .subagent_presentation
             .borrow()
@@ -4481,7 +4489,16 @@ impl MvpAgent {
             )
             }
         };
-        {
+        if child_parent.is_some() {
+            parent_mcp_pool = match &child_recipe {
+                Some(recipe) => recipe.inherited_pool(parent_mcp_pool),
+                None => crate::agent::subagent::resolve_inherited_mcp_pool(parent_mcp_pool, &agent_definition.mcp_inheritance),
+            };
+            mcp_servers = crate::session::agent_mcp::materialize_agent_mcp_servers(
+                &agent_definition, &mcp_servers, cwd.as_path(),
+            );
+        }
+        if child_parent.is_none() {
             let cfg = self.cfg.borrow();
             let overrides = &cfg.cli_agent_overrides;
             overrides.apply_to_definition(&mut agent_definition);
@@ -4958,8 +4975,8 @@ impl MvpAgent {
                     subagent_toggle,
                     Vec::new(),
                     if child_parent.is_some() { xai_grok_agent::prompt::context::PromptAudience::Subagent } else { xai_grok_agent::prompt::context::PromptAudience::Primary },
-                    None,
-                    None,
+                    child_recipe.as_ref().and_then(|recipe| recipe.role_instructions.clone()),
+                    child_recipe.as_ref().and_then(|recipe| recipe.persona_instructions.clone()),
                     disable_web_search,
                     backend_tools_enabled,
                     respect_gitignore,

@@ -1386,7 +1386,7 @@ impl MvpAgent {
                 },
                 responds_to,
             }).map_err(|_| acp::Error::internal_error().data("saved child command channel is closed"))?;
-            reply.await.map_err(|_| acp::Error::internal_error().data("saved child model restore did not respond"))?;
+            reply.await.map_err(|_| acp::Error::internal_error().data("saved child model restore did not respond"))??;
             return Ok(acp::LoadSessionResponse::new());
         }
         if gateway_backed {

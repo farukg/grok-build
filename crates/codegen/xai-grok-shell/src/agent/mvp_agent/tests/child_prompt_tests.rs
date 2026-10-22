@@ -260,7 +260,14 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
         drop(handle);
         agent.drain_old_session_thread(&child).await;
         let parent = acp::SessionId::new(PARENT);
-        let (mut parent_handle, _tx, _rx) = make_live_session_handle(&parent, None);
+        let (mut parent_handle, _tx, mut parent_commands) = make_live_session_handle(&parent, None);
+        tokio::task::spawn_local(async move {
+            while let Some(command) = parent_commands.recv().await {
+                if let SessionCommand::SnapshotMcpPool { respond_to } = command {
+                    let _ = respond_to.send(None);
+                }
+            }
+        });
         parent_handle.info.cwd = cwd.path().to_string_lossy().into_owned();
         agent.insert_resident(&parent, parent_handle);
         agent.set_session_host(&parent, crate::agent::mvp_agent::SessionHost::Root);
@@ -441,6 +448,23 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
             crate::util::grok_home::grok_home(),
         );
         let prior = storage.load_summary(&info).await.unwrap();
+        let recipe = crate::agent::subagent::management_recipe::ChildManagementRecipe::load(
+            &crate::session::persistence::session_dir(&info),
+        )
+        .unwrap()
+        .expect("coordinator child persists its effective management recipe");
+        let restored = agent.management_session(&child).await.unwrap();
+        let restored_tools = restored.handle.snapshot_tool_definitions().await.unwrap();
+        let stored_definition = prior
+            .agent_profile()
+            .expect("child saves the effective agent recipe");
+        assert_eq!(restored.handle.agent_name, stored_definition.name);
+        assert!(
+            !restored_tools.specs.is_empty(),
+            "administrative reload constructs the actual child toolset"
+        );
+        assert!(recipe.inherited_mcp_servers.is_empty());
+        drop(restored);
         let parent_handle = agent.resident_handle(&parent).unwrap();
         let parent_before = parent_handle.chat_state_handle.get_conversation().await;
         server.set_response("Summary of completed original work; preserve the original task and verified findings. ".repeat(30));

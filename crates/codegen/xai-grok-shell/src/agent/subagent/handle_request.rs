@@ -1393,8 +1393,30 @@ pub(crate) async fn run_shell_child(
         &ctx.parent_mcp_configs,
         &ctx.parent_cwd,
     );
-    let parent_mcp_pool =
+    let mut parent_mcp_pool =
         resolve_inherited_mcp_pool(ctx.parent_mcp_pool.take(), &definition.mcp_inheritance);
+    let prior_management_recipe = if is_wake {
+        match super::management_recipe::ChildManagementRecipe::load(&child_session_dir) {
+            Ok(recipe) => recipe,
+            Err(error) => {
+                return child_run_output(
+                    failure_result(
+                        &request,
+                        &format!("cannot load child management recipe: {error}"),
+                    ),
+                    completion_data,
+                    None,
+                );
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(recipe) = &prior_management_recipe {
+        parent_mcp_pool = recipe.inherited_pool(parent_mcp_pool);
+        effective_runtime.role_prompt = recipe.role_instructions.clone();
+        effective_runtime.persona_instructions = recipe.persona_instructions.clone();
+    }
     let mcp_inherited_count = parent_mcp_pool
         .as_ref()
         .map(|p| p.len() as u32)
@@ -1488,6 +1510,24 @@ pub(crate) async fn run_shell_child(
     let spawn_phase_parent = session_bootstrap_span.span().clone();
     let bootstrap_started_at = std::time::Instant::now();
     let pins = ctx.compaction_pins_for_child(&definition.user_message_template);
+    let recipe = super::management_recipe::ChildManagementRecipe {
+        role_instructions: effective_runtime.role_prompt.clone(),
+        persona_instructions: effective_runtime.persona_instructions.clone(),
+        inherited_mcp_servers: parent_mcp_pool
+            .as_ref()
+            .map(|pool| pool.server_names().map(str::to_owned).collect())
+            .unwrap_or_default(),
+    };
+    if let Err(error) = recipe.save(&child_session_dir) {
+        return child_run_output(
+            failure_result(
+                &request,
+                &format!("cannot persist child management recipe: {error}"),
+            ),
+            completion_data,
+            None,
+        );
+    }
     let spawn_result = session::spawn_session_on_thread(
         child_session_info,
         gateway.clone(),
@@ -1617,7 +1657,7 @@ pub(crate) async fn run_shell_child(
         Vec::new(),
         xai_grok_agent::prompt::context::PromptAudience::Subagent,
         effective_runtime.role_prompt.clone(),
-        None,
+        effective_runtime.persona_instructions.clone(),
         ctx.disable_web_search,
         ctx.backend_tools_enabled,
         ctx.respect_gitignore,

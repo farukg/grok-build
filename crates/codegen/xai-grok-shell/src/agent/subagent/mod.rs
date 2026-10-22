@@ -55,6 +55,7 @@ pub(crate) use xai_grok_tools::implementations::grok_build::task::coordinator::{
 mod attempt_store;
 mod child_runtime;
 mod handle_request;
+pub(crate) mod management_recipe;
 mod prompt_turn_receipt;
 mod prompt_turn_result;
 mod resume_window;
@@ -1520,7 +1521,7 @@ fn durable_resume_source_at(
 }
 /// Resolve the MCP pool a child subagent should import from its parent. Inheritance applies to **every** agent source (built-in, user, project, and plugin).
 /// Plugin agents are not excluded: the parent already connected these servers for the session. Agent-owned `mcpServers` (spawned by the child itself) are handled separately and remain blocked for plugins.
-fn resolve_inherited_mcp_pool(
+pub(crate) fn resolve_inherited_mcp_pool(
     parent_pool: Option<crate::session::mcp_servers::SharedMcpPool>,
     inheritance: &xai_grok_agent::config::McpInheritance,
 ) -> Option<crate::session::mcp_servers::SharedMcpPool> {

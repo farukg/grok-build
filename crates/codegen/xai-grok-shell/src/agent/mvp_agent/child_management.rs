@@ -175,6 +175,47 @@ impl MvpAgent {
                 if self.session_registry.thread_is_finished(id) == Some(false) {
                     return Err(failed("the previous child actor still owns persistence"));
                 }
+                if !std::path::Path::new(&summary.info.cwd).is_dir() {
+                    let parent = match self.session_host(id) {
+                        Some(SessionHost::Child(child)) => child.parent_session_id,
+                        Some(SessionHost::Root) | None => {
+                            return Err(failed("saved child was released"));
+                        }
+                    };
+                    let cwd = self
+                        .get_session_cwd(&parent)
+                        .ok_or_else(|| failed("saved child parent is unavailable"))?;
+                    let source = crate::agent::subagent::durable_resume_source(
+                        id.0.as_ref(),
+                        parent.0.as_ref(),
+                        &cwd,
+                    )
+                    .map_err(|error| failed(&error.to_string()))?;
+                    match (&source.worktree_path, &source.snapshot_ref) {
+                        (Some(worktree), Some(snapshot)) => {
+                            let repository =
+                                xai_grok_workspace::session::git::find_main_repo_root_from_path(
+                                    &cwd,
+                                )
+                                .unwrap_or(cwd);
+                            crate::session::worktree::rehydrate_subagent_worktree(
+                                worktree,
+                                &repository,
+                                snapshot,
+                                Some(source.subagent_id.as_str()),
+                            )
+                            .await
+                            .map_err(|error| {
+                                failed(&format!("cannot restore saved child worktree: {error}"))
+                            })?;
+                        }
+                        (Some(_), None) | (None, Some(_)) | (None, None) => {
+                            return Err(failed(
+                                "saved child cwd has no restorable worktree snapshot",
+                            ));
+                        }
+                    }
+                }
                 self.load_child_for_management(&summary.info).await?;
                 let handle = self
                     .resident_handle(id)
