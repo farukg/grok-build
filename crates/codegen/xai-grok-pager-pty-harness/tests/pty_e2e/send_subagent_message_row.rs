@@ -18,7 +18,7 @@ const QUEUE_TEXT: &str = "QUEUE_MARKER then summarize";
 const INTERJECT_TEXT: &str = "INTERJECT_MARKER stop after this step";
 const BOGUS_TEXT: &str = "BOGUS_MARKER hello";
 pub(crate) const PARENT_DONE: &str = "PARENT_TURN_DONE";
-const WAKE_DONE: &str = "PARENT_WAKE_DONE";
+pub(crate) const WAKE_DONE: &str = "PARENT_WAKE_DONE";
 /// The shell's reason for an unknown id, verbatim.
 const REJECTED_REASON: &str = "Subagent not found or not owned by this session.";
 /// `keys` has no Left; the collapse chord mirrors `keys::RIGHT`.
