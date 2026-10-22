@@ -13,6 +13,7 @@ pub(crate) enum AttachPause {
     AfterSpawn,
     AfterInstall,
     BeforeRelease,
+    CompactCheckpoint,
 }
 
 #[cfg(test)]

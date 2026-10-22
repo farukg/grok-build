@@ -2616,7 +2616,7 @@ impl MvpAgent {
     /// Wait for an old session thread to finish before reloading the same session. When a client disconnects and a session is *idle*, `handle_evict_sessions` unloads it.
     /// That sends `Shutdown`, drops the `SessionHandle`, and keeps the `SessionThread`. (Sessions with live work stay fully resident and skip this path.)
     /// If the client reconnects and loads the same session, wait for the old actor to finish flushing to disk before replaying `updates.jsonl`. Uses async polling (never blocks the `LocalSet` runtime) with a 5s deadline to handle slow shutdowns (e.g., embedding API timeouts).
-    pub(super) async fn drain_old_session_thread(&self, session_id: &acp::SessionId) {
+    pub(crate) async fn drain_old_session_thread(&self, session_id: &acp::SessionId) {
         self.drain_old_session_thread_within(session_id, DRAIN_OLD_THREAD_WAIT).await;
     }
     /// [`Self::drain_old_session_thread`] under a caller-supplied budget.
@@ -4230,6 +4230,16 @@ impl MvpAgent {
                 }
                 Some(ClientFsConfig { fs, mode })
             });
+        let child_parent = match self.session_host(&session_info.id) {
+            Some(SessionHost::Child(child)) => self.resident_handle(&child.parent_session_id),
+            Some(SessionHost::Root) | None => None,
+        };
+        let parent_mcp_pool = match &child_parent {
+            Some(parent) => parent.snapshot_mcp_pool().await,
+            None => None,
+        };
+        let parent_terminal_backend = child_parent.as_ref().and_then(|parent| parent.terminal_backend.clone());
+        let parent_scheduler_handle = child_parent.as_ref().and_then(|parent| parent.scheduler_handle.clone());
         let fs: Arc<dyn xai_grok_workspace::file_system::AsyncFileSystem> = if use_acp_fs {
             let mut acp_fs = AcpSessionFs::new(
                 cwd.to_path_buf(),
@@ -4262,7 +4272,12 @@ impl MvpAgent {
             );
             std::sync::Arc::new(TerminalRunner::new(notifier, session_info.id.clone()))
         };
-        let startup_hints = startup_hints_from_meta(session_meta, init.meta.as_ref());
+        let mut startup_hints = startup_hints_from_meta(session_meta, init.meta.as_ref());
+        if let Some(SessionHost::Child(child)) = self.session_host(&session_info.id) {
+            startup_hints.is_subagent = true;
+            startup_hints.parent_session_id = Some(child.parent_session_id.0.to_string());
+            startup_hints.preserve_inherited_system = true;
+        }
         let hunk_plan = plan_hunk_tracking(
             init
                 .client_capabilities
@@ -4453,7 +4468,9 @@ impl MvpAgent {
         let session_default_agent_profile = acp_agent_profile
             .as_ref()
             .map(|d| d.name.clone());
-        let mut agent_definition = {
+        let mut agent_definition = match (self.session_host(&session_info.id), acp_agent_profile) {
+            (Some(SessionHost::Child(_)), Some(definition)) => definition,
+            (Some(SessionHost::Child(_) | SessionHost::Root) | None, acp_agent_profile) => {
             let cfg = self.cfg.borrow();
             Self::resolve_agent_definition(
                 cwd.as_path(),
@@ -4462,6 +4479,7 @@ impl MvpAgent {
                 acp_agent_profile,
                 model_agent_type,
             )
+            }
         };
         {
             let cfg = self.cfg.borrow();
@@ -4863,7 +4881,7 @@ impl MvpAgent {
                     mcp_servers,
                     initial_client_mcp_servers,
                     mcp_meta_config_map,
-                    None,
+                    parent_mcp_pool,
                     acp_mcp_servers,
                     support_permission,
                     telemetry_enabled,
@@ -4939,7 +4957,7 @@ impl MvpAgent {
                     prompt_display_cwd,
                     subagent_toggle,
                     Vec::new(),
-                    xai_grok_agent::prompt::context::PromptAudience::Primary,
+                    if child_parent.is_some() { xai_grok_agent::prompt::context::PromptAudience::Subagent } else { xai_grok_agent::prompt::context::PromptAudience::Primary },
                     None,
                     None,
                     disable_web_search,
@@ -4969,8 +4987,8 @@ impl MvpAgent {
                     todo_gate,
                     remote_settings_for_spawn,
                     laziness_debug_log_for_spawn,
-                    None,
-                    None,
+                    parent_terminal_backend,
+                    parent_scheduler_handle,
                     max_turns,
                     None,
                     {
@@ -5121,6 +5139,24 @@ impl MvpAgent {
         #[cfg(test)]
         super::test_hooks::pause_at(super::test_hooks::AttachPause::AfterInstall).await;
         if let Some(install_id) = install_id {
+            if matches!(self.session_host(&session_info.id), Some(SessionHost::Child(_))) {
+                match self.session_registry.resolve_identity_stamp(
+                    &session_info.id,
+                    install_id,
+                    IdentityStamp::Durable,
+                ) {
+                    StampResolution::Landed => {}
+                    StampResolution::Withdrawn(withdrawn) => {
+                        self.roll_back_install(&session_info.id, *withdrawn).await;
+                        return Ok(false);
+                    }
+                    StampResolution::Superseded => return Ok(false),
+                }
+                if let Some(guard) = &mut stamp_guard {
+                    guard.disarm();
+                }
+                return Ok(!displaced_existing);
+            }
             let Some(identity) = self
                 .session_registry
                 .current_attach_identity(&session_info.id, install_id) else {

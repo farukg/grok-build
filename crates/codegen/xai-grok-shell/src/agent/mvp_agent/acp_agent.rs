@@ -1051,6 +1051,7 @@ impl acp::Agent for MvpAgent {
             Some(arguments.session_id.0.as_ref()),
             None,
         );
+        self.wait_for_child_management(&arguments.session_id).await;
         let (handle, child_turn) = match self.session_host(&arguments.session_id) {
             Some(SessionHost::Child(child)) => match super::child_prompt::ChildPromptAdmission::of(child) {
                 super::child_prompt::ChildPromptAdmission::Live { handle, turn } => (*handle, Some(turn)),
@@ -1930,8 +1931,10 @@ impl acp::Agent for MvpAgent {
     }
     async fn cancel(&self, args: acp::CancelNotification) -> Result<(), acp::Error> {
         tracing::info!("Received cancel request {args:?}");
+        self.cancel_management(&args.session_id);
         let handle = match self.session_host(&args.session_id) {
-            Some(SessionHost::Child(child)) => child.running_handle().cloned(),
+            Some(SessionHost::Child(child)) => self.resident_handle(&args.session_id)
+                .or_else(|| child.running_handle().cloned()),
             Some(SessionHost::Root) | None => self.session_handle_waiting_for_load(&args.session_id).await,
         };
         let cancel_trigger = args

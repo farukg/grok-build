@@ -1237,6 +1237,7 @@ mod session_lifecycle;
 mod agent_ops;
 mod acp_agent;
 mod child_prompt;
+pub(crate) mod child_management;
 pub(crate) mod reasoning_effort;
 mod sampler_prewarm;
 mod session_setup;

@@ -2899,7 +2899,9 @@ pub(crate) async fn spawn_session_on_thread(
                         return;
                     }
                 };
-                let _ = init_tx.send(Ok(init));
+                if let Err(Ok(init)) = init_tx.send(Ok(init)) {
+                    let _ = init.handle.cmd_tx.send(SessionCommand::Shutdown(crate::session::ShutdownKind::Graceful));
+                }
                 let _ = session_done_rx.await;
             };
             local.block_on(&rt, actor_main);

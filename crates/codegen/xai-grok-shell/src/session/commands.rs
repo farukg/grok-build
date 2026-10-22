@@ -511,6 +511,7 @@ pub enum SessionCommand {
         responds_to: oneshot::Sender<SessionInfoData>,
     },
     CompactSession {
+        cancellation: tokio_util::sync::CancellationToken,
         respond_to: oneshot::Sender<acp::Result<()>>,
     },
     /// Reload plugin hooks and registry mid-session.

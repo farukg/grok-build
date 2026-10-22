@@ -56,6 +56,15 @@ pub(crate) struct AsyncCompactionCache {
 pub(crate) struct CompactCancelGate {
     token: RefCell<tokio_util::sync::CancellationToken>,
     holders: AtomicUsize,
+    phase: Cell<CompactPhase>,
+    drained: tokio::sync::Notify,
+}
+
+#[derive(Clone, Copy, Default)]
+enum CompactPhase {
+    #[default]
+    Preparing,
+    Committing,
 }
 
 /// Decrements the holder count when a compact/prefire scope ends.
@@ -74,6 +83,7 @@ impl CompactCancelGate {
     pub(crate) fn enter(&self) -> (tokio_util::sync::CancellationToken, CompactCancelScope<'_>) {
         let prev = self.holders.fetch_add(1, Ordering::AcqRel);
         let token = if prev == 0 {
+            self.phase.set(CompactPhase::Preparing);
             let token = tokio_util::sync::CancellationToken::new();
             self.token.replace(token.clone());
             token
@@ -83,8 +93,31 @@ impl CompactCancelGate {
         (token, CompactCancelScope(self))
     }
 
+    pub(crate) fn begin_commit(&self) {
+        self.phase.set(CompactPhase::Committing);
+    }
+
+    pub(crate) fn is_committing(&self) -> bool {
+        match self.phase.get() {
+            CompactPhase::Preparing => false,
+            CompactPhase::Committing => true,
+        }
+    }
+
+    pub(crate) async fn drain(&self) {
+        loop {
+            let notified = self.drained.notified();
+            if self.holders.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     fn end(&self) {
-        self.holders.fetch_sub(1, Ordering::AcqRel);
+        if self.holders.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.drained.notify_waiters();
+        }
     }
 
     pub(crate) fn request_cancel(&self) {

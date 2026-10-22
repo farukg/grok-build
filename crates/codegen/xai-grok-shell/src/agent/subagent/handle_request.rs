@@ -1474,7 +1474,9 @@ pub(crate) async fn run_shell_child(
             .tx
             .send(crate::session::persistence::PersistenceMsg::CurrentModel {
                 model_id: effective_model_id.clone(),
-                agent: crate::session::persistence::PersistedAgent::from(&definition),
+                agent: crate::session::persistence::PersistedAgent::Inline(Box::new(
+                    definition.clone(),
+                )),
                 reasoning_effort: Some(effective_sampling_config.reasoning_effort),
                 context_window: None,
             });

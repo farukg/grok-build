@@ -335,18 +335,60 @@ async fn handle_forget(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 
 async fn handle_compact(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let req: CompactConversationRequest = parse_params(args)?;
-    // send over the compact query here properly
     let sid: acp::SessionId = req.session_id.into();
-    let session_handle = agent.resident_handle(&sid);
-    let (tx, rx) = oneshot::channel();
-    if let Some(session) = session_handle {
-        let _ = session
-            .cmd_tx
-            .send(SessionCommand::CompactSession { respond_to: tx });
+    if agent.session_host(&sid).is_none() && agent.resident_handle(&sid).is_none() {
+        return Err(crate::agent::mvp_agent::child_management::failed(
+            "session not found",
+        ));
     }
-    // Pass the session error through; rewrapping buries the detail in a Debug dump.
-    rx.await
-        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))??;
+    let operation = agent.compact_operation(&sid);
+    let _admission = operation.compact.clone().try_lock_owned().map_err(|_| {
+        acp::Error::invalid_request().data(serde_json::json!({
+            "kind": "compact_busy", "message": "a compact operation is already in progress",
+        }))
+    })?;
+    let (cancel, _scope) = operation.cancel.enter();
+    let _cancel_on_drop = cancel.clone().drop_guard();
+    let session = agent.management_session(&sid).await?;
+    let (tx, rx) = oneshot::channel();
+    session
+        .handle
+        .cmd_tx
+        .send(SessionCommand::CompactSession {
+            cancellation: cancel.clone(),
+            respond_to: tx,
+        })
+        .map_err(|_| {
+            crate::agent::mvp_agent::child_management::failed("session command channel is closed")
+        })?;
+    rx.await.map_err(|_| {
+        crate::agent::mvp_agent::child_management::failed("session failed to respond")
+    })??;
+    let compact = async {
+        let (respond_to, flushed) = oneshot::channel();
+        session
+            .handle
+            .cmd_tx
+            .send(SessionCommand::FlushComplete { respond_to })
+            .map_err(|_| {
+                crate::agent::mvp_agent::child_management::failed(
+                    "session command channel is closed",
+                )
+            })?;
+        flushed
+            .await
+            .map_err(|_| {
+                crate::agent::mvp_agent::child_management::failed("session flush did not respond")
+            })?
+            .map_err(|error| crate::agent::mvp_agent::child_management::failed(&error.to_string()))
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), compact)
+        .await
+        .map_err(|_| {
+            crate::agent::mvp_agent::child_management::failed(
+                "committed compact flush exceeded 30 seconds",
+            )
+        })??;
     to_raw_response(&CompactConversationResponse {})
 }
 

@@ -3476,6 +3476,84 @@ fn routed_to_cancelled(events: &[SessionEvent]) -> bool {
 }
 
 #[test]
+fn cancel_acknowledgement_keeps_compaction_command_cancelling_until_terminal_result() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent
+        .session
+        .start_command(crate::app::agent::AgentCommand::Compact);
+    agent.session.cancel_compact_command();
+
+    assert!(matches!(
+        expect_agent(&app, id).session.state,
+        crate::app::agent::AgentState::CommandCancelling {
+            command: crate::app::agent::AgentCommand::Compact,
+        }
+    ));
+}
+
+#[test]
+fn compact_complete_success_finishes_running_command() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .start_command(crate::app::agent::AgentCommand::Compact);
+    dispatch_task_result(
+        TaskResult::CompactComplete {
+            agent_id: id,
+            result: Ok(()),
+        },
+        &mut app,
+    );
+    let agent = expect_agent(&app, id);
+    assert!(agent.session.state.is_idle());
+    assert!((0..agent.scrollback.len()).any(|i| matches!(
+        agent.scrollback.entry(i).map(|entry| &entry.block),
+        Some(RenderBlock::SessionEvent(event))
+            if matches!(event.event, SessionEvent::CompactCompleted { .. })
+    )));
+}
+
+#[test]
+fn compact_complete_terminal_result_finishes_cancelling_command() {
+    use xai_grok_shell::session::helpers::session_compact::{CompactErrorKind, compact_error_data};
+
+    for result in [
+        Ok(()),
+        Err(crate::app::effects::compact_error(
+            &acp::Error::internal_error().data(compact_error_data(
+                CompactErrorKind::Failed,
+                "compaction failed",
+            )),
+        )),
+        Err(crate::app::effects::compact_error(
+            &acp::Error::internal_error().data(compact_error_data(
+                CompactErrorKind::Cancelled,
+                COMPACT_CANCELLED_MSG,
+            )),
+        )),
+    ] {
+        let mut app = test_app_with_agent();
+        let id = AgentId(0);
+        let session = &mut app.agents.get_mut(&id).unwrap().session;
+        session.start_command(crate::app::agent::AgentCommand::Compact);
+        session.cancel_compact_command();
+        dispatch_task_result(
+            TaskResult::CompactComplete {
+                agent_id: id,
+                result,
+            },
+            &mut app,
+        );
+        assert!(expect_agent(&app, id).session.state.is_idle());
+    }
+}
+
+#[test]
 fn compact_complete_error_surfaces_real_error_in_scrollback() {
     use xai_grok_shell::session::helpers::session_compact::{CompactErrorKind, compact_error_data};
     // Real wire shape: typed data carrying the shell-normalized detail.

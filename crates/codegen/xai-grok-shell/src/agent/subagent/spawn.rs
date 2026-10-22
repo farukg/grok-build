@@ -135,6 +135,20 @@ impl coordinator::ChildRunner for ShellChildRunner {
         let agent_ref = self.agent_ref.clone();
         Box::pin(async move {
             let this = agent_ref.get();
+            let management_id = acp::SessionId::new(run.request.id.clone());
+            let management_claim = this.claim_child_management(&management_id).await;
+            this.drain_old_session_thread(&management_id).await;
+            if this.child_writer_is_active(&management_id) {
+                return coordinator::ChildRunOutput {
+                    result: SubagentResult::failed(
+                        run.request.id.clone(),
+                        run.request.id.clone(),
+                        "previous child actor still owns persistence",
+                    ),
+                    completion_data: Default::default(),
+                    snapshot_ref: None,
+                };
+            }
             let parent_sid = run.request.parent_session_id.clone();
             let root_span = run.request.spawn_root.take_span();
             let root_parent = spawn_pipeline_parent(root_span.as_ref());
@@ -250,6 +264,7 @@ impl coordinator::ChildRunner for ShellChildRunner {
             };
             drop(root_parent);
             let register = async {
+                let _management_claim = management_claim;
                 let Ok(running) = residence_rx.await else {
                     return;
                 };

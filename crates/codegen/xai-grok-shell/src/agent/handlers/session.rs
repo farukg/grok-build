@@ -8,8 +8,8 @@ use serde::Deserialize;
 use super::super::mvp_agent::MvpAgent;
 use crate::session::persistence::{Summary, list_recent_summaries, list_summaries};
 use crate::session::{
-    AllSessionOverviewRequest, AllSessionOverviewResponse, ContextInfo, ExtMethodResult,
-    SessionCommand, SessionInfoData, SessionInfoResponse, SessionListRequest, SessionListResponse,
+    AllSessionOverviewRequest, AllSessionOverviewResponse, ExtMethodResult, SessionCommand,
+    SessionInfoResponse, SessionListRequest, SessionListResponse,
 };
 
 /// Copies `display_title()` (`generated_title`, else `session_summary`) into `session_summary`.
@@ -85,37 +85,28 @@ async fn handle_session_info(
     };
 
     let sid = acp::SessionId::new(session_id.clone());
-    let Some(session) = agent.resident_handle(&sid) else {
-        return ExtMethodResult::success(serde_json::json!({}))
-            .to_ext_response()
-            .map_err(|e| acp::Error::internal_error().data(e.to_string()));
+    agent.wait_for_child_management(&sid).await;
+    let session = match agent.management_resolution(&sid).await? {
+        crate::agent::mvp_agent::child_management::ManagementResolution::Active(session) => session,
+        crate::agent::mvp_agent::child_management::ManagementResolution::Restorable(_) => {
+            return handle_saved_session_info(agent, &sid).await;
+        }
+        crate::agent::mvp_agent::child_management::ManagementResolution::Unknown => {
+            return Err(acp::Error::invalid_params().data("session not found"));
+        }
+        crate::agent::mvp_agent::child_management::ManagementResolution::ChannelClosed => {
+            return Err(acp::Error::internal_error().data("session command channel is closed"));
+        }
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let _ = session
+    session
         .cmd_tx
-        .send(SessionCommand::GetSessionInfo { responds_to: tx });
-    let info = rx.await.ok();
-
-    // Construct display data for `/session-info`.
-    let mut data = info.unwrap_or_else(|| SessionInfoData {
-        agent_name: None,
-        model: None,
-        model_display_name: None,
-        resolved_model_id: None,
-        model_fingerprint: None,
-        show_model_fingerprint: false,
-        served_route: None,
-        api_backend: None,
-        conversation_id: None,
-        turns: 0,
-        turn_index: 0,
-        context: ContextInfo {
-            auto_compact_threshold_percent:
-                crate::util::config::DEFAULT_AUTO_COMPACT_THRESHOLD_PERCENT,
-            ..ContextInfo::default()
-        },
-    });
+        .send(SessionCommand::GetSessionInfo { responds_to: tx })
+        .map_err(|_| acp::Error::internal_error().data("session command channel is closed"))?;
+    let mut data = rx
+        .await
+        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))?;
 
     data.model_display_name = agent
         .models_manager
@@ -129,9 +120,43 @@ async fn handle_session_info(
         data,
     };
 
-    ExtMethodResult::success(serde_json::to_value(&response).unwrap_or_default())
+    ExtMethodResult::success(
+        serde_json::to_value(&response)
+            .map_err(|e| acp::Error::internal_error().data(e.to_string()))?,
+    )
+    .to_ext_response()
+    .map_err(|e| acp::Error::internal_error().data(e.to_string()))
+}
+
+async fn handle_saved_session_info(
+    agent: &MvpAgent,
+    sid: &acp::SessionId,
+) -> Result<acp::ExtResponse, acp::Error> {
+    let session = agent.management_session(sid).await?;
+    let (responds_to, response) = tokio::sync::oneshot::channel();
+    session
+        .handle
+        .cmd_tx
+        .send(SessionCommand::GetSessionInfo { responds_to })
+        .map_err(|_| acp::Error::internal_error().data("saved child command channel is closed"))?;
+    let data = tokio::time::timeout(std::time::Duration::from_secs(30), response)
+        .await
+        .map_err(|_| acp::Error::internal_error().data("saved child info exceeded 30 seconds"))?
+        .map_err(|_| acp::Error::internal_error().data("saved child did not respond"))?;
+    let response = SessionInfoResponse {
+        session_id: sid.0.to_string(),
+        cwd: session.handle.info.cwd.clone(),
+        data,
+    };
+    let mut value = serde_json::to_value(response)
+        .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("source".into(), serde_json::json!("restored"));
+        object.insert("runtime".into(), serde_json::json!("management"));
+    }
+    ExtMethodResult::success(value)
         .to_ext_response()
-        .map_err(|e| acp::Error::internal_error().data(e.to_string()))
+        .map_err(|error| acp::Error::internal_error().data(error.to_string()))
 }
 
 async fn handle_session_close(

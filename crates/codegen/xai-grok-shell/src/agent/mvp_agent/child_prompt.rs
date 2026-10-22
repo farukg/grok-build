@@ -165,6 +165,7 @@ impl MvpAgent {
         address: AgentAddress,
         prompt: Vec<acp::ContentBlock>,
     ) -> Result<acp::PromptResponse, acp::Error> {
+        self.wait_for_child_management(child).await;
         let text = prompt_text(prompt)?;
         match self
             .send_human_subagent_message(

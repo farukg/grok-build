@@ -15,8 +15,19 @@ Branch: `grb/w3`. Shell side is W1-S/W1-H (on `main`).
 - By-id shell handlers (set_model, compact, mode, …) reach a running child (`8ea9759`).
 
 ## Open
-1. Finished children: set_model/compact/mode answer `unknown session id` (accepted by Faruk). A fix
-   would remember the choice in the registry entry and pass it as a resume override.
+1. Finished-child management has an authored, unverified shell patch: compact and session-info
+   reload the saved actor under its existing session/agent/attempt identity without a prompt.
+   Preparation is bounded (60 s); cancellation reaches the queued/running actor operation.
+   Once checkpoint commit begins, cancellation waits for history installation and reports the
+   committed result; the final flush has a 30-s diagnostic budget. Coordinator wakes wait for the
+   administrative lease; root enumerations exclude the temporary child. Session-info uses the
+   restored actor's measured context/model/tool values and marks `source: restored`,
+   `runtime: management` instead of inventing saved runtime measurements. Handler regressions are
+   authored in `S/agent/mvp_agent/tests/child_prompt_tests.rs`; no local build/test result exists.
+   `set_model` still refuses an actorless child through `session_handle_waiting_for_load`
+   (`S/agent/handlers/model_switch.rs`). Mode has a separate unresolved handler defect:
+   `set_session_mode` creates its reply channel before optional handle resolution and can hang
+   with no actor (`S/agent/mvp_agent/acp_agent.rs`); it is not covered by the compact patch.
 2. ~~Fork from a child view.~~ Verified by code: children persist like root sessions
    (`sessions/<cwd>/<child id>`, `S/agent/subagent/handle_request.rs:931`), `x.ai/session/fork` copies from disk
    by id and cwd (`S/session/fork.rs`, `storage/jsonl/copy.rs:270`), and the pager forks with the child view's

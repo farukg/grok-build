@@ -1428,6 +1428,57 @@ async fn route_compaction_to_mock_server(
     actor.chat_state_handle.update_sampling_config(cfg);
     server
 }
+#[tokio::test(flavor = "current_thread")]
+async fn cancel_after_checkpoint_finishes_conversation_install() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            use crate::agent::mvp_agent::test_hooks::{AttachPause, with_pause_at};
+            let (gateway_tx, _gateway_rx) = mpsc::unbounded_channel();
+            let (persistence_tx, mut persistence_rx) = mpsc::unbounded_channel();
+            let actor =
+                Arc::new(create_test_actor(50_000, 200_000, 85, gateway_tx, persistence_tx).await);
+            let _server =
+                route_compaction_to_mock_server(&actor, "Summary of completed work. ".repeat(30))
+                    .await;
+            actor.chat_state_handle.replace_conversation(vec![
+                ConversationItem::system("system"),
+                ConversationItem::user("original task"),
+                ConversationItem::assistant("prior work ".repeat(2_000)),
+                ConversationItem::user("final query"),
+            ]);
+            let (compact, reached, release) =
+                with_pause_at(AttachPause::CompactCheckpoint, actor.run_compact());
+            let cancel = async {
+                reached.await.unwrap();
+                actor.compaction.cancel.request_cancel();
+                release.send(()).unwrap();
+            };
+            let (result, ()) = tokio::join!(compact, cancel);
+            result.expect("cancel after commit must finish successfully");
+            let mut checkpoint = None;
+            while let Ok(message) = persistence_rx.try_recv() {
+                if let crate::session::persistence::PersistenceMsg::CompactionCheckpoint(data) =
+                    message
+                {
+                    checkpoint = Some(data);
+                }
+            }
+            let checkpoint = checkpoint.expect("commit writes a checkpoint");
+            let installed = actor.chat_state_handle.get_conversation().await;
+            assert_eq!(
+                installed, checkpoint.compacted_history,
+                "checkpoint and installed history must agree after cancel at the commit boundary"
+            );
+            assert!(
+                installed
+                    .iter()
+                    .any(|item| item.text_content().contains("Summary of completed work")),
+                "committed history must be installed despite cancel"
+            );
+        })
+        .await;
+}
+
 /// A successful compaction lets failed-server announcements fire again.
 /// The failure reminder was dropped with the compacted context (unlike connected servers, which the compaction context carries).
 /// So the announced episodes clear and the MCP reminder goes dirty for a re-announcement at the next injection.

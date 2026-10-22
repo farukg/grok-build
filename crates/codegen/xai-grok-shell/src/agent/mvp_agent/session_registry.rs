@@ -354,6 +354,7 @@ struct SessionResources {
     /// Running actor threads that lost the presence's slot to another; the sweep drops each once it exits.
     retired_threads: Vec<SessionThread>,
     unavailable_model: Option<acp::ModelId>,
+    management: Option<Rc<super::child_management::ChildManagement>>,
 }
 #[derive(Default)]
 pub(super) struct SessionCounts {
@@ -387,6 +388,16 @@ impl SessionRegistry {
             entries.retain(|child_id, entry| match &entry.host {
                 Some(SessionHost::Child(child)) if child.parent_session_id == parent => {
                     released_parents.push(child_id.clone());
+                    if let Some(operation) = &entry.management {
+                        operation.cancel.request_cancel();
+                    }
+                    if let Some(handle) = entry.presence.as_ref().and_then(SessionPresence::hosted_handle) {
+                        let _ = handle.cmd_tx.send(SessionCommand::Shutdown(ShutdownKind::Graceful));
+                    }
+                    let thread = entry.presence.as_mut().and_then(SessionPresence::take_thread);
+                    if let Some(thread) = thread.filter(|thread| !thread.is_finished()) {
+                        released.retired_threads.push(thread);
+                    }
                     false
                 }
                 Some(SessionHost::Child(_) | SessionHost::Root) | None => true,
@@ -409,6 +420,7 @@ impl SessionRegistry {
                     retained: None,
                     resident: None,
                     unavailable_model: None,
+                    management: None,
                 },
             );
         }
@@ -601,6 +613,12 @@ impl SessionRegistry {
         })
         .flatten()
     }
+    pub(super) fn management(&self, id: &acp::SessionId) -> Option<Rc<super::child_management::ChildManagement>> {
+        self.with(id, |entry| entry.management.clone()).flatten()
+    }
+    pub(super) fn begin_management(&self, id: &acp::SessionId) -> Rc<super::child_management::ChildManagement> {
+        self.edit(id, |entry| entry.management.get_or_insert_default().clone())
+    }
     pub(super) fn is_resident(&self, id: &acp::SessionId) -> bool {
         self.with(id, |e| {
             e.presence
@@ -614,6 +632,7 @@ impl SessionRegistry {
         self.sessions
             .borrow()
             .values()
+            .filter(|e| !matches!(e.host, Some(SessionHost::Child(_))))
             .filter(|e| {
                 e.presence
                     .as_ref()
@@ -626,6 +645,7 @@ impl SessionRegistry {
         self.sessions
             .borrow()
             .iter()
+            .filter(|(_, e)| !matches!(e.host, Some(SessionHost::Child(_))))
             .filter(|(_, e)| {
                 e.presence
                     .as_ref()
@@ -637,6 +657,9 @@ impl SessionRegistry {
     }
     pub(super) fn for_each_resident(&self, mut f: impl FnMut(&acp::SessionId, &SessionHandle)) {
         for (id, entry) in self.sessions.borrow().iter() {
+            if matches!(entry.host, Some(SessionHost::Child(_))) {
+                continue;
+            }
             if let Some(handle) = entry
                 .presence
                 .as_ref()
@@ -651,6 +674,9 @@ impl SessionRegistry {
         mut f: impl FnMut(&acp::SessionId, &mut SessionHandle),
     ) {
         for (id, entry) in self.sessions.borrow_mut().iter_mut() {
+            if matches!(entry.host, Some(SessionHost::Child(_))) {
+                continue;
+            }
             if let Some(handle) = entry
                 .presence
                 .as_mut()
@@ -856,7 +882,15 @@ impl SessionRegistry {
         self.agent_directory
             .borrow_mut()
             .settle_attach(id, None, false);
-        self.release(id);
+        match self.host(id) {
+            Some(SessionHost::Child(_)) => {
+                self.clear(id, |entry| {
+                    let thread = entry.presence.as_mut().and_then(SessionPresence::take_thread);
+                    entry.presence = Some(SessionPresence::Dormant { thread });
+                });
+            }
+            Some(SessionHost::Root) | None => self.release(id),
+        }
     }
     /// The outstanding stamp of the installed actor an attach would adopt, with its install id.
     pub(super) fn pending_identity_stamp(
@@ -1293,6 +1327,7 @@ impl SessionRegistry {
                 presence,
                 retired_threads,
                 unavailable_model,
+                management: _,
             } = entry;
             counts.retained_resources += usize::from(retained.is_some());
             counts.resident_resources += usize::from(resident.is_some());
@@ -1363,6 +1398,7 @@ impl SessionResources {
             retired_threads,
             unavailable_model,
             host,
+            management,
         } = self;
         let chat_vacant = true;
         let presence_vacant = match presence {
@@ -1375,6 +1411,7 @@ impl SessionResources {
             && retired_threads.is_empty()
             && unavailable_model.is_none()
             && host.is_none()
+            && management.is_none()
             && chat_vacant
     }
 }

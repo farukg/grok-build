@@ -1182,11 +1182,32 @@ pub(super) async fn run_session(
                                 }
                             }
                         }
-                        SessionCommand::CompactSession { respond_to } => {
+                        SessionCommand::CompactSession { cancellation, mut respond_to } => {
                             let s = session.clone();
                             tokio::task::spawn_local(async move {
-                                let compact_session = s.run_compact().await;
-                                let _ = respond_to.send(compact_session);
+                                let compact = s.run_compact();
+                                tokio::pin!(compact);
+                                let result = tokio::select! {
+                                    biased;
+                                    () = cancellation.cancelled() => {
+                                        s.compaction.cancel.request_cancel();
+                                        if s.compaction.cancel.is_committing() {
+                                            compact.await
+                                        } else {
+                                            Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error())
+                                        }
+                                    }
+                                    () = respond_to.closed() => {
+                                        s.compaction.cancel.request_cancel();
+                                        if s.compaction.cancel.is_committing() {
+                                            compact.await
+                                        } else {
+                                            Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error())
+                                        }
+                                    }
+                                    result = &mut compact => result,
+                                };
+                                let _ = respond_to.send(result);
                             });
                         }
                         SessionCommand::ReloadPlugins { registry } => {
@@ -2246,6 +2267,8 @@ pub(super) async fn run_session(
                             let _ = respond_to.send(());
                         }
                         SessionCommand::Shutdown(kind) => {
+                            session.compaction.cancel.request_cancel();
+                            session.compaction.cancel.drain().await;
                             let end_timer = session_end::SessionEndTimer::new_shared();
                             session.persist_resume_status().await;
                             shutdown_workflows(&session, &end_timer).await;

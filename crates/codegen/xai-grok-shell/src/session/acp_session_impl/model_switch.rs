@@ -156,13 +156,22 @@ impl SessionActor {
                 "handle_set_session_model: skipping prompt rewrite (just rebuilt harness)"
             );
         }
-        let agent_name = self.agent.borrow().definition().name.clone();
+        let persisted_agent = {
+            let agent = self.agent.borrow();
+            if self.startup_hints.is_subagent {
+                crate::session::persistence::PersistedAgent::Inline(Box::new(
+                    agent.definition().clone(),
+                ))
+            } else {
+                crate::session::persistence::PersistedAgent::from(agent.definition())
+            }
+        };
         let _ = self
             .notifications
             .persistence_tx
             .send(PersistenceMsg::CurrentModel {
                 model_id: model_id.clone(),
-                agent: crate::session::persistence::PersistedAgent::Named(agent_name),
+                agent: persisted_agent,
                 reasoning_effort: Some(sampling_config.reasoning_effort),
                 context_window: Some(crate::session::handle::load_context_window_selection(
                     &self.compaction.context_window_selection,
@@ -258,13 +267,22 @@ impl SessionActor {
         cfg.reasoning_effort = Some(effort);
         let model_id = acp::ModelId::new(cfg.model.clone());
         self.chat_state_handle.update_sampling_config(cfg);
-        let agent_name = self.agent.borrow().definition().name.clone();
+        let persisted_agent = {
+            let agent = self.agent.borrow();
+            if self.startup_hints.is_subagent {
+                crate::session::persistence::PersistedAgent::Inline(Box::new(
+                    agent.definition().clone(),
+                ))
+            } else {
+                crate::session::persistence::PersistedAgent::from(agent.definition())
+            }
+        };
         let _ = self
             .notifications
             .persistence_tx
             .send(PersistenceMsg::CurrentModel {
                 model_id: model_id.clone(),
-                agent: crate::session::persistence::PersistedAgent::Named(agent_name),
+                agent: persisted_agent,
                 reasoning_effort: Some(Some(effort)),
                 context_window: None,
             });

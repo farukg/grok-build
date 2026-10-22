@@ -603,7 +603,22 @@ impl SessionActor {
         )
     )]
     pub(crate) async fn run_compact(self: &Arc<Self>) -> Result<(), acp::Error> {
-        let (_cancel, _cancel_scope) = self.compaction.cancel.enter();
+        let (cancel, _cancel_scope) = self.compaction.cancel.enter();
+        let compact = self.run_manual_compact();
+        tokio::pin!(compact);
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                if self.compaction.cancel.is_committing() {
+                    compact.await
+                } else {
+                    Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error())
+                }
+            }
+            result = &mut compact => result,
+        }
+    }
+    async fn run_manual_compact(self: &Arc<Self>) -> Result<(), acp::Error> {
         self.record_compaction_variant();
         let total_tokens = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("pre_tokens", total_tokens as i64);
@@ -1931,17 +1946,12 @@ impl SessionActor {
         if cancel.is_cancelled() {
             return self.emit_compact_cancelled(auto_trigger).await;
         }
+        self.compaction.cancel.begin_commit();
         let segments_queued = u32::from(
             self.persist_compaction_segment(&segment_messages, &generate_session_compact),
         );
         self.chat_state_handle
             .record_compaction_at(prompt_index_at_compaction);
-        self.persist_compaction_checkpoint(
-            &compacted_history,
-            prompt_index_at_compaction,
-            auto_continue,
-            original_user_info,
-        );
         let prefix_len = if self
             .compaction
             .prefix_released
@@ -1962,6 +1972,17 @@ impl SessionActor {
             )
             .await
         };
+        self.persist_compaction_checkpoint(
+            &compacted_history,
+            prompt_index_at_compaction,
+            auto_continue,
+            original_user_info,
+        );
+        #[cfg(test)]
+        crate::agent::mvp_agent::test_hooks::pause_at(
+            crate::agent::mvp_agent::test_hooks::AttachPause::CompactCheckpoint,
+        )
+        .await;
         self.chat_state_handle
             .replace_conversation_for_compaction(compacted_history);
         self.reseed_active_goal_after_compaction().await;
