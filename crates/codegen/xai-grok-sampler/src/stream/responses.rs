@@ -242,6 +242,7 @@ pub(crate) fn stream_responses_tracked<'a>(
         }
 
         let mut final_response: Option<rs::Response> = None;
+        let mut completed_output: BTreeMap<u32, rs::OutputItem> = BTreeMap::new();
         let mut chunk_index: u64 = 0;
         let mut message_chunk_count: u64 = 0;
         let mut first_token_emitted = false;
@@ -555,6 +556,7 @@ pub(crate) fn stream_responses_tracked<'a>(
                         }
                         _ => {}
                     }
+                    completed_output.insert(done_event.output_index, done_event.item);
                 }
 
                 // CustomToolCallInputDelta is x_search in-progress streaming.
@@ -611,6 +613,12 @@ pub(crate) fn stream_responses_tracked<'a>(
                 return;
             }
         };
+
+        // Responses Lite commits items through output_item.done and can leave
+        // the terminal response's output empty, as in the native Codex stream.
+        if response.output.is_empty() {
+            response.output = completed_output.into_values().collect();
+        }
 
         // Billing fields (`prompt_tokens`, `completion_tokens`, `cached_prompt_tokens`, `reasoning_tokens`) are the cumulative wire values
         // The SSE decoder (`deserialize_response_event`) has already rewritten `u.total_tokens` to `context_details.input + output`
@@ -851,6 +859,59 @@ mod tests {
             out.push(ev);
         }
         out
+    }
+
+    #[tokio::test]
+    async fn responses_lite_done_items_survive_empty_terminal() {
+        for (wire_item, expected_stop) in [
+            (
+                r#"{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_probe_value","arguments":"{}","status":"completed"}"#,
+                StopReason::ToolCalls,
+            ),
+            (
+                r#"{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"native-probe-7429","annotations":[],"logprobs":[]}]}"#,
+                StopReason::Stop,
+            ),
+        ] {
+            let item = serde_json::from_str(wire_item).expect("captured Lite output item");
+            let done = rs::ResponseStreamEvent::ResponseOutputItemDone(
+                rs_types::ResponseOutputItemDoneEvent {
+                    item,
+                    output_index: 0,
+                    sequence_number: 1,
+                },
+            );
+            let raw = stream::iter(vec![Ok(done), Ok(completed_event())]).boxed();
+            let events = collect(stream_responses(
+                raw,
+                None,
+                rid(),
+                Duration::from_secs(60),
+                None,
+            ))
+            .await;
+            let Some(SamplingEvent::Completed { response, .. }) = events.last() else {
+                panic!("missing completion: {events:?}");
+            };
+            assert_eq!(response.stop_reason, Some(expected_stop));
+            let assistants: Vec<_> = response
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ConversationItem::Assistant(assistant) => Some(assistant),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(assistants.len(), 1);
+            match expected_stop {
+                StopReason::ToolCalls => {
+                    assert_eq!(assistants[0].tool_calls.len(), 1);
+                    assert_eq!(assistants[0].tool_calls[0].name, "read_probe_value");
+                }
+                StopReason::Stop => assert_eq!(assistants[0].content.as_ref(), "native-probe-7429"),
+                _ => unreachable!("fixture stop reason"),
+            }
+        }
     }
 
     /// A confident signal that aborts on a custom-tool input frame still vetoes the replay.
