@@ -351,13 +351,16 @@ impl FailedResponseCapture {
         });
     }
 
-    /// Record the terminal `output` list, which supersedes anything recorded item by item: it is the turn's authoritative content and order.
+    /// Nonempty terminal output supplies authoritative content and order.
+    /// Lite can omit that list after committing items through output_item.done.
     pub(crate) fn record_terminal_output(&self, output: &[rs::OutputItem]) {
         if self.inner.is_none() {
             return;
         }
         self.with(|captured| {
-            captured.typed.clear();
+            if !output.is_empty() {
+                captured.typed.clear();
+            }
             captured.terminal_seen = true;
         });
         for (output_index, item) in output.iter().enumerate() {

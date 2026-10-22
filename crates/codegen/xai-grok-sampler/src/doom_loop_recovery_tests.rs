@@ -372,6 +372,37 @@ fn an_empty_terminal_response_replays_nothing() {
     );
 }
 
+#[test]
+fn lite_empty_terminal_preserves_completed_items() {
+    let capture = armed();
+    capture.record_output_item(
+        0,
+        &rs::OutputItem::Reasoning(reasoning_item(
+            "reasoning-1",
+            Some("completed thought"),
+            None,
+        )),
+    );
+    capture.record_output_item(1, &message_item("message-1", "completed answer"));
+    capture.record_output_delta(2, 0, "unfinished".into(), "delta only");
+    capture.record_terminal_output(&[]);
+
+    let items = capture.take_items();
+    assert_eq!(
+        items.len(),
+        2,
+        "replay committed items without unfinished deltas"
+    );
+    let ConversationItem::Reasoning(reasoning) = nth(&items, 0) else {
+        panic!("expected completed reasoning");
+    };
+    assert_eq!(reasoning.id, "reasoning-1");
+    let ConversationItem::Assistant(assistant) = nth(&items, 1) else {
+        panic!("expected completed answer");
+    };
+    assert_eq!(assistant.content.as_ref(), "completed answer");
+}
+
 /// A turn that reached its terminal frame has told us everything it produced, so streamed reasoning the wire left out is not replayed.
 #[test]
 fn a_terminal_turn_does_not_gain_items_from_the_deltas() {

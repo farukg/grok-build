@@ -55,6 +55,7 @@ jobs:
           cargo test -p xai-grok-sampler --lib --locked deserialize_response_event
           cargo test -p xai-grok-sampler --lib --locked responses_stream_skips_unknown_events_without_ending_the_stream
           cargo test -p xai-grok-sampler --lib --locked responses_lite_done_items_survive_empty_terminal
+          cargo test -p xai-grok-sampler --lib --locked lite_empty_terminal_preserves_completed_items
           cargo test -p xai-grok-sampler --lib --locked grok_request_headers_follow_sampler_capability_opt_in
           cargo test -p xai-grok-sampler --lib --locked response_call_sites_emit_final_includes_and_stream_fields
           cargo test -p xai-grok-sampler --lib --locked function_call_
