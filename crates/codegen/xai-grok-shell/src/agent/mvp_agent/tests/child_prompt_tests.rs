@@ -230,8 +230,8 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             .chat_state_handle
             .replace_conversation(conversation.clone());
         assert_eq!(
-            handle.chat_state_handle.get_conversation().await,
-            conversation
+            serde_json::to_value(handle.chat_state_handle.get_conversation().await).unwrap(),
+            serde_json::to_value(&conversation).unwrap()
         );
         super::drain_persistence(&agent, &child).await;
         let info = handle.info.clone();
@@ -317,8 +317,8 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             let restored = agent.resident_handle(&child).unwrap();
             assert_eq!(restored.info.id, child);
             assert_eq!(
-                restored.chat_state_handle.get_conversation().await,
-                conversation
+                serde_json::to_value(restored.chat_state_handle.get_conversation().await).unwrap(),
+                serde_json::to_value(&conversation).unwrap()
             );
             assert_eq!(
                 restored.chat_state_handle.get_context_policy().await,
@@ -352,8 +352,9 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             policy
         );
         assert_eq!(
-            reloaded.handle.chat_state_handle.get_conversation().await,
-            conversation
+            serde_json::to_value(reloaded.handle.chat_state_handle.get_conversation().await)
+                .unwrap(),
+            serde_json::to_value(&conversation).unwrap()
         );
         assert!(!agent.resident_ids().contains(&child));
         drop(reloaded);
@@ -391,7 +392,7 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
         agent.start_subagent_coordinator();
         let id = uuid::Uuid::now_v7().to_string();
         let backend = ChannelBackend::for_coordinator_session(
-            agent.subagent_event_tx.event_sender().0,
+            agent.subagent_event_tx.clone(),
             parent.0.to_string(),
         );
         let result = backend
@@ -464,8 +465,8 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
         assert_eq!(after.attempt_id, prior.attempt_id);
         assert_eq!(after.next_trace_turn, prior.next_trace_turn);
         assert_eq!(
-            parent_handle.chat_state_handle.get_conversation().await,
-            parent_before,
+            serde_json::to_value(parent_handle.chat_state_handle.get_conversation().await).unwrap(),
+            serde_json::to_value(&parent_before).unwrap(),
             "administrative compact must not deliver a second child answer to the parent"
         );
         assert!(agent.resident_handle(&child).is_none());

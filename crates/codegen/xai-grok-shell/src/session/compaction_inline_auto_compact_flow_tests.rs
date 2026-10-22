@@ -1466,7 +1466,8 @@ async fn cancel_after_checkpoint_finishes_conversation_install() {
             let checkpoint = checkpoint.expect("commit writes a checkpoint");
             let installed = actor.chat_state_handle.get_conversation().await;
             assert_eq!(
-                installed, checkpoint.compacted_history,
+                serde_json::to_value(&installed).unwrap(),
+                serde_json::to_value(&checkpoint.compacted_history).unwrap(),
                 "checkpoint and installed history must agree after cancel at the commit boundary"
             );
             assert!(
