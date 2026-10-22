@@ -3,9 +3,7 @@
 #![cfg(unix)]
 #[allow(unused_imports)]
 use super::common::*;
-use super::send_subagent_message_row::{
-    CHILD_LABEL, PARENT_DONE, ROW_TIMEOUT, SendMessageScenario,
-};
+use super::send_subagent_message_row::{CHILD_LABEL, ROW_TIMEOUT, SendMessageScenario, WAKE_DONE};
 
 const TAKEOVER_HINT: &str = "q/Esc:back";
 const AUX_HOLD_TIMEOUT: Duration = Duration::from_secs(30);
@@ -16,10 +14,8 @@ const COMPACT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(45);
 async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
     let mut scenario = SendMessageScenario::start().await;
 
-    // Finish the child through the existing owned fixture, leaving its result in the parent transcript.
     std::fs::write(&scenario.hold_flag, b"done").expect("release child command");
-    scenario.wait_for_row("CHILD_DONE");
-    scenario.wait_for_row(PARENT_DONE);
+    scenario.wait_for_row(WAKE_DONE);
     scenario
         .harness
         .wait_for_turn_idle(ROW_TIMEOUT)
@@ -36,6 +32,7 @@ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
         .harness
         .wait_for_text(TAKEOVER_HINT, ROW_TIMEOUT)
         .expect("finished child view opened");
+    scenario.wait_for_row("CHILD_DONE");
 
     // The shell tags compaction summary requests xai-compact-<uuid>; hold that auxiliary specifically.
     scenario
@@ -59,8 +56,8 @@ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
         .expect("cancel compact");
     scenario
         .harness
-        .wait_for_text("Cancelling", Duration::from_secs(15))
-        .expect("child compact cancellation rendered");
+        .wait_for_text("Compaction cancelled.", COMPACT_TERMINAL_TIMEOUT)
+        .expect("compact cancellation acknowledged while auxiliary response is held");
     scenario.content.server().release_auxiliary_replies();
     scenario
         .harness
@@ -68,9 +65,9 @@ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
             "child compact reached terminal cancellation UI",
             COMPACT_TERMINAL_TIMEOUT,
             Duration::from_secs(2),
-            |h| !h.contains_text("Cancelling"),
+            |h| h.contains_text("Compaction cancelled.") && !h.contains_text("Cancelling"),
         )
-        .expect("cancelling state cleared on terminal result");
+        .expect("cancelling state cleared on acknowledged terminal result");
 
     scenario
         .harness
