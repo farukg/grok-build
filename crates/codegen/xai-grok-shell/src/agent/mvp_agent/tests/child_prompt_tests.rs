@@ -558,31 +558,30 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
                 .unwrap(),
         )
         .unwrap();
-        server.hold_agent_completions();
+        server.set_auxiliary_hold_matching("xai-compact-");
         let cancelling = agent.ext_method(acp::ExtRequest::new(
             "x.ai/compact_conversation",
             std::sync::Arc::from(
                 serde_json::value::to_raw_value(&json!({ "sessionId": child.0 })).unwrap(),
             ),
         ));
-        let cancel_stream = async {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                server.wait_until_a_reply_is_held(),
-            )
+        tokio::pin!(cancelling);
+        tokio::select! {
+            result = &mut cancelling => panic!("compact ended before its model stream was held: {result:?}"),
+            held = tokio::time::timeout(std::time::Duration::from_secs(30), server.wait_until_matching_parked(1)) => {
+                held.expect("compact auxiliary model stream is held");
+            }
+        }
+        agent
+            .cancel(acp::CancelNotification::new(child.clone()))
             .await
-            .expect("mock inference reaches a held model reply");
-            agent
-                .cancel(acp::CancelNotification::new(child.clone()))
-                .await
-                .unwrap();
-        };
-        let (cancelled, ()) = tokio::join!(cancelling, cancel_stream);
+            .unwrap();
+        let cancelled = cancelling.await;
         assert_eq!(
             crate::session::helpers::session_compact::compact_error_kind(&cancelled.unwrap_err()),
             Some(crate::session::helpers::session_compact::CompactErrorKind::Cancelled)
         );
-        server.release_agent_completions();
+        server.release_auxiliary_replies();
         agent.drain_old_session_thread(&child).await;
         assert!(
             !agent.child_writer_is_active(&child),
