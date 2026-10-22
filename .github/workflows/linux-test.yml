@@ -46,8 +46,8 @@ jobs:
         with:
           shared-key: linux-test
 
-      - name: Check sampler and shell formatting
-        run: cargo +nightly-2026-08-13 fmt -p xai-grok-sampler -p xai-grok-shell -- --check
+      - name: Check sampler, shell, tools and pager formatting
+        run: cargo +nightly-2026-08-13 fmt -p xai-grok-sampler -p xai-grok-shell -p xai-grok-tools -p xai-grok-pager -p xai-grok-pager-pty-harness -- --check
 
       - name: Test gateway-compatible sampler events and request shape
         if: always()
@@ -83,6 +83,20 @@ jobs:
       - name: Test pager compaction
         if: always()
         run: cargo test -p xai-grok-pager --lib --locked compact
+
+      - name: Test subagent delivery and live steering
+        if: always()
+        run: |
+          cargo test -p xai-grok-tools --lib --locked coordinator_tests
+          cargo test -p xai-grok-shell --lib --locked parent_message
+          cargo test -p xai-grok-shell --lib --locked prompt_turn_receipt
+          cargo test -p xai-grok-shell --lib --locked live_steers_
+
+      - name: Test finished child compaction through the terminal
+        if: always()
+        run: |
+          cargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked
+          PAGER_BINARY="$PWD/target/debug/xai-grok-pager" cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked finished_child_manual_compact_cancel -- --ignored
 
       - name: Test pager
         shell: bash

@@ -30,6 +30,8 @@ mod edit_merge_parallel_pty;
 mod edit_merge_sequential_pty;
 #[path = "pty_e2e/file_path_with_space_emits_full_osc8_hyperlink.rs"]
 mod file_path_with_space_emits_full_osc8_hyperlink;
+#[path = "pty_e2e/finished_child_manual_compact_cancel.rs"]
+mod finished_child_manual_compact_cancel;
 #[path = "pty_e2e/folder_trust_cwd_is_home_git_repo_no_prompt.rs"]
 mod folder_trust_cwd_is_home_git_repo_no_prompt;
 #[path = "pty_e2e/folder_trust_decline_quits_without_grant.rs"]

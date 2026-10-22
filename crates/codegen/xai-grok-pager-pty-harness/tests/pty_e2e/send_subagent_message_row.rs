@@ -29,9 +29,9 @@ pub(crate) const ROW_TIMEOUT: Duration = Duration::from_secs(60);
 /// The parent and child scripts plus the spawned pager, driven to the point where every send row has settled.
 /// The child keeps polling `hold_flag` until the caller writes it, so the sends land on an active child.
 pub(crate) struct SendMessageScenario {
-    content: ContentController,
+    pub(crate) content: ContentController,
     pub(crate) harness: PtyHarness,
-    hold_flag: PathBuf,
+    pub(crate) hold_flag: PathBuf,
 }
 
 impl SendMessageScenario {
