@@ -71,7 +71,10 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
     policy.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
     agent.context_policy_answered(Ok(ContextPolicyReport {
         policy,
-        usage: vec![CategoryTokens { category: ContextCategory::Reasoning, tokens: 12_345 }],
+        usage: vec![CategoryTokens {
+            category: ContextCategory::Reasoning,
+            tokens: 12_345,
+        }],
     }));
     let buf = draw(&mut agent);
     assert!(sidebar_row(&buf, "Reasoning").contains("OFF"));
@@ -84,16 +87,28 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
         panic!("space asks the shell for the change");
     };
     let first = xai_grok_shell::sampling::all_categories()[0];
-    assert!(!requested.includes(first), "the cursor starts on the first row, which was ON");
-    assert!(!requested.includes(ContextCategory::Reasoning), "the rest of the policy is unchanged");
+    assert!(
+        !requested.includes(first),
+        "the cursor starts on the first row, which was ON"
+    );
+    assert!(
+        !requested.includes(ContextCategory::Reasoning),
+        "the rest of the policy is unchanged"
+    );
     assert!(
         screen(&draw(&mut agent)).contains("Applying"),
         "the row keeps the shell's last answer until it answers again"
     );
 
-    agent.context_policy_answered(Ok(ContextPolicyReport { policy: requested, usage: Vec::new() }));
+    agent.context_policy_answered(Ok(ContextPolicyReport {
+        policy: requested,
+        usage: Vec::new(),
+    }));
     assert!(!screen(&draw(&mut agent)).contains("Applying"));
-    assert!(matches!(press(&mut agent, KeyCode::Esc), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut agent, KeyCode::Esc),
+        InputOutcome::Changed
+    ));
     assert!(!screen(&draw(&mut agent)).contains("Context sent to the model"));
 }
 
@@ -124,13 +139,22 @@ fn f7_message_display_flips_a_kind_between_one_line_and_full() {
     let buf = draw(&mut agent);
     assert!(sidebar_row(&buf, "File reads").contains("1 line"));
 
-    assert!(matches!(click_row(&mut agent, &buf, "File reads"), InputOutcome::Changed));
+    assert!(matches!(
+        click_row(&mut agent, &buf, "File reads"),
+        InputOutcome::Changed
+    ));
     assert!(sidebar_row(&draw(&mut agent), "File reads").contains("full"));
     assert_eq!(
         agent.scrollback.display_defaults().get(MessageKind::Read),
         Some(DisplayForm::Expanded)
     );
-    assert_eq!(agent.scrollback.display_defaults().get(MessageKind::Execute), None);
+    assert_eq!(
+        agent
+            .scrollback
+            .display_defaults()
+            .get(MessageKind::Execute),
+        None
+    );
 
     let buf = draw(&mut agent);
     let _ = click_row(&mut agent, &buf, "File reads");
@@ -146,7 +170,10 @@ use crate::views::sidebar::SidebarLine;
 use ratatui::style::Modifier;
 
 fn ready_report() -> ContextPolicyReport {
-    ContextPolicyReport { policy: ContextPolicy::default(), usage: Vec::new() }
+    ContextPolicyReport {
+        policy: ContextPolicy::default(),
+        usage: Vec::new(),
+    }
 }
 
 /// F7 open, the shell answered, first frame drawn: the cursor sits on the first context switch.
@@ -260,26 +287,52 @@ fn f7_arrow_keys_walk_the_tree_like_a_tree_view() {
     assert_eq!(cursor(&agent), Some(context.row_line(0)));
 
     let _ = press(&mut agent, KeyCode::Left);
-    assert_eq!(cursor(&agent), Some(context.title_line()), "Left from a row selects its title");
+    assert_eq!(
+        cursor(&agent),
+        Some(context.title_line()),
+        "Left from a row selects its title"
+    );
     assert!(disclosure(&agent).is_expanded(context));
     let _ = press(&mut agent, KeyCode::Left);
-    assert!(!disclosure(&agent).is_expanded(context), "Left on an open title folds it");
+    assert!(
+        !disclosure(&agent).is_expanded(context),
+        "Left on an open title folds it"
+    );
     assert_eq!(cursor(&agent), Some(context.title_line()));
     let _ = press(&mut agent, KeyCode::Left);
-    assert_eq!(cursor(&agent), Some(context.title_line()), "a folded root title has no parent");
+    assert_eq!(
+        cursor(&agent),
+        Some(context.title_line()),
+        "a folded root title has no parent"
+    );
     assert!(!disclosure(&agent).is_expanded(context));
 
     let _ = press(&mut agent, KeyCode::Down);
-    assert_eq!(cursor(&agent), Some(display.title_line()), "Down skips the folded rows");
+    assert_eq!(
+        cursor(&agent),
+        Some(display.title_line()),
+        "Down skips the folded rows"
+    );
     let _ = press(&mut agent, KeyCode::Right);
-    assert_eq!(cursor(&agent), Some(display.row_line(0)), "Right on an open title enters it");
+    assert_eq!(
+        cursor(&agent),
+        Some(display.row_line(0)),
+        "Right on an open title enters it"
+    );
     let _ = press(&mut agent, KeyCode::Up);
     assert_eq!(cursor(&agent), Some(display.title_line()));
     let _ = press(&mut agent, KeyCode::Up);
-    assert_eq!(cursor(&agent), Some(context.title_line()), "Up skips the folded rows");
+    assert_eq!(
+        cursor(&agent),
+        Some(context.title_line()),
+        "Up skips the folded rows"
+    );
 
     let _ = press(&mut agent, KeyCode::Right);
-    assert!(disclosure(&agent).is_expanded(context), "Right on a folded title opens it");
+    assert!(
+        disclosure(&agent).is_expanded(context),
+        "Right on a folded title opens it"
+    );
     assert_eq!(cursor(&agent), Some(context.title_line()));
     let _ = press(&mut agent, KeyCode::Right);
     assert_eq!(cursor(&agent), Some(context.row_line(0)));
@@ -322,7 +375,11 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
     assert_eq!(cursor(&agent), Some(display.title_line()));
     let _ = press(&mut agent, KeyCode::Home);
     let _ = press(&mut agent, KeyCode::Char('j'));
-    assert_eq!(cursor(&agent), Some(display.title_line()), "j also skips the folded rows");
+    assert_eq!(
+        cursor(&agent),
+        Some(display.title_line()),
+        "j also skips the folded rows"
+    );
 }
 
 #[test]
@@ -332,18 +389,36 @@ fn f7_enter_and_space_fold_a_title_and_a_click_unfolds_it() {
     let _ = press(&mut agent, KeyCode::Home);
     assert!(sidebar_row(&draw(&mut agent), "Core instructions").contains("Core instructions"));
 
-    assert!(matches!(press(&mut agent, KeyCode::Enter), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut agent, KeyCode::Enter),
+        InputOutcome::Changed
+    ));
     let buf = draw(&mut agent);
-    assert!(!screen(&buf).contains("Core instructions"), "a folded section shows no rows");
+    assert!(
+        !screen(&buf).contains("Core instructions"),
+        "a folded section shows no rows"
+    );
     assert!(screen(&buf).contains("\u{25B8} Context"));
-    assert!(screen(&buf).contains("Message display"), "the other section stays");
+    assert!(
+        screen(&buf).contains("Message display"),
+        "the other section stays"
+    );
 
-    assert!(matches!(click_row(&mut agent, &buf, "\u{25B8} Context"), InputOutcome::Changed));
+    assert!(matches!(
+        click_row(&mut agent, &buf, "\u{25B8} Context"),
+        InputOutcome::Changed
+    ));
     let buf = draw(&mut agent);
-    assert!(screen(&buf).contains("Core instructions"), "a click on a folded title unfolds it");
+    assert!(
+        screen(&buf).contains("Core instructions"),
+        "a click on a folded title unfolds it"
+    );
     assert!(screen(&buf).contains("\u{25BE} Context"));
 
-    assert!(matches!(press(&mut agent, KeyCode::Char(' ')), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut agent, KeyCode::Char(' ')),
+        InputOutcome::Changed
+    ));
     assert!(!disclosure(&agent).is_expanded(SectionId::Context));
 }
 
@@ -354,13 +429,22 @@ fn f7_clicks_hit_the_right_row_after_a_fold() {
     let _ = press(&mut agent, KeyCode::Left);
     let _ = press(&mut agent, KeyCode::Left);
     let buf = draw(&mut agent);
-    assert!(matches!(click_row(&mut agent, &buf, "File reads"), InputOutcome::Changed));
+    assert!(matches!(
+        click_row(&mut agent, &buf, "File reads"),
+        InputOutcome::Changed
+    ));
     assert_eq!(
         agent.scrollback.display_defaults().get(MessageKind::Read),
         Some(DisplayForm::Expanded),
         "the row moved up with the fold and the click found it"
     );
-    assert_eq!(agent.scrollback.display_defaults().get(MessageKind::Execute), None);
+    assert_eq!(
+        agent
+            .scrollback
+            .display_defaults()
+            .get(MessageKind::Execute),
+        None
+    );
 }
 
 #[test]
@@ -368,14 +452,26 @@ fn f7_clicks_hit_the_right_row_after_end_scrolls() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
-    assert!(!screen(&buf).contains("Memory captures"), "the last row starts below the viewport");
+    assert!(
+        !screen(&buf).contains("Memory captures"),
+        "the last row starts below the viewport"
+    );
 
     let _ = press(&mut agent, KeyCode::End);
     let buf = draw(&mut agent);
-    assert!(screen(&buf).contains("Memory captures"), "End scrolls the last row into view");
-    assert!(matches!(click_row(&mut agent, &buf, "Memory captures"), InputOutcome::Changed));
+    assert!(
+        screen(&buf).contains("Memory captures"),
+        "End scrolls the last row into view"
+    );
+    assert!(matches!(
+        click_row(&mut agent, &buf, "Memory captures"),
+        InputOutcome::Changed
+    ));
     assert_eq!(
-        agent.scrollback.display_defaults().get(MessageKind::MemoryCapture),
+        agent
+            .scrollback
+            .display_defaults()
+            .get(MessageKind::MemoryCapture),
         Some(DisplayForm::Collapsed),
         "memory captures start full, the click made them one line"
     );
@@ -398,7 +494,11 @@ fn f7_shift_enter_on_a_message_row_sets_the_other_bulk_kinds_and_reverts() {
         if kind == MessageKind::MemoryCapture {
             continue;
         }
-        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Expanded, "{kind:?}");
+        assert_eq!(
+            agent.scrollback.display_defaults().shown(kind),
+            DisplayForm::Expanded,
+            "{kind:?}"
+        );
     }
     assert!(never_bulk_toggled_stay(&agent, &before));
     assert!(disclosure(&agent).is_expanded(SectionId::Context));
@@ -412,7 +512,11 @@ fn f7_shift_enter_on_a_message_row_sets_the_other_bulk_kinds_and_reverts() {
         if kind == MessageKind::MemoryCapture {
             continue;
         }
-        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Collapsed, "{kind:?}");
+        assert_eq!(
+            agent.scrollback.display_defaults().shown(kind),
+            DisplayForm::Collapsed,
+            "{kind:?}"
+        );
     }
     assert!(never_bulk_toggled_stay(&agent, &before));
     let buf = draw(&mut agent);
@@ -424,7 +528,14 @@ fn f7_shift_click_on_a_message_row_sets_the_other_bulk_kinds() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
-    let before = never_bulk_toggled_snapshot(&agent);
+    let before = [
+        MessageKind::UserPrompt,
+        MessageKind::AgentMessage,
+        MessageKind::Read,
+    ]
+    .into_iter()
+    .map(|kind| (kind, agent.scrollback.display_defaults().shown(kind)))
+    .collect::<Vec<_>>();
     assert!(matches!(
         click_row_with(&mut agent, &buf, "File reads", KeyModifiers::SHIFT),
         InputOutcome::Changed
@@ -433,16 +544,27 @@ fn f7_shift_click_on_a_message_row_sets_the_other_bulk_kinds() {
         if kind == MessageKind::Read {
             continue;
         }
-        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Expanded, "{kind:?}");
+        assert_eq!(
+            agent.scrollback.display_defaults().shown(kind),
+            DisplayForm::Expanded,
+            "{kind:?}"
+        );
     }
-    assert!(never_bulk_toggled_stay(&agent, &before), "user, assistant and the clicked kind stay untouched");
+    assert!(
+        never_bulk_toggled_stay(&agent, &before),
+        "user, assistant and the clicked kind stay untouched"
+    );
     let buf = draw(&mut agent);
     let _ = click_row_with(&mut agent, &buf, "File reads", KeyModifiers::SHIFT);
     for &kind in MessageKind::bulk_kinds() {
         if kind == MessageKind::Read {
             continue;
         }
-        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Collapsed, "{kind:?}");
+        assert_eq!(
+            agent.scrollback.display_defaults().shown(kind),
+            DisplayForm::Collapsed,
+            "{kind:?}"
+        );
     }
     assert!(never_bulk_toggled_stay(&agent, &before));
 }
@@ -456,7 +578,10 @@ fn f7_plus_and_minus_open_and_close_all_bulk_kinds_and_say_when_nothing_changes(
 
     let _ = press(&mut agent, KeyCode::Char('+'));
     assert!(every_bulk_kind_shows(&agent, DisplayForm::Expanded));
-    assert!(never_bulk_toggled_stay(&agent, &before), "user and assistant rows are never bulk-toggled");
+    assert!(
+        never_bulk_toggled_stay(&agent, &before),
+        "user and assistant rows are never bulk-toggled"
+    );
     let _ = press(&mut agent, KeyCode::Char('+'));
     assert_eq!(toast(&agent), "All message kinds already show full");
 
@@ -490,7 +615,10 @@ fn f7_shift_enter_on_a_title_folds_the_other_sections_and_reverts() {
         .iter()
         .map(|&kind| agent.scrollback.display_defaults().shown(kind))
         .collect();
-    assert_eq!(kinds_before, kinds_after, "a title gesture leaves the display forms alone");
+    assert_eq!(
+        kinds_before, kinds_after,
+        "a title gesture leaves the display forms alone"
+    );
 }
 
 #[test]
@@ -505,29 +633,56 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
         if kind == MessageKind::MemoryCapture {
             continue;
         }
-        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Expanded, "{kind:?}");
+        assert_eq!(
+            agent.scrollback.display_defaults().shown(kind),
+            DisplayForm::Expanded,
+            "{kind:?}"
+        );
     }
-    assert!(never_bulk_toggled_stay(&agent, &before), "the cursor kind and user/assistant rows keep their form");
-    assert!(!disclosure(&agent).is_expanded(SectionId::Context), "the other section folded");
-    assert!(disclosure(&agent).is_expanded(SectionId::Display), "the cursor row's own section stays open");
+    assert!(
+        never_bulk_toggled_stay(&agent, &before),
+        "the cursor kind and user/assistant rows keep their form"
+    );
+    assert!(
+        disclosure(&agent).is_expanded(SectionId::Context),
+        "a collapsed kind makes the combined scope expand"
+    );
+    assert!(
+        disclosure(&agent).is_expanded(SectionId::Display),
+        "the cursor row's own section stays open"
+    );
 
     let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::CONTROL);
     for &kind in MessageKind::bulk_kinds() {
         if kind == MessageKind::MemoryCapture {
             continue;
         }
-        assert_eq!(agent.scrollback.display_defaults().shown(kind), DisplayForm::Collapsed, "{kind:?}");
+        assert_eq!(
+            agent.scrollback.display_defaults().shown(kind),
+            DisplayForm::Collapsed,
+            "{kind:?}"
+        );
     }
     assert!(never_bulk_toggled_stay(&agent, &before));
-    assert!(disclosure(&agent).is_expanded(SectionId::Context));
+    assert!(!disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
-    assert_eq!(cursor(&agent), Some(SectionId::Display.row_line(MessageKind::settings_kinds().len() - 1)), "the cursor row stayed visible");
+    assert_eq!(
+        cursor(&agent),
+        Some(SectionId::Display.row_line(MessageKind::settings_kinds().len() - 1)),
+        "the cursor row stayed visible"
+    );
 
     let _ = press(&mut agent, KeyCode::Char('*'));
-    assert!(every_bulk_kind_shows(&agent, DisplayForm::Expanded), "* sweeps the whole scope, cursor kind included");
+    assert!(
+        every_bulk_kind_shows(&agent, DisplayForm::Expanded),
+        "* sweeps the whole scope, cursor kind included"
+    );
     assert!(disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
-    assert!(never_bulk_toggled_stay(&agent, &before), "user and assistant rows stay out of every bulk gesture");
+    assert!(
+        never_bulk_toggled_stay(&agent, &before),
+        "user and assistant rows stay out of every bulk gesture"
+    );
 }
 
 #[test]
@@ -548,17 +703,33 @@ fn f7_bulk_gestures_on_a_context_row_never_ask_the_shell_for_a_change() {
             matches!(outcome, InputOutcome::Changed),
             "{code:?}+{modifiers:?} must not return an action"
         );
-        assert!(!screen(&draw(&mut agent)).contains("Applying"), "{code:?}+{modifiers:?}");
+        assert!(
+            !screen(&draw(&mut agent)).contains("Applying"),
+            "{code:?}+{modifiers:?}"
+        );
     }
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
     let outcome = click_row_with(&mut agent, &buf, "Core instructions", KeyModifiers::SHIFT);
-    assert!(matches!(outcome, InputOutcome::Changed), "Shift+click on a switch");
-    assert!(!disclosure(&agent).is_expanded(SectionId::Context), "it only folded the sections");
+    assert!(
+        matches!(outcome, InputOutcome::Changed),
+        "Shift+click on a switch"
+    );
+    assert!(
+        disclosure(&agent).is_expanded(SectionId::Context),
+        "the cursor row's section stays open"
+    );
+    assert!(
+        !disclosure(&agent).is_expanded(SectionId::Display),
+        "the other section folded"
+    );
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
     let outcome = click_row_with(&mut agent, &buf, "Project rules", KeyModifiers::CONTROL);
-    assert!(matches!(outcome, InputOutcome::Changed), "Ctrl+click on a switch");
+    assert!(
+        matches!(outcome, InputOutcome::Changed),
+        "Ctrl+click on a switch"
+    );
 }
 
 #[test]
@@ -568,7 +739,10 @@ fn f7_a_switch_that_cannot_be_sent_says_why() {
     let mut loading = test_fixtures::make_agent();
     let _ = press(&mut loading, KeyCode::F(7));
     let _ = draw(&mut loading);
-    assert!(matches!(press(&mut loading, KeyCode::Char(' ')), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut loading, KeyCode::Char(' ')),
+        InputOutcome::Changed
+    ));
     let while_loading = toast(&loading);
     assert!(while_loading.contains("still loading"), "{while_loading}");
 
@@ -577,18 +751,33 @@ fn f7_a_switch_that_cannot_be_sent_says_why() {
         press(&mut applying, KeyCode::Char(' ')),
         InputOutcome::Action(Action::SetContextPolicy(_))
     ));
-    assert!(matches!(press(&mut applying, KeyCode::Char(' ')), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut applying, KeyCode::Char(' ')),
+        InputOutcome::Changed
+    ));
     let while_applying = toast(&applying);
-    assert!(while_applying.contains("still being applied"), "{while_applying}");
-    assert!(screen(&draw(&mut applying)).contains("Applying"), "the footer keeps the state");
+    assert!(
+        while_applying.contains("still being applied"),
+        "{while_applying}"
+    );
+    assert!(
+        screen(&draw(&mut applying)).contains("Applying"),
+        "the footer keeps the state"
+    );
 
     let mut unavailable = test_fixtures::make_agent();
     let _ = press(&mut unavailable, KeyCode::F(7));
     unavailable.context_policy_answered(Err("no policy".to_string()));
     let _ = draw(&mut unavailable);
-    assert!(matches!(press(&mut unavailable, KeyCode::Enter), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut unavailable, KeyCode::Enter),
+        InputOutcome::Changed
+    ));
     let when_unavailable = toast(&unavailable);
-    assert!(when_unavailable.contains("could not be read"), "{when_unavailable}");
+    assert!(
+        when_unavailable.contains("could not be read"),
+        "{when_unavailable}"
+    );
     assert!(screen(&draw(&mut unavailable)).contains("Unavailable"));
 
     assert_ne!(while_loading, while_applying);
@@ -615,22 +804,40 @@ fn f7_rows_are_coloured_by_their_meaning() {
     let _ = press(&mut agent, KeyCode::F(7));
     let mut policy = ContextPolicy::default();
     policy.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
-    agent.context_policy_answered(Ok(ContextPolicyReport { policy, usage: Vec::new() }));
+    agent.context_policy_answered(Ok(ContextPolicyReport {
+        policy,
+        usage: Vec::new(),
+    }));
     let buf = draw(&mut agent);
 
     let on = sidebar_style(SidebarRowClass::SwitchOn, &theme);
     let off = sidebar_style(SidebarRowClass::SwitchOff, &theme);
-    assert_ne!(on.glyph.fg, off.glyph.fg, "the palette must tell ON from OFF");
+    assert_ne!(
+        on.glyph.fg, off.glyph.fg,
+        "the palette must tell ON from OFF"
+    );
 
     let (on_y, on_line) = row_of(&buf, "Core instructions");
     let on_x = column_of(&on_line, "Core instructions");
-    assert_eq!(cell(&buf, on_x - 2, on_y).fg, on.glyph.fg.unwrap_or_default());
-    assert_eq!(cell(&buf, column_of(&on_line, "ON"), on_y).fg, on.value.fg.unwrap_or_default());
+    assert_eq!(
+        cell(&buf, on_x - 2, on_y).fg,
+        on.glyph.fg.unwrap_or_default()
+    );
+    assert_eq!(
+        cell(&buf, column_of(&on_line, "ON"), on_y).fg,
+        on.value.fg.unwrap_or_default()
+    );
 
     let (off_y, off_line) = row_of(&buf, "Reasoning");
     let off_x = column_of(&off_line, "Reasoning");
-    assert_eq!(cell(&buf, off_x - 2, off_y).fg, off.glyph.fg.unwrap_or_default());
-    assert_eq!(cell(&buf, column_of(&off_line, "OFF"), off_y).fg, off.value.fg.unwrap_or_default());
+    assert_eq!(
+        cell(&buf, off_x - 2, off_y).fg,
+        off.glyph.fg.unwrap_or_default()
+    );
+    assert_eq!(
+        cell(&buf, column_of(&off_line, "OFF"), off_y).fg,
+        off.value.fg.unwrap_or_default()
+    );
     assert_ne!(
         cell(&buf, on_x - 2, on_y).fg,
         cell(&buf, off_x - 2, off_y).fg,
@@ -644,8 +851,15 @@ fn f7_rows_are_coloured_by_their_meaning() {
     let title = sidebar_style(SidebarRowClass::SectionTitle, &theme);
     let (title_y, title_line) = row_of(&buf, "\u{25BE} Context");
     let title_x = column_of(&title_line, "\u{25BE} Context");
-    assert_eq!(cell(&buf, title_x, title_y).fg, title.glyph.fg.unwrap_or_default());
-    assert!(cell(&buf, title_x + 2, title_y).modifier.contains(Modifier::BOLD));
+    assert_eq!(
+        cell(&buf, title_x, title_y).fg,
+        title.glyph.fg.unwrap_or_default()
+    );
+    assert!(
+        cell(&buf, title_x + 2, title_y)
+            .modifier
+            .contains(Modifier::BOLD)
+    );
     assert!(
         !cell(&buf, on_x, on_y).modifier.contains(Modifier::BOLD),
         "a row label is not bold like a title"
@@ -671,7 +885,13 @@ fn f7_a_flipped_display_form_changes_its_colour() {
     let buf = draw(&mut agent);
     let (y, line) = row_of(&buf, "File reads");
     let full = cell(&buf, column_of(&line, "full"), y).fg;
-    assert_eq!(full, sidebar_style(SidebarRowClass::FormExpanded, &theme).value.fg.unwrap_or_default());
+    assert_eq!(
+        full,
+        sidebar_style(SidebarRowClass::FormExpanded, &theme)
+            .value
+            .fg
+            .unwrap_or_default()
+    );
     assert_ne!(one_line, full);
 }
 
@@ -685,7 +905,10 @@ fn f7_loading_rows_render_as_unavailable() {
     let (y, line) = row_of(&buf, "Core instructions");
     let x = column_of(&line, "Core instructions");
     let unavailable = sidebar_style(SidebarRowClass::Unavailable, &theme);
-    assert_eq!(cell(&buf, x, y).fg, unavailable.label.fg.unwrap_or_default());
+    assert_eq!(
+        cell(&buf, x, y).fg,
+        unavailable.label.fg.unwrap_or_default()
+    );
     assert!(cell(&buf, x, y).modifier.contains(Modifier::DIM));
 }
 
@@ -708,7 +931,11 @@ fn f7_disclosure_can_be_read_and_restored() {
     assert!(screen(&buf).contains("Core instructions"));
 
     let _ = press(&mut agent, KeyCode::End);
-    assert_eq!(cursor(&agent), Some(SectionId::Display.title_line()), "the last visible line");
+    assert_eq!(
+        cursor(&agent),
+        Some(SectionId::Display.title_line()),
+        "the last visible line"
+    );
 }
 
 #[test]
@@ -733,12 +960,16 @@ fn f7_titles_summarise_their_section_while_folded() {
     let categories = xai_grok_shell::sampling::all_categories().len();
     let kinds = MessageKind::settings_kinds().len();
     let buf = draw(&mut agent);
-    assert!(sidebar_row(&buf, "\u{25BE} Context").contains(&format!("{categories}/{categories} ON")));
+    assert!(
+        sidebar_row(&buf, "\u{25BE} Context").contains(&format!("{categories}/{categories} ON"))
+    );
 
     let _ = press(&mut agent, KeyCode::Home);
     let _ = press(&mut agent, KeyCode::Enter);
     let buf = draw(&mut agent);
-    assert!(sidebar_row(&buf, "\u{25B8} Context").contains(&format!("{categories}/{categories} ON")));
+    assert!(
+        sidebar_row(&buf, "\u{25B8} Context").contains(&format!("{categories}/{categories} ON"))
+    );
 
     let full = MessageKind::settings_kinds()
         .iter()

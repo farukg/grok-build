@@ -4594,6 +4594,26 @@ mod overlay_cycle_hint_tests {
         background_work: bool,
         bound: bool,
     ) -> String {
+        let registry = ActionRegistry::with_binding_for_test(
+            crate::actions::ActionId::DashboardOverlayStop,
+            crate::key!(F(12)),
+        );
+        draw_overlay_footer_with_registry(
+            can_cycle,
+            workspace_dashboard_enabled,
+            background_work,
+            bound,
+            &registry,
+        )
+    }
+
+    fn draw_overlay_footer_with_registry(
+        can_cycle: bool,
+        workspace_dashboard_enabled: bool,
+        background_work: bool,
+        bound: bool,
+        reg: &ActionRegistry,
+    ) -> String {
         let mut agent = make_agent();
         if bound {
             agent.session.session_id = Some("overlay-session".into());
@@ -4612,14 +4632,13 @@ mod overlay_cycle_hint_tests {
                 },
             );
         }
-        let reg = ActionRegistry::defaults();
         let area = Rect::new(0, 0, 100, 30);
         let mut buf = Buffer::empty(area);
         let mut scratch = ScratchBuffer::new();
         agent.draw(
             area,
             &mut buf,
-            &reg,
+            reg,
             &mut scratch,
             None,
             false,
@@ -4703,20 +4722,58 @@ mod overlay_cycle_hint_tests {
         );
     }
     #[test]
+    fn default_overlay_ctrl_x_opens_shortcuts_without_advertising_stop() {
+        let registry = ActionRegistry::defaults();
+        for (workspace, busy, bound) in [
+            (true, false, true),
+            (true, false, false),
+            (true, true, true),
+            (false, false, true),
+        ] {
+            let text = draw_overlay_footer_with_registry(false, workspace, busy, bound, &registry);
+            assert!(
+                !text.contains(":stop") && !text.contains(":archive"),
+                "{text}"
+            );
+            assert!(!text.contains(":close"), "{text}");
+            assert!(text.contains(":shortcuts"), "{text}");
+        }
+        let mut agent = make_agent();
+        agent.in_dashboard_overlay = true;
+        let outcome = agent.handle_input(
+            &crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('x'),
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+            &registry,
+        );
+        assert!(matches!(
+            outcome,
+            crate::app::app_view::InputOutcome::Changed
+        ));
+        assert!(matches!(
+            agent.active_modal,
+            Some(crate::views::modal::ActiveModal::ShortcutsHelp { .. })
+        ));
+    }
+    #[test]
     fn settled_workspace_overlay_advertises_archive() {
         let text = draw_overlay_footer(false, true, false, true);
-        assert!(text.contains("Ctrl+x:archive"), "{text}");
-        assert!(!text.contains("Ctrl+x:stop"), "{text}");
+        assert!(text.contains("F12:archive"), "{text}");
+        assert!(!text.contains("F12:stop"), "{text}");
     }
     #[test]
     fn unbound_workspace_overlay_advertises_close() {
         let text = draw_overlay_footer(false, true, false, false);
-        assert!(text.contains("Ctrl+x:close"), "{text}");
-        assert!(!text.contains("Ctrl+x:archive"), "{text}");
+        assert!(text.contains("F12:close"), "{text}");
+        assert!(!text.contains("F12:archive"), "{text}");
     }
     #[test]
-    fn workspace_cheatsheet_uses_the_same_ctrl_x_action_as_the_footer() {
-        let registry = ActionRegistry::defaults();
+    fn workspace_cheatsheet_uses_the_same_bound_action_as_the_footer() {
+        let registry = ActionRegistry::with_binding_for_test(
+            crate::actions::ActionId::DashboardOverlayStop,
+            crate::key!(F(12)),
+        );
         let mut agent = make_agent();
         agent.in_dashboard_overlay = true;
         agent.workspace_dashboard_enabled = true;
@@ -4724,23 +4781,23 @@ mod overlay_cycle_hint_tests {
             .find(crate::actions::ActionId::DashboardOverlayStop)
             .unwrap()
             .default_key;
-        let ctrl_x_label = |agent: &super::AgentView| {
+        let stop_label = |agent: &super::AgentView| {
             agent
                 .current_shortcut_hints(&registry)
                 .into_iter()
                 .find(|hint| hint.keys.contains(&stop_key))
                 .map(|hint| hint.label)
         };
-        assert_eq!(ctrl_x_label(&agent).as_deref(), Some("close"));
+        assert_eq!(stop_label(&agent).as_deref(), Some("close"));
         agent.session.session_id = Some("workspace-session".into());
-        assert_eq!(ctrl_x_label(&agent).as_deref(), Some("archive"));
+        assert_eq!(stop_label(&agent).as_deref(), Some("archive"));
     }
     #[test]
     fn busy_workspace_overlay_and_v1_keep_stop_copy() {
         let busy_v2 = draw_overlay_footer(false, true, true, true);
-        assert!(busy_v2.contains("Ctrl+x:stop"), "{busy_v2}");
+        assert!(busy_v2.contains("F12:stop"), "{busy_v2}");
         let settled_v1 = draw_overlay_footer(false, false, false, true);
-        assert!(settled_v1.contains("Ctrl+x:stop"), "{settled_v1}");
+        assert!(settled_v1.contains("F12:stop"), "{settled_v1}");
     }
 }
 #[cfg(test)]

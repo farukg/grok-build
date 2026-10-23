@@ -109,8 +109,15 @@ fn healthy_report() -> DiagnosticReport {
             },
             color: ColorFacts {
                 level: RuntimeFact::Available(ColorLevel::TrueColor),
-                available_themes: ThemeKind::ALL.to_vec(),
-                total_themes: ThemeKind::ALL.len(),
+                available_themes: vec![
+                    ThemeKind::GrokNight,
+                    ThemeKind::GrokDay,
+                    ThemeKind::TokyoNight,
+                    ThemeKind::RosePineMoon,
+                    ThemeKind::OscuraMidnight,
+                    ThemeKind::ColorDna,
+                ],
+                total_themes: 6,
             },
             keyboard: None,
             newline: None,
@@ -148,7 +155,7 @@ fn mixed_report() -> DiagnosticReport {
             ThemeKind::GrokDay,
             ThemeKind::Terminal,
         ],
-        total_themes: ThemeKind::ALL.len(),
+        total_themes: 6,
     };
     report.facts.keyboard = Some(KeyboardFact {
         modifier_delivery: ModifierDelivery::new_for_test(
@@ -442,6 +449,25 @@ fn standalone_runtime_and_tmux_are_unavailable_without_false_wezterm_finding() {
             .iter()
             .filter(|note| note.probe.starts_with("tmux."))
             .all(|note| !crate::diagnostics::probe_requires_live_tui(note))
+    );
+}
+
+#[test]
+fn doctor_theme_registry_names_are_complete_and_ordered() {
+    assert_eq!(
+        ThemeKind::ALL
+            .iter()
+            .map(|kind| kind.display_name())
+            .collect::<Vec<_>>(),
+        vec![
+            "groknight",
+            "grokday",
+            "tokyonight",
+            "rosepine-moon",
+            "oscura-midnight",
+            "color-dna",
+            "terminal",
+        ]
     );
 }
 

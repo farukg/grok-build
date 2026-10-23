@@ -4896,17 +4896,18 @@ fn focus_change_disarms_delete_confirm() {
     assert!(!state.list_focused);
 }
 
-/// An auto-repeat (held) Ctrl+X must not drive the destructive
-/// arm→confirm: only discrete presses count, so holding the key can't
-/// arm and immediately confirm a delete.
+/// A held stop binding must not drive the destructive arm→confirm path.
 #[test]
-fn ctrl_x_key_repeat_is_ignored() {
+fn bound_stop_key_repeat_is_ignored() {
     let mut state = DashboardState::new();
-    let reg = crate::actions::ActionRegistry::defaults();
+    let reg = crate::actions::ActionRegistry::with_binding_for_test(
+        crate::actions::ActionId::DashboardStop,
+        crate::key!(F(12)),
+    );
     state.focus_row(DashboardRowId::TopLevel(AgentId(0)));
     let repeat = Event::Key(crossterm::event::KeyEvent {
-        code: KeyCode::Char('x'),
-        modifiers: KeyModifiers::CONTROL,
+        code: KeyCode::F(12),
+        modifiers: KeyModifiers::NONE,
         kind: crossterm::event::KeyEventKind::Repeat,
         state: crossterm::event::KeyEventState::NONE,
     });
@@ -4914,14 +4915,11 @@ fn ctrl_x_key_repeat_is_ignored() {
         state.handle_input(&repeat, &reg),
         InputOutcome::Unchanged
     ));
-    let press = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    assert!(
-        !matches!(
-            state.handle_input(&press, &reg),
-            InputOutcome::Action(Action::DashboardStop)
-        ),
-        "Ctrl+X must not stop a dashboard row",
-    );
+    let press = Event::Key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE));
+    assert!(matches!(
+        state.handle_input(&press, &reg),
+        InputOutcome::Action(Action::DashboardStop)
+    ));
 }
 
 /// An empty Enter within a second of a send is an echo of that send (key auto-repeat, a bouncing key switch, a double tap).

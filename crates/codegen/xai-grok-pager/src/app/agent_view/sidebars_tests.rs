@@ -68,6 +68,10 @@ fn the_side_columns_follow_which_panels_are_open() {
     assert!(column_of(&both, "Timeline").is_some());
 
     press(&mut agent, KeyCode::F(6));
+    let refocused = draw(&mut agent);
+    assert!(column_of(&refocused, "Timeline").is_some());
+    assert!(column_of(&refocused, "Context sent").is_some());
+    press(&mut agent, KeyCode::F(6));
     let context_only = draw(&mut agent);
     assert_eq!(column_of(&context_only, "Timeline"), None);
     let context_x = column_of(&context_only, "Context sent").expect("F7 header");

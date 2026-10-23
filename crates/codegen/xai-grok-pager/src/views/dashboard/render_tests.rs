@@ -1,4 +1,5 @@
 use super::*;
+use crate::key;
 use crate::views::dashboard::state::{ActionsFocus, DashboardState};
 use crate::views::dashboard::test_support::{buf_to_text, header_test_row};
 use crate::views::dashboard::{DashboardRowId, RowBadge};
@@ -249,7 +250,29 @@ fn workspace_dashboard_renders_snapshot_member_with_archive_control() {
         !state.row_delete_rects.is_empty(),
         "workspace-only rows must expose v2's history-preserving archive action"
     );
-    assert!(content.contains("archive"), "{content}");
+    assert!(
+        !content.contains(":archive"),
+        "unbound action has no footer chip: {content}"
+    );
+    assert!(matches!(
+        state.selected_stop_action,
+        Some(DashboardStopAction::Archive)
+    ));
+    let (_, rect) = state.row_delete_rects[0].clone();
+    let click = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: rect.x,
+        row: rect.y,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+    assert!(matches!(
+        state.handle_input(&click, &registry),
+        crate::app::app_view::InputOutcome::Changed
+    ));
+    assert!(matches!(
+        state.handle_input(&click, &registry),
+        crate::app::app_view::InputOutcome::Action(crate::app::actions::Action::DashboardDelete)
+    ));
 }
 
 /// The peek box replaces the dispatch box, so a toast raised by a row action must paint on the peek box instead.
@@ -3615,9 +3638,12 @@ fn render_footer_says_send_not_create_when_new_agent_holds_a_draft() {
 }
 
 #[test]
-fn workspace_footer_uses_selected_stop_action_for_ctrl_x_copy() {
+fn workspace_footer_uses_selected_stop_action_for_bound_key_copy() {
     let theme = Theme::current();
-    let registry = crate::actions::ActionRegistry::defaults();
+    let registry = crate::actions::ActionRegistry::with_binding_for_test(
+        crate::actions::ActionId::DashboardStop,
+        key!(F(12)),
+    );
     let render = |action| {
         let mut buf = Buffer::empty(Rect::new(0, 0, 200, 1));
         let mut state = DashboardState::new();
@@ -3813,7 +3839,10 @@ fn render_footer_peek_mode_shows_peek_hints() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 200, 1));
     let theme = Theme::current();
     let state = DashboardState::new();
-    let registry = crate::actions::ActionRegistry::defaults();
+    let registry = crate::actions::ActionRegistry::with_binding_for_test(
+        crate::actions::ActionId::DashboardStop,
+        key!(F(12)),
+    );
     render_footer(
         &mut buf,
         Rect::new(0, 0, 200, 1),
@@ -3831,7 +3860,7 @@ fn render_footer_peek_mode_shows_peek_hints() {
     );
     assert!(
         content.contains(":delete"),
-        "peek-mode footer must keep the Ctrl+x delete chip, got: {content:?}",
+        "peek-mode footer must keep the F12 delete chip, got: {content:?}",
     );
     // The nav chip is dropped to save bottom-bar space.
     assert!(
@@ -4139,7 +4168,10 @@ fn render_footer_row_selected_empty_prompt_shows_enter_open() {
 #[test]
 fn render_footer_inactive_row_shows_delete() {
     let theme = Theme::current();
-    let registry = crate::actions::ActionRegistry::defaults();
+    let registry = crate::actions::ActionRegistry::with_binding_for_test(
+        crate::actions::ActionId::DashboardStop,
+        key!(F(12)),
+    );
 
     // Input focused, row selected.
     let mut state = DashboardState::new();
@@ -4197,9 +4229,57 @@ fn render_footer_inactive_row_shows_delete() {
 }
 
 #[test]
-fn render_footer_stop_label_follows_state() {
+fn default_dashboard_footer_omits_unbound_stop_in_list_and_peek() {
     let theme = Theme::current();
     let registry = crate::actions::ActionRegistry::defaults();
+    for row_state in [RowState::Working, RowState::NeedsInput, RowState::Idle] {
+        for peek in [false, true] {
+            let mut state = DashboardState::new();
+            state.focus_row(DashboardRowId::TopLevel(crate::app::agent::AgentId(0)));
+            let mut buf = Buffer::empty(Rect::new(0, 0, 200, 1));
+            render_footer(
+                &mut buf,
+                Rect::new(0, 0, 200, 1),
+                &theme,
+                &state,
+                &registry,
+                Some(row_state),
+                peek,
+                None,
+            );
+            let text = buf_to_text(&buf);
+            assert!(
+                text.contains(":open") && text.contains(":shortcuts"),
+                "{text}"
+            );
+            assert!(
+                !text.contains(":stop") && !text.contains(":delete"),
+                "{text}"
+            );
+            let outcome = state.handle_input(
+                &crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('x'),
+                    crossterm::event::KeyModifiers::CONTROL,
+                )),
+                &registry,
+            );
+            assert!(matches!(
+                outcome,
+                crate::app::app_view::InputOutcome::Action(
+                    crate::app::actions::Action::DashboardOpenShortcutsHelp
+                )
+            ));
+        }
+    }
+}
+
+#[test]
+fn render_footer_stop_label_follows_state() {
+    let theme = Theme::current();
+    let registry = crate::actions::ActionRegistry::with_binding_for_test(
+        crate::actions::ActionId::DashboardStop,
+        key!(F(12)),
+    );
     let mut state = DashboardState::new();
     state.focus_row(DashboardRowId::TopLevel(crate::app::agent::AgentId(0)));
 
@@ -4218,10 +4298,10 @@ fn render_footer_stop_label_follows_state() {
     let working = buf_to_text(&buf);
     assert!(
         working.contains(":stop") && !working.contains(":close"),
-        "Working agent footer must label Ctrl+x as `stop`, got: {working:?}",
+        "Working agent footer must label F12 as `stop`, got: {working:?}",
     );
 
-    // NeedsInput: `stop` (a paused-but-running turn; first Ctrl+x cancels, mirroring `dispatch_dashboard_stop`)
+    // NeedsInput: `stop` (a paused-but-running turn; first F12 cancels, mirroring `dispatch_dashboard_stop`)
     let mut buf_ni = Buffer::empty(Rect::new(0, 0, 200, 1));
     render_footer(
         &mut buf_ni,
@@ -4236,7 +4316,7 @@ fn render_footer_stop_label_follows_state() {
     let needs_input = buf_to_text(&buf_ni);
     assert!(
         needs_input.contains(":stop") && !needs_input.contains(":close"),
-        "NeedsInput agent footer must label Ctrl+x as `stop`, got: {needs_input:?}",
+        "NeedsInput agent footer must label F12 as `stop`, got: {needs_input:?}",
     );
 
     // Idle: `delete`
@@ -4254,7 +4334,7 @@ fn render_footer_stop_label_follows_state() {
     let idle = buf_to_text(&buf2);
     assert!(
         idle.contains(":delete") && !idle.contains(":stop"),
-        "Idle agent footer must label Ctrl+x as `delete`, got: {idle:?}",
+        "Idle agent footer must label F12 as `delete`, got: {idle:?}",
     );
 }
 

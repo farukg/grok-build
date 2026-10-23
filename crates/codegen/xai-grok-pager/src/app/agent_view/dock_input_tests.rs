@@ -1302,7 +1302,7 @@ fn keyboard_collapse_keeps_dock_focus_on_the_header() {
     assert!(agent.dock_snapshot().focused);
     assert_eq!(
         painted_header_bg(&agent, crate::views::dock::Section::Tasks),
-        Some(crate::theme::Theme::tokyonight().bg_highlight)
+        Some(crate::theme::Theme::tokyonight().bg_visual)
     );
 }
 

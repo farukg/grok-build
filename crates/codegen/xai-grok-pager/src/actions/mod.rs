@@ -313,6 +313,18 @@ impl ActionRegistry {
         turn_running && has_payload
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_binding_for_test(id: ActionId, key: KeyShortcut) -> Self {
+        let mut actions = Self::defaults().all().to_vec();
+        let def = actions
+            .iter_mut()
+            .find(|def| def.id == id)
+            .expect("registered action");
+        def.default_key = key;
+        def.alt_keys.clear();
+        Self::new(actions)
+    }
+
     /// Registry pinned to non-VS Code family bindings (host-independent tests).
     #[cfg(test)]
     pub fn non_vscode_for_test() -> Self {

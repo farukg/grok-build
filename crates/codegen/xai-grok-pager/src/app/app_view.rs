@@ -2699,7 +2699,7 @@ impl AppView {
                     match self.agents.get_mut(&agent_id) {
                         Some(agent) => {
                             let workflows_before = agent.show_workflows;
-                            let outcome = agent.handle_input(ev, &self.registry);
+                            let outcome = agent.handle_input_with_prompt_paging(ev, &self.registry);
                             let workflows_opened = !workflows_before && agent.show_workflows;
                             if let Event::Key(key) = ev {
                                 agent.record_input(key, &outcome);
