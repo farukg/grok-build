@@ -265,43 +265,64 @@ impl ReadToolCallBlock {
         let text_style = theme.primary();
 
         let syntect = get_syntect();
-        let body: Vec<Vec<Span<'static>>> = if holds_terminal_output(&self.path, content) {
-            render_terminal_lines(content, text_style)
+        let (total_rows, body) = if holds_terminal_output(&self.path, content) {
+            let rendered = render_terminal_lines(content, text_style);
+            let total_rows = rendered.len();
+            let ranges = visible_row_ranges(total_rows, truncate);
+            let rows: Vec<(usize, Vec<Span<'static>>)> = rendered
                 .into_iter()
-                .map(|rendered| rendered.line.spans)
-                .collect()
+                .enumerate()
+                .filter(|(i, _)| ranges.iter().any(|range| range.contains(i)))
+                .map(|(i, rendered)| (i, rendered.line.spans))
+                .collect();
+            (total_rows, rows)
         } else {
-            let mut highlighter = syntect.highlight_lines_by_file_path(Path::new(&self.path));
-            content
-                .lines()
-                .map(|text| {
-                    crate::syntax::highlight_line(text, &mut highlighter, syntect, text_style)
-                })
-                .collect()
+            let source: Vec<&str> = content.lines().collect();
+            let ranges = if source.len() > PARTIAL_HIGHLIGHT_MIN_ROWS {
+                visible_row_ranges(source.len(), truncate)
+            } else {
+                vec![0..source.len()]
+            };
+            let mut rows = Vec::new();
+            for range in &ranges {
+                let mut highlighter = syntect.highlight_lines_by_file_path(Path::new(&self.path));
+                let warmup_start = range.start.saturating_sub(TAIL_WARMUP_LINES);
+                for (i, text) in source.iter().enumerate().take(range.end).skip(warmup_start) {
+                    let spans =
+                        crate::syntax::highlight_line(text, &mut highlighter, syntect, text_style);
+                    if i >= range.start {
+                        rows.push((i, spans));
+                    }
+                }
+            }
+            (source.len(), rows)
         };
 
-        let gutter_width = digit_count(base_line + body.len().saturating_sub(1));
+        let gutter_width = digit_count(base_line + total_rows.saturating_sub(1));
         let content_width = width.saturating_sub(gutter_width + 2).max(20);
 
-        let styled_lines: Vec<Line<'static>> = body
+        let styled_rows: Vec<(usize, Line<'static>)> = body
             .into_iter()
-            .enumerate()
             .map(|(i, body_spans)| {
                 let gutter = format!("{:>w$}  ", base_line + i, w = gutter_width);
                 let mut spans = vec![Span::styled(gutter, gutter_style)];
                 spans.extend(body_spans);
-                Line::from(spans)
+                (i, Line::from(spans))
             })
             .collect();
 
-        let (wrapped, joiners) = word_wrap_lines_with_joiners(styled_lines, content_width);
-        let total = wrapped.len();
-
         let mut lines = Vec::new();
+
+        let (wrapped, joiners) = word_wrap_lines_with_joiners(
+            styled_rows.into_iter().map(|(_, line)| line).collect(),
+            content_width,
+        );
+        let total = wrapped.len();
 
         if let Some((first, last)) = truncate {
             let threshold = first + last;
-            if total > threshold {
+            // A partially styled body holds only head and tail rows, so more source rows than the budget means a hidden middle even when no row wraps.
+            if total > threshold || total_rows > threshold {
                 for (wrapped_line, joiner) in wrapped.iter().zip(joiners.iter()).take(first) {
                     lines.push(
                         BlockLine::styled(wrapped_line.clone())
@@ -360,6 +381,26 @@ fn holds_terminal_output(path: &str, content: &str) -> bool {
         }
     };
     capture_type && looks_like_terminal_output(content)
+}
+
+/// Source rows highlighted ahead of a truncated tail so open strings and block comments reach it in the right state.
+const TAIL_WARMUP_LINES: usize = 64;
+
+/// Source files up to this many rows are highlighted whole, so the preview tail is exact. Larger files highlight only the preview rows.
+const PARTIAL_HIGHLIGHT_MIN_ROWS: usize = 400;
+
+/// Row ranges a read preview shows: the head and tail when truncation hides the middle, otherwise every row.
+/// More than `first + last` rows always wrap to more than that many lines, so the hidden middle never reaches the screen.
+fn visible_row_ranges(
+    total_rows: usize,
+    truncate: Option<(usize, usize)>,
+) -> Vec<std::ops::Range<usize>> {
+    match truncate {
+        Some((first, last)) if total_rows > first + last => {
+            vec![0..first, total_rows - last..total_rows]
+        }
+        _ => vec![0..total_rows],
+    }
 }
 
 /// Count decimal digits in a number (for gutter width).
@@ -550,6 +591,44 @@ mod tests {
         assert!(holds_terminal_output("capture", "\x1b[31mred\x1b[0m"));
         assert!(!holds_terminal_output("main.rs", "let s = \"\x1b[31m\";"));
         assert!(!holds_terminal_output("call.log", "plain text\n"));
+    }
+
+    #[test]
+    fn visible_rows_cover_head_and_tail_only_when_truncation_hides_the_middle() {
+        assert_eq!(visible_row_ranges(100, Some((5, 3))), vec![0..5, 97..100]);
+        assert_eq!(visible_row_ranges(8, Some((5, 3))), vec![0..8]);
+        assert_eq!(visible_row_ranges(100, None), vec![0..100]);
+    }
+
+    #[test]
+    fn large_truncated_read_shows_head_tail_and_hides_the_middle() {
+        let content = (1..=2000)
+            .map(|i| format!("let value_{i} = {i};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let block = ReadToolCallBlock::new("big.rs")
+            .with_line_range(LineRange::new(1, 2000))
+            .with_content(content, 2000);
+        let ctx = BlockContext {
+            mode: DisplayMode::Truncated,
+            ..make_ctx()
+        };
+        let text: Vec<String> = block
+            .output(&ctx)
+            .lines
+            .iter()
+            .map(|l| l.content.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        let joined = text.join("\n");
+        assert!(joined.contains("value_1 = 1;"), "{joined}");
+        assert!(joined.contains("value_5 = 5;"), "{joined}");
+        assert!(!joined.contains("value_6 = 6;"), "{joined}");
+        assert!(!joined.contains("value_1000 = 1000;"), "{joined}");
+        assert!(joined.contains("value_1998 = 1998;"), "{joined}");
+        assert!(joined.contains("value_2000 = 2000;"), "{joined}");
+        assert!(!joined.contains("value_1997 = 1997;"), "{joined}");
+        assert!(joined.contains('\u{2026}'), "{joined}");
+        assert!(joined.contains("2000"), "gutter shows absolute numbers");
     }
 
     #[test]
