@@ -190,7 +190,6 @@ pub fn start_lsp_backend(
 }
 
 impl LspManager {
-
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }

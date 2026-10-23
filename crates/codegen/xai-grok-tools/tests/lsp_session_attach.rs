@@ -1,7 +1,7 @@
 //! Loads LSP config from disk and asks the server this test binary starts.
 
 use xai_grok_tools::implementations::lsp::{
-    config::load_servers, start_lsp_backend, LspBackend, LspOperation, LspToolInput,
+    LspBackend, LspOperation, LspToolInput, config::load_servers, start_lsp_backend,
 };
 
 #[tokio::test]
