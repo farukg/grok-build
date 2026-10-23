@@ -379,10 +379,9 @@ impl ReadToolCallBlock {
 
         let mut lines = Vec::new();
 
-        let (wrapped, joiners) = word_wrap_lines_with_joiners(
-            styled_rows.into_iter().map(|(_, line)| line).collect(),
-            content_width,
-        );
+        let body_lines: Vec<Line<'static>> =
+            styled_rows.into_iter().map(|(_, line)| line).collect();
+        let (wrapped, joiners) = word_wrap_lines_with_joiners(body_lines, content_width);
         let total = wrapped.len();
 
         if let Some((first, last)) = truncate {
