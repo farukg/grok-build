@@ -41,7 +41,7 @@ The pre-fold history (all commit shas cited below as "pre-fold") is preserved in
 | M5 remove turns / tool exchanges from the model context via the timeline, persisted across replay | f3, f4 |
 | W2 subagent view = normal session view (child sessions are top-level views, takeover modal removed) | f3, f4 · `streams/w2-subagent-session-view.md` |
 | W1-S human prompts reach child sessions by id, cancel by child id, `childSessions: "firstClass"` | f3 · `streams/w1s-child-sessions-shell.md` |
-| W1-H a human prompt holds a running subagent's answer; `[deliver]` / F5 hands the last turn to the caller | f3, f4 · `streams/w1h-hold-deliver.md` |
+| W1-H automatic completion by default; explicit child header / F5 manual toggle and caller dock warning (current author-only update awaits CI) | f3, f4 · `streams/w1h-hold-deliver.md` |
 | W1-S/W3 a finished or restart-lost child continues like a resume (`_meta.childResume`, pager stamps `_meta.childOf`) | f3, f4 |
 | Fix: by-id handlers (set_model, compact, mode …) resolve a running child session | f3 |
 | F1-core A1/A2/B1: typed origins, request projection under `ContextPolicy`, `x.ai/session/context_policy` get/set persisted, compaction summarizes what the policy sends | f2, f3 · `streams/f1-context-provenance.md` |
@@ -90,7 +90,7 @@ fetch. Upstream `xai-org/grok-build` is `origin`; the fork base is `2bdd1d6a`.
 
 ## Context reporting and tool-call diagnosis
 
-F7 currently reports zero tool-definition tokens because its usage query counts conversation history only. Existing session prefixes/catalogs can also put workspace rules under Environment and skills under SystemReminder, leaving their intended rows at zero. Findings, acceptance criteria and open fixes are maintained in `streams/f1-context-provenance.md` under “Verified defects and TODO”.
+F7 function-tool schema accounting is included in the installed `0d4dd3b2` artifact (GitHub build `39768893207`); hosted-tool accounting and fresh/resumed/child UI acceptance remain open. Existing session prefixes/catalogs can also put workspace rules under Environment and skills under SystemReminder, leaving their intended rows at zero. The gateway now exposes GPT-6/6.1 through native Responses Lite. Grok's native stream reducer still needs the `22fd28fb` artifact to assemble `output_item.done` items when terminal `output` is empty; otherwise successful text turns repeat. Findings and remaining acceptance criteria are maintained in `streams/f1-context-provenance.md` under “Verified defects and TODO”.
 
 Intermittent model claims of missing tools are reproduced independently of those display errors: the gateway's outbound capture contains all 29 declarations, and identical fresh-session payloads can produce either a denial or a successful call. A causal regression in Grok CLI or the gateway has not yet been isolated.
 
@@ -99,7 +99,7 @@ Intermittent model claims of missing tools are reproduced independently of those
 | Stream | State | Stream file |
 |---|---|---|
 | W2 subagent view = normal session view | done — folded (f3, f4) | `streams/w2-subagent-session-view.md` |
-| W1-H hold a steered subagent until `deliver` | done — folded (f3, f4); open low-prio: ↑ history in child views | `streams/w1h-hold-deliver.md` |
+| W1-H explicit automatic/manual completion delivery | author-only update; authoritative completion/caller dock warning integrated; Lead CI pending | `streams/w1h-hold-deliver.md` |
 | W1-S shell: children are first-class ACP sessions | done — folded (f3); open questions in stream file | `streams/w1s-child-sessions-shell.md` |
 | W3 pager consumes child sessions | on `main` (f3, f4); fork and roundtrip pinned by tests; open: set_model/compact/mode on a finished child (accepted) | `streams/w3-pager-child-sessions.md` |
 | M11 agent + human control over subagents | B1+B2+B3 and list/outcome visibility on `main` (f2, f6); open: `SubagentFinished` carries `interruption`, pager pause/cause display | `streams/m11-subagent-control.md` |

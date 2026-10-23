@@ -1,52 +1,66 @@
-# W1-H — hold a steered subagent until `deliver`
+# W1-H — explicit subagent completion delivery
 
-Branch: `grb/w1h`. **Landed on `main` as `71a6fae` (shell) and `6fa71ae` (pager).**
+## Current policy
 
-## Goal (Faruk, 2026-09-28)
-Subagents keep their behavior; only the view looks like a main session view. A human can prompt
-a running subagent to steer it before its final answer. From the first human prompt on, the
-answer is held back from the caller; the human steers as long as needed and then presses
-`deliver`, which hands the latest answer to the caller (the agent that started the subagent).
-Labels stay short (`deliver`, not a sentence).
+Running attempts default to automatic completion delivery. Opening, leaving, observing or
+prompting a child view does not change its delivery policy. Only the explicit header button
+or F5 switches automatic/manual delivery. The policy lasts for the running attempt; it is
+not a persisted global preference. Finished children cannot change delivery mode.
 
-## State
-Shell:
-- `SubagentDelivery::{OnTurnEnd, Held}` (S/extensions/notification.rs) is the one state; a
-  `watch` channel per running child (S/agent/subagent/handle_request.rs) feeds the receipt drain,
-  the progress publisher and the registry entry (`RunningChild.delivery`).
-- A human prompt admitted to a running child sets `Held` after its receipt slot is reserved
-  (S/agent/mvp_agent/child_prompt.rs).
-- The receipt drain (S/agent/subagent/prompt_turn_receipt.rs) keeps its stream open while a
-  completed run is held, so later human prompts still land in the same run; only `deliver` or a
-  cancel lets the settlement finish. The last settled turn is the caller's answer.
-- `x.ai/subagent/deliver { sessionId: <child> }` → `{kind: delivered | not_held | not_running}`
-  (S/extensions/subagent_deliver.rs).
-- `SubagentProgress.delivery` (serde default `onTurnEnd`, old sessions load unchanged); the
-  publisher emits immediately on a change and in its 8 s heartbeat, so a reconnecting client sees
-  a held child again. No new polling.
+Manual delivery holds the final answer for the caller. Returning to automatic delivery
+releases an already pending answer through the existing receipt settlement. This control
+is completion delivery, not human takeover or an instruction to cancel active tools.
 
-Pager:
-- `SubagentAttemptInfo.delivery` from progress; `SubagentInfo::awaits_delivery()` (running and
-  held); `SessionViews::child_info(id)`.
-- Child view header shows `[deliver]` (clickable) while held; `F5` (action `deliver`,
-  cheatsheet category Session) does the same. Toast only when nothing was released.
+## Owners
 
-Tests: drain holds after the turn and releases on deliver (prompt_turn_receipt_tests.rs); shell
-prompt → held → `x.ai/subagent/deliver` → released, finished child → `not_running`
-(child_prompt_tests.rs); pager header offers `[deliver]` as a click target (header_tests.rs);
-F5 releases only a held child (acp_handler/tests/subagent_delivery.rs).
+- Shell `extensions/notification.rs`: `SubagentDelivery::{OnTurnEnd, Held}`.
+- Shell `agent/mvp_agent/child_prompt.rs`: prompt admission preserves delivery; explicit
+  delivery requests update the running child's watch channel, refusing terminal children.
+- Shell `extensions/subagent_deliver.rs`: `x.ai/subagent/deliver` accepts `sessionId` and
+  additive `delivery` (`onTurnEnd` or `held`). Omission retains the older release operation.
+  Outcomes are `delivered`, `not_held`, `held`, `not_running`.
+- Shell `agent/subagent/prompt_turn_receipt.rs`: held completed settlement remains open for
+  steering receipts until automatic delivery or cancellation. The latest receipt settles
+  the caller's answer.
+- Shell progress publisher observes the same delivery channel; progress carries the mode.
+- Pager `app/dispatch/turn.rs`: explicit requested target, no optimistic mode mutation.
+  Failed RPCs leave the reported mode unchanged and can be retried.
+- Pager `app/agent_view/render.rs`: clickable `[delivery:auto F5:manual]` or
+  `[delivery:manual F5:auto]` for running children; no toggle on finished children.
+- Pager `app/agent_view/panes.rs::dock_subagent_rows` and `views/dock/mod.rs::paint_row`:
+  caller dock displays a leading bold warning-colour manual-delivery notice with the
+  open-child/F5 recovery action. It derives from the same attempt mode as the child header.
+  Manual mode is also marked in shared subagent labels.
 
-## Open questions
-1. Key: `F5` (free everywhere). `F9` stays unbound on purpose (an upstream test pins it after the
-   old mouse toggle); `Ctrl+Y` is yank in the prompt. Change if you prefer another.
-2. While held, the caller sees the subagent as still running. A foreground caller simply keeps
-   waiting (possibly no need to pause the main agent any more); a background caller continues
-   and gets the answer on `deliver`.
+## Verification and limits
 
-Verified: pager lib 10119 passed (only the four known doctor failures); shell lib 7076 passed
-(the same 10 environment failures as `main`); clippy clean on the touched lines;
-`cargo check -p xai-grok-pager-bin` builds.
+Author-only changes await Lead CI. Regression tests cover explicit target dispatch, failed
+RPC retry, child header click targets, navigation preserving both modes, terminal refusal,
+and dock warning reset. Shell receipt-settlement tests remain the owner of caller wake-up.
 
-## Next steps
-1. Low priority: ↑ prompt history in the subagent view (today `prompt_history` skips subagent
-   sessions, S/session/acp_session_impl/prompt_queue.rs ~L166).
+Progress carries independent, defaulted observations: `completion` is `working`, `settling`
+(initial turn ended, admitted receipts pending), or `pending` (all receipts settled);
+`caller` is `notWaiting` or `waiting`, derived from coordinator foreground replies and
+blocking query waiters. Pager preserves them across duplicate spawn reconciliation, resets
+them on terminal/new attempts, and rejects late terminal progress through the lifecycle gate.
+The dock always marks running manual children. With `pending` + `waiting` it leads with
+`MANUAL — CALLER BLOCKED: answer ready; open child, F5: auto`; working/settling children
+instead show their actual phase and whether the caller waits. No activity text inference or
+second delivery flag is used. Handler, lifecycle, navigation and paint regressions are authored;
+compiler/runtime verification remains pending CI.
+
+Live steer/queue admission is separate from final completion delivery. Shell routes eligible
+automatic child text prompts into the existing coordinator Steer safe-point path; manual
+prompts retain the resident Queue path. Full live-tools integration remains unverified in the
+Shell unit; completion hold was not the ingress delay's root cause.
+
+Caller-completion continuation (author-only): subagent results no longer inherit ordinary
+background-task goal suppression. Runner injection, idle digest, active safe-point projection
+and per-tool reminders now retain success/error information during goal execution. The
+subagent-only goal gate was removed; bash/workflow goal policy, explicit stop/cancel, AutoWake
+configuration and Held settlement were not changed. The actor regression covers successful
+and failed active completions with and without a goal; the idle goal digest contains the real
+failure text and a successful sibling. These are authored actor/reminder regressions, not a
+real child-to-parent sampler or restart acceptance result. Attempt-keyed durable admission,
+terminal-result recovery and process-crash tests remain open. Decision:
+`context-modules.d/500_work.d/epics.d/product.d/grok-build/001-subagent-results-during-goals.adr.md`.
