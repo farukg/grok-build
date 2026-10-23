@@ -1,4 +1,5 @@
 use super::*;
+use crate::key;
 use crate::views::dashboard::state::{ActionsFocus, DashboardState};
 use crate::views::dashboard::test_support::{buf_to_text, header_test_row};
 use crate::views::dashboard::{DashboardRowId, RowBadge};
