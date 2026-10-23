@@ -286,7 +286,11 @@ pub enum PersistenceMsg {
             io::Result<Vec<super::delivery_receiver::DeliveryReceipt>>,
         >,
     },
-    GetCompletionReceipts { respond_to: tokio::sync::oneshot::Sender<io::Result<Vec<xai_chat_state::CompletionReceipt>>> },
+    GetCompletionState {
+        respond_to: tokio::sync::oneshot::Sender<
+            io::Result<super::completion_delivery::CompletionDeliveryState>,
+        >,
+    },
     RecoverSubagentCompletions {
         respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>>,
     },
@@ -2422,8 +2426,8 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::GetCompletionReceipts { respond_to } => {
-                    let result = self.storage.read_completion_receipts(&self.info).await;
+                PersistenceMsg::GetCompletionState { respond_to } => {
+                    let result = self.storage.read_completion_state(&self.info).await;
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::RecoverSubagentCompletions { respond_to } => {

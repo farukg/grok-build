@@ -647,6 +647,21 @@ impl SessionActor {
         }
     }
     async fn drain_between_turn_subagent_completions(&self, _commit_ids: &[String]) {
+        if self
+            .state
+            .lock()
+            .await
+            .running_task
+            .as_ref()
+            .is_some_and(|task| {
+                matches!(
+                    task.input_origin.as_prompt_origin(),
+                    crate::session::PromptOrigin::SubagentCompleted { .. }
+                )
+            })
+        {
+            return;
+        }
         let prompt_id = self.current_prompt_id.lock().ok().and_then(|id| id.clone());
         if let Some(prompt_id) = prompt_id {
             self.drain_buffered_subagent_completions(&prompt_id).await;

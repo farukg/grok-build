@@ -102,7 +102,18 @@ type WakeRun = (
 );
 
 #[derive(Clone, Copy, Default)]
+enum ProducerCommitBehavior {
+    #[default]
+    Commit,
+    Reject {
+        reason: &'static str,
+    },
+    DropAcknowledgement,
+}
+
+#[derive(Clone, Copy, Default)]
 pub(in crate::implementations::grok_build::task::coordinator) struct RunnerBehavior {
+    producer_commit: ProducerCommitBehavior,
     pub(in crate::implementations::grok_build::task::coordinator) wait_before_start: bool,
     pub(in crate::implementations::grok_build::task::coordinator) fail_wake_before_start: bool,
     pub(in crate::implementations::grok_build::task::coordinator) reject_wake_after_deferred_start:
@@ -365,12 +376,36 @@ impl ChildRunner for TestRunner {
 
     fn on_completed(
         &self,
-        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<
+            '_,
+            Self::CompletionData,
+        >,
+        terminal_published: Box<
+            dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult)
+                + Send,
+        >,
     ) {
-        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+        match self.behavior.producer_commit {
+            ProducerCommitBehavior::Commit => terminal_published(
+                crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed,
+            ),
+            ProducerCommitBehavior::Reject { reason } => terminal_published(
+                crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Rejected { error: reason.to_owned() },
+            ),
+            // Dropping the callback is the producer dying between finishing and its durable
+            // acknowledgement; the coordinator's publication guard must resolve it as rejected.
+            ProducerCommitBehavior::DropAcknowledgement => drop(terminal_published),
+        }
     }
-    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+    fn on_published(
+        &self,
+        completion: ChildCompletion<Self::CompletionData>,
+        published: Box<
+            dyn FnOnce(
+                    crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult,
+                ) + Send,
+        >,
+    ) {
         let _ = self.completions.send(completion.disposition);
         if self.behavior.hold_terminal_publication {
             let _ = self.terminal_publications.send(Box::new(move || published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published)));
@@ -824,7 +859,11 @@ async fn foreground_deadline_hands_off_without_stopping_child() {
         }
     );
 
-    let running = harness.backend.query("slow", false, None, None).await.unwrap();
+    let running = harness
+        .backend
+        .query("slow", false, None, None)
+        .await
+        .unwrap();
     assert!(running.is_running());
     let _ = harness.finish.send(());
     let disposition = harness.completions.recv().await.unwrap();
@@ -918,7 +957,11 @@ async fn surviving_waiter_suppresses_after_peer_times_out() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     let spawn = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("two-waiters", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("two-waiters", true), None, None)
+                .await
+        }
     });
     tokio::task::yield_now().await;
     let short = tokio::spawn({
@@ -958,12 +1001,20 @@ async fn dropped_waiter_does_not_suppress_completion() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     let spawn = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("dropped-wait", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("dropped-wait", true), None, None)
+                .await
+        }
     });
     tokio::task::yield_now().await;
     let wait = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.query("dropped-wait", true, Some(60_000), None).await }
+        async move {
+            backend
+                .query("dropped-wait", true, Some(60_000), None)
+                .await
+        }
     });
     tokio::task::yield_now().await;
     wait.abort();
@@ -983,12 +1034,20 @@ async fn pending_cancel_delivers_waiter_once() {
     let mut harness = harness(true, std::time::Duration::from_secs(60));
     let spawn = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("pending-cancel", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("pending-cancel", true), None, None)
+                .await
+        }
     });
     tokio::task::yield_now().await;
     let wait = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.query("pending-cancel", true, Some(60_000), None).await }
+        async move {
+            backend
+                .query("pending-cancel", true, Some(60_000), None)
+                .await
+        }
     });
     tokio::task::yield_now().await;
     assert!(matches!(
@@ -1027,7 +1086,11 @@ async fn caller_drop_during_initialization_does_not_drop_owned_run() {
     spawn.abort();
     let _ = spawn.await;
 
-    let initializing = harness.backend.query("owned", false, None, None).await.unwrap();
+    let initializing = harness
+        .backend
+        .query("owned", false, None, None)
+        .await
+        .unwrap();
     assert!(matches!(
         initializing.status,
         SubagentSnapshotStatus::Initializing
@@ -1040,7 +1103,11 @@ async fn caller_drop_during_initialization_does_not_drop_owned_run() {
         disposition.reporting == CompletionReporting::Reportable,
         "dropped foreground receiver becomes handle-only"
     );
-    let terminal = harness.backend.query("owned", false, None, None).await.unwrap();
+    let terminal = harness
+        .backend
+        .query("owned", false, None, None)
+        .await
+        .unwrap();
     assert!(terminal.status.is_terminal());
     harness.actor.abort();
 }
@@ -1203,7 +1270,11 @@ async fn caller_observation_keeps_surviving_query_and_clears_on_last_receiver_dr
     assert_eq!(*h.caller.borrow(), SubagentCaller::NotWaiting);
     let first = tokio::spawn({
         let backend = h.backend.clone();
-        async move { backend.query("query-observation", true, Some(1_000), None).await }
+        async move {
+            backend
+                .query("query-observation", true, Some(1_000), None)
+                .await
+        }
     });
     h.caller
         .wait_for(|state| *state == SubagentCaller::Waiting)
@@ -2100,7 +2171,11 @@ async fn completed_resume_source_uses_request_uuid_as_agent_id() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     let spawn = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("identity-source", false), None, None).await }
+        async move {
+            backend
+                .spawn(request("identity-source", false), None, None)
+                .await
+        }
     });
     assert_eq!(
         harness
@@ -2804,7 +2879,11 @@ async fn cancel_parent_session_rejects_late_spawn_until_admission_reopens() {
     assert!(bound.open_spawn_admission());
     let allowed = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("after-reopen", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("after-reopen", true), None, None)
+                .await
+        }
     });
     assert_eq!(
         harness
@@ -3129,7 +3208,12 @@ async fn foreign_session_cannot_reach_nested_grandchild() {
     assert_eq!(harness.started.recv().await.as_deref(), Some("grandchild"));
 
     let foreign = session_backend(&harness, "foreign");
-    assert!(foreign.query("grandchild", false, None, None).await.is_none());
+    assert!(
+        foreign
+            .query("grandchild", false, None, None)
+            .await
+            .is_none()
+    );
     assert!(foreign.inspect("grandchild").await.is_none());
     assert!(matches!(
         foreign
@@ -3279,6 +3363,9 @@ async fn nested_spawner_resume_of_grandchild_is_reparented_and_reachable() {
     harness.actor.abort();
 }
 
+#[path = "coordinator/completion_projection_tests.rs"]
+mod completion_projection_tests;
+
 pub(in crate::implementations::grok_build::task::coordinator) fn buffering() -> CoordinatorConfig {
     CoordinatorConfig {
         buffer_completions: true,
@@ -3287,7 +3374,11 @@ pub(in crate::implementations::grok_build::task::coordinator) fn buffering() -> 
 }
 
 async fn buffered_completion_ids(harness: &Harness, session: Option<&str>) -> Vec<String> {
-    buffered_completions(harness, session).await.into_iter().map(|summary| summary.snapshot.subagent_id).collect()
+    buffered_completions(harness, session)
+        .await
+        .into_iter()
+        .map(|summary| summary.snapshot.subagent_id)
+        .collect()
 }
 
 async fn peeked_completion_ids(harness: &Harness, session: Option<&str>) -> Vec<String> {
@@ -3312,12 +3403,20 @@ pub(in crate::implementations::grok_build::task::coordinator) async fn buffered_
 ) -> Vec<crate::implementations::grok_build::task::types::SubagentCompletionSummary> {
     let completions = completions_via(harness, session, SubagentEvent::PeekCompletions).await;
     if let Some(parent_session_id) = session {
-        harness.backend.sender().send(SubagentEvent::AcknowledgeCompletions {
-            parent_session_id: parent_session_id.to_owned(),
-            completions: completions.iter().map(|summary| xai_message_delivery_core::SubagentCompletionId {
-                subagent_id: summary.subagent_id().to_owned(), attempt_id: summary.attempt_id.clone(),
-            }).collect(),
-        }).expect("projection acknowledgement accepted");
+        harness
+            .backend
+            .sender()
+            .send(SubagentEvent::AcknowledgeCompletions {
+                parent_session_id: parent_session_id.to_owned(),
+                completions: completions
+                    .iter()
+                    .map(|summary| xai_message_delivery_core::SubagentCompletionId {
+                        subagent_id: summary.subagent_id().to_owned(),
+                        attempt_id: summary.attempt_id.clone(),
+                    })
+                    .collect(),
+            })
+            .expect("projection acknowledgement accepted");
     }
     completions
 }
@@ -3359,7 +3458,11 @@ async fn nested_grandchild_completion_buffers_for_spawner_not_root() {
     let _ = harness.finish_one.send("grandchild".to_owned());
     assert!(grandchild.await.unwrap().unwrap().success());
     let disposition = harness.completions.recv().await.expect("grandchild done");
-    assert_eq!(disposition.reporting, CompletionReporting::Silent, "the root is not a nested result recipient");
+    assert_eq!(
+        disposition.reporting,
+        CompletionReporting::Silent,
+        "the root is not a nested result recipient"
+    );
     assert_eq!(
         buffered_completion_ids(&harness, Some("child")).await,
         ["grandchild"]
@@ -3728,9 +3831,14 @@ async fn suppressed_completion_stays_buffered_for_a_later_drain() {
         .sender()
         .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
-            suppress_ids: completions_via(&harness, Some("parent"), SubagentEvent::PeekCompletions).await.into_iter().map(|summary| xai_message_delivery_core::SubagentCompletionId {
-                subagent_id: summary.subagent_id().to_owned(), attempt_id: summary.attempt_id,
-            }).collect(),
+            suppress_ids: completions_via(&harness, Some("parent"), SubagentEvent::PeekCompletions)
+                .await
+                .into_iter()
+                .map(|summary| xai_message_delivery_core::SubagentCompletionId {
+                    subagent_id: summary.subagent_id().to_owned(),
+                    attempt_id: summary.attempt_id,
+                })
+                .collect(),
             respond_to,
         }))
         .expect("actor command channel open");
@@ -3863,7 +3971,11 @@ async fn blocking_query_of_completed_child_returns_immediately() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     let spawn = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("already-done", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("already-done", true), None, None)
+                .await
+        }
     });
     tokio::task::yield_now().await;
     let _ = harness.finish.send(());
@@ -3891,7 +4003,11 @@ async fn blocking_query_of_cancelled_child_returns_immediately() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     let spawn = tokio::spawn({
         let backend = harness.backend.clone();
-        async move { backend.spawn(request("already-killed", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("already-killed", true), None, None)
+                .await
+        }
     });
     assert_eq!(
         harness.started.recv().await.as_deref(),
@@ -4039,7 +4155,12 @@ async fn completed_cache_evicts_oldest_entry_at_cap() {
     assert!(
         harness
             .backend
-            .query(&format!("cache-{MAX_COMPLETED_ENTRIES:04}"), false, None, None)
+            .query(
+                &format!("cache-{MAX_COMPLETED_ENTRIES:04}"),
+                false,
+                None,
+                None
+            )
             .await
             .is_some()
     );

@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 #[path = "completion_persistence.rs"]
 mod completion_persistence;
-pub(crate) use completion_persistence::create_completion_test_actor;
 use super::*;
+pub(crate) use completion_persistence::create_completion_test_actor;
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCompletionSummary, SubagentSnapshot, SubagentSnapshotStatus,
 };
@@ -1040,13 +1040,23 @@ pub(crate) fn subagent_summary(id: &str) -> SubagentCompletionSummary {
 pub(crate) struct FakeCoordinator {
     acknowledged: Arc<std::sync::Mutex<Vec<String>>>,
     peeks: Arc<std::sync::atomic::AtomicUsize>,
-    sender: tokio::sync::mpsc::UnboundedSender<xai_grok_tools::implementations::grok_build::task::types::SubagentEvent>,
+    sender: tokio::sync::mpsc::UnboundedSender<
+        xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
+    >,
 }
 impl FakeCoordinator {
     pub(crate) async fn acknowledged(&self) -> Vec<String> {
-        use xai_grok_tools::implementations::grok_build::task::types::{SubagentCompletionsRequest, SubagentEvent};
+        use xai_grok_tools::implementations::grok_build::task::types::{
+            SubagentCompletionsRequest, SubagentEvent,
+        };
         let (respond_to, receive) = oneshot::channel();
-        self.sender.send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest { parent_session_id: Some("test-actor".into()), suppress_ids: Vec::new(), respond_to })).unwrap();
+        self.sender
+            .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
+                parent_session_id: Some("test-actor".into()),
+                suppress_ids: Vec::new(),
+                respond_to,
+            }))
+            .unwrap();
         receive.await.unwrap();
         self.acknowledged.lock().unwrap().clone()
     }
@@ -1074,17 +1084,37 @@ pub(crate) fn spawn_fake_coordinator(
         let mut buffer = buffer;
         while let Some(ev) = rx.recv().await {
             match ev {
-                SubagentEvent::AcknowledgeCompletions { parent_session_id: _, completions } => {
+                SubagentEvent::AcknowledgeCompletions {
+                    parent_session_id: _,
+                    completions,
+                } => {
                     buffer.retain(|summary| {
-                        if completions.iter().any(|id| id.subagent_id == summary.subagent_id() && id.attempt_id == summary.attempt_id) {
-                            acknowledged.lock().unwrap().push(summary.subagent_id().to_owned());
+                        if completions.iter().any(|id| {
+                            id.subagent_id == summary.subagent_id()
+                                && id.attempt_id == summary.attempt_id
+                        }) {
+                            acknowledged
+                                .lock()
+                                .unwrap()
+                                .push(summary.subagent_id().to_owned());
                             false
-                        } else { true }
+                        } else {
+                            true
+                        }
                     });
                 }
                 SubagentEvent::PeekCompletions(req) => {
                     peeks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let filtered = buffer.iter().filter(|summary| !req.suppress_ids.iter().any(|id| id.subagent_id == summary.subagent_id() && id.attempt_id == summary.attempt_id)).cloned().collect();
+                    let filtered = buffer
+                        .iter()
+                        .filter(|summary| {
+                            !req.suppress_ids.iter().any(|id| {
+                                id.subagent_id == summary.subagent_id()
+                                    && id.attempt_id == summary.attempt_id
+                            })
+                        })
+                        .cloned()
+                        .collect();
                     let _ = req.respond_to.send(filtered);
                 }
                 _ => {}

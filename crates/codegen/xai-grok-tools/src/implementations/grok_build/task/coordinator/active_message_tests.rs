@@ -125,15 +125,30 @@ impl ChildRunner for PanickingRunner {
 
     fn on_completed(
         &self,
-        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<
+            '_,
+            Self::CompletionData,
+        >,
+        terminal_published: Box<
+            dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult)
+                + Send,
+        >,
     ) {
-        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+        terminal_published(
+            crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed,
+        );
     }
-    fn on_published(&self, completion: ChildCompletion<()>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
-        
+    fn on_published(
+        &self,
+        completion: ChildCompletion<()>,
+        published: Box<
+            dyn FnOnce(
+                    crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult,
+                ) + Send,
+        >,
+    ) {
         let _ = self.completions.send(completion.result);
-        
+
         published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
@@ -175,14 +190,28 @@ impl ChildRunner for TestRunner {
 
     fn on_completed(
         &self,
-        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<
+            '_,
+            Self::CompletionData,
+        >,
+        terminal_published: Box<
+            dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult)
+                + Send,
+        >,
     ) {
-        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+        terminal_published(
+            crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed,
+        );
     }
-    fn on_published(&self, _: ChildCompletion<()>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
-        
-        
+    fn on_published(
+        &self,
+        _: ChildCompletion<()>,
+        published: Box<
+            dyn FnOnce(
+                    crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult,
+                ) + Send,
+        >,
+    ) {
         published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
@@ -428,7 +457,24 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child(
     coordinator: &mut TestCoordinator,
     id: &str,
 ) {
-    finish_child_with_result(
+    finish_child_at(coordinator, id, PublicationCheckpoint::Visible);
+}
+
+pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_before_visibility(
+    coordinator: &mut TestCoordinator,
+    id: &str,
+) {
+    finish_child_at(coordinator, id, PublicationCheckpoint::Prepared);
+}
+
+#[derive(Clone, Copy)]
+enum PublicationCheckpoint {
+    Prepared,
+    Visible,
+}
+
+fn finish_child_at(coordinator: &mut TestCoordinator, id: &str, checkpoint: PublicationCheckpoint) {
+    finish_child_with_result_at(
         coordinator,
         id,
         SubagentResult {
@@ -437,6 +483,7 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child(
             child_session_id: id.to_owned(),
             ..Default::default()
         },
+        checkpoint,
     );
 }
 
@@ -444,6 +491,15 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_wi
     coordinator: &mut TestCoordinator,
     id: &str,
     result: SubagentResult,
+) {
+    finish_child_with_result_at(coordinator, id, result, PublicationCheckpoint::Visible);
+}
+
+fn finish_child_with_result_at(
+    coordinator: &mut TestCoordinator,
+    id: &str,
+    result: SubagentResult,
+    checkpoint: PublicationCheckpoint,
 ) {
     coordinator.begin_terminalization(
         id,
@@ -453,6 +509,13 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_wi
             snapshot_ref: None,
         },
     );
+    while let Ok(publication) = coordinator.terminal_published_rx.try_recv() {
+        coordinator.handle_terminal_publication(publication);
+        match checkpoint {
+            PublicationCheckpoint::Prepared => break,
+            PublicationCheckpoint::Visible => {}
+        }
+    }
 }
 
 #[tokio::test]

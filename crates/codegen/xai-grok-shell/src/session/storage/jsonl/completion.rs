@@ -242,14 +242,16 @@ impl JsonlStorageAdapter {
         Ok(receipts)
     }
 
-    pub(super) fn read_completion_receipts_sync(&self, info: &Info) -> io::Result<Vec<CompletionReceipt>> {
+    pub(super) fn read_completion_state_sync(
+        &self,
+        info: &Info,
+    ) -> io::Result<crate::session::completion_delivery::CompletionDeliveryState> {
         let path = self.chat_file(info);
         let _lock = Self::lock_append(&path)?;
-        let mut receipts = Self::completion_receipts(&path)?;
-        for receipt in self.read_summary_sync(info)?.completion_delivery.receipts {
-            if !receipts.iter().any(|actual| actual.completion == receipt.completion) { receipts.push(receipt); }
-        }
-        Ok(receipts)
+        let receipts = Self::completion_receipts(&path)?;
+        let mut state = self.read_summary_sync(info)?.completion_delivery;
+        state.apply(&CompletionMutation::RetainReceipts(receipts));
+        Ok(state)
     }
 
     pub(crate) async fn record_completion_ready(
@@ -398,10 +400,25 @@ impl JsonlStorageAdapter {
                             if previous == current {
                                 return None;
                             }
-                            let mut rebound = receipt.clone();
-                            rebound.prompt_id = projection.receipt.prompt_id.clone();
-                            rebound.parent_task = projection.receipt.parent_task.clone();
-                            Some(rebound)
+                            Some(
+                                summary
+                                    .completion_delivery
+                                    .obligations
+                                    .iter()
+                                    .filter_map(|obligation| obligation.receipt())
+                                    .filter(|owned| {
+                                        owned.prompt_id == receipt.prompt_id
+                                            && owned.parent_task == receipt.parent_task
+                                    })
+                                    .map(|owned| {
+                                        let mut rebound = owned.clone();
+                                        rebound.prompt_id = projection.receipt.prompt_id.clone();
+                                        rebound.parent_task =
+                                            projection.receipt.parent_task.clone();
+                                        rebound
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
                         }
                         (
                             xai_chat_state::ParentTask::Unknown,
@@ -466,7 +483,7 @@ impl JsonlStorageAdapter {
             })
             .collect();
         let mutation = match continuation {
-            Some(receipt) => CompletionMutation::Projected(vec![receipt]),
+            Some(receipts) => CompletionMutation::Projected(receipts),
             None => CompletionMutation::RetainReceipts(projected_receipts),
         };
         apply_patch_locked(

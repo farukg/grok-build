@@ -6,7 +6,7 @@ use crate::session::receiver_execution::ReceiverAccess;
 use crate::session::storage::SessionUpdate;
 use xai_chat_state::{DeliveryBinding, DeliveryProjection, InputAdmission, ParentTask};
 
-fn task(id: &str) -> InputAdmission {
+pub(super) fn task(id: &str) -> InputAdmission {
     InputAdmission {
         parent_task: ParentTask::Instance { id: id.into() },
         ..admission()
@@ -24,7 +24,7 @@ fn projected(
     projection
 }
 
-fn terminal(
+pub(super) fn terminal(
     info: &Info,
     prompt: &str,
     admission: &InputAdmission,

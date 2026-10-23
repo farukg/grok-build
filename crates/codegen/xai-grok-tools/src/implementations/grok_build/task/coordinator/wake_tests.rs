@@ -54,13 +54,7 @@ async fn outer_ancestor_wakes_completed_descendant_by_raw_id_and_address() {
 async fn dropping_coordinator_refuses_parked_wake() {
     let (mut coordinator, command_tx, admission_tx, _admissions) = fixture();
     insert_child(&mut coordinator, admission_tx, "child", "parent");
-    finish_child(&mut coordinator, "child");
-    let Some(child) = coordinator.completed.get_mut("child") else {
-        panic!("expected completed child");
-    };
-    child
-        .terminal_published
-        .store(false, std::sync::atomic::Ordering::Release);
+    finish_child_before_visibility(&mut coordinator, "child");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     assert_eq!(
         coordinator.pending_wakes.get("child").map(Vec::len),
@@ -79,13 +73,7 @@ async fn dropping_coordinator_refuses_parked_wake() {
 async fn evicted_unpublished_completion_refuses_parked_wake() {
     let (mut coordinator, command_tx, admission_tx, _admissions) = fixture();
     insert_child(&mut coordinator, admission_tx.clone(), "evicted", "parent");
-    finish_child(&mut coordinator, "evicted");
-    let Some(evicted) = coordinator.completed.get_mut("evicted") else {
-        panic!("expected completed evicted child");
-    };
-    evicted
-        .terminal_published
-        .store(false, std::sync::atomic::Ordering::Release);
+    finish_child_before_visibility(&mut coordinator, "evicted");
     let response = begin_send(&mut coordinator, &command_tx, "evicted", "parent");
     assert_eq!(
         coordinator.pending_wakes.get("evicted").map(Vec::len),
@@ -170,7 +158,11 @@ async fn completed_wake_waits_for_terminal_publication() {
     let backend = parent_backend(&harness);
     let spawn = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("identity-source", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("identity-source", true), None, None)
+                .await
+        }
     });
     harness.wake_runs.recv().await.expect("initial run");
     harness.started.recv().await.expect("initial start");
@@ -659,7 +651,11 @@ async fn completed_wake_queues_at_concurrent_limit_until_slot_frees() {
     let backend = parent_backend(&harness);
     let source = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("identity-source", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("identity-source", true), None, None)
+                .await
+        }
     });
     harness.wake_runs.recv().await.unwrap();
     harness.started.recv().await.unwrap();
@@ -730,7 +726,11 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
     let backend = parent_backend(&harness);
     let source = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("identity-source", true), None, None).await }
+        async move {
+            backend
+                .spawn(request("identity-source", true), None, None)
+                .await
+        }
     });
     harness.wake_runs.recv().await.unwrap();
     harness.started.recv().await.unwrap();

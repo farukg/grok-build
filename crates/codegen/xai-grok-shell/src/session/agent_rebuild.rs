@@ -63,6 +63,21 @@ fn session_identity_env(
     audience: PromptAudience,
 ) -> HashMap<String, String> {
     let mut env = inherited.clone();
+    for key in [
+        "SIG_RUNTIME_ORIGIN",
+        "SIG_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "CODEX_TOOL_CALL_ID",
+        "CODEX_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDECODE",
+        "OPENCODE_SESSION_ID",
+        "OPENCODE_CALL_ID",
+        "OPENCODE",
+    ] {
+        env.insert(key.to_owned(), String::new());
+    }
     let context = match audience {
         PromptAudience::Primary => "main",
         PromptAudience::Subagent => "subagent",

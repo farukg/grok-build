@@ -196,14 +196,14 @@ mod turn_task;
 use turn_task::*;
 #[path = "acp_session_impl/cancel.rs"]
 mod cancel;
-#[path = "acp_session_impl/reminders.rs"]
-mod reminders;
 #[path = "acp_session_impl/completion_admission.rs"]
 mod completion_admission;
 #[path = "acp_session_impl/completion_digest.rs"]
 mod completion_digest;
 #[path = "acp_session_impl/delivery_receiver.rs"]
 mod delivery_receiver;
+#[path = "acp_session_impl/reminders.rs"]
+mod reminders;
 #[path = "acp_session_impl/subagent_handoff.rs"]
 mod subagent_handoff;
 use reminders::*;

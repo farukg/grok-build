@@ -121,6 +121,27 @@ fn admission_process_worker() {
                     .unwrap();
                 prompt_turn(&conn, &sid, "process-spawn-seed").await;
                 recorder.child_finished(CHILD).await;
+                if std::env::var("GROK_ADMISSION_TEST_CRASH").as_deref() == Ok("input_projected") {
+                    recorder
+                        .wait(|event| {
+                            event
+                                .get("params")
+                                .and_then(|params| params.get("update"))
+                                .is_some_and(|update| {
+                                    update
+                                        .get("sessionUpdate")
+                                        .and_then(serde_json::Value::as_str)
+                                        == Some("turn_completed")
+                                        && update
+                                            .get("prompt_id")
+                                            .and_then(serde_json::Value::as_str)
+                                            .is_some_and(|prompt| {
+                                                prompt.starts_with("subagent-completed-")
+                                            })
+                                })
+                        })
+                        .await;
+                }
             }
             "recover" => {
                 conn.load_session(acp::LoadSessionRequest::new(sid, cwd))

@@ -18,18 +18,34 @@ fn task_completed_input(task_id: &str) -> InputItem {
     )
 }
 fn test_completion_wake(id: &str) -> crate::session::CompletionWake {
-    crate::session::CompletionWake { id: xai_chat_state::SubagentCompletionId { subagent_id: id.to_owned(),
-        attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, kind: crate::session::CompletionWakeKind::Fresh }
+    crate::session::CompletionWake {
+        id: xai_chat_state::SubagentCompletionId {
+            subagent_id: id.to_owned(),
+            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+        },
+        kind: crate::session::CompletionWakeKind::Fresh,
+    }
 }
 async fn completion_projected(actor: &SessionActor, id: &str) -> bool {
     actor.chat_state_handle.get_conversation().await.iter().any(|item| matches!(item,
         ConversationItem::User(user) if user.synthetic_reason == xai_grok_sampling_types::SyntheticReason::SubagentCompleted && item.text_content().contains(id)))
 }
 async fn mark_completion_projected(actor: &SessionActor, id: &str) {
-    actor.chat_state_handle.append_completion_and_ack(xai_chat_state::CompletionProjection::new(
-        test_completion_wake(id).id, "prior-turn".into(), wake_body(id)), xai_chat_state::InputAdmission {
-            parent_task: xai_chat_state::ParentTask::Unknown, cancellation: tokio_util::sync::CancellationToken::new(),
-        }).await.expect("durable fixture projection");
+    actor
+        .chat_state_handle
+        .append_completion_and_ack(
+            xai_chat_state::CompletionProjection::new(
+                test_completion_wake(id).id,
+                "prior-turn".into(),
+                wake_body(id),
+            ),
+            xai_chat_state::InputAdmission {
+                parent_task: xai_chat_state::ParentTask::Unknown,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+            },
+        )
+        .await
+        .expect("durable fixture projection");
 }
 fn subagent_completed_input(subagent_id: &str) -> InputItem {
     input_with_origin(
@@ -64,6 +80,13 @@ async fn run_wake_turn(
     subagent_id: &str,
     persist_ack: Option<oneshot::Sender<()>>,
 ) -> PromptTurnResult {
+    let prompt_id = format!("subagent-completed-{subagent_id}/at1.1");
+    let mut task = running_task_stub(&prompt_id);
+    let _admission = task.admission.clone().drop_guard();
+    task.input_origin = InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted {
+        completion: test_completion_wake(subagent_id),
+    });
+    actor.state.lock().await.running_task = Some(task);
     actor
         .handle_prompt(
             &format!("subagent-completed-{subagent_id}/at1.1"),
@@ -103,9 +126,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
         for (failed, goal_active) in [(false, false), (true, false), (false, true), (true, true)] {
             let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
             drain_gateway(gateway_rx);
-            let (persistence_tx, persistence_rx) = mpsc::unbounded_channel();
-            drain_persistence(persistence_rx);
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             if goal_active {
                 set_goal_harness_for_tests(&actor);
                 actor.goal_tracker.lock().create_goal(
@@ -124,6 +145,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
                     error: "upload blocked: permission denied".into(),
                 };
             }
+            let wake_text = xai_grok_tools::reminders::wrap_reminder(&xai_grok_tools::reminders::task_completion::format_subagent_completion(&completion, Some("get_command_or_subagent_output"), None, None));
             let fake = spawn_fake_coordinator(&mut actor, vec![completion]);
             let actor = std::sync::Arc::new(actor);
             {
@@ -134,7 +156,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
             let (respond_to, mut receipt) = oneshot::channel();
             actor.queue_input(QueueInputRequest {
                 verbatim: true,
-                ..queue_input_request(vec![acp::ContentBlock::from(wake_body("safe-child"))], "subagent-completed-safe-child/at1.1", respond_to)
+                ..queue_input_request(vec![acp::ContentBlock::from(wake_text)], "subagent-completed-safe-child/at1.1", respond_to)
             }).await;
             assert!(matches!(receipt.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
             assert!(actor.drain_admitted_messages_at_safe_point().await);
@@ -147,7 +169,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
                 assert!(projected[0].text_content().contains("upload blocked: permission denied"));
             }
             assert!(completion_projected(&actor, "safe-child").await);
-            assert!(fake.returned().is_empty(), "safe projection must not blindly drain coordinator completions");
+            assert_eq!(fake.acknowledged().await, ["safe-child"], "only the durably projected attempt is acknowledged");
             assert_eq!(actor.state.lock().await.running_prompt_id(), Some("working"));
             let (retry_tx, retry_rx) = oneshot::channel();
             actor.queue_input(QueueInputRequest {
@@ -167,9 +189,7 @@ async fn idle_caller_commits_success_and_error_wakes_without_a_human_prompt() {
         for failed in [false, true] {
             let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
             drain_gateway(gateway_rx);
-            let (persistence_tx, persistence_rx) = mpsc::unbounded_channel();
-            drain_persistence(persistence_rx);
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let mut completion = subagent_summary("idle-child");
             if failed {
                 completion.snapshot.status = xai_grok_tools::implementations::grok_build::task::types::SubagentSnapshotStatus::Failed {
@@ -198,10 +218,7 @@ async fn drain_batches_monitor_notifications_into_formatted_block() {
             let (gateway_tx, _) = tokio::sync::mpsc::unbounded_channel::<
                 xai_acp_lib::AcpClientMessage,
             >();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<
-                PersistenceMsg,
-            >();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx)
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx)
                 .await;
             let monitor_notif = |task: &str, line: &str| PendingNotification {
                 prompt_id: format!("monitor-{task}"),
@@ -274,8 +291,7 @@ async fn closed_admission_ack_stores_fallback_before_prompt_rejection() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let origin = crate::session::PromptOrigin::TaskCompleted {
                 task_id: "mon-timeout".to_string(),
             };
@@ -310,8 +326,7 @@ async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             actor.state.lock().await.notifications_suppressed = true;
             let (admission, response_rx) = task_wake_admission(
                 "sub-1",
@@ -342,10 +357,8 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = std::sync::Arc::new(
-                create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await,
-            );
+            let actor =
+                std::sync::Arc::new(create_completion_test_actor(0, 256_000, 85, gateway_tx).await);
             let origin = crate::session::PromptOrigin::TaskCompleted {
                 task_id: "bg-normal".to_string(),
             };
@@ -486,10 +499,8 @@ async fn genuine_user_start_consumes_deferred_completions_without_notification_t
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = std::sync::Arc::new(
-                create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await,
-            );
+            let actor =
+                std::sync::Arc::new(create_completion_test_actor(0, 256_000, 85, gateway_tx).await);
             let body = xai_grok_tools::reminders::task_completion::format_monitor_completion(
                 &xai_grok_tools::types::TaskSnapshot {
                     task_id: "mon-quiet".to_string(),
@@ -620,10 +631,8 @@ async fn accepted_reservation_survives_user_start() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = std::sync::Arc::new(
-                create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await,
-            );
+            let actor =
+                std::sync::Arc::new(create_completion_test_actor(0, 256_000, 85, gateway_tx).await);
             let reservations = actor
                 .tool_context
                 .task_completion_reservations
@@ -684,10 +693,7 @@ async fn same_id_bash_completion_does_not_suppress_monitor_event() {
             let (gateway_tx, _) = tokio::sync::mpsc::unbounded_channel::<
                 xai_acp_lib::AcpClientMessage,
             >();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<
-                PersistenceMsg,
-            >();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx)
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx)
                 .await;
             let monitor = PendingNotification {
                 prompt_id: "monitor-shared".to_string(),
@@ -733,8 +739,7 @@ async fn task_output_completed_drops_matching_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -775,8 +780,7 @@ async fn task_output_failed_drops_matching_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -817,8 +821,7 @@ async fn interrupted_wait_placeholder_keeps_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             actor
                 .state
                 .lock()
@@ -854,8 +857,7 @@ async fn sweep_never_drops_running_turns_own_slot() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state.running_task = Some(running_task_stub("task-completed-bg-target"));
@@ -894,8 +896,7 @@ async fn user_prompt_preempt_keeps_running_synthetic_slot() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let reservations = actor
                 .tool_context
                 .task_completion_reservations
@@ -942,8 +943,7 @@ async fn await_text_completed_drops_matching_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -984,8 +984,7 @@ async fn kill_task_drops_matching_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -1022,8 +1021,7 @@ async fn subagent_completed_drops_matching_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -1084,8 +1082,7 @@ async fn multi_task_output_drops_each_completed_id() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -1131,8 +1128,7 @@ async fn task_output_running_does_not_drop_pending_input() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -1200,8 +1196,7 @@ async fn sweep_clears_matching_pending_notifications() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -1240,8 +1235,7 @@ async fn shutdown_drops_pending_synthetic_inputs() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state.pending_inputs.push_back(user_input("user-1"));
@@ -1293,8 +1287,7 @@ async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let mut state = actor.state.lock().await;
                 state
@@ -1408,10 +1401,8 @@ async fn drain_drops_goal_turn_origin_when_status_none_and_marks_reported() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = std::sync::Arc::new(
-                create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await,
-            );
+            let actor =
+                std::sync::Arc::new(create_completion_test_actor(0, 256_000, 85, gateway_tx).await);
             set_goal_harness_for_tests(&actor);
             actor
                 .goal_turn_task_ids
@@ -1455,10 +1446,8 @@ async fn reparented_harness_subagent_task_suppressed_when_status_not_active() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = std::sync::Arc::new(
-                create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await,
-            );
+            let actor =
+                std::sync::Arc::new(create_completion_test_actor(0, 256_000, 85, gateway_tx).await);
             set_goal_harness_for_tests(&actor);
             actor.record_goal_turn_task_ids(["bg-skeptic".to_string()]);
             assert!(
@@ -1497,8 +1486,7 @@ async fn reparented_record_is_noop_without_goal_harness() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             actor.record_reparented_goal_turn_task_ids(["bg-user".to_string()]);
             assert!(
                 actor.goal_turn_task_ids.lock().is_empty(),
@@ -1516,10 +1504,7 @@ async fn wake_turn_digest_coalesces_unreported_siblings() {
             let (gateway_tx, gateway_rx) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             drain_gateway(gateway_rx);
-            let (persistence_tx, persistence_rx) =
-                tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            drain_persistence(persistence_rx);
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let ids = ["sa-1", "sa-2", "sa-3"];
             let fake = spawn_fake_coordinator(
                 &mut actor,
@@ -1532,21 +1517,16 @@ async fn wake_turn_digest_coalesces_unreported_siblings() {
                 1,
                 "the wake turn reads the buffer exactly once"
             );
-            assert!(
-                fake.returned().is_empty(),
-                "the wake turn must not drain the coordinator: {:?}",
-                fake.returned()
-            );
             assert_eq!(
-                fake.suppress_seen(),
-                [ids.map(str::to_owned)],
-                "the wake turn's own drain leaves every digested completion buffered"
+                fake.acknowledged().await,
+                ids,
+                "the one digest acknowledges each committed occurrence"
             );
             actor.drain_between_turn_completions(&[]).await;
             assert_eq!(
-                fake.returned(),
+                fake.acknowledged().await,
                 ids,
-                "the next drain hands the committed copies back"
+                "later drains do not acknowledge an occurrence twice"
             );
             let conversation = actor.chat_state_handle.get_conversation().await;
             let mentions: Vec<&ConversationItem> = conversation
@@ -1587,7 +1567,9 @@ async fn promotion_drops_reported_wake_without_running_turn() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
-            let (actor, _gateway_rx) = build_actor().await;
+            let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
+            drain_gateway(gateway_rx);
+            let actor = Arc::new(create_completion_test_actor(0, 256_000, 85, gateway_tx).await);
             mark_completion_projected(&actor, "sa-dup").await;
             let (respond_to, mut dup_rx) = oneshot::channel();
             let _ = actor
@@ -1646,8 +1628,7 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let fake = spawn_fake_coordinator(&mut actor, vec![subagent_summary("sa-pre")]);
             actor.state.lock().await.running_task = Some(running_task_stub("user-running"));
             let (respond_to, _wake_rx) = oneshot::channel();
@@ -1678,9 +1659,10 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
                 !completion_projected(&actor, "sa-pre").await,
                 "a dropped wake must leave the ledger untouched"
             );
+            actor.state.lock().await.running_task = Some(running_task_stub("user-typed"));
+            *actor.current_prompt_id.lock().unwrap() = Some("user-typed".into());
             actor.drain_between_turn_completions(&[]).await;
-            assert_eq!(fake.suppress_seen(), [Vec::<String>::new()]);
-            assert_eq!(fake.returned(), ["sa-pre"]);
+            assert_eq!(fake.acknowledged().await, ["sa-pre"]);
             let conversation = actor.chat_state_handle.get_conversation().await;
             let digests: Vec<&ConversationItem> = conversation
                 .iter()
@@ -1690,7 +1672,7 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
                 matches!(
                     digests.as_slice(),
                     [ConversationItem::User(u)]
-                        if u.synthetic_reason == SyntheticReason::SystemReminder
+                        if u.synthetic_reason == SyntheticReason::SubagentCompleted
                 ),
                 "the dropped wake must be redelivered as exactly one digest: {digests:?}"
             );
@@ -1719,16 +1701,25 @@ async fn refused_wake_leaves_completion_unreported() {
                 !completion_projected(&actor, "sa-refused").await,
                 "a wake the model never saw must stay unreported"
             );
-            actor.drain_between_turn_completions(&[]).await;
-            assert_eq!(fake.returned(), ["sa-refused"]);
-            let conversation = actor.chat_state_handle.get_conversation().await;
+            assert!(
+                fake.acknowledged().await.is_empty(),
+                "refusal cannot acknowledge an unseen completion"
+            );
+            let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
+            drain_gateway(gateway_rx);
+            let mut recovered = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+            recovered.tool_context.subagent_event_tx = actor.tool_context.subagent_event_tx.clone();
+            let recovered = Arc::new(recovered);
+            run_wake_turn_to_commit(&recovered, "sa-refused").await;
+            assert_eq!(fake.acknowledged().await, ["sa-refused"]);
+            let conversation = recovered.chat_state_handle.get_conversation().await;
             assert!(
                 conversation
                     .iter()
                     .any(|i| i.text_content().contains("sa-refused")),
                 "the refused wake's completion must be redelivered"
             );
-            assert!(completion_projected(&actor, "sa-refused").await);
+            assert!(completion_projected(&recovered, "sa-refused").await);
         })
         .await;
 }
@@ -1740,8 +1731,7 @@ async fn already_reported_wake_ends_turn_without_sampling() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let fake = spawn_fake_coordinator(&mut actor, vec![subagent_summary("sa-dup")]);
             mark_completion_projected(&actor, "sa-dup").await;
             let actor = std::sync::Arc::new(actor);
@@ -1764,7 +1754,11 @@ async fn already_reported_wake_ends_turn_without_sampling() {
                 conversation_len_before,
                 "a silent wake pushes no message"
             );
-            assert!(fake.returned().is_empty(), "a silent wake drains nothing");
+            assert_eq!(
+                fake.acknowledged().await,
+                ["sa-dup"],
+                "an existing durable receipt can acknowledge only its own attempt"
+            );
         })
         .await;
 }
@@ -1776,10 +1770,7 @@ async fn wake_missing_from_buffer_falls_back_to_injected_body() {
             let (gateway_tx, gateway_rx) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             drain_gateway(gateway_rx);
-            let (persistence_tx, persistence_rx) =
-                tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            drain_persistence(persistence_rx);
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let fake = spawn_fake_coordinator(&mut actor, vec![]);
             let actor = std::sync::Arc::new(actor);
             run_wake_turn_to_commit(&actor, "sa-evicted").await;
@@ -1803,10 +1794,9 @@ async fn wake_missing_from_buffer_falls_back_to_injected_body() {
                 "without a buffered copy the injected body is what the model sees"
             );
             assert!(completion_projected(&actor, "sa-evicted").await);
-            assert_eq!(
-                fake.suppress_seen(),
-                [["sa-evicted"]],
-                "the body path still runs the normal drain, suppressing only its own id"
+            assert!(
+                fake.acknowledged().await.is_empty(),
+                "fallback projection must not consume an unrelated buffered attempt"
             );
         })
         .await;
@@ -1819,9 +1809,7 @@ async fn wake_turn_under_goal_loop_projects_success_and_error_without_a_human_pr
             let (gateway_tx, gateway_rx) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             drain_gateway(gateway_rx);
-            let (persistence_tx, persistence_rx) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            drain_persistence(persistence_rx);
-            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             set_goal_harness_for_tests(&actor);
             actor.goal_tracker.lock().create_goal(
                 "g".into(),
@@ -1858,7 +1846,7 @@ async fn wake_turn_under_goal_loop_projects_success_and_error_without_a_human_pr
                     "{id} must be marked only after projection"
                 );
             }
-            assert!(fake.returned().is_empty());
+            assert_eq!(fake.acknowledged().await, ["sa-goal", "sa-goal-sibling"]);
         })
         .await;
 }
@@ -1873,8 +1861,7 @@ async fn set_goal_loop_active_resource_mirrors_into_gate() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             assert!(!actor.tool_context.goal_loop_active_gate.load(Relaxed));
             actor.set_goal_loop_active_resource(true).await;
             assert!(
@@ -1963,8 +1950,7 @@ async fn state_is_busy_reflects_queued_inputs() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             {
                 let state = actor.state.lock().await;
                 assert!(
@@ -1998,8 +1984,7 @@ async fn is_busy_reflects_active_work() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             assert!(
                 !actor.is_busy().await,
                 "a fresh actor (no turn, no queue, no work) must not be busy"
@@ -2024,8 +2009,7 @@ async fn is_busy_reflects_parked_plan_approval() {
         .run_until(async {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             assert!(!actor.is_busy().await, "a fresh actor must not be busy");
             actor.pending_interactions.lock().unwrap().insert(
                 "exit-plan-mode-resume".to_string(),

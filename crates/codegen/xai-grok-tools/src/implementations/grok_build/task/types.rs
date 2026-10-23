@@ -562,34 +562,34 @@ impl SubagentResult {
 }
 
 pub fn completion_error(state: &SubagentState) -> Option<String> {
-        match state {
-            SubagentState::Running | SubagentState::Completed => None,
-            SubagentState::Failed { message } => Some(message.clone()),
-            SubagentState::Interrupted { cause } => Some(cause.model_text()),
-        }
+    match state {
+        SubagentState::Running | SubagentState::Completed => None,
+        SubagentState::Failed { message } => Some(message.clone()),
+        SubagentState::Interrupted { cause } => Some(cause.model_text()),
+    }
 }
 
 pub fn completion_state_permits_wake(state: &SubagentState) -> bool {
-        match state {
-            SubagentState::Completed
-            | SubagentState::Failed { .. }
-            | SubagentState::Interrupted {
-                cause: InterruptionCause::Error { .. },
-            } => true,
-            SubagentState::Running
-            | SubagentState::Interrupted {
-                cause:
-                    InterruptionCause::ExplicitStop { .. }
-                    | InterruptionCause::Paused { .. }
-                    | InterruptionCause::ParentTurnCancelled { .. }
-                    | InterruptionCause::SessionStopped { .. }
-                    | InterruptionCause::SessionTeardown { .. }
-                    | InterruptionCause::WorkflowCancelled { .. }
-                    | InterruptionCause::ProcessRestart
-                    | InterruptionCause::LiveParentOrphan
-                    | InterruptionCause::Limit { .. },
-            } => false,
-        }
+    match state {
+        SubagentState::Completed
+        | SubagentState::Failed { .. }
+        | SubagentState::Interrupted {
+            cause: InterruptionCause::Error { .. },
+        } => true,
+        SubagentState::Running
+        | SubagentState::Interrupted {
+            cause:
+                InterruptionCause::ExplicitStop { .. }
+                | InterruptionCause::Paused { .. }
+                | InterruptionCause::ParentTurnCancelled { .. }
+                | InterruptionCause::SessionStopped { .. }
+                | InterruptionCause::SessionTeardown { .. }
+                | InterruptionCause::WorkflowCancelled { .. }
+                | InterruptionCause::ProcessRestart
+                | InterruptionCause::LiveParentOrphan
+                | InterruptionCause::Limit { .. },
+        } => false,
+    }
 }
 
 // Query protocol
@@ -653,18 +653,25 @@ impl SubagentSnapshot {
     pub fn is_running(&self) -> bool {
         matches!(
             self.status,
-            SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Finalizing { .. }
+            SubagentSnapshotStatus::Running { .. }
+                | SubagentSnapshotStatus::Initializing
+                | SubagentSnapshotStatus::Finalizing { .. }
         )
     }
 }
 
 /// Status of a subagent snapshot.
 #[derive(Debug, Clone)]
-pub enum SubagentFinalization { Writing, Blocked { error: String } }
+pub enum SubagentFinalization {
+    Writing,
+    Blocked { error: String },
+}
 
 #[derive(Debug, Clone)]
 pub enum SubagentSnapshotStatus {
-    Finalizing { publication: SubagentFinalization },
+    Finalizing {
+        publication: SubagentFinalization,
+    },
     /// Subagent is being set up (creating worktree, resolving config, spawning
     /// session). Queries during this phase should report the subagent as
     /// initializing rather than "not found".
@@ -695,9 +702,13 @@ pub enum SubagentSnapshotStatus {
         worktree_path: Option<String>,
     },
     /// Child session failed or crashed.
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
     /// The child was interrupted, and by whom.
-    Cancelled { cause: InterruptionCause },
+    Cancelled {
+        cause: InterruptionCause,
+    },
 }
 
 impl SubagentSnapshotStatus {
@@ -711,7 +722,9 @@ impl SubagentSnapshotStatus {
 
     pub fn state(&self) -> SubagentState {
         match self {
-            Self::Initializing | Self::Running { .. } | Self::Finalizing { .. } => SubagentState::Running,
+            Self::Initializing | Self::Running { .. } | Self::Finalizing { .. } => {
+                SubagentState::Running
+            }
             Self::Completed { .. } => SubagentState::Completed,
             Self::Failed { error } => SubagentState::Failed {
                 message: error.clone(),
@@ -1649,7 +1662,12 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel::<super::SubagentCompletionsRequest>();
         let (respond_to, mut response_rx) = oneshot::channel();
 
-        let suppressed = ["id-1", "id-2"].map(|id| xai_message_delivery_core::SubagentCompletionId { subagent_id: id.into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }).to_vec();
+        let suppressed = ["id-1", "id-2"]
+            .map(|id| xai_message_delivery_core::SubagentCompletionId {
+                subagent_id: id.into(),
+                attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+            })
+            .to_vec();
         tx.send(super::SubagentCompletionsRequest {
             parent_session_id: Some("parent".into()),
             suppress_ids: suppressed.clone(),

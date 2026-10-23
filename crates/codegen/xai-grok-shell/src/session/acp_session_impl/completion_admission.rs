@@ -8,6 +8,27 @@ use xai_grok_tools::implementations::grok_build::task::types::{
 };
 
 impl SessionActor {
+    pub(super) async fn persisted_completion_state(
+        &self,
+    ) -> std::io::Result<crate::session::completion_delivery::CompletionDeliveryState> {
+        let (respond_to, receive) = oneshot::channel();
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::GetCompletionState { respond_to })
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "completion state owner closed",
+                )
+            })?;
+        receive.await.map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "completion state observation lost",
+            )
+        })?
+    }
+
     pub(super) async fn input_turn_binding(&self, prompt_id: &str) -> InputTurnBinding {
         let state = self.state.lock().await;
         match state
@@ -88,8 +109,15 @@ impl SessionActor {
         self.commit_subagent_projection(projection, prompt_id).await
     }
 
-    pub(super) async fn commit_subagent_projection(&self, projection: CompletionProjection, prompt_id: &str) -> Result<bool, CompletionProjectionError> {
-        let completions: Vec<_> = projection.receipts().map(|receipt| receipt.completion.clone()).collect();
+    pub(super) async fn commit_subagent_projection(
+        &self,
+        projection: CompletionProjection,
+        prompt_id: &str,
+    ) -> Result<bool, CompletionProjectionError> {
+        let completions: Vec<_> = projection
+            .receipts()
+            .map(|receipt| receipt.completion.clone())
+            .collect();
         let admission = self
             .current_turn_admission(prompt_id)
             .await
@@ -100,11 +128,15 @@ impl SessionActor {
             .await?
         {
             CompletionProjectionAck::Appended | CompletionProjectionAck::Continue { .. } => {
-                for completion in &completions { self.acknowledge_subagent_completion(completion); }
+                for completion in &completions {
+                    self.acknowledge_subagent_completion(completion);
+                }
                 Ok(true)
             }
             CompletionProjectionAck::AlreadyPresent { .. } => {
-                for completion in &completions { self.acknowledge_subagent_completion(completion); }
+                for completion in &completions {
+                    self.acknowledge_subagent_completion(completion);
+                }
                 Ok(false)
             }
             CompletionProjectionAck::TurnClosed => Ok(false),

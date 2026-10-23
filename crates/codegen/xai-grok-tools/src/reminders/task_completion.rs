@@ -490,9 +490,9 @@ fn outcome_words(c: &SubagentCompletionSummary) -> (&'static str, &'static str) 
             cause: xai_tool_types::InterruptionCause::Paused { .. },
         } => ("was paused", "paused"),
         SubagentSnapshotStatus::Cancelled { .. } => ("was cancelled", "cancelled"),
-        SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Finalizing { .. } => {
-            ("is still running", "running")
-        }
+        SubagentSnapshotStatus::Initializing
+        | SubagentSnapshotStatus::Running { .. }
+        | SubagentSnapshotStatus::Finalizing { .. } => ("is still running", "running"),
     }
 }
 /// Format a model-facing message from a [`SubagentCompletionSummary`] for
@@ -719,7 +719,11 @@ impl Reminder for TaskCompletionReminder {
                 .map(TaskCompletionReservations::snapshot)
                 .unwrap_or_default()
         };
-        let terminal = resources.lock().await.get::<Terminal>().map(|terminal| terminal.0.clone());
+        let terminal = resources
+            .lock()
+            .await
+            .get::<Terminal>()
+            .map(|terminal| terminal.0.clone());
         let mut reminders = Vec::new();
         if let Some(terminal) = terminal {
             let all_tasks = terminal.list_tasks().await;
@@ -756,7 +760,9 @@ impl Reminder for TaskCompletionReminder {
             });
             let state = res.get_or_default::<State<ReportedTaskCompletions>>();
             for id in &consumed_ids {
-                if tasks.iter().any(|task| &task.task_id == id) { state.reported.insert(id.clone()); }
+                if tasks.iter().any(|task| &task.task_id == id) {
+                    state.reported.insert(id.clone());
+                }
             }
             if surface_reminders {
                 reminders.extend(
@@ -1732,7 +1738,12 @@ mod tests {
     }
     fn summarize(request: &SubagentRequest, result: &SubagentResult) -> SubagentCompletionSummary {
         let snapshot = terminal_snapshot(request, result, None, None, 1_700_000_000_000);
-        completion_summary(&xai_message_delivery_core::AttemptId::mint(1), request, result, &snapshot)
+        completion_summary(
+            &xai_message_delivery_core::AttemptId::mint(1),
+            request,
+            result,
+            &snapshot,
+        )
     }
     fn make_subagent_completion(id: &str, success: bool) -> SubagentCompletionSummary {
         summarize(&test_request(id), &test_result(id, success))
@@ -1754,7 +1765,12 @@ mod tests {
     }
     #[test]
     fn subagent_completion_surfaced() {
-        let r = [format_subagent_completion(&make_subagent_completion("sub-1", true), None, None, None)];
+        let r = [format_subagent_completion(
+            &make_subagent_completion("sub-1", true),
+            None,
+            None,
+            None,
+        )];
         assert_eq!(
             r,
             [
@@ -1790,7 +1806,10 @@ mod tests {
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
         let first = reminder.collect_reminders(shared.clone(), &output).await;
-        assert!(first.is_empty(), "ordinary background tasks stay suppressed during goals");
+        assert!(
+            first.is_empty(),
+            "ordinary background tasks stay suppressed during goals"
+        );
         shared
             .lock()
             .await
@@ -1903,7 +1922,12 @@ mod tests {
             );
             let tool = TaskOutputOutput::Result(terminal_subagent_result(&snapshot));
             let tool_text = ToolOutput::TaskOutput(tool).to_prompt_format();
-            let c = completion_summary(&xai_message_delivery_core::AttemptId::mint(1), &request, &result, &snapshot);
+            let c = completion_summary(
+                &xai_message_delivery_core::AttemptId::mint(1),
+                &request,
+                &result,
+                &snapshot,
+            );
             let msg = format_subagent_completion(&c, Some("get_task_output"), None, None);
             let case = format!("{outcome} {output:?} {persona:?} {worktree:?}");
             let (header, body) = msg.split_once('\n').expect("header line");

@@ -211,10 +211,20 @@ impl SessionActor {
             return;
         }
 
-        if self.tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get()) {
-            let human = state.pending_inputs.iter().position(|item| item.input_origin.policy().authority.is_human_intent());
+        if self
+            .tool_context
+            .task_wake_suppressed
+            .as_ref()
+            .is_some_and(|gate| gate.get())
+        {
+            let human = state
+                .pending_inputs
+                .iter()
+                .position(|item| item.input_origin.policy().authority.is_human_intent());
             let Some(index) = human else { return };
-            if let Some(input) = state.pending_inputs.remove(index) { state.pending_inputs.push_front(input); }
+            if let Some(input) = state.pending_inputs.remove(index) {
+                state.pending_inputs.push_front(input);
+            }
         }
         if state.pending_inputs.front().is_some_and(|item| matches!(item.input_origin.as_prompt_origin(),
             super::PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery))) {
@@ -234,7 +244,23 @@ impl SessionActor {
                 .front()
                 .map(|item| item.input_origin.as_prompt_origin())
             {
-                Some(super::PromptOrigin::SubagentCompleted { .. }) => false,
+                Some(super::PromptOrigin::SubagentCompleted { completion }) => {
+                    let persisted = match self.persisted_completion_state().await {
+                        Ok(persisted) => persisted,
+                        Err(error) => {
+                            tracing::error!(%error, "completion promotion remains pending after receipt observation failure");
+                            return;
+                        }
+                    };
+                    persisted
+                        .receipts
+                        .iter()
+                        .any(|receipt| receipt.completion == completion.id)
+                        && !persisted
+                            .obligations
+                            .iter()
+                            .any(|obligation| obligation.id() == &completion.id)
+                }
                 Some(super::PromptOrigin::WorkflowCompleted { completion_id }) => {
                     match completion_id
                         .rsplit_once('-')
@@ -356,7 +382,9 @@ impl SessionActor {
         };
         self.apply_tool_overrides_update(tool_overrides_update);
         if input_origin.policy().authority.is_human_intent() {
-            self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
+            self.set_completion_wake_policy(
+                crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+            );
             state.notifications_suppressed = false;
             xai_grok_telemetry::unified_log::info(
                 "shell.task_wake.gate_cleared",

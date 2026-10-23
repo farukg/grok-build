@@ -25,6 +25,12 @@ async fn registration_origin_is_rebuilt_from_actual_session_and_audience() {
                         .to_string(),
                     ),
                     ("CODEX_SESSION_ID".to_owned(), "inherited-parent".to_owned()),
+                    ("CODEX_TOOL_CALL_ID".to_owned(), "parent-call".to_owned()),
+                    (
+                        "SIG_RUNTIME_ORIGIN".to_owned(),
+                        "inherited-foreign-origin".to_owned(),
+                    ),
+                    ("CLAUDECODE".to_owned(), "1".to_owned()),
                     ("SIG_PARENT_AGENT".to_owned(), "ParentName".to_owned()),
                 ]));
                 for _ in 0..2 {
@@ -41,6 +47,17 @@ async fn registration_origin_is_rebuilt_from_actual_session_and_audience() {
                         .await
                         .unwrap();
                     assert_eq!(env.0.get("GROK_SESSION_ID").unwrap(), session_id);
+                    for key in [
+                        "CODEX_SESSION_ID",
+                        "CODEX_THREAD_ID",
+                        "CODEX_TOOL_CALL_ID",
+                        "SIG_RUNTIME_ORIGIN",
+                        "CLAUDECODE",
+                        "OPENCODE_SESSION_ID",
+                        "SIG_SESSION_ID",
+                    ] {
+                        assert_eq!(env.0.get(key).map(String::as_str), Some(""));
+                    }
                     let origin: serde_json::Value =
                         serde_json::from_str(env.0.get("GROK_SESSION_ORIGIN").unwrap()).unwrap();
                     assert_eq!(

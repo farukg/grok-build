@@ -335,15 +335,10 @@ async fn peer_root_reaches_another_roots_child_in_every_state() {
                     actor: SubagentActor::Human,
                 });
         }
-        if state.starts_with("completed") {
-            finish_child(&mut c, CHILD);
-        }
         if state == "completed_unpublished" {
-            c.completed
-                .get(CHILD)
-                .unwrap()
-                .terminal_published
-                .store(false, std::sync::atomic::Ordering::Release);
+            finish_child_before_visibility(&mut c, CHILD);
+        } else if state.starts_with("completed") {
+            finish_child(&mut c, CHILD);
         }
         let sender = ActiveMessageSenderContext::RootSession {
             session_id: Arc::from("root-a"),
@@ -360,12 +355,11 @@ async fn peer_root_reaches_another_roots_child_in_every_state() {
         assert!(response.try_recv().is_err(), "{state}");
         if state == "completed_unpublished" {
             assert_eq!(1, c.pending_wakes.get(CHILD).unwrap().len(), "{state}");
-            c.completed
-                .get(CHILD)
-                .unwrap()
-                .terminal_published
-                .store(true, std::sync::atomic::Ordering::Release);
-            c.handle_terminal_published(CHILD.to_owned());
+            let publication = c
+                .terminal_published_rx
+                .try_recv()
+                .expect("host visibility callback");
+            c.handle_terminal_publication(publication);
         }
         // A wake folds its first send into the prompt, so a second send exposes the route.
         let wake = state.starts_with("completed").then(|| {

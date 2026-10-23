@@ -1449,10 +1449,15 @@ impl StorageAdapter for JsonlStorageAdapter {
         .await
         .map_err(io::Error::other)?
     }
-    async fn read_completion_receipts(&self, info: &Info) -> io::Result<Vec<xai_chat_state::CompletionReceipt>> {
+    async fn read_completion_state(
+        &self,
+        info: &Info,
+    ) -> io::Result<crate::session::completion_delivery::CompletionDeliveryState> {
         let storage = self.clone();
         let info = info.clone();
-        tokio::task::spawn_blocking(move || storage.read_completion_receipts_sync(&info)).await.map_err(io::Error::other)?
+        tokio::task::spawn_blocking(move || storage.read_completion_state_sync(&info))
+            .await
+            .map_err(io::Error::other)?
     }
 
     async fn prepare_subagent_completion(
