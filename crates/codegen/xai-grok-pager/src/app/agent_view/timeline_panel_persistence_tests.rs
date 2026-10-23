@@ -304,14 +304,14 @@ fn every_gesture_that_folds_a_turn_is_saved() {
     press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
     assert_eq!(
         (saved("3"), saved("4")),
-        (None, None),
-        "Shift+Enter opens the siblings"
+        (Some("collapsed".into()), Some("collapsed".into())),
+        "Shift+Enter closes the other turn and preserves the collapsed anchor"
     );
     press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
     assert_eq!(
         (saved("3").as_deref(), saved("4").as_deref()),
-        (Some("collapsed"), Some("collapsed")),
-        "Shift+Enter closes them"
+        (None, Some("collapsed")),
+        "Shift+Enter reopens the other turn and preserves the collapsed anchor"
     );
 
     press(&mut agent, KeyCode::Char('+'));

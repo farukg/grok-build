@@ -667,8 +667,8 @@ fn shift_enter_toggles_all_siblings_and_flips_back() {
     go_to(&mut agent, TimelineRowKey::Turn(id_at(&ids, 0)));
     press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
     assert!(
-        !turn_expanded(&agent, id_at(&ids, 0)) && !turn_expanded(&agent, id_at(&ids, 6)),
-        "both turns closed"
+        turn_expanded(&agent, id_at(&ids, 0)) && !turn_expanded(&agent, id_at(&ids, 6)),
+        "only the other turn closed"
     );
     assert_eq!(cursor_key(&agent), TimelineRowKey::Turn(id_at(&ids, 0)));
     press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
@@ -680,8 +680,8 @@ fn shift_enter_toggles_all_siblings_and_flips_back() {
     go_to(&mut agent, TimelineRowKey::Group(id_at(&ids, 2)));
     press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
     assert!(
-        group_expanded(&agent),
-        "the group's only sibling opens in the chat too"
+        !group_expanded(&agent),
+        "the anchor group has no branch sibling and stays closed"
     );
     press_with(&mut agent, KeyCode::Enter, KeyModifiers::SHIFT);
     assert!(!group_expanded(&agent));
@@ -703,7 +703,10 @@ fn ctrl_enter_toggles_the_whole_subtree_and_flips_back() {
         !group_expanded(&agent),
         "everything below was open, so the subtree closes"
     );
-    assert!(!turn_expanded(&agent, id_at(&ids, 0)));
+    assert!(
+        turn_expanded(&agent, id_at(&ids, 0)),
+        "the anchor turn stays open"
+    );
     assert!(
         turn_expanded(&agent, id_at(&ids, 6)),
         "the other turn is outside the subtree"

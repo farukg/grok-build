@@ -528,7 +528,14 @@ fn f7_shift_click_on_a_message_row_sets_the_other_bulk_kinds() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
-    let before = never_bulk_toggled_snapshot(&agent);
+    let before = [
+        MessageKind::UserPrompt,
+        MessageKind::AgentMessage,
+        MessageKind::Read,
+    ]
+    .into_iter()
+    .map(|kind| (kind, agent.scrollback.display_defaults().shown(kind)))
+    .collect::<Vec<_>>();
     assert!(matches!(
         click_row_with(&mut agent, &buf, "File reads", KeyModifiers::SHIFT),
         InputOutcome::Changed
@@ -637,8 +644,8 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
         "the cursor kind and user/assistant rows keep their form"
     );
     assert!(
-        !disclosure(&agent).is_expanded(SectionId::Context),
-        "the other section folded"
+        disclosure(&agent).is_expanded(SectionId::Context),
+        "a collapsed kind makes the combined scope expand"
     );
     assert!(
         disclosure(&agent).is_expanded(SectionId::Display),
@@ -657,7 +664,7 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
         );
     }
     assert!(never_bulk_toggled_stay(&agent, &before));
-    assert!(disclosure(&agent).is_expanded(SectionId::Context));
+    assert!(!disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
     assert_eq!(
         cursor(&agent),
@@ -709,8 +716,12 @@ fn f7_bulk_gestures_on_a_context_row_never_ask_the_shell_for_a_change() {
         "Shift+click on a switch"
     );
     assert!(
-        !disclosure(&agent).is_expanded(SectionId::Context),
-        "it only folded the sections"
+        disclosure(&agent).is_expanded(SectionId::Context),
+        "the cursor row's section stays open"
+    );
+    assert!(
+        !disclosure(&agent).is_expanded(SectionId::Display),
+        "the other section folded"
     );
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
