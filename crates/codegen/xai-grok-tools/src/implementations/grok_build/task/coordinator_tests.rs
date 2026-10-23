@@ -1784,7 +1784,7 @@ async fn workflow_cancel_waits_for_drain_and_hides_owned_children() {
     harness
         .backend
         .sender()
-        .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+        .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
             suppress_ids: Vec::new(),
             respond_to: completions_respond_to,
@@ -2481,7 +2481,7 @@ async fn teardown_cancels_background_child_without_rebuffering() {
     harness
         .backend
         .sender()
-        .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+        .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
             suppress_ids: Vec::new(),
             respond_to: tx,
@@ -3287,7 +3287,7 @@ pub(in crate::implementations::grok_build::task::coordinator) fn buffering() -> 
 }
 
 async fn buffered_completion_ids(harness: &Harness, session: Option<&str>) -> Vec<String> {
-    completion_ids_via(harness, session, SubagentEvent::Completions).await
+    buffered_completions(harness, session).await.into_iter().map(|summary| summary.snapshot.subagent_id).collect()
 }
 
 async fn peeked_completion_ids(harness: &Harness, session: Option<&str>) -> Vec<String> {
@@ -3310,7 +3310,16 @@ pub(in crate::implementations::grok_build::task::coordinator) async fn buffered_
     harness: &Harness,
     session: Option<&str>,
 ) -> Vec<crate::implementations::grok_build::task::types::SubagentCompletionSummary> {
-    completions_via(harness, session, SubagentEvent::Completions).await
+    let completions = completions_via(harness, session, SubagentEvent::PeekCompletions).await;
+    if let Some(parent_session_id) = session {
+        harness.backend.sender().send(SubagentEvent::AcknowledgeCompletions {
+            parent_session_id: parent_session_id.to_owned(),
+            completions: completions.iter().map(|summary| xai_message_delivery_core::SubagentCompletionId {
+                subagent_id: summary.subagent_id().to_owned(), attempt_id: summary.attempt_id.clone(),
+            }).collect(),
+        }).expect("projection acknowledgement accepted");
+    }
+    completions
 }
 
 async fn completions_via(
@@ -3527,7 +3536,7 @@ async fn completion_buffer_caps_summary_without_mutating_result() {
     harness
         .backend
         .sender()
-        .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+        .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
             suppress_ids: Vec::new(),
             respond_to,
@@ -3611,7 +3620,7 @@ async fn buffered_completion_output_cap_bounds_buffered_summary() {
     harness
         .backend
         .sender()
-        .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+        .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
             suppress_ids: Vec::new(),
             respond_to,
@@ -3681,7 +3690,7 @@ async fn teardown_session_drops_only_that_sessions_buffer() {
         async move {
             let (respond_to, response_rx) = oneshot::channel();
             sender
-                .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+                .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
                     parent_session_id: Some(parent),
                     suppress_ids: Vec::new(),
                     respond_to,
@@ -3717,9 +3726,11 @@ async fn suppressed_completion_stays_buffered_for_a_later_drain() {
     harness
         .backend
         .sender()
-        .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+        .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
-            suppress_ids: vec!["child".to_owned()],
+            suppress_ids: completions_via(&harness, Some("parent"), SubagentEvent::PeekCompletions).await.into_iter().map(|summary| xai_message_delivery_core::SubagentCompletionId {
+                subagent_id: summary.subagent_id().to_owned(), attempt_id: summary.attempt_id,
+            }).collect(),
             respond_to,
         }))
         .expect("actor command channel open");
@@ -3734,7 +3745,7 @@ async fn suppressed_completion_stays_buffered_for_a_later_drain() {
         buffered_completion_ids(&harness, Some("parent"))
             .await
             .is_empty(),
-        "the drain that hands the copy back also consumes it"
+        "projection acknowledgement consumes the observed occurrence"
     );
     harness.actor.abort();
 }
@@ -3763,7 +3774,7 @@ async fn peek_completions_returns_owned_without_draining() {
     assert_eq!(
         buffered_completion_ids(&harness, Some("parent")).await,
         peeked,
-        "the destructive drain still hands every peeked copy back"
+        "the observation hands every pending copy back before projection acknowledgement"
     );
     assert!(
         peeked_completion_ids(&harness, Some("parent"))
@@ -3832,7 +3843,7 @@ async fn completion_drain_is_scoped_to_parent_session() {
         harness
             .backend
             .sender()
-            .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+            .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
                 parent_session_id: Some(parent.to_owned()),
                 suppress_ids: Vec::new(),
                 respond_to,
@@ -4337,7 +4348,7 @@ async fn teardown_purges_a_queued_spawn_without_rebuffering() {
     harness
         .backend
         .sender()
-        .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+        .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
             parent_session_id: Some("parent".to_owned()),
             suppress_ids: Vec::new(),
             respond_to: tx,

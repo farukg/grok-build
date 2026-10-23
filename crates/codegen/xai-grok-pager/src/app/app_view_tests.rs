@@ -10,6 +10,197 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 #[test]
+fn task_and_todo_preferences_apply_globally_and_survive_new_views_and_restart() {
+    use crate::app::agent::AgentId;
+    use crate::app::agent_view::test_fixtures::make_agent;
+    let root = tempfile::tempdir().unwrap();
+    let mut app = test_app_with_agent();
+    for (id, session) in [(AgentId(0), "display-a"), (AgentId(1), "display-b")] {
+        if id != AgentId(0) { app.agents.insert(id, make_agent()); }
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.session_id = Some(session.to_owned().into());
+        agent.open_panel_settings_in(root.path());
+        agent.todo.update_todos(vec![xai_grok_shell::tools::TodoItem {
+            content: session.to_owned(), priority: Default::default(),
+            status: xai_grok_shell::tools::TodoStatus::Pending, meta: None,
+        }]);
+    }
+    app.reconcile_sidebar_chrome();
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)));
+    for (_, agent) in app.agents.all() {
+        assert!(agent.tasks.overlay.visible && agent.todo.overlay.visible);
+        assert_eq!(agent.todo.todos().len(), 1);
+    }
+    super::super::dispatch::switch_to_agent(&mut app, AgentId(1), super::super::dispatch::SwitchCause::Load);
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    for (_, agent) in app.agents.all() {
+        assert!(!agent.tasks.overlay.visible);
+        assert!(agent.todo.overlay.visible);
+    }
+    let mut new_view = make_agent();
+    new_view.session.session_id = Some("display-new".to_owned().into());
+    new_view.open_panel_settings_in(root.path());
+    assert!(!new_view.tasks.overlay.visible && new_view.todo.overlay.visible);
+    let mut restarted = make_agent();
+    restarted.session.session_id = Some("display-a".to_owned().into());
+    restarted.open_panel_settings_in(root.path());
+    assert!(!restarted.tasks.overlay.visible && restarted.todo.overlay.visible);
+    assert_eq!(app.agents.get(&AgentId(0)).unwrap().todo.todos()[0].content, "display-a");
+    assert_eq!(app.agents.get(&AgentId(1)).unwrap().todo.todos()[0].content, "display-b");
+    app.agents.insert(AgentId(2), new_view);
+    super::super::dispatch::switch_to_agent(
+        &mut app,
+        AgentId(2),
+        super::super::dispatch::SwitchCause::Load,
+    );
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    for (_, agent) in app.agents.all() {
+        assert!(!agent.tasks.overlay.visible && !agent.todo.overlay.visible);
+    }
+    super::super::dispatch::switch_to_agent(
+        &mut app,
+        AgentId(0),
+        super::super::dispatch::SwitchCause::Load,
+    );
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    )));
+    for (_, agent) in app.agents.all() {
+        assert!(agent.tasks.overlay.visible && !agent.todo.overlay.visible);
+    }
+    restarted.open_panel_settings_in(root.path());
+    assert!(restarted.tasks.overlay.visible && !restarted.todo.overlay.visible);
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().todo.todos()[0].content,
+        "display-a"
+    );
+    assert_eq!(
+        app.agents.get(&AgentId(1)).unwrap().todo.todos()[0].content,
+        "display-b"
+    );
+}
+
+#[test]
+fn global_todo_hide_releases_another_sessions_focus_and_input() {
+    use crate::app::agent::AgentId;
+    use crate::app::agent_view::AgentPane;
+    use crate::app::agent_view::test_fixtures::make_agent;
+    crate::views::dock::set_enabled_for_test(true);
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut app = test_app_with_agent();
+    app.screen_mode = ScreenMode::Fullscreen;
+    for (id, session) in [(AgentId(0), "focus-a"), (AgentId(1), "focus-b")] {
+        if id != AgentId(0) {
+            app.agents.insert(id, make_agent());
+        }
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.session_id = Some(session.to_owned().into());
+        agent.open_panel_settings_in(root.path());
+        agent.vim_mode = false;
+        agent
+            .todo
+            .update_todos(vec![xai_grok_shell::tools::TodoItem {
+                content: session.to_owned(),
+                priority: Default::default(),
+                status: xai_grok_shell::tools::TodoStatus::Pending,
+                meta: None,
+            }]);
+    }
+    let (mut terminal, _frames) = test_terminal();
+    app.draw(&mut terminal);
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    app.draw(&mut terminal);
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().active_pane,
+        AgentPane::Todo
+    );
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('/'),
+        KeyModifiers::NONE,
+    )));
+    assert!(
+        app.agents
+            .get(&AgentId(0))
+            .unwrap()
+            .todo
+            .list_state
+            .input_mode()
+            .is_some()
+    );
+    super::super::dispatch::switch_to_agent(
+        &mut app,
+        AgentId(1),
+        super::super::dispatch::SwitchCause::Load,
+    );
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    super::super::dispatch::switch_to_agent(
+        &mut app,
+        AgentId(0),
+        super::super::dispatch::SwitchCause::Load,
+    );
+    app.draw(&mut terminal);
+    let agent = app.agents.get(&AgentId(0)).unwrap();
+    assert_eq!(agent.active_pane, AgentPane::Scrollback);
+    assert_eq!(agent.pane_areas.todo.height, 0);
+    assert!(!agent.todo.overlay.focused);
+    assert!(agent.todo.list_state.input_mode().is_none());
+    let show_done = agent.todo.show_done();
+    let outcome = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('h'),
+        KeyModifiers::NONE,
+    )));
+    assert!(matches!(
+        outcome,
+        InputOutcome::ActionThenForward(crate::app::actions::Action::FocusPrompt)
+    ));
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().todo.show_done(),
+        show_done
+    );
+}
+
+#[test]
+fn failed_global_visibility_write_keeps_live_intent_and_reports_the_storage_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = test_app_with_agent();
+    let id = crate::app::agent::AgentId(0);
+    app.agents.get_mut(&id).unwrap().open_panel_settings_in(root.path());
+    std::fs::create_dir(root.path().join("global.toml")).unwrap();
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    let agent = app.agents.get(&id).unwrap();
+    assert!(agent.tasks.overlay.visible);
+    assert!(agent.toast.as_ref().is_some_and(|(text, _)| text.contains("Panel settings not saved")));
+    assert!(root.path().join("global.toml").is_dir());
+    let new_id = crate::app::agent::AgentId(1);
+    app.agents
+        .insert(new_id, crate::app::agent_view::test_fixtures::make_agent());
+    super::super::dispatch::switch_to_agent(
+        &mut app,
+        new_id,
+        super::super::dispatch::SwitchCause::Load,
+    );
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    for (_, agent) in app.agents.all() {
+        assert!(agent.tasks.overlay.visible && agent.todo.overlay.visible);
+    }
+}
+
+#[test]
 fn welcome_show_toast_scrubs_control_chars() {
     let mut app = test_app();
     assert!(matches!(app.active_view, ActiveView::Welcome));
@@ -1975,7 +2166,10 @@ fn needs_animation_gates_subagent_image_viewer_loading() {
     let mut terminal = false;
     for _ in 0..200 {
         app.tick();
-        let child = app.agents.get(&child_id).unwrap_or_else(|| panic!("missing child view"));
+        let child = app
+            .agents
+            .get(&child_id)
+            .unwrap_or_else(|| panic!("missing child view"));
         if child.image_viewer.is_none()
             || child.toast.is_some()
             || child.image_load_rx.is_some()
@@ -2049,7 +2243,10 @@ fn resize_event_closes_tip_show_gate_until_redraw() {
     let child_sid = "child-session";
     let mut child = idle_child_view(&app, 1, child_sid);
     child.note_terminal_size((80, 28));
-    app.agents.get_mut(&id).unwrap().note_terminal_size((80, 30));
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .note_terminal_size((80, 30));
     crate::app::session_views::test_support::link_child(
         &mut app.agents,
         id,
@@ -2071,7 +2268,10 @@ fn resize_event_closes_tip_show_gate_until_redraw() {
     };
     assert!(!agent.show_ephemeral_tip(tip(), &mut counts));
     assert!(counts.is_empty(), "stale-size show must not burn a count");
-    let child = app.agents.get_mut(&super::super::agent::AgentId(1)).unwrap();
+    let child = app
+        .agents
+        .get_mut(&super::super::agent::AgentId(1))
+        .unwrap();
     assert!(!child.show_ephemeral_tip(tip(), &mut counts));
     assert!(counts.is_empty(), "child stale-size show must not burn");
     child.note_terminal_size((118, 46));
@@ -2525,14 +2725,14 @@ fn minimal_ctrl_t_toggles_todo_panel() {
     );
 }
 #[test]
-fn non_minimal_ctrl_t_leaves_todo_panel_flag_untouched() {
+fn non_minimal_ctrl_t_updates_the_shared_todo_preference() {
     let mut app = test_app_with_agent();
     app.screen_mode = ScreenMode::Inline;
     assert!(!app.minimal_state.show_todos);
     let _ = app.handle_input(&key_event(KeyCode::Char('t'), KeyModifiers::CONTROL));
     assert!(
-        !app.minimal_state.show_todos,
-        "the minimal todo-panel flag must never flip outside minimal mode"
+        app.minimal_state.show_todos,
+        "changing screen mode must retain the shared Todo preference"
     );
 }
 /// The minimal info-row transcript hint and the Ctrl+O key remap are gated on the same predicate.
@@ -3355,11 +3555,7 @@ fn prompt_paging_scope_matches_agent_surface() {
             true,
         ),
         ("minimal agent", Surface::Agent(ScreenMode::Minimal), false),
-        (
-            "dashboard session overlay",
-            Surface::DashboardOverlay,
-            true,
-        ),
+        ("dashboard session overlay", Surface::DashboardOverlay, true),
         ("dashboard attached popup", Surface::DashboardPopup, true),
     ] {
         let screen_mode = match surface {
@@ -3425,7 +3621,12 @@ fn prompt_page_actions_target_visible_fullscreen_child_scrollback() {
     let offsets = |app: &AppView| {
         (
             app.agents.get(&id).unwrap().scrollback.scroll_info().0,
-            app.agents.get(&child_id).unwrap().scrollback.scroll_info().0,
+            app.agents
+                .get(&child_id)
+                .unwrap()
+                .scrollback
+                .scroll_info()
+                .0,
         )
     };
     let before = offsets(&app);
@@ -5657,7 +5858,8 @@ fn opening_workflow_transcript_cancels_pending_scroll_stream() {
         .on_scroll_event(ScrollDirection::Up, ScrollConfig::default());
     app.last_scroll_pos = Some((30, 12));
     assert!(app.scroll_state.has_active_stream());
-    let InputOutcome::Action(open) = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE))
+    let InputOutcome::Action(open) =
+        app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE))
     else {
         panic!("Enter on a workflow agent must request its session");
     };
@@ -7572,9 +7774,6 @@ fn minimal_session_keeps_pending_sidebar_chrome_until_it_leaves_minimal() {
         "the former minimal session adopts the pager-wide F7 state"
     );
 }
-
-
-
 
 /// When the attached agent disappears externally,
 /// the `handle_input` filter must clear `attached_agent`

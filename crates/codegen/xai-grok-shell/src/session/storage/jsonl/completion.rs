@@ -242,6 +242,16 @@ impl JsonlStorageAdapter {
         Ok(receipts)
     }
 
+    pub(super) fn read_completion_receipts_sync(&self, info: &Info) -> io::Result<Vec<CompletionReceipt>> {
+        let path = self.chat_file(info);
+        let _lock = Self::lock_append(&path)?;
+        let mut receipts = Self::completion_receipts(&path)?;
+        for receipt in self.read_summary_sync(info)?.completion_delivery.receipts {
+            if !receipts.iter().any(|actual| actual.completion == receipt.completion) { receipts.push(receipt); }
+        }
+        Ok(receipts)
+    }
+
     pub(crate) async fn record_completion_ready(
         &self,
         info: &Info,

@@ -498,6 +498,7 @@ impl AuthIdentity {
 /// Open and focus of the F6 and F7 columns, shared by every session in this pager.
 #[derive(Debug, Default)]
 pub(crate) struct SidebarChrome {
+    work_visibility: Option<(bool, bool)>,
     f6_open: bool,
     f7_open: bool,
     f6_focused: bool,
@@ -2086,7 +2087,10 @@ impl AppView {
     /// 0 means unknown (welcome/dashboard views), which keeps the trackpad per-flush cap at its floor.
     fn scroll_viewport_height(&self) -> u16 {
         match self.active_view {
-            ActiveView::Agent(id) => self.agents.get(&id).map_or(0, |agent| agent.scrollback.scroll_info().1),
+            ActiveView::Agent(id) => self
+                .agents
+                .get(&id)
+                .map_or(0, |agent| agent.scrollback.scroll_info().1),
             _ => 0,
         }
     }
@@ -2211,6 +2215,39 @@ impl AppView {
         self.handle_input_at_with_paste_provenance(ev, Instant::now(), PasteProvenance::Terminal)
     }
     pub(crate) fn handle_input_at_with_paste_provenance(
+        &mut self,
+        ev: &Event,
+        arrived_at: Instant,
+        paste_provenance: PasteProvenance,
+    ) -> InputOutcome {
+        self.reconcile_work_visibility();
+        let before = self.active_view.agent_id().and_then(|id| self.agents.get(&id)
+            .map(|agent| (id, agent.tasks.overlay.visible, agent.todo.overlay.visible)));
+        let minimal_todo_before = self.minimal_state.show_todos;
+        let outcome = self.handle_input_inner(ev, arrived_at, paste_provenance);
+        if let Some((id, old_tasks, old_todo)) = before {
+            let changed = self.agents.get(&id).and_then(|agent| {
+                let todo = if self.minimal_state.show_todos != minimal_todo_before {
+                    self.minimal_state.show_todos
+                } else { agent.todo.overlay.visible };
+                let now = (agent.tasks.overlay.visible, todo);
+                (now != (old_tasks, old_todo)).then_some(now)
+            });
+            if let Some((tasks, todo)) = changed {
+                self.sidebar_chrome.work_visibility = Some((tasks, todo));
+                self.minimal_state.show_todos = todo;
+                if let Some(agent) = self.agents.get_mut(&id) {
+                    agent.save_global_work_visibility((tasks != old_tasks).then_some(tasks), (todo != old_todo).then_some(todo));
+                }
+                for (_, agent) in self.agents.all_mut() {
+                    agent.adopt_global_work_visibility(tasks, todo);
+                }
+            }
+        }
+        outcome
+    }
+
+    fn handle_input_inner(
         &mut self,
         ev: &Event,
         arrived_at: Instant,
@@ -2405,12 +2442,21 @@ impl AppView {
                     .is_some_and(|d| d.attached_agent == Some(id));
                 if let Event::Key(key) = ev
                     && key.kind != KeyEventKind::Release
-                    && let Some(action) = self.registry.lookup(key, crate::actions::When::AgentScreen)
+                    && let Some(action) =
+                        self.registry.lookup(key, crate::actions::When::AgentScreen)
                     && let Some(action) = match action {
-                        crate::actions::ActionId::SessionPrev => Some(Action::CycleSessions(crate::app::actions::Direction::Prev)),
-                        crate::actions::ActionId::SessionNext => Some(Action::CycleSessions(crate::app::actions::Direction::Next)),
-                        crate::actions::ActionId::SessionParent => Some(Action::NavigateTree(crate::app::actions::TreeStep::Parent)),
-                        crate::actions::ActionId::SessionLatestChild => Some(Action::NavigateTree(crate::app::actions::TreeStep::LatestChild)),
+                        crate::actions::ActionId::SessionPrev => {
+                            Some(Action::CycleSessions(crate::app::actions::Direction::Prev))
+                        }
+                        crate::actions::ActionId::SessionNext => {
+                            Some(Action::CycleSessions(crate::app::actions::Direction::Next))
+                        }
+                        crate::actions::ActionId::SessionParent => {
+                            Some(Action::NavigateTree(crate::app::actions::TreeStep::Parent))
+                        }
+                        crate::actions::ActionId::SessionLatestChild => Some(Action::NavigateTree(
+                            crate::app::actions::TreeStep::LatestChild,
+                        )),
                         _ => None,
                     }
                 {
@@ -4624,9 +4670,9 @@ impl AppView {
                                 title: overlay_title.as_deref(),
                                 position,
                                 kind: kind.as_deref(),
-                                awaits_delivery: child_info.is_some_and(
-                                    crate::app::subagent::SubagentInfo::awaits_delivery,
-                                ),
+                                delivery: child_info
+                                    .filter(|info| info.is_running())
+                                    .map(|info| info.attempt.delivery),
                             };
                             if let Some(d) = self.dashboard.as_mut()
                                 && d.peek_viewport.is_some()
@@ -5517,7 +5563,11 @@ impl AppView {
         if self.session_picker_content_loading {
             return TickDemand::Fast;
         }
-        if self.agents.roots().any(|(_, agent)| agent.edit_hl_needs_tick()) {
+        if self
+            .agents
+            .roots()
+            .any(|(_, agent)| agent.edit_hl_needs_tick())
+        {
             return TickDemand::Fast;
         }
         match self.active_view {
@@ -5636,7 +5686,10 @@ impl AppView {
             } else {
                 (None, None, None, false, None, false)
             };
-        let any_agent_has_perms = self.agents.roots().any(|(_, agent)| !agent.permission_queue.is_empty());
+        let any_agent_has_perms = self
+            .agents
+            .roots()
+            .any(|(_, agent)| !agent.permission_queue.is_empty());
         if !any_agent_has_perms {
             self.notification_service.clear_permission_notification();
         }
@@ -5679,8 +5732,30 @@ impl AppView {
         self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
     }
 
+    fn reconcile_work_visibility(&mut self) {
+        if self.sidebar_chrome.work_visibility.is_none() {
+            self.sidebar_chrome.work_visibility = self.active_view.agent_id().and_then(|id| {
+                self.agents
+                    .get(&id)
+                    .map(|agent| (agent.tasks.overlay.visible, agent.todo.overlay.visible))
+            });
+        }
+        if let Some((tasks, todo)) = self.sidebar_chrome.work_visibility {
+            self.minimal_state.show_todos = todo;
+            if let Some(agent) = self
+                .active_view
+                .agent_id()
+                .and_then(|id| self.agents.get_mut(&id))
+                && (agent.tasks.overlay.visible, agent.todo.overlay.visible) != (tasks, todo)
+            {
+                agent.adopt_global_work_visibility(tasks, todo);
+            }
+        }
+    }
+
     /// Keep F6/F7 open or closed across session switches. The newly shown session supplies the rows.
     fn reconcile_sidebar_chrome(&mut self) {
+        self.reconcile_work_visibility();
         let Some(id) = self.active_view.agent_id() else {
             return;
         };

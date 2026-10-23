@@ -1343,6 +1343,10 @@ pub trait StorageAdapter: Send + Sync {
         ))
     }
 
+    async fn read_completion_receipts(&self, _info: &Info) -> io::Result<Vec<xai_chat_state::CompletionReceipt>> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "completion receipt observation unsupported"))
+    }
+
     async fn prepare_subagent_completion(
         &self,
         _info: &Info,

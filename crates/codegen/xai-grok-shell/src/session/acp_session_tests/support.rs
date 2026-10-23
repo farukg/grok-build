@@ -1038,57 +1038,54 @@ pub(crate) fn subagent_summary(id: &str) -> SubagentCompletionSummary {
     }
 }
 pub(crate) struct FakeCoordinator {
-    suppress_seen: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
-    returned: Arc<std::sync::Mutex<Vec<String>>>,
+    acknowledged: Arc<std::sync::Mutex<Vec<String>>>,
     peeks: Arc<std::sync::atomic::AtomicUsize>,
+    sender: tokio::sync::mpsc::UnboundedSender<xai_grok_tools::implementations::grok_build::task::types::SubagentEvent>,
 }
 impl FakeCoordinator {
-    pub(crate) fn suppress_seen(&self) -> Vec<Vec<String>> {
-        self.suppress_seen.lock().unwrap().clone()
-    }
-    pub(crate) fn returned(&self) -> Vec<String> {
-        self.returned.lock().unwrap().clone()
+    pub(crate) async fn acknowledged(&self) -> Vec<String> {
+        use xai_grok_tools::implementations::grok_build::task::types::{SubagentCompletionsRequest, SubagentEvent};
+        let (respond_to, receive) = oneshot::channel();
+        self.sender.send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest { parent_session_id: Some("test-actor".into()), suppress_ids: Vec::new(), respond_to })).unwrap();
+        receive.await.unwrap();
+        self.acknowledged.lock().unwrap().clone()
     }
     pub(crate) fn peeks(&self) -> usize {
         self.peeks.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
-/// Fakes the coordinator's `Completions` (destructive, honours `suppress_ids`) and `PeekCompletions` (clones) arms.
+/// Fakes attempt-bound observation and explicit projection acknowledgement.
 /// Spawns on the current `LocalSet`; call before the actor is shared.
 pub(crate) fn spawn_fake_coordinator(
     actor: &mut SessionActor,
     buffer: Vec<SubagentCompletionSummary>,
 ) -> FakeCoordinator {
     use xai_grok_tools::implementations::grok_build::task::types::SubagentEvent;
-    let fake = FakeCoordinator {
-        suppress_seen: Arc::default(),
-        returned: Arc::default(),
-        peeks: Arc::default(),
-    };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SubagentEvent>();
+    let fake = FakeCoordinator {
+        acknowledged: Arc::default(),
+        peeks: Arc::default(),
+        sender: tx.clone(),
+    };
     actor.tool_context.subagent_event_tx = Some(tx);
-    let suppress_seen = Arc::clone(&fake.suppress_seen);
-    let returned = Arc::clone(&fake.returned);
+    let acknowledged = Arc::clone(&fake.acknowledged);
     let peeks = Arc::clone(&fake.peeks);
     tokio::task::spawn_local(async move {
         let mut buffer = buffer;
         while let Some(ev) = rx.recv().await {
             match ev {
-                SubagentEvent::Completions(req) => {
-                    suppress_seen.lock().unwrap().push(req.suppress_ids.clone());
-                    let (drained, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut buffer)
-                        .into_iter()
-                        .partition(|c| !req.suppress_ids.iter().any(|id| id == c.subagent_id()));
-                    buffer = kept;
-                    returned
-                        .lock()
-                        .unwrap()
-                        .extend(drained.iter().map(|c| c.subagent_id().to_owned()));
-                    let _ = req.respond_to.send(drained);
+                SubagentEvent::AcknowledgeCompletions { parent_session_id: _, completions } => {
+                    buffer.retain(|summary| {
+                        if completions.iter().any(|id| id.subagent_id == summary.subagent_id() && id.attempt_id == summary.attempt_id) {
+                            acknowledged.lock().unwrap().push(summary.subagent_id().to_owned());
+                            false
+                        } else { true }
+                    });
                 }
                 SubagentEvent::PeekCompletions(req) => {
                     peeks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let _ = req.respond_to.send(buffer.clone());
+                    let filtered = buffer.iter().filter(|summary| !req.suppress_ids.iter().any(|id| id.subagent_id == summary.subagent_id() && id.attempt_id == summary.attempt_id)).cloned().collect();
+                    let _ = req.respond_to.send(filtered);
                 }
                 _ => {}
             }

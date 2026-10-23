@@ -71,8 +71,7 @@ pub struct OverlayHeader<'a> {
     pub position: Option<(usize, usize)>,
     /// A child session's kind ("Explorer", "General", …), shown before the title.
     pub kind: Option<&'a str>,
-    /// A human steered this child; the header offers `[deliver]`.
-    pub awaits_delivery: bool,
+    pub delivery: Option<xai_grok_shell::extensions::notification::SubagentDelivery>,
 }
 impl OverlayHeader<'_> {
     /// The `i/n` position when `‹`/`›` have anything to cycle through.
@@ -1001,31 +1000,24 @@ impl AgentView {
         }
         let dock_on = crate::views::dock::enabled() && area.height > agent::SHORT_TERMINAL_ROWS;
         self.dock_on = dock_on;
-        let tasks_height = if dock_on {
-            0
+        let tasks_height = 0;
+        let todo_height = if dock_on {
+            self.todo.desired_height(area.height)
         } else {
-            self.tasks.desired_height(area.height)
+            0
         };
-        let todo_height = self.todo.desired_height(area.height);
         self.sync_queue_pane();
-        if dock_on {
-            self.queue.overlay.visible =
-                self.dock_queued_expanded && self.visible_held_queue_len() > 0;
-        }
+        self.queue.overlay.visible = !self.visible_queue_is_empty();
         if self.active_pane == ActivePane::Queue && !self.queue.is_visible() {
             self.active_pane = ActivePane::Scrollback;
         }
         if dock_on && self.active_pane == ActivePane::Tasks {
             self.active_pane = ActivePane::Scrollback;
         }
-        let queue_height = if dock_on {
-            0
-        } else {
-            self.queue.desired_height()
-        };
+        let queue_height = self.queue.desired_height();
         let drain_blocked = self.drain_blocked();
         let dock_slot = self.f7_body;
-        let dock_covers_cues = self.dock_covers_idle_cues(dock_on && dock_slot.width > 0);
+        let dock_covers_cues = self.dock_covers_idle_cues(dock_on);
         let turn_status_drain_blocked = if dock_covers_cues {
             false
         } else {
@@ -1083,8 +1075,10 @@ impl AgentView {
             _ => 1,
         };
         let follow_ups_height = u16::from(self.follow_ups.is_some());
-        let mut dock_data =
-            (dock_on && !self.dock_hidden && dock_slot.width > 0).then(|| self.dock_snapshot());
+        let mut dock_data = (dock_slot.width > 0).then(|| self.dock_snapshot());
+        let upper_dock = (dock_on && self.tasks.overlay.visible).then(|| self.dock_snapshot());
+        let upper_dock_rows = upper_dock.as_ref().map_or(0, crate::views::dock::desired_height)
+            .min(area.height / 4);
         let dock_rows = dock_data
             .as_ref()
             .map_or(0, crate::views::dock::desired_height)
@@ -1092,7 +1086,7 @@ impl AgentView {
         let dock_rect = Rect::new(dock_slot.x, dock_slot.y, dock_slot.width, dock_rows);
         self.dock_rows_in_sidebar = dock_rows;
         self.take_dock_row_request();
-        self.dock_shown = dock_rows > 0;
+        self.dock_shown = dock_rows > 0 || upper_dock_rows > 0;
         if !self.dock_shown && self.active_pane == ActivePane::Dock {
             self.active_pane = ActivePane::Scrollback;
         }
@@ -1116,7 +1110,7 @@ impl AgentView {
             banner_height,
             cta_height,
             follow_ups_height,
-            dock_height: 0,
+            dock_height: upper_dock_rows,
             prompt_gap,
             model_notice_height,
             voice_recording_height,
@@ -1129,7 +1123,10 @@ impl AgentView {
                 prompt_height.min(AgentViewLayout::rows_available_for_prompt(layout_params));
         }
         let mut layout = AgentViewLayout::compute(layout_params);
-        layout.dock = dock_rect;
+        if layout.todo.height == 0 && self.active_pane == ActivePane::Todo {
+            self.set_active_pane(AgentPane::Scrollback, false);
+        }
+        if upper_dock_rows == 0 { layout.dock = dock_rect; }
         let search_active =
             self.scrollback_search.is_some() && self.active_pane == AgentPane::Scrollback;
         let search_reserved_rows =
@@ -1190,7 +1187,7 @@ impl AgentView {
                         timeline_width: 0,
                         ..layout_params
                     });
-                    layout.dock = dock_rect;
+                    if upper_dock_rows == 0 { layout.dock = dock_rect; }
                     if search_reserved_rows > 0 {
                         layout.scrollback.height -= search_reserved_rows;
                         layout.scrollback_content.height = layout
@@ -1209,6 +1206,8 @@ impl AgentView {
             self.timeline_hover = None;
             self.timeline_hover_preview = None;
         }
+        let upper_dock_rect = if upper_dock_rows > 0 { layout.dock } else { Rect::default() };
+        if upper_dock_rect.height == 0 { layout.dock = dock_rect; }
         if let Some(data) = &mut dock_data {
             if dock_rect.height > 0 {
                 data.max_rows =
@@ -1220,11 +1219,9 @@ impl AgentView {
             data.stop_hovered = crate::views::dock::hovered_stop_button_rect(dock_rect, data)
                 .is_some_and(|hit| hit.rect.contains((col, row).into()));
         }
-        if let Some(dock) = &dock_data {
-            let body = crate::views::dock::queue_body_rect(dock_rect, dock);
-            if body.height > 0 {
-                layout.queue = body;
-            }
+        self.dock_shown = layout.dock.height > 0 || dock_rect.height > 0;
+        if !self.dock_shown && self.active_pane == ActivePane::Dock {
+            self.active_pane = ActivePane::Scrollback;
         }
         agent::fill_background(buf, area, layout_cfg, compact, &theme);
         let mut status_line_link_spans: Vec<xai_ratatui_inline::LinkSpan> = Vec::new();
@@ -1386,12 +1383,17 @@ impl AgentView {
                 )),
             );
         }
-        if overlay_header.awaits_delivery {
+        if let Some(delivery) = overlay_header.delivery {
+            use xai_grok_shell::extensions::notification::SubagentDelivery;
+            let (label, color) = match delivery {
+                SubagentDelivery::Held => ("[delivery:manual F5:auto]", theme.warning),
+                SubagentDelivery::OnTurnEnd => ("[delivery:auto F5:manual]", theme.gray),
+            };
             status.push(
                 "deliver",
                 Line::from(Span::styled(
-                    "[deliver]",
-                    hover_or(self.hit_deliver.hovered, bg.fg(theme.warning)),
+                    label,
+                    hover_or(self.hit_deliver.hovered, bg.fg(color)),
                 )),
             );
         }
@@ -1915,31 +1917,28 @@ impl AgentView {
                 Some(layout.scrollback),
                 self.can_send_now(),
             );
-            let close_rect = agent::render_todo_chrome_with_close_label(
-                buf,
-                layout.queue,
-                layout_cfg,
-                queue_focused,
-                false,
-                self.hit_queue_close.hovered,
-                &theme,
-                Some(crate::glyphs::ballot_x_button()),
-            )
-            .and_then(|sel| sel.close_button_rect());
-            self.hit_queue_close.set(close_rect);
+            agent::render_queue_chrome(buf, layout.queue, layout_cfg, queue_focused, &theme);
+            self.hit_queue_close.clear();
         } else {
             self.hit_queue_close.clear();
         }
         self.dock_stop_button = None;
-        self.pending_dock = dock_data.take().filter(|_| dock_rect.height > 0).map(|data| {
-            super::sidebars::PendingDock {
-                data,
-                rect: dock_rect,
-                scrollback: layout.scrollback,
-                layout_cfg: *layout_cfg,
-                overlay_focused,
-            }
-        });
+        if let Some(mut data) = upper_dock
+            && upper_dock_rect.height > 0
+        {
+            data.focused = self.active_pane == ActivePane::Dock && !self.dock_focus_in_sidebar;
+            self.sync_dock_hover_from_pointer(upper_dock_rect);
+            data.hovered = self.dock_hovered;
+            crate::views::dock::render(buf, upper_dock_rect, &theme, &data);
+            self.cache_dock_stop_at(upper_dock_rect, &data);
+        }
+        self.pending_dock = dock_data
+            .take()
+            .filter(|_| dock_rect.height > 0)
+            .map(|mut data| {
+                data.focused = self.active_pane == ActivePane::Dock && (self.dock_focus_in_sidebar || upper_dock_rect.height == 0);
+                super::sidebars::PendingDock { data, rect: dock_rect }
+            });
         self.last_btw_selection_model = ResolvedSelectionModel::default();
         self.last_btw_area = Rect::default();
         if btw_height > 0
@@ -4651,7 +4650,7 @@ mod overlay_cycle_hint_tests {
                     title: None,
                     position: Some((1, if can_cycle { 2 } else { 1 })),
                     kind: None,
-                    awaits_delivery: false,
+                    delivery: None,
                 },
                 ..Default::default()
             },
@@ -4694,7 +4693,7 @@ mod overlay_cycle_hint_tests {
                     title: None,
                     position: Some((1, 2)),
                     kind: None,
-                    awaits_delivery: false,
+                    delivery: None,
                 },
                 ..Default::default()
             },

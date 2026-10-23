@@ -627,10 +627,7 @@ impl SchedulerActor {
         };
 
         if let Some(snapshot) = &prev_snapshot
-            && matches!(
-                snapshot.status,
-                SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. }
-            )
+            && snapshot.is_running()
         {
             tracing::info!(
                 task_id = %task_id,

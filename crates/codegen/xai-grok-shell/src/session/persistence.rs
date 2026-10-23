@@ -286,6 +286,7 @@ pub enum PersistenceMsg {
             io::Result<Vec<super::delivery_receiver::DeliveryReceipt>>,
         >,
     },
+    GetCompletionReceipts { respond_to: tokio::sync::oneshot::Sender<io::Result<Vec<xai_chat_state::CompletionReceipt>>> },
     RecoverSubagentCompletions {
         respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>>,
     },
@@ -2418,6 +2419,10 @@ impl SessionPersistence {
                         super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::ProducerPublished);
                     }
                     self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::GetCompletionReceipts { respond_to } => {
+                    let result = self.storage.read_completion_receipts(&self.info).await;
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::RecoverSubagentCompletions { respond_to } => {

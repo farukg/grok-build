@@ -31,7 +31,7 @@ pub(crate) async fn create_completion_test_actor(
     context_window: u64,
     threshold_percent: u8,
     gateway_tx: mpsc::UnboundedSender<xai_acp_lib::AcpClientMessage>,
-    persistence_tx: mpsc::UnboundedSender<PersistenceMsg>,
+    _persistence_tx: mpsc::UnboundedSender<PersistenceMsg>,
 ) -> SessionActor {
     let directory = tempfile::tempdir().expect("durable chat fixture");
     let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
@@ -39,6 +39,6 @@ pub(crate) async fn create_completion_test_actor(
     storage.init_session(&info, acp::ModelId::new("test")).await.expect("fixture session");
     let actor = crate::session::persistence::durable_update_tests::test_actor(info, storage);
     let channel = ChannelChatPersistence::new(actor.handle.tx.clone());
-    create_test_actor_with_chat_persistence(total_tokens, context_window, threshold_percent, gateway_tx, persistence_tx,
+    create_test_actor_with_chat_persistence(total_tokens, context_window, threshold_percent, gateway_tx, actor.handle.tx.clone(),
         Box::new(DurableChatFixture { channel, actor, _directory: directory })).await.0
 }

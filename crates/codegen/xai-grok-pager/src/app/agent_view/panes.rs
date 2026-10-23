@@ -266,6 +266,22 @@ impl AgentView {
             self.scrollback.reveal_entry_line(idx, line);
         }
     }
+    pub(crate) fn adopt_global_work_visibility(&mut self, tasks: bool, todo: bool) {
+        self.tasks.overlay.visible = tasks;
+        self.todo.overlay.visible = todo;
+        self.tasks.on_state_change();
+        self.todo.on_state_change();
+        if !tasks {
+            self.tasks.overlay.focused = false;
+        }
+        if !todo {
+            self.todo.overlay.focused = false;
+            if self.active_pane == AgentPane::Todo {
+                self.set_active_pane(AgentPane::Scrollback, false);
+            }
+        }
+    }
+
     /// Todo-pane-focused key handling.
     ///
     /// Routes structural keys through the shared overlay handler, then content keys through `TodoPane::handle_key`.

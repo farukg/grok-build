@@ -11,7 +11,6 @@ use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::scrollback::render::ScratchBuffer;
-use crate::views::tasks_pane::TaskEntryId;
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -106,65 +105,23 @@ fn insert_running_task_with_entry(
         },
     );
 }
-/// Tasks pane (dock off): the frame paints `[↗]` and `[✗]` on a running task
-/// row; hovering each icon activates it and clicking fires its action.
 #[test]
-fn tasks_pane_icons_hover_and_click_where_painted() {
-    let mut agent = make_agent();
-    insert_running_task(&mut agent, "bg-1");
-    let area = Rect::new(0, 0, 80, 30);
-    let _ = draw_frame(&mut agent, area);
-    let buf = draw_frame(&mut agent, area);
-    let kill = *find_symbol(&buf, "\u{2717}")
-        .first()
-        .expect("kill icon [✗] painted for a running task");
-    let view = *find_symbol(&buf, "\u{2197}")
-        .first()
-        .expect("view icon [↗] painted for a running task");
-    let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, kill.0, kill.1));
-    assert_eq!(
-        agent.tasks.hovered_kill,
-        Some(TaskEntryId::BgTask("bg-1".into())),
-        "hovering the painted [✗] must activate it"
-    );
-    let outcome = agent.handle_mouse(&mouse(
-        MouseEventKind::Down(MouseButton::Left),
-        kill.0,
-        kill.1,
-    ));
-    assert!(
-        matches!(outcome, InputOutcome::Action(Action::KillBgTask(ref id)) if id == "bg-1"),
-        "clicking the painted [✗] must kill the task, got {outcome:?}"
-    );
-    let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, view.0, view.1));
-    assert_eq!(
-        agent.tasks.hovered_view,
-        Some(TaskEntryId::BgTask("bg-1".into())),
-        "hovering the painted [↗] must activate it"
-    );
-    let outcome = agent.handle_mouse(&mouse(
-        MouseEventKind::Down(MouseButton::Left),
-        view.0,
-        view.1,
-    ));
-    assert!(
-        matches!(outcome, InputOutcome::Changed),
-        "clicking the painted [↗] must open the viewer, got {outcome:?}"
-    );
-    assert!(
-        agent.block_viewer.is_some(),
-        "the [↗] click must open the bg task viewer"
-    );
+fn f7_task_icons_work_when_upper_dock_is_disabled() {
+    check_work_icons(false);
 }
 /// A task whose scrollback entry never materialized (completed-early race) or
 /// dangles after a scrollback swap must still open its viewer from `[↗]`: the
 /// task state carries the stdout, and the dock path already opens it.
 #[test]
-fn tasks_pane_view_click_opens_viewer_without_scrollback_entry() {
+fn f7_view_click_opens_viewer_without_scrollback_entry() {
+    crate::views::dock::set_enabled_for_test(false);
     let mut agent = make_agent();
+    open_dock_sidebar(&mut agent);
     insert_running_task_with_entry(&mut agent, "bg-1", None);
     let area = Rect::new(0, 0, 80, 30);
     let _ = draw_frame(&mut agent, area);
+    let dock = agent.pane_areas.dock;
+    let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, dock.x + 3, dock.y + 1));
     let buf = draw_frame(&mut agent, area);
     let view = *find_symbol(&buf, "\u{2197}")
         .first()
@@ -274,13 +231,17 @@ fn dock_subagent_icons_hover_and_click_where_painted() {
 /// hovering and clicking the painted icons must act on that row.
 #[test]
 fn dock_icons_hover_and_click_where_painted() {
-    crate::views::dock::set_enabled_for_test(true);
+    check_work_icons(true);
+}
+
+fn check_work_icons(upper_enabled: bool) {
+    crate::views::dock::set_enabled_for_test(upper_enabled);
     let mut agent = make_agent();
     open_dock_sidebar(&mut agent);
     insert_running_task(&mut agent, "bg-1");
     let area = Rect::new(0, 0, 80, 30);
     let buf = draw_frame(&mut agent, area);
-    assert!(agent.dock_on, "dock must be on for this test");
+    assert_eq!(agent.dock_on, upper_enabled);
     let dock = agent.pane_areas.dock;
     let row_y = (dock.y..dock.bottom())
         .find(|y| {
@@ -347,59 +308,240 @@ fn dock_row_has_tasks(buf: &Buffer, dock: Rect) -> bool {
     })
 }
 #[test]
-fn ctrl_g_hides_and_shows_painted_dock() {
+fn task_preference_only_changes_the_additional_upper_projection() {
     crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
     open_dock_sidebar(&mut agent);
     insert_running_task(&mut agent, "bg-1");
-    let area = Rect::new(0, 0, 80, 30);
+    let area = Rect::new(0, 0, 160, 40);
     let registry = ActionRegistry::defaults();
     let ctrl_g = Event::Key(crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Char('g'),
-        KeyModifiers::CONTROL,
-    ));
+        crossterm::event::KeyCode::Char('g'), KeyModifiers::CONTROL));
     let buf = draw_frame(&mut agent, area);
-    assert!(agent.dock_shown);
     assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
-    assert!(matches!(
-        agent.handle_input(&ctrl_g, &registry),
-        InputOutcome::Changed
-    ));
+    assert!(agent.pane_areas.dock.x >= agent.f7_body.x);
+    let _ = agent.handle_input(&ctrl_g, &registry);
     let buf = draw_frame(&mut agent, area);
-    assert!(agent.dock_on && agent.dock_hidden);
-    assert!(!agent.dock_shown);
-    assert_eq!(agent.pane_areas.dock.height, 0);
-    assert!(!dock_row_has_tasks(&buf, agent.pane_areas.dock));
-    assert!(matches!(
-        agent.handle_input(&ctrl_g, &registry),
-        InputOutcome::Changed
-    ));
+    assert!(agent.tasks.overlay.visible);
+    assert!(agent.pane_areas.dock.x < agent.f7_body.x);
+    assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
+    let sidebar = Rect::new(agent.f7_body.x, agent.f7_body.y, agent.f7_body.width, agent.dock_rows_in_sidebar);
+    assert!(dock_row_has_tasks(&buf, sidebar));
+    let _ = agent.handle_input(&ctrl_g, &registry);
     let buf = draw_frame(&mut agent, area);
-    assert!(agent.dock_shown && !agent.dock_hidden);
+    assert!(!agent.tasks.overlay.visible);
     assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
 }
 #[test]
-fn dock_lives_in_the_f7_column_and_goes_with_it() {
+fn both_work_projections_open_the_same_child_with_surface_local_indices() {
     crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
-    insert_running_task(&mut agent, "bg-1");
-    let area = Rect::new(0, 0, 160, 30);
-    let text_of = |buf: &Buffer| -> String {
-        (0..area.height)
-            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
-            .map(|(x, y)| cell_symbol(buf, x, y))
-            .collect()
-    };
-
-    let closed = draw_frame(&mut agent, area);
-    assert!(!agent.dock_shown, "the dock is invisible while F7 is closed");
-    assert!(!text_of(&closed).contains("Run sleep 5"));
-
+    agent.tasks.overlay.visible = true;
+    agent.subagent_sessions.insert("child-one".into(), super::test_fixtures::running_subagent_info("child-one"));
     open_dock_sidebar(&mut agent);
-    let open = draw_frame(&mut agent, area);
-    assert!(agent.dock_shown);
-    let dock = agent.pane_areas.dock;
-    assert!(dock.x >= area.width * 6 / 10, "the dock is in the right column: {dock:?}");
-    assert!(dock.right() <= area.width);
-    assert!(text_of(&open).contains("Run sleep 5"));
+    let registry = ActionRegistry::defaults();
+    for size in [(160, 40), (120, 25)] {
+        let area = Rect::new(0, 0, size.0, size.1);
+        let _ = draw_frame(&mut agent, area);
+        let upper = agent.pane_areas.dock;
+        let sidebar = Rect::new(agent.f7_body.x, agent.f7_body.y, agent.f7_body.width, agent.dock_rows_in_sidebar);
+        assert!(upper.width > 0 && sidebar.width > 0);
+        assert!(!upper.intersects(sidebar));
+        for (rect, in_sidebar) in [(upper, false), (sidebar, true)] {
+            let row = (rect.y..rect.bottom()).find(|y| matches!(agent.dock_item_at(rect, *y),
+                Some(crate::views::dock::DockItem::Row(crate::views::dock::Section::Subagents, 0)))).unwrap();
+            let outcome = agent.handle_input(&Event::Mouse(mouse(MouseEventKind::Down(MouseButton::Left), rect.x + 3, row)), &registry);
+            assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(ref id)) if id == "child-one"));
+            assert_eq!(agent.dock_focus_in_sidebar, in_sidebar);
+            let enter = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Enter, KeyModifiers::NONE);
+            assert!(matches!(agent.handle_dock_key(&enter), InputOutcome::Action(Action::OpenSession(ref id)) if id == "child-one"));
+        }
+    }
+}
+
+#[test]
+fn suppressed_todo_releases_keyboard_focus_on_short_and_narrow_terminals() {
+    crate::views::dock::set_enabled_for_test(true);
+    let _theme = crate::theme::cache::pin_theme();
+    let registry = ActionRegistry::defaults();
+    for width in [80, 32, 24] {
+        let mut agent = super::test_fixtures::running_agent_local_only();
+        agent.vim_mode = false;
+        agent
+            .todo
+            .update_todos(vec![xai_grok_shell::tools::TodoItem {
+                content: "resize-todo".into(),
+                priority: Default::default(),
+                status: xai_grok_shell::tools::TodoStatus::Pending,
+                meta: None,
+            }]);
+        let large = Rect::new(0, 0, 80, 30);
+        let _ = draw_frame(&mut agent, large);
+        let _ = agent.handle_input(
+            &Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('t'),
+                KeyModifiers::CONTROL,
+            )),
+            &registry,
+        );
+        let _ = draw_frame(&mut agent, large);
+        assert_eq!(agent.active_pane, super::AgentPane::Todo);
+        assert!(agent.pane_areas.todo.height > 0);
+        let small = Rect::new(0, 0, width, 16);
+        let _ = agent.handle_input(&Event::Resize(width, 16), &registry);
+        let _ = draw_frame(&mut agent, small);
+        assert_eq!(agent.pane_areas.todo.height, 0);
+        assert_eq!(agent.active_pane, super::AgentPane::Scrollback);
+        assert!(!agent.todo.overlay.focused);
+        assert!(agent.todo.is_visible());
+        assert!(agent.pane_areas.queue.height > 0);
+        assert_eq!(agent.pane_areas.queue.bottom(), agent.pane_areas.prompt.y);
+        let show_done = agent.todo.show_done();
+        let outcome = agent.handle_input(
+            &Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('h'),
+                KeyModifiers::NONE,
+            )),
+            &registry,
+        );
+        assert!(matches!(
+            outcome,
+            InputOutcome::ActionThenForward(Action::FocusPrompt)
+        ));
+        assert_eq!(agent.todo.show_done(), show_done);
+        let _ = draw_frame(&mut agent, large);
+        assert!(agent.pane_areas.todo.height > 0);
+        assert_eq!(agent.active_pane, super::AgentPane::Scrollback);
+    }
+}
+
+#[test]
+fn upper_todo_render_obeys_dock_and_visibility_without_hiding_f7_or_queue() {
+    let _theme = crate::theme::cache::pin_theme();
+    let registry = ActionRegistry::defaults();
+    let toggle_todo = Event::Key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    ));
+    for dock in [false, true] {
+        crate::views::dock::set_enabled_for_test(dock);
+        for f7 in [false, true] {
+            for tasks in [false, true] {
+                for empty in [false, true] {
+                    let mut agent = super::test_fixtures::running_agent_local_only();
+                    agent.tasks.overlay.visible = tasks;
+                    agent.todo.overlay.visible = false;
+                    insert_running_task(&mut agent, "bg-todo-visibility");
+                    if !empty {
+                        agent
+                            .todo
+                            .update_todos(vec![xai_grok_shell::tools::TodoItem {
+                                content: "upper-todo-marker".into(),
+                                priority: Default::default(),
+                                status: xai_grok_shell::tools::TodoStatus::Pending,
+                                meta: None,
+                            }]);
+                    }
+                    if f7 {
+                        open_dock_sidebar(&mut agent);
+                    }
+                    for visible in [false, true, false] {
+                        if agent.todo.is_visible() != visible {
+                            let _ = agent.handle_input(&toggle_todo, &registry);
+                        }
+                        for height in [40, 24] {
+                            let area = Rect::new(0, 0, 160, height);
+                            let buf = draw_frame(&mut agent, area);
+                            let todo = agent.pane_areas.todo;
+                            assert_eq!(todo.height > 0, dock && visible);
+                            let upper_width = if f7 { agent.f7_body.x } else { area.width };
+                            let upper: String = (0..height)
+                                .flat_map(|y| (0..upper_width).map(move |x| (x, y)))
+                                .map(|(x, y)| cell_symbol(&buf, x, y))
+                                .collect();
+                            let marker = if empty {
+                                "No todo items."
+                            } else {
+                                "upper-todo-marker"
+                            };
+                            assert_eq!(upper.contains(marker), dock && visible);
+                            assert!(agent.pane_areas.queue.height > 0);
+                            assert_eq!(agent.pane_areas.queue.bottom(), agent.pane_areas.prompt.y);
+                            assert_eq!(agent.dock_counts().queued, 0);
+                            assert!(agent.hit_queue_close.rect.is_none());
+                            if f7 {
+                                let sidebar = Rect::new(
+                                    agent.f7_body.x,
+                                    agent.f7_body.y,
+                                    agent.f7_body.width,
+                                    agent.dock_rows_in_sidebar,
+                                );
+                                assert!(dock_row_has_tasks(&buf, sidebar));
+                                if !empty {
+                                    agent.adopt_global_sidebars(false, true, false, true);
+                                    let _ = agent.handle_input(
+                                        &Event::Key(crossterm::event::KeyEvent::new(
+                                            crossterm::event::KeyCode::End,
+                                            KeyModifiers::NONE,
+                                        )),
+                                        &registry,
+                                    );
+                                    let buf = draw_frame(&mut agent, area);
+                                    let sidebar = agent.f7_body;
+                                    let text: String = (sidebar.y..sidebar.bottom())
+                                        .flat_map(|y| {
+                                            (sidebar.x..sidebar.right()).map(move |x| (x, y))
+                                        })
+                                        .map(|(x, y)| cell_symbol(&buf, x, y))
+                                        .collect();
+                                    assert!(text.contains("upper-todo-marker"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn f7_keeps_work_and_todos_when_upper_dock_and_preferences_are_off() {
+    for dock in [false, true] {
+        crate::views::dock::set_enabled_for_test(dock);
+        for visible in [false, true] {
+            let mut agent = make_agent();
+            insert_running_task(&mut agent, "bg-1");
+            agent.tasks.overlay.visible = visible;
+            agent.todo.overlay.visible = visible;
+            agent.todo.update_todos(vec![xai_grok_shell::tools::TodoItem {
+                content: "persistent-todo-marker".into(), priority: Default::default(),
+                status: xai_grok_shell::tools::TodoStatus::Pending, meta: None,
+            }]);
+            let mut child = super::test_fixtures::running_subagent_info("manual-child");
+            child.attempt.delivery = xai_grok_shell::extensions::notification::SubagentDelivery::Held;
+            child.attempt.completion = xai_grok_shell::extensions::notification::SubagentCompletion::Pending;
+            child.attempt.caller = xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller::Waiting;
+            agent.subagent_sessions.insert("manual-child".into(), child);
+            open_dock_sidebar(&mut agent);
+            let area = Rect::new(0, 0, 160, 40);
+            let buf = draw_frame(&mut agent, area);
+            let sidebar = Rect::new(agent.f7_body.x, agent.f7_body.y, agent.f7_body.width, agent.dock_rows_in_sidebar);
+            assert!(dock_row_has_tasks(&buf, sidebar));
+            let warning: String = (sidebar.y..sidebar.bottom()).flat_map(|y|
+                (sidebar.x..sidebar.right()).map(move |x| (x, y)))
+                .map(|(x, y)| cell_symbol(&buf, x, y)).collect();
+            assert!(warning.contains("MANUAL"));
+            assert!(warning.contains("CALLER BLOCKED"));
+            let _ = agent.handle_input(&Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::End, KeyModifiers::NONE)), &ActionRegistry::defaults());
+            let buf = draw_frame(&mut agent, area);
+            let text: String = (agent.f7_body.y..agent.f7_body.bottom()).flat_map(|y|
+                (agent.f7_body.x..agent.f7_body.right()).map(move |x| (x, y)))
+                .map(|(x, y)| cell_symbol(&buf, x, y)).collect();
+            assert!(text.contains("persistent-todo-marker"), "F7 keyboard navigation must reach real Todos independently of upper display preferences");
+            assert_eq!(agent.todo.todos()[0].content, "persistent-todo-marker");
+            assert_eq!(agent.session.bg_tasks.len(), 1);
+        }
+    }
 }

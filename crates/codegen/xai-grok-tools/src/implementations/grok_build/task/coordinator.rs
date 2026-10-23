@@ -486,25 +486,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             SubagentEvent::ListOwned(request) => {
                 self.handle_list_owned(request.parent_session_id.as_deref(), request.respond_to);
             }
-            SubagentEvent::Completions(request) => {
-                // Suppressed owned completions stay buffered for the requester's next unsuppressed request
-                let (drained, kept): (Vec<_>, Vec<_>) =
-                    std::mem::take(&mut self.pending_completions)
-                        .into_iter()
-                        .partition(|completion| {
-                            completion.is_owned_by(request.parent_session_id.as_deref())
-                                && !request
-                                    .suppress_ids
-                                    .iter()
-                                    .any(|id| id == completion.summary.subagent_id())
-                        });
-                self.pending_completions = kept;
-                let completions = drained
-                    .into_iter()
-                    .map(|completion| completion.summary)
-                    .collect();
-                let _ = request.respond_to.send(completions);
-            }
             SubagentEvent::AcknowledgeCompletions { parent_session_id, completions } => {
                 self.pending_completions.retain(|completion| {
                     completion.parent_session_id != parent_session_id
@@ -517,6 +498,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .iter()
                     .filter(|completion| {
                         completion.is_owned_by(request.parent_session_id.as_deref())
+                            && !request.suppress_ids.iter().any(|id| id.subagent_id == completion.summary.subagent_id() && id.attempt_id == completion.summary.attempt_id)
                     })
                     .map(|completion| completion.summary.clone())
                     .collect();

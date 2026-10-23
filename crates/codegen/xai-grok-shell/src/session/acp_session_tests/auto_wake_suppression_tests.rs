@@ -27,7 +27,9 @@ async fn completion_projected(actor: &SessionActor, id: &str) -> bool {
 }
 async fn mark_completion_projected(actor: &SessionActor, id: &str) {
     actor.chat_state_handle.append_completion_and_ack(xai_chat_state::CompletionProjection::new(
-        test_completion_wake(id).id, "prior-turn".into(), wake_body(id))).await.expect("durable fixture projection");
+        test_completion_wake(id).id, "prior-turn".into(), wake_body(id)), xai_chat_state::InputAdmission {
+            parent_task: xai_chat_state::ParentTask::Unknown, cancellation: tokio_util::sync::CancellationToken::new(),
+        }).await.expect("durable fixture projection");
 }
 fn subagent_completed_input(subagent_id: &str) -> InputItem {
     input_with_origin(

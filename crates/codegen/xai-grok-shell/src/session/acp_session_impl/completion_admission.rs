@@ -85,6 +85,11 @@ impl SessionActor {
     ) -> Result<bool, CompletionProjectionError> {
         let projection =
             CompletionProjection::new(completion.id.clone(), prompt_id.to_owned(), text);
+        self.commit_subagent_projection(projection, prompt_id).await
+    }
+
+    pub(super) async fn commit_subagent_projection(&self, projection: CompletionProjection, prompt_id: &str) -> Result<bool, CompletionProjectionError> {
+        let completions: Vec<_> = projection.receipts().map(|receipt| receipt.completion.clone()).collect();
         let admission = self
             .current_turn_admission(prompt_id)
             .await
@@ -95,11 +100,11 @@ impl SessionActor {
             .await?
         {
             CompletionProjectionAck::Appended | CompletionProjectionAck::Continue { .. } => {
-                self.acknowledge_subagent_completion(&completion.id);
+                for completion in &completions { self.acknowledge_subagent_completion(completion); }
                 Ok(true)
             }
             CompletionProjectionAck::AlreadyPresent { .. } => {
-                self.acknowledge_subagent_completion(&completion.id);
+                for completion in &completions { self.acknowledge_subagent_completion(completion); }
                 Ok(false)
             }
             CompletionProjectionAck::TurnClosed => Ok(false),

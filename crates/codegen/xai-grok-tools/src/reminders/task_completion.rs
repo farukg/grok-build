@@ -10,8 +10,7 @@
 //! `ReportedTaskCompletions` tracks ordinary background-task reminders only.
 use crate::bridge::ToolBridge;
 use crate::implementations::grok_build::task::types::{
-    SubagentCompletionSummary, SubagentCompletionsRequest, SubagentEvent, SubagentEventSender,
-    SubagentSnapshotStatus,
+    SubagentCompletionSummary, SubagentSnapshotStatus,
 };
 use crate::implementations::grok_build::task_output::{WaitHint, format_subagent_snapshot};
 use crate::types::TaskSnapshot;
@@ -1692,30 +1691,6 @@ mod tests {
             "expected no bash completion reminders when flag is disabled, got: {reminders:?}"
         );
     }
-    fn shared_with_subagent_completions(
-        tasks: Vec<TaskSnapshot>,
-        completions: Vec<SubagentCompletionSummary>,
-    ) -> SharedResources {
-        let mut res = Resources::new();
-        let backend: Arc<dyn TerminalBackend> = Arc::new(MockTerminal { tasks });
-        res.insert(Terminal(backend));
-        res.register_state::<ReportedTaskCompletions>();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        res.insert(SubagentEventSender(tx));
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                if let SubagentEvent::Completions(req) = event {
-                    let filtered: Vec<_> = completions
-                        .iter()
-                        .filter(|c| !req.suppress_ids.iter().any(|id| id == c.subagent_id()))
-                        .cloned()
-                        .collect();
-                    let _ = req.respond_to.send(filtered);
-                }
-            }
-        });
-        res.into_shared()
-    }
     fn test_request(id: &str) -> SubagentRequest {
         SubagentRequest {
             id: id.into(),
@@ -1777,13 +1752,9 @@ mod tests {
         };
         text
     }
-    #[tokio::test]
-    async fn subagent_completion_surfaced() {
-        let shared =
-            shared_with_subagent_completions(vec![], vec![make_subagent_completion("sub-1", true)]);
-        let reminder = TaskCompletionReminder;
-        let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let r = reminder.collect_reminders(shared, &output).await;
+    #[test]
+    fn subagent_completion_surfaced() {
+        let r = [format_subagent_completion(&make_subagent_completion("sub-1", true), None, None, None)];
         assert_eq!(
             r,
             [
@@ -1807,96 +1778,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn subagent_completion_suppressed_by_task_output() {
-        let shared =
-            shared_with_subagent_completions(vec![], vec![make_subagent_completion("sub-1", true)]);
-        let reminder = TaskCompletionReminder;
-        let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(TaskOutputResult {
-            task_id: "sub-1".into(),
-            command: String::new(),
-            status: "completed".into(),
-            exit_code: None,
-            started: String::new(),
-            ended: None,
-            duration_secs: 0.0,
-            output: "done".into(),
-            output_file: String::new(),
-            truncated: false,
-            truncation_hint: String::new(),
-            raw_output_bytes: 0,
-        }));
-        let r = reminder.collect_reminders(shared, &output).await;
-        assert!(
-            r.is_empty(),
-            "completed get_task_output should suppress subagent reminder"
-        );
-    }
-    #[tokio::test]
-    async fn subagent_completion_suppressed_by_wait_tasks_multi_result() {
-        let shared = shared_with_subagent_completions(
-            vec![],
-            vec![
-                make_subagent_completion("sub-1", true),
-                make_subagent_completion("sub-2", true),
-            ],
-        );
-        let reminder = TaskCompletionReminder;
-        let output = ToolOutput::TaskOutput(TaskOutputOutput::MultiResult(MultiTaskOutputResult {
-            mode: "wait_all".into(),
-            results: vec![
-                TaskOutputResult {
-                    task_id: "sub-1".into(),
-                    command: String::new(),
-                    status: "completed".into(),
-                    exit_code: None,
-                    started: String::new(),
-                    ended: None,
-                    duration_secs: 0.0,
-                    output: "done".into(),
-                    output_file: String::new(),
-                    truncated: false,
-                    truncation_hint: String::new(),
-                    raw_output_bytes: 0,
-                },
-                TaskOutputResult {
-                    task_id: "sub-2".into(),
-                    command: String::new(),
-                    status: "completed".into(),
-                    exit_code: None,
-                    started: String::new(),
-                    ended: None,
-                    duration_secs: 0.0,
-                    output: "done".into(),
-                    output_file: String::new(),
-                    truncated: false,
-                    truncation_hint: String::new(),
-                    raw_output_bytes: 0,
-                },
-            ],
-            summary: "2/2 tasks completed (wait_all)".into(),
-        }));
-        let r = reminder.collect_reminders(shared, &output).await;
-        assert!(
-            r.is_empty(),
-            "wait_tasks MultiResult should suppress reminders for completed subagents"
-        );
-    }
-    #[tokio::test]
-    async fn subagent_completion_dedup_across_calls() {
-        let shared =
-            shared_with_subagent_completions(vec![], vec![make_subagent_completion("sub-1", true)]);
-        let reminder = TaskCompletionReminder;
-        let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let first = reminder.collect_reminders(shared.clone(), &output).await;
-        assert_eq!(first.len(), 1);
-        let second = reminder.collect_reminders(shared, &output).await;
-        assert!(
-            second.is_empty(),
-            "same subagent completion should not repeat"
-        );
-    }
-    #[tokio::test]
-    async fn goal_loop_surfaces_subagent_results_but_suppresses_ordinary_background_tasks() {
+    async fn goal_loop_suppresses_ordinary_background_tasks_without_repeating_them() {
         let mut res = Resources::new();
         let backend: Arc<dyn TerminalBackend> = Arc::new(MockTerminal {
             tasks: vec![make_completed("bash-1")],
@@ -1904,25 +1786,11 @@ mod tests {
         res.insert(Terminal(backend));
         res.register_state::<ReportedTaskCompletions>();
         res.insert(crate::implementations::grok_build::task::types::GoalLoopActive(true));
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        res.insert(SubagentEventSender(tx));
-        tokio::spawn(async move {
-            while let Some(SubagentEvent::Completions(req)) = rx.recv().await {
-                let _ = req.respond_to.send(vec![
-                    make_subagent_completion("sub-1", true),
-                    make_subagent_completion("sub-error", false),
-                ]);
-            }
-        });
         let shared = res.into_shared();
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
         let first = reminder.collect_reminders(shared.clone(), &output).await;
-        assert_eq!(first.len(), 2, "subagent results must reach the goal caller");
-        assert!(first[0].contains("sub-1"));
-        assert!(first[1].contains("sub-error"));
-        assert!(first[1].contains("Unknown error"));
-        assert!(first.iter().all(|reminder| !reminder.contains("bash-1")));
+        assert!(first.is_empty(), "ordinary background tasks stay suppressed during goals");
         shared
             .lock()
             .await
@@ -1930,24 +1798,8 @@ mod tests {
         let second = reminder.collect_reminders(shared, &output).await;
         assert!(
             second.is_empty(),
-            "already surfaced subagent and suppressed bash must not repeat, got: {second:?}"
+            "suppressed bash must not repeat, got: {second:?}"
         );
-    }
-    #[tokio::test]
-    async fn subagent_and_bash_completions_together() {
-        let shared = shared_with_subagent_completions(
-            vec![make_completed("bash-1")],
-            vec![make_subagent_completion("sub-1", false)],
-        );
-        let reminder = TaskCompletionReminder;
-        let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let r = reminder.collect_reminders(shared, &output).await;
-        let [bash, sub] = r.as_slice() else {
-            panic!("expected bash + subagent reminders: {r:?}");
-        };
-        assert!(bash.contains("bash-1"));
-        assert!(sub.contains("sub-1"));
-        assert!(sub.contains("with failure"));
     }
     #[tokio::test]
     async fn warns_about_running_tasks_on_bg_launch() {
@@ -2466,36 +2318,6 @@ mod tests {
                 .reported
                 .contains("reserved")
         );
-    }
-    #[tokio::test]
-    async fn reserved_ids_do_not_suppress_subagent_reminders() {
-        let shared = shared_with_subagent_completions(
-            vec![make_completed("bash-reserved")],
-            vec![make_subagent_completion("sub-reserved", true)],
-        );
-        let reservations = TaskCompletionReservations::default();
-        reservations.reserve("bash-reserved".into());
-        reservations.reserve("sub-reserved".into());
-        shared.lock().await.insert(reservations);
-        let reminder = TaskCompletionReminder;
-        let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let reminders = reminder.collect_reminders(shared.clone(), &output).await;
-        assert_eq!(
-            reminders.len(),
-            1,
-            "only the subagent completion may surface: {reminders:?}"
-        );
-        assert!(
-            reminders
-                .first()
-                .is_some_and(|s| s.contains("sub-reserved"))
-        );
-        let res = shared.lock().await;
-        let reported = res
-            .get::<State<ReportedTaskCompletions>>()
-            .expect("reported state");
-        assert!(reported.is_reported("sub-reserved"));
-        assert!(!reported.is_reported("bash-reserved"));
     }
     /// The reminder pipeline ignores `MonitorEventBuffer` — the turn loop
     /// owns the drain. Guards against the tool-result append path being

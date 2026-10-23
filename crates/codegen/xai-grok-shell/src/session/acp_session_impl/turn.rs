@@ -563,7 +563,7 @@ impl SessionActor {
             }
             super::super::PromptOrigin::SubagentCompleted { completion } => {
                 let text = Self::queue_text_from_blocks(&prompt_blocks);
-                match self.project_subagent_completion(completion, prompt_id, text).await {
+                match self.project_subagent_wake_turn(completion, prompt_id, text).await {
                     Ok(true) => true,
                     Ok(false) => return ok_end_turn(0, None),
                     Err(error) => return Err(acp::Error::internal_error().data(format!("subagent completion persistence: {error}"))),

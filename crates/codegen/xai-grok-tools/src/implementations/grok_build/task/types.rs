@@ -819,8 +819,8 @@ pub struct SubagentMultiWaitRequest {
 #[educe(Debug)]
 pub struct SubagentCompletionsRequest {
     pub parent_session_id: Option<String>,
-    /// Left buffered rather than returned: the requester delivers these itself and a later ledger-filtered drain discards the copies.
-    pub suppress_ids: Vec<String>,
+    /// Omitted from this observation without acknowledging their projection.
+    pub suppress_ids: Vec<xai_message_delivery_core::SubagentCompletionId>,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<Vec<SubagentCompletionSummary>>,
 }
@@ -1080,8 +1080,7 @@ pub enum SubagentEvent {
     ListActive(SubagentListActiveRequest),
     ListRunning(SubagentListRunningRequest),
     ListOwned(SubagentListOwnedRequest),
-    Completions(SubagentCompletionsRequest),
-    /// `Completions` without draining; the requester's ledger discards the copies at a later drain. `suppress_ids` is ignored.
+    /// Observe attempt-bound completions without acknowledging their projection.
     PeekCompletions(SubagentCompletionsRequest),
     AcknowledgeCompletions {
         parent_session_id: String,
@@ -1650,16 +1649,17 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel::<super::SubagentCompletionsRequest>();
         let (respond_to, mut response_rx) = oneshot::channel();
 
+        let suppressed = ["id-1", "id-2"].map(|id| xai_message_delivery_core::SubagentCompletionId { subagent_id: id.into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }).to_vec();
         tx.send(super::SubagentCompletionsRequest {
             parent_session_id: Some("parent".into()),
-            suppress_ids: vec!["id-1".into(), "id-2".into()],
+            suppress_ids: suppressed.clone(),
             respond_to,
         })
         .unwrap();
 
         let req = rx.try_recv().unwrap();
         assert_eq!(req.parent_session_id.as_deref(), Some("parent"));
-        assert_eq!(req.suppress_ids, vec!["id-1", "id-2"]);
+        assert_eq!(req.suppress_ids, suppressed);
 
         let summaries = vec![super::SubagentCompletionSummary {
             attempt_id: xai_message_delivery_core::AttemptId::mint(1),
@@ -1756,7 +1756,7 @@ mod tests {
 
         let (respond_to, mut response_rx) = oneshot::channel();
         sender
-            .send(super::SubagentEvent::Completions(
+            .send(super::SubagentEvent::PeekCompletions(
                 super::SubagentCompletionsRequest {
                     parent_session_id: None,
                     suppress_ids: vec![],
@@ -1767,8 +1767,8 @@ mod tests {
 
         let event = rx.try_recv().unwrap();
         let req = match event {
-            super::SubagentEvent::Completions(r) => r,
-            _ => panic!("Expected Completions, got different variant"),
+            super::SubagentEvent::PeekCompletions(r) => r,
+            _ => panic!("Expected PeekCompletions, got different variant"),
         };
         assert!(req.suppress_ids.is_empty());
         req.respond_to.send(vec![]).unwrap();
@@ -1786,7 +1786,7 @@ mod tests {
         let cloned = sender.clone();
         let (respond_to, _) = tokio::sync::oneshot::channel();
         cloned
-            .send(super::SubagentEvent::Completions(
+            .send(super::SubagentEvent::PeekCompletions(
                 super::SubagentCompletionsRequest {
                     parent_session_id: None,
                     suppress_ids: vec![],

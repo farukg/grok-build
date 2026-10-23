@@ -200,6 +200,8 @@ mod cancel;
 mod reminders;
 #[path = "acp_session_impl/completion_admission.rs"]
 mod completion_admission;
+#[path = "acp_session_impl/completion_digest.rs"]
+mod completion_digest;
 #[path = "acp_session_impl/delivery_receiver.rs"]
 mod delivery_receiver;
 #[path = "acp_session_impl/subagent_handoff.rs"]
