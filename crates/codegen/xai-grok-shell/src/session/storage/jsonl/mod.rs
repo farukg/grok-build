@@ -12,7 +12,9 @@ use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use xai_chat_state::StrictAppendAck;
 use xai_grok_workspace::session::file_state::RewindPoint;
+mod completion;
 mod copy;
+mod delivery_receiver;
 #[derive(Clone)]
 enum SessionDirMode {
     FromRoot(PathBuf),
@@ -421,9 +423,21 @@ impl JsonlStorageAdapter {
         mut sync_file: impl FnMut(&std::fs::File) -> io::Result<()>,
         mut sync_parent: impl FnMut() -> io::Result<()>,
     ) -> Result<(), AppendLineError> {
-        debug_assert!(line.ends_with(b"\n"), "JSONL record must end with \\n");
         let lock = Self::lock_append(path).map_err(AppendLineError::NotCommitted)?;
-        let result = (|| {
+        let result =
+            Self::append_jsonl_line_unlocked_with(path, line, durability, sync_file, sync_parent);
+        let _ = lock.unlock();
+        result
+    }
+    fn append_jsonl_line_unlocked_with(
+        path: &Path,
+        mut line: Vec<u8>,
+        durability: AppendDurability,
+        mut sync_file: impl FnMut(&std::fs::File) -> io::Result<()>,
+        mut sync_parent: impl FnMut() -> io::Result<()>,
+    ) -> Result<(), AppendLineError> {
+        debug_assert!(line.ends_with(b"\n"), "JSONL record must end with \\n");
+        (|| {
             let mut file = OpenOptions::new()
                 .read(true)
                 .create(true)
@@ -459,9 +473,7 @@ impl JsonlStorageAdapter {
                 drop(file);
             }
             Ok(())
-        })();
-        let _ = lock.unlock();
-        result
+        })()
     }
     async fn append_cwd_switch_with_bookkeeping(
         &self,
@@ -591,7 +603,7 @@ impl JsonlStorageAdapter {
     }
     /// Lock tail healing, append, and barriers through `<target>.jsonl.lock`.
     /// Full-file [`Self::write_jsonl`] atomic-rename rewrites bypass this append-only lock.
-    fn lock_append(path: &Path) -> io::Result<std::fs::File> {
+    pub(crate) fn lock_append(path: &Path) -> io::Result<std::fs::File> {
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -682,6 +694,17 @@ impl JsonlStorageAdapter {
             super::summary_write::SummaryPatch {
                 record_activity: true,
                 messages: Some(super::summary_write::CounterOp::Increment(1)),
+                completion_mutation: match (durability, update) {
+                    (AppendDurability::Durable, super::SessionUpdate::Xai(notification)) => match &notification.update {
+                        crate::extensions::notification::SessionUpdate::TurnCompleted { prompt_id, stop_reason, agent_result, .. }
+                            if matches!(crate::session::delivery_receiver::terminal_progress(&serde_json::Value::String(stop_reason.clone()),
+                                &agent_result.clone().map_or(serde_json::Value::Null, serde_json::Value::String), None), crate::session::delivery_receiver::DeliveryProgress::Succeeded) =>
+                            Some(crate::session::completion_delivery::CompletionMutation::TurnEnded { prompt_id: prompt_id.clone(),
+                                parent_task: xai_chat_state::input_projection::parent_task_from_meta(notification.meta.as_ref()).map_err(|error| super::AppendUpdateError::Committed(io::Error::other(error)))? }),
+                        _ => None,
+                    },
+                    (AppendDurability::Buffered, _) | (AppendDurability::Durable, super::SessionUpdate::Acp(_)) => None,
+                },
                 ..Default::default()
             },
         )
@@ -1357,6 +1380,118 @@ impl StorageAdapter for JsonlStorageAdapter {
     ) -> Result<StrictAppendAck, super::AppendCwdSwitchError> {
         self.append_cwd_switch_with_bookkeeping(info, message).await
     }
+    async fn receive_delivery(
+        &self,
+        info: &Info,
+        request: &crate::session::delivery_receiver::DeliveryRequest,
+        access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<crate::session::delivery_receiver::DeliveryResult> {
+        self.receive_delivery_owned(info, request, access).await
+    }
+    async fn claim_receiver(
+        &self,
+        info: &Info,
+    ) -> io::Result<(
+        crate::session::receiver_execution::ReceiverExecutionLease,
+        Summary,
+    )> {
+        self.claim_receiver_owned(info).await
+    }
+    async fn recover_deliveries(
+        &self,
+        info: &Info,
+        lease: &crate::session::receiver_execution::ReceiverExecutionLease,
+    ) -> io::Result<Summary> {
+        if lease.session_id != info.id.to_string() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "receiver lease belongs to another session directory",
+            ));
+        }
+        self.recover_deliveries_owned(info).await
+    }
+    async fn append_delivery_commit_aware(
+        &self,
+        info: &Info,
+        projection: &xai_chat_state::DeliveryProjection,
+        admission: &xai_chat_state::InputAdmission,
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError>
+    {
+        let storage = self.clone();
+        let info = info.clone();
+        let projection = projection.clone();
+        let admission = admission.clone();
+        tokio::task::spawn_blocking(move || {
+            storage.append_delivery_sync(&info, &projection, &admission)
+        })
+        .await
+        .map_err(|error| {
+            xai_chat_state::StrictAppendError::Indeterminate(io::Error::other(error))
+        })?
+    }
+    async fn finish_delivery_turn(
+        &self,
+        info: &Info,
+        turn_id: &str,
+        parent_task: &xai_chat_state::ParentTask,
+        origin: &crate::session::delivery_receiver::ReceiverTurnOrigin,
+        progress: &crate::session::delivery_receiver::DeliveryProgress,
+    ) -> io::Result<Vec<crate::session::delivery_receiver::DeliveryReceipt>> {
+        let storage = self.clone();
+        let info = info.clone();
+        let turn_id = turn_id.to_owned();
+        let parent_task = parent_task.clone();
+        let origin = origin.clone();
+        let progress = progress.clone();
+        tokio::task::spawn_blocking(move || {
+            storage.finish_delivery_turn_sync(&info, &turn_id, &parent_task, &origin, &progress)
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
+    async fn prepare_subagent_completion(
+        &self,
+        info: &Info,
+        event: crate::session::SubagentCompletionEvent,
+    ) -> io::Result<crate::session::ProducerCommitAck> {
+        self.prepare_completion(info, event).await
+    }
+    async fn publish_subagent_completion(
+        &self,
+        info: &Info,
+        event: &crate::session::SubagentCompletionEvent,
+        will_wake: bool,
+    ) -> io::Result<crate::session::PublishedCompletion> {
+        self.publish_completion(info, event, will_wake).await
+    }
+    async fn recover_subagent_completions(&self, info: &Info) -> io::Result<Summary> {
+        self.recover_completions(info).await
+    }
+    async fn set_completion_wake_policy(
+        &self,
+        info: &Info,
+        policy: crate::session::completion_delivery::CompletionWakePolicy,
+    ) -> io::Result<()> {
+        self.apply_summary_patch(
+            info,
+            super::summary_write::SummaryPatch {
+                completion_mutation: Some(
+                    crate::session::completion_delivery::CompletionMutation::WakePolicy(policy),
+                ),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn append_completion_commit_aware(
+        &self,
+        info: &Info,
+        projection: &xai_chat_state::CompletionProjection,
+        admission: &xai_chat_state::InputAdmission,
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError>
+    {
+        self.append_completion(info, projection, admission).await
+    }
     async fn update_current_model_and_agent(
         &self,
         info: &Info,
@@ -1594,7 +1729,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         }
     }
     async fn load_session(&self, info: &Info) -> io::Result<PersistedData> {
-        let summary = self.read_summary_sync(info)?;
+        let mut summary = self.read_summary_sync(info)?;
+        self.reconcile_completion_turns(info, &mut summary).await?;
         let chat_file = self.chat_file(info);
         self.ensure_chat_history(info, summary.chat_format_version)?;
         let chat_history = self.read_chat_history_sync(chat_file, summary.chat_format_version)?;
@@ -1649,7 +1785,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         info: &Info,
     ) -> io::Result<super::PersistedDataLight> {
         tracing::info!("Loading session data (without updates) from JSONL");
-        let summary = self.read_summary_sync(info)?;
+        let mut summary = self.read_summary_sync(info)?;
+        self.reconcile_completion_turns(info, &mut summary).await?;
         let chat_file = self.chat_file(info);
         self.ensure_chat_history(info, summary.chat_format_version)?;
         let chat_history = self.read_chat_history_sync(chat_file, summary.chat_format_version)?;
@@ -1711,12 +1848,11 @@ impl StorageAdapter for JsonlStorageAdapter {
             .map_err(io::Error::other)?
     }
     async fn delete_session(&self, info: &Info) -> io::Result<()> {
-        let dir = self.session_dir(info);
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e),
-        }
+        let storage = self.clone();
+        let info = info.clone();
+        tokio::task::spawn_blocking(move || storage.delete_session_sync(&info))
+            .await
+            .map_err(io::Error::other)?
     }
     async fn append_rewind_point(&self, info: &Info, point: &RewindPoint) -> io::Result<()> {
         self.append_jsonl(self.rewind_points_file(info), point)
@@ -1805,7 +1941,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         info: &Info,
         messages: &[ConversationItem],
     ) -> io::Result<()> {
-        self.write_jsonl(self.chat_file(info), messages).await?;
+        self.replace_chat_preserving_completion_receipts(info, messages)
+            .await?;
         let new_count = messages.len();
         let cwd_switch_bookkeeping_generation = messages
             .iter()

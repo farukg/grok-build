@@ -57,6 +57,30 @@ use xai_grok_tools::notification::ToolNotificationHandle;
 use xai_grok_tools::types::SharedApiKeyProvider;
 use xai_grok_tools::types::compat::CompatConfig;
 use xai_grok_tools::types::memory_backend::MemoryBackend;
+fn session_identity_env(
+    inherited: &HashMap<String, String>,
+    session_id: &str,
+    audience: PromptAudience,
+) -> HashMap<String, String> {
+    let mut env = inherited.clone();
+    let context = match audience {
+        PromptAudience::Primary => "main",
+        PromptAudience::Subagent => "subagent",
+    };
+    env.insert("GROK_SESSION_ID".to_owned(), session_id.to_owned());
+    env.insert(
+        "GROK_SESSION_ORIGIN".to_owned(),
+        serde_json::json!({
+            "version": 1,
+            "runtime": "grok",
+            "session_id": session_id,
+            "context": context,
+        })
+        .to_string(),
+    );
+    env
+}
+
 /// Shell-resolved per-tool `ToolConfig.params` JSON maps.
 /// The struct keeps the spawn functions to a single argument instead of adjacent identically-typed positional arguments a caller could transpose.
 #[derive(Debug, Clone, Default)]
@@ -298,11 +322,11 @@ impl AgentRebuildSpec {
                 .get_or_insert_with(Default::default)
                 .web_search = Some(cfg_opts);
         }
-        let session_env = {
-            let mut env = session_env.as_ref().clone();
-            env.insert("GROK_SESSION_ID".to_string(), session_id_str.clone());
-            Arc::new(env)
-        };
+        let session_env = Arc::new(session_identity_env(
+            session_env,
+            session_id_str,
+            *prompt_audience,
+        ));
         let presentation = latch_task_model_presentation(models_manager, task_model_policy).await;
         let mut builder = AgentBuilder::new(
             working_directory.clone(),
@@ -726,6 +750,10 @@ mod legacy_tests {
             .await;
     }
 }
+#[cfg(test)]
+#[path = "registration_origin_tests.rs"]
+mod registration_origin_tests;
+
 #[cfg(test)]
 #[path = "agent_rebuild_tests.rs"]
 mod tests;

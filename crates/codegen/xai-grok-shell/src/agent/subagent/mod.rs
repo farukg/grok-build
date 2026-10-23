@@ -43,16 +43,19 @@ use xai_grok_tools::types::tool::ToolKind;
 use xai_grok_workspace::file_system::AsyncFileSystem;
 use xai_hunk_tracker::HunkTrackerHandle;
 mod attempt_runner;
-mod spawn;
 mod completion_publication;
+mod spawn;
 pub(crate) use completion_publication::completion_lifecycle_notification_from_event;
 mod metadata_store;
-pub(crate) use metadata_store::{normalize_artifacts as normalize_completion_artifacts, materialize_artifacts as materialize_completion_artifacts};
 use completion_publication::*;
+pub(crate) use metadata_store::{
+    materialize_artifacts as materialize_completion_artifacts,
+    normalize_artifacts as normalize_completion_artifacts,
+};
 mod start_artifact_publication;
 pub(crate) use spawn::{
-    emit_subagent_notification, enqueue_completion_wake, spawn_subagent_coordinator, subagent_coordinator_channel,
-    worker_runtime,
+    emit_subagent_notification, enqueue_completion_wake, spawn_subagent_coordinator,
+    subagent_coordinator_channel, worker_runtime,
 };
 pub(crate) use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildRunOutput, StartedChild,
@@ -260,7 +263,8 @@ pub(crate) struct SubagentSpawnContext {
     /// Whether the parent session is non-interactive (headless `-p` / SDK).
     /// Copied onto the child's `StartupHints` so its prompt omits interactive guidance.
     pub parent_non_interactive: bool,
-    pub parent_persistence_tx: Option<mpsc::UnboundedSender<crate::session::persistence::PersistenceMsg>>,
+    pub parent_persistence_tx:
+        Option<mpsc::UnboundedSender<crate::session::persistence::PersistenceMsg>>,
     /// Parent session command channel.
     /// Carries lifecycle notifications the parent persists (`SubagentSpawned` / `SubagentFinished`).
     /// When goal mode is on, it also carries transient `SubagentProgress` ticks the parent consumes for token accounting without persisting.
@@ -535,14 +539,23 @@ impl SubagentSpawnContext {
 enum TerminalArtifacts {
     #[default]
     Unprepared,
-    StartPublished { dir: PathBuf, metadata: Box<SubagentMeta> },
-    Prepared { dir: PathBuf, metadata: Box<SubagentMeta>, upload: GcsUploadContext },
+    StartPublished {
+        dir: PathBuf,
+        metadata: Box<SubagentMeta>,
+    },
+    Prepared {
+        dir: PathBuf,
+        metadata: Box<SubagentMeta>,
+        upload: GcsUploadContext,
+    },
 }
 #[derive(Default)]
 enum PreparedProducer {
     #[default]
     Uncommitted,
-    Committed { outcome: crate::session::completion_delivery::PreparedProducerOutcome },
+    Committed {
+        outcome: crate::session::completion_delivery::PreparedProducerOutcome,
+    },
 }
 #[derive(Default)]
 struct ShellCompletionState {
@@ -557,7 +570,8 @@ pub(crate) struct ShellCompletionData {
     auto_wake_enabled: bool,
     parent_cmd_tx: Option<mpsc::UnboundedSender<SessionCommand>>,
     parent_session_info: Option<SessionInfo>,
-    parent_persistence_tx: Option<mpsc::UnboundedSender<crate::session::persistence::PersistenceMsg>>,
+    parent_persistence_tx:
+        Option<mpsc::UnboundedSender<crate::session::persistence::PersistenceMsg>>,
     task_output_tool_name: String,
     scheduler_delete_tool_name: Option<String>,
     scheduler_create_tool_name: Option<String>,
@@ -567,10 +581,7 @@ pub(crate) struct ShellCompletionData {
     state: Arc<parking_lot::Mutex<ShellCompletionState>>,
 }
 impl ShellCompletionData {
-    fn from_context(
-        ctx: &SubagentSpawnContext,
-        turn_number: Option<u64>,
-    ) -> Self {
+    fn from_context(ctx: &SubagentSpawnContext, turn_number: Option<u64>) -> Self {
         ShellCompletionData {
             auto_wake_enabled: ctx.auto_wake_enabled,
             parent_cmd_tx: ctx.parent_cmd_tx.clone(),
@@ -590,11 +601,17 @@ impl ShellCompletionData {
     fn set_persisted_output_dir(&self, path: Option<PathBuf>) {
         self.state.lock().persisted_output_dir = path;
     }
-    fn capture_start_artifacts(&self, artifacts: &start_artifact_publication::PreparedStartArtifacts) {
+    fn capture_start_artifacts(
+        &self,
+        artifacts: &start_artifact_publication::PreparedStartArtifacts,
+    ) {
         let mut state = self.state.lock();
         match state.terminal_artifacts {
             TerminalArtifacts::Unprepared | TerminalArtifacts::StartPublished { .. } => {
-                state.terminal_artifacts = TerminalArtifacts::StartPublished { dir: artifacts.meta_dir.clone(), metadata: Box::new(artifacts.meta.clone()) };
+                state.terminal_artifacts = TerminalArtifacts::StartPublished {
+                    dir: artifacts.meta_dir.clone(),
+                    metadata: Box::new(artifacts.meta.clone()),
+                };
             }
             TerminalArtifacts::Prepared { .. } => {}
         }
@@ -603,24 +620,40 @@ impl ShellCompletionData {
         let mut state = self.state.lock();
         let metadata = match &state.terminal_artifacts {
             TerminalArtifacts::Unprepared => return,
-            TerminalArtifacts::StartPublished { metadata, .. } | TerminalArtifacts::Prepared { metadata, .. } => metadata.clone(),
+            TerminalArtifacts::StartPublished { metadata, .. }
+            | TerminalArtifacts::Prepared { metadata, .. } => metadata.clone(),
         };
-        state.terminal_artifacts = TerminalArtifacts::Prepared { dir: dir.to_owned(), metadata, upload: upload.clone() };
+        state.terminal_artifacts = TerminalArtifacts::Prepared {
+            dir: dir.to_owned(),
+            metadata,
+            upload: upload.clone(),
+        };
     }
-    fn forbid_terminal_artifacts(&self) { self.state.lock().terminal_artifacts = TerminalArtifacts::Unprepared; }
+    fn forbid_terminal_artifacts(&self) {
+        self.state.lock().terminal_artifacts = TerminalArtifacts::Unprepared;
+    }
     fn set_terminal_snapshot_ref(&self, snapshot_ref: Option<String>) {
         let mut state = self.state.lock();
         match &mut state.terminal_artifacts {
             TerminalArtifacts::Unprepared => {}
-            TerminalArtifacts::StartPublished { metadata, .. } | TerminalArtifacts::Prepared { metadata, .. } => metadata.snapshot_ref = snapshot_ref,
+            TerminalArtifacts::StartPublished { metadata, .. }
+            | TerminalArtifacts::Prepared { metadata, .. } => metadata.snapshot_ref = snapshot_ref,
         }
     }
-    fn remember_prepared_producer(&self, ack: crate::session::completion_delivery::ProducerCommitAck) {
+    fn remember_prepared_producer(
+        &self,
+        ack: crate::session::completion_delivery::ProducerCommitAck,
+    ) {
         self.state.lock().producer = PreparedProducer::Committed {
-            outcome: crate::session::completion_delivery::PreparedProducerOutcome { event: Arc::new(ack.event), summary_path: ack.summary_path },
+            outcome: crate::session::completion_delivery::PreparedProducerOutcome {
+                event: Arc::new(ack.event),
+                summary_path: ack.summary_path,
+            },
         };
     }
-    fn prepared_producer(&self) -> Option<crate::session::completion_delivery::PreparedProducerOutcome> {
+    fn prepared_producer(
+        &self,
+    ) -> Option<crate::session::completion_delivery::PreparedProducerOutcome> {
         match &self.state.lock().producer {
             PreparedProducer::Uncommitted => None,
             PreparedProducer::Committed { outcome } => Some(outcome.clone()),
@@ -628,14 +661,28 @@ impl ShellCompletionData {
     }
     fn completion_artifacts(&self) -> crate::session::completion_delivery::CompletionArtifacts {
         match &self.state.lock().terminal_artifacts {
-            TerminalArtifacts::Unprepared => crate::session::completion_delivery::CompletionArtifacts::None,
-            TerminalArtifacts::StartPublished { metadata, .. } | TerminalArtifacts::Prepared { metadata, .. } =>
-                crate::session::completion_delivery::CompletionArtifacts::Metadata { metadata: metadata.clone() },
+            TerminalArtifacts::Unprepared => {
+                crate::session::completion_delivery::CompletionArtifacts::None
+            }
+            TerminalArtifacts::StartPublished { metadata, .. }
+            | TerminalArtifacts::Prepared { metadata, .. } => {
+                crate::session::completion_delivery::CompletionArtifacts::Metadata {
+                    metadata: metadata.clone(),
+                }
+            }
         }
     }
-    fn upload_committed_metadata(&self, result: &SubagentResult, ack: &crate::session::completion_delivery::ProducerCommitAck) {
+    fn upload_committed_metadata(
+        &self,
+        result: &SubagentResult,
+        ack: &crate::session::completion_delivery::ProducerCommitAck,
+    ) {
         let artifacts = self.state.lock().terminal_artifacts.clone();
-        if let (TerminalArtifacts::Prepared { upload, .. }, crate::session::completion_delivery::CompletionArtifacts::Metadata { metadata }) = (artifacts, &ack.event.artifacts) {
+        if let (
+            TerminalArtifacts::Prepared { upload, .. },
+            crate::session::completion_delivery::CompletionArtifacts::Metadata { metadata },
+        ) = (artifacts, &ack.event.artifacts)
+        {
             upload_completed_subagent_metadata(metadata, result, &upload);
         }
     }
@@ -1992,12 +2039,7 @@ fn setup_failure_output(
 ) -> ChildRunOutput<ShellCompletionData> {
     let result = if may_persist_terminal {
         completion_data.defer_terminal_artifacts(subagent_meta_dir, gcs_ctx);
-        fail_subagent(
-            error,
-            &request.id,
-            child_session_id,
-            0,
-        )
+        fail_subagent(error, &request.id, child_session_id, 0)
     } else {
         failure_result(request, error)
     };
@@ -2458,7 +2500,10 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
 pub(super) fn write_subagent_meta(dir: &Path, meta: &SubagentMeta) -> bool {
     match metadata_store::write_initial(dir, meta) {
         Ok(()) => true,
-        Err(error) => { tracing::warn!(%error, "failed to write subagent metadata"); false }
+        Err(error) => {
+            tracing::warn!(%error, "failed to write subagent metadata");
+            false
+        }
     }
 }
 /// Borrowed output schema so persistence does not copy the text.
@@ -2516,7 +2561,10 @@ struct GcsUploadContext {
 fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str) -> bool {
     match metadata_store::commit_snapshot_ref(dir, snapshot_ref) {
         Ok(()) => true,
-        Err(error) => { tracing::warn!(%error, "snapshot reference did not commit; preserving worktree"); false }
+        Err(error) => {
+            tracing::warn!(%error, "snapshot reference did not commit; preserving worktree");
+            false
+        }
     }
 }
 #[must_use]
@@ -2524,27 +2572,31 @@ fn persist_subagent_output(dir: &Path, result: &SubagentResult) -> Option<PathBu
     (result.success() && !result.output.is_empty() && write_subagent_output(dir, &result.output))
         .then(|| dir.to_path_buf())
 }
-fn upload_completed_subagent_metadata(meta: &SubagentMeta, result: &SubagentResult, gcs_ctx: &GcsUploadContext) {
-        if let (Some(bucket), Some(method)) = (&gcs_ctx.bucket_url, &gcs_ctx.upload_method) {
-            let gcs_meta = SubagentSessionMetadata::from_meta(
-                &meta,
-                gcs_ctx.model_id.as_deref(),
-                gcs_ctx.cwd.as_deref(),
-                result.worktree_path.as_deref(),
-                gcs_ctx.isolation_mode.as_deref(),
-                gcs_ctx.capability_mode.as_deref(),
-                gcs_ctx.reasoning_effort.as_deref(),
-                gcs_ctx.role_name.as_deref(),
-                gcs_ctx.parent_prompt_id.as_deref(),
-                gcs_ctx.depth,
-            );
-            let bucket = bucket.clone();
-            let method = method.clone();
-            let auth_for_spawn = gcs_ctx.auth_manager.clone();
-            tokio::spawn(async move {
-                upload_subagent_metadata(&gcs_meta, &bucket, method, auth_for_spawn).await;
-            });
-        }
+fn upload_completed_subagent_metadata(
+    meta: &SubagentMeta,
+    result: &SubagentResult,
+    gcs_ctx: &GcsUploadContext,
+) {
+    if let (Some(bucket), Some(method)) = (&gcs_ctx.bucket_url, &gcs_ctx.upload_method) {
+        let gcs_meta = SubagentSessionMetadata::from_meta(
+            &meta,
+            gcs_ctx.model_id.as_deref(),
+            gcs_ctx.cwd.as_deref(),
+            result.worktree_path.as_deref(),
+            gcs_ctx.isolation_mode.as_deref(),
+            gcs_ctx.capability_mode.as_deref(),
+            gcs_ctx.reasoning_effort.as_deref(),
+            gcs_ctx.role_name.as_deref(),
+            gcs_ctx.parent_prompt_id.as_deref(),
+            gcs_ctx.depth,
+        );
+        let bucket = bucket.clone();
+        let method = method.clone();
+        let auth_for_spawn = gcs_ctx.auth_manager.clone();
+        tokio::spawn(async move {
+            upload_subagent_metadata(&gcs_meta, &bucket, method, auth_for_spawn).await;
+        });
+    }
 }
 
 pub(crate) const ORPHAN_RECONCILE_REASON: &str = "interrupted by process restart";
@@ -2669,7 +2721,9 @@ fn completed_finish_from_inspection(
         SubagentSnapshotStatus::Cancelled { cause } => {
             ("cancelled", Some(cause.model_text()), 0, 0)
         }
-        SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
+        SubagentSnapshotStatus::Initializing
+        | SubagentSnapshotStatus::Running { .. }
+        | SubagentSnapshotStatus::Finalizing { .. } => {
             return None;
         }
     };

@@ -243,6 +243,12 @@ impl Drop for FinalizationLease {
     }
 }
 
+#[derive(Default)]
+pub(super) struct InputTurnBinding {
+    pub parent_task: xai_chat_state::ParentTask,
+    pub receiver_origin: crate::session::delivery_receiver::ReceiverTurnOrigin,
+}
+
 pub(crate) struct AgentTask {
     pub(crate) prompt_id: String,
     pub(super) epoch: TurnEpoch,

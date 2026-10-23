@@ -55,12 +55,27 @@ prompts retain the resident Queue path. Full live-tools integration remains unve
 Shell unit; completion hold was not the ingress delay's root cause.
 
 Caller-completion continuation (author-only): subagent results no longer inherit ordinary
-background-task goal suppression. Runner injection, idle digest, active safe-point projection
-and per-tool reminders now retain success/error information during goal execution. The
-subagent-only goal gate was removed; bash/workflow goal policy, explicit stop/cancel, AutoWake
-configuration and Held settlement were not changed. The actor regression covers successful
-and failed active completions with and without a goal; the idle goal digest contains the real
-failure text and a successful sibling. These are authored actor/reminder regressions, not a
-real child-to-parent sampler or restart acceptance result. Attempt-keyed durable admission,
-terminal-result recovery and process-crash tests remain open. Decision:
-`context-modules.d/500_work.d/epics.d/product.d/grok-build/001-subagent-results-during-goals.adr.md`.
+background-task goal suppression. AttemptId now follows producer preparation/publication,
+completion buffers and observed tool results into ChatState's commit-aware input projection.
+Projection receipts share the chat record and survive history replacement in the existing
+summary owner. Retry reconciles the actual stored occurrence; unfinished projections can
+continue under a new parent-task instance without appending another input. Parent-task and
+receiver-origin fencing also survives cancellation teardown. Scheduler liveness includes
+terminal publication still in flight.
+
+Native `x.ai/session/delivery` has a separate durable human-delivery receipt lifecycle:
+exact payload binding, idempotent admit, side-effect-free observe, conflict, monotone
+progress and unresolved interruption rather than execution replay after process loss.
+Standard `session/prompt` remains terminal-bound. Child Held/Auto, human stop/cancel,
+AutoWake and ordinary bash/workflow goal policy remain independent.
+
+Authored regressions cover strict append/ack failure, actual-occurrence reconciliation,
+late-parent fencing, child-ID reuse, history replacement, native foreground/background
+success/error through idle, sampling, tool and goal paths, receiver cancellation, and
+subprocess crashes after preparation/publication/input projection/receiver terminal commit.
+None has run for this source. The continuation's edited Rust files pass the pinned formatter;
+compilation, CI and runtime acceptance remain Lead-owned. No commit or publication was made.
+Historical interruptions without a typed cause remain unresolved pending a migration decision.
+Decisions:
+`context-modules.d/500_work.d/epics.d/product.d/grok-build/001-subagent-results-during-goals.adr.md`
+and `002-attempt-bound-input-admission.adr.md`.

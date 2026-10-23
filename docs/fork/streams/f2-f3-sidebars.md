@@ -6,9 +6,10 @@ settings of both panels: `streams/f6-f7-trees.md`.
 ## Goal (Faruk decisions, binding)
 - F6 = the expanded timeline on the **left**; the rail sits flush against the panel, mirrored, and
   must look good (visual spec in the design).
-- F7 = right sidebar, toggled with F7; closed means invisible (no dock, no queue above the prompt).
-  Body, stacked vertically: **Dock** (the whole existing dock — workflows, subagents, tasks,
-  monitors, queued — reused as it is, lightly optimized: glyphs instead of wide labels, full text on
+- F7 = right sidebar, toggled with F7; work and Todos stay available there independently of upper-display preferences.
+  Queue stays independently directly before the composer; Dock enables an optional upper work/Todo projection.
+  Body, stacked vertically: **Dock** (the whole existing work dock — workflows, subagents, tasks,
+  monitors — reused as it is, lightly optimized: glyphs instead of wide labels, full text on
   hover, `[↗][X]` unchanged, one line per row, no information dropped), **Context** (every category
   ON/OFF per session with warnings), **Message Display** (per kind `1 line | full`).
 - Columns: both open 25/50/25, one open 35/65 or 65/35, none 100.
@@ -24,7 +25,8 @@ screenshots in `docs/fork/design/screenshots/`. Wave order: B2 geometry/input �
 bridge/persistence → B4 dock into F7 → D F6 visual rework.
 
 ## Performance (binding)
-With F7 closed no dock render/snapshot/hover work. Width budgets computed once per resize or
+With F7 closed no sidebar dock render/snapshot/hover work; the optional upper projection remains independent.
+Width budgets computed once per resize or
 geometry change and cached; detail popup only for the hovered/selected row; per-frame work only
 for visible rows.
 
@@ -36,8 +38,9 @@ for visible rows.
   last answer while `Applying`. Esc closes, Tab returns focus to the chat. Sections are branches of a tree with the keys and
   gestures of `design/f6-f7.md` ("F6 outline keys, F7 gestures and saved settings").
 - Dock (B4): hosted in the top rows of the F7 body (blank `DockSlot` section, painted after the sidebar
-  chrome via `PendingDock`); F7 closed means no snapshot, no render, no queue above the prompt. Dock rows
-  are capped at half the body height.
+  chrome via `PendingDock`); F7 work stays available regardless of Dock or global upper-display preferences.
+  The optional upper work/Todo projection follows Dock and its global visibility preferences; queue remains
+  independently directly before the composer. Sidebar dock rows are capped at half the body height.
 - Message Display: F7 lists every settings `MessageKind` with `1 line | full`; click/Space flips the session's
   kind default through `ScrollbackState::set_kind_default`; an unset kind shows `MessageKind::starting_form`.
   The chosen forms and the section folds are saved globally or per session (`g` picks the target) and restored after a restart:

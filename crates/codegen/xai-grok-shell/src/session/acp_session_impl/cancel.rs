@@ -95,7 +95,9 @@ impl SessionActor {
 
     /// Takes the state lock with `try_lock`, so it must run before its caller's first await: a task suspended across one still holds the guard.
     fn arm_wake_barrier(&self, trigger: Option<&crate::session::CancelTrigger>) {
-        self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+        self.set_completion_wake_policy(
+            crate::session::completion_delivery::CompletionWakePolicy::HumanStopped,
+        );
         let mut state = self.state.try_lock().expect("session state is actor-owned");
         state.notifications_suppressed = true;
         xai_grok_telemetry::unified_log::info(
@@ -151,7 +153,9 @@ impl SessionActor {
         if !outcome.settled {
             return outcome;
         }
-        self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
+        self.set_completion_wake_policy(
+            crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+        );
         {
             let mut state = self.state.lock().await;
             state.notifications_suppressed = false;
@@ -317,7 +321,9 @@ impl SessionActor {
                     self.abort_turn_task(&task, turn_epoch);
                     self.cancel_active_sampling_requests();
                 }
-                self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
+                self.set_completion_wake_policy(
+                    crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+                );
                 state.notifications_suppressed = false;
                 xai_grok_telemetry::unified_log::info(
                     "shell.task_wake.gate_cleared",
@@ -432,6 +438,18 @@ impl SessionActor {
             );
         }
 
+        let binding_prompt = self
+            .state
+            .lock()
+            .await
+            .running_prompt_id()
+            .map(str::to_owned)
+            .or_else(|| pinned_prompt_id.clone());
+        let cancelled_input_binding = match binding_prompt {
+            Some(prompt_id) => self.input_turn_binding(&prompt_id).await,
+            None => InputTurnBinding::default(),
+        };
+
         // Sample before the abort and the teardown awaits, so the persisted cancel elapsed is turn runtime, not post-abort kill/token work
         // `None` when no running task supplies a start time (do not persist `Some(0)`)
         let cancel_elapsed_ms = {
@@ -517,7 +535,9 @@ impl SessionActor {
                 // Fail-stop, but do not strand StopGesture suppression (same
                 // cleanup as the identity-mismatch return below).
                 if suppress_task_wakes {
-                    self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
+                    self.set_completion_wake_policy(
+                        crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+                    );
                     state.notifications_suppressed = false;
                 }
                 return CancelOutcome::noop();
@@ -555,7 +575,9 @@ impl SessionActor {
                     self.abort_turn_task(&task, epoch);
                     rewound_task_prompt_id = Some(task.prompt_id);
                 }
-                self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
+                self.set_completion_wake_policy(
+                    crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+                );
                 state.notifications_suppressed = false;
                 xai_grok_telemetry::unified_log::info(
                     "shell.task_wake.gate_cleared",
@@ -620,7 +642,9 @@ impl SessionActor {
                     "stale_prompt_id",
                 );
                 if suppress_task_wakes {
-                    self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
+                    self.set_completion_wake_policy(
+                        crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+                    );
                     state.notifications_suppressed = false;
                 }
                 return CancelOutcome::noop();
@@ -874,6 +898,7 @@ impl SessionActor {
                 None,
                 cancel_elapsed_ms,
                 None,
+                cancelled_input_binding,
             )
             .await;
         }
