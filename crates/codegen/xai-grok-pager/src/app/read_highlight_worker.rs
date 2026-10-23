@@ -298,12 +298,7 @@ fn read_job(
     let content = read.content.as_deref()?;
     let needed = match &read.highlight {
         ReadHighlightPhase::Unrequested => {
-            content
-                .bytes()
-                .filter(|&b| b == b'\n')
-                .take(PARTIAL_HIGHLIGHT_MIN_ROWS)
-                .count()
-                >= PARTIAL_HIGHLIGHT_MIN_ROWS
+            content.lines().take(PARTIAL_HIGHLIGHT_MIN_ROWS).count() >= PARTIAL_HIGHLIGHT_MIN_ROWS
         }
         ReadHighlightPhase::Pending { .. } | ReadHighlightPhase::Skipped => false,
         ReadHighlightPhase::Cached(cached) => {
@@ -361,6 +356,19 @@ mod tests {
     }
 
     #[test]
+    fn threshold_read_without_final_newline_gets_a_job() {
+        let content = vec!["let value = 1;"; PARTIAL_HIGHLIGHT_MIN_ROWS].join("\n");
+        let read =
+            ReadToolCallBlock::new("big.rs").with_content(content, PARTIAL_HIGHLIGHT_MIN_ROWS);
+        let job = read_job(&read, EntryId::new(1), TerminalColoring::Terminal)
+            .expect("400 rows require off-thread highlighting");
+        let ReadHlOutcome::Ready(cached) = run_job(&job) else {
+            panic!("read HL should be ready");
+        };
+        assert_eq!(cached.rows.len(), PARTIAL_HIGHLIGHT_MIN_ROWS);
+    }
+
+    #[test]
     fn large_unrequested_reads_get_a_job_and_pending_ones_do_not() {
         let mut read = big_read("big.rs");
         assert!(read_job(&read, EntryId::new(1), TerminalColoring::Terminal).is_some());
@@ -404,18 +412,28 @@ mod tests {
                 "big.rs",
             ))));
 
+        let (job_tx, job_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        agent.read_hl = Some(ReadHlRuntime {
+            tx: job_tx,
+            rx: result_rx,
+            pending: Vec::new(),
+            next_job_id: 1,
+        });
         agent.submit_read_highlights();
         assert!(agent.read_hl_needs_tick());
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while agent.read_hl_needs_tick() {
-            agent.read_hl_tick();
-            assert!(
-                std::time::Instant::now() < deadline,
-                "read HL did not settle"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        let job = job_rx.try_recv().expect("submitted job");
+        let outcome = run_job(&job);
+        result_tx
+            .send(ReadHlResult {
+                job_id: job.job_id,
+                entry_id: job.entry_id,
+                path: job.path,
+                outcome,
+            })
+            .expect("worker result");
+        assert!(agent.read_hl_tick(), "cache application needs a redraw");
+        assert!(!agent.read_hl_needs_tick());
         let entry = agent.scrollback.get_by_id(entry_id).expect("entry");
         let RenderBlock::ToolCall(ToolCallBlock::Read(read)) = &entry.block else {
             panic!("read block missing");

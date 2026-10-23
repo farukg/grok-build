@@ -301,7 +301,6 @@ impl ReadToolCallBlock {
             }
             _ => None,
         };
-        let kind = ContentKind::classify(syntect, Path::new(&self.path), content);
         let (total_rows, body) = if let Some(rows) = cached {
             let ranges = visible_row_ranges(rows.len(), truncate);
             let visible: Vec<(usize, Vec<Span<'static>>)> = rows
@@ -311,7 +310,9 @@ impl ReadToolCallBlock {
                 .map(|(i, spans)| (i, spans.clone()))
                 .collect();
             (rows.len(), visible)
-        } else if kind == ContentKind::Terminal {
+        } else if ContentKind::classify(syntect, Path::new(&self.path), content)
+            == ContentKind::Terminal
+        {
             let rendered = terminal_rows(
                 syntect,
                 Path::new(&self.path),
@@ -330,7 +331,7 @@ impl ReadToolCallBlock {
             (total_rows, rows)
         } else {
             let source: Vec<&str> = content.lines().collect();
-            let ranges = if source.len() > PARTIAL_HIGHLIGHT_MIN_ROWS {
+            let ranges = if source.len() >= PARTIAL_HIGHLIGHT_MIN_ROWS {
                 visible_row_ranges(source.len(), truncate)
             } else {
                 vec![0..source.len()]
@@ -736,6 +737,35 @@ mod tests {
             .collect();
         assert!(!joined.contains("STALE"), "{joined}");
         assert!(joined.contains("value_1 = 1;"), "{joined}");
+    }
+
+    #[test]
+    fn cache_baked_under_another_theme_is_ignored() {
+        let mut block =
+            ReadToolCallBlock::new("main.rs").with_content("let fresh = 1;".to_owned(), 1);
+        let other_theme = ThemeKind::ALL
+            .iter()
+            .copied()
+            .find(|kind| *kind != Theme::current_kind())
+            .expect("another theme");
+        block.highlight = ReadHighlightPhase::Cached(CachedReadRows {
+            rows: Arc::new(vec![vec![Span::raw("STALE-THEME")]]),
+            theme: other_theme,
+            coloring: TerminalColoring::Terminal,
+        });
+        let ctx = BlockContext {
+            mode: DisplayMode::Expanded,
+            ..make_ctx()
+        };
+        let joined: String = block
+            .output(&ctx)
+            .lines
+            .iter()
+            .flat_map(|line| line.content.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(joined.contains("let fresh = 1;"), "{joined}");
+        assert!(!joined.contains("STALE-THEME"), "{joined}");
     }
 
     #[test]
