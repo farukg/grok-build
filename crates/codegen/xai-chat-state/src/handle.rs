@@ -106,6 +106,31 @@ impl ChatStateHandle {
         })
     }
 
+    pub async fn append_completion_and_ack(
+        &self,
+        projection: crate::completion::CompletionProjection,
+        admission: crate::InputAdmission,
+    ) -> Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError> {
+        self.query("AppendCompletionAndAck", |reply| {
+            ChatStateCommand::AppendInputAndAck { projection: crate::InputProjection::Subagent(projection), admission, reply }
+        }).await.unwrap_or_else(|| Err(StrictAppendError::Indeterminate(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "completion projection acknowledgement unavailable; retry the same attempt",
+        ))))
+    }
+
+    pub async fn append_delivery_and_ack(
+        &self,
+        projection: crate::DeliveryProjection,
+        admission: crate::InputAdmission,
+    ) -> Result<crate::CompletionProjectionAck, crate::CompletionProjectionError> {
+        self.query("AppendDeliveryAndAck", |reply| {
+            ChatStateCommand::AppendInputAndAck { projection: crate::InputProjection::Delivery(projection), admission, reply }
+        }).await.unwrap_or_else(|| Err(StrictAppendError::Indeterminate(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe, "delivery projection acknowledgement unavailable",
+        ))))
+    }
+
     /// Push a user message with an explicit dangling-repair reason.
     pub fn push_user_message_with_repair_reason(
         &self,

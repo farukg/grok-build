@@ -136,6 +136,32 @@ impl ChatStateActor {
                 self.push_user_message(item);
                 let _ = reply.send(());
             }
+            ChatStateCommand::AppendInputAndAck { projection, admission, reply } => {
+                if matches!(projection.item(), xai_grok_sampling_types::ConversationItem::User(_)) {
+                    self.pop_stranded_continue_reminder();
+                    self.ensure_conversation_integrity();
+                }
+                let result = self.persistence.persist_input_and_ack(&projection, &admission).await
+                    .unwrap_or_else(|_| Err(crate::StrictAppendError::Indeterminate(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe, "completion persistence acknowledgement lost",
+                    ))));
+                let acknowledgement = match &result {
+                    Ok(ack) => Some(ack),
+                    Err(crate::StrictAppendError::Committed { acknowledgement, .. }) => Some(acknowledgement),
+                    Err(crate::StrictAppendError::NotCommitted(_) | crate::StrictAppendError::Indeterminate(_)) => None,
+                };
+                match acknowledgement {
+                    Some(crate::CompletionProjectionAck::Appended) => {
+                        self.state.estimated_tokens_since_model += state::estimate_item_tokens(projection.item());
+                        self.state.conversation.push(projection.into_item());
+                    }
+                    Some(crate::CompletionProjectionAck::AlreadyPresent { history } | crate::CompletionProjectionAck::Continue { history }) => {
+                        self.replace_conversation_state(history.clone(), false);
+                    }
+                    Some(crate::CompletionProjectionAck::TurnClosed) | None => {}
+                }
+                let _ = reply.send(result);
+            }
             ChatStateCommand::AppendWorkingDirectorySwitchAndAck {
                 content,
                 cwd_generation,

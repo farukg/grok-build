@@ -27,6 +27,9 @@
 
 pub mod actor;
 pub mod commands;
+pub mod completion;
+pub mod input_projection;
+pub use input_projection::{DeliveryBinding, DeliveryProjection, InputAdmission, InputProjection, ParentTask};
 pub mod context_item_ref;
 pub mod compaction_image_context;
 pub mod compaction_mode;
@@ -47,6 +50,7 @@ pub use actor::state::{
     estimate_tool_definitions_tokens, estimate_tool_specs_tokens,
 };
 pub use commands::{ModelMetadata, ServedRouteChange, StrictAppendAck, StrictAppendError};
+pub use completion::{CompletionProjection, CompletionProjectionAck, CompletionProjectionError, CompletionReceipt, SubagentCompletionId};
 pub use context_item_ref::{ContextItemRef, ToolCallId};
 pub use compaction_mode::CompactionMode;
 pub use events::ChatStateEvent;

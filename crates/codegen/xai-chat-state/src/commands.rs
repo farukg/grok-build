@@ -52,14 +52,28 @@ pub enum StrictAppendAck {
 }
 
 #[derive(Debug)]
-pub enum StrictAppendError {
+pub enum StrictAppendError<A = StrictAppendAck> {
     NotCommitted(std::io::Error),
     Committed {
-        acknowledgement: StrictAppendAck,
+        acknowledgement: A,
         source: std::io::Error,
     },
     Indeterminate(std::io::Error),
 }
+impl<A> StrictAppendError<A> {
+    pub fn io_error(&self) -> &std::io::Error {
+        match self {
+            Self::NotCommitted(source) | Self::Indeterminate(source) | Self::Committed { source, .. } => source,
+        }
+    }
+}
+impl<A> std::fmt::Display for StrictAppendError<A> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let phase = match self { Self::NotCommitted(_) => "not committed", Self::Committed { .. } => "committed", Self::Indeterminate(_) => "indeterminate" };
+        write!(formatter, "{phase}: {}", self.io_error())
+    }
+}
+
 
 /// Commands sent to the ChatStateActor via mpsc channel.
 pub enum ChatStateCommand {
@@ -89,6 +103,12 @@ pub enum ChatStateCommand {
         content: String,
         cwd_generation: std::num::NonZeroU64,
         reply: oneshot::Sender<Result<StrictAppendAck, StrictAppendError>>,
+    },
+
+    AppendInputAndAck {
+        projection: crate::InputProjection,
+        admission: crate::InputAdmission,
+        reply: oneshot::Sender<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>>,
     },
 
     /// Push a user message with an explicit dangling-repair reason.

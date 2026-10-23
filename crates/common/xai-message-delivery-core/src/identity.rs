@@ -90,6 +90,12 @@ impl fmt::Display for AttemptId {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SubagentCompletionId {
+    pub subagent_id: String,
+    pub attempt_id: AttemptId,
+}
+
 /// How the next activation relates to a previous logical agent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IdentityAction {

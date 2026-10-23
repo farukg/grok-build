@@ -13,7 +13,7 @@ pub use envelope::{
     AgentSource, AuthorizedOperation, DeliveryEnvelope, DeliveryIdentity, HumanSource, Operation,
     OperationSet, Principal, UnsupportedOperation, authorize_operation,
 };
-pub use identity::{AgentId, AttemptId, IdentityAction, next_identity};
+pub use identity::{AgentId, AttemptId, IdentityAction, SubagentCompletionId, next_identity};
 pub use lifecycle::{
     DeliveryMessage, MessageDeliveryLifecycle, OwnedDelivery, TerminalCause, TerminalTarget,
     TerminalTransition, TurnBinding,

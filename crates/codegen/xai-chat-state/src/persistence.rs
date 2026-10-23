@@ -24,6 +24,12 @@ pub trait ChatPersistence: Send + 'static {
         item: &ConversationItem,
     ) -> oneshot::Receiver<Result<StrictAppendAck, StrictAppendError>>;
 
+    fn persist_input_and_ack(
+        &mut self,
+        projection: &crate::InputProjection,
+        admission: &crate::InputAdmission,
+    ) -> oneshot::Receiver<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>>;
+
     /// Replace the entire chat history (compaction / rewind).
     fn replace_history(&mut self, items: &[ConversationItem]);
 
@@ -71,6 +77,7 @@ pub enum PersistenceRecord {
     ReplaceHistory(Vec<ConversationItem>),
     /// A backup-gated, disk-acknowledged strip rewrite was requested.
     ReplaceHistoryForStrip(Vec<ConversationItem>),
+    Input(crate::InputProjection),
     /// A flush was requested.
     Flush,
 }
@@ -213,6 +220,19 @@ impl ChatPersistence for MockChatPersistence {
         receiver
     }
 
+    fn persist_input_and_ack(
+        &mut self,
+        projection: &crate::InputProjection,
+        admission: &crate::InputAdmission,
+    ) -> oneshot::Receiver<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>> {
+        let (tx, rx) = oneshot::channel();
+        let result = self.tx.send(PersistenceRecord::Input(projection.clone()))
+            .map(|_| crate::completion::CompletionProjectionAck::Appended)
+            .map_err(|_| StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::BrokenPipe, "mock persistence closed")));
+        let _ = tx.send(result);
+        rx
+    }
+
     fn replace_history(&mut self, items: &[ConversationItem]) {
         let _ = self
             .tx
@@ -257,6 +277,16 @@ impl ChatPersistence for NullChatPersistence {
         let (reply, receiver) = oneshot::channel();
         let _ = reply.send(Ok(StrictAppendAck::Appended));
         receiver
+    }
+    fn persist_input_and_ack(
+        &mut self,
+        _projection: &crate::InputProjection,
+        _admission: &crate::InputAdmission,
+        admission: &crate::InputAdmission,
+    ) -> oneshot::Receiver<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = tx.send(Ok(crate::completion::CompletionProjectionAck::Appended));
+        rx
     }
     fn replace_history(&mut self, _items: &[ConversationItem]) {}
     fn replace_history_for_strip_and_ack(

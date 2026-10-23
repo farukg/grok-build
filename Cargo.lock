@@ -13305,6 +13305,7 @@ dependencies = [
  "xai-compaction-transcript",
  "xai-grok-compaction",
  "xai-grok-sampling-types",
+ "xai-message-delivery-core",
  "xai-token-estimation",
 ]
 
