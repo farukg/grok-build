@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span, Text};
 
 use super::{LineRange, TOOL_HEADER_RANGE};
 use crate::prompt_images::ScrollbackImageRef;
+use crate::render::terminal_output::{looks_like_terminal_output, render_terminal_lines};
 use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -258,30 +259,37 @@ impl ReadToolCallBlock {
         };
 
         let base_line = self.line_range.map_or(1, |r| r.start);
-        let raw_lines: Vec<&str> = content.lines().collect();
-
-        let gutter_width = digit_count(base_line + raw_lines.len().saturating_sub(1));
-        let content_width = width.saturating_sub(gutter_width + 2).max(20);
 
         // Use Theme::dim/primary so terminal-native (minimal) maps grays to SGR dim / default fg instead of raw gray_dim slots
         let gutter_style = theme.dim();
         let text_style = theme.primary();
 
         let syntect = get_syntect();
-        let mut highlighter = syntect.highlight_lines_by_file_path(Path::new(&self.path));
+        let body: Vec<Vec<Span<'static>>> = if holds_terminal_output(&self.path, content) {
+            render_terminal_lines(content, text_style)
+                .into_iter()
+                .map(|rendered| rendered.line.spans)
+                .collect()
+        } else {
+            let mut highlighter = syntect.highlight_lines_by_file_path(Path::new(&self.path));
+            content
+                .lines()
+                .map(|text| {
+                    crate::syntax::highlight_line(text, &mut highlighter, syntect, text_style)
+                })
+                .collect()
+        };
 
-        let styled_lines: Vec<Line<'static>> = raw_lines
-            .iter()
+        let gutter_width = digit_count(base_line + body.len().saturating_sub(1));
+        let content_width = width.saturating_sub(gutter_width + 2).max(20);
+
+        let styled_lines: Vec<Line<'static>> = body
+            .into_iter()
             .enumerate()
-            .map(|(i, text)| {
+            .map(|(i, body_spans)| {
                 let gutter = format!("{:>w$}  ", base_line + i, w = gutter_width);
                 let mut spans = vec![Span::styled(gutter, gutter_style)];
-                spans.extend(crate::syntax::highlight_line(
-                    text,
-                    &mut highlighter,
-                    syntect,
-                    text_style,
-                ));
+                spans.extend(body_spans);
                 Line::from(spans)
             })
             .collect();
@@ -334,6 +342,24 @@ impl ReadToolCallBlock {
 
         lines
     }
+}
+
+/// Extensions that routinely hold captured terminal output; every other known source type is never scanned for escapes.
+const CAPTURE_EXTENSIONS: [&str; 4] = ["log", "txt", "out", "ansi"];
+
+/// Whether a read's content is a raw terminal capture that must go through the terminal emulator instead of the syntax highlighter.
+fn holds_terminal_output(path: &str, content: &str) -> bool {
+    let path = Path::new(path);
+    let capture_type = match path.extension().and_then(|ext| ext.to_str()) {
+        None => true,
+        Some(ext) => {
+            CAPTURE_EXTENSIONS
+                .iter()
+                .any(|capture| capture.eq_ignore_ascii_case(ext))
+                || get_syntect().find_syntax_by_file_path(path).is_none()
+        }
+    };
+    capture_type && looks_like_terminal_output(content)
 }
 
 /// Count decimal digits in a number (for gutter width).
@@ -494,6 +520,36 @@ mod tests {
             is_selected: false,
             cwd: None,
         }
+    }
+
+    #[test]
+    fn terminal_capture_log_renders_without_literal_escapes() {
+        let capture = "All file: dependencies are valid.\n\x1b[0;31mpre-commit: codegen drift detected\x1b[0m\n\x1b[0;33m  diagnose: sig codegen verify\x1b[0m\n";
+        let block = ReadToolCallBlock::new("/home/u/.grok/sessions/x/terminal/call_1.log")
+            .with_content(capture.into(), 3);
+        let mut ctx = make_ctx();
+        ctx.mode = DisplayMode::Expanded;
+        let output = block.output(&ctx);
+        let body: String = output
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!body.contains('\u{1b}'), "{body:?}");
+        assert!(!body.contains("[0;31m"), "{body:?}");
+        assert!(
+            body.contains("pre-commit: codegen drift detected"),
+            "{body:?}"
+        );
+    }
+
+    #[test]
+    fn source_extension_skips_the_terminal_scan() {
+        assert!(holds_terminal_output("call.log", "\x1b[31mred\x1b[0m"));
+        assert!(holds_terminal_output("capture", "\x1b[31mred\x1b[0m"));
+        assert!(!holds_terminal_output("main.rs", "let s = \"\x1b[31m\";"));
+        assert!(!holds_terminal_output("call.log", "plain text\n"));
     }
 
     #[test]

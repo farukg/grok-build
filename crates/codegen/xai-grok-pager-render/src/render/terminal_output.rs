@@ -44,6 +44,14 @@ pub fn render_terminal_plain(raw: &str) -> String {
         .join("\n")
 }
 
+/// Whether `raw` carries terminal control data: an ESC byte (SGR, OSC, cursor movement) or a `\r` that is not part of a `\r\n` line ending (progress bars).
+pub fn looks_like_terminal_output(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    bytes.iter().enumerate().any(|(i, &b)| {
+        b == 0x1b || (b == b'\r' && bytes.get(i + 1).is_some_and(|&next| next != b'\n'))
+    })
+}
+
 #[derive(Clone, Copy)]
 struct Cell {
     ch: char,
@@ -396,6 +404,21 @@ mod tests {
             .into_iter()
             .map(|rl| rl.plain)
             .collect()
+    }
+
+    #[test]
+    fn detects_escapes_and_bare_carriage_returns() {
+        assert!(looks_like_terminal_output("\x1b[0;31mfailed\x1b[0m"));
+        assert!(looks_like_terminal_output("10%\r50%\r100%\n"));
+        assert!(looks_like_terminal_output("\x1b]8;;http://x\x07link"));
+    }
+
+    #[test]
+    fn plain_text_and_crlf_are_not_terminal_output() {
+        assert!(!looks_like_terminal_output(""));
+        assert!(!looks_like_terminal_output("fn main() {}\n"));
+        assert!(!looks_like_terminal_output("a\r\nb\r\n"));
+        assert!(!looks_like_terminal_output("trailing cr\r"));
     }
 
     #[test]
