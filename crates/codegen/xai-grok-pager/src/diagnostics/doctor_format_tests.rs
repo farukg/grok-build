@@ -222,7 +222,7 @@ fn tmux_config_and_reload_notes_output_is_stable() {
 #[test]
 fn limited_color_output_is_stable() {
     let terminal = ghostty(false);
-    let output = build_doctor(snapshot(
+    let mut report = view(DiagnosticSnapshot::from(snapshot(
         &terminal,
         unavailable_tmux(),
         &LOCAL_ROUTE,
@@ -230,7 +230,9 @@ fn limited_color_output_is_stable() {
         false,
         ColorLevel::Ansi256,
         runtime(None, true),
-    ));
+    )));
+    report.facts.color.total_themes = 6;
+    let output = format_doctor(&report);
 
     assert_eq!(
         output,
