@@ -88,6 +88,7 @@ pub(crate) async fn handle_import(args: &acp::ExtRequest) -> ExtResult {
     // resolve_session_dir requires summary.json to count a session as present
     // An interrupted import (dir created, summary not yet written) is therefore recreated on retry rather than skipped forever
     let has_local_session = resolve_session_dir(&request.session_id, &request.cwd).is_some();
+    let mut imported = false;
     if !has_local_session {
         let Some(summary_value) = request.state.get_mut(SUMMARY_COLUMN) else {
             return Err(
@@ -101,16 +102,17 @@ pub(crate) async fn handle_import(args: &acp::ExtRequest) -> ExtResult {
         };
         sanitize_summary_for_host(summary, &request.session_id, &request.cwd);
         // Reject a summary that would not load rather than persist one that makes the session unloadable and blocks re-import
-        if Summary::deserialize(&*summary_value).is_err() {
-            return Err(acp::Error::invalid_params().data("summary column is not a valid summary"));
-        }
+        let mut summary = Summary::deserialize(&*summary_value)
+            .map_err(|_| acp::Error::invalid_params().data("summary column is not a valid summary"))?;
+        summary.completion_delivery.receiver.imported_without_execution_lease();
+        *summary_value = serde_json::to_value(summary).map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
         // Write the `.cwd` sidecar for hash-based (long-path) dirs so the session stays recoverable by id, not just by (id, cwd)
         crate::util::grok_home::ensure_sessions_cwd_dir(&request.cwd)
             .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-        write_import(&dir, &request.state, &request.updates, &request.session_id)
+        imported = write_import(&dir, &request.state, &request.updates, &request.session_id)
             .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
     }
-    super::to_raw_response(&json!({ "imported": !has_local_session }))
+    super::to_raw_response(&json!({ "imported": imported }))
 }
 
 /// Rewrite a mirrored summary's host-specific fields to describe this host.
@@ -165,8 +167,12 @@ fn write_import(
     state: &std::collections::HashMap<String, Value>,
     updates: &[Value],
     session_id: &str,
-) -> std::io::Result<()> {
+) -> std::io::Result<bool> {
     crate::util::grok_home::create_dir_all_owner_only(dir)?;
+    let _chat_lock = crate::session::storage::JsonlStorageAdapter::lock_append(&dir.join(st::CHAT_HISTORY_FILE))?;
+    let summary_lock = crate::session::storage::summary_write::open_lock_file(&dir.join("summary.json.lock"))?;
+    fs2::FileExt::lock_exclusive(&summary_lock)?;
+    if dir.join(st::SUMMARY_FILE).exists() { return Ok(false); }
 
     // Clear every file this import owns so a leftover from a failed attempt can't merge with the new snapshot; this import is authoritative
     let _ = std::fs::remove_file(dir.join(st::CHAT_HISTORY_FILE));
@@ -185,7 +191,7 @@ fn write_import(
         }
     }
     restamp_imported_usage(dir, session_id)?;
-    Ok(())
+    Ok(true)
 }
 
 fn restamp_imported_usage(dir: &Path, session_id: &str) -> std::io::Result<()> {

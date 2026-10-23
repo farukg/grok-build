@@ -152,6 +152,7 @@ pub(crate) mod hydrate {
             previous_cwd: None,
             pending_cwd_switch_reminder: None,
             cwd_switch_bookkeeping_generation: 0,
+            completion_delivery: Default::default(),
             session_summary: remote_title.unwrap_or_default(),
             created_at: parse_rfc3339_or_now(remote.created_at.as_deref()),
             updated_at: parse_rfc3339_or_now(remote.updated_at.as_deref()),

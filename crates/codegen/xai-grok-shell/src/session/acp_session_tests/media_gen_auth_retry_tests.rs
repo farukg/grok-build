@@ -65,6 +65,7 @@ fn failing_am() -> Arc<AuthManager> {
 
 fn ok_result(text: &str) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
     Ok(ToolRunResult {
+        completed_subagents: Vec::new(),
         output: ToolOutput::Text(text.to_owned().into()),
         prompt_text: text.to_owned(),
         effective_tool_name: None,

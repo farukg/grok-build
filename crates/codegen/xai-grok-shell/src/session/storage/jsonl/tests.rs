@@ -1281,6 +1281,7 @@ fn write_test_summary(
         previous_cwd: None,
         pending_cwd_switch_reminder: None,
         cwd_switch_bookkeeping_generation: 0,
+        completion_delivery: Default::default(),
         session_summary: format!("summary for {session_id}"),
         created_at: updated_at,
         updated_at,

@@ -445,6 +445,97 @@ async fn running_steer_projects_at_safe_point_with_agent_provenance() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn ordered_live_steers_reach_next_safe_point_before_turn_completion() {
+    let local = tokio::task::LocalSet::new();
+    await_with_timeout(local.run_until(async {
+        let (actor, _) = super::super::support::build_actor().await;
+        let epoch = start_turn(&actor, "working").await;
+        let mut receipts = Vec::new();
+        for (id, text) in [("first", "first update"), ("second", "second update")] {
+            receipts.push(
+                admit(
+                    &actor,
+                    message_with_text(id, text),
+                    ActiveAgentMessageOperation::Steer,
+                )
+                .await,
+            );
+        }
+        assert!(actor.chat_state_handle.get_conversation().await.is_empty());
+        {
+            let state = actor.state.lock().await;
+            assert_eq!(
+                state
+                    .running_task
+                    .as_ref()
+                    .expect("same running turn")
+                    .epoch,
+                epoch
+            );
+            assert_eq!(
+                state.pending_inputs.len(),
+                1,
+                "steers must not create parallel turns"
+            );
+        }
+        assert!(actor.drain_admitted_messages_at_safe_point().await);
+        assert!(
+            !actor.drain_admitted_messages_at_safe_point().await,
+            "each message projects once"
+        );
+        let conversation = actor.chat_state_handle.get_conversation().await;
+        assert_eq!(
+            conversation
+                .iter()
+                .map(ConversationItem::text_content)
+                .collect::<Vec<_>>(),
+            vec!["first update", "second update"]
+        );
+        for receipt in &mut receipts {
+            assert!(
+                matches!(
+                    receipt.result.try_recv(),
+                    Err(oneshot::error::TryRecvError::Empty)
+                ),
+                "sampling delivery must precede whole-turn settlement"
+            );
+        }
+        let completions = {
+            let mut state = actor.state.lock().await;
+            let binding = turn_binding(state.running_task.as_ref().expect("turn remains live"));
+            let (completions, _) = actor.transition_parent_messages(
+                &mut state,
+                TerminalTarget::Turn(&binding),
+                TerminalCause::Completion,
+            );
+            let (duplicate, _) = actor.transition_parent_messages(
+                &mut state,
+                TerminalTarget::Turn(&binding),
+                TerminalCause::HardTeardown,
+            );
+            assert!(duplicate.is_empty(), "terminal races must not settle twice");
+            completions
+        };
+        SessionActor::settle_parent_message_completions(
+            completions,
+            &crate::session::commands::ok_end_turn(9, None),
+        );
+        for receipt in receipts {
+            assert_eq!(
+                receipt
+                    .result
+                    .await
+                    .expect("one receipt")
+                    .expect("successful completion")
+                    .total_tokens,
+                9
+            );
+        }
+    }))
+    .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn completion_fallback_appends_after_retained_queue() {
     let local = tokio::task::LocalSet::new();
     await_with_timeout(local.run_until(async {

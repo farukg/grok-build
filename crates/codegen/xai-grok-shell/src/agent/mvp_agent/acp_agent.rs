@@ -1052,6 +1052,17 @@ impl acp::Agent for MvpAgent {
             None,
         );
         self.wait_for_child_management(&arguments.session_id).await;
+        if let Some(SessionHost::Child(super::ChildHost {
+            parent_session_id,
+            reach: super::ChildReach::Addressed { address, residence: super::ChildResidence::Running(running) },
+        })) = self.session_host(&arguments.session_id)
+            && *running.delivery.borrow() == crate::extensions::notification::SubagentDelivery::OnTurnEnd
+            && self.cfg.borrow().is_feature_enabled(crate::agent::config::Feature::ActiveAgentMessages)
+            && matches!(arguments.prompt.as_slice(), [acp::ContentBlock::Text(_)])
+            && !arguments.meta.as_ref().and_then(|meta| meta.get("sendNow")).and_then(serde_json::Value::as_bool).unwrap_or(false)
+        {
+            return self.wake_child_with_prompt(&parent_session_id, &arguments.session_id, address, arguments.prompt).await;
+        }
         let (handle, child_turn) = match self.session_host(&arguments.session_id) {
             Some(SessionHost::Child(child)) => match super::child_prompt::ChildPromptAdmission::of(child) {
                 super::child_prompt::ChildPromptAdmission::Live { handle, turn } => (*handle, Some(turn)),
@@ -2067,6 +2078,9 @@ impl acp::Agent for MvpAgent {
             "x.ai/models/list" => {
                 crate::agent::handlers::models::handle(self, &args).await
             }
+            "x.ai/session/delivery" => {
+                crate::extensions::session_delivery::handle(self, &args).await
+            }
             "x.ai/session/updates" => {
                 crate::extensions::session_updates::handle(&args, &self.gateway).await
             }
@@ -2611,9 +2625,14 @@ impl acp::Agent for MvpAgent {
             crate::extensions::terminal::handle_pty_input(&params).await;
         }
         if args.method.as_ref() == "_x.ai/session/update" {
-            if let Ok(notification) = serde_json::from_str::<
+            if let Ok(mut notification) = serde_json::from_str::<
                 SessionNotification,
             >(args.params.get()) {
+                if let Some(serde_json::Value::Object(meta)) = &mut notification.meta {
+                    meta.remove(xai_chat_state::input_projection::PARENT_TASK_META);
+                    meta.remove("_receiverTurnOrigin");
+                    meta.remove("subagentCompletion");
+                }
                 tracing::info!(
                     "Storing xAI session notification: session_id={}",
                     notification.session_id.0

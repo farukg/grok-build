@@ -1282,6 +1282,48 @@ pub trait StorageAdapter: Send + Sync {
         )))
     }
 
+    async fn receive_delivery(&self, _info: &Info, _request: &crate::session::delivery_receiver::DeliveryRequest, _access: crate::session::receiver_execution::ReceiverAccess<'_>) -> io::Result<crate::session::delivery_receiver::DeliveryResult> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable delivery receiver unsupported"))
+    }
+    async fn claim_receiver(&self, _info: &Info) -> io::Result<(crate::session::receiver_execution::ReceiverExecutionLease, Summary)> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable receiver ownership unsupported"))
+    }
+    async fn recover_deliveries(&self, _info: &Info, _lease: &crate::session::receiver_execution::ReceiverExecutionLease) -> io::Result<Summary> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable delivery recovery unsupported"))
+    }
+    async fn append_delivery_commit_aware(&self, _info: &Info, _projection: &xai_chat_state::DeliveryProjection) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError> {
+        Err(xai_chat_state::StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::Unsupported, "strict delivery projection unsupported")))
+    }
+    async fn finish_delivery_turn(&self, _info: &Info, _turn_id: &str, _parent_task: &xai_chat_state::ParentTask, _origin: &crate::session::delivery_receiver::ReceiverTurnOrigin, _progress: &crate::session::delivery_receiver::DeliveryProgress) -> io::Result<Vec<crate::session::delivery_receiver::DeliveryReceipt>> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable delivery settlement unsupported"))
+    }
+
+    async fn prepare_subagent_completion(&self, _info: &Info, _event: crate::session::SubagentCompletionEvent) -> io::Result<crate::session::ProducerCommitAck> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable producer preparation is unsupported"))
+    }
+    async fn publish_subagent_completion(&self, _info: &Info, _event: &crate::session::SubagentCompletionEvent, _will_wake: bool) -> io::Result<crate::session::PublishedCompletion> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable completion publication is unsupported"))
+    }
+    async fn recover_subagent_completions(&self, _info: &Info) -> io::Result<crate::session::persistence::Summary> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "completion recovery is unsupported"))
+    }
+    async fn set_completion_wake_policy(
+        &self,
+        _info: &Info,
+        _policy: crate::session::completion_delivery::CompletionWakePolicy,
+    ) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "completion wake policy persistence is unsupported"))
+    }
+    async fn append_completion_commit_aware(
+        &self,
+        _info: &Info,
+        _projection: &xai_chat_state::CompletionProjection,
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError> {
+        Err(xai_chat_state::StrictAppendError::NotCommitted(io::Error::new(
+            io::ErrorKind::Unsupported, "strict completion projection is unsupported",
+        )))
+    }
+
     /// Update the current model in summary (delegates to `update_current_model_and_agent` with no agent change).
     async fn update_current_model(&self, info: &Info, model_id: &acp::ModelId) -> io::Result<()> {
         self.update_current_model_and_agent(info, model_id, None, None, None)

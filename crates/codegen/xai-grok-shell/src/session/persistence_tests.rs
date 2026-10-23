@@ -1,9 +1,9 @@
 use super::*;
 use crate::session::storage::jsonl::AppendDurability;
 
-struct ActorGuard {
-    handle: PersistenceHandle,
-    task: tokio::task::JoinHandle<()>,
+pub(crate) struct ActorGuard {
+    pub(crate) handle: PersistenceHandle,
+    pub(crate) task: tokio::task::JoinHandle<()>,
 }
 
 impl ActorGuard {
@@ -13,7 +13,7 @@ impl ActorGuard {
     }
 }
 
-fn test_actor(info: Info, storage: Arc<dyn StorageAdapter>) -> ActorGuard {
+pub(crate) fn test_actor(info: Info, storage: Arc<dyn StorageAdapter>) -> ActorGuard {
     test_actor_with_remote_sync(info, storage, None)
 }
 
@@ -45,6 +45,7 @@ fn test_actor_inner(
     }
     let task = tokio::spawn(
         SessionPersistence {
+            receiver_owner: Default::default(),
             info,
             storage,
             pending_notification: None,

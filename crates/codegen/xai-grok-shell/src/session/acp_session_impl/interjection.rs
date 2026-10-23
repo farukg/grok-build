@@ -326,7 +326,10 @@ impl SessionActor {
     /// late admissions still inject into the running turn.
     pub(super) async fn drain_admitted_messages_at_safe_point(&self) -> bool {
         let drained_human = self.drain_pending_interjections().await;
-        self.drain_parent_messages_at_safe_point().await || drained_human
+        let drained_parent = self.drain_parent_messages_at_safe_point().await;
+        let drained_children = self.drain_subagent_wakes_at_safe_point().await;
+        let drained_receiver = self.drain_durable_deliveries_at_safe_point().await;
+        drained_parent || drained_human || drained_children || drained_receiver
     }
 
     pub(super) async fn drain_pending_interjections(&self) -> bool {

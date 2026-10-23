@@ -1093,6 +1093,7 @@ pub(crate) async fn run_shell_child(
         gateway.clone(),
         reporter.clone(),
         &ctx,
+        completion_data.clone(),
     );
     start_artifacts.publish_at(PublicationBoundary::Prepared);
     if !is_wake {
@@ -1712,13 +1713,12 @@ pub(crate) async fn run_shell_child(
         Err(e) => {
             let msg = format!("Failed to spawn child session: {e}");
             let result = if completion_data.has_emitted_spawned_notification() {
+                completion_data.defer_terminal_artifacts(&subagent_meta_dir, &gcs_upload_ctx);
                 fail_subagent(
                     &msg,
                     &subagent_id,
                     &child_session_id,
-                    &subagent_meta_dir,
                     start.elapsed().as_millis() as u64,
-                    &gcs_upload_ctx,
                 )
             } else {
                 failure_result(&request, &msg)
@@ -1749,6 +1749,8 @@ pub(crate) async fn run_shell_child(
         cancel_token.clone(),
         delivery_rx.clone(),
     );
+    let completion_rx = receipt_drain.completion();
+    let (caller, caller_rx) = tokio::sync::watch::channel(Default::default());
     let (prompt_admitted, prompt_admitted_rx) = oneshot::channel();
     super::resume_window::arm_force_compact(
         &child_handle.force_compact,
@@ -1814,6 +1816,7 @@ pub(crate) async fn run_shell_child(
                     active_message_target_agent_id: agent_id.clone(),
                     active_message_target_generation: target_generation,
                     child_signals: child_handle.signals_handle.clone(),
+                    caller,
                     _child_thread: None,
                     receipt_sink,
                     #[cfg(test)]
@@ -1967,6 +1970,7 @@ pub(crate) async fn run_shell_child(
             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
             unpromoted_disposition,
             start_artifacts.terminal_persistence_allowed(),
+            &completion_data,
         )
         .await;
         if restore_wake_after_teardown {
@@ -1990,6 +1994,8 @@ pub(crate) async fn run_shell_child(
         cancel_token.clone(),
         goal_tick_cmd_tx(ctx.goal_enabled, ctx.parent_cmd_tx.as_ref()),
         delivery_rx,
+        completion_rx,
+        caller_rx,
     );
     spawn_timer.record(
         SubagentSpawnPhase::ReadyToFirstTurn,
@@ -2270,9 +2276,8 @@ pub(crate) async fn run_shell_child(
     if terminal_persistence_allowed {
         completion_data
             .set_persisted_output_dir(persist_subagent_output(&subagent_meta_dir, &result));
-        persist_subagent_completion(&subagent_meta_dir, &result, &gcs_upload_ctx);
+        completion_data.defer_terminal_artifacts(&subagent_meta_dir, &gcs_upload_ctx);
     }
-    let final_status = SubagentMetaStatus::of_result(&result);
     let snapshot_dispose_enabled =
         terminal_persistence_allowed && ctx.resolve_subagent_worktree_snapshot_enabled();
     let telemetry_tokens = if result.tool_calls > 0 || result.success() {
@@ -2420,7 +2425,6 @@ pub(crate) async fn run_shell_child(
                 wt_path,
                 &resolve_subagent_source_repo(&ctx),
                 &subagent_meta_dir,
-                final_status,
                 &request.id,
             )
             .await;
@@ -2497,7 +2501,6 @@ pub(crate) async fn dispose_worktree_after_completion(
     worktree: &std::path::Path,
     source_repo: &std::path::Path,
     meta_dir: &std::path::Path,
-    final_status: SubagentMetaStatus,
     subagent_id: &str,
 ) -> Disposal {
     let ref_name = format!("refs/grok/subagents/{subagent_id}");
@@ -2562,7 +2565,7 @@ pub(crate) async fn dispose_worktree_after_completion(
             return Disposal::Kept;
         }
     }
-    if !update_subagent_meta_snapshot_ref(meta_dir, &snapshot_ref, final_status) {
+    if !update_subagent_meta_snapshot_ref(meta_dir, &snapshot_ref) {
         tracing::warn!(
             subagent_id = %subagent_id,
             worktree_path = %worktree.display(),

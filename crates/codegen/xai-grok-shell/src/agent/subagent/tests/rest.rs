@@ -3289,6 +3289,8 @@ async fn progress_publisher_delivers_ticks_to_parent_cmd_channel() {
                 cancel.clone(),
                 Some(cmd_tx),
                 tokio::sync::watch::channel(Default::default()).1,
+                tokio::sync::watch::channel(Default::default()).1,
+                tokio::sync::watch::channel(Default::default()).1,
             );
             let cmd = tokio::time::timeout(
                     std::time::Duration::from_secs(30),

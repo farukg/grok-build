@@ -2830,7 +2830,7 @@ impl SessionActor {
         tool_call_id: &acp::ToolCallId,
         call_id: &str,
         function_name: &str,
-        err: xai_tool_runtime::ToolError,
+        mut err: xai_tool_runtime::ToolError,
         raw_arguments: &str,
         model_id: &str,
     ) -> Result<(), acp::Error> {
@@ -2843,7 +2843,13 @@ impl SessionActor {
             "tool_error: parse_failure"
         );
         self.signals_handle().record_tool_failure(function_name);
-        let message = build_tool_parse_error_message(function_name, &err, raw_arguments);
+        let observations = xai_grok_tools::types::completion_observation::SubagentCompletionObservations::take_error(&mut err);
+        let mut message = build_tool_parse_error_message(function_name, &err, raw_arguments);
+        for observation in &observations {
+            let text = xai_grok_tools::reminders::task_completion::neutralize_reminder_tags(&observation.text);
+            message.push_str("\n\n");
+            message.push_str(&xai_grok_tools::reminders::wrap_reminder(&text));
+        }
         let title = (err.kind == xai_tool_runtime::ToolErrorKind::NotFound)
             .then(|| format!("Agent tried calling a tool that doesn't exist: {function_name}"));
         self.send_update(
@@ -2860,7 +2866,7 @@ impl SessionActor {
         )
         .await;
         let tool_chat = ConversationItem::tool_result(call_id.to_string(), message);
-        self.chat_state_handle.push_tool_result(tool_chat);
+        self.commit_observed_subagent_tool_result(tool_chat, observations).await?;
         Ok(())
     }
     /// Queued auto-wake synthetic prompts for a task/subagent the model already learned about are dropped before they get flushed to chat history.
@@ -3121,7 +3127,8 @@ impl SessionActor {
                 inline_images,
             )
         };
-        self.chat_state_handle.push_tool_result(tool_chat);
+        self.commit_observed_subagent_tool_result(tool_chat,
+            if output_replaced { Vec::new() } else { result.completed_subagents }).await?;
         let mut deferred_followups = Vec::new();
         if !extracted_images.is_empty() {
             let count = extracted_images.len();

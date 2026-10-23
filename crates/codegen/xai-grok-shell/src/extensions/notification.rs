@@ -512,14 +512,22 @@ pub enum AutoCompactCancelReason {
 /// `Switching model…` loader (family-switch compact runs with no turn in flight).
 pub const MODEL_FAMILY_SWITCH_COMPACT_BANNER: &str = "Switching model. Compacting…";
 
-/// When a running subagent's answer goes to its caller: when its turn ends, or, once a human has
-/// prompted it, only after the human delivers it.
+/// Explicit completion policy for the running attempt; prompts and navigation preserve it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SubagentDelivery {
     #[default]
     OnTurnEnd,
     Held,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentCompletion {
+    #[default]
+    Working,
+    Settling,
+    Pending,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -827,6 +835,10 @@ pub enum SessionUpdate {
         error_count: u32,
         #[serde(default)]
         delivery: SubagentDelivery,
+        #[serde(default)]
+        completion: SubagentCompletion,
+        #[serde(default)]
+        caller: xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller,
     },
     /// A subagent session has finished (success, failure, or cancellation).
     ///
@@ -1706,6 +1718,8 @@ mod tests {
             tools_used: vec!["bash".into(), "grep".into()],
             error_count: 1,
             delivery: SubagentDelivery::OnTurnEnd,
+            completion: Default::default(),
+            caller: Default::default(),
         };
         let json = serde_json::to_value(&update).unwrap();
         assert_eq!(
@@ -1754,6 +1768,8 @@ mod tests {
             tools_used: vec![],
             error_count: 0,
             delivery: SubagentDelivery::OnTurnEnd,
+            completion: Default::default(),
+            caller: Default::default(),
         };
         let json_str = serde_json::to_string(&update).unwrap();
         let parsed: SessionUpdate = serde_json::from_str(&json_str).unwrap();
@@ -1797,6 +1813,8 @@ mod tests {
             tools_used: vec![],
             error_count: 0,
             delivery: SubagentDelivery::OnTurnEnd,
+            completion: Default::default(),
+            caller: Default::default(),
         })
         .unwrap();
         let finished = serde_json::to_value(SessionUpdate::SubagentFinished {

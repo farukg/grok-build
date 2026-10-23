@@ -330,6 +330,7 @@ pub(super) fn test_summary(
         previous_cwd: None,
         pending_cwd_switch_reminder: None,
         cwd_switch_bookkeeping_generation: 0,
+        completion_delivery: Default::default(),
         session_summary: title.to_string(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),

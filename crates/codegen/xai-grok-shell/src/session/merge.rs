@@ -470,6 +470,7 @@ mod tests {
             previous_cwd: None,
             pending_cwd_switch_reminder: None,
             cwd_switch_bookkeeping_generation: 0,
+            completion_delivery: Default::default(),
             session_summary: title.into(),
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             updated_at: updated.parse().unwrap(),

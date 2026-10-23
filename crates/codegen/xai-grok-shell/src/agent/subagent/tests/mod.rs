@@ -115,6 +115,7 @@ async fn usage_ack_precedes_terminal_presentation() {
         ..Default::default()
     };
     let completion = ChildCompletion {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
         snapshot: test_snapshot(&request, &result),
         request,
         result,
@@ -124,7 +125,7 @@ async fn usage_ack_precedes_terminal_presentation() {
             backgrounded: false,
             waiter_delivered: false,
             explicitly_killed: false,
-            should_surface: false,
+            reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
         },
     };
     let will_wake = will_wake_for(&completion);
@@ -684,23 +685,63 @@ fn resume_worktree_action_covers_three_outcomes() {
             ResumeWorktreeAction::Shared
         );
 }
+#[tokio::test]
+async fn completion_errors_admit_parent_wake_but_explicit_stop_stays_silent() {
+    use xai_tool_types::InterruptionCause;
+    for (state, wake) in [
+        (SubagentState::Completed, true),
+        (SubagentState::Failed { message: "upload rejected".into() }, true),
+        (SubagentState::Interrupted { cause: InterruptionCause::Error { message: "receipt actor failed".into() } }, true),
+        (SubagentState::Interrupted { cause: InterruptionCause::ExplicitStop { actor: xai_tool_types::SubagentActor::Human } }, false),
+    ] {
+        let (cmd_tx, mut commands) = mpsc::unbounded_channel();
+        let request = auto_wake_test_request("wake-error-class");
+        let result = SubagentResult {
+            state,
+            subagent_id: request.id.clone(),
+            child_session_id: request.id.clone(),
+            ..Default::default()
+        };
+        let completion = ChildCompletion {
+            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+            snapshot: test_snapshot(&request, &result), request, result,
+            completion_data: ShellCompletionData {
+                auto_wake_enabled: true,
+                parent_cmd_tx: Some(cmd_tx),
+                task_output_tool_name: "get_command_or_subagent_output".into(),
+                ..Default::default()
+            },
+            disposition: CompletionDisposition {
+                foreground_delivered: false, backgrounded: true, waiter_delivered: false,
+                explicitly_killed: false, reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Reportable,
+            },
+        };
+        assert_eq!(will_wake_for(&completion), wake);
+        present_child_completion(completion, &test_gateway(), wake);
+        let mut prompts = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            if let SessionCommand::Prompt { prompt_blocks, .. } = command {
+                prompts.push(prompt_blocks);
+            }
+        }
+        assert_eq!(prompts.len(), usize::from(wake));
+        if wake {
+            assert!(prompt_text(&prompts[0]).contains("wake-error-class"));
+        }
+    }
+}
+
 #[test]
 fn should_auto_wake_subagent_truth_table() {
     let wakeable = AutoWakeInputs {
         run_in_background: true,
         cancelled: false,
         auto_wake_enabled: true,
-        block_waited: false,
         explicitly_killed: false,
-        goal_loop_active: false,
         parent_channel_open: true,
     };
     assert!(should_auto_wake_subagent(wakeable));
     let suppressed = [
-        AutoWakeInputs {
-            run_in_background: false,
-            ..wakeable
-        },
         AutoWakeInputs {
             cancelled: true,
             ..wakeable
@@ -710,15 +751,7 @@ fn should_auto_wake_subagent_truth_table() {
             ..wakeable
         },
         AutoWakeInputs {
-            block_waited: true,
-            ..wakeable
-        },
-        AutoWakeInputs {
             explicitly_killed: true,
-            ..wakeable
-        },
-        AutoWakeInputs {
-            goal_loop_active: true,
             ..wakeable
         },
         AutoWakeInputs {
@@ -780,6 +813,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
     assert!(!folded.result.is_interrupted());
     let request = auto_wake_test_request("sa-followup");
     let completion = ChildCompletion {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
         snapshot: test_snapshot(&request, &folded.result),
         request,
         result: folded.result,
@@ -794,7 +828,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
             backgrounded: true,
             waiter_delivered: false,
             explicitly_killed: false,
-            should_surface: true,
+            reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Reportable,
         },
     };
     let will_wake = will_wake_for(&completion);
@@ -840,6 +874,7 @@ fn inject_subagent_completed_prompt_sends_prompt() {
         ..Default::default()
     };
     inject_subagent_completed_prompt(InjectParams {
+        attempt_id: &xai_message_delivery_core::AttemptId::mint(1),
         subagent_id: "sa-1",
         result: &result,
         request: &request,
@@ -849,7 +884,6 @@ fn inject_subagent_completed_prompt_sends_prompt() {
         scheduler_delete_tool_name: Some("renamed_scheduler_delete"),
         scheduler_create_tool_name: Some("renamed_scheduler_create"),
         synthetic_trace_tx: &None,
-        goal_loop_active: &std::sync::atomic::AtomicBool::new(false),
     });
     match cmd_rx.try_recv().expect("expected synthetic Prompt") {
         SessionCommand::Prompt { prompt_id, prompt_blocks, verbatim, .. } => {
@@ -888,6 +922,7 @@ fn inject_subagent_completed_prompt_copies_capped_task_output() {
         ..Default::default()
     };
     inject_subagent_completed_prompt(InjectParams {
+        attempt_id: &xai_message_delivery_core::AttemptId::mint(1),
         subagent_id: "sa-1",
         result: &result,
         request: &request,
@@ -897,7 +932,6 @@ fn inject_subagent_completed_prompt_copies_capped_task_output() {
         scheduler_delete_tool_name: None,
         scheduler_create_tool_name: None,
         synthetic_trace_tx: &None,
-        goal_loop_active: &std::sync::atomic::AtomicBool::new(false),
     });
     let SessionCommand::Prompt { prompt_blocks, .. } = cmd_rx
         .try_recv()
@@ -934,6 +968,7 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
         ..Default::default()
     };
     inject_subagent_completed_prompt(InjectParams {
+        attempt_id: &xai_message_delivery_core::AttemptId::mint(1),
         subagent_id: "sa-no-loop",
         result: &result,
         request: &request,
@@ -943,7 +978,6 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
         scheduler_delete_tool_name: Some("scheduler_delete"),
         scheduler_create_tool_name: Some("scheduler_create"),
         synthetic_trace_tx: &None,
-        goal_loop_active: &std::sync::atomic::AtomicBool::new(false),
     });
     let SessionCommand::Prompt { prompt_blocks, .. } = cmd_rx
         .try_recv()
@@ -954,30 +988,6 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
     assert!(!prompt.contains("scheduler_delete"));
     assert!(!prompt.contains("no longer relevant"));
     assert!(!prompt.contains("Check the subagent output"));
-}
-#[test]
-fn inject_subagent_completed_prompt_bails_when_goal_loop_activates_in_gap() {
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
-    let request = auto_wake_test_request("sa-goal");
-    let result = SubagentResult {
-        state: SubagentState::Completed,
-        subagent_id: "sa-goal".into(),
-        child_session_id: "sa-goal".into(),
-        ..Default::default()
-    };
-    inject_subagent_completed_prompt(InjectParams {
-        subagent_id: "sa-goal",
-        result: &result,
-        request: &request,
-        snapshot: &test_snapshot(&request, &result),
-        parent_cmd_tx: Some(&cmd_tx),
-        task_output_tool_name: "get_command_or_subagent_output",
-        scheduler_delete_tool_name: None,
-        scheduler_create_tool_name: None,
-        synthetic_trace_tx: &None,
-        goal_loop_active: &std::sync::atomic::AtomicBool::new(true),
-    });
-    assert!(cmd_rx.try_recv().is_err(), "no prompt when the goal loop owns the cadence");
 }
 #[test]
 fn inject_subagent_completed_prompt_bails_when_parent_closed() {
@@ -992,6 +1002,7 @@ fn inject_subagent_completed_prompt_bails_when_parent_closed() {
         ..Default::default()
     };
     inject_subagent_completed_prompt(InjectParams {
+        attempt_id: &xai_message_delivery_core::AttemptId::mint(1),
         subagent_id: "sa-closed",
         result: &result,
         request: &request,
@@ -1001,7 +1012,6 @@ fn inject_subagent_completed_prompt_bails_when_parent_closed() {
         scheduler_delete_tool_name: None,
         scheduler_create_tool_name: None,
         synthetic_trace_tx: &Some(trace_tx),
-        goal_loop_active: &std::sync::atomic::AtomicBool::new(false),
     });
     assert!(trace_rx.try_recv().is_err(), "no prompt was sent, so no trace request follows");
 }
@@ -2302,6 +2312,7 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
     );
     completion_data.mark_spawned_notification_emitted();
     let completion = ChildCompletion {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
         snapshot: test_snapshot(&request, &result),
         request,
         result,
@@ -2311,7 +2322,7 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
             backgrounded: false,
             waiter_delivered: false,
             explicitly_killed: false,
-            should_surface: false,
+            reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
         },
     };
     let will_wake = will_wake_for(&completion);
@@ -2529,6 +2540,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
     );
     completion_data.mark_spawned_notification_emitted();
     let completion = ChildCompletion {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
         snapshot: test_snapshot(&request, &result),
         request,
         result,
@@ -2538,7 +2550,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             backgrounded: false,
             waiter_delivered: false,
             explicitly_killed: false,
-            should_surface: false,
+            reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
         },
     };
     let will_wake = will_wake_for(&completion);
@@ -2839,6 +2851,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
     let snapshot = test_snapshot(&request, &output.result);
     present_child_completion(
         ChildCompletion {
+            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
             snapshot,
             request,
             result: output.result,
@@ -2848,7 +2861,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
                 backgrounded: false,
                 waiter_delivered: false,
                 explicitly_killed: false,
-                should_surface: false,
+                reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
             },
         },
         &gateway,

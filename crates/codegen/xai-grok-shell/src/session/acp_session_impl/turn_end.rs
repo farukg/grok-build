@@ -397,12 +397,23 @@ impl SessionActor {
     ) {
         let (stop_reason, agent_result, error_kind) =
             crate::sampling::error::prompt_complete_fields(mapped);
-        let extra = crate::session::commands::cancellation_meta(
+        let delivery_progress = crate::session::delivery_receiver::terminal_progress(&stop_reason, &agent_result, cancel_trigger);
+        let (parent_task, receiver_origin) = {
+            let state = self.state.lock().await;
+            match state.running_task.as_ref().filter(|task| task.prompt_id == prompt_id) {
+                Some(task) => (xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() },
+                    crate::session::delivery_receiver::ReceiverTurnOrigin::from_prompt(task.input_origin.as_prompt_origin())),
+                None => (xai_chat_state::ParentTask::Unknown, crate::session::delivery_receiver::ReceiverTurnOrigin::Other),
+            }
+        };
+        let mut extra = crate::session::commands::cancellation_meta(
             cancel_trigger,
             cancellation_category,
             cancellation_context,
         );
-        let extra_meta = (!extra.is_empty()).then_some(extra);
+        extra.insert(xai_chat_state::input_projection::PARENT_TASK_META.into(), serde_json::json!(parent_task));
+        extra.insert("_receiverTurnOrigin".into(), serde_json::json!(receiver_origin));
+        let extra_meta = Some(extra);
         self.send_xai_notification_with_extra_meta(
             crate::session::turn_completion::build_turn_completed(
                 prompt_id.clone(),
@@ -416,6 +427,8 @@ impl SessionActor {
             crate::session::storage::jsonl::AppendDurability::Durable,
         )
         .await;
+
+        self.settle_durable_delivery_turn(&prompt_id, parent_task, receiver_origin, delivery_progress);
 
         // Behind the finalization lease, so a turn posts exactly one delta whichever path settles it.
         let turn_outcome = match mapped {

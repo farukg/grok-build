@@ -98,6 +98,7 @@ impl ChildRunner for SnapshotProbeRunner {
                                     .expect("test child id"),
                             active_message_target_generation: run.generation,
                             child_signals: crate::session::signals::SessionSignalsHandle::new(),
+                            caller: tokio::sync::watch::channel(Default::default()).0,
                             _child_thread: Some(SessionThread::from_handle(std::thread::spawn(
                                 || {},
                             ))),
@@ -130,8 +131,17 @@ impl ChildRunner for SnapshotProbeRunner {
         true
     }
 
-    fn on_completed(&self, _: ChildCompletion<()>, terminal_published: Box<dyn FnOnce() + Send>) {
-        terminal_published();
+    fn on_completed(
+        &self,
+        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+    ) {
+        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _: ChildCompletion<()>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -193,7 +203,7 @@ async fn send_active_message_freezes_parent_turn_before_first_poll() {
         let coordinator_task = tokio::task::spawn_local(coordinator.run());
         let spawn_task = tokio::task::spawn_local({
             let backend = backend.clone();
-            async move { backend.spawn(request(), None).await }
+            async move { backend.spawn(request(), None, None).await }
         });
         await_with_timeout(started_rx.recv())
             .await
@@ -268,7 +278,7 @@ async fn rejected_delivery(
         let coordinator_task = tokio::task::spawn_local(coordinator.run());
         let spawn_task = tokio::task::spawn_local({
             let backend = backend.clone();
-            async move { backend.spawn(request(), None).await }
+            async move { backend.spawn(request(), None, None).await }
         });
         await_with_timeout(started_rx.recv())
             .await

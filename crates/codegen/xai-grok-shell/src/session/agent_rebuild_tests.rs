@@ -50,8 +50,17 @@ impl ChildRunner for SenderProbeRunner {
     fn supports_agent_message_sender(&self) -> bool {
         true
     }
-    fn on_completed(&self, _: ChildCompletion<()>, terminal_published: Box<dyn FnOnce() + Send>) {
-        terminal_published();
+    fn on_completed(
+        &self,
+        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+    ) {
+        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _: ChildCompletion<()>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -91,7 +100,7 @@ async fn mint_test_sender(owner: SubagentOwner) -> Option<AgentMessageSender> {
                     tool_call_id: None,
                 },
                 None,
-            )
+             None)
             .await
     });
     let sender = sender_rx.recv().await.unwrap();

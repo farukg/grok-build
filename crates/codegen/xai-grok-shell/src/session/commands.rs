@@ -608,6 +608,23 @@ pub enum SessionCommand {
     XaiSessionNotification {
         notification: SessionNotification,
     },
+    ReceiveDelivery { request: crate::session::delivery_receiver::DeliveryRequest, respond_to: oneshot::Sender<crate::session::delivery_receiver::DeliveryResult> },
+    ResumeDeliveries { deliveries: Vec<String> },
+    RestoreCompletionWakePolicy(crate::session::completion_delivery::CompletionWakePolicy),
+    SubagentCompletionWake {
+        prompt_id: String,
+        completion: crate::session::CompletionWake,
+        text: String,
+        respond_to: oneshot::Sender<PromptTurnResult>,
+    },
+    PublishSubagentCompletion {
+        event: crate::session::SubagentCompletionEvent,
+        will_wake: bool,
+        respond_to: oneshot::Sender<std::io::Result<crate::session::PublishedCompletion>>,
+    },
+    SubagentCompletionPublished {
+        notification: SessionNotification,
+    },
     /// Apply subagent usage into parent ledgers.
     /// Acks `()` once chat state has applied it (prompt-attributed or session-only).
     /// Drop the oneshot on failure so the child treats the fold as not landed.

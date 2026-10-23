@@ -30,6 +30,7 @@ pub struct InferenceRequestMatcher {
     /// When set, the request body must contain this text. A compaction summary is an auxiliary
     /// request like any side query, so the hold has to name it.
     body_contains: Option<&'static str>,
+    session_id: Option<&'static str>,
 }
 
 impl InferenceRequestMatcher {
@@ -39,6 +40,7 @@ impl InferenceRequestMatcher {
             endpoint,
             kind: InferenceRequestKind::Foreground,
             body_contains: None,
+            session_id: None,
         }
     }
 
@@ -47,6 +49,7 @@ impl InferenceRequestMatcher {
             endpoint,
             kind: InferenceRequestKind::Foreground,
             body_contains: Some(fragment),
+            session_id: None,
         }
     }
 
@@ -56,6 +59,7 @@ impl InferenceRequestMatcher {
             endpoint,
             kind: InferenceRequestKind::Auxiliary,
             body_contains: None,
+            session_id: None,
         }
     }
 
@@ -65,11 +69,18 @@ impl InferenceRequestMatcher {
             endpoint,
             kind: InferenceRequestKind::Auxiliary,
             body_contains: Some(fragment),
+            session_id: None,
         }
     }
 
+    pub fn for_session(mut self, session_id: &'static str) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
     fn matches(self, request: &InferenceRequest<'_>) -> bool {
-        self.endpoint == request.endpoint()
+        self.session_id.is_none_or(|session_id| request.headers().get("x-grok-session-id").and_then(|value| value.to_str().ok()) == Some(session_id))
+            && self.endpoint == request.endpoint()
             && self.kind == request.kind()
             && self.body_contains.is_none_or(|fragment| {
                 serde_json::to_string(request.body())

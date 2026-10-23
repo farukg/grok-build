@@ -81,6 +81,8 @@ fn progress(subagent_id: &str, attempt_id: Option<&str>, tokens_used: u64) -> Xa
         tools_used: vec!["read_file".to_owned()],
         error_count: 0,
         delivery: Default::default(),
+        completion: Default::default(),
+        caller: Default::default(),
     }
 }
 

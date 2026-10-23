@@ -310,6 +310,13 @@ impl SubagentSnapshotDto {
             resumed_from: provenance.resumed_from,
         };
         match snap.status {
+            SubagentSnapshotStatus::Finalizing { publication } => {
+                dto.status = "finalizing".into();
+                dto.failure_error = match publication {
+                    xai_grok_tools::implementations::grok_build::task::types::SubagentFinalization::Writing => None,
+                    xai_grok_tools::implementations::grok_build::task::types::SubagentFinalization::Blocked { error } => Some(error),
+                };
+            }
             SubagentSnapshotStatus::Initializing => {
                 dto.status = "initializing".into();
             }

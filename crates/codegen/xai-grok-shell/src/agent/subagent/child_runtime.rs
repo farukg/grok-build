@@ -21,6 +21,9 @@ pub(crate) struct ShellChildRuntime {
     /// `None` means the caller still owns the join handle, so a cancel during promotion can wait for the actor to exit.
     pub(crate) _child_thread: Option<SessionThread>,
     pub(crate) receipt_sink: mpsc::Sender<PromptTurnReceipt>,
+    pub(crate) caller: tokio::sync::watch::Sender<
+        xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller,
+    >,
     #[cfg(test)]
     pub(crate) force_queue_envelope: bool,
     pub(crate) active_message_parent_session_id: String,
@@ -47,6 +50,19 @@ impl ChildControl for ShellChildRuntime {
                 })
                 .unwrap_or_default()
         })
+    }
+
+    fn observe_caller(
+        &self,
+        caller: xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller,
+    ) {
+        self.caller.send_if_modified(|current| {
+            if *current == caller {
+                return false;
+            }
+            *current = caller;
+            true
+        });
     }
 
     fn send_active_message(

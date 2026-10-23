@@ -32,6 +32,7 @@ pub(super) struct PreparedStartArtifacts {
 
 pub(super) struct StartArtifactPublication {
     boundary: PublicationBoundary,
+    completion_data: super::ShellCompletionData,
     durable_publication: bool,
     prepared: PreparedStartArtifacts,
     gateway: GatewaySender,
@@ -59,9 +60,11 @@ impl StartArtifactPublication {
             ShellChildRuntime,
         >,
         ctx: &SubagentSpawnContext,
+        completion_data: super::ShellCompletionData,
     ) -> Self {
         Self {
             boundary,
+            completion_data,
             durable_publication: false,
             prepared,
             gateway,
@@ -90,12 +93,15 @@ impl StartArtifactPublication {
             self.durable_publication =
                 write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
         }
-        self.boundary == PublicationBoundary::Prepared || self.durable_publication
+        let allowed = self.boundary == PublicationBoundary::Prepared || self.durable_publication;
+        if allowed { self.completion_data.capture_start_artifacts(&self.prepared); }
+        allowed
     }
 
     pub(super) fn forbid_terminal_persistence(&mut self) {
         self.boundary = PublicationBoundary::Started;
         self.durable_publication = false;
+        self.completion_data.forbid_terminal_artifacts();
     }
 
     fn publish(&mut self) {
@@ -115,6 +121,9 @@ impl StartArtifactPublication {
         #[cfg(not(test))]
         let metadata_written = write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
         self.durable_publication = metadata_written;
+        if self.boundary == PublicationBoundary::Prepared || metadata_written {
+            self.completion_data.capture_start_artifacts(&self.prepared);
+        }
         metadata_persist_span.close();
         if self.durable_publication
             && let (Some(bucket_url), Some(upload_method)) = (&self.bucket_url, &self.upload_method)

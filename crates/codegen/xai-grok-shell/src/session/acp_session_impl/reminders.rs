@@ -33,16 +33,6 @@ impl HookNoteKind {
         }
     }
 }
-#[derive(Debug)]
-pub(super) enum WakeTurnMessage {
-    /// `ids` are marked reported when this message commits.
-    Digest {
-        text: String,
-        ids: Vec<String>,
-    },
-    KeepBody,
-    Silent,
-}
 /// Owned snapshot returned by [`SessionActor::collect_todo_gate_input`].
 ///
 /// Exposed as `pub` solely so the replay-trace integration test in `tests/trace_replay.rs` can drive the gate against synthetic JSON fixtures.
@@ -602,7 +592,7 @@ impl SessionActor {
             .await;
         self.drain_between_turn_workflow_completions(goal_loop_active)
             .await;
-        self.drain_between_turn_subagent_completions(commit_ids, goal_loop_active)
+        self.drain_between_turn_subagent_completions(commit_ids)
             .await;
     }
     async fn drain_between_turn_bash_completions(
@@ -656,135 +646,13 @@ impl SessionActor {
             }
         }
     }
-    async fn drain_between_turn_subagent_completions(
-        &self,
-        commit_ids: &[String],
-        goal_loop_active: bool,
-    ) {
-        let Some(tx) = &self.tool_context.subagent_event_tx else {
-            return;
-        };
-        use xai_grok_tools::implementations::grok_build::task::types::{
-            SubagentCompletionsRequest, SubagentEvent,
-        };
-        let (respond_to, rx) = tokio::sync::oneshot::channel();
-        if tx
-            .send(SubagentEvent::Completions(SubagentCompletionsRequest {
-                parent_session_id: Some(self.session_id_string()),
-                suppress_ids: commit_ids.to_vec(),
-                respond_to,
-            }))
-            .is_err()
-        {
-            return;
-        }
-        let Ok(mut completions) = rx.await else {
-            return;
-        };
-        if completions.is_empty() {
-            return;
-        }
-        self.with_reported_completions(|reported| {
-            completions.retain(|c| reported.mark_reported(c.subagent_id()))
-        })
-        .await;
-        if completions.is_empty() {
-            return;
-        }
-        let ids: Vec<&str> = completions.iter().map(|c| c.subagent_id()).collect();
-        if goal_loop_active {
-            tracing::info!(
-                count = completions.len(),
-                subagent_ids = ?ids,
-                "dropping between-turn subagent completions (goal loop active)"
-            );
-            return;
-        }
-        tracing::info!(
-            count = completions.len(),
-            subagent_ids = ?ids,
-            "draining between-turn subagent completions"
-        );
-        let bridge = self.agent.borrow().tool_bridge().clone();
-        let reminder =
-            xai_grok_tools::reminders::task_completion::format_between_turn_completion_reminder(
-                &completions,
-                &bridge,
-            )
-            .await;
-        self.push_system_reminder(&reminder);
-    }
-    /// Reads the coordinator buffer without draining it, so nothing is lost if the turn never commits.
-    pub(super) async fn build_wake_turn_message(&self, subagent_id: &str) -> WakeTurnMessage {
-        use xai_grok_tools::implementations::grok_build::task::types::{
-            SubagentCompletionsRequest, SubagentEvent,
-        };
-        let mut completions = Vec::new();
-        if let Some(tx) = &self.tool_context.subagent_event_tx {
-            let (respond_to, rx) = tokio::sync::oneshot::channel();
-            if tx
-                .send(SubagentEvent::PeekCompletions(SubagentCompletionsRequest {
-                    parent_session_id: Some(self.session_id_string()),
-                    suppress_ids: Vec::new(),
-                    respond_to,
-                }))
-                .is_ok()
-            {
-                completions = rx.await.unwrap_or_default();
-            }
-        }
-        if self.goal_loop_active() {
-            let ids: Vec<&str> = completions
-                .iter()
-                .map(|c| c.subagent_id())
-                .chain(std::iter::once(subagent_id))
-                .collect();
-            tracing::info!(
-                subagent_id,
-                subagent_ids = ?ids,
-                "dropping wake turn (goal loop active)"
-            );
-            self.mark_completions_reported(&ids).await;
-            return WakeTurnMessage::Silent;
-        }
-        let mut own_reported = false;
-        self.with_reported_completions(|reported| {
-            own_reported = reported.is_reported(subagent_id);
-            completions.retain(|c| !reported.is_reported(c.subagent_id()));
-        })
-        .await;
-        if own_reported {
-            tracing::info!(
-                subagent_id,
-                "dropping wake turn: completion already reported"
-            );
-            return WakeTurnMessage::Silent;
-        }
-        if !completions.iter().any(|c| c.subagent_id() == subagent_id) {
-            return WakeTurnMessage::KeepBody;
-        }
-        let ids: Vec<String> = completions
-            .iter()
-            .map(|c| c.subagent_id().to_owned())
-            .collect();
-        tracing::info!(
-            subagent_id,
-            count = ids.len(),
-            subagent_ids = ?ids,
-            "wake turn digests buffered subagent completions"
-        );
-        let bridge = self.agent.borrow().tool_bridge().clone();
-        let reminder =
-            xai_grok_tools::reminders::task_completion::format_between_turn_completion_reminder(
-                &completions,
-                &bridge,
-            )
-            .await;
-        WakeTurnMessage::Digest {
-            text: reminder_text(&reminder, self.reminder_wrapper_tag()),
-            ids,
+    async fn drain_between_turn_subagent_completions(&self, _commit_ids: &[String]) {
+        let prompt_id = self.current_prompt_id.lock().ok().and_then(|id| id.clone());
+        if let Some(prompt_id) = prompt_id {
+            self.drain_buffered_subagent_completions(&prompt_id).await;
         }
     }
+
     pub(super) async fn drain_between_turn_workflow_completions(&self, goal_loop_active: bool) {
         if goal_loop_active {
             return;

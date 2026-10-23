@@ -433,7 +433,8 @@ impl SessionActor {
             crate::session::storage::HOST_TURN_META_KEY.into(),
             serde_json::json!(true),
         );
-        if super::super::PromptOrigin::from_prompt_id(prompt_id).hide_user_echo_from_scrollback() {
+        if super::super::PromptOrigin::from_prompt_id(prompt_id).hide_user_echo_from_scrollback()
+            || crate::session::completion_delivery::completion_from_prompt_id(prompt_id).is_some() {
             chunk_meta.insert("hideFromScrollback".into(), serde_json::json!(true));
         }
         let update = acp::SessionUpdate::UserMessageChunk(
@@ -553,30 +554,24 @@ impl SessionActor {
             self.invalidate_side_calls_for_new_prompt();
         }
         self.ensure_session_disk_writable().await?;
-        let wake_message = match input_origin.as_prompt_origin() {
-            super::super::PromptOrigin::SubagentCompleted { subagent_id } => {
-                Some(self.build_wake_turn_message(subagent_id).await)
+        let preprojected_subagent = match input_origin.as_prompt_origin() {
+            super::super::PromptOrigin::Delivery { delivery_id, payload_digest } => {
+                match self.project_durable_delivery(delivery_id, payload_digest, prompt_id, Self::durable_delivery_payload(&prompt_blocks)?).await? {
+                    true => true,
+                    false => return ok_end_turn(0, None),
+                }
             }
-            _ => None,
-        };
-        let (prompt_blocks, commit_ids) = match wake_message {
-            Some(WakeTurnMessage::Digest { text, ids }) => (
-                vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
-                ids,
-            ),
-            Some(WakeTurnMessage::Silent) => {
-                tracing::info!(prompt_id, "ending wake turn without sampling");
-                return ok_end_turn(0, None);
+            super::super::PromptOrigin::SubagentCompleted { completion } => {
+                let text = Self::queue_text_from_blocks(&prompt_blocks);
+                match self.project_subagent_completion(completion, prompt_id, text).await {
+                    Ok(true) => true,
+                    Ok(false) => return ok_end_turn(0, None),
+                    Err(error) => return Err(acp::Error::internal_error().data(format!("subagent completion persistence: {error}"))),
+                }
             }
-            Some(WakeTurnMessage::KeepBody) | None => (
-                prompt_blocks,
-                input_origin
-                    .completion_id()
-                    .map(str::to_owned)
-                    .into_iter()
-                    .collect(),
-            ),
+            _ => false,
         };
+        let commit_ids: Vec<String> = input_origin.completion_id().map(str::to_owned).into_iter().collect();
         let prompt_length: usize = prompt_blocks
             .iter()
             .map(|b| match b {
@@ -1134,9 +1129,7 @@ impl SessionActor {
             self.inject_fork_reminder().await;
             self.inject_resumed_tasks_reminder();
             if policy.authority.is_human_intent() {
-                if let Some(gate) = &self.tool_context.task_wake_suppressed {
-                    gate.set(false);
-                }
+                self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
                 xai_grok_telemetry::unified_log::info(
                     "shell.task_wake.gate_cleared",
                     Some(self.session_info.id.0.as_ref()),
@@ -1218,7 +1211,7 @@ impl SessionActor {
                 super::super::PromptOrigin::SchedulerFired => {
                     ConversationItem::scheduler_fired(user_message)
                 }
-                super::super::PromptOrigin::PlanResume => ConversationItem::user(user_message),
+                super::super::PromptOrigin::PlanResume | super::super::PromptOrigin::Delivery { .. } => ConversationItem::user(user_message),
                 super::super::PromptOrigin::User => {
                     let text = self.maybe_apply_interrupt_envelope(user_message, verbatim);
                     let mut item = match user_input_kind {
@@ -1244,7 +1237,7 @@ impl SessionActor {
                     user_chat.add_image(format!("data:{};base64,{}", image.mime_type, image.data));
                 }
             }
-            if self
+            if preprojected_subagent || self
                 .chat_state_handle
                 .push_user_message_and_ack(user_chat)
                 .await
@@ -1370,7 +1363,7 @@ impl SessionActor {
                         );
                         break round;
                     }
-                    if crate::session::PromptOrigin::from_prompt_id(prompt_id).is_synthetic()
+                    if input_origin.is_synthetic()
                         || !self.has_pending_goal_continuation().await
                     {
                         let decision = if self.goal_runs_on_workflow_engine() {

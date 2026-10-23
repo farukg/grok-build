@@ -214,6 +214,7 @@ pub(super) fn interrupted_wait_tool_result(
         raw_output_bytes: msg.len(),
     };
     ToolRunResult {
+        completed_subagents: Vec::new(),
         output: ToolsToolOutput::TaskOutput(TaskOutputOutput::Result(result)),
         prompt_text: msg,
         effective_tool_name: None,

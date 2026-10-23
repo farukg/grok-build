@@ -25,6 +25,7 @@ fn summary(
         }
     };
     SubagentCompletionSummary {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
         snapshot: SubagentSnapshot {
             subagent_id: id.into(),
             description: desc.into(),

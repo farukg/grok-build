@@ -72,7 +72,7 @@ pub(crate) struct TurnInputRequest {
 
 /// Pointer-identity token minted per task spawn: `Rc::ptr_eq` tells spawns
 /// apart even when a prompt id and epoch are reused.
-pub(super) type TaskIdentity = std::rc::Rc<()>;
+pub(super) type TaskIdentity = std::rc::Rc<String>;
 
 /// Completion-channel payload: prompt id, turn result, elapsed ms from `started_at`.
 /// `elapsed_ms` is `None` when no running task supplied a start time.
@@ -247,6 +247,8 @@ pub(crate) struct AgentTask {
     pub(crate) prompt_id: String,
     pub(super) epoch: TurnEpoch,
     pub(super) identity: TaskIdentity,
+    pub(super) admission: tokio_util::sync::CancellationToken,
+    pub(super) input_origin: InputOrigin,
     pub(crate) handle: tokio::task::AbortHandle,
     /// Monotonic start of this running turn; complete and cancel both read it.
     pub(crate) started_at: std::time::Instant,
@@ -370,7 +372,9 @@ impl AgentTask {
         Self {
             prompt_id: prompt_id.to_string(),
             epoch,
-            identity: TaskIdentity::new(()),
+            identity: TaskIdentity::new(uuid::Uuid::now_v7().to_string()),
+            admission: tokio_util::sync::CancellationToken::new(),
+            input_origin: InputOrigin::new(PromptOrigin::User),
             handle,
             started_at: std::time::Instant::now(),
         }
@@ -389,16 +393,20 @@ impl AgentTask {
         session.signals_handle().increment_turn();
         *session.turn_start_prompt_mode.lock() = request.prompt_mode;
         *session.turn_prompt_mode.lock() = request.prompt_mode;
-        let identity = TaskIdentity::new(());
+        let identity = TaskIdentity::new(uuid::Uuid::now_v7().to_string());
+        let admission = tokio_util::sync::CancellationToken::new();
         Self {
             prompt_id: request.prompt_id.clone(),
             epoch,
             identity: identity.clone(),
+            admission: admission.clone(),
+            input_origin: request.input_origin.clone(),
             handle: xai_grok_telemetry::session_ctx::spawn_local_in_session_ctx(run_task(
                 session,
                 request,
                 epoch,
                 identity,
+                admission,
                 completion_tx,
                 started_at,
             ))
@@ -408,6 +416,7 @@ impl AgentTask {
     }
 
     pub(super) fn abort(&self) {
+        self.admission.cancel();
         if !self.handle.is_finished() {
             self.handle.abort();
         }
@@ -488,9 +497,11 @@ async fn run_task(
     request: TurnInputRequest,
     epoch: TurnEpoch,
     task_identity: TaskIdentity,
+    admission: tokio_util::sync::CancellationToken,
     completion_tx: mpsc::UnboundedSender<TurnCompletionMsg>,
     started_at: std::time::Instant,
 ) {
+    let _admission = admission.drop_guard();
     let mut request = request;
     let prompt_id = request.prompt_id.clone();
     let result = if let Some(start_gate) = request.start_gate.take()
@@ -586,7 +597,8 @@ mod start_gate_tests {
                         start_gate: Some(start_gate),
                     },
                     TurnEpoch::default(),
-                    TaskIdentity::new(()),
+                    TaskIdentity::new(uuid::Uuid::now_v7().to_string()),
+                    tokio_util::sync::CancellationToken::new(),
                     completion_tx,
                     std::time::Instant::now(),
                 )

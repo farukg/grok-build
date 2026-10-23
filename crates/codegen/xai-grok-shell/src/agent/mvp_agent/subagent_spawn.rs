@@ -152,9 +152,8 @@ impl MvpAgent {
         let request = human_resume_request(source_id, prompt, parent_session_id.to_owned());
         let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
         let spawn_backend = backend.clone();
-        let spawn = tokio::spawn(async move {
-            spawn_backend.spawn(request, Some(registered_tx)).await
-        });
+        let spawn =
+            tokio::spawn(async move { spawn_backend.spawn(request, Some(registered_tx), None).await });
         if registered_rx.await.is_ok() {
             return Ok(route);
         }
@@ -380,6 +379,7 @@ impl MvpAgent {
             ask_user_question_enabled: false,
             parent_non_interactive,
             parent_cmd_tx: parent_cmd_tx.clone(),
+            parent_persistence_tx: parent_handle.as_ref().map(|h| h.persistence_tx.clone()),
             spawner_address_target: None,
             parent_session_info: parent_handle.as_ref().map(|h| crate::session::info::Info {
                 id: parent_sid.clone(),
@@ -472,10 +472,6 @@ impl MvpAgent {
                 .cfg
                 .borrow()
                 .is_feature_enabled(crate::agent::config::Feature::AutoWake),
-            goal_loop_active: parent_handle
-                .as_ref()
-                .map(|h| h.tool_context.goal_loop_active_gate.clone())
-                .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))),
             parent_terminal_backend: parent_terminal_backend.clone(),
             parent_notification_handle: parent_notification_handle.clone(),
             parent_scheduler_handle: parent_scheduler_handle.clone(),

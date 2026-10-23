@@ -95,9 +95,7 @@ impl SessionActor {
 
     /// Takes the state lock with `try_lock`, so it must run before its caller's first await: a task suspended across one still holds the guard.
     fn arm_wake_barrier(&self, trigger: Option<&crate::session::CancelTrigger>) {
-        if let Some(gate) = &self.tool_context.task_wake_suppressed {
-            gate.set(true);
-        }
+        self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
         let mut state = self.state.try_lock().expect("session state is actor-owned");
         state.notifications_suppressed = true;
         xai_grok_telemetry::unified_log::info(
@@ -153,9 +151,7 @@ impl SessionActor {
         if !outcome.settled {
             return outcome;
         }
-        if let Some(gate) = &self.tool_context.task_wake_suppressed {
-            gate.set(false);
-        }
+        self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
         {
             let mut state = self.state.lock().await;
             state.notifications_suppressed = false;
@@ -321,9 +317,7 @@ impl SessionActor {
                     self.abort_turn_task(&task, turn_epoch);
                     self.cancel_active_sampling_requests();
                 }
-                if let Some(gate) = &self.tool_context.task_wake_suppressed {
-                    gate.set(false);
-                }
+                self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
                 state.notifications_suppressed = false;
                 xai_grok_telemetry::unified_log::info(
                     "shell.task_wake.gate_cleared",
@@ -523,9 +517,7 @@ impl SessionActor {
                 // Fail-stop, but do not strand StopGesture suppression (same
                 // cleanup as the identity-mismatch return below).
                 if suppress_task_wakes {
-                    if let Some(gate) = &self.tool_context.task_wake_suppressed {
-                        gate.set(false);
-                    }
+                    self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
                     state.notifications_suppressed = false;
                 }
                 return CancelOutcome::noop();
@@ -563,9 +555,7 @@ impl SessionActor {
                     self.abort_turn_task(&task, epoch);
                     rewound_task_prompt_id = Some(task.prompt_id);
                 }
-                if let Some(gate) = &self.tool_context.task_wake_suppressed {
-                    gate.set(false);
-                }
+                self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
                 state.notifications_suppressed = false;
                 xai_grok_telemetry::unified_log::info(
                     "shell.task_wake.gate_cleared",
@@ -630,9 +620,7 @@ impl SessionActor {
                     "stale_prompt_id",
                 );
                 if suppress_task_wakes {
-                    if let Some(gate) = &self.tool_context.task_wake_suppressed {
-                        gate.set(false);
-                    }
+                    self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
                     state.notifications_suppressed = false;
                 }
                 return CancelOutcome::noop();

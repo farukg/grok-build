@@ -152,6 +152,7 @@ async fn push_mcp(
             requested_tool_name: "use_tool",
             effective_tool_name: SPLUNK,
             drained: DrainedToolSuccess::new(ToolRunResult {
+                completed_subagents: Vec::new(),
                 output,
                 prompt_text: prompt_text.to_owned(),
                 effective_tool_name: None,

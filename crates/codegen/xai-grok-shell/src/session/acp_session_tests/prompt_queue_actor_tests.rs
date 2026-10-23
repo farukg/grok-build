@@ -2848,7 +2848,7 @@ async fn stale_completion_does_not_clear_promoted_turns_running_task() {
                 .handle_completion(
                     "cancelled-old".to_string(),
                     TurnEpoch::default(),
-                    &std::rc::Rc::new(()),
+                    &std::rc::Rc::new(uuid::Uuid::now_v7().to_string()),
                     Ok(crate::session::commands::PromptTurnOk {
                         stop_reason: acp::StopReason::EndTurn,
                         total_tokens: 0,

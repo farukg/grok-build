@@ -45,6 +45,18 @@ impl ChatPersistence for ChannelChatPersistence {
         receiver
     }
 
+    fn persist_input_and_ack(
+        &mut self,
+        projection: &xai_chat_state::InputProjection,
+        admission: &xai_chat_state::InputAdmission,
+    ) -> oneshot::Receiver<Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError>> {
+        let (respond_to, receiver) = oneshot::channel();
+        let _ = self.tx.send(PersistenceMsg::AppendInputAndAck {
+            projection: projection.clone(), admission: admission.clone(), respond_to,
+        });
+        receiver
+    }
+
     fn replace_history(&mut self, items: &[ConversationItem]) {
         let _ = self
             .tx

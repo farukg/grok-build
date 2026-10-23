@@ -138,22 +138,36 @@ async fn a_held_drain_takes_prompts_after_the_turn_until_delivered() {
     let (delivery, delivery_rx) = watch::channel(SubagentDelivery::Held);
     let drain =
         PromptTurnReceiptDrain::start(handoff_rx, cmd_tx, CancellationToken::new(), delivery_rx);
+    let mut completion = drain.completion();
     let mut settling = tokio::spawn(drain.settle(AdmissionSettlement::Settled));
+    completion
+        .wait_for(|state| *state == SubagentCompletion::Pending)
+        .await
+        .expect("completed answer is held");
+    assert!(!settling.is_finished());
 
     let (steer_tx, steer) = receipt("human-steer");
     await_with_timeout(handoff_tx.send(steer))
         .await
         .expect("a held child takes prompts after its own turn ended");
+    completion
+        .wait_for(|state| *state == SubagentCompletion::Settling)
+        .await
+        .expect("admitted receipt is still running");
+    assert!(!settling.is_finished());
     steer_tx
         .send(crate::session::commands::ok_end_turn(7, None))
         .expect("the steering turn settles");
+    completion
+        .wait_for(|state| *state == SubagentCompletion::Pending)
+        .await
+        .expect("latest receipt is held");
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(50), &mut settling)
-            .await
-            .is_err(),
-        "nothing reaches the caller before deliver"
+        !settling.is_finished(),
+        "nothing reaches the caller before auto"
     );
 
+    delivery.send_replace(SubagentDelivery::OnTurnEnd);
     delivery.send_replace(SubagentDelivery::OnTurnEnd);
     let settled = await_with_timeout(settling).await.expect("drain task");
     let Some(FinalPromptTurnReceipt {
@@ -171,6 +185,114 @@ async fn a_held_drain_takes_prompts_after_the_turn_until_delivered() {
         (prompt_id.as_str(), result.total_tokens, settled.disposition),
         ("human-steer", 7, PromptTurnReceiptDisposition::Completed)
     );
+}
+
+#[tokio::test]
+async fn held_observation_tracks_receipts_and_auto_settles_once() {
+    use crate::extensions::notification::SubagentCompletion;
+    let (handoff, stream) = mpsc::channel(4);
+    let (cmd, mut commands) = mpsc::unbounded_channel();
+    let (delivery, policy) = watch::channel(SubagentDelivery::Held);
+    let drain = PromptTurnReceiptDrain::start(stream, cmd, CancellationToken::new(), policy);
+    let mut observation = drain.completion();
+    assert_eq!(
+        *observation.borrow_and_update(),
+        SubagentCompletion::Working
+    );
+    let settling = tokio::spawn(drain.settle(AdmissionSettlement::Settled));
+    await_with_timeout(observation.wait_for(|state| *state == SubagentCompletion::Pending))
+        .await
+        .expect("completed held result");
+    let (first_tx, first) = receipt("first");
+    handoff.send(first).await.expect("held ingress open");
+    await_with_timeout(observation.wait_for(|state| *state == SubagentCompletion::Settling))
+        .await
+        .expect("receipt still active");
+    let (second_tx, second) = receipt("second");
+    handoff.send(second).await.expect("second ingress");
+    second_tx
+        .send(crate::session::commands::ok_end_turn(2, None))
+        .expect("second settles first");
+    first_tx
+        .send(crate::session::commands::ok_end_turn(1, None))
+        .expect("first settles last");
+    await_with_timeout(observation.wait_for(|state| *state == SubagentCompletion::Pending))
+        .await
+        .expect("all receipts settled");
+    assert!(!settling.is_finished());
+    delivery.send_replace(SubagentDelivery::Held);
+    delivery.send_replace(SubagentDelivery::OnTurnEnd);
+    delivery.send_replace(SubagentDelivery::OnTurnEnd);
+    let settled = await_with_timeout(settling).await.expect("settlement task");
+    assert_eq!(settled.disposition, PromptTurnReceiptDisposition::Completed);
+    assert_eq!(
+        settled.final_receipt.expect("final receipt").prompt_id,
+        "second"
+    );
+    assert!(handoff.is_closed());
+    assert!(
+        commands.try_recv().is_err(),
+        "auto release must not cancel or restart a turn"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_releases_a_held_parent_without_auto_and_closes_ingress() {
+    use crate::extensions::notification::SubagentCompletion;
+    let (handoff, stream) = mpsc::channel(1);
+    let (cmd, mut commands) = mpsc::unbounded_channel();
+    let (_delivery, policy) = watch::channel(SubagentDelivery::Held);
+    let cancel = CancellationToken::new();
+    let drain = PromptTurnReceiptDrain::start(stream, cmd, cancel.clone(), policy);
+    let mut observation = drain.completion();
+    let settling = tokio::spawn(drain.settle(AdmissionSettlement::Settled));
+    await_with_timeout(observation.wait_for(|state| *state == SubagentCompletion::Pending))
+        .await
+        .expect("held completion");
+    cancel.cancel();
+    let settled = await_with_timeout(settling)
+        .await
+        .expect("cancelled settlement");
+    assert_eq!(settled.disposition, PromptTurnReceiptDisposition::Cancelled);
+    assert!(handoff.is_closed());
+    assert!(matches!(commands.try_recv(), Ok(SessionCommand::Cancel(_))));
+    assert!(commands.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn held_completion_cancel_and_closed_policy_cannot_strand_parent() {
+    for cancel in [true, false] {
+        let (handoff_tx, handoff_rx) = mpsc::channel(1);
+        let (cmd_tx, _commands) = mpsc::unbounded_channel();
+        let token = CancellationToken::new();
+        let (delivery, delivery_rx) = watch::channel(SubagentDelivery::Held);
+        let drain = PromptTurnReceiptDrain::start(handoff_rx, cmd_tx, token.clone(), delivery_rx);
+        let mut completion = drain.completion();
+        let settling = tokio::spawn(drain.settle(AdmissionSettlement::Settled));
+        completion
+            .wait_for(|state| *state == SubagentCompletion::Pending)
+            .await
+            .expect("held completion");
+        if cancel {
+            token.cancel();
+        }
+        drop(delivery);
+        let settled = await_with_timeout(settling)
+            .await
+            .expect("single settlement");
+        assert_eq!(
+            settled.disposition,
+            if cancel {
+                PromptTurnReceiptDisposition::Cancelled
+            } else {
+                PromptTurnReceiptDisposition::Completed
+            }
+        );
+        assert!(
+            handoff_tx.is_closed(),
+            "terminal settlement closes further admission"
+        );
+    }
 }
 
 fn dropped_oneshot_error() -> oneshot::error::RecvError {

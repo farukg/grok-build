@@ -26,6 +26,7 @@ fn mcp_screenshot_result(payload_b64: &str) -> ToolRunResult {
         mime_type: "image/png".into(),
     }];
     ToolRunResult {
+        completed_subagents: Vec::new(),
         output: ToolOutput::MCP(mcp),
         prompt_text: IMAGE_CONTENT_PLACEHOLDER.into(),
         effective_tool_name: None,
@@ -199,6 +200,7 @@ fn prepared_post_tool_use_call(id: &str, tool_name: &str) -> PreparedToolCall {
 }
 fn mcp_text_result(marker: &str) -> ToolRunResult {
     ToolRunResult {
+        completed_subagents: Vec::new(),
         output: ToolOutput::MCP(MCPOutput::okay_output(
             "search".into(),
             "memory".into(),
@@ -209,6 +211,7 @@ fn mcp_text_result(marker: &str) -> ToolRunResult {
     }
 }
 fn bash_text_result(marker: &str) -> ToolRunResult {
+    completed_subagents: Vec::new(),
     let output: ToolOutput = serde_json::from_value(serde_json::json!({
         "type": "Bash",
         "output": [],
@@ -223,6 +226,7 @@ fn bash_text_result(marker: &str) -> ToolRunResult {
     }))
     .expect("bash output should deserialize");
     ToolRunResult {
+        completed_subagents: Vec::new(),
         output,
         prompt_text: marker.into(),
         effective_tool_name: None,

@@ -378,7 +378,7 @@ async fn same_prompt_and_epoch_wrong_allocation_does_not_settle_successor() {
             let (persistence_tx, mut persistence_rx) = mpsc::unbounded_channel::<PersistenceMsg>();
             let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
             let live_epoch = TurnEpoch::default();
-            let wrong_allocation = std::rc::Rc::new(());
+            let wrong_allocation = std::rc::Rc::new(uuid::Uuid::now_v7().to_string());
             let (item, mut response_rx) = pending_input("same");
             let handle = tokio::task::spawn_local(std::future::pending::<()>()).abort_handle();
             {

@@ -610,7 +610,7 @@ impl HostService {
             self.tick();
 
             let backend = ChannelBackend::new(self.params.subagent_event_tx.clone());
-            let result_fut = backend.spawn(request, None);
+            let result_fut = backend.spawn(request, None, None);
             tokio::pin!(result_fut);
             let result = tokio::select! {
                 result = &mut result_fut => result,

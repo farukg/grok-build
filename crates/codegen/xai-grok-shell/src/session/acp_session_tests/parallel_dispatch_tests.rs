@@ -33,6 +33,7 @@ impl SubagentBackend for FixedActiveMessageBackend {
         &self,
         _: SubagentRequest,
         _: Option<tokio::sync::oneshot::Sender<()>>,
+        _observations: Option<xai_grok_tools::types::completion_observation::SubagentCompletionObservations>,
     ) -> Result<SubagentResult, xai_tool_runtime::ToolError> {
         Err(xai_tool_runtime::ToolError::custom(
             "unsupported",
@@ -40,7 +41,7 @@ impl SubagentBackend for FixedActiveMessageBackend {
         ))
     }
 
-    async fn query(&self, _: &str, _: bool, _: Option<u64>) -> Option<SubagentSnapshot> {
+    async fn query(&self, _: &str, _: bool, _: Option<u64>, _: Option<xai_grok_tools::types::completion_observation::SubagentCompletionObservations>) -> Option<SubagentSnapshot> {
         None
     }
 
@@ -175,6 +176,7 @@ fn active_message_outputs_distinguish_uncertain_from_proved_rejection() {
     ] {
         let output = ToolOutput::SendSubagentMessage(output);
         let result: Result<ToolRunResult, xai_tool_runtime::ToolError> = Ok(ToolRunResult {
+            completed_subagents: Vec::new(),
             prompt_text: output.to_prompt_format(),
             output,
             effective_tool_name: None,

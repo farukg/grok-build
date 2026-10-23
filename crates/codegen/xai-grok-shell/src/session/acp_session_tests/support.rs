@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+#[path = "completion_persistence.rs"]
+mod completion_persistence;
+pub(crate) use completion_persistence::create_completion_test_actor;
 use super::*;
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCompletionSummary, SubagentSnapshot, SubagentSnapshotStatus,
@@ -19,7 +22,7 @@ const JSON_NULL: serde_json::Value = serde_json::Value::Null;
 pub(crate) fn j<'a>(v: &'a serde_json::Value, k: &str) -> &'a serde_json::Value {
     v.get(k).unwrap_or(&JSON_NULL)
 }
-pub(crate) fn completion_identity(actor: &SessionActor) -> std::rc::Rc<()> {
+pub(crate) fn completion_identity(actor: &SessionActor) -> std::rc::Rc<String> {
     actor
         .state
         .try_lock()
@@ -27,7 +30,7 @@ pub(crate) fn completion_identity(actor: &SessionActor) -> std::rc::Rc<()> {
         .running_task
         .as_ref()
         .map(|task| task.identity.clone())
-        .unwrap_or_else(|| std::rc::Rc::new(()))
+        .unwrap_or_else(|| std::rc::Rc::new(uuid::Uuid::now_v7().to_string()))
 }
 pub(crate) fn test_auth_method_id(id: &str) -> crate::agent::auth_method::SharedAuthMethodId {
     crate::agent::auth_method::new_shared_auth_method_id(Some(acp::AuthMethodId::new(id)))
@@ -1012,6 +1015,7 @@ pub(crate) async fn disk_full_actor() -> SessionActor {
 }
 pub(crate) fn subagent_summary(id: &str) -> SubagentCompletionSummary {
     SubagentCompletionSummary {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
         snapshot: SubagentSnapshot {
             subagent_id: id.into(),
             description: format!("desc {id}"),

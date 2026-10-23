@@ -92,6 +92,7 @@ pub(crate) struct SummaryPatch {
     /// A leftover pre-rename auto title would otherwise block regeneration.
     pub reset_title_to_auto: bool,
     pub cwd_switch_bookkeeping_generation: Option<u64>,
+    pub completion_mutation: Option<crate::session::completion_delivery::CompletionMutation>,
     /// Per-turn dashboard summary as `(text, prompt_id)`.
     /// Outer `Some` applies (last-writer-wins); `Some(None)` clears it (conversation rewind removed the described work).
     pub last_turn_summary: Option<Option<(String, String)>>,
@@ -111,6 +112,9 @@ impl Summary {
     /// `now` is the single timestamp used for both `last_active_at` (when activity is recorded) and `updated_at`.
     /// Returns `true` iff an auto title was adopted (`generated_title_if_absent` or `generated_title_regenerate`).
     pub(crate) fn apply_patch(&mut self, patch: &SummaryPatch, now: DateTime<Utc>) -> bool {
+        if let Some(mutation) = &patch.completion_mutation {
+            self.completion_delivery.apply(mutation);
+        }
         if patch.record_activity {
             // Monotonic: a stale concurrent writer can never move it backwards.
             self.last_active_at = Some(
@@ -417,7 +421,29 @@ pub(crate) fn restore_wake_summary_locked(
 ) -> io::Result<()> {
     let lock = open_lock_file(lock_path)?;
     lock.lock_exclusive()?;
-    let result = super::write_bytes_atomic(summary_path, &prior.summary_bytes);
+    let result = (|| {
+        let current = read_summary(summary_path)?;
+        let mut restored: Summary = serde_json::from_slice(&prior.summary_bytes).map_err(io::Error::other)?;
+        if serde_json::to_value(&current.completion_delivery).map_err(io::Error::other)? == serde_json::to_value(&restored.completion_delivery).map_err(io::Error::other)? {
+            return super::write_bytes_atomic(summary_path, &prior.summary_bytes);
+        }
+        restored.completion_delivery = current.completion_delivery;
+        write_summary_atomic(summary_path, &restored)
+    })();
+    let _ = lock.unlock();
+    result
+}
+
+pub(crate) fn mutate_locked<T>(summary_path: &Path, lock_path: &Path, mutate: impl FnOnce(&mut Summary) -> io::Result<T>) -> io::Result<T> {
+    let lock = open_lock_file(lock_path)?;
+    lock.lock_exclusive()?;
+    let result = (|| {
+        let mut summary = read_summary(summary_path)?;
+        let result = mutate(&mut summary)?;
+        summary.updated_at = Utc::now();
+        write_summary_atomic(summary_path, &summary)?;
+        Ok(result)
+    })();
     let _ = lock.unlock();
     result
 }
@@ -441,7 +467,7 @@ fn read_modify_write(summary_path: &Path, patch: &SummaryPatch) -> io::Result<bo
     Ok(absent_title_applied)
 }
 
-fn open_lock_file(path: &Path) -> io::Result<File> {
+pub(crate) fn open_lock_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
         .write(true)

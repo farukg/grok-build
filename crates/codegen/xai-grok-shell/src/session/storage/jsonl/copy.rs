@@ -275,6 +275,19 @@ impl JsonlStorageAdapter {
     ) -> io::Result<CopySessionResult> {
         // Canonical creator: the fork target chain is born owner-only.
         let target_dir = self.create_session_dir_owner_only(target_info)?;
+        let _target_chat_lock = Self::lock_append(&self.chat_file(target_info))?;
+        let target_summary_lock = crate::session::storage::summary_write::open_lock_file(&self.summary_lock_file(target_info))?;
+        fs2::FileExt::lock_exclusive(&target_summary_lock)?;
+        let retained_admissions = match self.read_summary_sync(target_info) {
+            Ok(summary) => {
+                if !summary.completion_delivery.receiver.records.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "fork target owns durable delivery receipts; choose a new session identity"));
+                }
+                summary.completion_delivery
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Default::default(),
+            Err(error) => return Err(error),
+        };
 
         let source_summary = self.read_summary_sync(source_info)?;
         let chat_format_version = source_summary.chat_format_version;
@@ -356,7 +369,7 @@ impl JsonlStorageAdapter {
         let checkpoint_files = copied_updates.checkpoint_files;
         let num_messages = copied_updates.count;
 
-        let target_summary = fork_summary(
+        let mut target_summary = fork_summary(
             source_summary,
             target_info,
             &options,
@@ -367,9 +380,9 @@ impl JsonlStorageAdapter {
                 inherited_prefix_len,
             },
         );
+        target_summary.completion_delivery = retained_admissions;
+        crate::session::storage::write_bytes_atomic(&self.summary_file(target_info), &serde_json::to_vec_pretty(&target_summary).map_err(invalid_data)?)?;
         let minted_agent_id = target_summary.agent_id.clone();
-        let summary_bytes = serde_json::to_vec_pretty(&target_summary).map_err(invalid_data)?;
-        std::fs::write(self.summary_file(target_info), summary_bytes)?;
 
         let plan_copied = copy_sidecar_file(
             options.copy_plan_state,
@@ -552,6 +565,7 @@ fn fork_summary(
         previous_cwd: source.previous_cwd,
         pending_cwd_switch_reminder: None,
         cwd_switch_bookkeeping_generation: counters.cwd_switch_bookkeeping_generation,
+        completion_delivery: Default::default(),
         session_summary: source.session_summary,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),

@@ -109,18 +109,44 @@ fn running_child_prompt_runs_on_child_and_settles_the_parent_receipt() {
         assert_eq!(settled.total_tokens, 42);
         assert_eq!(
             *delivery_rx.borrow(),
-            SubagentDelivery::Held,
-            "a human prompt holds the child's answer back from its caller"
+            SubagentDelivery::OnTurnEnd,
+            "a human prompt preserves automatic completion delivery"
         );
-
+        assert_eq!(deliver(&agent).await, json!({ "kind": "not_held" }));
+        for _ in 0..2 {
+            assert_eq!(
+                set_delivery(&agent, "held").await,
+                json!({ "kind": "held" })
+            );
+            assert_eq!(*delivery_rx.borrow(), SubagentDelivery::Held);
+        }
         assert_eq!(deliver(&agent).await, json!({ "kind": "delivered" }));
         assert_eq!(*delivery_rx.borrow(), SubagentDelivery::OnTurnEnd);
         assert_eq!(deliver(&agent).await, json!({ "kind": "not_held" }));
+        drop(receipts);
+        assert_eq!(
+            set_delivery(&agent, "held").await,
+            json!({ "kind": "not_running" })
+        );
+        assert_eq!(*delivery_rx.borrow(), SubagentDelivery::OnTurnEnd);
     });
 }
 
 async fn deliver(agent: &crate::agent::mvp_agent::MvpAgent) -> serde_json::Value {
-    let params = json!({ "sessionId": CHILD });
+    delivery_request(agent, json!({ "sessionId": CHILD })).await
+}
+
+async fn set_delivery(
+    agent: &crate::agent::mvp_agent::MvpAgent,
+    delivery: &str,
+) -> serde_json::Value {
+    delivery_request(agent, json!({ "sessionId": CHILD, "delivery": delivery })).await
+}
+
+async fn delivery_request(
+    agent: &crate::agent::mvp_agent::MvpAgent,
+    params: serde_json::Value,
+) -> serde_json::Value {
     let response = agent
         .ext_method(acp::ExtRequest::new(
             "x.ai/subagent/deliver",
@@ -148,6 +174,14 @@ fn deliver_on_a_finished_child_reports_not_running() {
         );
 
         assert_eq!(deliver(&agent).await, json!({ "kind": "not_running" }));
+        assert_eq!(
+            set_delivery(&agent, "held").await,
+            json!({ "kind": "not_running" })
+        );
+        assert_eq!(
+            set_delivery(&agent, "onTurnEnd").await,
+            json!({ "kind": "not_running" })
+        );
     });
 }
 
@@ -449,7 +483,7 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
                     tool_call_id: None,
                 },
                 None,
-            );
+             None);
         let observe_original = async {
             tokio::time::timeout(
                 std::time::Duration::from_secs(30),
@@ -776,6 +810,55 @@ fn workflow_child_refuses_prompts() {
             .expect_err("a workflow child is not promptable");
 
         assert_eq!(error.code, acp::ErrorCode::InvalidRequest);
+    });
+}
+
+#[test]
+fn automatic_running_child_prompt_uses_coordinator_steer_ingress() {
+    run_local_for_bridge_test(|| async {
+        let agent = build_minimal_agent_for_tests();
+        agent
+            .cfg
+            .borrow_mut()
+            .feature_values
+            .insert(crate::agent::config::Feature::ActiveAgentMessages, true);
+        let parent = acp::SessionId::new(PARENT);
+        let (parent_handle, _, _parent_rx) = make_live_session_handle(&parent, None);
+        agent.insert_resident(&parent, parent_handle);
+        let child = acp::SessionId::new(CHILD);
+        let (handle, _, mut commands) = make_live_session_handle(&child, None);
+        let (turns, mut receipts) = tokio::sync::mpsc::channel(4);
+        let (delivery, policy) = tokio::sync::watch::channel(SubagentDelivery::OnTurnEnd);
+        agent.register_child_session(
+            &child,
+            child_host(ChildReach::Addressed {
+                address: AgentAddress::mint(7),
+                residence: ChildResidence::Running(Box::new(RunningChild {
+                    handle,
+                    turns,
+                    parent_prompt_index: Default::default(),
+                    delivery,
+                })),
+            }),
+        );
+        agent.start_subagent_coordinator();
+        let error = agent
+            .prompt(prompt("live update"))
+            .await
+            .expect_err("unowned address rejected by coordinator");
+        assert_eq!(
+            error.data,
+            Some(json!({ "childWake": { "kind": "rejected" } }))
+        );
+        assert!(
+            commands.try_recv().is_err(),
+            "auto must not queue an ordinary child Prompt"
+        );
+        assert!(
+            receipts.try_recv().is_err(),
+            "coordinator owns the receipt admission"
+        );
+        assert_eq!(*policy.borrow(), SubagentDelivery::OnTurnEnd);
     });
 }
 

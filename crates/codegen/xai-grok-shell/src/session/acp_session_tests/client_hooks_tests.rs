@@ -988,6 +988,7 @@ async fn post_tool_use_dispatch_merges_file_then_client_contributions() {
             });
 
             let run = ToolRunResult {
+                completed_subagents: Vec::new(),
                 output: ToolOutput::MCP(MCPOutput::okay_output(
                     "search".into(),
                     "memory".into(),

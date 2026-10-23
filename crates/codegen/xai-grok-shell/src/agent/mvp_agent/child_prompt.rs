@@ -10,8 +10,8 @@ use super::{ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild, Sessi
 use crate::agent::subagent::PromptTurnReceipt;
 use crate::extensions::notification::SubagentDelivery;
 use crate::extensions::subagent_deliver::DeliverSubagentOutcome;
-use crate::extensions::subagent_resume::ResumeSubagentOutcome;
 use crate::extensions::subagent_message::{SendSubagentMessageOutcome, literal_text};
+use crate::extensions::subagent_resume::ResumeSubagentOutcome;
 use crate::session::SessionHandle;
 use crate::session::commands::PromptTurnResult;
 
@@ -61,22 +61,17 @@ impl ChildPromptAdmission {
                     handle,
                     turns,
                     parent_prompt_index,
-                    delivery,
+                    delivery: _,
                 } = *running;
                 match turns.try_reserve_owned() {
-                    Ok(receipt) => {
-                        // Held only after the reservation: a child whose drain already closed must
-                        // not wait for a `deliver` nobody can send.
-                        delivery.send_replace(SubagentDelivery::Held);
-                        Self::Live {
-                            handle: Box::new(handle),
-                            turn: ChildTurn {
-                                receipt,
-                                parent_session_id,
-                                parent_prompt_index,
-                            },
-                        }
-                    }
+                    Ok(receipt) => Self::Live {
+                        handle: Box::new(handle),
+                        turn: ChildTurn {
+                            receipt,
+                            parent_session_id,
+                            parent_prompt_index,
+                        },
+                    },
                     // The receipt drain closes when the child's run finalizes; from then on only a
                     // wake reaches it.
                     Err(mpsc::error::TrySendError::Closed(_)) => Self::Woken {
@@ -126,7 +121,11 @@ impl ChildTurn {
 }
 
 impl MvpAgent {
-    pub(crate) fn deliver_child(&self, id: &acp::SessionId) -> DeliverSubagentOutcome {
+    pub(crate) fn deliver_child(
+        &self,
+        id: &acp::SessionId,
+        requested: SubagentDelivery,
+    ) -> DeliverSubagentOutcome {
         let Some(SessionHost::Child(child)) = self.session_host(id) else {
             return DeliverSubagentOutcome::NotRunning;
         };
@@ -135,19 +134,25 @@ impl MvpAgent {
                 residence: ChildResidence::Running(running),
                 ..
             } => {
-                let released = running
-                    .delivery
-                    .send_if_modified(|delivery| match delivery {
-                        SubagentDelivery::Held => {
-                            *delivery = SubagentDelivery::OnTurnEnd;
-                            true
-                        }
-                        SubagentDelivery::OnTurnEnd => false,
-                    });
-                if released {
-                    DeliverSubagentOutcome::Delivered
-                } else {
-                    DeliverSubagentOutcome::NotHeld
+                let mut previous = None;
+                running.delivery.send_if_modified(|delivery| {
+                    if running.turns.is_closed() {
+                        return false;
+                    }
+                    previous = Some(*delivery);
+                    let changed = *delivery != requested;
+                    *delivery = requested;
+                    changed
+                });
+                let Some(previous) = previous else {
+                    return DeliverSubagentOutcome::NotRunning;
+                };
+                match requested {
+                    SubagentDelivery::Held => DeliverSubagentOutcome::Held,
+                    SubagentDelivery::OnTurnEnd => match previous {
+                        SubagentDelivery::Held => DeliverSubagentOutcome::Delivered,
+                        SubagentDelivery::OnTurnEnd => DeliverSubagentOutcome::NotHeld,
+                    },
                 }
             }
             ChildReach::Addressed {
@@ -172,12 +177,13 @@ impl MvpAgent {
                 &parent_session_id.0,
                 address.as_str().to_owned(),
                 text.clone(),
-                ActiveAgentMessageOperation::Queue,
+                ActiveAgentMessageOperation::Steer,
             )
             .await
         {
             ActiveAgentMessageOutcome::Unsupported => {
-                self.continue_child_with_prompt(parent_session_id, child, text).await
+                self.continue_child_with_prompt(parent_session_id, child, text)
+                    .await
             }
             outcome @ ActiveAgentMessageOutcome::Accepted { .. } => {
                 let wake =
@@ -201,16 +207,16 @@ impl MvpAgent {
         text: String,
     ) -> Result<acp::PromptResponse, acp::Error> {
         let outcome = ResumeSubagentOutcome::from(
-            self.resume_subagent(&parent_session_id.0, &child.0, text).await,
+            self.resume_subagent(&parent_session_id.0, &child.0, text)
+                .await,
         );
         let body = serde_json::json!({ "childResume": outcome });
         match outcome {
             ResumeSubagentOutcome::Queued { .. } | ResumeSubagentOutcome::Resumed { .. } => {
-                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn).meta(body.as_object().cloned()))
+                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)
+                    .meta(body.as_object().cloned()))
             }
-            ResumeSubagentOutcome::Refused { .. } => {
-                Err(acp::Error::invalid_request().data(body))
-            }
+            ResumeSubagentOutcome::Refused { .. } => Err(acp::Error::invalid_request().data(body)),
         }
     }
 }

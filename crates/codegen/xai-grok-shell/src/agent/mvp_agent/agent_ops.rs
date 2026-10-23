@@ -2910,7 +2910,7 @@ impl MvpAgent {
         xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
                 self.subagent_event_tx.event_sender().0,
             )
-            .query(subagent_id, block, timeout_ms)
+            .query(subagent_id, block, timeout_ms, None)
             .await
     }
     pub(super) async fn spawned_subagent_refs_for_prompt(

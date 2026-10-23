@@ -122,7 +122,6 @@ impl SessionActor {
     ) {
         // Fast path under the lock: nothing to promote.
         let may_combine;
-        let queued_wake_ids: Vec<String>;
         {
             let state = self.state.lock().await;
             if state.running_task.is_some() || state.finalization_gate.is_active() {
@@ -157,16 +156,6 @@ impl SessionActor {
             }
             // A merge needs at least two queued prompts; sample here so the common single-prompt promote skips the config disk read below
             may_combine = state.pending_inputs.len() >= 2;
-            queued_wake_ids = state
-                .pending_inputs
-                .iter()
-                .filter_map(|item| match item.input_origin.as_prompt_origin() {
-                    super::PromptOrigin::SubagentCompleted { subagent_id } => {
-                        Some(subagent_id.clone())
-                    }
-                    _ => None,
-                })
-                .collect();
         }
 
         // Config I/O outside the state lock, and only when a merge is even possible; keeps the single-prompt promote (the common case) off disk
@@ -176,15 +165,6 @@ impl SessionActor {
                 .ui
                 .combine_queued_prompts
                 .unwrap_or(false);
-        // The resources mutex is never taken under `state`; a wake queued after this snapshot is still caught at turn start
-        let mut reported_wake_ids = queued_wake_ids;
-        if !reported_wake_ids.is_empty() {
-            self.with_reported_completions(|reported| {
-                reported_wake_ids.retain(|id| reported.is_reported(id))
-            })
-            .await;
-        }
-
         // A `/memory` toggle during the previous turn could not swap the prompt; do it before this
         // turn samples. Takes `state` briefly on its own, so it stays outside the lock below.
         if self
@@ -231,6 +211,18 @@ impl SessionActor {
             return;
         }
 
+        if self.tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get()) {
+            let human = state.pending_inputs.iter().position(|item| item.input_origin.policy().authority.is_human_intent());
+            let Some(index) = human else { return };
+            if let Some(input) = state.pending_inputs.remove(index) { state.pending_inputs.push_front(input); }
+        }
+        if state.pending_inputs.front().is_some_and(|item| matches!(item.input_origin.as_prompt_origin(),
+            super::PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery))) {
+            let boundary = state.pending_inputs.iter().position(|item| !matches!(item.input_origin.as_prompt_origin(),
+                super::PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery)));
+            let Some(index) = boundary else { return };
+            if let Some(input) = state.pending_inputs.remove(index) { state.pending_inputs.push_front(input); }
+        }
         // Auto-compact is handled inline by process_conversation_turn, so there is no queued auto-compact to check here
 
         // Drop stale synthetic fronts before promoting
@@ -242,16 +234,7 @@ impl SessionActor {
                 .front()
                 .map(|item| item.input_origin.as_prompt_origin())
             {
-                Some(super::PromptOrigin::SubagentCompleted { subagent_id }) => {
-                    let reported = reported_wake_ids.contains(subagent_id);
-                    if reported {
-                        tracing::info!(
-                            subagent_id,
-                            "dropping queued wake: completion already reported"
-                        );
-                    }
-                    reported
-                }
+                Some(super::PromptOrigin::SubagentCompleted { .. }) => false,
                 Some(super::PromptOrigin::WorkflowCompleted { completion_id }) => {
                     match completion_id
                         .rsplit_once('-')
@@ -373,9 +356,7 @@ impl SessionActor {
         };
         self.apply_tool_overrides_update(tool_overrides_update);
         if input_origin.policy().authority.is_human_intent() {
-            if let Some(gate) = &self.tool_context.task_wake_suppressed {
-                gate.set(false);
-            }
+            self.set_completion_wake_policy(crate::session::completion_delivery::CompletionWakePolicy::Automatic);
             state.notifications_suppressed = false;
             xai_grok_telemetry::unified_log::info(
                 "shell.task_wake.gate_cleared",

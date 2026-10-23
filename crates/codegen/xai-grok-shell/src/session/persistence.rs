@@ -254,6 +254,19 @@ pub enum PersistenceMsg {
             Result<xai_chat_state::StrictAppendAck, xai_chat_state::StrictAppendError>,
         >,
     },
+    PrepareSubagentCompletion { event: super::completion_delivery::SubagentCompletionEvent, respond_to: tokio::sync::oneshot::Sender<io::Result<super::completion_delivery::ProducerCommitAck>> },
+    PublishSubagentCompletion { event: super::completion_delivery::SubagentCompletionEvent, will_wake: bool, respond_to: tokio::sync::oneshot::Sender<io::Result<super::completion_delivery::PublishedCompletion>> },
+    ReceiveDelivery { request: super::delivery_receiver::DeliveryRequest, respond_to: tokio::sync::oneshot::Sender<io::Result<super::delivery_receiver::DeliveryResult>> },
+    GetDeliveryQueue { respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>> },
+    RecoverDeliveries { respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>> },
+    FinishDeliveryTurn { turn_id: String, parent_task: xai_chat_state::ParentTask, origin: super::delivery_receiver::ReceiverTurnOrigin, progress: super::delivery_receiver::DeliveryProgress, respond_to: tokio::sync::oneshot::Sender<io::Result<Vec<super::delivery_receiver::DeliveryReceipt>>> },
+    RecoverSubagentCompletions { respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>> },
+    CompletionWakePolicy(super::completion_delivery::CompletionWakePolicy),
+    AppendInputAndAck {
+        projection: xai_chat_state::InputProjection,
+        admission: xai_chat_state::InputAdmission,
+        respond_to: tokio::sync::oneshot::Sender<Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError>>,
+    },
     /// Replace the entire chat history (used for compaction)
     ReplaceChatHistory(Vec<ConversationItem>),
     /// Destructive image-strip rewrite: back up the on-disk history first, and only rewrite if the backup landed.
@@ -679,17 +692,22 @@ pub(crate) fn find_summary_by_session_id(session_id: &str) -> Option<Summary> {
     find_summary_by_session_id_in_root(session_id, &grok_home().join("sessions"))
 }
 
+pub(crate) fn find_summary_by_session_id_result(session_id: &str) -> io::Result<Option<Summary>> {
+    find_summary_by_session_id_in_root_result(session_id, &grok_home().join("sessions"))
+}
+
 /// Inner implementation with injectable root for testing.
 pub(crate) fn find_summary_by_session_id_in_root(
     session_id: &str,
     sessions_root: &Path,
 ) -> Option<Summary> {
-    let path = storage_view(sessions_root)
-        .ok()?
-        .find_persisted_session_dir(session_id)
-        .ok()
-        .flatten()?;
-    read_summary_from_dir(&path).ok()
+    find_summary_by_session_id_in_root_result(session_id, sessions_root).ok().flatten()
+}
+
+fn find_summary_by_session_id_in_root_result(session_id: &str, sessions_root: &Path) -> io::Result<Option<Summary>> {
+    let view = storage_view(sessions_root).map_err(io::Error::other)?;
+    let Some(path) = view.find_persisted_session_dir(session_id).map_err(io::Error::other)? else { return Ok(None); };
+    read_summary_from_dir(&path).map(Some).map_err(io::Error::other)
 }
 
 fn read_summary_from_dir(session_dir: &Path) -> RelocationResult<Summary> {
@@ -1166,6 +1184,8 @@ pub struct Summary {
     /// Latest switch generation reflected in `num_chat_messages` bookkeeping.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub cwd_switch_bookkeeping_generation: u64,
+    #[serde(default, skip_serializing_if = "super::completion_delivery::CompletionDeliveryState::is_empty")]
+    pub(crate) completion_delivery: super::completion_delivery::CompletionDeliveryState,
     pub session_summary: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -1592,6 +1612,7 @@ enum PendingAppendOutcome {
 }
 
 struct SessionPersistence {
+    receiver_owner: super::receiver_execution::ReceiverOwner,
     info: Info,
     storage: Arc<dyn StorageAdapter>,
     /// Pending ACP notification for merging consecutive text chunks
@@ -1627,6 +1648,39 @@ struct SessionPersistence {
 }
 
 impl SessionPersistence {
+    async fn claim_receiver(&mut self) -> io::Result<Summary> {
+        match &self.receiver_owner {
+            super::receiver_execution::ReceiverOwner::Unclaimed => {
+                let (lease, summary) = self.storage.claim_receiver(&self.info).await?;
+                self.receiver_owner = super::receiver_execution::ReceiverOwner::Ready(lease);
+                Ok(summary)
+            }
+            super::receiver_execution::ReceiverOwner::Ready(lease) => self.storage.recover_deliveries(&self.info, lease).await,
+            super::receiver_execution::ReceiverOwner::Running { .. } => self.storage.load_summary(&self.info).await,
+        }
+    }
+    async fn receive_delivery(&mut self, request: &super::delivery_receiver::DeliveryRequest) -> io::Result<super::delivery_receiver::DeliveryResult> {
+        use super::delivery_receiver::{DeliveryAction, DeliveryProgress, DeliveryResult};
+        let mut observe = request.clone(); observe.action = DeliveryAction::Observe;
+        let observed = self.storage.receive_delivery(&self.info, &observe, super::receiver_execution::ReceiverAccess::Observe).await?;
+        match request.action {
+            DeliveryAction::Observe => return Ok(observed),
+            DeliveryAction::Admit => {}
+        }
+        match &observed {
+            DeliveryResult::Absent | DeliveryResult::Admitted { receipt: super::delivery_receiver::DeliveryReceipt { progress: DeliveryProgress::Queued, .. } } => {}
+            DeliveryResult::Admitted { .. } | DeliveryResult::Conflict { .. } | DeliveryResult::Rejected { .. } | DeliveryResult::Indeterminate { .. } => return Ok(observed),
+        }
+        match self.claim_receiver().await {
+            Ok(_) => self.storage.receive_delivery(&self.info, request, self.receiver_owner.access()).await,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => match observed {
+                DeliveryResult::Absent => Ok(DeliveryResult::Rejected { reason: "target session has another live receiver owner".into() }),
+                admitted @ DeliveryResult::Admitted { .. } => Ok(admitted),
+                other @ (DeliveryResult::Conflict { .. } | DeliveryResult::Rejected { .. } | DeliveryResult::Indeterminate { .. }) => Ok(other),
+            },
+            Err(error) => Err(error),
+        }
+    }
     fn try_merge_text(prev: &mut acp::ContentBlock, new: &acp::ContentBlock) -> bool {
         match (prev, new) {
             (acp::ContentBlock::Text(prev_text), acp::ContentBlock::Text(new_text))
@@ -2179,6 +2233,92 @@ impl SessionPersistence {
                                 source,
                             },
                         });
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::GetDeliveryQueue { respond_to } => {
+                    let result = match self.receiver_owner.access() {
+                        super::receiver_execution::ReceiverAccess::Owner(_) => self.storage.load_summary(&self.info).await,
+                        super::receiver_execution::ReceiverAccess::Observe => Err(io::Error::new(io::ErrorKind::WouldBlock, "another receiver owns queued input")),
+                    };
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::ReceiveDelivery { request, respond_to } => {
+                    let result = self.receive_delivery(&request).await;
+                    #[cfg(any(test, feature = "test-support"))]
+                    if matches!(request.action, super::delivery_receiver::DeliveryAction::Admit)
+                        && matches!(&result, Ok(super::delivery_receiver::DeliveryResult::Admitted { .. })) {
+                        super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::ReceiverAdmitted);
+                    }
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::RecoverDeliveries { respond_to } => {
+                    let result = self.claim_receiver().await;
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::FinishDeliveryTurn { turn_id, parent_task, origin, progress, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => self.storage.finish_delivery_turn(&self.info, &turn_id, &parent_task, &origin, &progress).await,
+                        Err(error) => Err(error),
+                    };
+                    self.receiver_owner.finish_turn(&turn_id);
+                    self.observe_io(&result);
+                    #[cfg(any(test, feature = "test-support"))]
+                    if result.as_ref().is_ok_and(|receipts| !receipts.is_empty()) {
+                        super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::ReceiverTerminal);
+                    }
+                    if let Ok(receipts) = &result && let Some(gateway) = &self.gateway {
+                        for receipt in receipts {
+                            if let Ok(params) = serde_json::value::to_raw_value(receipt) {
+                                gateway.forward_fire_and_forget(acp::ExtNotification::new("x.ai/session/delivery_changed", params.into()));
+                            }
+                        }
+                    }
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::PrepareSubagentCompletion { event, respond_to } => {
+                    let result = self.storage.prepare_subagent_completion(&self.info, event).await;
+                    #[cfg(any(test, feature = "test-support"))]
+                    if result.is_ok() { super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::ProducerPrepared); }
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::PublishSubagentCompletion { event, will_wake, respond_to } => {
+                    let result = self.storage.publish_subagent_completion(&self.info, &event, will_wake).await;
+                    #[cfg(any(test, feature = "test-support"))]
+                    if result.is_ok() { super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::ProducerPublished); }
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::RecoverSubagentCompletions { respond_to } => {
+                    let result = self.storage.recover_subagent_completions(&self.info).await;
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::CompletionWakePolicy(policy) => {
+                    if let Err(error) = self.storage.set_completion_wake_policy(&self.info, policy).await {
+                        self.note_write_failure(&error);
+                    }
+                }
+                PersistenceMsg::AppendInputAndAck { mut projection, admission, respond_to } => {
+                    projection.bind_parent(&admission.parent_task);
+                    let result = if admission.cancellation.is_cancelled() {
+                        Ok(xai_chat_state::CompletionProjectionAck::TurnClosed)
+                    } else { match self.flush_and_sync().await {
+                        Ok(()) => match &projection {
+                            xai_chat_state::InputProjection::Subagent(completion) => self.storage.append_completion_commit_aware(&self.info, completion).await,
+                            xai_chat_state::InputProjection::Delivery(delivery) => {
+                                match self.receiver_owner.bind_turn(&delivery.binding.turn_id) {
+                                    Ok(()) => self.storage.append_delivery_commit_aware(&self.info, delivery).await,
+                                    Err(error) => Err(xai_chat_state::StrictAppendError::NotCommitted(error)),
+                                }
+                            },
+                        },
+                        Err(error) => Err(xai_chat_state::StrictAppendError::NotCommitted(error)),
+                    } };
+                    #[cfg(any(test, feature = "test-support"))]
+                    if result.is_ok() { super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::InputProjected); }
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::ReplaceChatHistory(messages) => {
@@ -2943,6 +3083,7 @@ pub(crate) async fn new(
     let remote_sync = init_remote_sync(&summary, storage_mode, auth_manager)?;
     tokio::task::spawn(async move {
         let persistence = SessionPersistence {
+            receiver_owner: Default::default(),
             info: info_clone,
             storage: storage.clone(),
             pending_notification: None,
@@ -3052,6 +3193,7 @@ pub(crate) async fn new_with_explicit_dir(
     let storage: Arc<dyn StorageAdapter> = Arc::new(storage);
     tokio::task::spawn(async move {
         let persistence = SessionPersistence {
+            receiver_owner: Default::default(),
             info: info_clone,
             storage: storage.clone(),
             pending_notification: None,
@@ -3198,6 +3340,7 @@ pub(crate) async fn load_light(
             summary_gen.mark_done();
         }
         let persistence = SessionPersistence {
+            receiver_owner: Default::default(),
             info: loaded_info,
             storage: storage.clone(),
             pending_notification: None,
@@ -3352,7 +3495,7 @@ fn classify_remote_delete(
 
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
-mod durable_update_tests;
+pub(crate) mod durable_update_tests;
 
 #[cfg(test)]
 #[path = "persistence_delete_session_history_tests.rs"]
@@ -3602,6 +3745,15 @@ fn cleanup_session_dir(session_dir: &Path, ttl_days: u32) -> CleanupStats {
             return stats;
         }
     };
+    let retains_admissions = match std::fs::read(session_dir.join("summary.json")) {
+        Ok(bytes) => match serde_json::from_slice::<Summary>(&bytes) {
+            Ok(summary) => !summary.completion_delivery.is_empty(),
+            Err(_) => { stats.errors += 1; return stats; }
+        },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => { stats.errors += 1; return stats; }
+    };
+    if retains_admissions { prune_blob_dirs(session_dir, ttl_days, &mut stats); return stats; }
     if is_stale(last_activity, ttl_days) {
         match std::fs::remove_dir_all(session_dir) {
             Ok(()) => {

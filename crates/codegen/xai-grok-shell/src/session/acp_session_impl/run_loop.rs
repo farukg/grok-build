@@ -722,6 +722,25 @@ pub(super) async fn run_session(
                         SessionCommand::SetToolOverrides { overrides } => {
                             session.set_tool_overrides(overrides);
                         }
+                        SessionCommand::SubagentCompletionWake { prompt_id, completion, text, respond_to } => {
+                            session.ensure_prefix_ready().await;
+                            let mut request = QueueInputRequest::from_input_origin(
+                                vec![acp::ContentBlock::Text(acp::TextContent::new(text))], prompt_id,
+                                InputOrigin::new(super::PromptOrigin::SubagentCompleted { completion }), PromptMode::Agent, respond_to);
+                            request.verbatim = true;
+                            let _ = session.queue_input(request).await;
+                            SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                        }
+                        SessionCommand::ReceiveDelivery { request, respond_to } => {
+                            let admitting = matches!(request.action, crate::session::delivery_receiver::DeliveryAction::Admit);
+                            let result = session.receive_durable_delivery(request).await;
+                            let _ = respond_to.send(result);
+                            if admitting { session.ensure_prefix_ready().await; SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await; }
+                        }
+                        SessionCommand::ResumeDeliveries { deliveries } => {
+                            session.resume_durable_deliveries(crate::session::delivery_receiver::ReceiverResume::Recovery { deliveries }).await;
+                            SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                        }
                         SessionCommand::Prompt { prompt_id, prompt_blocks, prompt_mode, artifact_upload_ctx, client_identifier, screen_mode, verbatim, traceparent, json_schema, send_now, admission, tool_overrides_update, respond_to, prompt_admitted, persist_ack, parsed_prompt_tx } => {
                             let origin = super::PromptOrigin::from_prompt_id(&prompt_id);
                             let (actor_admitted, task_wake_fallback) = match admission {
@@ -1363,6 +1382,24 @@ pub(super) async fn run_session(
                         SessionCommand::XaiSessionNotification { notification } => {
                             session.handle_xai_session_notification(notification).await;
                         }
+                        SessionCommand::RestoreCompletionWakePolicy(policy) => {
+                            if let Some(gate) = &session.tool_context.task_wake_suppressed {
+                                gate.set(policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+                            }
+                            session.state.lock().await.notifications_suppressed = policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped;
+                        }
+                        SessionCommand::PublishSubagentCompletion { event, will_wake, respond_to } => {
+                            let (reply, receive) = oneshot::channel();
+                            let result = match session.notifications.persistence_tx.send(PersistenceMsg::PublishSubagentCompletion { event, will_wake, respond_to: reply }) {
+                                Ok(()) => receive.await.unwrap_or_else(|_| Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "completion publication acknowledgement lost"))),
+                                Err(_) => Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "parent persistence owner closed")),
+                            };
+                            if let Ok(published) = &result { session.handle_committed_subagent_notification(published.notification.clone()).await; }
+                            let _ = respond_to.send(result);
+                        }
+                        SessionCommand::SubagentCompletionPublished { notification } => {
+                            session.handle_committed_subagent_notification(notification).await;
+                        }
                         SessionCommand::RecordSubagentUsage {
                             by_model,
                             parent_prompt_id,
@@ -1480,7 +1517,7 @@ pub(super) async fn run_session(
                                 .running_task
                                 .as_ref()
                                 .map(|task| task.identity.clone())
-                                .unwrap_or_else(|| super::turn_task::TaskIdentity::new(()));
+                                .unwrap_or_else(|| super::turn_task::TaskIdentity::new(uuid::Uuid::now_v7().to_string()));
                             let _ = completion_tx.send(super::turn_task::TurnCompletionMsg {
                                 prompt_id,
                                 epoch,

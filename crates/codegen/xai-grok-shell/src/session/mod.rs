@@ -3,6 +3,12 @@ pub mod announcement_state;
 pub mod auto_mode;
 pub mod batch_dream;
 pub mod commands;
+pub(crate) mod completion_delivery;
+pub mod delivery_receiver;
+pub mod receiver_execution;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod admission_crash_tests_support;
+pub use completion_delivery::{CompletionWake, CompletionWakeKind, SubagentCompletionEvent, ProducerCommitAck, PublishedCompletion};
 pub(crate) mod compaction_config;
 pub(crate) mod doom_loop_telemetry;
 pub(crate) mod fork_status;
@@ -94,6 +100,7 @@ pub use xai_agent_lifecycle::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptOrigin {
     User,
+    Delivery { delivery_id: String, payload_digest: String },
     /// Auto-wake prompt injected when a background terminal task completed.
     TaskCompleted {
         /// The background task ID (without the `task-completed-` prefix).
@@ -101,8 +108,7 @@ pub enum PromptOrigin {
     },
     /// Auto-wake prompt injected when a background subagent completed.
     SubagentCompleted {
-        /// The subagent ID (without the `subagent-completed-` prefix).
-        subagent_id: String,
+        completion: CompletionWake,
     },
     /// Model-authored context from the owning root session.
     ParentAgentMessage {
@@ -137,10 +143,6 @@ impl PromptOrigin {
         if let Some(task_id) = prompt_id.strip_prefix("task-completed-") {
             Self::TaskCompleted {
                 task_id: task_id.to_string(),
-            }
-        } else if let Some(subagent_id) = prompt_id.strip_prefix("subagent-completed-") {
-            Self::SubagentCompleted {
-                subagent_id: subagent_id.to_string(),
             }
         } else if let Some(parent_message_id) = prompt_id.strip_prefix("parent-agent-message-") {
             Self::ParentAgentMessage {
@@ -190,7 +192,7 @@ impl PromptOrigin {
                 queue: QueuePolicy::VisibleProtected,
                 shutdown: ShutdownPolicy::Drain,
             },
-            Self::ParentHumanMessage { .. } => InputPolicy {
+            Self::Delivery { .. } | Self::ParentHumanMessage { .. } => InputPolicy {
                 authority: InputAuthority::ModelAuthoredUntrusted,
                 slash: SlashAuthority::Inert,
                 turn_boundary: TurnBoundary::Conversational,
@@ -199,8 +201,16 @@ impl PromptOrigin {
                 queue: QueuePolicy::VisibleProtected,
                 shutdown: ShutdownPolicy::Drain,
             },
+            Self::SubagentCompleted { .. } => InputPolicy {
+                authority: InputAuthority::RuntimeControl,
+                slash: SlashAuthority::Inert,
+                turn_boundary: TurnBoundary::Conversational,
+                analytics: AnalyticsClass::RuntimeWake,
+                compaction: CompactionClass::RuntimeEphemera,
+                queue: QueuePolicy::Hidden,
+                shutdown: ShutdownPolicy::Drain,
+            },
             Self::TaskCompleted { .. }
-            | Self::SubagentCompleted { .. }
             | Self::WorkflowCompleted { .. }
             | Self::SchedulerFired => InputPolicy {
                 authority: InputAuthority::RuntimeControl,
@@ -239,6 +249,7 @@ impl PromptOrigin {
                 | Self::WorkflowCompleted { .. }
                 | Self::ParentAgentMessage { .. }
                 | Self::ParentHumanMessage { .. }
+                | Self::Delivery { .. }
                 | Self::NotificationDrain
         )
     }
@@ -247,6 +258,7 @@ impl PromptOrigin {
     pub fn hide_user_echo_from_scrollback(&self) -> bool {
         match self {
             Self::User
+            | Self::Delivery { .. }
             | Self::ParentAgentMessage { .. }
             | Self::ParentHumanMessage { .. }
             | Self::SchedulerFired
@@ -262,9 +274,11 @@ impl PromptOrigin {
     pub fn completion_id(&self) -> Option<&str> {
         match self {
             Self::TaskCompleted { task_id } => Some(task_id),
-            Self::SubagentCompleted { subagent_id } => Some(subagent_id),
+
             Self::WorkflowCompleted { completion_id } => Some(completion_id),
             Self::User
+            | Self::Delivery { .. }
+            | Self::SubagentCompleted { .. }
             | Self::ParentAgentMessage { .. }
             | Self::ParentHumanMessage { .. }
             | Self::NotificationDrain
@@ -277,7 +291,7 @@ impl PromptOrigin {
 }
 #[cfg(test)]
 mod tests {
-    use super::{PromptOrigin, QueuePolicy};
+    use super::{PromptOrigin, QueuePolicy, CompletionWake, CompletionWakeKind};
     #[test]
     fn from_prompt_id_user() {
         assert_eq!(
@@ -344,16 +358,8 @@ mod tests {
         }
     }
     #[test]
-    fn from_prompt_id_subagent_completed() {
-        let origin = PromptOrigin::from_prompt_id("subagent-completed-xyz-789");
-        assert_eq!(
-            origin,
-            PromptOrigin::SubagentCompleted {
-                subagent_id: "xyz-789".into()
-            }
-        );
-        assert!(origin.is_synthetic());
-        assert_eq!(origin.completion_id(), Some("xyz-789"));
+    fn client_completion_prefix_has_human_authority() {
+        assert_eq!(PromptOrigin::from_prompt_id("subagent-completed-child/at1.child"), PromptOrigin::User);
     }
     #[test]
     fn from_prompt_id_notification_drain() {
@@ -415,7 +421,7 @@ mod tests {
             ),
             (
                 PromptOrigin::SubagentCompleted {
-                    subagent_id: "s".into(),
+                    completion: CompletionWake { id: xai_chat_state::SubagentCompletionId { subagent_id: "s".into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, kind: CompletionWakeKind::Fresh },
                 },
                 QueuePolicy::Hidden,
             ),
@@ -471,9 +477,9 @@ mod tests {
         );
         assert!(!PromptOrigin::from_prompt_id("plan-resume-1").hide_user_echo_from_scrollback());
         assert!(PromptOrigin::from_prompt_id("task-completed-t1").hide_user_echo_from_scrollback());
-        assert!(
-            PromptOrigin::from_prompt_id("subagent-completed-s1").hide_user_echo_from_scrollback()
-        );
+        assert!(PromptOrigin::SubagentCompleted { completion: CompletionWake { id: xai_chat_state::SubagentCompletionId {
+            subagent_id: "s1".into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+        }, kind: CompletionWakeKind::Fresh } }.hide_user_echo_from_scrollback());
         assert!(
             PromptOrigin::from_prompt_id("notifications-uuid").hide_user_echo_from_scrollback()
         );

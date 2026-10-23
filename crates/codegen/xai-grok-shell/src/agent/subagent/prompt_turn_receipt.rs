@@ -8,7 +8,7 @@ use futures::{FutureExt, stream::FuturesUnordered, stream::StreamExt};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-use crate::extensions::notification::SubagentDelivery;
+use crate::extensions::notification::{SubagentCompletion, SubagentDelivery};
 use crate::session::{
     CancelOptions, CancelTrigger, SessionCommand, ShutdownKind, commands::PromptTurnResult,
 };
@@ -159,6 +159,7 @@ pub(super) enum AdmissionSettlement {
 pub(super) struct PromptTurnReceiptDrain {
     finalization: Option<oneshot::Sender<AdmissionSettlement>>,
     settlement: oneshot::Receiver<PromptTurnReceiptSettlement>,
+    completion: watch::Receiver<SubagentCompletion>,
     _task: tokio_util::task::AbortOnDropHandle<()>,
 }
 
@@ -171,6 +172,7 @@ impl PromptTurnReceiptDrain {
     ) -> Self {
         let (finalization, finalization_rx) = oneshot::channel();
         let (settlement_tx, settlement) = oneshot::channel();
+        let (completion_tx, completion) = watch::channel(Default::default());
         let task = tokio::spawn(async move {
             let settlement = drain_prompt_turn_receipts(
                 receipt_stream,
@@ -178,6 +180,7 @@ impl PromptTurnReceiptDrain {
                 cancel_token,
                 finalization_rx,
                 delivery,
+                completion_tx,
             )
             .await;
             let _ = settlement_tx.send(settlement);
@@ -185,8 +188,13 @@ impl PromptTurnReceiptDrain {
         Self {
             finalization: Some(finalization),
             settlement,
+            completion,
             _task: tokio_util::task::AbortOnDropHandle::new(task),
         }
+    }
+
+    pub(super) fn completion(&self) -> watch::Receiver<SubagentCompletion> {
+        self.completion.clone()
     }
 
     pub(super) async fn settle(
@@ -220,6 +228,7 @@ async fn drain_prompt_turn_receipts(
     cancel_token: CancellationToken,
     mut finalization: oneshot::Receiver<AdmissionSettlement>,
     mut delivery: watch::Receiver<SubagentDelivery>,
+    completion: watch::Sender<SubagentCompletion>,
 ) -> PromptTurnReceiptSettlement {
     let mut pending = FuturesUnordered::new();
     let mut is_stream_open = true;
@@ -234,15 +243,42 @@ async fn drain_prompt_turn_receipts(
     loop {
         // A held child keeps taking human prompts after its own turn ended; only `deliver` or a
         // cancel lets a completed settlement finish.
-        let is_held = disposition == Some(PromptTurnReceiptDisposition::Completed)
-            && is_delivery_open
-            && *delivery.borrow() == SubagentDelivery::Held;
-        if is_stream_open
-            && disposition == Some(PromptTurnReceiptDisposition::Completed)
-            && !is_held
-        {
-            receipt_stream.close();
-        }
+        let is_held = {
+            let delivery = delivery.borrow();
+            let held = disposition == Some(PromptTurnReceiptDisposition::Completed)
+                && is_stream_open
+                && !receipt_stream.is_closed()
+                && is_delivery_open
+                && *delivery == SubagentDelivery::Held;
+            if is_stream_open
+                && disposition == Some(PromptTurnReceiptDisposition::Completed)
+                && !held
+            {
+                receipt_stream.close();
+            }
+            held
+        };
+        let observed = match disposition {
+            Some(PromptTurnReceiptDisposition::Completed)
+                if pending.is_empty() && receipt_stream.is_empty() =>
+            {
+                SubagentCompletion::Pending
+            }
+            Some(PromptTurnReceiptDisposition::Completed) => SubagentCompletion::Settling,
+            Some(
+                PromptTurnReceiptDisposition::Cancelled
+                | PromptTurnReceiptDisposition::AdmissionUncertain
+                | PromptTurnReceiptDisposition::TimedOut,
+            )
+            | None => SubagentCompletion::Working,
+        };
+        completion.send_if_modified(|value| {
+            if *value == observed {
+                return false;
+            }
+            *value = observed;
+            true
+        });
         if disposition.is_some() && !is_stream_open && pending.is_empty() && !is_held {
             return PromptTurnReceiptSettlement {
                 final_receipt,

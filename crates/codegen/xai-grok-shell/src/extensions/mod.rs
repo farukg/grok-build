@@ -41,6 +41,7 @@ pub(crate) mod session_admin;
 pub mod session_search;
 pub(crate) mod session_state;
 pub mod session_updates;
+pub(crate) mod session_delivery;
 pub mod share;
 pub mod skills;
 pub mod subagent_context;

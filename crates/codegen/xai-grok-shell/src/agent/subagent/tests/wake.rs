@@ -67,7 +67,7 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         }
         let ctx = self.contexts.lock().pop_front().expect("run context");
         let gateway = self.gateway.clone();
-        let completion_data = ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), None);
+        let completion_data = ShellCompletionData::from_context(&ctx, None);
         Box::pin(async move {
             run_shell_child(
                 run,
@@ -104,11 +104,16 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
 
     fn on_completed(
         &self,
-        completion: ChildCompletion<Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
+        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
         present_child_completion(completion, &self.gateway, false);
-        terminal_published();
+        
+        
+        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -209,7 +214,7 @@ async fn assert_wake_setup_failure_preserves_prior_durable_state(
     let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
     assert!(
         backend
-            .spawn(auto_wake_test_request(&id), None)
+            .spawn(auto_wake_test_request(&id), None, None)
             .await
             .expect("prior spawn")
             .success()
@@ -225,7 +230,7 @@ async fn assert_wake_setup_failure_preserves_prior_durable_state(
         ActiveAgentMessageOutcome::NotActiveOrFinalizing
     );
     let restored = backend
-        .query(&id, false, None)
+        .query(&id, false, None, None)
         .await
         .expect("restored prior snapshot");
     assert!(matches!(
@@ -289,6 +294,156 @@ async fn wake_setup_failures_preserve_prior_durable_state_and_lifecycle() {
             .await;
         })
         .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn live_steers_reach_next_sample_in_order_before_parent_completion() {
+    live_steers_through_shell_runtime(false).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn live_steers_wait_for_active_tool_then_reach_next_sample_before_parent_completion() {
+    live_steers_through_shell_runtime(true).await;
+}
+
+async fn live_steers_through_shell_runtime(with_active_tool: bool) {
+    use tokio::io::AsyncWriteExt;
+    use xai_grok_test_support::sse::{
+        responses_api_reasoning_then_tool_call_events, responses_api_script_exact,
+    };
+    use xai_grok_test_support::{InferenceEndpoint, InferenceRequestMatcher, ScriptedResponse};
+    use xai_grok_tools::implementations::grok_build::task::backend::{
+        ChannelBackend, SubagentBackend,
+    };
+    use xai_grok_tools::implementations::grok_build::task::coordinator::{
+        CoordinatorConfig, SubagentCoordinator,
+    };
+    use xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation;
+
+    tokio::task::LocalSet::new().run_until(async {
+        let meta_dir = tempfile::tempdir().expect("meta dir");
+        let server = xai_grok_test_support::MockInferenceServer::start().await.expect("mock server");
+        server.set_response("completed output");
+        server.set_keep_requests(true);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("tool gate");
+        if with_active_tool {
+            let port = listener.local_addr().expect("gate address").port();
+            let command = format!("bash -c 'exec 3<>/dev/tcp/127.0.0.1/{port}; IFS= read -r line <&3; printf \"%s\\n\" \"$line\"'");
+            let args = serde_json::json!({
+                "command": command,
+                "description": "wait for test tool release",
+                "block_until_ms": 60000
+            }).to_string();
+            server.enqueue_response("/v1/responses", ScriptedResponse::sse(
+                responses_api_reasoning_then_tool_call_events("use tool", "steer-tool", "run_terminal_command", &args, "test"),
+            ));
+        } else {
+            server.set_foreground_hold();
+        }
+        let mut next_sample = server.expect_response_blocked(
+            "live steer next sample",
+            InferenceRequestMatcher::foreground_containing(InferenceEndpoint::Responses, "live-order-first"),
+            ScriptedResponse::sse(responses_api_script_exact("completed output", "test")),
+        );
+        let id = uuid::Uuid::now_v7().to_string();
+        let mut ctx = ctx_with_toggle(HashMap::new());
+        configure_completion_harness(&mut ctx, &server, RunShellChildHarnessConfig::new(
+            meta_dir.path().to_path_buf(), InitialAttemptBehavior::Normal,
+        ));
+        ctx.yolo_mode = true;
+        let (parent_cmd_tx, parent_cmd_rx) = mpsc::unbounded_channel();
+        ctx.parent_cmd_tx = Some(parent_cmd_tx);
+        let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(parent_cmd_rx));
+        let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+        let child_info = SessionInfo {
+            id: acp::SessionId::new(id.clone()),
+            cwd: ctx.parent_cwd.to_string_lossy().into_owned(),
+        };
+        let (command_tx, command_rx) = SubagentCoordinator::<RunShellChildTestRunner>::channel();
+        let coordinator = tokio::task::spawn_local(SubagentCoordinator::from_channel(
+            command_rx, RunShellChildTestRunner::new([ctx], false, gateway), CoordinatorConfig::default(),
+        ).run());
+        let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
+        let mut request = auto_wake_test_request(&id);
+        request.parent_session_id = "setup-parent".into();
+        request.run_in_background = false;
+        request.await_to_completion = true;
+        let spawning = backend.spawn(request, None, None);
+        tokio::pin!(spawning);
+        let mut tool_socket = None;
+        let ready = async {
+            if with_active_tool {
+                tool_socket = Some(listener.accept().await.expect("tool connects before release").0);
+            } else {
+                server.wait_until_parked_replies(1).await;
+            }
+        };
+        tokio::select! {
+            result = &mut spawning => panic!("child finished before live ingress: {result:?}"),
+            _ = ready => {}
+        }
+        let sends = async {
+            for text in ["live-order-first", "live-order-second"] {
+                assert!(matches!(backend.send_active_message(
+                    ActiveAgentMessageRequest::try_new_with_operation(&id, text, ActiveAgentMessageOperation::Steer).expect("request")
+                ).await, ActiveAgentMessageOutcome::Accepted { .. }));
+            }
+        };
+        tokio::select! {
+            result = &mut spawning => panic!("parent settled before admission: {result:?}"),
+            _ = sends => {}
+        }
+        assert!(server.request_bodies().iter().all(|body| !body.to_string().contains("live-order-first")), "no sampling can bypass the in-flight operation");
+        match tool_socket {
+            Some(mut socket) => socket.write_all(b"tool-finished-marker\n").await.expect("release tool without cancelling"),
+            None => server.release_parked_replies(),
+        }
+        tokio::select! {
+            result = &mut spawning => panic!("parent completed before next sample terminal: {result:?}"),
+            _ = next_sample.wait_blocked() => {}
+        }
+        let requests = server.request_bodies();
+        let body = requests.iter().map(serde_json::Value::to_string).find(|body| body.contains("live-order-first")).expect("next sample contains live messages");
+        assert_eq!(body.matches("live-order-first").count(), 1);
+        assert_eq!(body.matches("live-order-second").count(), 1);
+        assert!(body.find("live-order-first") < body.find("live-order-second"));
+        if with_active_tool {
+            assert!(body.contains("tool-finished-marker"), "tool result must precede resampling");
+            assert!(body.find("tool-finished-marker") < body.find("live-order-first"));
+        }
+        let mut visible = Vec::new();
+        while let Ok(message) = gateway_rx.try_recv() {
+            if let xai_acp_lib::AcpClientMessage::SessionNotification(args) = message {
+                let notification = serde_json::to_value(&args.request).expect("child update");
+                if notification.to_string().contains("live-order-") {
+                    assert_eq!(args.request.session_id, child_info.id);
+                    assert!(matches!(&args.request.update, acp::SessionUpdate::UserMessageChunk(_)));
+                    visible.push(notification);
+                }
+                let _ = args.response_tx.send(Ok(()));
+            }
+        }
+        assert_eq!(visible.len(), 2, "both accepted Steers must be visible in the child, not just caller tool output");
+        let first_event = visible[0]["_meta"]["eventId"].as_str().expect("first event identity");
+        let second_event = visible[1]["_meta"]["eventId"].as_str().expect("second event identity");
+        assert_ne!(first_event, second_event, "child replay dedup must preserve both messages");
+        assert_eq!(visible[0]["_meta"]["promptId"], visible[1]["_meta"]["promptId"]);
+        assert!(!visible[0]["_meta"]["promptId"].as_str().expect("running prompt identity").starts_with("parent-message-"), "Steer is part of the existing child turn, not its receipt's future turn");
+        next_sample.release();
+        let result = spawning.await.expect("parent result");
+        assert!(result.success(), "{result:?}");
+        assert_eq!(result.turns, 1, "steering must not create a second turn");
+        assert_eq!(result.tool_calls, u32::from(with_active_tool));
+        next_sample.assert_satisfied();
+        let updates = std::fs::read_to_string(crate::session::persistence::session_dir(&child_info).join("updates.jsonl")).expect("durable child history");
+        for marker in ["live-order-first", "live-order-second", first_event, second_event] {
+            assert_eq!(updates.matches(marker).count(), 1, "one durable child projection for {marker}");
+        }
+        let snapshot = backend.query(&id, false, None, None).await.expect("terminal snapshot");
+        assert!(matches!(snapshot.status, SubagentSnapshotStatus::Completed { .. }));
+        coordinator.abort();
+        usage_ack.abort();
+    }).await;
 }
 
 fn configure_completion_harness(
@@ -408,7 +563,7 @@ async fn unpublished_wake_completion_preserves_prior_durable_state_and_worktree(
             let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
             assert!(
                 backend
-                    .spawn(auto_wake_test_request(&id), None)
+                    .spawn(auto_wake_test_request(&id), None, None)
                     .await
                     .expect("prior spawn")
                     .success()
@@ -424,7 +579,7 @@ async fn unpublished_wake_completion_preserves_prior_durable_state_and_worktree(
                 ActiveAgentMessageOutcome::NotActiveOrFinalizing
             );
             let restored = backend
-                .query(&id, false, None)
+                .query(&id, false, None, None)
                 .await
                 .expect("restored prior snapshot");
             assert!(matches!(
@@ -518,7 +673,7 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
             let mut request = auto_wake_test_request(&id);
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
-            let result = backend.spawn(request, None).await.expect("ordinary spawn");
+            let result = backend.spawn(request, None, None).await.expect("ordinary spawn");
             assert!(result.success());
             let output = result.output.to_string();
             assert_eq!(
@@ -592,7 +747,7 @@ async fn ordinary_spawn_disposes_worktree_when_only_remote_settings_enable_snaps
             let mut request = auto_wake_test_request(&id);
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
-            let result = backend.spawn(request, None).await.expect("ordinary spawn");
+            let result = backend.spawn(request, None, None).await.expect("ordinary spawn");
             assert!(result.success());
             let persisted: SubagentMeta = serde_json::from_str(
                 &std::fs::read_to_string(meta_dir.join("meta.json")).expect("completion meta"),
@@ -661,7 +816,7 @@ async fn ordinary_spawn_binds_the_child_workspace_session_before_its_first_turn(
             let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
             let request = auto_wake_test_request(&id);
             let spawned =
-                tokio::task::spawn_local(async move { backend.spawn(request, None).await });
+                tokio::task::spawn_local(async move { backend.spawn(request, None, None).await });
             let first_turn_at_model = async {
                 while server.request_count() == 0 {
                     tokio::task::yield_now().await;
@@ -746,7 +901,7 @@ async fn unacked_wake_start_and_abort_fail_closed_without_parking_runner() {
             );
             let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
             let ordinary = backend
-                .spawn(auto_wake_test_request(&id), None)
+                .spawn(auto_wake_test_request(&id), None, None)
                 .await
                 .expect("ordinary spawn");
             assert!(
@@ -776,7 +931,7 @@ async fn unacked_wake_start_and_abort_fail_closed_without_parking_runner() {
                 .await;
             assert_eq!(wake, ActiveAgentMessageOutcome::NotActiveOrFinalizing);
             let restored = backend
-                .query(&id, true, Some(5_000))
+                .query(&id, true, Some(5_000), None)
                 .await
                 .expect("restored prior snapshot");
             assert!(matches!(
@@ -875,7 +1030,7 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
             );
             let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
             let ordinary = backend
-                .spawn(auto_wake_test_request(&id), None)
+                .spawn(auto_wake_test_request(&id), None, None)
                 .await
                 .expect("ordinary spawn");
             assert!(
@@ -907,7 +1062,7 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
                 ActiveAgentMessageOutcome::NotActiveOrFinalizing
             );
             let restored = backend
-                .query(&id, true, Some(5_000))
+                .query(&id, true, Some(5_000), None)
                 .await
                 .expect("restored prior completion");
             assert!(
@@ -1000,7 +1155,7 @@ async fn started_wake_with_failed_metadata_write_preserves_prior_durable_artifac
             );
             let backend = ChannelBackend::for_coordinator_session(command_tx, "setup-parent");
             let ordinary = backend
-                .spawn(auto_wake_test_request(&id), None)
+                .spawn(auto_wake_test_request(&id), None, None)
                 .await
                 .expect("ordinary spawn");
             assert!(
@@ -1034,7 +1189,7 @@ async fn started_wake_with_failed_metadata_write_preserves_prior_durable_artifac
                 ActiveAgentMessageOutcome::Accepted { .. }
             ));
             let wake = backend
-                .query(&id, true, Some(5_000))
+                .query(&id, true, Some(5_000), None)
                 .await
                 .expect("wake completion");
             assert!(matches!(

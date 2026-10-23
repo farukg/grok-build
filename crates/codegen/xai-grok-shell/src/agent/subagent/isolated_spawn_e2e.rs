@@ -78,6 +78,7 @@ fn spawn_ctx(parent_cwd: PathBuf) -> SubagentSpawnContext {
         ask_user_question_enabled: false,
         parent_non_interactive: false,
         parent_cmd_tx: None,
+        parent_persistence_tx: None,
         spawner_address_target: None,
         parent_session_info: None,
         subagent_roles: HashMap::new(),
@@ -137,7 +138,6 @@ fn spawn_ctx(parent_cwd: PathBuf) -> SubagentSpawnContext {
         scheduler_delete_tool_name: None,
         scheduler_create_tool_name: None,
         auto_wake_enabled: true,
-        goal_loop_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         parent_terminal_backend: None,
         parent_notification_handle: None,
         parent_scheduler_handle: None,
@@ -173,7 +173,7 @@ impl ChildRunner for Runner {
     ) -> Self::RunFuture {
         let ctx = self.ctx.lock().take().expect("run context");
         let gateway = self.gateway.clone();
-        let completion_data = ShellCompletionData::from_context(&ctx, run.attempt_id.clone(), None);
+        let completion_data = ShellCompletionData::from_context(&ctx, None);
         Box::pin(async move {
             run_shell_child(
                 run,
@@ -206,11 +206,16 @@ impl ChildRunner for Runner {
     }
     fn on_completed(
         &self,
-        completion: ChildCompletion<Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
+        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
         present_child_completion(completion, &self.gateway, false);
-        terminal_published();
+        
+        
+        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 /// Spawn one isolated subagent from `parent_cwd`. Must run on a `LocalSet`.
@@ -267,7 +272,7 @@ pub async fn spawn_isolated_subagent_for_e2e(
         tool_call_id: None,
     };
     request.runtime_overrides.isolation = Some(SubagentIsolationMode::Worktree);
-    let spawned = tokio::time::timeout(SPAWN_TIMEOUT, backend.spawn(request, None)).await;
+    let spawned = tokio::time::timeout(SPAWN_TIMEOUT, backend.spawn(request, None, None)).await;
     drop(backend);
     let _ = coordinator.await;
     usage_ack.abort();

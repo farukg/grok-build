@@ -406,7 +406,6 @@ impl SessionActor {
         let user_chunk_meta = serde_json::json!({ "modelId": model_id })
             .as_object()
             .cloned();
-        let notification_meta = self.build_notification_meta();
         let (binding, trigger) = {
             let mut state = self.state.lock().await;
             // Reborrow once so `running_task` and `message_delivery` can be borrowed disjointly.
@@ -441,11 +440,13 @@ impl SessionActor {
         }
         // Persist and push only inside the commit under the state lock: teardown settlement transitions slots under the same lock, so a slot settled during the barrier yields no projecting messages here and its text never.
         let mut state = self.state.lock().await;
+        let prompt_id = state.running_prompt_id().map(str::to_owned);
         let committed = state
             .message_delivery
             .finish_delivery(&binding, |messages| {
                 let ordered: Vec<&_> =
                     super::parent_interject::order_for_delivery(messages).collect();
+                let mut notifications = Vec::with_capacity(ordered.len());
                 for message in &ordered {
                     let update = acp::SessionUpdate::UserMessageChunk(
                         acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
@@ -453,13 +454,20 @@ impl SessionActor {
                         )))
                         .meta(user_chunk_meta.clone()),
                     );
+                    let mut meta = self.build_notification_meta();
+                    if let Some(prompt_id) = &prompt_id {
+                        meta["promptId"] = serde_json::json!(prompt_id);
+                    }
+                    let notification =
+                        acp::SessionNotification::new(self.session_info.id.clone(), update)
+                            .meta(meta.as_object().cloned());
                     self.notifications
                         .persistence_tx
                         .send(PersistenceMsg::Update(SessionUpdate::Acp(Box::new(
-                            acp::SessionNotification::new(self.session_info.id.clone(), update)
-                                .meta(notification_meta.clone().as_object().cloned()),
+                            notification.clone(),
                         ))))
                         .map_err(|_| DrainCommitError::PersistenceUnavailable)?;
+                    notifications.push(notification);
                 }
                 self.chat_state_handle
                     .try_push_user_messages_batch(
@@ -471,6 +479,18 @@ impl SessionActor {
                             .collect(),
                     )
                     .map_err(|_| DrainCommitError::ChatStateUnavailable)?;
+                // The sender has no local echo in the child's view.
+                if self
+                    .notifications
+                    .gateway_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    for notification in notifications {
+                        self.notifications
+                            .gateway
+                            .forward_fire_and_forget(notification);
+                    }
+                }
                 let delivered_at = std::time::Instant::now();
                 for message in messages {
                     message
