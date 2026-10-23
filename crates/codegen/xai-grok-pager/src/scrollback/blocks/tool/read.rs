@@ -313,6 +313,14 @@ impl ReadToolCallBlock {
         } else if ContentKind::classify(syntect, Path::new(&self.path), content)
             == ContentKind::Terminal
         {
+            // Large captures take syntax colors from the worker cache; initial rows retain terminal styling.
+            let coloring = if content.lines().take(PARTIAL_HIGHLIGHT_MIN_ROWS).count()
+                >= PARTIAL_HIGHLIGHT_MIN_ROWS
+            {
+                TerminalColoring::Terminal
+            } else {
+                coloring
+            };
             let rendered = terminal_rows(
                 syntect,
                 Path::new(&self.path),
@@ -338,7 +346,12 @@ impl ReadToolCallBlock {
             };
             let mut rows = Vec::new();
             for range in &ranges {
-                let mut highlighter = syntect.highlight_lines_by_file_path(Path::new(&self.path));
+                let mut highlighter =
+                    if truncate.is_none() && source.len() >= PARTIAL_HIGHLIGHT_MIN_ROWS {
+                        None
+                    } else {
+                        syntect.highlight_lines_by_file_path(Path::new(&self.path))
+                    };
                 let warmup_start = range.start.saturating_sub(TAIL_WARMUP_LINES);
                 for (i, text) in source.iter().enumerate().take(range.end).skip(warmup_start) {
                     let spans =
@@ -679,7 +692,51 @@ mod tests {
     }
 
     #[test]
+    fn expanded_large_read_stays_plain_until_the_styled_cache_arrives() {
+        let _guard = crate::theme::cache::pin_theme();
+        let content = vec!["let value = 42;"; PARTIAL_HIGHLIGHT_MIN_ROWS].join("\n");
+        let mut block =
+            ReadToolCallBlock::new("big.rs").with_content(content, PARTIAL_HIGHLIGHT_MIN_ROWS);
+        let ctx = BlockContext {
+            mode: DisplayMode::Expanded,
+            ..make_ctx()
+        };
+        let primary = Theme::current().primary();
+        let initial = block.output(&ctx);
+        assert_eq!(initial.lines.len(), PARTIAL_HIGHLIGHT_MIN_ROWS + 2);
+        assert!(initial.lines.iter().skip(2).all(|line| {
+            line.content
+                .spans
+                .iter()
+                .skip(1)
+                .all(|span| span.style == primary)
+        }));
+        let rows = crate::render::content_kind::styled_rows(
+            get_syntect(),
+            Path::new(&block.path),
+            block.content.as_deref().expect("content"),
+            TerminalColoring::Terminal,
+            primary,
+        );
+        block.highlight = ReadHighlightPhase::Cached(CachedReadRows {
+            rows: Arc::new(rows),
+            theme: Theme::current_kind(),
+            coloring: TerminalColoring::Terminal,
+        });
+        let upgraded = block.output(&ctx);
+        assert_eq!(upgraded.lines.len(), initial.lines.len());
+        assert!(upgraded.lines.iter().skip(2).any(|line| {
+            line.content
+                .spans
+                .iter()
+                .skip(1)
+                .any(|span| span.style != primary)
+        }));
+    }
+
+    #[test]
     fn cached_rows_replace_a_fresh_highlight_pass() {
+        let _guard = crate::theme::cache::pin_theme();
         let content = (1..=2000)
             .map(|i| format!("let value_{i} = {i};"))
             .collect::<Vec<_>>()
@@ -711,6 +768,7 @@ mod tests {
 
     #[test]
     fn cache_baked_under_another_coloring_is_ignored() {
+        let _guard = crate::theme::cache::pin_theme();
         let content = (1..=2000)
             .map(|i| format!("let value_{i} = {i};"))
             .collect::<Vec<_>>()
@@ -741,6 +799,7 @@ mod tests {
 
     #[test]
     fn cache_baked_under_another_theme_is_ignored() {
+        let _guard = crate::theme::cache::pin_theme();
         let mut block =
             ReadToolCallBlock::new("main.rs").with_content("let fresh = 1;".to_owned(), 1);
         let other_theme = ThemeKind::ALL
