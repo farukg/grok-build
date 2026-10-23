@@ -84,6 +84,40 @@
     }
 
     #[test]
+    fn completion_and_waiter_observations_survive_duplicate_spawn_but_not_terminal_or_new_attempt() {
+        use xai_grok_shell::extensions::notification::{SubagentCompletion, SubagentDelivery};
+        use xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller;
+        let mut app = make_app_with_agent("sess-parent");
+        assert!(spawn(&mut app, "child", "at1.one", 1));
+        let held_progress = |attempt: &str| {
+            let mut update = progress_update_for_attempt("child", attempt, 10, 1);
+            let XaiSessionUpdate::SubagentProgress { delivery, completion, caller, .. } = &mut update else { unreachable!() };
+            *delivery = SubagentDelivery::Held;
+            *completion = SubagentCompletion::Pending;
+            *caller = SubagentCaller::Waiting;
+            update
+        };
+        assert!(sequenced(&mut app, held_progress("at1.one"), 2));
+        let _ = spawn(&mut app, "child", "at1.one", 3);
+        let info = &app.agents.get(&AgentId(0)).unwrap().subagent_sessions["child"];
+        assert_eq!(info.attempt.completion, SubagentCompletion::Pending);
+        assert_eq!(info.attempt.caller, SubagentCaller::Waiting);
+        assert!(info.delivery_warning().unwrap().contains("CALLER BLOCKED"));
+        assert!(finish(&mut app, "child", "at1.one", 4));
+        let info = &app.agents.get(&AgentId(0)).unwrap().subagent_sessions["child"];
+        assert_eq!(info.attempt.completion, SubagentCompletion::Working);
+        assert_eq!(info.attempt.caller, SubagentCaller::NotWaiting);
+        assert!(info.delivery_warning().is_none());
+        assert!(!sequenced(&mut app, held_progress("at1.one"), 5));
+        assert!(spawn(&mut app, "child", "at1.two", 6));
+        let info = &app.agents.get(&AgentId(0)).unwrap().subagent_sessions["child"];
+        assert_eq!(info.attempt.delivery, SubagentDelivery::OnTurnEnd);
+        assert_eq!(info.attempt.completion, SubagentCompletion::Working);
+        assert_eq!(info.attempt.caller, SubagentCaller::NotWaiting);
+        assert!(info.delivery_warning().is_none());
+    }
+
+    #[test]
     fn finish_before_spawn_is_applied_after_later_cursor_progress() {
         let mut app = make_app_with_agent("sess-parent");
         let notification = |update, seq| subagent_notification_with_seq("sess-parent", update, seq);

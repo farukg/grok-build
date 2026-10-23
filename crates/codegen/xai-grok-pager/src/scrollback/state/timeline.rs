@@ -137,11 +137,18 @@ pub struct TimelineRow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineRowKind {
     /// A turn, represented by its user prompt entry.
-    Turn { turn_idx: usize, prompt_id: EntryId },
+    Turn {
+        turn_idx: usize,
+        prompt_id: EntryId,
+    },
     /// A fold span (verb run or "N more" truncation); its members follow as nested entry rows.
     /// The span's live shape (kind, expansion) is read from the fold pass, not stored here.
-    Group { first_id: EntryId },
-    Entry { id: EntryId },
+    Group {
+        first_id: EntryId,
+    },
+    Entry {
+        id: EntryId,
+    },
 }
 
 /// Identity of an outline row. A group row and its first member share an entry, so the kind is part of the identity.
@@ -221,7 +228,10 @@ impl ScrollbackState {
     pub fn timeline_row_key(&self, idx: usize) -> Option<TimelineRowKey> {
         let (&id, _) = self.entries.get_index(idx)?;
         Some(
-            match self.turns.binary_search_by_key(&idx, |turn| turn.prompt_index) {
+            match self
+                .turns
+                .binary_search_by_key(&idx, |turn| turn.prompt_index)
+            {
                 Ok(_) => TimelineRowKey::Turn(id),
                 Err(_) => TimelineRowKey::Entry(id),
             },
@@ -268,9 +278,12 @@ impl ScrollbackState {
     pub fn group_header_index(&self, idx: usize) -> Option<usize> {
         let span = self.span_at(idx)?;
         let cache = self.layout_cache.as_ref()?;
-        span.range
-            .clone()
-            .find(|&i| cache.entries.get(i).is_some_and(|info| info.is_group_header()))
+        span.range.clone().find(|&i| {
+            cache
+                .entries
+                .get(i)
+                .is_some_and(|info| info.is_group_header())
+        })
     }
 
     /// The on-screen row that stands for `idx`: the entry itself, or its group header while a fold hides it.
@@ -349,7 +362,11 @@ mod tests {
         }
         state.push_block(agent_block("done"));
         state.prepare_layout(80, 10);
-        let span = state.group_spans().first().cloned().expect("read run folds");
+        let span = state
+            .group_spans()
+            .first()
+            .cloned()
+            .expect("read run folds");
 
         let outline = state.timeline_outline();
         let group_pos = outline
@@ -376,7 +393,10 @@ mod tests {
         };
         assert!(matches!(banner.kind, TimelineRowKind::Entry { .. }));
         assert_eq!(banner.depth, 0);
-        assert!(matches!(turn.kind, TimelineRowKind::Turn { turn_idx: 0, .. }));
+        assert!(matches!(
+            turn.kind,
+            TimelineRowKind::Turn { turn_idx: 0, .. }
+        ));
         assert_eq!(answer.depth, 1);
     }
 
@@ -399,7 +419,9 @@ mod tests {
         let area = Rect::new(0, 0, 80, 6);
         for offset in 0..=max {
             state.set_scroll_offset(offset);
-            let idx = state.active_entry_for_viewport().expect("an entry owns the top");
+            let idx = state
+                .active_entry_for_viewport()
+                .expect("an entry owns the top");
             let (rect, _, _) = state
                 .entry_screen_area(idx, area)
                 .expect("the tracked entry is on screen below the sticky header");

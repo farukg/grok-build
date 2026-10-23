@@ -197,7 +197,10 @@ impl AgentView {
     /// Unfold a collapsed group hiding the entry, so entry-level actions see its own content.
     fn reveal_timeline_entry(&mut self, idx: usize) {
         if self.scrollback.entry_content_hidden_by_group(idx)
-            && self.scrollback.span_at(idx).is_some_and(|span| !span.expanded)
+            && self
+                .scrollback
+                .span_at(idx)
+                .is_some_and(|span| !span.expanded)
             && let Some(header) = self.scrollback.group_header_index(idx)
         {
             self.scrollback.set_selected(Some(header));
@@ -274,12 +277,14 @@ impl AgentView {
                 self.scrollback.set_selected(Some(idx));
                 InputOutcome::Action(Action::Rewind)
             }
-            (TimelineItemAction::Remove, ActionTarget::Entry | ActionTarget::Group) => {
-                self.run_timeline_item_remove(row, &crossterm::event::KeyEvent::new(
-                    crossterm::event::KeyCode::Char('d'),
-                    crossterm::event::KeyModifiers::NONE,
-                ))
-            }
+            (TimelineItemAction::Remove, ActionTarget::Entry | ActionTarget::Group) => self
+                .run_timeline_item_remove(
+                    row,
+                    &crossterm::event::KeyEvent::new(
+                        crossterm::event::KeyCode::Char('d'),
+                        crossterm::event::KeyModifiers::NONE,
+                    ),
+                ),
         }
     }
 }

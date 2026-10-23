@@ -15,19 +15,32 @@ pub(super) async fn remove_context_items(
         Ok(raw) => raw,
         Err(error) => {
             tracing::warn!("Failed to encode remove-items request: {error}");
-            return TaskResult::RemoveContextItemsComplete { session_id, outcome: Err(error.to_string()) };
+            return TaskResult::RemoveContextItemsComplete {
+                session_id,
+                outcome: Err(error.to_string()),
+            };
         }
     };
-    match acp_send(acp::ExtRequest::new("x.ai/session/remove_items", raw.into()), tx).await {
+    match acp_send(
+        acp::ExtRequest::new("x.ai/session/remove_items", raw.into()),
+        tx,
+    )
+    .await
+    {
         Ok(response) => TaskResult::RemoveContextItemsComplete {
             session_id,
-            outcome: serde_json::from_str::<xai_grok_shell::extensions::remove_items::RemoveItemsSessionResponse>(response.0.get())
-                .map(|response| response.outcome)
-                .map_err(|error| format!("invalid remove-items response: {error}")),
+            outcome: serde_json::from_str::<
+                xai_grok_shell::extensions::remove_items::RemoveItemsSessionResponse,
+            >(response.0.get())
+            .map(|response| response.outcome)
+            .map_err(|error| format!("invalid remove-items response: {error}")),
         },
         Err(error) => {
             tracing::warn!("Failed to remove context items: {error}");
-            TaskResult::RemoveContextItemsComplete { session_id, outcome: Err(error.to_string()) }
+            TaskResult::RemoveContextItemsComplete {
+                session_id,
+                outcome: Err(error.to_string()),
+            }
         }
     }
 }

@@ -841,8 +841,14 @@ mod tests {
             ShellChildSupport::parse(first_class.as_object()),
             ShellChildSupport::FirstClass
         );
-        for legacy in [serde_json::json!({}), serde_json::json!({ "childSessions": "other" })] {
-            assert_eq!(ShellChildSupport::parse(legacy.as_object()), ShellChildSupport::Legacy);
+        for legacy in [
+            serde_json::json!({}),
+            serde_json::json!({ "childSessions": "other" }),
+        ] {
+            assert_eq!(
+                ShellChildSupport::parse(legacy.as_object()),
+                ShellChildSupport::Legacy
+            );
         }
         assert_eq!(ShellChildSupport::parse(None), ShellChildSupport::Legacy);
     }

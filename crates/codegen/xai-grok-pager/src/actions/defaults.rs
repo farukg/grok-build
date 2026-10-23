@@ -35,7 +35,7 @@ fn mode_ctrl_g_action(screen_mode: crate::app::ScreenMode) -> ActionDef {
         ActionDef {
             id: ActionId::ToggleTasks,
             label: "tasks",
-            description: "Toggle tasks pane",
+            description: "Toggle global upper Tasks display",
             default_key: key!('g', CONTROL),
             alt_keys: vec![],
             category: Category::Panels,
@@ -44,7 +44,7 @@ fn mode_ctrl_g_action(screen_mode: crate::app::ScreenMode) -> ActionDef {
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Shows or hides the tasks pane, which lists background tasks and their status.\nUse it to monitor or return to work you sent to the background with Ctrl+B.\nA side pane; toggle off to reclaim width.",
+                "Saves the Tasks display preference globally for existing and new sessions and restarts. With Dock enabled, Tasks adds the upper work display. F7 always retains work items and Todos, regardless of these upper-display preferences.",
             ),
         }
     }
@@ -541,7 +541,7 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Shows or hides the todo pane: the agent's live task checklist for the current work.\nWatch what it plans to do and what's left as the turn runs.\nA side pane; toggle it off to reclaim width.",
+                "Saves the Todo display preference globally. With Dock enabled, it adds the upper checklist; minimal mode uses the same preference. F7 always retains the full checklist independently of this preference.",
             ),
         },
         ActionDef {
@@ -577,7 +577,7 @@ pub(super) fn default_actions(
         ActionDef {
             id: ActionId::DeliverSubagent,
             label: "deliver",
-            description: "Send the steered subagent's answer to its caller",
+            description: "Toggle automatic/manual subagent completion delivery",
             default_key: key!(F(5)),
             alt_keys: vec![],
             category: Category::Session,
@@ -586,13 +586,13 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "A prompt you send to a running subagent holds its answer back from the agent that started it.\nSteer it as long as you like; deliver then hands its latest answer to the caller.",
+                "F5 or the child header delivery button switches this running attempt between automatic and manual completion delivery. Automatic is the default. Opening, leaving or prompting a child does not change its mode. Manual holds the final answer until you explicitly switch back to automatic; switching back releases an already pending answer. Finished children cannot change mode.",
             ),
         },
         ActionDef {
             id: ActionId::ToggleQueue,
             label: "queue",
-            description: "Toggle prompt queue",
+            description: "Focus or leave the prompt queue",
             // Local macOS VS Code family only: ; / ' often never arrive (saw Ctrl+4 in input-debug)
             // SSH and non-Mac keep ; with ' as alt
             // Win/Linux VS maps Ctrl+4 to focusFourthEditorGroup
@@ -614,7 +614,7 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Shows or hides the prompt queue.\nThe queue lets you line up follow-up prompts while a turn is running; each is sent automatically when the agent finishes.\nLocal macOS VS Code family: Ctrl+4 primary (Ctrl+; / Ctrl+' alts). Otherwise Ctrl+; with Ctrl+' alt.",
+                "Moves focus into or out of queued input. Pending input always stays directly above the composer, independently of Dock, F7 and Tasks/Todo preferences; it cannot be hidden.\nLocal macOS VS Code family: Ctrl+4 primary (Ctrl+; / Ctrl+' alts). Otherwise Ctrl+; with Ctrl+' alt.",
             ),
         },
         ActionDef {

@@ -59,7 +59,6 @@ impl AgentView {
             }
             if key.code == KeyCode::Tab
                 && self.dock_shown
-                && !self.dock_hidden
                 && self.set_active_pane(AgentPane::Dock, false)
             {
                 self.dock_cursor = 0;
@@ -314,6 +313,7 @@ impl AgentView {
                 (
                     run.run_id.clone(),
                     crate::views::dock::DockRow {
+                        warning: None,
                         kind: "Workflow".into(),
                         description: run.name.clone(),
                         activity: (!activity.is_empty()).then_some(activity),
@@ -357,6 +357,7 @@ impl AgentView {
                     info.child_session_id.to_string(),
                     info.subagent_id.to_string(),
                     crate::views::dock::DockRow {
+                        warning: info.delivery_warning(),
                         kind,
                         description,
                         activity: if running {
@@ -394,6 +395,7 @@ impl AgentView {
                 (
                     t.task_id.clone(),
                     crate::views::dock::DockRow {
+                        warning: None,
                         kind: "Run".into(),
                         description,
                         activity: None,
@@ -427,6 +429,7 @@ impl AgentView {
                 (
                     DockWatcherId::Monitor(t.task_id.clone()),
                     crate::views::dock::DockRow {
+                        warning: None,
                         kind: t.display_kind().into(),
                         description,
                         activity: None,
@@ -446,6 +449,7 @@ impl AgentView {
             (
                 DockWatcherId::Loop(s.task_id.clone()),
                 crate::views::dock::DockRow {
+                    warning: None,
                     kind: "Loop".into(),
                     description: s.prompt.clone(),
                     activity: None,
@@ -473,7 +477,7 @@ impl AgentView {
             subagents: self.dock_subagent_rows().len(),
             tasks: self.dock_task_rows().len(),
             watchers: self.dock_watcher_rows().len(),
-            queued: self.visible_held_queue_len(),
+            queued: 0,
             workflows_expanded: self.dock_workflows_expanded,
             subagents_expanded: self.dock_subagents_expanded,
             tasks_expanded: self.dock_tasks_expanded,
@@ -482,7 +486,7 @@ impl AgentView {
             subagents_show_all: self.dock_subagents_show_all,
             tasks_show_all: self.dock_tasks_show_all,
             watchers_show_all: self.dock_watchers_show_all,
-            queue_body_rows: self.queue.desired_height(),
+            queue_body_rows: 0,
             offsets: self.dock_offsets,
             max_rows: self.dock_max_rows(),
         }
@@ -510,6 +514,32 @@ impl AgentView {
             MaxRows::default()
         }
     }
+    pub(crate) fn open_work_sidebar(&mut self) -> InputOutcome {
+        self.dock_focus_in_sidebar = true;
+        if !self.sidebar_open_flags().1 {
+            self.toggle_context_sidebar()
+        } else {
+            self.clear_context_sidebar_focus();
+            self.set_active_pane(ActivePane::Dock, false);
+            InputOutcome::Changed
+        }
+    }
+
+    pub(crate) fn work_dock_at(&self, col: u16, row: u16) -> ratatui::layout::Rect {
+        let sidebar = ratatui::layout::Rect::new(self.f7_body.x, self.f7_body.y,
+            self.f7_body.width, self.dock_rows_in_sidebar);
+        if sidebar.contains((col, row).into()) { sidebar } else { self.pane_areas.dock }
+    }
+
+    pub(crate) fn work_pane_at(&self, col: u16, row: u16) -> Option<super::AgentPane> {
+        let dock = self.work_dock_at(col, row);
+        if dock.contains((col, row).into()) {
+            Some(super::AgentPane::Dock)
+        } else {
+            self.pane_areas.hit_test(col, row)
+        }
+    }
+
     /// Item painted at `row` on screen, or `None` for the queue body and rows past the content.
     pub(crate) fn dock_item_at(
         &self,
@@ -529,7 +559,11 @@ impl AgentView {
     /// budgets against the rows it asked for until the frame assigns them, so the
     /// cursor can reach a row it just uncovered.
     pub(crate) fn dock_layout(&self) -> crate::views::dock::DockLayout {
-        let assigned = self.pane_areas.dock.height;
+        let assigned = if self.dock_focus_in_sidebar {
+            self.dock_rows_in_sidebar
+        } else {
+            self.pane_areas.dock.height
+        };
         if self.dock_reveal_pending || assigned == 0 {
             crate::views::dock::DockLayout::new(&self.dock_counts())
         } else {
@@ -552,7 +586,7 @@ impl AgentView {
             crate::views::dock::Section::Subagents => self.dock_subagents_expanded,
             crate::views::dock::Section::Tasks => self.dock_tasks_expanded,
             crate::views::dock::Section::Watchers => self.dock_watchers_expanded,
-            crate::views::dock::Section::Queued => self.dock_queued_expanded,
+            crate::views::dock::Section::Queued => false,
         }
     }
     fn set_dock_section_expanded(
@@ -565,7 +599,7 @@ impl AgentView {
             crate::views::dock::Section::Subagents => &mut self.dock_subagents_expanded,
             crate::views::dock::Section::Tasks => &mut self.dock_tasks_expanded,
             crate::views::dock::Section::Watchers => &mut self.dock_watchers_expanded,
-            crate::views::dock::Section::Queued => &mut self.dock_queued_expanded,
+            crate::views::dock::Section::Queued => return InputOutcome::Unchanged,
         };
         if *slot == expanded {
             return InputOutcome::Unchanged;
@@ -693,7 +727,7 @@ impl AgentView {
                 .into_iter()
                 .map(|(_, row)| row)
                 .collect(),
-            queued: self.visible_held_queue_len(),
+            queued: 0,
             workflows_expanded: self.dock_workflows_expanded,
             subagents_expanded: self.dock_subagents_expanded,
             tasks_expanded: self.dock_tasks_expanded,
@@ -704,7 +738,7 @@ impl AgentView {
             watchers_show_all: self.dock_watchers_show_all,
             focused: self.active_pane == ActivePane::Dock,
             cursor: self.dock_cursor,
-            queue_body_rows: self.queue.desired_height(),
+            queue_body_rows: 0,
             offsets: self.dock_offsets,
             max_rows: self.dock_max_rows(),
             hovered: self.dock_hovered,
@@ -726,7 +760,8 @@ impl AgentView {
     }
     pub(crate) fn cache_dock_stop_button(&mut self) {
         let snapshot = self.dock_snapshot();
-        self.cache_dock_stop_at(self.pane_areas.dock, &snapshot);
+        let (col, row) = self.last_mouse_pos;
+        self.cache_dock_stop_at(self.work_dock_at(col, row), &snapshot);
     }
     /// Re-derive `dock_hovered` from the last pointer position against `dock`
     /// (this frame's dock rect) and the current viewport. Pass the live
@@ -904,7 +939,7 @@ impl AgentView {
     pub(super) fn handle_dock_key(&mut self, key: &KeyEvent) -> InputOutcome {
         use crate::views::dock::DockItem;
         use crossterm::event::KeyCode;
-        if !self.dock_shown || self.dock_hidden {
+        if !self.dock_shown {
             return InputOutcome::Unchanged;
         }
         let shift_tab = matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
@@ -1268,10 +1303,7 @@ impl AgentView {
             }
             return;
         }
-        let target = self
-            .pane_areas
-            .hit_test(col, row)
-            .unwrap_or(ActivePane::Scrollback);
+        let target = self.work_pane_at(col, row).unwrap_or(ActivePane::Scrollback);
         match target {
             ActivePane::Scrollback => {
                 if lines > 0 {
@@ -1289,7 +1321,7 @@ impl AgentView {
             ActivePane::Tasks => {
                 self.tasks.handle_scroll(lines, col, row);
             }
-            ActivePane::Dock => match self.dock_section_at(self.pane_areas.dock, row) {
+            ActivePane::Dock => match self.dock_section_at(self.work_dock_at(col, row), row) {
                 Some(crate::views::dock::Section::Queued) | None => {
                     self.queue.handle_scroll(lines, col, row);
                 }

@@ -216,7 +216,23 @@ impl AgentViewLayout {
         } else {
             follow_ups_height
         };
-        let top_vpad = outer_vpad;
+        let input_priority = queue_height > 0 && area.height <= SHORT_TERMINAL_ROWS;
+        let tasks_height = if input_priority { 0 } else { tasks_height };
+        let todo_height = if input_priority { 0 } else { todo_height };
+        let btw_height = if input_priority { 0 } else { btw_height };
+        let turn_status_height = if input_priority { 0 } else { turn_status_height };
+        let banner_height = if input_priority { 0 } else { banner_height };
+        let cta_height = if input_priority { 0 } else { cta_height };
+        let follow_ups_height = if input_priority { 0 } else { follow_ups_height };
+        let dock_height = if input_priority { 0 } else { dock_height };
+        let prompt_gap = if input_priority { 0 } else { prompt_gap };
+        let model_notice_height = if input_priority { 0 } else { model_notice_height };
+        let voice_recording_height = if input_priority { 0 } else { voice_recording_height };
+        let shortcuts_height = if input_priority { 0 } else { shortcuts_height };
+        let status_line_height = if input_priority { 0 } else { status_line_height };
+        let queue_height = if input_priority { queue_height.min((area.height / 3).max(1)) } else { queue_height };
+        let prompt_height = if input_priority && prompt_height > 0 { prompt_height.min(area.height.saturating_sub(queue_height + 1)).max(1) } else { prompt_height };
+        let top_vpad = if input_priority { 0 } else { outer_vpad };
         let outer_block = Block::default().padding(Padding::new(
             layout_cfg.eff_hpad_left(compact),
             layout_cfg.eff_hpad_right(compact),
@@ -242,10 +258,6 @@ impl AgentViewLayout {
         if btw_height > 0 {
             constraints.push(Constraint::Length(1));
             constraints.push(Constraint::Length(btw_height));
-        }
-        if queue_height > 0 {
-            constraints.push(Constraint::Length(1));
-            constraints.push(Constraint::Length(queue_height));
         }
         if turn_status_height > 0 {
             constraints.push(Constraint::Length(1));
@@ -275,6 +287,9 @@ impl AgentViewLayout {
         }
         if voice_recording_height > 0 {
             constraints.push(Constraint::Length(voice_recording_height));
+        }
+        if queue_height > 0 {
+            constraints.push(Constraint::Length(queue_height));
         }
         constraints.push(Constraint::Length(prompt_height));
         let pushed = constraints
@@ -312,12 +327,6 @@ impl AgentViewLayout {
         chunks.next();
         let scrollback = chunks.next().unwrap_or_default();
         let btw = if btw_height > 0 {
-            chunks.next();
-            chunks.next().unwrap_or_default()
-        } else {
-            Rect::default()
-        };
-        let queue = if queue_height > 0 {
             chunks.next();
             chunks.next().unwrap_or_default()
         } else {
@@ -362,6 +371,11 @@ impl AgentViewLayout {
             Rect::default()
         };
         let voice_recording = if voice_recording_height > 0 {
+            chunks.next().unwrap_or_default()
+        } else {
+            Rect::default()
+        };
+        let queue = if queue_height > 0 {
             chunks.next().unwrap_or_default()
         } else {
             Rect::default()
@@ -619,6 +633,16 @@ pub fn render_todo_chrome_with_close_label(
     sel.render(buf);
     Some(sel)
 }
+pub fn render_queue_chrome(
+    buf: &mut Buffer, area: Rect, layout_cfg: &LayoutConfig, focused: bool, theme: &Theme,
+) {
+    if focused && area.area() > 0 {
+        let layout = HorizontalLayout::new(area, layout_cfg);
+        SelectionBox::new(layout.selection_area(), Style::default().fg(theme.selection_border))
+            .with_closable(false, false).render(buf);
+    }
+}
+
 /// Render the scrollbar track and thumb. When `is_following` is true, the scrollbar thumb is dimmed
 /// to show the viewport is locked to the bottom. That makes follow mode (G) visible in the
 /// scrollbar itself.
@@ -2048,6 +2072,30 @@ mod tests {
         assert_eq!(layout.prompt.x, layout.model_notice.x);
         assert_eq!(layout.prompt.width, layout.model_notice.width);
     }
+    #[test]
+    fn queued_input_stays_immediately_above_composer_with_optional_surfaces_and_resize() {
+        for height in [16, 30, 60] {
+            for panels in [false, true] {
+                let layout = AgentViewLayout::compute(AgentViewLayoutParams {
+                    queue_height: 2,
+                    todo_height: u16::from(panels),
+                    tasks_height: u16::from(panels),
+                    dock_height: u16::from(panels),
+                    model_notice_height: 1,
+                    voice_recording_height: 1,
+                    turn_status_height: 1,
+                    prompt_height: 2,
+                    ..base_params(Rect::new(0, 0, 100, height))
+                });
+                assert!(layout.queue.height > 0);
+                assert!(layout.prompt.height > 0);
+                assert_eq!(layout.queue.bottom(), layout.prompt.y);
+                assert!(layout.voice_recording.bottom() <= layout.queue.y);
+                assert!(layout.dock.bottom() <= layout.queue.y);
+            }
+        }
+    }
+
     #[test]
     fn prompt_budget_excludes_the_prompts_own_requested_height() {
         let params = AgentViewLayoutParams {

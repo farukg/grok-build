@@ -182,25 +182,25 @@ mod model_notice_tests;
 mod rewind;
 mod role;
 pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
+mod context_removal;
+mod context_sidebar;
+#[cfg(test)]
+mod context_sidebar_tests;
+mod panel_persistence;
+#[cfg(test)]
+pub(crate) mod removal_test_support;
+pub(crate) mod removal_verdict;
 mod selection;
 mod session;
 mod session_mode;
 mod shell_completion;
-#[cfg(test)]
-mod task_icon_mouse_tests;
-#[cfg(test)]
-mod task_status_tests;
-mod context_removal;
-pub(crate) mod removal_verdict;
-#[cfg(test)]
-pub(crate) mod removal_test_support;
-mod context_sidebar;
-mod panel_persistence;
 mod sidebars;
 #[cfg(test)]
 mod sidebars_tests;
 #[cfg(test)]
-mod context_sidebar_tests;
+mod task_icon_mouse_tests;
+#[cfg(test)]
+mod task_status_tests;
 mod timeline_panel;
 mod viewer;
 mod workflows_overlay;
@@ -847,15 +847,11 @@ pub struct AgentView {
     /// Hover is independent of dock keyboard focus.
     pub dock_hovered: Option<crate::views::dock::DockItem>,
     pub dock_stop_button: Option<CachedDockStop>,
-    /// Sticky: render enforces the queue overlay's visibility from this each
-    /// frame, so the queue's auto-show can't re-open a manual collapse.
-    pub dock_queued_expanded: bool,
-    /// Last frame: dock replaced Tasks/Queue, even if every section is empty.
+    /// Whether the optional upper work projection is enabled this frame.
     pub dock_on: bool,
-    /// Last frame: dock painted (`dock_on` and ≥1 non-empty section).
+    pub(crate) dock_focus_in_sidebar: bool,
+    /// At least one work projection was painted this frame.
     pub dock_shown: bool,
-    /// Sticky: Ctrl+G hid the dock; paint stays off until the next Ctrl+G.
-    pub dock_hidden: bool,
     /// Current mode of the prompt widget (normal vs editing a queued prompt).
     pub prompt_mode: PromptMode,
     /// Current special prompt input mode (Normal/Bash/Remember).
@@ -1108,8 +1104,6 @@ pub struct AgentView {
     /// Still-running watcher cue on the turn-status row (click opens the tasks pane, same as `Ctrl+G`).
     /// tasks pane, same as `Ctrl+G`).
     pub hit_watching_cue: HitArea,
-    /// One-time Ctrl+G toast already fired for a watching-cue click.
-    pub(crate) watching_cue_toast_shown: bool,
     /// `[hide]` button on the announcement banner (click runs `/announcements hide`).
     pub hit_announcement_hide: HitArea,
     /// `[label]` CTA button on the promo banner row (click opens its link).
@@ -2346,6 +2340,8 @@ pub(crate) mod test_fixtures {
                 error_count: None,
                 activity_label: None,
                 delivery: Default::default(),
+                completion: Default::default(),
+                caller: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,

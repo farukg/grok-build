@@ -109,7 +109,7 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
         press(&mut agent, KeyCode::Esc),
         InputOutcome::Changed
     ));
-    assert!(!screen(&draw(&mut agent)).contains("Context sent to the model"));
+    assert!(!screen(&draw(&mut agent)).contains("Session overview"));
 }
 
 fn click_row(agent: &mut AgentView, buf: &Buffer, label: &str) -> InputOutcome {

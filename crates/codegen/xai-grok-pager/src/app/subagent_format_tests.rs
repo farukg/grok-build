@@ -71,8 +71,14 @@ fn badge_for_wire(fields: serde_json::Value) -> String {
 #[test]
 fn context_badge_shown_only_for_resumed_and_forked() {
     let cases = [
-        (serde_json::json!({"effective_context_source": "resumed"}), "resumed"),
-        (serde_json::json!({"effective_context_source": "forked"}), "forked"),
+        (
+            serde_json::json!({"effective_context_source": "resumed"}),
+            "resumed",
+        ),
+        (
+            serde_json::json!({"effective_context_source": "forked"}),
+            "forked",
+        ),
         (serde_json::json!({"effective_context_source": "new"}), ""),
         (serde_json::json!({}), ""),
     ];

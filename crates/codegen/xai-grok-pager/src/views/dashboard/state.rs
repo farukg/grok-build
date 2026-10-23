@@ -1032,9 +1032,7 @@ pub struct SessionIdResolver {
 impl SessionIdResolver {
     /// Resolve queries for a collided id therefore return the first-seen `AgentId`, which is
     /// deterministic given the `IndexMap` iteration order.
-    pub fn from_agents(
-        agents: &crate::app::session_views::SessionViews,
-    ) -> Self {
+    pub fn from_agents(agents: &crate::app::session_views::SessionViews) -> Self {
         Self::from_agents_and_workspace(agents, None)
     }
 
@@ -1861,10 +1859,7 @@ impl DashboardState {
         self.peek = peek;
     }
 
-    pub fn restore_peek_viewport(
-        &mut self,
-        agents: &mut crate::app::session_views::SessionViews,
-    ) {
+    pub fn restore_peek_viewport(&mut self, agents: &mut crate::app::session_views::SessionViews) {
         let Some(lease) = self.peek_viewport.take() else {
             return;
         };

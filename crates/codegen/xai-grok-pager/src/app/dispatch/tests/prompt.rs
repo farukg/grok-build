@@ -797,13 +797,28 @@ fn focus_prompt_targets_child_session() {
         make_test_agent_session(&app, child_id, "child-overlay-focus"),
         ScrollbackState::new(),
     );
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
-    app.agents.get_mut(&parent_id).unwrap().set_active_pane(ActivePane::Scrollback, true);
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
+    app.agents
+        .get_mut(&parent_id)
+        .unwrap()
+        .set_active_pane(ActivePane::Scrollback, true);
     app.active_view = ActiveView::Agent(child_id);
     let effects = dispatch(Action::FocusPrompt, &mut app);
     assert!(effects.is_empty());
-    assert_eq!(ActivePane::Prompt, app.agents.get(&child_id).unwrap().active_pane);
-    assert_eq!(ActivePane::Scrollback, app.agents.get(&parent_id).unwrap().active_pane);
+    assert_eq!(
+        ActivePane::Prompt,
+        app.agents.get(&child_id).unwrap().active_pane
+    );
+    assert_eq!(
+        ActivePane::Scrollback,
+        app.agents.get(&parent_id).unwrap().active_pane
+    );
 }
 
 #[test]
@@ -838,11 +853,23 @@ fn child_enter_emits_session_prompt_for_child_sid() {
         make_test_agent_session(&app, child_id, "child-prompt"),
         ScrollbackState::new(),
     );
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.active_view = ActiveView::Agent(child_id);
-    app.agents.get_mut(&child_id).unwrap().prompt.set_text("hello child");
+    app.agents
+        .get_mut(&child_id)
+        .unwrap()
+        .prompt
+        .set_text("hello child");
     let effects = dispatch(Action::SendPrompt("hello child".into()), &mut app);
-    assert!(matches!(effects.as_slice(), [Effect::SendPrompt { session_id, text, .. }] if &*session_id.0 == "child-prompt" && text == "hello child"));
+    assert!(
+        matches!(effects.as_slice(), [Effect::SendPrompt { session_id, text, .. }] if &*session_id.0 == "child-prompt" && text == "hello child")
+    );
 }
 
 /// Register `pr-workflow` as an ACP-advertised skill on the agent's slash registry, mirroring the shell's available-commands sync.
@@ -3550,10 +3577,18 @@ fn child_slash_compact_emits_compact_for_child() {
         make_test_agent_session(&app, child_id, "child-compact"),
         ScrollbackState::new(),
     );
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.active_view = ActiveView::Agent(child_id);
     let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
-    assert!(matches!(effects.as_slice(), [Effect::Compact { session_id, .. }] if &*session_id.0 == "child-compact"));
+    assert!(
+        matches!(effects.as_slice(), [Effect::Compact { session_id, .. }] if &*session_id.0 == "child-compact")
+    );
 }
 
 #[test]
@@ -6755,7 +6790,14 @@ fn bash_command_from_a_child_view_names_its_parent() {
 
     let mut app = test_app_with_agent();
     let parent_id = AgentId(0);
-    let parent_session_id = app.agents.get(&parent_id).unwrap().session.session_id.clone().unwrap();
+    let parent_session_id = app
+        .agents
+        .get(&parent_id)
+        .unwrap()
+        .session
+        .session_id
+        .clone()
+        .unwrap();
     let mut child = AgentView::new(
         make_test_agent_session(&app, AgentId(1), "child-bash"),
         ScrollbackState::new(),

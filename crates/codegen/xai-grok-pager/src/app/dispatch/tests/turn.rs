@@ -225,9 +225,6 @@ fn cancel_turn_without_subagents_cancels_immediately() {
     assert!(get_agent(&app, id).session.state.is_cancelling());
 }
 
-
-
-
 #[test]
 fn cancel_turn_forwards_trigger_hint_to_effect() {
     // The key/mouse producer sets `cancel_trigger_hint` (here the dashboard stop) before dispatching CancelTurn
@@ -1010,7 +1007,13 @@ fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
     let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
     let effects = dispatch(Action::CancelTurn, &mut app);
@@ -1028,8 +1031,21 @@ fn cancel_turn_in_child_session_cancels_child_while_parent_idle() {
         "overlay stop must emit CancelTurn for the child session, got {effects:?}"
     );
     assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
-    assert!(app.agents.get(&parent_id).unwrap().cancel_turn_view.is_none());
-    assert!(app.agents.get(&child_id).unwrap().session.state.is_cancelling());
+    assert!(
+        app.agents
+            .get(&parent_id)
+            .unwrap()
+            .cancel_turn_view
+            .is_none()
+    );
+    assert!(
+        app.agents
+            .get(&child_id)
+            .unwrap()
+            .session
+            .state
+            .is_cancelling()
+    );
 }
 
 /// Esc on a running child cancels that session without opening the parent's ask panel.
@@ -1043,7 +1059,13 @@ fn child_esc_emits_session_cancel_for_child() {
     let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.agents.get_mut(&parent_id).unwrap().session.state = AgentState::TurnRunning;
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
@@ -1060,9 +1082,29 @@ fn child_esc_emits_session_cancel_for_child() {
         ),
         "overlay stop must target the child session, got {effects:?}"
     );
-    assert!(app.agents.get(&parent_id).unwrap().cancel_turn_view.is_none());
-    assert!(app.agents.get(&parent_id).unwrap().session.state.is_turn_running());
-    assert!(app.agents.get(&child_id).unwrap().session.state.is_cancelling());
+    assert!(
+        app.agents
+            .get(&parent_id)
+            .unwrap()
+            .cancel_turn_view
+            .is_none()
+    );
+    assert!(
+        app.agents
+            .get(&parent_id)
+            .unwrap()
+            .session
+            .state
+            .is_turn_running()
+    );
+    assert!(
+        app.agents
+            .get(&child_id)
+            .unwrap()
+            .session
+            .state
+            .is_cancelling()
+    );
 }
 
 /// Leaving a child whose cancel still awaits its resend keeps Fast ticks, so the resend fires off-screen.
@@ -1077,7 +1119,13 @@ fn tick_demand_fast_after_leaving_a_cancelling_child() {
     child_session.state = AgentState::TurnRunning;
     let mut child = AgentView::new(child_session, ScrollbackState::new());
     child.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::Mouse);
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.next_agent_id = 2;
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     let effects = dispatch(Action::CancelTurn, &mut app);
@@ -1105,7 +1153,13 @@ fn reconcile_overdue_cancels_resends_for_child_session() {
     child_session.state = AgentState::TurnRunning;
     let mut child = AgentView::new(child_session, ScrollbackState::new());
     child.cancel_trigger_hint = Some(CancelTrigger::Mouse);
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = dispatch(Action::CancelTurn, &mut app);
@@ -1146,11 +1200,24 @@ fn cancel_turn_on_idle_parent_does_not_cancel_background_child() {
     let mut child_session = make_test_agent_session(&app, child_id, child_sid);
     child_session.state = AgentState::TurnRunning;
     let child = AgentView::new(child_session, ScrollbackState::new());
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     let effects = dispatch(Action::CancelTurn, &mut app);
     assert!(effects.is_empty());
     assert!(app.agents.get(&parent_id).unwrap().session.state.is_idle());
-    assert!(app.agents.get(&child_id).unwrap().session.state.is_turn_running());
+    assert!(
+        app.agents
+            .get(&child_id)
+            .unwrap()
+            .session
+            .state
+            .is_turn_running()
+    );
 }
 
 #[test]
@@ -2148,7 +2215,13 @@ fn kill_bg_task_in_child_session_names_child_sid() {
         .session
         .bg_tasks
         .insert("bg-child".into(), super::make_bg_task("bg-child"));
-    link_child(&mut app.agents, root_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        root_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
 
     let effects = dispatch(Action::KillBgTask("bg-child".into()), &mut app);
@@ -2241,14 +2314,29 @@ fn mouse_reporting_toggle_sticky_survives_child_navigation() {
         make_test_agent_session(&app, child_id, "child-mouse-toggle"),
         ScrollbackState::new(),
     );
-    link_child(&mut app.agents, parent_id, child_id, child, std::time::Instant::now());
+    link_child(
+        &mut app.agents,
+        parent_id,
+        child_id,
+        child,
+        std::time::Instant::now(),
+    );
     app.active_view = crate::app::app_view::ActiveView::Agent(child_id);
     app.registry = crate::actions::ActionRegistry::defaults_with_config(true);
     let _ = dispatch(Action::ToggleMouseCapture, &mut app);
-    assert_eq!(app.agents.get(&parent_id).unwrap().sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
-    assert_eq!(app.agents.get(&child_id).unwrap().sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(
+        app.agents.get(&parent_id).unwrap().sticky_toast.as_deref(),
+        Some(MOUSE_OFF_STICKY)
+    );
+    assert_eq!(
+        app.agents.get(&child_id).unwrap().sticky_toast.as_deref(),
+        Some(MOUSE_OFF_STICKY)
+    );
     app.active_view = crate::app::app_view::ActiveView::Agent(parent_id);
-    assert_eq!(app.agents.get(&parent_id).unwrap().sticky_toast.as_deref(), Some(MOUSE_OFF_STICKY));
+    assert_eq!(
+        app.agents.get(&parent_id).unwrap().sticky_toast.as_deref(),
+        Some(MOUSE_OFF_STICKY)
+    );
     reset_mouse_capture_enabled(true);
 }
 

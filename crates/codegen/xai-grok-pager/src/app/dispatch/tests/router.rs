@@ -1077,7 +1077,10 @@ fn child_model_switch_targets_child_sid() {
     let mut app = test_app_with_agent();
     let parent = AgentId(0);
     let child = AgentId(1);
-    let child_view = AgentView::new(make_test_agent_session(&app, child, "child-model"), ScrollbackState::new());
+    let child_view = AgentView::new(
+        make_test_agent_session(&app, child, "child-model"),
+        ScrollbackState::new(),
+    );
     link_child(
         &mut app.agents,
         parent,
@@ -1087,8 +1090,13 @@ fn child_model_switch_targets_child_sid() {
     );
     app.active_view = ActiveView::Agent(child);
     let model_id = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
-    let effects = dispatch(Action::SwitchModel(ModelChoice::new(model_id.clone())), &mut app);
-    assert!(matches!(effects.as_slice(), [Effect::SwitchModel { session_id, choice, .. }] if &*session_id.0 == "child-model" && choice.model_id == model_id));
+    let effects = dispatch(
+        Action::SwitchModel(ModelChoice::new(model_id.clone())),
+        &mut app,
+    );
+    assert!(
+        matches!(effects.as_slice(), [Effect::SwitchModel { session_id, choice, .. }] if &*session_id.0 == "child-model" && choice.model_id == model_id)
+    );
 }
 #[test]
 fn switch_model_allowed_when_agent_chat_kind() {

@@ -106,7 +106,10 @@ impl RowClick {
         if modifiers.contains(KeyModifiers::CONTROL) {
             Self::Bulk(BulkRequest::toggle(BulkScope::Subtree, BulkAnchor::Exclude))
         } else if modifiers.contains(KeyModifiers::SHIFT) {
-            Self::Bulk(BulkRequest::toggle(BulkScope::Siblings, BulkAnchor::Exclude))
+            Self::Bulk(BulkRequest::toggle(
+                BulkScope::Siblings,
+                BulkAnchor::Exclude,
+            ))
         } else if on_glyph {
             Self::Toggle
         } else {
@@ -127,18 +130,22 @@ pub fn bulk_request_for(key: &KeyEvent) -> Option<BulkRequest> {
     match key.code {
         KeyCode::Enter if ctrl_only => Some(BulkRequest::toggle(BulkScope::Subtree, leave_row)),
         KeyCode::Enter if shift_only => Some(BulkRequest::toggle(BulkScope::Siblings, leave_row)),
-        KeyCode::Right if shift_only => {
-            Some(BulkRequest::set(BulkScope::Subtree, BulkDirection::Expand, leave_row))
-        }
+        KeyCode::Right if shift_only => Some(BulkRequest::set(
+            BulkScope::Subtree,
+            BulkDirection::Expand,
+            leave_row,
+        )),
         KeyCode::Left if shift_only => Some(BulkRequest::set(
             BulkScope::Subtree,
             BulkDirection::Collapse,
             leave_row,
         )),
         KeyCode::Char('*') if plain => Some(BulkRequest::toggle(BulkScope::All, sweep)),
-        KeyCode::Char('+') if plain => {
-            Some(BulkRequest::set(BulkScope::Siblings, BulkDirection::Expand, sweep))
-        }
+        KeyCode::Char('+') if plain => Some(BulkRequest::set(
+            BulkScope::Siblings,
+            BulkDirection::Expand,
+            sweep,
+        )),
         KeyCode::Char('-') if plain => Some(BulkRequest::set(
             BulkScope::Siblings,
             BulkDirection::Collapse,

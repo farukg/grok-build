@@ -14,8 +14,8 @@ pub mod verb_group;
 
 pub(crate) use layout::ScrollAnchor;
 pub use layout::compute_paint_window;
-pub use timeline::{TimelineEntry, TimelineRow, TimelineRowKey, TimelineRowKind};
 pub(crate) use timeline::prompt_preview;
+pub use timeline::{TimelineEntry, TimelineRow, TimelineRowKey, TimelineRowKind};
 pub use types::*;
 
 use layout::{LayoutCache, StructuralScrollAnchor};
@@ -28,12 +28,12 @@ use indexmap::IndexMap;
 use ratatui::layout::Rect;
 
 use super::block::{BlockContent, DisplayDefaults, EntryForm, MessageKind, RenderBlock};
-use super::types::DisplayForm;
 use super::blocks::tool::{EditToolCallBlock, ToolCallBlock};
 use super::entry::{EntryId, ScrollbackEntry};
 use super::layout::HorizontalLayout;
 use super::selection::SelectionBox;
 use super::sticky::{PromptDescriptor, StickyHeaderLayout, compute_sticky_layout};
+use super::types::DisplayForm;
 use super::types::DisplayMode;
 use super::wrappers::EntryRenderer;
 use crate::appearance::AppearanceConfig;
@@ -424,9 +424,7 @@ impl ScrollbackState {
         self.display_defaults.set(kind, form);
         let mode = DisplayMode::from(form);
         for entry in self.entries.values_mut() {
-            if MessageKind::from(&entry.block) == kind
-                && entry.form == EntryForm::FollowingKind
-            {
+            if MessageKind::from(&entry.block) == kind && entry.form == EntryForm::FollowingKind {
                 entry.display_mode = mode;
                 entry.invalidate_cache();
             }
@@ -668,16 +666,14 @@ impl ScrollbackState {
         let setting = self.display_defaults.get(MessageKind::from(&entry.block));
         entry.display_mode = match (&entry.block, setting) {
             (RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), setting) => {
-                let expanded_by_default = match setting {
-                    Some(DisplayForm::Expanded) => true,
-                    Some(DisplayForm::Collapsed) => false,
-                    None => self
-                        .appearance
-                        .scrollback
-                        .blocks
-                        .edit
-                        .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks()),
-                };
+                let expanded_by_default =
+                    match setting {
+                        Some(DisplayForm::Expanded) => true,
+                        Some(DisplayForm::Collapsed) => false,
+                        None => self.appearance.scrollback.blocks.edit.effective_expanded(
+                            crate::appearance::cache::load_collapsed_edit_blocks(),
+                        ),
+                    };
                 edit_default_display_mode(expanded_by_default, edit)
             }
             (_, Some(form)) => DisplayMode::from(form),

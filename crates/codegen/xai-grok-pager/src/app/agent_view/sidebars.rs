@@ -2,6 +2,8 @@
 //! Both use the shared sidebar component, so header and footer heights and the column split come from one place.
 
 use super::AgentView;
+use crate::scrollback::state::ScrollbackState;
+use crate::theme::Theme;
 use crate::views::prompt_widget::PromptWidget;
 use crate::views::sidebar::{
     HostedSection, Sidebar, SidebarContent, SidebarEdge, SidebarHeights, SidebarLayout,
@@ -11,8 +13,6 @@ use crate::views::timeline::MIN_TERMINAL_WIDTH;
 use crate::views::timeline_panel::footer_memo::FooterRowsKey;
 use crate::views::timeline_panel::hint::{footer_lines, footer_rows, status_line};
 use crate::views::timeline_panel::{PanelFocus, TimelinePanelState, render_panel};
-use crate::scrollback::state::ScrollbackState;
-use crate::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -55,9 +55,6 @@ impl HostedSection for TimelineBody<'_> {
 pub(crate) struct PendingDock {
     pub(crate) data: crate::views::dock::DockData,
     pub(crate) rect: Rect,
-    pub(crate) scrollback: Rect,
-    pub(crate) layout_cfg: crate::appearance::LayoutConfig,
-    pub(crate) overlay_focused: bool,
 }
 
 /// Blank rows the dock is painted over.
@@ -74,38 +71,24 @@ impl HostedSection for DockSlot {
 impl AgentView {
     /// Paint the dock into the F7 column, after the sidebar chrome.
     pub(super) fn draw_pending_dock(&mut self, buf: &mut Buffer) {
-        self.dock_stop_button = None;
-        let Some(PendingDock {
-            data,
-            rect,
-            scrollback,
-            layout_cfg,
-            overlay_focused,
-        }) = self.pending_dock.take()
+        let Some(PendingDock { data, rect }) = self.pending_dock.take()
         else {
             return;
         };
         let theme = Theme::current();
         crate::views::dock::render(buf, rect, &theme, &data);
-        self.cache_dock_stop_at(rect, &data);
-        let queue_body = crate::views::dock::queue_body_rect(rect, &data);
-        if queue_body.height > 0 {
-            let queue_focused = self.active_pane == super::ActivePane::Queue && !overlay_focused;
-            self.queue.render(
-                queue_body,
-                buf,
-                queue_focused,
-                &layout_cfg,
-                Some(scrollback),
-                self.can_send_now(),
-            );
+        if rect.contains(self.last_mouse_pos.into()) {
+            self.cache_dock_stop_at(rect, &data);
         }
     }
 
     /// Which side columns take space this frame. The timeline needs a terminal wide enough for its rail.
     pub(crate) fn sidebars_open(&self, area_width: u16) -> SidebarsOpen {
         let timeline = self.timeline_mode.panel().is_some() && area_width >= MIN_TERMINAL_WIDTH;
-        let context = matches!(self.context_sidebar, super::context_sidebar::ContextSidebar::Open(_));
+        let context = matches!(
+            self.context_sidebar,
+            super::context_sidebar::ContextSidebar::Open(_)
+        );
         match (timeline, context) {
             (false, false) => SidebarsOpen::None,
             (true, false) => SidebarsOpen::Left,
@@ -138,7 +121,11 @@ impl AgentView {
             ..base
         };
         let body = SidebarLayout::compute(area, heights).body;
-        self.sync_timeline_panel_frame(if area.width == 0 { Rect::default() } else { body });
+        self.sync_timeline_panel_frame(if area.width == 0 {
+            Rect::default()
+        } else {
+            body
+        });
         let context = self.timeline_footer_context();
         let Some(panel) = self.timeline_mode.panel() else {
             return;

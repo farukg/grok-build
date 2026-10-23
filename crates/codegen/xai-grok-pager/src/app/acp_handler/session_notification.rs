@@ -573,6 +573,8 @@ pub(super) fn handle_session_notification_with_origin(
                 error_count: None,
                 activity_label: None,
                 delivery: Default::default(),
+                completion: Default::default(),
+                caller: Default::default(),
                 is_background,
                 pending_kill: false,
                 kill_requested_at: None,
@@ -743,6 +745,8 @@ pub(super) fn handle_session_notification_with_origin(
             tools_used,
             error_count,
             delivery,
+            completion,
+            caller,
             ..
         } => {
             if let Some(info) = agent.subagent_sessions.get_mut(&child_session_id) {
@@ -755,6 +759,8 @@ pub(super) fn handle_session_notification_with_origin(
                 info.attempt.tools_used = tools_used.into_iter().map(Arc::from).collect();
                 info.attempt.error_count = Some(error_count);
                 info.attempt.delivery = delivery;
+                info.attempt.completion = completion;
+                info.attempt.caller = caller;
                 info.attempt.last_progress_at = std::time::Instant::now();
             }
             child_follow_up = lifecycle_child.map(|child| ChildViewFollowUp::Progressed {
@@ -790,6 +796,10 @@ pub(super) fn handle_session_notification_with_origin(
             let existing_terminal = info_ref.and_then(|info| info.attempt.terminal_entry_id);
             if let Some(eid) = entry_id {
                 agent.scrollback.finish_running(eid);
+            }
+            if let Some(info) = agent.subagent_sessions.get_mut(&child_session_id) {
+                info.attempt.completion = Default::default();
+                info.attempt.caller = Default::default();
             }
             sync_subagent_activity(agent, &child_session_id, None);
             if is_background {

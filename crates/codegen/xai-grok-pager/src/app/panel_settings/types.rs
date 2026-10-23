@@ -44,7 +44,8 @@ impl DisclosureState {
     }
 }
 
-/// The collapsible sections of the F7 context sidebar. The snake_case names are the on-disk keys.
+/// Panel disclosure preferences. Tasks and Todo control only the global upper projection.
+/// The snake_case names are the on-disk keys.
 #[derive(
     Debug,
     Clone,
@@ -61,6 +62,17 @@ impl DisclosureState {
 pub enum SidebarSection {
     Context,
     MessageDisplay,
+    Tasks,
+    Todo,
+}
+
+impl SidebarSection {
+    pub(super) const fn storage_layer(self, requested: Layer) -> Layer {
+        match self {
+            Self::Tasks | Self::Todo => Layer::Global,
+            Self::Context | Self::MessageDisplay => requested,
+        }
+    }
 }
 
 /// The conversation's prompt ordinal (`UserPromptBlock::prompt_index`): stable across restarts and replay,

@@ -113,9 +113,11 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
         let key = format!("{SIDEBAR}.{name}");
         match (name.parse::<SidebarSection>().ok(), disclosure_of(item)) {
             (Some(section), Some(state)) => {
-                decoded
-                    .settings
-                    .apply(&Edit::Set(Setting::Section { section, state }));
+                if section.storage_layer(layer) != layer {
+                    decoded.problems.push(LoadProblem::IgnoredEntry { key });
+                } else {
+                    decoded.settings.apply(&Edit::Set(Setting::Section { section, state }));
+                }
             }
             (None, _) | (_, None) => decoded.problems.push(LoadProblem::IgnoredEntry { key }),
         }

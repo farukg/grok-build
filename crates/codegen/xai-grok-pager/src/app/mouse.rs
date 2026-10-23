@@ -48,14 +48,7 @@ impl AgentView {
                     return InputOutcome::Changed;
                 }
                 if self.hit_bg_status.contains(mouse.column, mouse.row) {
-                    self.tasks.overlay.toggle();
-                    self.tasks.on_state_change();
-                    if self.tasks.overlay.focused {
-                        self.set_active_pane(AgentPane::Tasks, false);
-                    } else if self.active_pane == AgentPane::Tasks {
-                        self.set_active_pane(AgentPane::Scrollback, false);
-                    }
-                    return InputOutcome::Changed;
+                    return self.open_work_sidebar();
                 }
                 if self.hit_goal_status.contains(mouse.column, mouse.row) {
                     if !self.workflow_runs.is_empty() {
@@ -157,19 +150,7 @@ impl AgentView {
                 if self.hit_watching_cue.contains(mouse.column, mouse.row)
                     && !self.pos_occluded(mouse.column, mouse.row)
                 {
-                    let was_visible = self.tasks.overlay.visible;
-                    self.tasks.overlay.toggle();
-                    self.tasks.on_state_change();
-                    if self.tasks.overlay.focused {
-                        self.set_active_pane(AgentPane::Tasks, false);
-                    } else if self.active_pane == AgentPane::Tasks {
-                        self.set_active_pane(AgentPane::Scrollback, false);
-                    }
-                    if !was_visible && !self.watching_cue_toast_shown {
-                        self.watching_cue_toast_shown = true;
-                        self.show_toast("Tip: Ctrl+G toggles the tasks pane");
-                    }
-                    return InputOutcome::Changed;
+                    return self.open_work_sidebar();
                 }
                 if self.hit_announcement_hide.contains(mouse.column, mouse.row)
                     && !self.pos_occluded(mouse.column, mouse.row)
@@ -432,9 +413,11 @@ impl AgentView {
                     }
                     return InputOutcome::Unchanged;
                 }
-                match self.pane_areas.hit_test(mouse.column, mouse.row) {
+                match self.work_pane_at(mouse.column, mouse.row) {
                     Some(AgentPane::Dock) => {
-                        let item = self.dock_item_at(self.pane_areas.dock, mouse.row);
+                        self.clear_context_sidebar_focus();
+                        self.dock_focus_in_sidebar = self.f7_body.contains((mouse.column, mouse.row).into());
+                        let item = self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
                         if let Some(hit) = self
                             .dock_stop_button
                             .clone()
@@ -475,7 +458,7 @@ impl AgentView {
                                 }
                                 let outcome = self.activate_dock_item(item);
                                 self.dock_hovered =
-                                    self.dock_item_at(self.pane_areas.dock, mouse.row);
+                                    self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
                                 self.cache_dock_stop_button();
                                 match outcome {
                                     InputOutcome::Changed | InputOutcome::Unchanged => {
@@ -992,7 +975,7 @@ impl AgentView {
                     || self.pending_block_drag.is_some()
                     || self.block_drag_selection.is_some()
                     || self.deferred_text_press.is_some();
-                let hit = self.pane_areas.hit_test(mouse.column, mouse.row);
+                let hit = self.work_pane_at(mouse.column, mouse.row);
                 let on_rail = self
                     .timeline_rail
                     .as_ref()
@@ -1050,7 +1033,7 @@ impl AgentView {
                     changed = true;
                 }
                 if hit == Some(AgentPane::Dock) {
-                    let new = self.dock_item_at(self.pane_areas.dock, mouse.row);
+                    let new = self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
                     if new != self.dock_hovered {
                         self.dock_hovered = new;
                         changed = true;
@@ -1065,7 +1048,7 @@ impl AgentView {
                 changed |= self.hit_todo_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_queue_close.update_hover(mouse.column, mouse.row);
                 if matches!(
-                    self.pane_areas.hit_test(mouse.column, mouse.row),
+                    self.work_pane_at(mouse.column, mouse.row),
                     Some(AgentPane::Queue)
                 ) {
                     changed |= self.queue.update_delete_hover(mouse.column, mouse.row);
@@ -1134,7 +1117,9 @@ impl AgentView {
                     .hit_session_parent
                     .update_hover(mouse.column, mouse.row);
                 changed |= self.hit_session_child.update_hover(mouse.column, mouse.row);
-                changed |= self.hit_session_dismiss.update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .hit_session_dismiss
+                    .update_hover(mouse.column, mouse.row);
                 changed |= self.hit_overlay_prev.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_overlay_next.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_upgrade_cta.update_hover(mouse.column, mouse.row);

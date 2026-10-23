@@ -173,13 +173,21 @@ fn finished_child_evicted_on_leave_and_replayed_on_open() {
     info.set_finished_for_test(true);
     let child = make_min_child_view();
     let (mut views, child_id) = session_views(child_sid, child, info);
-    assert_eq!(replay_on_open(&mut views, child_id), ChildReplayOutcome::Replayed);
+    assert_eq!(
+        replay_on_open(&mut views, child_id),
+        ChildReplayOutcome::Replayed
+    );
     assert_eq!(evict_on_leave(&mut views, child_id), EvictOutcome::Evicted);
     assert!(
-        views.get(&child_id).is_some_and(|child| child.scrollback.is_empty()),
+        views
+            .get(&child_id)
+            .is_some_and(|child| child.scrollback.is_empty()),
         "eviction drops the rebuilt content, never the session view"
     );
-    assert_eq!(replay_on_open(&mut views, child_id), ChildReplayOutcome::Replayed);
+    assert_eq!(
+        replay_on_open(&mut views, child_id),
+        ChildReplayOutcome::Replayed
+    );
     assert_eq!(views.get(&child_id).unwrap().scrollback.len(), 1);
     set_replay_grok_home_for_tests(None);
 }
@@ -693,7 +701,10 @@ fn child_view_for_live_update_hydrates_a_resumed_child_before_returning_it() {
     info.child_session_id = child_sid.into();
     info.attempt.context = xai_grok_shell::extensions::subagent_context::SubagentContext::Resumed;
     let (mut views, child_id) = session_views(child_sid, make_min_child_view(), info);
-    assert_eq!(replay_on_open(&mut views, child_id), ChildReplayOutcome::Replayed);
+    assert_eq!(
+        replay_on_open(&mut views, child_id),
+        ChildReplayOutcome::Replayed
+    );
     {
         let view = views.get(&child_id).unwrap();
         let tools = (0..view.scrollback.len())

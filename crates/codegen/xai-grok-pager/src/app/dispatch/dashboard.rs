@@ -18,9 +18,9 @@ use super::session::load::focus_if_session_already_open;
 use super::session::modal::{dispatch_sessions_confirm_close, remove_agent_and_cleanup};
 use super::turn::dispatch_cancel_turn;
 use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
+use crate::app::actions::Direction;
 use crate::app::actions::{Action, Effect, PermissionModeKind};
 use crate::app::agent::{AgentId, DeferredModelSwitch};
-use crate::app::actions::Direction;
 use crate::app::agent_view::AgentView;
 use crate::app::app_view::{ActiveView, AppView, DashboardReturn, TrustState};
 use crate::app::cancel_latency::CancelOrigin;
@@ -1016,7 +1016,10 @@ fn cycle_target(order: &[AgentId], current: AgentId, direction: Direction) -> Op
     order.get(next).copied()
 }
 
-pub(super) fn dispatch_navigate_tree(app: &mut AppView, step: crate::app::actions::TreeStep) -> Vec<Effect> {
+pub(super) fn dispatch_navigate_tree(
+    app: &mut AppView,
+    step: crate::app::actions::TreeStep,
+) -> Vec<Effect> {
     let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
@@ -1028,13 +1031,15 @@ pub(super) fn dispatch_navigate_tree(app: &mut AppView, step: crate::app::action
                 None
             }
         },
-        crate::app::actions::TreeStep::LatestChild => match app.agents.children_of(current).last() {
-            Some(child) => Some(*child),
-            None => {
-                app.show_toast("No child session");
-                None
+        crate::app::actions::TreeStep::LatestChild => {
+            match app.agents.children_of(current).last() {
+                Some(child) => Some(*child),
+                None => {
+                    app.show_toast("No child session");
+                    None
+                }
             }
-        },
+        }
     };
     if let Some(target) = target {
         switch_to_agent(app, target, SwitchCause::Navigate);
@@ -1147,7 +1152,10 @@ fn session_cycle(app: &mut AppView) -> crate::views::dashboard::SessionCycle {
     )
 }
 /// `current`'s `i/n` in [`session_cycle`] for the header switcher, memoized on `app.session_cycle` until it is marked stale.
-pub(crate) fn session_cycle_position(app: &mut AppView, current: AgentId) -> Option<(usize, usize)> {
+pub(crate) fn session_cycle_position(
+    app: &mut AppView,
+    current: AgentId,
+) -> Option<(usize, usize)> {
     match cycle_scope(app, current)? {
         CycleScope::Siblings(order) => {
             crate::views::dashboard::SessionCycle::from_order(order).position(current)
@@ -1160,7 +1168,7 @@ pub(crate) fn session_cycle_position(app: &mut AppView, current: AgentId) -> Opt
                 app.session_cycle = crate::views::dashboard::SessionCycleCache::Fresh(cycle);
                 position
             }
-        }
+        },
     }
 }
 pub(super) fn dispatch_dashboard_dispatch(

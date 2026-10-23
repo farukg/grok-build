@@ -1946,12 +1946,13 @@ pub(crate) fn execute(
                 TaskResult::ContextPolicyAnswered { agent_id, result }
             });
         }
-        Effect::DeliverSubagent { child_session_id } => {
+        Effect::DeliverSubagent { child_session_id, delivery } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
                     let params = xai_grok_shell::extensions::subagent_deliver::DeliverSubagentRequest {
                         session_id: child_session_id.0.to_string(),
+                        delivery,
                     };
                     let outcome = match serde_json::value::to_raw_value(&params) {
                         Ok(raw) => {

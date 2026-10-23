@@ -157,6 +157,8 @@ pub(super) fn make_subagent_info(child_sid: &str) -> SubagentInfo {
             error_count: None,
             activity_label: None,
             delivery: Default::default(),
+        completion: Default::default(),
+        caller: Default::default(),
             is_background: false,
             pending_kill: false,
             kill_requested_at: None,
@@ -1538,6 +1540,8 @@ pub(super) fn test_subagent_progress(
         tools_used: vec![],
         error_count: 0,
         delivery: Default::default(),
+        completion: Default::default(),
+        caller: Default::default(),
     }
 }
 /// Snapshot of subagent state after SubagentSpawned for method-parity tests.

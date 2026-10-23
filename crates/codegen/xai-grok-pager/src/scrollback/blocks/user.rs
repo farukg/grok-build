@@ -1147,8 +1147,14 @@ mod tests {
             let [row] = rows.as_slice() else {
                 panic!("{mode:?} prompt must render one row, got {rows:?}");
             };
-            assert!(row.ends_with(" \u{2026}"), "{mode:?} row lacks ellipsis: {row:?}");
-            assert!(row.width() <= width as usize, "{mode:?} row overflows: {row:?}");
+            assert!(
+                row.ends_with(" \u{2026}"),
+                "{mode:?} row lacks ellipsis: {row:?}"
+            );
+            assert!(
+                row.width() <= width as usize,
+                "{mode:?} row overflows: {row:?}"
+            );
         }
         assert!(render_texts(&block, DisplayMode::Expanded, width).len() > 3);
     }

@@ -88,13 +88,10 @@ impl OpenContextSidebar {
 
     /// Move the cursor off a line that a fold just hid, and scroll to it on the next draw.
     fn repair_cursor(&mut self) {
-        let outline = Outline::build(self.disclosure);
-        if let Some(line) = self
-            .sidebar
-            .cursor
-            .and_then(|line| outline.visible_line(line))
-        {
-            self.sidebar.cursor = Some(line);
+        let outline = Outline::build(self.disclosure, self.todo_count);
+        if self.sidebar.cursor.is_some() {
+            self.sidebar.cursor = self.sidebar.cursor.and_then(|line| outline.visible_line(line))
+                .or_else(|| Some(outline.default_cursor()));
         }
         self.reveal_pending = true;
     }
@@ -130,7 +127,11 @@ impl AgentView {
         match command {
             SidebarCommand::Tree(key) => self.navigate_sidebar(key),
             SidebarCommand::Activate => self.activate_cursor(),
-            SidebarCommand::Bulk { spread, goal, anchor } => self.bulk_sidebar(spread, goal, anchor),
+            SidebarCommand::Bulk {
+                spread,
+                goal,
+                anchor,
+            } => self.bulk_sidebar(spread, goal, anchor),
             SidebarCommand::ToggleEditLayer => {
                 self.toggle_panel_edit_layer();
                 InputOutcome::Changed
@@ -152,7 +153,7 @@ impl AgentView {
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return InputOutcome::Unchanged;
         };
-        let outline = Outline::build(open.disclosure);
+        let outline = Outline::build(open.disclosure, open.todo_count);
         let Some(at) = open.sidebar.cursor.and_then(|line| outline.index_of(line)) else {
             open.sidebar.cursor = Some(outline.default_cursor());
             open.reveal_pending = true;
@@ -172,7 +173,7 @@ impl AgentView {
         };
         match CursorTarget::of(line) {
             Some(CursorTarget::Title(_)) => {
-                let outline = Outline::build(open.disclosure);
+                let outline = Outline::build(open.disclosure, open.todo_count);
                 let Some(at) = outline.index_of(line) else {
                     return InputOutcome::Unchanged;
                 };
@@ -201,7 +202,7 @@ impl AgentView {
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return InputOutcome::Unchanged;
         };
-        let outline = Outline::build(open.disclosure);
+        let outline = Outline::build(open.disclosure, open.todo_count);
         let Some(line) = open.sidebar.cursor else {
             return InputOutcome::Unchanged;
         };
@@ -227,7 +228,8 @@ impl AgentView {
             Goal::Set(direction) => direction,
             Goal::Toggle => {
                 let section_closed = reached.sections()
-                    && bulk_toggle(outline.rows(), at, scope, anchor).direction == BulkDirection::Expand;
+                    && bulk_toggle(outline.rows(), at, scope, anchor).direction
+                        == BulkDirection::Expand;
                 let kind_closed = reached.kinds()
                     && kinds.clone().any(|kind| {
                         self.scrollback.display_defaults().shown(kind) == DisplayForm::Collapsed

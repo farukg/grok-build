@@ -54,7 +54,9 @@ fn turn_entries(
     };
     let mut entries = Vec::new();
     for idx in start..scrollback.len() {
-        let Some(entry) = scrollback.get(idx) else { break };
+        let Some(entry) = scrollback.get(idx) else {
+            break;
+        };
         if idx > start && starts_turn(&entry.block) {
             break;
         }
@@ -81,8 +83,9 @@ fn removed_entries(
             }
             ContextItemRef::ToolExchange { tool_call_id } => {
                 entries.extend(scrollback.iter_entries().filter_map(|(id, entry)| {
-                    (matches!(entry.block, RenderBlock::ToolCall(_)) && tool_ids.get(&id) == Some(tool_call_id))
-                        .then_some(id)
+                    (matches!(entry.block, RenderBlock::ToolCall(_))
+                        && tool_ids.get(&id) == Some(tool_call_id))
+                    .then_some(id)
                 }));
             }
         }
@@ -93,8 +96,16 @@ fn removed_entries(
 /// Takes the rows for `removed` out of the scrollback and the tracker, keeping turn boundaries for the rows that stay.
 fn drop_removed_rows(view: &mut AgentView, removed: &[ContextItemRef]) {
     let tool_ids = view.session.tracker.tool_call_ids_by_entry();
-    let rows = removed_entries(&view.scrollback, &view.session.tracker.turn_ledger, &tool_ids, removed);
-    view.session.tracker.turn_ledger.carry_to_survivors(&view.scrollback, &rows);
+    let rows = removed_entries(
+        &view.scrollback,
+        &view.session.tracker.turn_ledger,
+        &tool_ids,
+        removed,
+    );
+    view.session
+        .tracker
+        .turn_ledger
+        .carry_to_survivors(&view.scrollback, &rows);
     let row_ids: Vec<EntryId> = rows.into_iter().collect();
     for id in &row_ids {
         view.scrollback.remove_entry(*id);
@@ -132,7 +143,10 @@ pub(super) fn handle_remove_context_items_complete(
         .all_mut()
         .find(|(_, view)| view.session.session_id.as_ref() == Some(session_id))
     else {
-        tracing::warn!("Dropped remove-items answer for unknown session {}", session_id.0);
+        tracing::warn!(
+            "Dropped remove-items answer for unknown session {}",
+            session_id.0
+        );
         return;
     };
     let Some(position) = view
@@ -140,7 +154,10 @@ pub(super) fn handle_remove_context_items_complete(
         .iter()
         .position(|pending_session| pending_session == session_id)
     else {
-        tracing::warn!("Dropped remove-items answer without a pending request for session {}", session_id.0);
+        tracing::warn!(
+            "Dropped remove-items answer without a pending request for session {}",
+            session_id.0
+        );
         return;
     };
     view.pending_removed_context_items.remove(position);

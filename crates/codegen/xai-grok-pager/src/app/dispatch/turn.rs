@@ -740,18 +740,19 @@ pub(super) fn dispatch_resume_subagent(
     }]
 }
 
-/// Release the active child view's held answer (`x.ai/subagent/deliver`); a no-op anywhere else.
+/// Toggle the active child's delivery policy; finished children cannot be held.
 pub(super) fn dispatch_deliver_subagent(app: &mut AppView) -> Vec<Effect> {
+    use xai_grok_shell::extensions::notification::SubagentDelivery;
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
-    if !app
-        .agents
-        .child_info(id)
-        .is_some_and(crate::app::subagent::SubagentInfo::awaits_delivery)
-    {
+    let Some(info) = app.agents.child_info(id).filter(|info| info.is_running()) else {
         return vec![];
-    }
+    };
+    let delivery = match info.attempt.delivery {
+        SubagentDelivery::OnTurnEnd => SubagentDelivery::Held,
+        SubagentDelivery::Held => SubagentDelivery::OnTurnEnd,
+    };
     let Some(child_session_id) = app
         .agents
         .get(&id)
@@ -759,7 +760,10 @@ pub(super) fn dispatch_deliver_subagent(app: &mut AppView) -> Vec<Effect> {
     else {
         return vec![];
     };
-    vec![Effect::DeliverSubagent { child_session_id }]
+    vec![Effect::DeliverSubagent {
+        child_session_id,
+        delivery,
+    }]
 }
 
 /// Ask the shell to read or replace the active session's context policy.

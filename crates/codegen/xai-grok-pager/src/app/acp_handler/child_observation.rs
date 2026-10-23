@@ -80,6 +80,27 @@ pub(super) fn apply_child_acp_update(
     let Some(child_view) = app.agents.get_mut(&child) else {
         return false;
     };
+    let session_id = child_view
+        .session
+        .session_id
+        .as_ref()
+        .map(|id| id.0.to_string())
+        .unwrap_or_default();
+    if drop_unexpected_replay(child_view, meta, &session_id, "child session/update") {
+        return false;
+    }
+    if !meta.is_replay {
+        if meta.event_seq.is_some_and(|seq| {
+            child_view
+                .last_applied_event_seq
+                .is_some_and(|last| seq <= last)
+        }) {
+            return false;
+        }
+        if let Some(seq) = meta.event_seq {
+            child_view.last_applied_event_seq = Some(seq);
+        }
+    }
     ack_prompt_from_update(child_view, meta);
     if let Some(tokens) = meta.total_tokens {
         confirm_context_used(child_view, tokens);

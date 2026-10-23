@@ -886,36 +886,19 @@ mod link_click_tests {
             "click where stop used to be must not cancel the turn under a dropdown"
         );
     }
-    /// Clicking the still-running watcher cue toggles the tasks pane like Ctrl+G.
-    /// Only the first click that reveals the pane shows the one-time shortcut toast.
     #[test]
-    fn watching_cue_click_opens_tasks_pane_with_one_time_shortcut_toast() {
+    fn watching_cue_opens_f7_without_changing_the_global_upper_display_preference() {
         let reg = ActionRegistry::defaults();
         let mut agent = make_agent();
         agent.last_terminal_size = (80, 30);
         super::test_fixtures::add_running_bg_task(&mut agent);
         draw_banner_frame(&mut agent, &reg, &[], 0);
         let rect = agent.hit_watching_cue.rect.expect("cue rect must be armed");
-        let click = Event::Mouse(mouse_down(rect.x + 1, rect.y));
-        let _ = agent.handle_input(&click, &reg);
-        assert!(agent.tasks.overlay.focused);
-        assert!(agent.toast.is_none(), "focus-only click must not toast");
-        agent.tasks.overlay.hide();
-        agent.tasks.on_state_change();
-        draw_banner_frame(&mut agent, &reg, &[], 0);
-        let _ = agent.handle_input(&click, &reg);
-        assert!(agent.tasks.overlay.visible && agent.tasks.overlay.focused);
-        assert_eq!(agent.active_pane, AgentPane::Tasks);
-        let toast = agent.toast.clone().map(|(msg, _)| msg);
-        assert_eq!(toast.as_deref(), Some("Tip: Ctrl+G toggles the tasks pane"));
-        agent.toast = None;
-        draw_banner_frame(&mut agent, &reg, &[], 0);
-        let _ = agent.handle_input(&click, &reg);
-        assert!(!agent.tasks.overlay.visible);
-        draw_banner_frame(&mut agent, &reg, &[], 0);
-        let _ = agent.handle_input(&click, &reg);
-        assert!(agent.tasks.overlay.visible);
-        assert!(agent.toast.is_none(), "toast fires only once per session");
+        let preference = agent.tasks.overlay.visible;
+        let _ = agent.handle_input(&Event::Mouse(mouse_down(rect.x + 1, rect.y)), &reg);
+        assert!(agent.sidebar_open_flags().1);
+        assert_eq!(agent.tasks.overlay.visible, preference);
+        assert!(agent.toast.is_none());
     }
     /// Bg twin: the `[↓]` demote button sits on the same turn-status row, so its rect must drop under an open dropdown too.
     /// A dropdown click must never background the running execute tool.

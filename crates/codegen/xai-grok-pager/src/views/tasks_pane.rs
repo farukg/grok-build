@@ -604,8 +604,6 @@ pub struct TasksPane {
     pub view_button_rects: Vec<(TaskEntryId, Rect)>,
     pub hovered_kill: Option<TaskEntryId>,
     pub hovered_view: Option<TaskEntryId>,
-    prev_running_count: usize,
-    opened_by_auto: bool,
     highlight_cache: HashMap<String, Vec<Span<'static>>>,
     last_theme: ThemeKind,
     workflow_runs: Vec<crate::views::workflows::WorkflowRunSnapshot>,
@@ -688,8 +686,6 @@ impl TasksPane {
             view_button_rects: Vec::new(),
             hovered_kill: None,
             hovered_view: None,
-            prev_running_count: 0,
-            opened_by_auto: false,
             highlight_cache: HashMap::new(),
             last_theme: Theme::current_kind(),
             workflow_runs: Vec::new(),
@@ -787,28 +783,6 @@ impl TasksPane {
                 .retain(|g| present.get(g.order() as usize).copied().unwrap_or(false));
         }
         self.rebuild_entries();
-        let counts = Self::status_counts_from(bg_tasks, subagents, scheduled, workflow_runs);
-        let running_count = counts.running.saturating_sub(
-            bg_tasks
-                .values()
-                .filter(|task| task.status == BgTaskStatus::Running && task.restored_from_replay)
-                .count(),
-        );
-        if running_count > 0 && self.prev_running_count == 0 {
-            self.overlay.show();
-            self.opened_by_auto = true;
-        }
-        if running_count == 0
-            && counts.paused_workflows == 0
-            && self.overlay.visible
-            && !self.overlay.focused
-            && self.opened_by_auto
-            && !self.show_done
-        {
-            self.overlay.visible = false;
-            self.opened_by_auto = false;
-        }
-        self.prev_running_count = running_count;
     }
     /// Rebuild the display `entries` from the sorted `items`.
     /// Insert a header at each group boundary (with the group's item count), and include a group's items only when the group is not collapsed.
@@ -919,7 +893,6 @@ impl TasksPane {
         if !self.overlay.visible {
             self.list_state.close_input_bar();
         }
-        self.opened_by_auto = false;
     }
     pub fn desired_height(&self, view_height: u16) -> u16 {
         if !self.overlay.visible {
@@ -1638,6 +1611,8 @@ mod tests {
                 error_count: None,
                 activity_label: None,
                 delivery: Default::default(),
+                completion: Default::default(),
+                caller: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,
@@ -1913,9 +1888,7 @@ mod tests {
             "expected `(42)` badge in rendered buffer, got:\n{joined}",
         );
     }
-    /// Resume regression: bg tasks restored from a `session/load` replay are historical context and must not auto-open the overlay.
-    /// On cold resumes they die again within the same load; the open/close flash looked like tasks "loading then failing".
-    /// A genuinely new live task must still trigger the auto-show edge.
+    /// Task data changes preserve the global display preference.
     #[test]
     fn restored_running_tasks_do_not_auto_show() {
         let mut pane = TasksPane::new();
@@ -1933,10 +1906,11 @@ mod tests {
             make_bg_task("t-live", "cargo build", BgTaskStatus::Running),
         );
         pane.sync(&bg_tasks, &HashMap::new(), &HashMap::new(), &[]);
-        assert!(
-            pane.is_visible(),
-            "a new live running task must still auto-open the tasks pane"
-        );
+        assert!(!pane.is_visible(), "live tasks must not override a hidden global preference");
+        pane.overlay.visible = true;
+        bg_tasks.clear();
+        pane.sync(&bg_tasks, &HashMap::new(), &HashMap::new(), &[]);
+        assert!(pane.is_visible(), "completion must not override a visible global preference");
     }
     #[test]
     fn render_shows_plus_suffix_when_truncated() {

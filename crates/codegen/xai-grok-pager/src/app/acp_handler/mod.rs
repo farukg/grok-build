@@ -49,6 +49,10 @@ use background::{
     handle_scheduled_task_deleted, handle_scheduled_task_fired, handle_task_backgrounded,
     handle_task_completed, route_bg_task_stdout,
 };
+use child_observation::{
+    ChildObservation, apply_child_acp_update, apply_child_xai_update, complete_child_prompt,
+    is_child_turn_update, is_child_view, observe_child,
+};
 use follow_ups::handle_follow_ups;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -122,10 +126,6 @@ use subagent_activity::*;
 use subagent_activity::{subagent_activity_label, sync_subagent_activity};
 use subagent_lifecycle::{
     LifecycleOrigin, classify_subagent_lifecycle, prepare_tui_subagent_lifecycle,
-};
-use child_observation::{
-    ChildObservation, apply_child_acp_update, apply_child_xai_update, complete_child_prompt,
-    is_child_turn_update, is_child_view, observe_child,
 };
 use workflow_ingest::ingest_workflow_update;
 #[cfg(test)]

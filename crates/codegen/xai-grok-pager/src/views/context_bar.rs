@@ -395,15 +395,8 @@ mod tests {
     fn gateway_chat_suppresses_context_bar_even_with_tokens() {
         let theme = Theme::default();
         assert!(
-            context_bar_line_for_session(
-                Some(1_000),
-                Some(1_000_000),
-                false,
-                &theme,
-                true,
-                false,
-            )
-            .is_none()
+            context_bar_line_for_session(Some(1_000), Some(1_000_000), false, &theme, true, false,)
+                .is_none()
         );
         assert!(
             context_bar_line_for_session(

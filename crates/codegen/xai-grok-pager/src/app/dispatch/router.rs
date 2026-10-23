@@ -88,10 +88,9 @@ use super::settings::setters::{
     set_invert_scroll, set_keep_text_selection, set_max_thoughts_width, set_multiline_mode,
     set_page_flip_on_send, set_prompt_suggestions, set_remember_tool_approvals, set_render_mermaid,
     set_respect_manual_folds, set_screen_mode, set_scroll_lines, set_scroll_mode, set_scroll_speed,
-    set_system_reminders,
     set_show_thinking_blocks, set_show_tips, set_simple_mode, set_subagent_model_inheritance,
-    set_theme, set_timeline, set_timestamps, set_vim_mode, set_voice_capture_mode,
-    set_voice_keybind_enabled, set_voice_stt_language,
+    set_system_reminders, set_theme, set_timeline, set_timestamps, set_vim_mode,
+    set_voice_capture_mode, set_voice_keybind_enabled, set_voice_stt_language,
 };
 use super::settings::ui::{
     dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
@@ -114,8 +113,8 @@ use super::transcript::{
 };
 use super::turn::{
     dispatch_cancel_scheduled_task, dispatch_cancel_turn, dispatch_cancel_turn_choice,
-    dispatch_context_policy, dispatch_deliver_subagent, dispatch_demote_to_background, dispatch_kill_bg_task,
-    dispatch_kill_subagent, dispatch_resume_subagent,
+    dispatch_context_policy, dispatch_deliver_subagent, dispatch_demote_to_background,
+    dispatch_kill_bg_task, dispatch_kill_subagent, dispatch_resume_subagent,
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
 use crate::app::actions::{Action, Effect, ModelChoice};

@@ -5,8 +5,8 @@ use super::paste::paste_key_tests;
 use super::test_fixtures;
 use super::{
     AgentPane, AgentView, BlockingCard, CtaPhase, EscStep, InputMode, KeyOwner,
-    MULTI_CLICK_TIMEOUT_MS, PromptInputMode, active_contexts_for_pane,
-    format_key_for_log, is_link_modifier_for_key, is_mouse_reporting_toggle_chord, resolve_action,
+    MULTI_CLICK_TIMEOUT_MS, PromptInputMode, active_contexts_for_pane, format_key_for_log,
+    is_link_modifier_for_key, is_mouse_reporting_toggle_chord, resolve_action,
 };
 use crate::actions::{ActionId, ActionRegistry, When};
 use crate::app::actions::Action;
@@ -931,7 +931,11 @@ impl AgentView {
         if let Some(outcome) = self.route_timeline_panel_input(ev) {
             if let (Event::Key(key), InputOutcome::ArmPending { .. }) = (ev, &outcome)
                 && crate::app::agent_view::context_removal::is_remove_key(key)
-                && let Some(row) = self.timeline_mode.panel().and_then(|panel| panel.cursor_row()).copied()
+                && let Some(row) = self
+                    .timeline_mode
+                    .panel()
+                    .and_then(|panel| panel.cursor_row())
+                    .copied()
             {
                 return self.run_timeline_item_remove(row, key);
             }
@@ -1020,9 +1024,10 @@ impl AgentView {
             && key.kind != KeyEventKind::Release
             && key!('t', CONTROL).matches(key)
         {
-            self.todo.overlay.toggle();
+            self.todo.overlay.visible = !self.todo.overlay.visible;
+            self.todo.overlay.focused = self.todo.overlay.visible && self.dock_on;
             self.todo.on_state_change();
-            if self.todo.overlay.focused {
+            if self.todo.overlay.focused && self.dock_on {
                 self.set_active_pane(AgentPane::Todo, false);
             } else if self.active_pane == AgentPane::Todo {
                 self.set_active_pane(AgentPane::Scrollback, false);
@@ -1033,25 +1038,14 @@ impl AgentView {
             && key.kind != KeyEventKind::Release
             && registry.matches_id(ActionId::ToggleTasks, key)
         {
-            if self.dock_on {
-                if self.dock_hidden {
-                    self.dock_hidden = false;
-                    return InputOutcome::Changed;
-                }
-                if self.dock_shown {
-                    self.dock_hidden = true;
-                    if self.active_pane == AgentPane::Dock {
-                        self.set_active_pane(AgentPane::Scrollback, false);
-                    }
-                    return InputOutcome::Changed;
-                }
-                return InputOutcome::Unchanged;
-            }
-            self.tasks.overlay.toggle();
+            self.tasks.overlay.visible = !self.tasks.overlay.visible;
+            self.tasks.overlay.focused = false;
             self.tasks.on_state_change();
-            if self.tasks.overlay.focused {
-                self.set_active_pane(AgentPane::Tasks, false);
-            } else if self.active_pane == AgentPane::Tasks {
+            if self.tasks.overlay.visible && self.dock_on {
+                self.dock_focus_in_sidebar = false;
+                self.clear_context_sidebar_focus();
+                self.set_active_pane(AgentPane::Dock, false);
+            } else if matches!(self.active_pane, AgentPane::Tasks | AgentPane::Dock) {
                 self.set_active_pane(AgentPane::Scrollback, false);
             }
             return InputOutcome::Changed;
@@ -1067,13 +1061,7 @@ impl AgentView {
             && registry.matches_id(ActionId::ToggleQueue, key)
             && (self.queue.is_visible() || !self.visible_queue_is_empty())
         {
-            if self.dock_shown {
-                self.dock_queued_expanded = !self.dock_queued_expanded;
-            } else if self.dock_on {
-                return InputOutcome::Unchanged;
-            } else {
-                self.toggle_queue_pane();
-            }
+            self.toggle_queue_pane();
             return InputOutcome::Changed;
         }
         if let Event::Key(key) = ev
@@ -1235,10 +1223,10 @@ impl AgentView {
             }
             ActionId::SendToBackground => {
                 if self
-                        .session
-                        .tracker
-                        .running_execute_tool_call_id()
-                        .is_some()
+                    .session
+                    .tracker
+                    .running_execute_tool_call_id()
+                    .is_some()
                 {
                     InputOutcome::Action(Action::DemoteToBackground)
                 } else {
@@ -1545,6 +1533,7 @@ mod background_and_tasks_shortcut_tests {
     fn ctrl_g_toggles_tasks_and_never_demotes() {
         let registry = ActionRegistry::defaults();
         let mut agent = make_agent();
+        agent.dock_on = true;
         agent.prompt.set_text("draft");
         let draft_len = agent.prompt.text().len();
         agent.prompt.set_cursor(draft_len);
@@ -1552,16 +1541,13 @@ mod background_and_tasks_shortcut_tests {
         add_running_execute(&mut agent);
         let first = agent.handle_input(&ctrl('g'), &registry);
         assert!(matches!(first, InputOutcome::Changed));
-        assert_eq!(agent.active_pane, AgentPane::Tasks);
+        assert_eq!(agent.active_pane, AgentPane::Dock);
         assert!(agent.tasks.overlay.visible);
-        assert!(agent.tasks.overlay.focused);
+        assert!(!agent.tasks.overlay.focused);
         assert_eq!(agent.prompt.text(), "draft");
         assert_eq!(agent.prompt.cursor(), draft_len);
         let second = agent.handle_input(&ctrl('g'), &registry);
-        assert!(matches!(
-            second,
-            InputOutcome::Action(Action::FocusScrollback)
-        ));
+        assert!(matches!(second, InputOutcome::Changed));
         assert!(!agent.tasks.overlay.visible);
         assert!(!agent.tasks.overlay.focused);
     }

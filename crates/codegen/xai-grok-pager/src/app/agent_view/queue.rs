@@ -308,6 +308,7 @@ impl AgentView {
             self.expect_send_now_cancel.as_deref(),
             &self.send_now_painted_blocks,
         );
+        self.queue.overlay.visible = !self.visible_queue_is_empty();
     }
 
     /// Whether the stopped-session look is active: the turn is parked in a sendable wait that is not a foreground subagent await.
@@ -317,9 +318,8 @@ impl AgentView {
         self.is_parked_on_sendable_wait() && !self.is_waiting_on_subagent()
     }
 
-    /// Hidden (Ctrl+G) dock is unpainted, so the idle cues stay.
-    pub(crate) fn dock_covers_idle_cues(&self, dock_on: bool) -> bool {
-        dock_on && !self.dock_hidden
+    pub(crate) fn dock_covers_idle_cues(&self, upper_enabled: bool) -> bool {
+        self.f7_body.width > 0 || (upper_enabled && self.tasks.overlay.visible)
     }
 
     /// Live counts for the turn-status watching cue; see [`crate::views::turn_status::Watchers`].
@@ -567,14 +567,15 @@ impl AgentView {
             .retain(|(pid, _, _)| pid != prompt_id);
     }
 
-    /// Toggle queue pane visibility (Ctrl-; shortcut).
+    /// Toggle focus without hiding pending input.
     pub(in crate::app) fn toggle_queue_pane(&mut self) {
-        self.queue.overlay.toggle();
-        self.queue.on_state_change();
-        if self.queue.overlay.focused {
+        self.sync_queue_pane();
+        if self.active_pane == AgentPane::Queue {
+            self.queue.overlay.focused = false;
+            self.set_active_pane(AgentPane::Prompt, false);
+        } else if !self.visible_queue_is_empty() {
+            self.queue.overlay.focused = true;
             self.set_active_pane(AgentPane::Queue, false);
-        } else if self.active_pane == AgentPane::Queue {
-            self.set_active_pane(AgentPane::Scrollback, false);
         }
     }
 
@@ -595,9 +596,7 @@ impl AgentView {
             // Under the dock, Esc/dismiss collapses the sticky Queued section
             // (render enforces the overlay from this flag, so clearing only
             // `overlay.visible` would be re-opened next frame).
-            if !self.queue.overlay.visible && crate::views::dock::enabled() {
-                self.dock_queued_expanded = false;
-            }
+            self.queue.overlay.visible = !self.visible_queue_is_empty();
             // Overlay dismiss skips hide_queue_pane; reset edge when queue is empty.
             if !self.queue.overlay.visible && self.visible_queue_is_empty() {
                 self.queue.reset_auto_show_edge();
@@ -747,7 +746,7 @@ impl AgentView {
     /// Hide the queue pane. Only steals focus when the queue pane was active.
     /// Prompt-path send-now of the last local row must not yank the user out of the composer into scrollback.
     pub(in crate::app) fn hide_queue_pane(&mut self) {
-        self.queue.overlay.visible = false;
+        self.queue.overlay.visible = !self.visible_queue_is_empty();
         self.queue.overlay.focused = false;
         // External hide skips sync auto-hide; reset so next enqueue can auto-show.
         self.queue.reset_auto_show_edge();
@@ -845,6 +844,48 @@ mod queue_edit_routing_tests {
 
     fn delete_key() -> KeyEvent {
         KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn queued_input_is_always_visible_and_owned_once_across_dock_sidebar_and_resize() {
+        use crate::app::agent_view::{AppRenderParams, BannerSlotParams};
+        use crate::scrollback::render::ScratchBuffer;
+        use ratatui::{buffer::Buffer, layout::Rect};
+        for dock in [false, true] {
+            crate::views::dock::set_enabled_for_test(dock);
+            for f7 in [false, true] {
+                for queued in [false, true] {
+                    let mut agent = running_agent_local_only();
+                    if !queued { agent.session.pending_prompts.clear(); }
+                    if f7 { let _ = agent.toggle_context_sidebar(); }
+                    let registry = ActionRegistry::defaults();
+                    for (tasks, todo) in [(false, false), (false, true), (true, false), (true, true)] {
+                    agent.tasks.overlay.visible = tasks;
+                    agent.todo.overlay.visible = todo;
+                    for height in [40, 16, 24] {
+                        let area = Rect::new(0, 0, 100, height);
+                        let mut buf = Buffer::empty(area);
+                        agent.draw(area, &mut buf, &registry, &mut ScratchBuffer::new(), None, false,
+                            BannerSlotParams { height: 0, announcements: &[], hidden_ids: &std::collections::BTreeSet::new(), privacy_banner: false, mouse_pos: None, tip: None },
+                            false, &mut Vec::new(), AppRenderParams::default());
+                        assert_eq!(agent.queue.overlay.visible, queued);
+                        assert_eq!(agent.pane_areas.queue.height > 0, queued);
+                        assert_eq!(agent.dock_counts().queued, 0);
+                        assert!(agent.hit_queue_close.rect.is_none());
+                        if queued {
+                            assert_eq!(agent.pane_areas.queue.bottom(), agent.pane_areas.prompt.y);
+                            let ids = agent.queue.entry_ids();
+                            let _ = agent.toggle_queue_pane();
+                            agent.hide_queue_pane();
+                            agent.sync_queue_pane();
+                            assert!(agent.queue.overlay.visible);
+                            assert_eq!(agent.queue.entry_ids(), ids);
+                        }
+                    }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1545,7 +1586,9 @@ mod queue_edit_routing_tests {
                 .unwrap_or_else(|| panic!("missing index")),
         );
         match agent.handle_queue_key(&force_interject_key(), &registry) {
-            InputOutcome::Action(Action::SendPromptNow { text, .. }) => assert_eq!(text, "/compact"),
+            InputOutcome::Action(Action::SendPromptNow { text, .. }) => {
+                assert_eq!(text, "/compact")
+            }
             other => panic!("expected SendPromptNow for /compact, got {other:?}"),
         }
         assert!(agent.session.pending_prompts.is_empty());
@@ -1557,7 +1600,9 @@ mod queue_edit_routing_tests {
         agent.prompt.set_text("");
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         match agent.handle_prompt_key_for_test(&enter) {
-            InputOutcome::Action(Action::SendPromptNow { text, .. }) => assert_eq!(text, "/compact"),
+            InputOutcome::Action(Action::SendPromptNow { text, .. }) => {
+                assert_eq!(text, "/compact")
+            }
             other => panic!("expected SendPromptNow for /compact, got {other:?}"),
         }
         assert!(agent.session.pending_prompts.is_empty());

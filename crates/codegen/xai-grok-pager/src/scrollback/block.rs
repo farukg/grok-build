@@ -216,7 +216,6 @@ impl DisplayDefaults {
     }
 }
 
-
 /// The trailing inline image anchored within a block's rendered output. Mermaid diagrams do not use this path; they
 /// render as a code block plus a text affordance row instead.
 #[derive(Debug, Clone)]

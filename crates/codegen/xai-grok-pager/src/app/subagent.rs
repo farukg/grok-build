@@ -78,6 +78,8 @@ pub struct SubagentAttemptInfo {
     /// Live activity label ("Thinking", "Running: cargo build") for the tasks pane and dashboard; cleared on `SubagentFinished`.
     pub activity_label: Option<String>,
     pub delivery: xai_grok_shell::extensions::notification::SubagentDelivery,
+    pub completion: xai_grok_shell::extensions::notification::SubagentCompletion,
+    pub caller: xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller,
 
     /// Affects scrollback rendering (background shows "started:"/"completed:").
     pub is_background: bool,
@@ -106,15 +108,19 @@ impl SubagentAttemptInfo {
         self.error_count = prior.error_count;
         self.activity_label.clone_from(&prior.activity_label);
         self.delivery = prior.delivery;
+        self.completion = prior.completion;
+        self.caller = prior.caller;
     }
 
     /// Context tokens as `used/window`, or `used` alone while the window is unknown; `None` before any report.
     pub(crate) fn token_usage_label(&self) -> Option<String> {
         let used = fmt_tokens(self.tokens_used?);
-        Some(match self.context_window_tokens.filter(|&window| window > 0) {
-            Some(window) => format!("{used}/{}", fmt_tokens(window)),
-            None => used,
-        })
+        Some(
+            match self.context_window_tokens.filter(|&window| window > 0) {
+                Some(window) => format!("{used}/{}", fmt_tokens(window)),
+                None => used,
+            },
+        )
     }
 
     pub(crate) fn terminal_update(
@@ -328,11 +334,39 @@ impl SubagentInfo {
         !self.attempt.lifecycle.is_finished()
     }
 
-    /// A human steered this running subagent; its answer reaches the caller only on `deliver`.
+    /// Explicit manual delivery holds the running attempt's completion.
     pub fn awaits_delivery(&self) -> bool {
         self.is_running()
             && self.attempt.delivery
                 == xai_grok_shell::extensions::notification::SubagentDelivery::Held
+    }
+
+    pub(crate) fn delivery_warning(&self) -> Option<&'static str> {
+        use xai_grok_shell::extensions::notification::SubagentCompletion;
+        use xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller;
+        if !self.awaits_delivery() {
+            return None;
+        }
+        Some(match (self.attempt.completion, self.attempt.caller) {
+            (SubagentCompletion::Pending, SubagentCaller::Waiting) => {
+                "MANUAL — CALLER BLOCKED: answer ready; open child, F5: auto"
+            }
+            (SubagentCompletion::Settling, SubagentCaller::Waiting) => {
+                "MANUAL — caller waiting; follow-ups settling; open child, F5: auto"
+            }
+            (SubagentCompletion::Working, SubagentCaller::Waiting) => {
+                "MANUAL — caller waiting; child working; open child, F5: auto"
+            }
+            (SubagentCompletion::Pending, SubagentCaller::NotWaiting) => {
+                "MANUAL — answer ready, delivery blocked; open child, F5: auto"
+            }
+            (SubagentCompletion::Settling, SubagentCaller::NotWaiting) => {
+                "MANUAL — follow-ups settling; open child, F5: auto"
+            }
+            (SubagentCompletion::Working, SubagentCaller::NotWaiting) => {
+                "MANUAL — child working; open child, F5: auto"
+            }
+        })
     }
 
     pub(crate) fn is_finished(&self) -> bool {
@@ -550,6 +584,8 @@ pub(crate) mod test_support {
                 error_count: None,
                 activity_label: None,
                 delivery: Default::default(),
+                completion: Default::default(),
+                caller: Default::default(),
                 is_background: false,
                 pending_kill: false,
                 kill_requested_at: None,
@@ -974,6 +1010,11 @@ pub(crate) fn format_subagent_label(info: &SubagentInfo) -> (String, String) {
         None => raw_label,
     };
 
+    let label = if info.awaits_delivery() {
+        format!("{label} [delivery:manual]")
+    } else {
+        label
+    };
     (label, clean_desc.to_string())
 }
 

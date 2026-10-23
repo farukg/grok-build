@@ -437,7 +437,10 @@ pub enum Action {
     /// Kill (cancel) a subagent by subagent_id.
     KillSubagent(String),
     /// Continue a subagent (running: queued prompt; finished: resumed) with a user prompt.
-    ResumeSubagent { subagent_id: String, prompt: String },
+    ResumeSubagent {
+        subagent_id: String,
+        prompt: String,
+    },
     /// Release the active child view's held answer to its caller.
     DeliverSubagent,
     /// Ask the shell for the active session's context policy (the F7 sidebar just opened).
@@ -1644,7 +1647,10 @@ pub enum Effect {
         prompt: String,
     },
     /// Release a held child session via `x.ai/subagent/deliver`.
-    DeliverSubagent { child_session_id: acp::SessionId },
+    DeliverSubagent {
+        child_session_id: acp::SessionId,
+        delivery: xai_grok_shell::extensions::notification::SubagentDelivery,
+    },
     /// Read (`policy: None`) or replace the session's context policy via `x.ai/session/context_policy`.
     ContextPolicy {
         agent_id: AgentId,

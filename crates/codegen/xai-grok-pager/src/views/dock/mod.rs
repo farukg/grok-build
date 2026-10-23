@@ -62,6 +62,7 @@ pub fn set_enabled(on: bool) {
 
 pub struct DockRow {
     pub kind: String,
+    pub warning: Option<&'static str>,
     pub description: String,
     pub activity: Option<String>,
     /// Right-aligned meta column, e.g. `grok-4.5 2m14s` or `every 5m (next in 2m)`.
@@ -420,8 +421,16 @@ fn paint_row(
     } else {
         crate::glyphs::diamond_filled()
     };
-    let mut spans = vec![
-        Span::raw(ROW_INDENT),
+    let mut spans = vec![Span::raw(ROW_INDENT)];
+    if let Some(warning) = row.warning {
+        spans.push(Span::styled(
+            format!("{warning} · "),
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.extend([
         Span::styled(format!("{icon} "), accent),
         Span::styled(row.kind.clone(), accent),
         Span::raw(" "),
@@ -429,7 +438,7 @@ fn paint_row(
             row.description.clone(),
             Style::default().fg(theme.text_primary),
         ),
-    ];
+    ]);
     if let Some(activity) = row.activity.as_deref().filter(|s| !s.is_empty()) {
         spans.push(Span::styled(
             format!(" — {activity}"),
@@ -538,6 +547,7 @@ mod tests {
 
     fn row(kind: &str, description: &str, meta: &str, killable: bool) -> DockRow {
         DockRow {
+            warning: None,
             kind: kind.into(),
             description: description.into(),
             activity: None,
@@ -553,6 +563,7 @@ mod tests {
             workflows: Vec::new(),
             subagents: vec![
                 DockRow {
+                    warning: None,
                     kind: "Explore".into(),
                     description: "find dashboard render path".into(),
                     activity: Some("reading render.rs".into()),
@@ -588,6 +599,46 @@ mod tests {
             stop_hovered: false,
             spinner_tick: 0,
         }
+    }
+
+    #[test]
+    fn manual_delivery_warning_is_prominent_and_clears_without_stale_cells() {
+        let theme = Theme::tokyonight();
+        let area = Rect::new(0, 0, 120, 1);
+        let mut buf = Buffer::empty(area);
+        let mut child = row("Explorer", "long-running child", "1s", true);
+        child.warning = Some("MANUAL — CALLER BLOCKED: answer ready; open child, F5: auto");
+        paint_row(
+            &mut buf,
+            area,
+            0,
+            &theme,
+            &child,
+            false,
+            false,
+            0,
+            Section::Subagents,
+        );
+        assert!(
+            row_text(&buf, 0)
+                .starts_with(" MANUAL — CALLER BLOCKED: answer ready; open child, F5: auto")
+        );
+        assert_eq!(buf[(1, 0)].fg, theme.warning);
+        assert!(buf[(1, 0)].modifier.contains(Modifier::BOLD));
+        child.warning = None;
+        let mut buf = Buffer::empty(area);
+        paint_row(
+            &mut buf,
+            area,
+            0,
+            &theme,
+            &child,
+            false,
+            false,
+            0,
+            Section::Subagents,
+        );
+        assert!(!row_text(&buf, 0).contains("MANUAL"));
     }
 
     #[test]

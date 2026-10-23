@@ -1,5 +1,5 @@
-//! The F7 tree: two section branches, each with its rows as leaves one level deeper.
-//! The dock slot (section 0) is hosted content and not part of the tree.
+//! The F7 tree: context and message-display branches plus the read-only Todo list.
+//! The work slot (section 0) is hosted content and not part of the tree.
 
 use super::{CONTEXT_SECTION, DISPLAY_SECTION, RowTarget, row_target};
 use crate::scrollback::block::MessageKind;
@@ -103,7 +103,7 @@ pub(super) struct Outline {
 }
 
 impl Outline {
-    pub(super) fn build(disclosure: SectionDisclosure) -> Self {
+    pub(super) fn build(disclosure: SectionDisclosure, todo_count: usize) -> Self {
         let mut rows = Vec::new();
         let mut lines = Vec::new();
         for section in SectionId::iter() {
@@ -112,6 +112,14 @@ impl Outline {
             for row in 0..section.row_count() {
                 rows.push(TreeRow::leaf(1));
                 lines.push(section.row_line(row));
+            }
+        }
+        if todo_count > 0 {
+            rows.push(TreeRow::branch(0, true));
+            lines.push(SidebarLine::SectionTitle(super::TODO_SECTION));
+            for row in 0..todo_count {
+                rows.push(TreeRow::leaf(1));
+                lines.push(SidebarLine::Row(super::TODO_SECTION, RowIdx(row)));
             }
         }
         Self { rows, lines }

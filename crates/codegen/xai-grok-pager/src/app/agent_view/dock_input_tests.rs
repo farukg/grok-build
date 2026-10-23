@@ -52,6 +52,41 @@ fn dock_with_subagents(running: &[&str], finished: &[&str]) -> AgentView {
     agent
 }
 
+#[test]
+fn manual_delivery_warning_tracks_the_authoritative_child_mode() {
+    use xai_grok_shell::extensions::notification::SubagentDelivery;
+    let mut agent = dock_with_subagents(&["child"], &[]);
+    assert!(agent.dock_subagent_rows()[0].2.warning.is_none());
+    agent
+        .subagent_sessions
+        .get_mut("child")
+        .unwrap()
+        .attempt
+        .delivery = SubagentDelivery::Held;
+    let rows = agent.dock_subagent_rows();
+    assert_eq!(
+        rows[0].2.warning,
+        Some("MANUAL — child working; open child, F5: auto")
+    );
+    assert!(rows[0].2.openable);
+    agent
+        .subagent_sessions
+        .get_mut("child")
+        .unwrap()
+        .attempt
+        .delivery = SubagentDelivery::OnTurnEnd;
+    assert!(agent.dock_subagent_rows()[0].2.warning.is_none());
+    let child = agent.subagent_sessions.get_mut("child").unwrap();
+    child.attempt.delivery = SubagentDelivery::Held;
+    child.set_finished_for_test(true);
+    assert!(
+        agent
+            .dock_subagent_rows()
+            .iter()
+            .all(|row| row.2.warning.is_none())
+    );
+}
+
 fn dock_subagent_ids(agent: &AgentView) -> Vec<String> {
     agent
         .dock_subagent_rows()
@@ -100,6 +135,7 @@ fn dock_with_task() -> AgentView {
     insert_running_task(&mut agent, "bg-1");
     agent.dock_shown = true;
     agent.dock_on = true;
+    agent.tasks.overlay.visible = true;
     agent.active_pane = AgentPane::Dock;
     agent
 }
@@ -183,9 +219,9 @@ fn toggle_tasks_does_not_open_hidden_pane_when_dock_on_but_empty() {
         &Event::Key(key(KeyCode::Char('g'), KeyModifiers::CONTROL)),
         &registry,
     );
-    assert!(matches!(outcome, InputOutcome::Unchanged));
-    assert!(!agent.tasks.overlay.visible);
-    assert_ne!(agent.active_pane, AgentPane::Tasks);
+    assert!(matches!(outcome, InputOutcome::Changed));
+    assert!(agent.tasks.overlay.visible);
+    assert_eq!(agent.active_pane, AgentPane::Dock);
 }
 
 #[test]
@@ -200,7 +236,7 @@ fn toggle_tasks_still_toggles_legacy_pane_when_dock_off() {
     );
     assert!(matches!(outcome, InputOutcome::Changed));
     assert!(agent.tasks.overlay.visible);
-    assert_eq!(agent.active_pane, AgentPane::Tasks);
+    assert_ne!(agent.active_pane, AgentPane::Tasks);
 }
 
 fn ctrl_g(agent: &mut AgentView) -> InputOutcome {
@@ -215,12 +251,12 @@ fn ctrl_g_hides_and_shows_dock_from_prompt() {
     let mut agent = dock_with_task();
     agent.active_pane = AgentPane::Prompt;
     assert!(matches!(ctrl_g(&mut agent), InputOutcome::Changed));
-    assert!(agent.dock_hidden);
+    assert!(!agent.tasks.overlay.visible);
     assert_eq!(agent.active_pane, AgentPane::Prompt);
     assert!(!agent.tasks.overlay.visible);
     assert!(matches!(ctrl_g(&mut agent), InputOutcome::Changed));
-    assert!(!agent.dock_hidden);
-    assert_eq!(agent.active_pane, AgentPane::Prompt);
+    assert!(agent.tasks.overlay.visible);
+    assert_eq!(agent.active_pane, AgentPane::Dock);
 }
 
 #[test]
@@ -228,7 +264,7 @@ fn ctrl_g_hides_shown_dock_when_dock_focused() {
     let mut agent = dock_with_task();
     assert_eq!(agent.active_pane, AgentPane::Dock);
     assert!(matches!(ctrl_g(&mut agent), InputOutcome::Changed));
-    assert!(agent.dock_hidden);
+    assert!(!agent.tasks.overlay.visible);
     assert_eq!(agent.active_pane, AgentPane::Scrollback);
 }
 
@@ -1105,15 +1141,9 @@ fn tab_from_dock_is_one_stop() {
         ));
     agent.dock_shown = true;
     agent.dock_on = true;
-    agent.dock_queued_expanded = false;
     agent.active_pane = AgentPane::Dock;
-    agent.dock_cursor = agent
-        .dock_items()
-        .iter()
-        .position(|item| {
-            *item == crate::views::dock::DockItem::Header(crate::views::dock::Section::Queued)
-        })
-        .expect("queued");
+    agent.dock_cursor = 0;
+    assert!(!agent.dock_items().contains(&crate::views::dock::DockItem::Header(crate::views::dock::Section::Queued)));
 
     let outcome = agent.handle_dock_key(&key(KeyCode::Tab, KeyModifiers::NONE));
     assert!(matches!(outcome, InputOutcome::Action(Action::FocusPrompt)));
@@ -1124,7 +1154,7 @@ fn tab_from_dock_is_one_stop() {
 }
 
 #[test]
-fn j_reaches_the_queued_header() {
+fn j_stays_with_work_items_when_input_is_queued() {
     let mut agent = make_agent();
     insert_running_subagent(&mut agent, "child-1");
     agent
@@ -1137,7 +1167,6 @@ fn j_reaches_the_queued_header() {
         ));
     agent.dock_shown = true;
     agent.dock_on = true;
-    agent.dock_queued_expanded = false;
     agent.active_pane = AgentPane::Dock;
     agent.dock_cursor = 0;
     for _ in 0..agent.dock_items().len() {
@@ -1149,7 +1178,7 @@ fn j_reaches_the_queued_header() {
             .get(agent.dock_cursor)
             .copied()
             .unwrap_or_else(|| panic!("missing index")),
-        crate::views::dock::DockItem::Header(crate::views::dock::Section::Queued)
+        crate::views::dock::DockItem::Row(crate::views::dock::Section::Subagents, 0)
     );
 }
 
@@ -1243,30 +1272,30 @@ fn clicking_a_section_header_clears_selection_after_collapse() {
             "queued",
             crate::app::agent::QueueEntryKind::Prompt,
         ));
-    agent.dock_queued_expanded = true;
+    agent.dock_tasks_expanded = true;
     agent.active_pane = AgentPane::Prompt;
     agent.pane_areas.dock = Rect::new(0, 4, 80, 8);
-    let queued = crate::views::dock::Section::Queued;
-    let y = agent.pane_areas.dock.y + header_row(&agent, queued);
+    let tasks = crate::views::dock::Section::Tasks;
+    let y = agent.pane_areas.dock.y + header_row(&agent, tasks);
 
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), 5, y));
     assert!(matches!(outcome, InputOutcome::Changed));
-    assert!(!agent.dock_queued_expanded);
+    assert!(!agent.dock_tasks_expanded);
     assert_eq!(agent.active_pane, AgentPane::Prompt);
     assert!(!agent.dock_snapshot().focused);
 
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, 5, 0));
     let theme = crate::theme::Theme::tokyonight();
-    assert_ne!(painted_header_bg(&agent, queued), Some(theme.bg_highlight));
+    assert_ne!(painted_header_bg(&agent, tasks), Some(theme.bg_highlight));
     assert_ne!(
-        painted_header_bg(&agent, queued),
+        painted_header_bg(&agent, tasks),
         Some(theme.row_hover_bg())
     );
 
-    let y = agent.pane_areas.dock.y + header_row(&agent, queued);
+    let y = agent.pane_areas.dock.y + header_row(&agent, tasks);
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), 5, y));
     assert!(matches!(outcome, InputOutcome::Changed));
-    assert!(agent.dock_queued_expanded);
+    assert!(agent.dock_tasks_expanded);
     assert_eq!(agent.active_pane, AgentPane::Dock);
     assert!(agent.dock_snapshot().focused);
 }
@@ -1307,7 +1336,7 @@ fn keyboard_collapse_keeps_dock_focus_on_the_header() {
 }
 
 #[test]
-fn a_crowded_dock_still_shows_the_queued_header_and_its_body() {
+fn crowded_work_projection_does_not_own_queued_input() {
     let mut agent = agent_with_task_overflow();
     agent.dock_tasks_show_all = true;
     agent
@@ -1318,40 +1347,18 @@ fn a_crowded_dock_still_shows_the_queued_header_and_its_body() {
             "queued",
             crate::app::agent::QueueEntryKind::Prompt,
         ));
-    let data = crate::views::dock::DockData {
-        tasks: agent
-            .dock_task_rows()
-            .into_iter()
-            .map(|(_, row)| row)
-            .collect(),
-        queued: 1,
-        tasks_expanded: true,
-        tasks_show_all: true,
-        queue_body_rows: 2,
-        ..Default::default()
-    };
+    let data = agent.dock_snapshot();
     let items = crate::views::dock::visible_items(&data);
-    assert_eq!(
-        items.last(),
-        Some(&crate::views::dock::DockItem::Header(
-            crate::views::dock::Section::Queued
-        )),
-        "a long Tasks section cannot push the Queued header out: {items:?}"
-    );
-
+    assert!(!items.contains(&crate::views::dock::DockItem::Header(crate::views::dock::Section::Queued)));
     let area = Rect::new(0, 4, 80, crate::views::dock::desired_height(&data));
-    let body = crate::views::dock::queue_body_rect(area, &data);
-    assert!(body.height > 0, "the queue body keeps a row of its own");
-    assert_eq!(
-        body.y,
-        area.y + items.len() as u16,
-        "the body starts below the last painted row"
-    );
-    assert_eq!(body.bottom(), area.bottom());
+    assert_eq!(crate::views::dock::queue_body_rect(area, &data), Rect::default());
+    agent.sync_queue_pane();
+    assert!(agent.queue.overlay.visible);
+    assert_eq!(agent.queue.entry_ids().len(), 1);
 }
 
 #[test]
-fn toggle_queue_does_not_open_hidden_pane_when_dock_on_but_empty() {
+fn queue_focus_does_not_depend_on_visible_work() {
     let mut agent = make_agent();
     agent.dock_on = true;
     agent.dock_shown = false;
@@ -1369,11 +1376,9 @@ fn toggle_queue_does_not_open_hidden_pane_when_dock_on_but_empty() {
         &Event::Key(key(KeyCode::Char(';'), KeyModifiers::CONTROL)),
         &registry,
     );
-    assert!(
-        matches!(outcome, InputOutcome::Unchanged),
-        "empty dock must not toggle the suppressed queue pane, got {outcome:?}"
-    );
-    assert!(!agent.queue.overlay.visible);
+    assert!(matches!(outcome, InputOutcome::Changed));
+    assert!(agent.queue.overlay.visible);
+    assert_eq!(agent.active_pane, AgentPane::Queue);
 }
 
 #[test]
@@ -1510,10 +1515,9 @@ fn an_unfocused_wheel_scrolls_rows_without_moving_the_cursor() {
 }
 
 #[test]
-fn a_collapsed_queue_still_keeps_its_header() {
+fn hiding_queued_input_preserves_its_independent_surface() {
     let mut agent = agent_with_task_overflow();
     agent.dock_tasks_show_all = true;
-    agent.dock_queued_expanded = false;
     agent.active_pane = AgentPane::Prompt;
     agent
         .session
@@ -1523,21 +1527,10 @@ fn a_collapsed_queue_still_keeps_its_header() {
             "queued",
             crate::app::agent::QueueEntryKind::Prompt,
         ));
-    let data = crate::views::dock::DockData {
-        tasks: agent
-            .dock_task_rows()
-            .into_iter()
-            .map(|(_, row)| row)
-            .collect(),
-        queued: 1,
-        tasks_expanded: true,
-        tasks_show_all: true,
-        queue_body_rows: 0,
-        ..Default::default()
-    };
+    let data = agent.dock_snapshot();
     let items = crate::views::dock::visible_items(&data);
     assert!(
-        items.contains(&crate::views::dock::DockItem::Header(
+        !items.contains(&crate::views::dock::DockItem::Header(
             crate::views::dock::Section::Queued
         )),
         "{items:?}"
@@ -1548,8 +1541,11 @@ fn a_collapsed_queue_still_keeps_its_header() {
             &data
         ),
         Rect::default(),
-        "a collapsed queue paints no body"
+        "queued input is never painted inside work projections"
     );
+    agent.sync_queue_pane();
+    agent.hide_queue_pane();
+    assert!(agent.queue.overlay.visible);
 }
 
 #[test]
@@ -1758,7 +1754,7 @@ fn reveal_does_not_shrink_a_floor_taller_dock_assignment() {
     agent.dock_subagents_expanded = true;
     agent.dock_tasks_expanded = true;
     agent.dock_watchers_expanded = true;
-    agent.dock_queued_expanded = true;
+    agent.dock_tasks_expanded = true;
     // Floor-taller assignment (11) on a short scrollback: half of 8+11 is 9.
     agent.pane_areas.scrollback = Rect::new(0, 0, 80, 8);
     agent.pane_areas.dock = Rect::new(0, 8, 80, 11);
@@ -1925,7 +1921,6 @@ fn a_squeezed_dock_keeps_trailing_headers_reachable() {
     for section in [
         crate::views::dock::Section::Subagents,
         crate::views::dock::Section::Tasks,
-        crate::views::dock::Section::Queued,
     ] {
         assert!(
             items.contains(&crate::views::dock::DockItem::Header(section)),
@@ -1935,7 +1930,7 @@ fn a_squeezed_dock_keeps_trailing_headers_reachable() {
     assert_eq!(
         items.len(),
         4,
-        "a 4-row assignment spends its rows on headers: {items:?}"
+        "a 4-row assignment spends its rows only on work: {items:?}"
     );
 }
 
@@ -2146,9 +2141,12 @@ fn workflow_row_index(agent: &AgentView) -> usize {
 fn hidden_dock_keeps_the_running_workflow_status_cue() {
     let mut agent = dock_with_workflow();
     assert_eq!(agent.watchers().workflows, 1);
+    agent.tasks.overlay.visible = true;
     assert!(agent.dock_covers_idle_cues(true));
-    agent.dock_hidden = true;
+    agent.tasks.overlay.visible = false;
     assert!(!agent.dock_covers_idle_cues(true));
+    agent.f7_body = Rect::new(50, 1, 30, 20);
+    assert!(agent.dock_covers_idle_cues(false));
     assert_eq!(agent.watchers().workflows, 1);
 }
 

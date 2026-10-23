@@ -4,14 +4,14 @@
 use super::AgentView;
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
-use crate::theme::Theme;
-use crate::views::context_bar::fmt_tokens;
 use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
+use crate::theme::Theme;
+use crate::views::context_bar::fmt_tokens;
 use crate::views::row_style::{SidebarRowClass, sidebar_style};
 use crate::views::sidebar::{
-    RowIdx, SectionIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout, SidebarLine,
-    SidebarRender, SidebarRow, SidebarSection, SidebarState,
+    RowIdx, SectionIdx, Sidebar, SidebarContent, SidebarEdge, SidebarHit, SidebarLayout,
+    SidebarLine, SidebarRender, SidebarRow, SidebarSection, SidebarState,
 };
 use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -33,6 +33,7 @@ pub(crate) use outline::{SectionDisclosure, SectionId};
 /// Section 0 is the blank slot the dock paints over, then the context switches, then message display.
 const CONTEXT_SECTION: SectionIdx = SectionIdx(1);
 const DISPLAY_SECTION: SectionIdx = SectionIdx(2);
+const TODO_SECTION: SectionIdx = SectionIdx(3);
 
 /// What a row of the sidebar changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +46,10 @@ fn row_target(section: SectionIdx, RowIdx(index): RowIdx) -> Option<RowTarget> {
     if section == CONTEXT_SECTION {
         all_categories().get(index).copied().map(RowTarget::Context)
     } else if section == DISPLAY_SECTION {
-        MessageKind::settings_kinds().get(index).copied().map(RowTarget::Display)
+        MessageKind::settings_kinds()
+            .get(index)
+            .copied()
+            .map(RowTarget::Display)
     } else {
         None
     }
@@ -65,6 +69,7 @@ pub(crate) struct OpenContextSidebar {
     layout: Option<SidebarLayout>,
     policy: PolicyState,
     disclosure: SectionDisclosure,
+    todo_count: usize,
     /// The next draw scrolls the cursor line into view.
     reveal_pending: bool,
 }
@@ -81,7 +86,9 @@ pub(crate) enum PolicyState {
     Loading,
     Ready(ContextPolicyReport),
     /// A change is with the shell; `shown` stays on screen until it answers.
-    Applying { shown: ContextPolicyReport },
+    Applying {
+        shown: ContextPolicyReport,
+    },
     Unavailable,
 }
 
@@ -323,6 +330,7 @@ impl AgentView {
                     layout: None,
                     policy: PolicyState::Loading,
                     disclosure: self.restored_section_disclosure(),
+                    todo_count: self.todo.todos().len(),
                     reveal_pending: f7_focused,
                 });
             } else if let ContextSidebar::Open(open) = &mut self.context_sidebar {
@@ -351,6 +359,7 @@ impl AgentView {
                     layout: None,
                     policy: PolicyState::Loading,
                     disclosure: self.restored_section_disclosure(),
+                    todo_count: self.todo.todos().len(),
                     reveal_pending: false,
                 });
                 self.clear_timeline_panel_focus();
@@ -391,7 +400,9 @@ impl AgentView {
             return None;
         };
         match ev {
-            Event::Key(key) if key.kind != KeyEventKind::Release && open.focus == SidebarFocus::Sidebar => {
+            Event::Key(key)
+                if key.kind != KeyEventKind::Release && open.focus == SidebarFocus::Sidebar =>
+            {
                 let viewport = open.layout.map_or(1, |layout| layout.body.height as usize);
                 let command = gesture::command_for(key, viewport)?;
                 Some(self.run_sidebar_command_saving(command))
@@ -411,7 +422,10 @@ impl AgentView {
                         }
                         Some(self.run_sidebar_command_saving(gesture::activation(mouse.modifiers)))
                     }
-                    Some(SidebarHit::Line(SidebarLine::Hosted(_))) => None,
+                    Some(SidebarHit::Line(SidebarLine::Hosted(_))) => {
+                        open.focus = SidebarFocus::Chat;
+                        None
+                    }
                     Some(SidebarHit::Header | SidebarHit::Footer) => {
                         open.focus = SidebarFocus::Sidebar;
                         if let Some(panel) = self.timeline_mode.panel_mut() {
@@ -500,6 +514,20 @@ impl AgentView {
             Some(lines::display_summary(defaults)),
             &theme,
         );
+        let todo_rows: Vec<SidebarRow<'static>> = self.todo.todos().iter().map(|item| {
+            use xai_grok_shell::tools::TodoStatus;
+            let status = match item.status {
+                TodoStatus::Pending => "pending",
+                TodoStatus::InProgress => "in progress",
+                TodoStatus::Completed => "completed",
+                TodoStatus::Cancelled => "cancelled",
+            };
+            SidebarRow { left: Line::from(item.content.clone()), right: Some(Line::from(status)), detail: &[] }
+        }).collect();
+        if open.todo_count != todo_rows.len() {
+            open.todo_count = todo_rows.len();
+            open.apply_disclosure(open.disclosure);
+        }
         let dock_slot = super::sidebars::DockSlot(self.dock_rows_in_sidebar);
         let sections = [
             SidebarSection::Hosted(&dock_slot),
@@ -511,12 +539,13 @@ impl AgentView {
                 title: display_title,
                 rows: disclosure.visible(SectionId::Display, &display),
             },
+            SidebarSection::Rows { title: Line::from("Todos"), rows: &todo_rows },
         ];
         open.sidebar.rebuild_layout(&sections);
         let viewport = SidebarLayout::compute(area, heights).body.height as usize;
         open.sidebar.clamp_scroll(viewport);
         if open.sidebar.cursor.is_none() && open.focus == SidebarFocus::Sidebar {
-            open.sidebar.cursor = Some(Outline::build(disclosure).default_cursor());
+            open.sidebar.cursor = Some(Outline::build(disclosure, open.todo_count).default_cursor());
             open.reveal_pending = true;
         }
         if open.reveal_pending {
@@ -530,7 +559,7 @@ impl AgentView {
             PolicyState::Unavailable => "Unavailable for this session",
             PolicyState::Ready(_) => gesture::hint_for(cursor_target),
         };
-        let header = [Line::from("Context sent to the model")];
+        let header = [Line::from("Session overview")];
         let saving = self.panel_persistence.saving_status();
         let footer = footer::lines(status, saving);
         open.layout = Some(Sidebar::render(
