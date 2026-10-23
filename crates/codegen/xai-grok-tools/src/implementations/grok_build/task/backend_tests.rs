@@ -1,8 +1,8 @@
 use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
+use super::*;
 use crate::implementations::grok_build::task::types::{
     InterruptionCause, SubagentActor, SubagentCancelDisposition, SubagentState,
 };
-use super::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -83,10 +83,15 @@ impl super::super::coordinator::ChildRunner for BackendTestRunner {
 
     fn on_completed(
         &self,
-        _: super::super::coordinator::ChildCompletion<Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
-        terminal_published();
+        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -96,6 +101,7 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         &self,
         _request: SubagentRequest,
         _registered_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        _observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Result<SubagentResult, ToolError> {
         Err(ToolError::custom("unsupported", "spawn unsupported"))
     }
@@ -105,6 +111,7 @@ impl SubagentBackend for BackendWithoutActiveMessages {
         _id: &str,
         _block: bool,
         _timeout_ms: Option<u64>,
+        _observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Option<SubagentSnapshot> {
         None
     }
@@ -194,7 +201,7 @@ async fn channel_backend_spawn_success() {
         tool_call_id: None,
     };
 
-    let result = backend.spawn(request, None).await.unwrap();
+    let result = backend.spawn(request, None, None).await.unwrap();
     assert!(result.success());
     assert_eq!(result.subagent_id, "test-id");
     assert_eq!(result.tool_calls, 3);
@@ -229,7 +236,7 @@ async fn channel_backend_spawn_closed_channel() {
         tool_call_id: None,
     };
 
-    let err = backend.spawn(request, None).await.unwrap_err();
+    let err = backend.spawn(request, None, None).await.unwrap_err();
     assert!(err.to_string().contains("channel closed"));
 }
 
@@ -261,7 +268,7 @@ async fn channel_backend_query_found() {
             .unwrap();
     });
 
-    let snap = backend.query("sub-1", true, Some(5000)).await;
+    let snap = backend.query("sub-1", true, Some(5000), None).await;
     let snap = snap.expect("snapshot should be present");
     assert_eq!(snap.subagent_id, "sub-1");
     assert_eq!(snap.description, "find bugs");
@@ -300,7 +307,7 @@ async fn channel_backend_query_non_blocking_passes_through() {
         req.respond_to.send(None).unwrap();
     });
 
-    let snap = backend.query("sub-nb", false, None).await;
+    let snap = backend.query("sub-nb", false, None, None).await;
     assert!(snap.is_none());
 
     handle.await.unwrap();
@@ -332,7 +339,7 @@ async fn channel_backend_query_not_found() {
         req.respond_to.send(None).unwrap();
     });
 
-    let snap = backend.query("nonexistent", false, None).await;
+    let snap = backend.query("nonexistent", false, None, None).await;
     assert!(snap.is_none());
 
     handle.await.unwrap();
@@ -542,11 +549,21 @@ async fn channel_backend_cancel_success() {
             other => panic!("Expected SubagentId, got {:?}", other),
         }
         req.respond_to
-            .send(SubagentCancelOutcome::Cancelled { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::Human } })
+            .send(SubagentCancelOutcome::Cancelled {
+                cause: InterruptionCause::ExplicitStop {
+                    actor: SubagentActor::Human,
+                },
+            })
             .unwrap();
     });
 
-    let outcome = backend.cancel("sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop).await;
+    let outcome = backend
+        .cancel(
+            "sub-cancel",
+            SubagentActor::Human,
+            SubagentCancelDisposition::Stop,
+        )
+        .await;
     assert!(matches!(outcome, SubagentCancelOutcome::Cancelled { .. }));
 
     handle.await.unwrap();
@@ -559,7 +576,13 @@ async fn channel_backend_cancel_closed_channel() {
 
     let backend = ChannelBackend::new(tx);
 
-    let outcome = backend.cancel("sub-cancel", SubagentActor::Human, SubagentCancelDisposition::Stop).await;
+    let outcome = backend
+        .cancel(
+            "sub-cancel",
+            SubagentActor::Human,
+            SubagentCancelDisposition::Stop,
+        )
+        .await;
     assert!(matches!(outcome, SubagentCancelOutcome::NotFound));
 }
 
@@ -597,7 +620,7 @@ async fn workflow_spawn_future_drop_cancels_but_task_drop_does_not() {
         let cancel_token = request.cancel_token.clone();
         let task = tokio::spawn({
             let backend = backend.clone();
-            async move { backend.spawn(request, None).await }
+            async move { backend.spawn(request, None, None).await }
         });
         let spawned = recv_event!(rx, Spawn);
         task.abort();
@@ -641,7 +664,7 @@ async fn channel_backend_spawn_result_dropped() {
         tool_call_id: None,
     };
 
-    let err = backend.spawn(request, None).await.unwrap_err();
+    let err = backend.spawn(request, None, None).await.unwrap_err();
     assert!(
         err.to_string().contains("result channel dropped"),
         "error: {err}"
@@ -657,7 +680,7 @@ async fn channel_backend_query_closed_channel() {
 
     let backend = ChannelBackend::new(tx);
 
-    let snap = backend.query("sub-1", false, None).await;
+    let snap = backend.query("sub-1", false, None, None).await;
     assert!(snap.is_none());
 }
 

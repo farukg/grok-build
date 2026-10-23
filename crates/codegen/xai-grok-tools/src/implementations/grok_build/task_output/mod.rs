@@ -269,7 +269,7 @@ impl TaskOutputTool {
         if let Some(backend) = backend
             && let Some(snapshot) = backend
                 .backend()
-                .query(task_id, waits, query_timeout_ms)
+                .query(task_id, waits, query_timeout_ms, ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()))
                 .await
         {
             return Ok(format_subagent_snapshot(&snapshot, wait_hint));
@@ -316,6 +316,7 @@ impl TaskOutputTool {
             resources,
             tool_name_for_truncation,
             None,
+            None,
         )
         .await
     }
@@ -326,6 +327,7 @@ impl TaskOutputTool {
         resources: SharedResources,
         tool_name_for_truncation: &str,
         output_byte_limit: Option<usize>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Result<TaskOutputOutput, xai_tool_runtime::ToolError> {
         let waits = xai_tool_types::task_output_waits(timeout_ms);
         let requested = requested_wait_timeout(timeout_ms);
@@ -353,7 +355,7 @@ impl TaskOutputTool {
         )
         .await;
 
-        let results = if waits
+        let resolved = if waits
             && (!initial.pending_bash_ids.is_empty() || !initial.pending_subagent_ids.is_empty())
         {
             let deadline = tokio::time::Instant::now() + timeout;
@@ -375,10 +377,11 @@ impl TaskOutputTool {
                 wait_hint,
             )
             .await
-            .results
         } else {
-            initial.results
+            initial
         };
+        if let Some(observer) = observations { observer.extend(resolved.observations.snapshot()); }
+        let results = resolved.results;
 
         let completed_count = results.iter().filter(|r| r.is_terminal()).count();
         let total = results.len();
@@ -417,6 +420,7 @@ pub(crate) struct ResolveResult {
     pub(crate) results: Vec<TaskOutputResult>,
     pub(crate) pending_bash_ids: Vec<String>,
     pub(crate) pending_subagent_ids: Vec<String>,
+    pub(crate) observations: crate::types::completion_observation::SubagentCompletionObservations,
 }
 
 pub(crate) async fn resolve_tasks(
@@ -427,6 +431,7 @@ pub(crate) async fn resolve_tasks(
     max_output_bytes: usize,
     wait_hint: WaitHint,
 ) -> ResolveResult {
+    let observations = crate::types::completion_observation::SubagentCompletionObservations::default();
     let mut results = Vec::with_capacity(task_ids.len());
     let mut pending_bash_ids = Vec::new();
     let mut pending_subagent_ids = Vec::new();
@@ -446,7 +451,7 @@ pub(crate) async fn resolve_tasks(
         }
 
         if let Some(be) = backend
-            && let Some(snap) = be.backend().query(id, false, None).await
+            && let Some(snap) = be.backend().query(id, false, None, Some(observations.clone())).await
         {
             let is_terminal = snap.status.is_terminal();
             if let TaskOutputOutput::Result(r) = format_subagent_snapshot(&snap, wait_hint) {
@@ -462,6 +467,7 @@ pub(crate) async fn resolve_tasks(
     }
 
     ResolveResult {
+        observations,
         results,
         pending_bash_ids,
         pending_subagent_ids,
@@ -553,7 +559,7 @@ pub(crate) async fn wait_any_event_driven(
             let done = done.clone();
             waits.push(
                 tokio::spawn(async move {
-                    let _ = be.backend().query(&id, true, Some(timeout_ms)).await;
+                    let _ = be.backend().query(&id, true, Some(timeout_ms), None).await;
                     done.notify_waiters();
                 })
                 .abort_handle(),
@@ -602,7 +608,7 @@ pub(crate) async fn wait_all_event_driven(
             let id = id.clone();
             let timeout_ms = remaining.as_millis() as u64;
             handles.push(tokio::spawn(async move {
-                let _ = be.backend().query(&id, true, Some(timeout_ms)).await;
+                let _ = be.backend().query(&id, true, Some(timeout_ms), None).await;
             }));
         }
     }
@@ -633,6 +639,7 @@ pub(crate) fn format_subagent_snapshot(
     wait_hint: WaitHint,
 ) -> TaskOutputOutput {
     match &snap.status {
+        SubagentSnapshotStatus::Finalizing { publication } => TaskOutputOutput::Result(finalizing_subagent_result(snap, publication)),
         SubagentSnapshotStatus::Initializing => {
             let started = format_epoch_ms_as_rfc3339(snap.started_at_epoch_ms);
             let duration_secs = snap.duration_ms as f64 / 1000.0;
@@ -741,6 +748,7 @@ pub(crate) fn terminal_subagent_result(snap: &SubagentSnapshot) -> TaskOutputRes
             ));
             ("completed", Some(0), output)
         }
+        SubagentSnapshotStatus::Finalizing { publication } => return finalizing_subagent_result(snap, publication),
         SubagentSnapshotStatus::Failed { error } => ("failed", Some(1), error.clone()),
         SubagentSnapshotStatus::Cancelled { cause } => ("cancelled", None, cause.model_text()),
         SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
@@ -762,6 +770,16 @@ pub(crate) fn terminal_subagent_result(snap: &SubagentSnapshot) -> TaskOutputRes
         truncated: false,
         truncation_hint: String::new(),
     }
+}
+
+fn finalizing_subagent_result(snap: &SubagentSnapshot, publication: &crate::implementations::grok_build::task::types::SubagentFinalization) -> TaskOutputResult {
+    let output = match publication {
+        crate::implementations::grok_build::task::types::SubagentFinalization::Writing => "Child execution ended; durable result publication is pending.".to_owned(),
+        crate::implementations::grok_build::task::types::SubagentFinalization::Blocked { error } => format!("Child execution ended; durable result publication failed: {error}"),
+    };
+    TaskOutputResult { task_id: snap.subagent_id.clone(), command: format!("[subagent:{}] {}", snap.subagent_type, snap.description), status: "finalizing".into(),
+        exit_code: None, started: format_epoch_ms_as_rfc3339(snap.started_at_epoch_ms), ended: None, duration_secs: snap.duration_ms as f64 / 1000.0,
+        raw_output_bytes: output.len(), output, output_file: String::new(), truncated: false, truncation_hint: String::new() }
 }
 
 fn format_epoch_ms_as_rfc3339(epoch_ms: u64) -> String {
@@ -953,6 +971,7 @@ impl TaskOutputTool {
             resources,
             "get_command_or_subagent_output",
             output_byte_limit,
+            ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()),
         )
         .await
     }
@@ -1107,11 +1126,11 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::*;
     use super::*;
-    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
     use crate::computer::types::{
         BackgroundHandle, KillOutcome, TaskSnapshot, TerminalBackend, TerminalRunRequest,
         TerminalRunResult,
     };
+    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
     use crate::types::resources::Resources;
     use crate::types::tool_metadata::ToolMetadata;
     use crate::types::tool_metadata::test_ctx;
@@ -2464,6 +2483,7 @@ mod tests {
     fn unwrap_query(
         event: crate::implementations::grok_build::task::types::SubagentEvent,
     ) -> crate::implementations::grok_build::task::types::SubagentQueryRequest {
+        observations: None,
         match event {
             crate::implementations::grok_build::task::types::SubagentEvent::Query(q) => q,
             _ => panic!("Expected SubagentEvent::Query"),

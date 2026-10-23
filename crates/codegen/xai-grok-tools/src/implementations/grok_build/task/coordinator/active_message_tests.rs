@@ -1,5 +1,5 @@
-use std::future::Future;
 use crate::implementations::grok_build::task::types::{SubagentActor, SubagentState};
+use std::future::Future;
 
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -125,11 +125,16 @@ impl ChildRunner for PanickingRunner {
 
     fn on_completed(
         &self,
-        completion: ChildCompletion<()>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
-        terminal_published();
+        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, completion: ChildCompletion<()>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
         let _ = self.completions.send(completion.result);
+        
+        published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -168,8 +173,17 @@ impl ChildRunner for TestRunner {
         super::super::root_targets::tests::resolve_root_session(session_id)
     }
 
-    fn on_completed(&self, _: ChildCompletion<()>, terminal_published: Box<dyn FnOnce() + Send>) {
-        terminal_published();
+    fn on_completed(
+        &self,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+    ) {
+        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _: ChildCompletion<()>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -1383,7 +1397,13 @@ async fn cancel_pending_rejects_parked_human_as_terminal() {
         "human send parks while starting"
     );
     assert!(matches!(
-        coordinator.cancel_one("child", Some("parent"), InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+        coordinator.cancel_one(
+            "child",
+            Some("parent"),
+            InterruptionCause::ExplicitStop {
+                actor: SubagentActor::Human
+            }
+        ),
         crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(

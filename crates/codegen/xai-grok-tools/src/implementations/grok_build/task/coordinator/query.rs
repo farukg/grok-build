@@ -15,13 +15,32 @@ use super::{ChildControl, ChildRunner, SubagentCoordinator, SubagentProgress};
 const DEFAULT_QUERY_BLOCK_TIMEOUT_MS: u64 = 30_000;
 
 impl<R: ChildRunner> SubagentCoordinator<R> {
+    pub(super) fn observe_callers(&self) {
+        for (id, child) in &self.active {
+            let waiting = (!child.handle_only && child
+                .spawn_reply
+                .as_ref()
+                .is_some_and(|reply| !reply.is_closed()))
+                || self.waiters.get(id).is_some_and(|waiters| {
+                    waiters.iter().any(|waiter| !waiter.respond_to.is_closed())
+                });
+            child.control.observe_caller(if waiting {
+                super::SubagentCaller::Waiting
+            } else {
+                super::SubagentCaller::NotWaiting
+            });
+        }
+    }
+
     fn push_blocking_waiter(
         &mut self,
         id: String,
         timeout_ms: Option<u64>,
         respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) {
         self.waiters.entry(id).or_default().push(BlockingWaiter {
+            observations,
             deadline: tokio::time::Instant::now()
                 + std::time::Duration::from_millis(
                     timeout_ms.unwrap_or(DEFAULT_QUERY_BLOCK_TIMEOUT_MS),
@@ -37,14 +56,23 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         block: bool,
         timeout_ms: Option<u64>,
         respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) {
         if !self.is_reachable_from_session(&id, parent_session_id.as_deref()) {
             let _ = respond_to.send(None);
             return;
         }
         if let Some(child) = self.completed.get(&id) {
+            if !child.publication.is_settled() && !child.publication.is_committed() && block {
+                self.push_blocking_waiter(id, timeout_ms, respond_to, observations);
+                return;
+            }
             let snapshot = (!child.request.owner.is_workflow())
                 .then(|| self.completed_snapshot_for_query(child));
+            if matches!(child.publication, super::super::coordinator_state::TerminalPublicationState::Publishing | super::super::coordinator_state::TerminalPublicationState::Published | super::super::coordinator_state::TerminalPublicationState::HistoryBlocked { .. })
+                && snapshot.is_some() && !respond_to.is_closed() && let Some(observer) = &observations {
+                observer.record(&child.result, &child.attempt_id);
+            }
             let _ = respond_to.send(snapshot);
             return;
         }
@@ -54,7 +82,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 return;
             }
             if block {
-                self.push_blocking_waiter(id, timeout_ms, respond_to);
+                self.push_blocking_waiter(id, timeout_ms, respond_to, observations);
             } else {
                 self.queue_active_progress(&id, ProgressTarget::Query(respond_to));
             }
@@ -66,7 +94,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 return;
             }
             if block {
-                self.push_blocking_waiter(id, timeout_ms, respond_to);
+                self.push_blocking_waiter(id, timeout_ms, respond_to, observations);
             } else {
                 let _ = respond_to.send(Some(pending_snapshot(child)));
             }
@@ -74,7 +102,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         if let Some(queued) = self.queued.iter().find(|queued| queued.request.id == id) {
             if block {
-                self.push_blocking_waiter(id, timeout_ms, respond_to);
+                self.push_blocking_waiter(id, timeout_ms, respond_to, observations);
             } else {
                 let _ = respond_to.send(Some(queued_snapshot(
                     &queued.request,

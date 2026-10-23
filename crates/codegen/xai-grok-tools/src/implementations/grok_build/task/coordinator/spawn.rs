@@ -241,7 +241,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     pub(super) fn finish_never_started(
         &mut self,
         mut request: SubagentRequest,
-        spawn_reply: Option<oneshot::Sender<SubagentResult>>,
+        spawn_reply: Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>,
         result: SubagentResult,
         since: std::time::Instant,
     ) {
@@ -309,4 +309,3 @@ pub(super) enum BackgroundStartAck {
     /// Leave `result_tx` for completion or a foreground-budget handoff.
     Hold,
 }
-

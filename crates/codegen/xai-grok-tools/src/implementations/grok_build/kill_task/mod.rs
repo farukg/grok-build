@@ -276,7 +276,6 @@ impl xai_tool_runtime::Tool for KillTaskTool {
 
 #[cfg(test)]
 mod tests {
-    use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor, SubagentState};
     use super::*;
     use crate::computer::types::{
         BackgroundHandle, KillOutcome as KO, TaskSnapshot, TerminalBackend, TerminalRunRequest,
@@ -284,6 +283,9 @@ mod tests {
     };
     use crate::implementations::grok_build::task::backend::{
         ChannelBackend, SubagentBackendResource,
+    };
+    use crate::implementations::grok_build::task::types::{
+        InterruptionCause, SubagentActor, SubagentState,
     };
     use crate::implementations::grok_build::task::types::{
         SubagentCancelRequest, SubagentCancelTarget, SubagentEvent,
@@ -732,7 +734,11 @@ mod tests {
                 other => panic!("Expected SubagentId, got {:?}", other),
             }
             req.respond_to
-                .send(SubagentCancelOutcome::Cancelled { cause: InterruptionCause::ExplicitStop { actor: SubagentActor::Human } })
+                .send(SubagentCancelOutcome::Cancelled {
+                    cause: InterruptionCause::ExplicitStop {
+                        actor: SubagentActor::Human,
+                    },
+                })
                 .unwrap();
         });
 

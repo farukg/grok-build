@@ -74,7 +74,7 @@ pub(super) enum QueuedCaller {
     /// `deadline` is the caller's await budget, running from enqueue and
     /// carried through start.
     Awaiting {
-        result_tx: oneshot::Sender<SubagentResult>,
+        result_tx: crate::implementations::grok_build::task::result_delivery::SubagentResultSender,
         deadline: Option<tokio::time::Instant>,
     },
     /// The queued analog of `handle_only`: the caller was already handed off.
@@ -93,7 +93,7 @@ impl QueuedCaller {
         matches!(self, Self::Backgrounded)
     }
 
-    pub(super) fn into_spawn_reply(self) -> Option<oneshot::Sender<SubagentResult>> {
+    pub(super) fn into_spawn_reply(self) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender> {
         match self {
             Self::Awaiting { result_tx, .. } => Some(result_tx),
             Self::Backgrounded => None,
@@ -204,8 +204,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         // Token observers must see command-path cancels too.
         request.cancel_token.cancel();
-        let result =
-            SubagentResult::interrupted(request.id.clone(), request.id.clone(), cause);
+        let result = SubagentResult::interrupted(request.id.clone(), request.id.clone(), cause);
         self.finish_never_started(
             *request,
             caller.into_spawn_reply(),

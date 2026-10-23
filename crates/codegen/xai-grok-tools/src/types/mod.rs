@@ -10,6 +10,7 @@ pub mod error;
 pub mod memory_backend;
 pub mod memory_v2;
 pub mod output;
+pub mod completion_observation;
 pub mod params_validation;
 pub mod process_manager;
 pub mod requirements;

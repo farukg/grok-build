@@ -15,6 +15,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         request: &SubagentRequest,
         result: &SubagentResult,
         snapshot: &SubagentSnapshot,
+        attempt_id: &xai_message_delivery_core::AttemptId,
     ) {
         if !self.config.buffer_completions {
             return;
@@ -34,7 +35,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let Some(parent_session_id) = target else {
             return;
         };
-        let mut summary = completion_summary(request, result, snapshot);
+        let mut summary = completion_summary(attempt_id, request, result, snapshot);
         if let Some(cap) = self.config.buffered_completion_output_cap {
             summary.output = cap_completion_output(&summary.output, cap);
         }

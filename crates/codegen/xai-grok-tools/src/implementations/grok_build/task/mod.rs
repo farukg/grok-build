@@ -19,6 +19,7 @@ mod active_message;
 pub mod admission;
 mod agent_message_sender;
 pub mod backend;
+pub mod result_delivery;
 pub mod coordinator;
 mod coordinator_state;
 pub use coordinator_state::{cap_completion_output, completion_summary, terminal_snapshot};
@@ -684,6 +685,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             tool_call_id: Some(ctx.call_id.as_str().to_owned()),
         };
 
+        let completion_observations = ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone());
         // 4. Background mode: await registration (pending/queued), not the
         // child session. `spawn()` stays the terminal result; late failures
         // are logged from a detached waiter.
@@ -694,7 +696,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             let mut spawn_task = tokio::spawn(async move {
                 spawn_backend
                     .backend()
-                    .spawn(request, Some(registered_tx))
+                    .spawn(request, Some(registered_tx), completion_observations)
                     .await
             });
 
@@ -754,7 +756,7 @@ impl xai_tool_runtime::Tool for TaskTool {
         }
 
         // 5. Blocking mode (default): spawn via backend and await result
-        let result = backend.backend().spawn(request, None).await;
+        let result = backend.backend().spawn(request, None, completion_observations).await;
         if let Some(forwarder) = cancellation_forwarder {
             forwarder.abort();
         }
@@ -1212,7 +1214,9 @@ mod tests {
             let request = unwrap_spawn(rx.recv().await.unwrap());
             request
                 .respond_with(|_| SubagentResult {
-                    state: SubagentState::Failed { message: "Child session crashed".to_string() },
+                    state: SubagentState::Failed {
+                        message: "Child session crashed".to_string(),
+                    },
                     ..Default::default()
                 })
                 .unwrap();
@@ -1975,7 +1979,9 @@ mod tests {
         let drain = tokio::spawn(async move {
             if let Some(SubagentEvent::Spawn(boxed)) = rx.recv().await {
                 let _ = boxed.respond_with(|boxed| SubagentResult {
-                    state: SubagentState::Failed { message: "worktree creation failed".to_string() },
+                    state: SubagentState::Failed {
+                        message: "worktree creation failed".to_string(),
+                    },
                     subagent_id: boxed.id.clone(),
                     ..Default::default()
                 });

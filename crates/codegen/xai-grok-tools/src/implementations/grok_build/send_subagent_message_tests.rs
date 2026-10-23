@@ -107,10 +107,15 @@ impl ChildRunner for ToolTestRunner {
 
     fn on_completed(
         &self,
-        _: ChildCompletion<Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
-        terminal_published();
+        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -420,7 +425,7 @@ async fn child_sender_parses_targets_at_any_depth() {
         let child_id = child_id.clone();
         async move {
             backend
-                .spawn(request(&child_id, "root", SubagentOwner::Task), None)
+                .spawn(request(&child_id, "root", SubagentOwner::Task), None, None)
                 .await
         }
     });
@@ -489,7 +494,7 @@ async fn depth_zero_child_sender_uses_granted_path_not_backend() {
         let child_id = child_id.clone();
         async move {
             backend
-                .spawn(request(&child_id, "root", SubagentOwner::Task), None)
+                .spawn(request(&child_id, "root", SubagentOwner::Task), None, None)
                 .await
         }
     });
@@ -535,7 +540,7 @@ async fn child_tool_routes_parent_and_sibling_through_coordinator() {
             let id = id.clone();
             async move {
                 backend
-                    .spawn(request(&id, "root", SubagentOwner::Task), None)
+                    .spawn(request(&id, "root", SubagentOwner::Task), None, None)
                     .await
             }
         }));
@@ -549,7 +554,7 @@ async fn child_tool_routes_parent_and_sibling_through_coordinator() {
         let child_id = child_id.clone();
         async move {
             nested_backend
-                .spawn(request(&child_id, "ignored", SubagentOwner::Task), None)
+                .spawn(request(&child_id, "ignored", SubagentOwner::Task), None, None)
                 .await
         }
     }));

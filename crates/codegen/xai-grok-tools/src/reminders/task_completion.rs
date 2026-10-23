@@ -1,17 +1,13 @@
-//! Background task and subagent completion reminder.
+//! Completion formatting and ordinary background-task reminders.
 //!
-//! On each tool call, [`TaskCompletionReminder`] queries the
-//! [`TerminalBackend`] (already on `SharedResources`) via `list_tasks()`
-//! and reports any newly-completed background tasks as plain reminder
-//! text. It also queries the subagent coordinator via
-//! [`SubagentEventSender`] for newly-completed subagents.
+//! `TaskCompletionReminder` reports terminal-backed tasks. Child completion
+//! projection and durable receipts belong to the session safe-point owner.
 //!
 //! The tool pipeline wraps each string in `<system-reminder>` tags
 //! inside the tool result so the model learns about completions without
 //! polling `get_task_output`.
 //!
-//! A [`ReportedTaskCompletions`] state set tracks which task/subagent IDs
-//! have already been surfaced, preventing duplicate reminders.
+//! `ReportedTaskCompletions` tracks ordinary background-task reminders only.
 use crate::bridge::ToolBridge;
 use crate::implementations::grok_build::task::types::{
     SubagentCompletionSummary, SubagentCompletionsRequest, SubagentEvent, SubagentEventSender,
@@ -47,7 +43,7 @@ pub const INLINE_SUBAGENT_OUTPUT_BYTES: usize = 16_000;
 /// Tags model-authored text could use to close the reminder wrapper; `<\/tag` matches the shell's
 /// own escape, so its later pass is a no-op.
 const NEUTRALIZED_TAGS: [&str; 2] = ["system-reminder", "system_reminder"];
-/// Refcounted bash task ids whose wake prompt is queued or in flight; subagent wakes dedupe through [`ReportedTaskCompletions`] instead.
+/// Refcounted bash task IDs whose wake prompt is queued or in flight. Subagent attempts use durable session receipts.
 #[derive(Clone, Debug, Default)]
 pub struct TaskCompletionReservations(pub Arc<std::sync::Mutex<HashMap<String, usize>>>);
 impl TaskCompletionReservations {
@@ -445,7 +441,7 @@ fn append_scheduled_wakeup_footer(
     out.push_str(&scheduled_wakeup_footer(task_id, tools));
 }
 /// Matched without the trailing `>` so attribute forms are covered too.
-fn neutralize_reminder_tags(text: &str) -> String {
+pub fn neutralize_reminder_tags(text: &str) -> String {
     NEUTRALIZED_TAGS.iter().fold(text.to_owned(), |acc, tag| {
         acc.replace(&format!("</{tag}"), &format!("<\\/{tag}"))
             .replace(&format!("<{tag}"), &format!("<\\{tag}"))
@@ -495,7 +491,7 @@ fn outcome_words(c: &SubagentCompletionSummary) -> (&'static str, &'static str) 
             cause: xai_tool_types::InterruptionCause::Paused { .. },
         } => ("was paused", "paused"),
         SubagentSnapshotStatus::Cancelled { .. } => ("was cancelled", "cancelled"),
-        SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } => {
+        SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Finalizing { .. } => {
             ("is still running", "running")
         }
     }
@@ -698,9 +694,7 @@ pub fn consumed_completion_ids(output: &ToolOutput) -> Vec<&str> {
     }
     ids
 }
-/// Cross-cutting reminder that queries the terminal backend for completed background tasks and the subagent coordinator for completed
-/// subagents, surfacing newly-completed ones as `<system-reminder>` text inside the next tool result. Registered on `FinalizedToolset` as a
-/// cross-cutting reminder. Returns plain strings; the tool pipeline wraps each one in `<system-reminder>` tags automatically.
+/// Ordinary background-task reminders, wrapped by the tool pipeline. Subagent results use durable session admission.
 pub struct TaskCompletionReminder;
 #[async_trait::async_trait]
 impl Reminder for TaskCompletionReminder {
@@ -726,15 +720,7 @@ impl Reminder for TaskCompletionReminder {
                 .map(TaskCompletionReservations::snapshot)
                 .unwrap_or_default()
         };
-        let (terminal, event_sender, parent_session_id) = {
-            let res = resources.lock().await;
-            (
-                res.get::<Terminal>().map(|t| t.0.clone()),
-                res.get::<SubagentEventSender>().cloned(),
-                res.get::<crate::types::resources::OwnerSessionId>()
-                    .map(|owner| owner.0.clone()),
-            )
-        };
+        let terminal = resources.lock().await.get::<Terminal>().map(|terminal| terminal.0.clone());
         let mut reminders = Vec::new();
         if let Some(terminal) = terminal {
             let all_tasks = terminal.list_tasks().await;
@@ -771,7 +757,7 @@ impl Reminder for TaskCompletionReminder {
             });
             let state = res.get_or_default::<State<ReportedTaskCompletions>>();
             for id in &consumed_ids {
-                state.reported.insert(id.clone());
+                if tasks.iter().any(|task| &task.task_id == id) { state.reported.insert(id.clone()); }
             }
             if surface_reminders {
                 reminders.extend(
@@ -807,47 +793,6 @@ impl Reminder for TaskCompletionReminder {
                         &running,
                         kill_task_name.as_deref(),
                     ));
-                }
-            }
-        }
-        if let Some(sender) = event_sender {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            if sender
-                .0
-                .send(SubagentEvent::Completions(SubagentCompletionsRequest {
-                    parent_session_id,
-                    suppress_ids: consumed_ids,
-                    respond_to: tx,
-                }))
-                .is_err()
-            {
-                tracing::debug!("SubagentEventSender: receiver dropped, skipping");
-            } else if let Ok(completions) = rx.await {
-                let mut res = resources.lock().await;
-                let goal_loop_active = res
-                    .get::<crate::implementations::grok_build::task::types::GoalLoopActive>()
-                    .is_some_and(|g| g.0);
-                let renderer = res.get::<crate::types::template_renderer::TemplateRenderer>();
-                let task_output_name: Option<String> = renderer.and_then(|r| {
-                    r.tool_for_kind(crate::types::tool::ToolKind::BackgroundTaskAction)
-                        .map(str::to_string)
-                });
-                let scheduler_delete_name: Option<String> = res
-                    .get::<crate::types::resources::NativeToolClientNames>()
-                    .and_then(|names| names.0.get("scheduler_delete").cloned());
-                let scheduler_create_name: Option<String> = res
-                    .get::<crate::types::resources::NativeToolClientNames>()
-                    .and_then(|names| names.0.get("scheduler_create").cloned());
-                let state = res.get_or_default::<State<ReportedTaskCompletions>>();
-                for c in &completions {
-                    if state.reported.insert(c.subagent_id().to_owned()) && !goal_loop_active {
-                        reminders.push(format_subagent_completion(
-                            c,
-                            task_output_name.as_deref(),
-                            scheduler_delete_name.as_deref(),
-                            scheduler_create_name.as_deref(),
-                        ));
-                    }
                 }
             }
         }
@@ -1812,7 +1757,7 @@ mod tests {
     }
     fn summarize(request: &SubagentRequest, result: &SubagentResult) -> SubagentCompletionSummary {
         let snapshot = terminal_snapshot(request, result, None, None, 1_700_000_000_000);
-        completion_summary(request, result, &snapshot)
+        completion_summary(&xai_message_delivery_core::AttemptId::mint(1), request, result, &snapshot)
     }
     fn make_subagent_completion(id: &str, success: bool) -> SubagentCompletionSummary {
         summarize(&test_request(id), &test_result(id, success))
@@ -1950,11 +1895,8 @@ mod tests {
             "same subagent completion should not repeat"
         );
     }
-    /// While a `/goal` loop is active the per-tool-call reminder must not surface bash or subagent
-    /// completions (they would derail a weak model mid-goal), but the IDs must still be marked
-    /// reported so they never resurface once the goal ends.
     #[tokio::test]
-    async fn completions_suppressed_when_goal_loop_active() {
+    async fn goal_loop_surfaces_subagent_results_but_suppresses_ordinary_background_tasks() {
         let mut res = Resources::new();
         let backend: Arc<dyn TerminalBackend> = Arc::new(MockTerminal {
             tasks: vec![make_completed("bash-1")],
@@ -1966,19 +1908,21 @@ mod tests {
         res.insert(SubagentEventSender(tx));
         tokio::spawn(async move {
             while let Some(SubagentEvent::Completions(req)) = rx.recv().await {
-                let _ = req
-                    .respond_to
-                    .send(vec![make_subagent_completion("sub-1", true)]);
+                let _ = req.respond_to.send(vec![
+                    make_subagent_completion("sub-1", true),
+                    make_subagent_completion("sub-error", false),
+                ]);
             }
         });
         let shared = res.into_shared();
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
         let first = reminder.collect_reminders(shared.clone(), &output).await;
-        assert!(
-            first.is_empty(),
-            "goal loop active should suppress bash + subagent reminders, got: {first:?}"
-        );
+        assert_eq!(first.len(), 2, "subagent results must reach the goal caller");
+        assert!(first[0].contains("sub-1"));
+        assert!(first[1].contains("sub-error"));
+        assert!(first[1].contains("Unknown error"));
+        assert!(first.iter().all(|reminder| !reminder.contains("bash-1")));
         shared
             .lock()
             .await
@@ -1986,7 +1930,7 @@ mod tests {
         let second = reminder.collect_reminders(shared, &output).await;
         assert!(
             second.is_empty(),
-            "suppressed completions must stay reported after goal ends, got: {second:?}"
+            "already surfaced subagent and suppressed bash must not repeat, got: {second:?}"
         );
     }
     #[tokio::test]
@@ -2107,7 +2051,7 @@ mod tests {
             );
             let tool = TaskOutputOutput::Result(terminal_subagent_result(&snapshot));
             let tool_text = ToolOutput::TaskOutput(tool).to_prompt_format();
-            let c = completion_summary(&request, &result, &snapshot);
+            let c = completion_summary(&xai_message_delivery_core::AttemptId::mint(1), &request, &result, &snapshot);
             let msg = format_subagent_completion(&c, Some("get_task_output"), None, None);
             let case = format!("{outcome} {output:?} {persona:?} {worktree:?}");
             let (header, body) = msg.split_once('\n').expect("header line");

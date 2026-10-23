@@ -341,6 +341,7 @@ type OutputConverter =
 /// Produced by [`FinalizedToolset::prepare_dispatch`] after the tools read guard has been dropped,
 /// so none of this is held across `.await`.
 struct DispatchParts {
+    completion_observations: crate::types::completion_observation::SubagentCompletionObservations,
     /// Resolved `LocalRegistry` handle to dispatch through.
     lr_handle: Arc<dyn xai_computer_hub_core::ToolHandle>,
     /// Runtime context built for the call (resources, renderer, cwd,
@@ -1722,6 +1723,8 @@ impl FinalizedToolset {
             remap_json_keys(tool_args, &reverse_params)
         };
         let mut ctx = xai_tool_runtime::ToolCallContext::new(parent_ctx.call_id.clone());
+        let completion_observations = parent_ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()).unwrap_or_default();
+        ctx.extensions.insert(completion_observations.clone());
         ctx.extensions.insert(self.resources.clone());
         ctx.extensions.insert_arc(Arc::clone(&self.renderer));
         if let Some(cancellation) = parent_ctx.get::<xai_tool_runtime::Cancellation>() {
@@ -1843,11 +1846,12 @@ impl FinalizedToolset {
             ) {
                 Ok(parts) => parts,
                 Err(e) => {
-                    yield xai_tool_runtime::ToolStreamItem::Terminal(Err(e));
+                    yield xai_tool_runtime::ToolStreamItem::Terminal(Err(crate::types::completion_observation::SubagentCompletionObservations::default().stamp_error(e)));
                     return;
                 }
             };
             let DispatchParts {
+                completion_observations,
                 lr_handle,
                 ctx,
                 canonical_params,
@@ -1862,19 +1866,19 @@ impl FinalizedToolset {
                         yield xai_tool_runtime::ToolStreamItem::Progress(p);
                     }
                     xai_tool_runtime::ToolStreamItem::Terminal(Err(e)) => {
-                        yield xai_tool_runtime::ToolStreamItem::Terminal(Err(e));
+                        yield xai_tool_runtime::ToolStreamItem::Terminal(Err(completion_observations.stamp_error(e)));
                         return;
                     }
                     xai_tool_runtime::ToolStreamItem::Terminal(Ok(typed)) => {
                         let run_result = this
-                            .finalize_output(typed.value, &output_converter, effective_tool_name)
+                            .finalize_output(typed.value, &output_converter, effective_tool_name, completion_observations.snapshot())
                             .await;
-                        yield xai_tool_runtime::ToolStreamItem::Terminal(run_result);
+                        yield xai_tool_runtime::ToolStreamItem::Terminal(run_result.map_err(|error| completion_observations.stamp_error(error)));
                         return;
                     }
                 }
             }
-            yield xai_tool_runtime::ToolStreamItem::Terminal(Err(stream_no_terminal_error()));
+            yield xai_tool_runtime::ToolStreamItem::Terminal(Err(completion_observations.stamp_error(stream_no_terminal_error())));
         })
     }
     /// Pre-dispatch setup shared by [`call`] / [`call_streaming`]. Acquires the tools read lock, clones the per-tool
@@ -1917,6 +1921,8 @@ impl FinalizedToolset {
             None
         };
         let contract_version = self.get_contract_version(tool_name);
+        let completion_observations = ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()).unwrap_or_default();
+        ctx.extensions.insert(completion_observations.clone());
         ctx.extensions.insert(self.resources.clone());
         ctx.extensions.insert_arc(Arc::clone(&self.renderer));
         ctx.extensions.insert(
@@ -1947,6 +1953,7 @@ impl FinalizedToolset {
             )
         })?;
         Ok(DispatchParts {
+            completion_observations,
             lr_handle,
             ctx,
             canonical_params,
@@ -1962,6 +1969,7 @@ impl FinalizedToolset {
         value: serde_json::Value,
         output_converter: &OutputConverter,
         effective_tool_name: Option<String>,
+        completed_subagents: Vec<crate::types::completion_observation::ObservedSubagentCompletion>,
     ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
         let output = (output_converter)(value)
             .map_err(|e| xai_tool_runtime::ToolError::custom("output_decoding", e.to_string()))?;
@@ -1997,6 +2005,7 @@ impl FinalizedToolset {
             self.resources_persistence.save(&res);
         }
         Ok(ToolRunResult {
+            completed_subagents,
             output,
             prompt_text,
             effective_tool_name,

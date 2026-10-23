@@ -15,13 +15,13 @@ use tokio::sync::{mpsc, oneshot};
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
     HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest, SubagentActor,
-    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome,
-    SubagentDescribeRequest, SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest,
-    SubagentInspectRequest, SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest,
-    SubagentRegistryCounts, SubagentRegistryCountsRequest, SubagentRequest,
-    SubagentResolveResumeRequest, SubagentResult, SubagentResumeError, SubagentResumeTarget,
-    SubagentSnapshot, SubagentSpawnRequest, SubagentSpawnedRefsRequest,
-    SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget,
+    SubagentDescribeOutcome, SubagentDescribeRequest, SubagentEvent, SubagentEventSender,
+    SubagentHandOffForegroundRequest, SubagentInspectRequest, SubagentInspection,
+    SubagentListRunningRequest, SubagentQueryRequest, SubagentRegistryCounts,
+    SubagentRegistryCountsRequest, SubagentRequest, SubagentResolveResumeRequest, SubagentResult,
+    SubagentResumeError, SubagentResumeTarget, SubagentSnapshot, SubagentSpawnRequest,
+    SubagentSpawnedRefsRequest, SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
 };
 use crate::register_resource;
 use xai_tool_runtime::ToolError;
@@ -38,6 +38,7 @@ pub trait SubagentBackend: Send + Sync + 'static {
         &self,
         request: SubagentRequest,
         registered_tx: Option<oneshot::Sender<()>>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Result<SubagentResult, ToolError>;
 
     /// Query the current state of a subagent by ID. When `block` is true the backend waits (up to
@@ -47,6 +48,7 @@ pub trait SubagentBackend: Send + Sync + 'static {
         id: &str,
         block: bool,
         timeout_ms: Option<u64>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Option<SubagentSnapshot>;
 
     /// Admit one bounded message to an owned active descendant.
@@ -497,7 +499,7 @@ impl ChannelBackend {
         wait: Option<&super::types::SubagentForegroundWait>,
     ) -> Result<SubagentResult, ToolError> {
         let _wait = wait.map(super::types::SubagentForegroundWait::enter);
-        self.spawn(request, None).await
+        self.spawn(request, None, None).await
     }
 }
 
@@ -520,6 +522,7 @@ impl SubagentBackend for ChannelBackend {
         &self,
         mut request: SubagentRequest,
         registered_tx: Option<oneshot::Sender<()>>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Result<SubagentResult, ToolError> {
         if let Some(parent_session_id) = self.parent_session_id.as_deref() {
             request.parent_session_id = parent_session_id.to_owned();
@@ -531,7 +534,7 @@ impl SubagentBackend for ChannelBackend {
             .event_sender()
             .send(SubagentEvent::Spawn(SubagentSpawnRequest {
                 request: Box::new(request),
-                result_tx: respond_to,
+                result_tx: super::result_delivery::SubagentResultSender::new(respond_to, observations),
                 registered_tx,
             }))
             .map_err(|_| {
@@ -566,12 +569,14 @@ impl SubagentBackend for ChannelBackend {
         id: &str,
         block: bool,
         timeout_ms: Option<u64>,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     ) -> Option<SubagentSnapshot> {
         let (respond_to, response_rx) = oneshot::channel();
         let sent = self
             .tx
             .event_sender()
             .send(SubagentEvent::Query(SubagentQueryRequest {
+                observations,
                 subagent_id: id.to_string(),
                 parent_session_id: self.parent_session_id(),
                 block,

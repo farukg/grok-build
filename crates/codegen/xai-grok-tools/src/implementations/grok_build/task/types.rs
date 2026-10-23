@@ -162,7 +162,7 @@ impl SubagentRequest {
 pub struct SubagentSpawnRequest {
     pub request: Box<SubagentRequest>,
     #[educe(Debug(ignore))]
-    pub result_tx: oneshot::Sender<SubagentResult>,
+    pub result_tx: crate::implementations::grok_build::task::result_delivery::SubagentResultSender,
     /// Fired once when the child is recorded pending or queued. Independent of [`Self::result_tx`],
     /// which stays the terminal completion or a definite pre-start reject. Only Task background
     /// mode attaches this; scheduler-loop fires leave it `None`.
@@ -546,13 +546,13 @@ impl SubagentResult {
         matches!(self.state, SubagentState::Interrupted { .. })
     }
 
+    pub fn permits_completion_wake(&self) -> bool {
+        completion_state_permits_wake(&self.state)
+    }
+
     /// Why the child did not complete, worded for a caller; `None` for a completed or still-running child.
     pub fn error(&self) -> Option<String> {
-        match &self.state {
-            SubagentState::Running | SubagentState::Completed => None,
-            SubagentState::Failed { message } => Some(message.clone()),
-            SubagentState::Interrupted { cause } => Some(cause.model_text()),
-        }
+        completion_error(&self.state)
     }
 
     /// Terminal status string: `"cancelled"`, `"completed"`, `"failed"`, or `"running"`.
@@ -561,12 +561,45 @@ impl SubagentResult {
     }
 }
 
+pub fn completion_error(state: &SubagentState) -> Option<String> {
+        match state {
+            SubagentState::Running | SubagentState::Completed => None,
+            SubagentState::Failed { message } => Some(message.clone()),
+            SubagentState::Interrupted { cause } => Some(cause.model_text()),
+        }
+}
+
+pub fn completion_state_permits_wake(state: &SubagentState) -> bool {
+        match state {
+            SubagentState::Completed
+            | SubagentState::Failed { .. }
+            | SubagentState::Interrupted {
+                cause: InterruptionCause::Error { .. },
+            } => true,
+            SubagentState::Running
+            | SubagentState::Interrupted {
+                cause:
+                    InterruptionCause::ExplicitStop { .. }
+                    | InterruptionCause::Paused { .. }
+                    | InterruptionCause::ParentTurnCancelled { .. }
+                    | InterruptionCause::SessionStopped { .. }
+                    | InterruptionCause::SessionTeardown { .. }
+                    | InterruptionCause::WorkflowCancelled { .. }
+                    | InterruptionCause::ProcessRestart
+                    | InterruptionCause::LiveParentOrphan
+                    | InterruptionCause::Limit { .. },
+            } => false,
+        }
+}
+
 // Query protocol
 
 /// Query sent by `TaskOutputTool` to the shared coordinator actor.
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentQueryRequest {
+    #[educe(Debug(ignore))]
+    pub observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
     /// The subagent ID to look up.
     pub subagent_id: String,
     /// Restrict the lookup to children owned by this parent session.
@@ -620,14 +653,18 @@ impl SubagentSnapshot {
     pub fn is_running(&self) -> bool {
         matches!(
             self.status,
-            SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Initializing
+            SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Finalizing { .. }
         )
     }
 }
 
 /// Status of a subagent snapshot.
 #[derive(Debug, Clone)]
+pub enum SubagentFinalization { Writing, Blocked { error: String } }
+
+#[derive(Debug, Clone)]
 pub enum SubagentSnapshotStatus {
+    Finalizing { publication: SubagentFinalization },
     /// Subagent is being set up (creating worktree, resolving config, spawning
     /// session). Queries during this phase should report the subagent as
     /// initializing rather than "not found".
@@ -674,7 +711,7 @@ impl SubagentSnapshotStatus {
 
     pub fn state(&self) -> SubagentState {
         match self {
-            Self::Initializing | Self::Running { .. } => SubagentState::Running,
+            Self::Initializing | Self::Running { .. } | Self::Finalizing { .. } => SubagentState::Running,
             Self::Completed { .. } => SubagentState::Completed,
             Self::Failed { error } => SubagentState::Failed {
                 message: error.clone(),
@@ -745,6 +782,7 @@ pub enum SubagentCancelOutcome {
 /// drains are scoped there, so delivered summaries carry no owner field.
 #[derive(Debug, Clone)]
 pub struct SubagentCompletionSummary {
+    pub attempt_id: xai_message_delivery_core::AttemptId,
     /// The tool's view of the child, except `Completed.output` is empty; the text lives in `output`.
     pub snapshot: SubagentSnapshot,
     /// Scheduled task that launched this child, when applicable.
@@ -1045,6 +1083,10 @@ pub enum SubagentEvent {
     Completions(SubagentCompletionsRequest),
     /// `Completions` without draining; the requester's ledger discards the copies at a later drain. `suppress_ids` is ignored.
     PeekCompletions(SubagentCompletionsRequest),
+    AcknowledgeCompletions {
+        parent_session_id: String,
+        completions: Vec<xai_message_delivery_core::SubagentCompletionId>,
+    },
     /// Cancel children of `parent_session_id` and drop its buffered completions.
     /// `respond_to`, if set, resolves when no children remain (caller should
     /// time-bound the wait).
@@ -1620,6 +1662,7 @@ mod tests {
         assert_eq!(req.suppress_ids, vec!["id-1", "id-2"]);
 
         let summaries = vec![super::SubagentCompletionSummary {
+            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
             snapshot: super::SubagentSnapshot {
                 subagent_id: "sub-1".into(),
                 description: "test task".into(),

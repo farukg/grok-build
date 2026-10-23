@@ -2,7 +2,9 @@
 
 use tokio::sync::oneshot;
 
-use super::super::coordinator_state::{completed_inspection, pending_inspection, queued_inspection};
+use super::super::coordinator_state::{
+    completed_inspection, pending_inspection, queued_inspection,
+};
 use super::super::types::{SubagentInspection, SubagentRequest};
 use super::{ChildRunner, SubagentCoordinator};
 

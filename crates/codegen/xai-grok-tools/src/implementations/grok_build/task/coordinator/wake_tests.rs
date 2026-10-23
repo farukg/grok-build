@@ -1,10 +1,10 @@
 use super::active_message::tests::*;
-use crate::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 use super::tests::*;
 use super::*;
 use crate::implementations::grok_build::task::admission::{LimitBehavior, SubagentLimits};
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::types::*;
+use crate::implementations::grok_build::task::types::{SubagentActor, SubagentCancelDisposition};
 use tokio::sync::oneshot;
 
 const CHILD_ID: &str = "019b0000-0000-7000-8000-000000000001";
@@ -170,7 +170,7 @@ async fn completed_wake_waits_for_terminal_publication() {
     let backend = parent_backend(&harness);
     let spawn = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("identity-source", true), None).await }
+        async move { backend.spawn(request("identity-source", true), None, None).await }
     });
     harness.wake_runs.recv().await.expect("initial run");
     harness.started.recv().await.expect("initial start");
@@ -244,9 +244,9 @@ async fn stopped_session_refuses_parked_wake_before_publication() {
     let send = park_wake_until_terminal_publication(&mut harness, &backend).await;
 
     assert!(matches!(
-backend.cancel_parent_session().await,
- SubagentCancelOutcome::Cancelled { .. }
-));
+        backend.cancel_parent_session().await,
+        SubagentCancelOutcome::Cancelled { .. }
+    ));
     assert_eq!(
         send.await.unwrap(),
         ActiveAgentMessageOutcome::NotActiveOrFinalizing
@@ -308,7 +308,7 @@ async fn completed_agent_message_wakes_same_id_and_queues_next_turn() {
         let backend = parent_backend(&harness);
         let spawn = tokio::spawn({
             let backend = backend.clone();
-            async move { backend.spawn(request(CHILD_ID, true), None).await }
+            async move { backend.spawn(request(CHILD_ID, true), None, None).await }
         });
         let first_run = harness.wake_runs.recv().await.expect("initial run");
         assert_eq!(
@@ -382,7 +382,7 @@ async fn complete_child(harness: &mut Harness, backend: &ChannelBackend, id: &st
     let spawn = tokio::spawn({
         let backend = backend.clone();
         let request = request(id, true);
-        async move { backend.spawn(request, None).await }
+        async move { backend.spawn(request, None, None).await }
     });
     harness.wake_runs.recv().await.expect("run observed");
     assert_eq!(harness.started.recv().await.as_deref(), Some(id));
@@ -436,7 +436,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
         } else {
             let source = tokio::spawn({
                 let backend = backend.clone();
-                async move { backend.spawn(request(CHILD_ID, true), None).await }
+                async move { backend.spawn(request(CHILD_ID, true), None, None).await }
             });
             harness.wake_runs.recv().await.expect("source run observed");
             let _ = harness.start.send(());
@@ -451,7 +451,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
         if matches!(origin, WakeAdmissionOrigin::Dequeued) {
             let spawn = tokio::spawn({
                 let backend = backend.clone();
-                async move { backend.spawn(request("held", true), None).await }
+                async move { backend.spawn(request("held", true), None, None).await }
             });
             harness.wake_runs.recv().await.expect("held run observed");
             if !is_failure {
@@ -500,6 +500,7 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
             .backend
             .sender()
             .send(SubagentEvent::Query(SubagentQueryRequest {
+                observations: None,
                 subagent_id: CHILD_ID.to_owned(),
                 parent_session_id: Some("parent".to_owned()),
                 block: true,
@@ -520,9 +521,15 @@ async fn run_pre_start_wake_restore_scenario(origin: WakeAdmissionOrigin, exit: 
             }
             PreStartExit::Cancellation => {
                 assert!(matches!(
-backend.cancel(CHILD_ID, SubagentActor::Human, SubagentCancelDisposition::Stop).await,
- SubagentCancelOutcome::Cancelled { .. }
-));
+                    backend
+                        .cancel(
+                            CHILD_ID,
+                            SubagentActor::Human,
+                            SubagentCancelDisposition::Stop
+                        )
+                        .await,
+                    SubagentCancelOutcome::Cancelled { .. }
+                ));
             }
         }
 
@@ -652,7 +659,7 @@ async fn completed_wake_queues_at_concurrent_limit_until_slot_frees() {
     let backend = parent_backend(&harness);
     let source = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("identity-source", true), None).await }
+        async move { backend.spawn(request("identity-source", true), None, None).await }
     });
     harness.wake_runs.recv().await.unwrap();
     harness.started.recv().await.unwrap();
@@ -662,7 +669,7 @@ async fn completed_wake_queues_at_concurrent_limit_until_slot_frees() {
 
     let held = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("held", true), None).await }
+        async move { backend.spawn(request("held", true), None, None).await }
     });
     harness.wake_runs.recv().await.unwrap();
     harness.started.recv().await.unwrap();
@@ -723,7 +730,7 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
     let backend = parent_backend(&harness);
     let source = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("identity-source", true), None).await }
+        async move { backend.spawn(request("identity-source", true), None, None).await }
     });
     harness.wake_runs.recv().await.unwrap();
     harness.started.recv().await.unwrap();
@@ -733,7 +740,7 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
 
     let held = tokio::spawn({
         let backend = backend.clone();
-        async move { backend.spawn(request("held", true), None).await }
+        async move { backend.spawn(request("held", true), None, None).await }
     });
     harness.wake_runs.recv().await.unwrap();
     harness.started.recv().await.unwrap();
@@ -748,7 +755,7 @@ async fn completed_wake_rejects_at_concurrent_limit_without_losing_terminal_reco
     );
     assert!(harness.wake_runs.try_recv().is_err());
     let terminal = backend
-        .query("identity-source", false, None)
+        .query("identity-source", false, None, None)
         .await
         .expect("completed record remains queryable");
     assert!(terminal.status.is_terminal());

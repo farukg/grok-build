@@ -4,8 +4,6 @@ use tokio::sync::{mpsc, oneshot};
 use xai_message_delivery_core::{AgentAddress, AgentId, AttemptId};
 
 use super::*;
-use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
-use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
 use crate::implementations::grok_build::task::admission::{
     Admission, LimitBehavior, SubagentLimits,
 };
@@ -20,6 +18,7 @@ use crate::implementations::grok_build::task::coordinator::agent_quotas::MAX_SEN
 use crate::implementations::grok_build::task::coordinator::{
     ActiveChildGeneration, ActiveMessageAdmission,
 };
+use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
 use crate::implementations::grok_build::task::coordinator_state::{
     ChildRunOutput, InternalEvent, StartedChild,
 };
@@ -27,6 +26,7 @@ use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageOperation, ActiveAgentMessageRequest, SubagentActiveMessageRequest,
     SubagentCancelOutcome, SubagentOwner, SubagentResult,
 };
+use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
 
 const IDS: [&str; 6] = [
     "019b0000-0000-7000-8000-000000000001",
@@ -182,7 +182,12 @@ pub(in super::super) async fn replay_target_resolution_table() {
             3 => c.active.get_mut(IDS[2]).unwrap().generation = ActiveChildGeneration::new(),
             4 => c.active.get_mut(IDS[2]).unwrap().request.owner = SubagentOwner::workflow("run"),
             5 => c.active.get(IDS[2]).unwrap().cancellation.cancel(),
-            6 => c.active.get_mut(IDS[2]).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+            6 => {
+                c.active.get_mut(IDS[2]).unwrap().disposition =
+                    PendingDisposition::Interrupted(InterruptionCause::ExplicitStop {
+                        actor: SubagentActor::Human,
+                    })
+            }
             7 => {
                 let _ = c
                     .active
@@ -213,12 +218,28 @@ pub(in super::super) async fn replay_target_resolution_table() {
                     .start_terminalizing();
             }
             20 => c.active.get(IDS[3]).unwrap().cancellation.cancel(),
-            21 => c.active.get_mut(IDS[3]).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+            21 => {
+                c.active.get_mut(IDS[3]).unwrap().disposition =
+                    PendingDisposition::Interrupted(InterruptionCause::ExplicitStop {
+                        actor: SubagentActor::Human,
+                    })
+            }
             22 => c.pending.get(IDS[3]).unwrap().cancellation.cancel(),
-            23 => c.pending.get_mut(IDS[3]).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+            23 => {
+                c.pending.get_mut(IDS[3]).unwrap().disposition =
+                    PendingDisposition::Interrupted(InterruptionCause::ExplicitStop {
+                        actor: SubagentActor::Human,
+                    })
+            }
             24 | 26 => {
                 assert!(matches!(
-                    c.cancel_one(IDS[3], Some("other"), InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+                    c.cancel_one(
+                        IDS[3],
+                        Some("other"),
+                        InterruptionCause::ExplicitStop {
+                            actor: SubagentActor::Human
+                        }
+                    ),
                     SubagentCancelOutcome::Cancelled { .. }
                 ));
                 finish_child(&mut c, IDS[3]);
@@ -287,7 +308,12 @@ async fn parked_sends_revalidate_the_holder_at_promotion() {
         assert!(response.try_recv().is_err(), "{invalidation}");
         assert_eq!(permits - 1, sender.available_permits(), "{invalidation}");
         match invalidation {
-            "killed" => c.active.get_mut(IDS[2]).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+            "killed" => {
+                c.active.get_mut(IDS[2]).unwrap().disposition =
+                    PendingDisposition::Interrupted(InterruptionCause::ExplicitStop {
+                        actor: SubagentActor::Human,
+                    })
+            }
             "completed" => finish_child(&mut c, IDS[2]),
             "finalizing" => {
                 let _ = c
@@ -345,17 +371,41 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
                     reject_deferred(&mut c, IDS[3]);
                 } else {
                     assert!(matches!(
-                        c.cancel_one(IDS[3], Some("other"), if exit == "killed" { InterruptionCause::ExplicitStop { actor: SubagentActor::Human } } else { InterruptionCause::SessionStopped { session_id: "other".to_owned() } }),
+                        c.cancel_one(
+                            IDS[3],
+                            Some("other"),
+                            if exit == "killed" {
+                                InterruptionCause::ExplicitStop {
+                                    actor: SubagentActor::Human,
+                                }
+                            } else {
+                                InterruptionCause::SessionStopped {
+                                    session_id: "other".to_owned(),
+                                }
+                            }
+                        ),
                         SubagentCancelOutcome::Cancelled { .. }
                     ));
                 }
-                let result = SubagentResult::interrupted(IDS[3].to_owned(), IDS[3].to_owned(), InterruptionCause::Error { message: "".to_owned() });
+                let result = SubagentResult::interrupted(
+                    IDS[3].to_owned(),
+                    IDS[3].to_owned(),
+                    InterruptionCause::Error {
+                        message: "".to_owned(),
+                    },
+                );
                 c.finish_child(IDS[3], output(result));
             }
             "queued_cancelled" => {
                 assert!(c.queued.contains_id(IDS[3]), "{exit}");
                 assert!(matches!(
-                    c.cancel_one(IDS[3], Some("other"), InterruptionCause::ExplicitStop { actor: SubagentActor::Human }),
+                    c.cancel_one(
+                        IDS[3],
+                        Some("other"),
+                        InterruptionCause::ExplicitStop {
+                            actor: SubagentActor::Human
+                        }
+                    ),
                     SubagentCancelOutcome::Cancelled { .. }
                 ));
             }
@@ -395,7 +445,10 @@ async fn granted_legacy_targets_refuse_killed_and_cancelled_completed_children()
         add(&mut c, admissions, IDS[3], IDS[2], None);
         let address = c.active.get(IDS[3]).unwrap().agent_address.clone().unwrap();
         if is_killed {
-            c.active.get_mut(IDS[3]).unwrap().disposition = PendingDisposition::Interrupted(InterruptionCause::ExplicitStop { actor: SubagentActor::Human });
+            c.active.get_mut(IDS[3]).unwrap().disposition =
+                PendingDisposition::Interrupted(InterruptionCause::ExplicitStop {
+                    actor: SubagentActor::Human,
+                });
         } else {
             c.active.get(IDS[3]).unwrap().cancellation.cancel();
         }
@@ -596,13 +649,25 @@ async fn abandoned_incarnations_release_their_pair_permits() {
             if exit == "deferred_rejected" {
                 reject_deferred(&mut c, IDS[3]);
             } else {
-                c.cancel_one(IDS[3], Some("other"), InterruptionCause::SessionStopped { session_id: "other".to_owned() });
+                c.cancel_one(
+                    IDS[3],
+                    Some("other"),
+                    InterruptionCause::SessionStopped {
+                        session_id: "other".to_owned(),
+                    },
+                );
             }
         }
         let result = if exit == "completed" {
             SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "")
         } else {
-            SubagentResult::interrupted(IDS[3].to_owned(), IDS[3].to_owned(), InterruptionCause::Error { message: "".to_owned() })
+            SubagentResult::interrupted(
+                IDS[3].to_owned(),
+                IDS[3].to_owned(),
+                InterruptionCause::Error {
+                    message: "".to_owned(),
+                },
+            )
         };
         c.finish_child(
             IDS[3],

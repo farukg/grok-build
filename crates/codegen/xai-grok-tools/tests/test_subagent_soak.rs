@@ -12,8 +12,8 @@
 static DHAT_ALLOC: dhat::Alloc = dhat::Alloc;
 
 use std::sync::Arc;
-use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 use std::time::Duration;
+use xai_grok_tools::implementations::grok_build::task::types::{InterruptionCause, SubagentState};
 
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -352,7 +352,11 @@ impl ChildRunner for SoakRunner {
             if !promoted || cancellation.is_cancelled() {
                 return ChildRunOutput {
                     result: SubagentResult {
-                        state: SubagentState::Interrupted { cause: InterruptionCause::Error { message: "cancelled before start".to_owned() } },
+                        state: SubagentState::Interrupted {
+                            cause: InterruptionCause::Error {
+                                message: "cancelled before start".to_owned(),
+                            },
+                        },
                         subagent_id: request.id.clone(),
                         child_session_id: request.id,
                         ..Default::default()
@@ -400,10 +404,15 @@ impl ChildRunner for SoakRunner {
 
     fn on_completed(
         &self,
-        _completion: ChildCompletion<Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
-        terminal_published();
+        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -431,21 +440,21 @@ fn soak_request(id: String, background: bool) -> SubagentRequest {
 
 async fn run_cycle(backend: &ChannelBackend, i: u64) {
     let fg = backend
-        .spawn(soak_request(format!("fg-{i}"), false), None)
+        .spawn(soak_request(format!("fg-{i}"), false), None, None)
         .await
         .expect("foreground spawn round-trips through the coordinator");
     assert!(fg.success(), "cycle {i}: foreground child must complete");
 
     let bg_id = format!("bg-{i}");
     let bg = backend
-        .spawn(soak_request(bg_id.clone(), true), None)
+        .spawn(soak_request(bg_id.clone(), true), None, None)
         .await
         .expect("background spawn round-trips through the coordinator");
     assert!(bg.success(), "cycle {i}: background child must complete");
 
     let blocking = true;
     let timeout_ms = Some(5_000);
-    let snapshot = backend.query(&bg_id, blocking, timeout_ms).await;
+    let snapshot = backend.query(&bg_id, blocking, timeout_ms, None).await;
     assert!(
         snapshot.is_some(),
         "cycle {i}: completed subagent must be queryable"
@@ -470,7 +479,7 @@ async fn concurrent_phase(backend: &ChannelBackend, gate: &tokio::sync::Semaphor
             let backend = backend.clone();
             tokio::task::spawn_local(async move {
                 backend
-                    .spawn(soak_request(format!("conc-{k}"), true), None)
+                    .spawn(soak_request(format!("conc-{k}"), true), None, None)
                     .await
             })
         })

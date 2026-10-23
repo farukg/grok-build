@@ -1022,7 +1022,15 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 if let Some(is_clean) = terminal_disposition
                     && let Some(output) = self.terminal_outputs.remove(subagent_id)
                 {
-                    self.finish_terminalized_child(subagent_id, output, is_clean);
+                    match output {
+                        super::super::coordinator_state::TerminalOutput::Finishing(output) => self.finish_terminalized_child(subagent_id, output, is_clean),
+                        super::super::coordinator_state::TerminalOutput::Committing(completion) => {
+                            self.terminal_outputs.insert(subagent_id.to_owned(), super::super::coordinator_state::TerminalOutput::Committing(completion));
+                        }
+                        output @ super::super::coordinator_state::TerminalOutput::Publishing { .. } => {
+                            self.terminal_outputs.insert(subagent_id.to_owned(), output);
+                        }
+                    }
                 }
             }
             ActiveMessageCompletionTarget::Root(key) => {

@@ -1,5 +1,5 @@
+use crate::implementations::grok_build::task::types::SubagentState;
 use tokio::sync::mpsc;
-use crate::implementations::grok_build::task::types::{SubagentState};
 
 use super::*;
 use crate::implementations::grok_build::task::TaskTool;
@@ -120,10 +120,15 @@ impl ChildRunner for RecordingRunner {
 
     fn on_completed(
         &self,
-        _: ChildCompletion<Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce() + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
-        terminal_published();
+        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+    }
+    fn on_published(&self, _: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+        
+        
+        published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
 
@@ -166,12 +171,11 @@ fn harness() -> Harness {
 impl Harness {
     /// Spawn a child with `id`; a [`HOLD`] prompt keeps it running.
     async fn spawn_child(&mut self, id: &str, prompt: &str) {
-        let mut request =
-            human_resume_request(String::new(), prompt.to_owned(), PARENT.to_owned());
+        let mut request = human_resume_request(String::new(), prompt.to_owned(), PARENT.to_owned());
         request.id = id.to_owned();
         request.resume_from = None;
         let backend = self.backend.clone();
-        let spawn = tokio::spawn(async move { backend.spawn(request, None).await });
+        let spawn = tokio::spawn(async move { backend.spawn(request, None, None).await });
         let _ = completes(self.runs.recv()).await;
         assert_eq!(completes(self.started.recv()).await.as_deref(), Some(id));
         if prompt != HOLD {

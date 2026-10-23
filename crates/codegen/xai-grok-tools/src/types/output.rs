@@ -132,6 +132,8 @@ use crate::util::truncate::{DEFAULT_SOFT_WRAP_WIDTH, soft_wrap_lines};
 /// protocol translation. `prompt_text` — rendered with system reminders appended; for model prompt.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolRunResult {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completed_subagents: Vec<crate::types::completion_observation::ObservedSubagentCompletion>,
     /// Clean tool output — never mutated by layers.
     /// Consumers use this for: JSON serialization, protocol translation, hunk tracking.
     pub output: ToolOutput,
@@ -2924,6 +2926,7 @@ mod tests {
     }
     fn sample_run_result(output: ToolOutput) -> ToolRunResult {
         ToolRunResult {
+            completed_subagents: Vec::new(),
             prompt_text: "prompt".into(),
             effective_tool_name: None,
             output,

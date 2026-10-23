@@ -586,6 +586,7 @@ impl SchedulerActor {
                 let query_sent = events
                     .0
                     .send(SubagentEvent::Query(SubagentQueryRequest {
+                        observations: None,
                         subagent_id: prev_id.clone(),
                         parent_session_id: Some(parent_session_id.clone()),
                         block: false,
@@ -766,7 +767,7 @@ impl SchedulerActor {
             .0
             .send(SubagentEvent::Spawn(SubagentSpawnRequest {
                 request: Box::new(request),
-                result_tx,
+                result_tx: crate::implementations::grok_build::task::result_delivery::SubagentResultSender::new(result_tx, None),
                 registered_tx: Some(registered_tx),
             }))
             .is_err()
@@ -1004,10 +1005,10 @@ impl SchedulerActor {
 mod tests {
     use super::*;
 
-    use crate::implementations::grok_build::task::types::{SubagentState};
     use crate::implementations::grok_build::scheduler::types::{
-    ScheduledTask, SchedulerHandle, scheduler_tool_error,
-};
+        ScheduledTask, SchedulerHandle, scheduler_tool_error,
+    };
+    use crate::implementations::grok_build::task::types::SubagentState;
     use crate::notification::{AcknowledgedToolNotification, ToolNotification};
     use crate::types::resources::{Resources, WebCitationCounter};
     use std::sync::Arc;
@@ -2498,7 +2499,9 @@ mod tests {
         let spawned_id = request.id.clone();
         let _ = request.result_tx.send(
             crate::implementations::grok_build::task::types::SubagentResult {
-                state: SubagentState::Failed { message: "worktree creation failed".into() },
+                state: SubagentState::Failed {
+                    message: "worktree creation failed".into(),
+                },
                 subagent_id: spawned_id.clone(),
                 ..Default::default()
             },

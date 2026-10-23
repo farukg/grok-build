@@ -42,9 +42,10 @@ use super::coordinator_state::{
 };
 use super::types::{
     ActiveAgentMessageOutcome, AgentAddress, HandedOffForegroundSubagent, SpawnedSubagentRef,
-    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome, SubagentEvent,
-    SubagentOutstandingReply, SubagentRegistryCounts, SubagentRequest, SubagentResult,
-    SubagentResumeLookup, SubagentResumeSource, SubagentValidateTypeOutcome,
+    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelTarget,
+    SubagentDescribeOutcome, SubagentEvent, SubagentOutstandingReply, SubagentRegistryCounts,
+    SubagentRequest, SubagentResult, SubagentResumeLookup, SubagentResumeSource,
+    SubagentValidateTypeOutcome,
 };
 pub use active_message::ActiveChildGeneration;
 use active_message::{ActiveMessageFuture, ActiveMessageLifecycle, SpawnReadyMessages};
@@ -55,10 +56,11 @@ use root_targets::{RootTargetKey, RootTargetLifecycle};
 pub use super::coordinator_state::{
     ACTIVE_MESSAGE_ADMISSION_TIMEOUT, ACTIVE_MESSAGE_FINALIZATION_TIMEOUT,
     ACTIVE_MESSAGE_SPAWN_READY_TIMEOUT, ActiveMessageAdmission, ChildCompletion, ChildControl,
-    ChildReporter, ChildRunOutput, ChildRunRequest, ChildRunner, CompletionDisposition,
+    ChildReporter, ChildRunOutput, ChildRunRequest, ChildRunner, CompletionDisposition, CompletionReporting, CompletionPreparation, TerminalCommitResult, TerminalVisibilityResult,
     CoordinatorConfig, LimitedSpawnOrigin, LocalBoxFuture, MAX_ACTIVE_MESSAGE_ADMISSIONS,
     MAX_ACTIVE_MESSAGE_ADMISSIONS_PER_CHILD, MAX_COMPLETED_ENTRIES, SendBoxFuture, StartedChild,
-    SubagentLimitDecision, SubagentLimitNotice, SubagentLimitSink, SubagentProgress, WakeOrigin,
+    SubagentCaller, SubagentLimitDecision, SubagentLimitNotice, SubagentLimitSink,
+    SubagentProgress, WakeOrigin,
 };
 use queue::{QUEUED_REAP_INTERVAL, QueuedCaller, SpawnQueue, StartOrigin};
 use wake::PendingWake;
@@ -70,8 +72,8 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     agent_message_sender_factory: Option<super::agent_message_sender::AgentMessageSenderFactory>,
     internal_tx: mpsc::UnboundedSender<InternalEvent<R::Control>>,
     internal_rx: mpsc::UnboundedReceiver<InternalEvent<R::Control>>,
-    terminal_published_tx: mpsc::UnboundedSender<String>,
-    terminal_published_rx: mpsc::UnboundedReceiver<String>,
+    terminal_published_tx: mpsc::UnboundedSender<super::coordinator_state::TerminalPublication>,
+    terminal_published_rx: mpsc::UnboundedReceiver<super::coordinator_state::TerminalPublication>,
     runner: R,
     config: CoordinatorConfig,
     admission: Admission,
@@ -113,7 +115,7 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     active_messages: FuturesUnordered<ActiveMessageFuture>,
     /// Parked sends and the admission semaphore they re-acquire on start.
     spawn_ready: SpawnReadyMessages,
-    terminal_outputs: HashMap<String, ChildRunOutput<R::CompletionData>>,
+    terminal_outputs: HashMap<String, super::coordinator_state::TerminalOutput<R::CompletionData>>,
     progress: FuturesUnordered<ProgressFuture<<R::Control as ChildControl>::ProgressFuture>>,
     list_requests: HashMap<u64, ListRequest>,
     next_list_request_id: u64,
@@ -336,7 +338,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 biased;
                 Some(event) = self.internal_rx.recv() => self.handle_internal(event),
                 Some(subagent_id) = self.terminal_published_rx.recv() => {
-                    self.handle_terminal_published(subagent_id);
+                    self.handle_terminal_publication(subagent_id);
                 },
                 Some(completion) = self.active_messages.next(), if !self.active_messages.is_empty() => {
                     self.finish_active_message(completion);
@@ -387,11 +389,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 // turn-blocking set, and any parked drain waiting on it, would otherwise stall until the next command or the far-later
                 // foreground deadline.
                 _ = std::future::poll_fn(|cx| {
-                    poll_caller_abandoned(&mut self.pending, &mut self.active, cx)
-                }) => self.reap_abandoned_callers(),
+                    poll_caller_abandoned(&mut self.pending, &mut self.active, &mut self.waiters, cx)
+                }) => {
+                    self.reap_abandoned_callers();
+                    self.waiters.retain(|_, waiters| {
+                        waiters.retain(|waiter| !waiter.respond_to.is_closed());
+                        !waiters.is_empty()
+                    });
+                },
                 _ = sleep_until(deadline), if deadline.is_some() => self.process_deadlines(),
             }
             self.resolve_drain_waiters();
+            self.observe_callers();
             self.evict_completed_overflow();
         }
 
@@ -409,6 +418,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     query.block,
                     query.timeout_ms,
                     query.respond_to,
+                    query.observations,
                 );
             }
             SubagentEvent::Cancel(request) => match request.target {
@@ -418,11 +428,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     disposition,
                 } => {
                     let cause = match disposition {
-                        SubagentCancelDisposition::Stop => InterruptionCause::ExplicitStop { actor },
+                        SubagentCancelDisposition::Stop => {
+                            InterruptionCause::ExplicitStop { actor }
+                        }
                         SubagentCancelDisposition::Pause => InterruptionCause::Paused { actor },
                     };
-                    let outcome =
-                        self.cancel_one(&id, request.parent_session_id.as_deref(), cause);
+                    let outcome = self.cancel_one(&id, request.parent_session_id.as_deref(), cause);
                     let _ = request.respond_to.send(outcome);
                 }
                 SubagentCancelTarget::ParentPromptId(prompt_id) => {
@@ -493,6 +504,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .map(|completion| completion.summary)
                     .collect();
                 let _ = request.respond_to.send(completions);
+            }
+            SubagentEvent::AcknowledgeCompletions { parent_session_id, completions } => {
+                self.pending_completions.retain(|completion| {
+                    completion.parent_session_id != parent_session_id
+                        || !completions.iter().any(|id| id.subagent_id == completion.summary.subagent_id() && id.attempt_id == completion.summary.attempt_id)
+                });
             }
             SubagentEvent::PeekCompletions(request) => {
                 let completions = self
@@ -659,10 +676,16 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     }
 
     fn evict_completed_overflow(&mut self) {
-        while self.completed.len() > MAX_COMPLETED_ENTRIES {
+        let mut remaining = self.completed_order.len();
+        while self.completed.len() > MAX_COMPLETED_ENTRIES && remaining > 0 {
+            remaining -= 1;
             let Some(id) = self.completed_order.pop_front() else {
                 break;
             };
+            if self.completed.get(&id).is_some_and(|child| !child.publication.is_settled()) || self.pending_wakes.contains_key(&id) {
+                self.completed_order.push_back(id);
+                continue;
+            }
             self.completed.remove(&id);
             self.reject_pending_wakes_for_id(&id);
             self.graph.remove(&id);
@@ -670,7 +693,112 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
     }
 
-    fn handle_terminal_published(&mut self, subagent_id: String) {
+    fn handle_terminal_publication(&mut self, publication: super::coordinator_state::TerminalPublication) {
+        match publication {
+            super::coordinator_state::TerminalPublication::Prepared { subagent_id, attempt_id, result } => self.handle_terminal_prepared(subagent_id, attempt_id, result),
+            super::coordinator_state::TerminalPublication::Visible { subagent_id, attempt_id, result } => self.handle_terminal_visible(subagent_id, attempt_id, result),
+        }
+    }
+    fn handle_terminal_prepared(&mut self, subagent_id: String, attempt_id: xai_message_delivery_core::AttemptId, result: TerminalCommitResult) {
+        use super::coordinator_state::{CompletionReplyTarget, TerminalOutput, TerminalPublicationState};
+        if !self.completed.get(&subagent_id).is_some_and(|child| child.attempt_id == attempt_id) { return; }
+        let mut completion = match self.terminal_outputs.remove(&subagent_id) {
+            Some(TerminalOutput::Committing(completion)) => completion,
+            Some(output @ (TerminalOutput::Finishing(_) | TerminalOutput::Publishing { .. })) => { self.terminal_outputs.insert(subagent_id, output); return; }
+            None => return,
+        };
+        let committed = matches!(result, TerminalCommitResult::Committed);
+        let mut delivered = false;
+        let mut foreground_delivered = false;
+        let reply_result = match &result {
+            TerminalCommitResult::Committed => completion.result.clone(),
+            TerminalCommitResult::Rejected { error } => SubagentResult::failed(subagent_id.clone(), completion.result.child_session_id.clone(),
+                format!("Completion {}/{} was not admitted: {} Durable commit failed: {error}", subagent_id, completion.attempt_id, completion.result.state.model_text())),
+        };
+        let snapshot = match &result {
+            TerminalCommitResult::Committed => completion.snapshot.clone(),
+            TerminalCommitResult::Rejected { error } => {
+                let mut snapshot = completion.snapshot.clone();
+                snapshot.status = super::types::SubagentSnapshotStatus::Finalizing { publication: super::types::SubagentFinalization::Blocked { error: error.clone() } };
+                snapshot
+            }
+        };
+        for waiter in self.waiters.remove(&subagent_id).unwrap_or_default() {
+            if committed && !waiter.respond_to.is_closed() && let Some(observer) = &waiter.observations {
+                observer.record(&completion.result, &completion.attempt_id);
+            }
+            delivered |= waiter.respond_to.send(Some(snapshot.clone())).is_ok();
+        }
+        if let Some(child) = self.completed.get_mut(&subagent_id) {
+            child.publication = match &result {
+                TerminalCommitResult::Committed => TerminalPublicationState::Publishing,
+                TerminalCommitResult::Rejected { error } => TerminalPublicationState::Rejected { error: error.clone() },
+            };
+            match std::mem::replace(&mut child.reply_target, CompletionReplyTarget::Absent) {
+                CompletionReplyTarget::Foreground { result_tx: reply, .. } => {
+                    foreground_delivered = if committed { reply.send_committed(reply_result, &completion.attempt_id).is_ok() } else { reply.send(reply_result).is_ok() };
+                    completion.disposition.backgrounded = !foreground_delivered;
+                }
+                CompletionReplyTarget::Detached(reply) => { let _ = reply.send(reply_result); completion.disposition.backgrounded = true; }
+                CompletionReplyTarget::Absent => completion.disposition.backgrounded = true,
+            }
+        }
+        completion.disposition.foreground_delivered = foreground_delivered;
+        completion.disposition.waiter_delivered = delivered;
+        
+        let parent_session_id = completion.request.parent_session_id.clone();
+        let workflow_run_id = completion.request.owner.workflow_run_id().map(str::to_owned);
+        match result {
+            TerminalCommitResult::Committed => {
+                if !completion.disposition.explicitly_killed && completion.result.permits_completion_wake() {
+                    self.buffer_completion(&completion.request, &completion.result, &completion.snapshot, &completion.attempt_id);
+                }
+                let published_tx = self.terminal_published_tx.clone();
+                let published_id = subagent_id.clone();
+                let published_attempt = completion.attempt_id.clone();
+                self.terminal_outputs.insert(subagent_id.clone(), TerminalOutput::Publishing {
+                    attempt_id: published_attempt.clone(), parent_session_id: parent_session_id.clone(),
+                });
+                let callback = super::coordinator_state::TerminalPublicationGuard::new(published_tx,
+                    super::coordinator_state::TerminalPublication::Visible { subagent_id: published_id.clone(), attempt_id: published_attempt.clone(),
+                        result: TerminalVisibilityResult::Deferred { error: "host publication callback dropped before visibility acknowledgement".into() } });
+                self.runner.on_published(completion, Box::new(move |result| {
+                    callback.resolve(super::coordinator_state::TerminalPublication::Visible { subagent_id: published_id, attempt_id: published_attempt, result });
+                }));
+            }
+            TerminalCommitResult::Rejected { error } => {
+                self.runner.on_commit_failed(completion, error);
+                self.reject_pending_wakes_for_id(&subagent_id);
+            }
+        }
+        if let Some(run_id) = workflow_run_id { self.resolve_workflow_cancel_waiters(&run_id); }
+        self.resolve_teardown_drain_waiters(&parent_session_id);
+        self.start_queued_within_capacity();
+    }
+
+    fn handle_terminal_visible(&mut self, subagent_id: String, attempt_id: xai_message_delivery_core::AttemptId, result: TerminalVisibilityResult) {
+        use super::coordinator_state::{TerminalOutput, TerminalPublicationState};
+        if !self.completed.get(&subagent_id).is_some_and(|child| child.attempt_id == attempt_id) { return; }
+        let parent_session_id = match self.terminal_outputs.remove(&subagent_id) {
+            Some(TerminalOutput::Publishing { attempt_id: pending_attempt, parent_session_id }) if pending_attempt == attempt_id => parent_session_id,
+            Some(output) => { self.terminal_outputs.insert(subagent_id, output); return; }
+            None => return,
+        };
+        if let Some(child) = self.completed.get_mut(&subagent_id) {
+            child.publication = match result {
+                TerminalVisibilityResult::Published => TerminalPublicationState::Published,
+                TerminalVisibilityResult::Deferred { error } => TerminalPublicationState::HistoryBlocked { error },
+            };
+        }
+        self.resolve_teardown_drain_waiters(&parent_session_id);
+        if let Some(run_id) = self.completed.get(&subagent_id).and_then(|child| child.request.owner.workflow_run_id()).map(str::to_owned) {
+            self.resolve_workflow_cancel_waiters(&run_id);
+        }
+        self.evict_completed_overflow();
+        if self.completed.get(&subagent_id).is_some_and(|child| !child.publication.is_published()) {
+            self.reject_pending_wakes_for_id(&subagent_id);
+            return;
+        }
         let is_blocked = self.completed.get(&subagent_id).is_some_and(|completed| {
             let parent_session_id = &completed.request.parent_session_id;
             self.spawn_blocked_sessions.contains(parent_session_id)
@@ -905,7 +1033,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     fn start_child(
         &mut self,
         request: SubagentRequest,
-        spawn_reply: Option<oneshot::Sender<SubagentResult>>,
+        spawn_reply: Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>,
         registered_tx: Option<oneshot::Sender<()>>,
         origin: StartOrigin,
         agent_address: Option<AgentAddress>,
@@ -1002,6 +1130,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             .values()
             .map(|child| &child.request)
             .chain(self.active.values().map(|child| &child.request))
+            .chain(self.terminal_outputs.values().filter_map(|output| match output {
+                super::coordinator_state::TerminalOutput::Finishing(_) => None,
+                super::coordinator_state::TerminalOutput::Committing(completion) => Some(&completion.request),
+                super::coordinator_state::TerminalOutput::Publishing { .. } => None,
+            }))
             .filter(|request| {
                 request.parent_session_id == parent_session_id && !request.owner.is_workflow()
             })
@@ -1109,7 +1242,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             None => {
                 // Stays in `self.active` while buffered, so a parked drain keeps
                 // counting it live until the last admission settles.
-                self.terminal_outputs.insert(id.to_owned(), output);
+                self.terminal_outputs.insert(id.to_owned(), super::coordinator_state::TerminalOutput::Finishing(output));
             }
         }
     }
@@ -1193,6 +1326,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
 
         let request = record.request().clone();
+        let completion_attempt_id = record.attempt_id().clone();
         let launched = match &record {
             ChildRecord::Active(_) => true,
             ChildRecord::Pending(child) => child.launched,
@@ -1224,7 +1358,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             agent_address,
             spawner_session_id,
             mut spawn_reply,
-            mut handle_only,
+            foreground_deadline,
+            handle_only,
         ) = match record {
             ChildRecord::Pending(child) => (
                 child.started_at,
@@ -1237,6 +1372,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.agent_address,
                 child.spawner_session_id,
                 child.spawn_reply,
+                child.foreground_deadline,
                 child.handle_only,
             ),
             ChildRecord::Active(child) => (
@@ -1250,6 +1386,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.agent_address,
                 child.spawner_session_id,
                 child.spawn_reply,
+                child.foreground_deadline,
                 child.handle_only,
             ),
         };
@@ -1274,10 +1411,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             .next_completion_age
             .checked_add(1)
             .expect("subagent completion age exhausted");
-        let terminal_published = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reply_target = match (handle_only, spawn_reply.take()) {
+            (false, Some(result_tx)) => super::coordinator_state::CompletionReplyTarget::Foreground {
+                result_tx, deadline: super::coordinator_state::CompletionDeadline::from_option(foreground_deadline),
+            },
+            (true, Some(reply)) => super::coordinator_state::CompletionReplyTarget::Detached(reply),
+            (false | true, None) => super::coordinator_state::CompletionReplyTarget::Absent,
+        };
         let mut completed = CompletedChild {
+            attempt_id: completion_attempt_id.clone(),
             completion_age,
-            terminal_published: Arc::clone(&terminal_published),
+            publication: super::coordinator_state::TerminalPublicationState::Committing,
+            reply_target,
             request: request.clone(),
             started_at,
             child_session_id,
@@ -1294,69 +1439,44 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 && (paused || (!was_cancelled && !output.result.is_interrupted())),
             result: output.result.clone(),
         };
-        let snapshot = completed_snapshot(&completed, None);
+        let snapshot = super::coordinator_state::terminal_snapshot(&completed.request, &completed.result, None,
+            completed.persona.clone(), super::coordinator_state::instant_to_epoch_ms(completed.started_at));
 
-        let mut waiter_delivered = false;
-        for waiter in self.waiters.remove(id).unwrap_or_default() {
-            waiter_delivered |= waiter.respond_to.send(Some(snapshot.clone())).is_ok();
-        }
-
-        let mut foreground_delivered = false;
-        if let Some(respond_to) = spawn_reply.take() {
-            let sent = respond_to.send(output.result.clone()).is_ok();
-            if !handle_only {
-                foreground_delivered = sent;
-                handle_only = !sent;
-            }
-        } else if !handle_only {
-            handle_only = true;
-        }
-
-        self.buffer_completion(&request, &output.result, &snapshot);
         if completed.persisted_output_ref.is_some() {
             completed.result.output = Arc::from("");
         }
 
         // Root-scoped: the root is never woken for a grandchild.
-        let should_surface = request.surface_completion
-            && handle_only
-            && !output.result.is_interrupted()
-            && !waiter_delivered
-            && !explicitly_killed;
+        let reporting = if request.surface_completion && output.result.permits_completion_wake() && !explicitly_killed {
+            CompletionReporting::Reportable
+        } else { CompletionReporting::Silent };
         let disposition = CompletionDisposition {
-            foreground_delivered,
+            foreground_delivered: false,
             backgrounded: handle_only,
-            waiter_delivered,
+            waiter_delivered: false,
             explicitly_killed,
-            should_surface,
+            reporting,
         };
         let finished_session = completed.child_session_id.clone();
         self.completed.insert(id.to_owned(), completed);
         self.completed_order.push_back(id.to_owned());
         self.purge_completions_for_spawner(&finished_session);
         self.running_count_changed();
-        let workflow_run_id = request.owner.workflow_run_id().map(str::to_owned);
-        let parent_session_id = request.parent_session_id.clone();
         let published_tx = self.terminal_published_tx.clone();
         let published_id = id.to_owned();
-        self.runner.on_completed(
-            ChildCompletion {
-                request,
-                result: output.result,
-                snapshot,
-                completion_data: output.completion_data,
-                disposition,
-            },
-            Box::new(move || {
-                terminal_published.store(true, std::sync::atomic::Ordering::Release);
-                let _ = published_tx.send(published_id);
-            }),
-        );
-        if let Some(run_id) = workflow_run_id {
-            self.resolve_workflow_cancel_waiters(&run_id);
+        let published_attempt = completion_attempt_id.clone();
+        self.terminal_outputs.insert(id.to_owned(), super::coordinator_state::TerminalOutput::Committing(ChildCompletion {
+            attempt_id: completion_attempt_id, request, result: output.result, snapshot,
+            completion_data: output.completion_data, disposition,
+        }));
+        if let Some(super::coordinator_state::TerminalOutput::Committing(completion)) = self.terminal_outputs.get_mut(id) {
+            let callback = super::coordinator_state::TerminalPublicationGuard::new(published_tx,
+                super::coordinator_state::TerminalPublication::Prepared { subagent_id: published_id.clone(), attempt_id: published_attempt.clone(),
+                    result: TerminalCommitResult::Rejected { error: "host producer callback dropped before durable acknowledgement".into() } });
+            self.runner.on_completed(completion.preparation(), Box::new(move |result| {
+                callback.resolve(super::coordinator_state::TerminalPublication::Prepared { subagent_id: published_id, attempt_id: published_attempt, result });
+            }));
         }
-        self.resolve_teardown_drain_waiters(&parent_session_id);
-        self.start_queued_within_capacity();
     }
 
     fn cancel_one(
@@ -1524,8 +1644,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 queued.request.surface_completion = false;
             }
         }
-        cancelled +=
-            self.remove_queued(&cause, |request| request.parent_session_id == parent_session_id);
+        cancelled += self.remove_queued(&cause, |request| {
+            request.parent_session_id == parent_session_id
+        });
         if cancelled > 0 {
             tracing::info!(
                 parent_session_id,
@@ -1545,6 +1666,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             .chain(self.pending.values().map(|child| &child.request))
             .chain(self.queued.iter().map(|queued| queued.request.as_ref()))
             .any(|request| request.parent_session_id == parent_session_id)
+            || self.completed.values().any(|child| child.request.parent_session_id == parent_session_id && !child.publication.is_settled())
             || self.pending_wakes.keys().any(|subagent_id| {
                 self.completed.get(subagent_id).is_some_and(|completed| {
                     completed.request.parent_session_id == parent_session_id
@@ -1657,7 +1779,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     }
 
     fn resolve_workflow_cancel_waiters(&mut self, run_id: &str) {
-        if workflow_outstanding(&self.pending, &self.active, run_id) != 0 {
+        if workflow_outstanding(&self.pending, &self.active, run_id) != 0
+            || self.completed.values().any(|child| child.request.owner.workflow_run_id() == Some(run_id) && !child.publication.is_settled()) {
             return;
         }
         for respond_to in self
@@ -1682,6 +1805,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .values()
                     .filter_map(|child| child.foreground_deadline),
             )
+            .chain(self.completed.values().filter(|child| !child.publication.is_settled()).filter_map(ForegroundChild::deadline))
             .chain(
                 self.queued
                     .iter()
@@ -1709,6 +1833,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             background_if_caller_gone(child);
         }
         for child in self.active.values_mut() {
+            background_if_caller_gone(child);
+        }
+        for child in self.completed.values_mut().filter(|child| !child.publication.is_settled()) {
             background_if_caller_gone(child);
         }
         // The queued leg of the same sweep.
@@ -1748,6 +1875,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             background_at_deadline(child, now, self.config.foreground_budget);
         }
         for child in self.active.values_mut() {
+            background_at_deadline(child, now, self.config.foreground_budget);
+        }
+        for child in self.completed.values_mut().filter(|child| !child.publication.is_settled()) {
             background_at_deadline(child, now, self.config.foreground_budget);
         }
         // The spawn stays queued; only its caller is handed off.
@@ -1790,6 +1920,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 if self.active.contains_key(&id) {
                     self.queue_active_progress(&id, ProgressTarget::Query(waiter.respond_to));
                 } else {
+                    if let Some(child) = self.completed.get(&id)
+                        && matches!(child.publication, super::coordinator_state::TerminalPublicationState::Publishing | super::coordinator_state::TerminalPublicationState::Published | super::coordinator_state::TerminalPublicationState::HistoryBlocked { .. })
+                        && let Some(observer) = &waiter.observations {
+                        observer.record(&child.result, &child.attempt_id);
+                    }
                     let _ = waiter.respond_to.send(self.ready_snapshot(&id));
                 }
             }
@@ -1861,6 +1996,7 @@ fn hand_off_record(
 fn poll_caller_abandoned<C: ChildControl>(
     pending: &mut HashMap<String, PendingChild>,
     active: &mut HashMap<String, ActiveChild<C>>,
+    waiters: &mut HashMap<String, Vec<BlockingWaiter>>,
     cx: &mut std::task::Context<'_>,
 ) -> std::task::Poll<()> {
     for child in pending.values_mut() {
@@ -1876,6 +2012,11 @@ fn poll_caller_abandoned<C: ChildControl>(
             && let Some(reply) = child.spawn_reply.as_mut()
             && reply.poll_closed(cx).is_ready()
         {
+            return std::task::Poll::Ready(());
+        }
+    }
+    for waiter in waiters.values_mut().flatten() {
+        if waiter.respond_to.poll_closed(cx).is_ready() {
             return std::task::Poll::Ready(());
         }
     }
