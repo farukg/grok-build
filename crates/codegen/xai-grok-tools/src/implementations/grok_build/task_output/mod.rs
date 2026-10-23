@@ -2483,7 +2483,6 @@ mod tests {
     fn unwrap_query(
         event: crate::implementations::grok_build::task::types::SubagentEvent,
     ) -> crate::implementations::grok_build::task::types::SubagentQueryRequest {
-        observations: None,
         match event {
             crate::implementations::grok_build::task::types::SubagentEvent::Query(q) => q,
             _ => panic!("Expected SubagentEvent::Query"),

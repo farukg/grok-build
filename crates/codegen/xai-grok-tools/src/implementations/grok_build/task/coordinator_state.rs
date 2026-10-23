@@ -1066,7 +1066,7 @@ pub(super) async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-fn instant_to_epoch_ms(instant: std::time::Instant) -> u64 {
+pub(super) fn instant_to_epoch_ms(instant: std::time::Instant) -> u64 {
     let now_instant = std::time::Instant::now();
     let now_system = std::time::SystemTime::now();
     let elapsed = now_instant.saturating_duration_since(instant);
