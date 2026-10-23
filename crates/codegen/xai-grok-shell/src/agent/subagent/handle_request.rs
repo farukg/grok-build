@@ -386,7 +386,6 @@ pub(crate) async fn run_shell_child(
     let Some(agent_id) = xai_message_delivery_core::AgentId::from_uuid_v7(request.id.clone())
     else {
         let completion_data = ShellCompletionData {
-            attempt_id: None,
             turn_number: None,
             ..completion_data
         };

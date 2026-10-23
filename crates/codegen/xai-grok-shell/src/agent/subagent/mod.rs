@@ -58,7 +58,7 @@ pub(crate) use spawn::{
     subagent_coordinator_channel, worker_runtime,
 };
 pub(crate) use xai_grok_tools::implementations::grok_build::task::coordinator::{
-    ChildRunOutput, StartedChild,
+    ChildRunOutput, StartedChild, SubagentCaller,
 };
 mod attempt_store;
 mod child_runtime;
@@ -2180,7 +2180,7 @@ pub(crate) fn spawn_progress_publisher(
     mut completion: tokio::sync::watch::Receiver<
         crate::extensions::notification::SubagentCompletion,
     >,
-    mut caller: tokio::sync::watch::Receiver<grok_build::task::coordinator::SubagentCaller>,
+    mut caller: tokio::sync::watch::Receiver<SubagentCaller>,
 ) -> tokio_util::task::AbortOnDropHandle<()> {
     tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let mut interval = tokio::time::interval(PROGRESS_PUBLISH_INTERVAL);
@@ -2188,7 +2188,7 @@ pub(crate) fn spawn_progress_publisher(
         let mut last_signature: ProgressSignature = (0, 0, 0, 0, 0);
         let mut last_delivery = *delivery.borrow();
         let mut last_completion = crate::extensions::notification::SubagentCompletion::default();
-        let mut last_caller = grok_build::task::coordinator::SubagentCaller::default();
+        let mut last_caller = SubagentCaller::default();
         let mut is_completion_open = true;
         let mut is_caller_open = true;
         let mut is_delivery_open = true;

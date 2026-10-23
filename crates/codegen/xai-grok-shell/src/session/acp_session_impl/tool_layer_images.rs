@@ -75,7 +75,6 @@ mod tests {
     }
 
     fn run_result(output: ToolOutput) -> ToolRunResult {
-        completed_subagents: Vec::new(),
         ToolRunResult {
             completed_subagents: Vec::new(),
             output,

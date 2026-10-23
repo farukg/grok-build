@@ -1396,6 +1396,7 @@ impl Summary {
             previous_cwd: None,
             pending_cwd_switch_reminder: None,
             cwd_switch_bookkeeping_generation: 0,
+            completion_delivery: super::completion_delivery::CompletionDeliveryState::default(),
             session_summary: String::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
