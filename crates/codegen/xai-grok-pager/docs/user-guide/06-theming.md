@@ -271,7 +271,10 @@ header_bright = false       # Bright header style (vs dim/muted)
 muted_collapsed = true     # Gray out collapsed tool calls
 dim_details = true          # Dim parenthetical details (line counts, match counts)
 bullet = "diamond"          # Bullet style before tool headers
+terminal_coloring = "terminal"  # Colors for captured terminal text: "terminal", "syntax" or "both"
 ```
+
+`terminal_coloring` applies to command output, directory listings and file reads whose content carries terminal escape codes (for example `.log` captures). `terminal` keeps the colors the tool emitted. `syntax` removes them and colors the text by the path's grammar (DSL when the path names none). `both` keeps the tool's colors and colors the remaining text by grammar. Files with a known source extension such as `.rs` or `.json` are never scanned for escape codes.
 
 Available bullet styles:
 

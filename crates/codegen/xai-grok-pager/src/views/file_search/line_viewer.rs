@@ -21,6 +21,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{StatefulWidget, Widget};
 use syntect::easy::HighlightLines;
 
+use crate::render::content_kind::{ContentKind, terminal_rows};
 use crate::render::scrollbar::SCROLLBAR_TOTAL_COLS;
 use crate::render::wrapping::word_wrap_line;
 use crate::scrollback::blocks::markdown_content::MarkdownContent;
@@ -1184,6 +1185,29 @@ impl LineViewerState {
 /// Build syntax-highlighted source lines from file content.
 fn build_source_lines(path: &Path, content: &str) -> Vec<SourceLine> {
     let syntect = get_syntect();
+    if ContentKind::classify(syntect, path, content) == ContentKind::Terminal {
+        let base = Style::default().fg(Theme::current().text_primary);
+        let rows = terminal_rows(
+            syntect,
+            path,
+            content,
+            crate::appearance::terminal_coloring::current(),
+            base,
+        );
+        let max_digits = digit_count(rows.len().max(1));
+        return rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let line = if row.spans.is_empty() {
+                    Line::from(" ".to_owned())
+                } else {
+                    Line::from(row.spans)
+                };
+                SourceLine::new(i + 1, line, row.plain, max_digits)
+            })
+            .collect();
+    }
     let mut highlighter = syntect.highlight_lines_by_file_path(path);
 
     // Split preserving all lines including trailing empty ones.

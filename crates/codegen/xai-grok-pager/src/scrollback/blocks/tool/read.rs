@@ -1,18 +1,20 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 
 use super::{LineRange, TOOL_HEADER_RANGE};
+use crate::appearance::TerminalColoring;
 use crate::prompt_images::ScrollbackImageRef;
-use crate::render::terminal_output::{looks_like_terminal_output, render_terminal_lines};
+use crate::render::content_kind::{ContentKind, terminal_rows};
 use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
     AccentStyle, BlockBackground, BlockContext, BlockLine, BlockOutput, DisplayMode, Selectable,
 };
 use crate::syntax::get_syntect;
-use crate::theme::Theme;
+use crate::theme::{Theme, ThemeKind};
 
 const FIRST_LINES: usize = 5;
 const LAST_LINES: usize = 3;
@@ -27,6 +29,28 @@ pub enum ReadMediaKind {
     Image,
     /// PDF rendered as page images.
     Pdf { pages: usize },
+}
+
+/// Styled rows for a Read's whole content, baked off-thread under `theme` and `coloring`.
+#[derive(Debug, Clone)]
+pub struct CachedReadRows {
+    pub rows: Arc<Vec<Vec<Span<'static>>>>,
+    pub theme: ThemeKind,
+    pub coloring: TerminalColoring,
+}
+
+/// Where a large Read stands in the off-thread highlight pipeline.
+#[derive(Debug, Clone, Default)]
+pub enum ReadHighlightPhase {
+    /// No job yet; the preview styles only its visible rows.
+    #[default]
+    Unrequested,
+    /// A worker job is outstanding.
+    Pending { job_id: u64 },
+    /// The whole content is styled; expanding reads from here.
+    Cached(CachedReadRows),
+    /// No worker result will come: the content is under the row threshold or over the worker caps. The preview styles its own rows.
+    Skipped,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +75,8 @@ pub struct ReadToolCallBlock {
     pub media_kind: Option<ReadMediaKind>,
     /// Whether this ordinary read targets a memory v2 scope.
     pub is_memory_activity: bool,
+    /// Off-thread highlight state for large content.
+    pub highlight: ReadHighlightPhase,
 }
 
 impl ReadToolCallBlock {
@@ -68,6 +94,7 @@ impl ReadToolCallBlock {
             image_ref: None,
             media_kind: None,
             is_memory_activity: false,
+            highlight: ReadHighlightPhase::Unrequested,
         }
     }
 
@@ -253,6 +280,7 @@ impl ReadToolCallBlock {
         theme: &Theme,
         width: usize,
         truncate: Option<(usize, usize)>,
+        coloring: TerminalColoring,
     ) -> Vec<BlockLine> {
         let Some(content) = &self.content else {
             return Vec::new();
@@ -265,15 +293,39 @@ impl ReadToolCallBlock {
         let text_style = theme.primary();
 
         let syntect = get_syntect();
-        let (total_rows, body) = if holds_terminal_output(&self.path, content) {
-            let rendered = render_terminal_lines(content, text_style);
+        let cached = match &self.highlight {
+            ReadHighlightPhase::Cached(cached)
+                if cached.theme == Theme::current_kind() && cached.coloring == coloring =>
+            {
+                Some(Arc::clone(&cached.rows))
+            }
+            _ => None,
+        };
+        let kind = ContentKind::classify(syntect, Path::new(&self.path), content);
+        let (total_rows, body) = if let Some(rows) = cached {
+            let ranges = visible_row_ranges(rows.len(), truncate);
+            let visible: Vec<(usize, Vec<Span<'static>>)> = rows
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| ranges.iter().any(|range| range.contains(i)))
+                .map(|(i, spans)| (i, spans.clone()))
+                .collect();
+            (rows.len(), visible)
+        } else if kind == ContentKind::Terminal {
+            let rendered = terminal_rows(
+                syntect,
+                Path::new(&self.path),
+                content,
+                coloring,
+                text_style,
+            );
             let total_rows = rendered.len();
             let ranges = visible_row_ranges(total_rows, truncate);
             let rows: Vec<(usize, Vec<Span<'static>>)> = rendered
                 .into_iter()
                 .enumerate()
                 .filter(|(i, _)| ranges.iter().any(|range| range.contains(i)))
-                .map(|(i, rendered)| (i, rendered.line.spans))
+                .map(|(i, row)| (i, row.spans))
                 .collect();
             (total_rows, rows)
         } else {
@@ -365,29 +417,11 @@ impl ReadToolCallBlock {
     }
 }
 
-/// Extensions that routinely hold captured terminal output; every other known source type is never scanned for escapes.
-const CAPTURE_EXTENSIONS: [&str; 4] = ["log", "txt", "out", "ansi"];
-
-/// Whether a read's content is a raw terminal capture that must go through the terminal emulator instead of the syntax highlighter.
-fn holds_terminal_output(path: &str, content: &str) -> bool {
-    let path = Path::new(path);
-    let capture_type = match path.extension().and_then(|ext| ext.to_str()) {
-        None => true,
-        Some(ext) => {
-            CAPTURE_EXTENSIONS
-                .iter()
-                .any(|capture| capture.eq_ignore_ascii_case(ext))
-                || get_syntect().find_syntax_by_file_path(path).is_none()
-        }
-    };
-    capture_type && looks_like_terminal_output(content)
-}
-
 /// Source rows highlighted ahead of a truncated tail so open strings and block comments reach it in the right state.
 const TAIL_WARMUP_LINES: usize = 64;
 
 /// Source files up to this many rows are highlighted whole, so the preview tail is exact. Larger files highlight only the preview rows.
-const PARTIAL_HIGHLIGHT_MIN_ROWS: usize = 400;
+pub const PARTIAL_HIGHLIGHT_MIN_ROWS: usize = 400;
 
 /// Row ranges a read preview shows: the head and tail when truncation hides the middle, otherwise every row.
 /// More than `first + last` rows always wrap to more than that many lines, so the hidden middle never reaches the screen.
@@ -446,7 +480,12 @@ impl BlockContent for ReadToolCallBlock {
                 let mut lines: Vec<BlockLine> = vec![self.header_block_line(header, cwd)];
                 if self.has_content() {
                     lines.push(BlockLine::separator(Line::from("")));
-                    lines.extend(self.render_content_lines(&theme, ctx.width as usize, truncate));
+                    lines.extend(self.render_content_lines(
+                        &theme,
+                        ctx.width as usize,
+                        truncate,
+                        tool_cfg.terminal_coloring,
+                    ));
                 } else if let Some(err) = &self.error {
                     lines.push(BlockLine::separator(Line::from("")));
                     let error_style = Style::default().fg(theme.accent_error);
@@ -587,10 +626,17 @@ mod tests {
 
     #[test]
     fn source_extension_skips_the_terminal_scan() {
-        assert!(holds_terminal_output("call.log", "\x1b[31mred\x1b[0m"));
-        assert!(holds_terminal_output("capture", "\x1b[31mred\x1b[0m"));
-        assert!(!holds_terminal_output("main.rs", "let s = \"\x1b[31m\";"));
-        assert!(!holds_terminal_output("call.log", "plain text\n"));
+        let syntect = get_syntect();
+        let colored = "\x1b[31mred\x1b[0m";
+        let kind =
+            |path: &str, content: &str| ContentKind::classify(syntect, Path::new(path), content);
+        assert_eq!(kind("call.log", colored), ContentKind::Terminal);
+        assert_eq!(kind("capture", colored), ContentKind::Terminal);
+        assert_eq!(
+            kind("main.rs", "let s = \"\x1b[31m\";"),
+            ContentKind::Source
+        );
+        assert_eq!(kind("call.log", "plain text\n"), ContentKind::Plain);
     }
 
     #[test]
@@ -629,6 +675,67 @@ mod tests {
         assert!(!joined.contains("value_1997 = 1997;"), "{joined}");
         assert!(joined.contains('\u{2026}'), "{joined}");
         assert!(joined.contains("2000"), "gutter shows absolute numbers");
+    }
+
+    #[test]
+    fn cached_rows_replace_a_fresh_highlight_pass() {
+        let content = (1..=2000)
+            .map(|i| format!("let value_{i} = {i};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut block = ReadToolCallBlock::new("big.rs")
+            .with_line_range(LineRange::new(1, 2000))
+            .with_content(content, 2000);
+        let marker = Span::raw("CACHED-ROW");
+        let rows: Vec<Vec<Span<'static>>> = (0..2000).map(|_| vec![marker.clone()]).collect();
+        block.highlight = ReadHighlightPhase::Cached(CachedReadRows {
+            rows: Arc::new(rows),
+            theme: Theme::current_kind(),
+            coloring: TerminalColoring::Terminal,
+        });
+        let ctx = BlockContext {
+            mode: DisplayMode::Expanded,
+            ..make_ctx()
+        };
+        let joined: String = block
+            .output(&ctx)
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(joined.contains("CACHED-ROW"), "cache must supply the rows");
+        assert!(!joined.contains("value_1 = 1;"), "no fresh highlight pass");
+    }
+
+    #[test]
+    fn cache_baked_under_another_coloring_is_ignored() {
+        let content = (1..=2000)
+            .map(|i| format!("let value_{i} = {i};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut block = ReadToolCallBlock::new("big.rs")
+            .with_line_range(LineRange::new(1, 2000))
+            .with_content(content, 2000);
+        let rows: Vec<Vec<Span<'static>>> = (0..2000).map(|_| vec![Span::raw("STALE")]).collect();
+        block.highlight = ReadHighlightPhase::Cached(CachedReadRows {
+            rows: Arc::new(rows),
+            theme: Theme::current_kind(),
+            coloring: TerminalColoring::Both,
+        });
+        let ctx = BlockContext {
+            mode: DisplayMode::Truncated,
+            ..make_ctx()
+        };
+        let joined: String = block
+            .output(&ctx)
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!joined.contains("STALE"), "{joined}");
+        assert!(joined.contains("value_1 = 1;"), "{joined}");
     }
 
     #[test]

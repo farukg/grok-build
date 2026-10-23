@@ -510,6 +510,8 @@ pub struct ToolConfig {
     pub dim_details: bool,
     /// Bullet/icon character rendered before tool call headers.
     pub bullet: ToolBullet,
+    /// Which color source paints captured terminal text (command output, `.log` reads).
+    pub terminal_coloring: super::TerminalColoring,
     // Bullet color is decided by BlockContent::bullet(), not config. Collapsed dimming is EntryRenderer.
     // TODO(dim_muted): add a dim factor for collapsed text styling (not just bullet/accent).
 }
@@ -520,6 +522,7 @@ impl Default for ToolConfig {
             muted_collapsed: true,
             dim_details: true,
             bullet: ToolBullet::Diamond,
+            terminal_coloring: super::TerminalColoring::Terminal,
         }
     }
 }
@@ -1094,6 +1097,9 @@ pub struct RawToolConfig {
     /// "none", "dot" (·), "small-circle" (•), "circle" (●),
     /// "small-triangle" (▸), "triangle" (▶), "diamond" (◆).
     pub bullet: RawToolBullet,
+    /// Which color source paints captured terminal text such as command output and `.log` reads.
+    /// "terminal" keeps the colors the tool emitted, "syntax" colors by the path's grammar (DSL when it names none), "both" keeps tool colors and colors the rest by grammar.
+    pub terminal_coloring: super::TerminalColoring,
     // Note: bullet_accent and bullet_color removed — see ToolConfig comment.
 }
 
@@ -1103,6 +1109,7 @@ impl Default for RawToolConfig {
             muted_collapsed: true,
             dim_details: true,
             bullet: RawToolBullet::Diamond,
+            terminal_coloring: super::TerminalColoring::Terminal,
         }
     }
 }
@@ -1359,6 +1366,7 @@ impl From<RawToolConfig> for ToolConfig {
             muted_collapsed: raw.muted_collapsed,
             dim_details: raw.dim_details,
             bullet: raw.bullet.into(),
+            terminal_coloring: raw.terminal_coloring,
         }
     }
 }

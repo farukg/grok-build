@@ -29,6 +29,8 @@ pub mod edit_highlight_worker;
 pub mod mermaid_worker;
 pub(crate) mod panel_settings;
 pub(crate) mod prompt_ack;
+/// Off-thread full-content syntax highlight for large Read previews.
+pub mod read_highlight_worker;
 pub(crate) fn is_daemon_session_row(_source: &str) -> bool {
     false
 }

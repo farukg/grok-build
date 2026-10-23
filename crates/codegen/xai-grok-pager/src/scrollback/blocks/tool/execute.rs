@@ -476,6 +476,7 @@ impl ExecuteToolCallBlock {
         header_style: ExecuteHeaderStyle,
         extra_indent: usize,
         result_pad: usize,
+        coloring: crate::appearance::TerminalColoring,
     ) -> BlockOutput {
         let mut lines: Vec<BlockLine> = Vec::new();
         self.push_header_lines(
@@ -512,11 +513,16 @@ impl ExecuteToolCallBlock {
             // Default foreground for the output body
             // Under the terminal-native (minimal) palette, muted used to collapse to ANSI bright black and washed out on many dark profiles
             // Content must track the terminal's default fg (`primary` / Reset); labels / chrome stay on `muted`/`dim`
-            let styled_lines: Vec<Line<'static>> =
-                crate::render::terminal_output::render_terminal_lines(output, theme.primary())
-                    .into_iter()
-                    .map(|rl| rl.line)
-                    .collect();
+            let styled_lines: Vec<Line<'static>> = crate::render::content_kind::terminal_rows(
+                crate::syntax::get_syntect(),
+                std::path::Path::new(""),
+                output,
+                coloring,
+                theme.primary(),
+            )
+            .into_iter()
+            .map(|row| Line::from(row.spans))
+            .collect();
 
             let (wrapped, joiners) = word_wrap_lines_with_joiners(
                 styled_lines,
@@ -656,6 +662,7 @@ impl BlockContent for ExecuteToolCallBlock {
                 header_style,
                 0,
                 result_pad,
+                ctx.appearance.scrollback.blocks.tool.terminal_coloring,
             ),
             DisplayMode::Expanded => self.render_with_truncation(
                 &theme,
@@ -664,6 +671,7 @@ impl BlockContent for ExecuteToolCallBlock {
                 header_style,
                 0,
                 result_pad,
+                ctx.appearance.scrollback.blocks.tool.terminal_coloring,
             ),
         }
     }

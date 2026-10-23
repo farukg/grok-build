@@ -17,6 +17,7 @@ use ratatui::widgets::StatefulWidget;
 use xai_grok_workspace::permission::mcp_titleize_segment;
 
 use crate::clipboard::SystemClipboard;
+use crate::render::content_kind::{ContentKind, terminal_rows};
 use crate::render::scrollbar::SCROLLBAR_TOTAL_COLS;
 use crate::scrollback::block::{BlockContent, RenderBlock};
 use crate::scrollback::blocks::ToolCallBlock;
@@ -405,29 +406,43 @@ impl BlockViewerPane {
         }
 
         let content = read.content.as_deref().unwrap_or("");
-        let raw_lines: Vec<&str> = content.lines().collect();
         let base_line = read.line_range.map_or(1, |r| r.start);
-        let max_line = base_line + raw_lines.len().saturating_sub(1);
-        let gutter_width = max_line.checked_ilog10().map_or(1, |d| d as usize + 1);
         let gutter_style = Style::default().fg(theme.gray_dim);
         let fallback = Style::default().fg(theme.text_primary);
 
         let syntect = crate::syntax::get_syntect();
-        let mut highlighter =
-            syntect.highlight_lines_by_file_path(std::path::Path::new(&read.path));
+        let path = std::path::Path::new(&read.path);
+        let bodies: Vec<Vec<Span<'static>>> =
+            if ContentKind::classify(syntect, path, content) == ContentKind::Terminal {
+                terminal_rows(
+                    syntect,
+                    path,
+                    content,
+                    crate::appearance::terminal_coloring::current(),
+                    fallback,
+                )
+                .into_iter()
+                .map(|row| row.spans)
+                .collect()
+            } else {
+                let mut highlighter = syntect.highlight_lines_by_file_path(path);
+                content
+                    .lines()
+                    .map(|text| {
+                        crate::syntax::highlight_line(text, &mut highlighter, syntect, fallback)
+                    })
+                    .collect()
+            };
+        let max_line = base_line + bodies.len().saturating_sub(1);
+        let gutter_width = max_line.checked_ilog10().map_or(1, |d| d as usize + 1);
 
-        let lines: Vec<Line<'static>> = raw_lines
-            .iter()
+        let lines: Vec<Line<'static>> = bodies
+            .into_iter()
             .enumerate()
-            .map(|(i, text)| {
+            .map(|(i, body)| {
                 let gutter = format!("{:>w$}  ", base_line + i, w = gutter_width);
                 let mut spans = vec![Span::styled(gutter, gutter_style)];
-                spans.extend(crate::syntax::highlight_line(
-                    text,
-                    &mut highlighter,
-                    syntect,
-                    fallback,
-                ));
+                spans.extend(body);
                 Line::from(spans)
             })
             .collect();
@@ -801,16 +816,22 @@ impl BlockViewerPane {
             return Vec::new();
         };
         let base = ratatui::style::Style::default().fg(theme.text_primary);
-        crate::render::terminal_output::render_terminal_lines(output, base)
-            .into_iter()
-            .enumerate()
-            .map(|(i, rl)| ContentLine {
-                content: rl.line,
-                plain_text: rl.plain,
-                id: i as u64,
-                bg: Some(theme.bg_dark),
-            })
-            .collect()
+        crate::render::content_kind::terminal_rows(
+            crate::syntax::get_syntect(),
+            std::path::Path::new(""),
+            output,
+            crate::appearance::terminal_coloring::current(),
+            base,
+        )
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| ContentLine {
+            content: ratatui::text::Line::from(row.spans),
+            plain_text: row.plain,
+            id: i as u64,
+            bg: Some(theme.bg_dark),
+        })
+        .collect()
     }
 
     /// Create a viewer for an edit block (diff content).

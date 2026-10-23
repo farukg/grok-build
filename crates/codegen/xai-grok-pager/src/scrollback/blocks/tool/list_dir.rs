@@ -168,13 +168,16 @@ impl BlockContent for ListDirToolCallBlock {
                 if !self.output.is_empty() {
                     lines.push(BlockLine::separator(Line::from("")));
 
-                    for rl in crate::render::terminal_output::render_terminal_lines(
+                    for row in crate::render::content_kind::terminal_rows(
+                        crate::syntax::get_syntect(),
+                        std::path::Path::new(""),
                         &self.output,
+                        ctx.appearance.scrollback.blocks.tool.terminal_coloring,
                         theme.primary(),
                     ) {
                         // Indent output by 2 spaces
                         let mut spans = vec![Span::styled("  ".to_string(), theme.primary())];
-                        spans.extend(rl.line.spans);
+                        spans.extend(row.spans);
                         let mut block_line: BlockLine = Line::from(spans).into();
                         if terminal_bg {
                             block_line = block_line.with_panel_background(theme.bg_dark);

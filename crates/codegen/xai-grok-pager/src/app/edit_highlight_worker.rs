@@ -197,16 +197,21 @@ fn resolve_edit_target_path(path: &str, session_cwd: Option<&std::path::Path>) -
 }
 
 impl AgentView {
-    /// Keep ticking while an edit-HL job is outstanding (mpsc has no waker).
+    /// Keep ticking while an edit-HL or read-HL job is outstanding (mpsc has no waker).
     pub fn edit_hl_needs_tick(&self) -> bool {
         self.edit_hl
             .as_ref()
             .is_some_and(|rt| !rt.pending.is_empty())
+            || self.read_hl_needs_tick()
     }
 
     /// Poll worker results and attach FileScoped styles. Returns true when a redraw is needed.
+    /// Also drives the read-HL worker: it submits large Reads that lack a cache, then applies finished results.
     pub fn edit_hl_tick(&mut self) -> bool {
-        self.poll_edit_hl_results()
+        self.submit_read_highlights();
+        let edit_redraw = self.poll_edit_hl_results();
+        let read_redraw = self.read_hl_tick();
+        edit_redraw || read_redraw
     }
 
     fn ensure_edit_hl_runtime(&mut self) -> &mut EditHlRuntime {

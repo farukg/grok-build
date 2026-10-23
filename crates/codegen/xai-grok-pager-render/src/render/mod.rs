@@ -1,6 +1,7 @@
 //! Generic rendering primitives used by the scrollback and viewport.
 pub mod bidi;
 pub mod color;
+pub mod content_kind;
 pub mod draw;
 pub mod gboom_overlay;
 pub mod highlight;

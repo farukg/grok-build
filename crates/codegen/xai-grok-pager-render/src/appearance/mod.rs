@@ -15,6 +15,7 @@ pub mod follow_up_behavior;
 pub mod permission_cursor;
 pub mod render_mermaid;
 pub mod scroll_mode;
+pub mod terminal_coloring;
 pub mod text_selection;
 mod watcher;
 
@@ -27,6 +28,7 @@ pub use config::{
 pub use follow_up_behavior::FollowUpBehavior;
 pub use render_mermaid::RenderMermaid;
 pub use scroll_mode::ScrollMode;
+pub use terminal_coloring::TerminalColoring;
 pub use text_selection::TextSelection;
 pub use watcher::ConfigWatcher;
 

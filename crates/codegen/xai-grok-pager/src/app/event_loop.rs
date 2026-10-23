@@ -1529,6 +1529,9 @@ pub(crate) async fn run(
     initial_config.show_timeline = crate::appearance::cache::load_show_timeline();
     let tick_interval = initial_config.animation.tick_interval();
     crate::appearance::set_tab_width(initial_config.scrollback.display.tab_width);
+    crate::appearance::terminal_coloring::set_current(
+        initial_config.scrollback.blocks.tool.terminal_coloring,
+    );
     app.set_appearance(initial_config);
     app.current_ui = load_initial_ui_config();
     crate::app::status_line::metrics::global().report_config(&app.current_ui.status_line);
@@ -2550,6 +2553,9 @@ pub(crate) async fn run(
                 config.show_timeline = app.appearance.show_timeline;
                 tick_interval = config.animation.tick_interval();
                 crate::appearance::set_tab_width(config.scrollback.display.tab_width);
+                crate::appearance::terminal_coloring::set_current(
+                    config.scrollback.blocks.tool.terminal_coloring,
+                );
                 app.set_appearance(config);
                 app.apply_effective_compact();
 

@@ -20,7 +20,10 @@ pub use execute::ExecuteToolCallBlock;
 pub use list_dir::ListDirToolCallBlock;
 pub use memory_search::MemorySearchToolCallBlock;
 pub use other::OtherToolCallBlock;
-pub use read::{ReadMediaKind, ReadToolCallBlock};
+pub use read::{
+    CachedReadRows, PARTIAL_HIGHLIGHT_MIN_ROWS, ReadHighlightPhase, ReadMediaKind,
+    ReadToolCallBlock,
+};
 pub use search::{
     SearchFileMatch, SearchInputMeta, SearchLineMatch, SearchOutputMode, SearchToolCallBlock,
 };

@@ -1178,6 +1178,9 @@ pub struct AgentView {
     /// Off-thread edit-diff full-file syntax highlight upgrade. Lazily created
     /// on the first successful Edit tool completion that has hunks.
     pub(crate) edit_hl: Option<crate::app::edit_highlight_worker::EditHlRuntime>,
+    /// Off-thread full-content highlight for large Read previews. Lazily created
+    /// on the first Read entry above the row threshold.
+    pub(crate) read_hl: Option<crate::app::read_highlight_worker::ReadHlRuntime>,
     /// Whether any inline media is currently placed on screen.
     pub(crate) inline_media_active: bool,
     /// Image IDs that were placed on screen last frame. Used to detect

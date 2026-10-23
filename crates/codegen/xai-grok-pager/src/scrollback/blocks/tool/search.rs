@@ -464,12 +464,28 @@ impl BlockContent for SearchToolCallBlock {
                                 Span::styled(line_num_str, theme.muted()),
                                 Span::styled("  ".to_string(), theme.primary()),
                             ];
-                            spans.extend(crate::syntax::highlight_line(
-                                content_trimmed,
-                                &mut highlighter,
+                            if crate::render::content_kind::ContentKind::classify(
                                 syntect,
-                                theme.primary(),
-                            ));
+                                path,
+                                content_trimmed,
+                            ) == crate::render::content_kind::ContentKind::Terminal
+                            {
+                                let rows = crate::render::content_kind::terminal_rows(
+                                    syntect,
+                                    path,
+                                    content_trimmed,
+                                    tool_cfg.terminal_coloring,
+                                    theme.primary(),
+                                );
+                                spans.extend(rows.into_iter().flat_map(|row| row.spans));
+                            } else {
+                                spans.extend(crate::syntax::highlight_line(
+                                    content_trimmed,
+                                    &mut highlighter,
+                                    syntect,
+                                    theme.primary(),
+                                ));
+                            }
                             lines.push(
                                 BlockLine::from(Line::from(spans))
                                     .with_panel_background(theme.bg_dark),
@@ -639,5 +655,27 @@ mod tests {
                 .iter()
                 .any(|span| span.style != Theme::current().primary())
         );
+    }
+
+    #[test]
+    fn search_match_in_a_capture_file_drops_escape_codes() {
+        let block = SearchToolCallBlock::new("failed").with_matches(
+            1,
+            vec![SearchFileMatch {
+                path: "terminal/call_1.log".into(),
+                matches: vec![SearchLineMatch {
+                    line_number: 3,
+                    content: "\x1b[0;31mpre-commit: failed\x1b[0m".into(),
+                }],
+            }],
+        );
+        let output = block.output(&expanded());
+        let line = output
+            .lines
+            .iter()
+            .find(|line| row_text(line).ends_with("pre-commit: failed"))
+            .expect("search match row");
+        assert!(!row_text(line).contains('\u{1b}'), "{:?}", row_text(line));
+        assert!(!row_text(line).contains("[0;31m"), "{:?}", row_text(line));
     }
 }
