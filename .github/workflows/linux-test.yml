@@ -45,6 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-test
+          cache-on-failure: "true"
 
       - name: Check sampler, shell, tools and pager formatting
         run: cargo +nightly-2026-08-13 fmt -p xai-grok-sampler -p xai-grok-shell -p xai-grok-tools -p xai-grok-pager -p xai-grok-pager-pty-harness -- --check
