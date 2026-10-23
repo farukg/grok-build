@@ -102,10 +102,15 @@ pub(crate) async fn handle_import(args: &acp::ExtRequest) -> ExtResult {
         };
         sanitize_summary_for_host(summary, &request.session_id, &request.cwd);
         // Reject a summary that would not load rather than persist one that makes the session unloadable and blocks re-import
-        let mut summary = Summary::deserialize(&*summary_value)
-            .map_err(|_| acp::Error::invalid_params().data("summary column is not a valid summary"))?;
-        summary.completion_delivery.receiver.imported_without_execution_lease();
-        *summary_value = serde_json::to_value(summary).map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+        let mut summary = Summary::deserialize(&*summary_value).map_err(|_| {
+            acp::Error::invalid_params().data("summary column is not a valid summary")
+        })?;
+        summary
+            .completion_delivery
+            .receiver
+            .imported_without_execution_lease();
+        *summary_value = serde_json::to_value(summary)
+            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
         // Write the `.cwd` sidecar for hash-based (long-path) dirs so the session stays recoverable by id, not just by (id, cwd)
         crate::util::grok_home::ensure_sessions_cwd_dir(&request.cwd)
             .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
@@ -169,10 +174,15 @@ fn write_import(
     session_id: &str,
 ) -> std::io::Result<bool> {
     crate::util::grok_home::create_dir_all_owner_only(dir)?;
-    let _chat_lock = crate::session::storage::JsonlStorageAdapter::lock_append(&dir.join(st::CHAT_HISTORY_FILE))?;
-    let summary_lock = crate::session::storage::summary_write::open_lock_file(&dir.join("summary.json.lock"))?;
+    let _chat_lock = crate::session::storage::JsonlStorageAdapter::lock_append(
+        &dir.join(st::CHAT_HISTORY_FILE),
+    )?;
+    let summary_lock =
+        crate::session::storage::summary_write::open_lock_file(&dir.join("summary.json.lock"))?;
     fs2::FileExt::lock_exclusive(&summary_lock)?;
-    if dir.join(st::SUMMARY_FILE).exists() { return Ok(false); }
+    if dir.join(st::SUMMARY_FILE).exists() {
+        return Ok(false);
+    }
 
     // Clear every file this import owns so a leftover from a failed attempt can't merge with the new snapshot; this import is authoritative
     let _ = std::fs::remove_file(dir.join(st::CHAT_HISTORY_FILE));

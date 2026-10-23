@@ -1723,7 +1723,11 @@ impl FinalizedToolset {
             remap_json_keys(tool_args, &reverse_params)
         };
         let mut ctx = xai_tool_runtime::ToolCallContext::new(parent_ctx.call_id.clone());
-        let completion_observations = parent_ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()).unwrap_or_default();
+        let completion_observations = parent_ctx
+            .extensions
+            .get::<crate::types::completion_observation::SubagentCompletionObservations>()
+            .map(|observer| (*observer).clone())
+            .unwrap_or_default();
         ctx.extensions.insert(completion_observations.clone());
         ctx.extensions.insert(self.resources.clone());
         ctx.extensions.insert_arc(Arc::clone(&self.renderer));
@@ -1921,7 +1925,11 @@ impl FinalizedToolset {
             None
         };
         let contract_version = self.get_contract_version(tool_name);
-        let completion_observations = ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone()).unwrap_or_default();
+        let completion_observations = ctx
+            .extensions
+            .get::<crate::types::completion_observation::SubagentCompletionObservations>()
+            .map(|observer| (*observer).clone())
+            .unwrap_or_default();
         ctx.extensions.insert(completion_observations.clone());
         ctx.extensions.insert(self.resources.clone());
         ctx.extensions.insert_arc(Arc::clone(&self.renderer));

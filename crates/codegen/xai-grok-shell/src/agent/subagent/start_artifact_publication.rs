@@ -94,7 +94,9 @@ impl StartArtifactPublication {
                 write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
         }
         let allowed = self.boundary == PublicationBoundary::Prepared || self.durable_publication;
-        if allowed { self.completion_data.capture_start_artifacts(&self.prepared); }
+        if allowed {
+            self.completion_data.capture_start_artifacts(&self.prepared);
+        }
         allowed
     }
 

@@ -2846,7 +2846,9 @@ impl SessionActor {
         let observations = xai_grok_tools::types::completion_observation::SubagentCompletionObservations::take_error(&mut err);
         let mut message = build_tool_parse_error_message(function_name, &err, raw_arguments);
         for observation in &observations {
-            let text = xai_grok_tools::reminders::task_completion::neutralize_reminder_tags(&observation.text);
+            let text = xai_grok_tools::reminders::task_completion::neutralize_reminder_tags(
+                &observation.text,
+            );
             message.push_str("\n\n");
             message.push_str(&xai_grok_tools::reminders::wrap_reminder(&text));
         }
@@ -2866,7 +2868,8 @@ impl SessionActor {
         )
         .await;
         let tool_chat = ConversationItem::tool_result(call_id.to_string(), message);
-        self.commit_observed_subagent_tool_result(tool_chat, observations).await?;
+        self.commit_observed_subagent_tool_result(tool_chat, observations)
+            .await?;
         Ok(())
     }
     /// Queued auto-wake synthetic prompts for a task/subagent the model already learned about are dropped before they get flushed to chat history.
@@ -3127,8 +3130,15 @@ impl SessionActor {
                 inline_images,
             )
         };
-        self.commit_observed_subagent_tool_result(tool_chat,
-            if output_replaced { Vec::new() } else { result.completed_subagents }).await?;
+        self.commit_observed_subagent_tool_result(
+            tool_chat,
+            if output_replaced {
+                Vec::new()
+            } else {
+                result.completed_subagents
+            },
+        )
+        .await?;
         let mut deferred_followups = Vec::new();
         if !extracted_images.is_empty() {
             let count = extracted_images.len();

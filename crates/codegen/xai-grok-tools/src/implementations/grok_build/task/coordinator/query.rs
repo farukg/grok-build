@@ -17,10 +17,11 @@ const DEFAULT_QUERY_BLOCK_TIMEOUT_MS: u64 = 30_000;
 impl<R: ChildRunner> SubagentCoordinator<R> {
     pub(super) fn observe_callers(&self) {
         for (id, child) in &self.active {
-            let waiting = (!child.handle_only && child
-                .spawn_reply
-                .as_ref()
-                .is_some_and(|reply| !reply.is_closed()))
+            let waiting = (!child.handle_only
+                && child
+                    .spawn_reply
+                    .as_ref()
+                    .is_some_and(|reply| !reply.is_closed()))
                 || self.waiters.get(id).is_some_and(|waiters| {
                     waiters.iter().any(|waiter| !waiter.respond_to.is_closed())
                 });
@@ -69,8 +70,15 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
             let snapshot = (!child.request.owner.is_workflow())
                 .then(|| self.completed_snapshot_for_query(child));
-            if matches!(child.publication, super::super::coordinator_state::TerminalPublicationState::Publishing | super::super::coordinator_state::TerminalPublicationState::Published | super::super::coordinator_state::TerminalPublicationState::HistoryBlocked { .. })
-                && snapshot.is_some() && !respond_to.is_closed() && let Some(observer) = &observations {
+            if matches!(
+                child.publication,
+                super::super::coordinator_state::TerminalPublicationState::Publishing
+                    | super::super::coordinator_state::TerminalPublicationState::Published
+                    | super::super::coordinator_state::TerminalPublicationState::HistoryBlocked { .. }
+            ) && snapshot.is_some()
+                && !respond_to.is_closed()
+                && let Some(observer) = &observations
+            {
                 observer.record(&child.result, &child.attempt_id);
             }
             let _ = respond_to.send(snapshot);

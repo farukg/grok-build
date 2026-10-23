@@ -243,8 +243,7 @@ impl coordinator::ChildRunner for ShellChildRunner {
             } else {
                 Some(this.allocate_turn_number(&child_session_id))
             };
-            let completion_data =
-                ShellCompletionData::from_context(&ctx, turn_number);
+            let completion_data = ShellCompletionData::from_context(&ctx, turn_number);
             let panic_completion_data = completion_data.clone();
             let child_parent_session_id = acp::SessionId::new(parent_sid.clone());
             let child_address = run.agent_address.clone();
@@ -357,36 +356,55 @@ impl coordinator::ChildRunner for ShellChildRunner {
         committed: Box<dyn FnOnce(coordinator::TerminalCommitResult) + Send>,
     ) {
         if completion.completion_data.parent_persistence_tx.is_none()
-            && let Some(ctx) = self.agent_ref.get().try_build_subagent_spawn_context(&completion.request.parent_session_id)
+            && let Some(ctx) = self
+                .agent_ref
+                .get()
+                .try_build_subagent_spawn_context(&completion.request.parent_session_id)
         {
             let state = completion.completion_data.state.clone();
             *completion.completion_data = ShellCompletionData::from_context(&ctx, None);
             completion.completion_data.state = state;
         }
         let completion = completion.snapshot();
-        self.agent_ref.get().release_subagent_turn_number(&acp::SessionId::new(completion.request.id.clone()));
+        self.agent_ref
+            .get()
+            .release_subagent_turn_number(&acp::SessionId::new(completion.request.id.clone()));
         let task = tokio::task::spawn_local(async move {
-            let result = super::completion_publication::prepare_completion_admission(&completion).await;
+            let result =
+                super::completion_publication::prepare_completion_admission(&completion).await;
             committed(match result {
                 Ok(()) => coordinator::TerminalCommitResult::Committed,
-                Err(error) => coordinator::TerminalCommitResult::Rejected { error: error.to_string() },
+                Err(error) => coordinator::TerminalCommitResult::Rejected {
+                    error: error.to_string(),
+                },
             });
         });
         let mut tasks = self.presentations.borrow_mut();
         tasks.retain(|task| !task.is_finished());
         tasks.push(tokio_util::task::AbortOnDropHandle::new(task));
     }
-    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(coordinator::TerminalVisibilityResult) + Send>) {
+    fn on_published(
+        &self,
+        completion: ChildCompletion<Self::CompletionData>,
+        published: Box<dyn FnOnce(coordinator::TerminalVisibilityResult) + Send>,
+    ) {
         let gateway = self.agent_ref.get().gateway.clone();
         let task = tokio::task::spawn_local(async move {
-            published(super::completion_publication::publish_committed_completion(completion, gateway).await);
+            published(
+                super::completion_publication::publish_committed_completion(completion, gateway)
+                    .await,
+            );
         });
         let mut tasks = self.presentations.borrow_mut();
         tasks.retain(|task| !task.is_finished());
         tasks.push(tokio_util::task::AbortOnDropHandle::new(task));
     }
     fn on_commit_failed(&self, completion: ChildCompletion<Self::CompletionData>, error: String) {
-        super::completion_publication::report_commit_failure(completion, &self.agent_ref.get().gateway, &error);
+        super::completion_publication::report_commit_failure(
+            completion,
+            &self.agent_ref.get().gateway,
+            &error,
+        );
     }
     fn running_count_changed(&self, running: usize) {
         self.agent_ref
@@ -461,7 +479,9 @@ pub(crate) fn spawn_subagent_coordinator(
 /// Whether this completion will inject an auto-wake prompt; decided on the coordinator thread in `on_completed`.
 pub(crate) fn will_wake_for(completion: &ChildCompletion<ShellCompletionData>) -> bool {
     match completion.disposition.reporting {
-        coordinator::CompletionReporting::Reportable => should_auto_wake_subagent(AutoWakeInputs::from_completion(completion)),
+        coordinator::CompletionReporting::Reportable => {
+            should_auto_wake_subagent(AutoWakeInputs::from_completion(completion))
+        }
         coordinator::CompletionReporting::Silent => false,
     }
 }
@@ -482,17 +502,33 @@ pub(crate) fn publish_child_completion(
     } = completion;
     if completion_data.has_emitted_spawned_notification() || request.run_in_background {
         if let Ok(params) = serde_json::value::to_raw_value(&notification) {
-            gateway.forward_fire_and_forget(acp::ExtNotification::new("x.ai/session_notification", params.into()));
+            gateway.forward_fire_and_forget(acp::ExtNotification::new(
+                "x.ai/session_notification",
+                params.into(),
+            ));
         }
     }
     let kind = match offer {
-        crate::session::completion_delivery::CompletionOffer::Automatic => Some(crate::session::CompletionWakeKind::Fresh),
-        crate::session::completion_delivery::CompletionOffer::Boundary => Some(crate::session::CompletionWakeKind::Boundary),
+        crate::session::completion_delivery::CompletionOffer::Automatic => {
+            Some(crate::session::CompletionWakeKind::Fresh)
+        }
+        crate::session::completion_delivery::CompletionOffer::Boundary => {
+            Some(crate::session::CompletionWakeKind::Boundary)
+        }
         crate::session::completion_delivery::CompletionOffer::None => None,
     };
     if let (Some(kind), Some(sender)) = (kind, &completion_data.parent_cmd_tx) {
-        enqueue_completion_wake(sender, &xai_chat_state::SubagentCompletionId { subagent_id: request.id, attempt_id },
-            kind, text, &request.parent_session_id, &completion_data.synthetic_trace_tx);
+        enqueue_completion_wake(
+            sender,
+            &xai_chat_state::SubagentCompletionId {
+                subagent_id: request.id,
+                attempt_id,
+            },
+            kind,
+            text,
+            &request.parent_session_id,
+            &completion_data.synthetic_trace_tx,
+        );
     }
 }
 /// Inputs to the auto-wake gate, one field per suppression reason.
@@ -569,7 +605,10 @@ pub(crate) fn inject_subagent_completed_prompt(params: InjectParams) {
     let wrapped = xai_grok_tools::reminders::wrap_reminder(&message);
     enqueue_completion_wake(
         cmd_tx,
-        &xai_chat_state::SubagentCompletionId { subagent_id: subagent_id.to_owned(), attempt_id: attempt_id.clone() },
+        &xai_chat_state::SubagentCompletionId {
+            subagent_id: subagent_id.to_owned(),
+            attempt_id: attempt_id.clone(),
+        },
         crate::session::CompletionWakeKind::Fresh,
         wrapped,
         &request.parent_session_id,
@@ -583,7 +622,9 @@ pub(crate) fn enqueue_completion_wake(
     kind: crate::session::CompletionWakeKind,
     wrapped: String,
     parent_session_id: &str,
-    synthetic_trace_tx: &Option<mpsc::UnboundedSender<crate::upload::turn::SyntheticTurnTraceRequest>>,
+    synthetic_trace_tx: &Option<
+        mpsc::UnboundedSender<crate::upload::turn::SyntheticTurnTraceRequest>,
+    >,
 ) {
     let prompt_id = crate::session::completion_delivery::completion_prompt_id(id, kind);
     let before_rx = if synthetic_trace_tx.is_some() {
@@ -599,7 +640,12 @@ pub(crate) fn enqueue_completion_wake(
     if cmd_tx
         .send(SessionCommand::SubagentCompletionWake {
             prompt_id: prompt_id.clone(),
-            completion: crate::session::CompletionWake { id: id.clone(), kind }, text: wrapped, respond_to,
+            completion: crate::session::CompletionWake {
+                id: id.clone(),
+                kind,
+            },
+            text: wrapped,
+            respond_to,
         })
         .is_err()
     {

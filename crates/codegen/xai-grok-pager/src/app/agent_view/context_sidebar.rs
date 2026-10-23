@@ -514,16 +514,25 @@ impl AgentView {
             Some(lines::display_summary(defaults)),
             &theme,
         );
-        let todo_rows: Vec<SidebarRow<'static>> = self.todo.todos().iter().map(|item| {
-            use xai_grok_shell::tools::TodoStatus;
-            let status = match item.status {
-                TodoStatus::Pending => "pending",
-                TodoStatus::InProgress => "in progress",
-                TodoStatus::Completed => "completed",
-                TodoStatus::Cancelled => "cancelled",
-            };
-            SidebarRow { left: Line::from(item.content.clone()), right: Some(Line::from(status)), detail: &[] }
-        }).collect();
+        let todo_rows: Vec<SidebarRow<'static>> = self
+            .todo
+            .todos()
+            .iter()
+            .map(|item| {
+                use xai_grok_shell::tools::TodoStatus;
+                let status = match item.status {
+                    TodoStatus::Pending => "pending",
+                    TodoStatus::InProgress => "in progress",
+                    TodoStatus::Completed => "completed",
+                    TodoStatus::Cancelled => "cancelled",
+                };
+                SidebarRow {
+                    left: Line::from(item.content.clone()),
+                    right: Some(Line::from(status)),
+                    detail: &[],
+                }
+            })
+            .collect();
         if open.todo_count != todo_rows.len() {
             open.todo_count = todo_rows.len();
             open.apply_disclosure(open.disclosure);
@@ -539,13 +548,17 @@ impl AgentView {
                 title: display_title,
                 rows: disclosure.visible(SectionId::Display, &display),
             },
-            SidebarSection::Rows { title: Line::from("Todos"), rows: &todo_rows },
+            SidebarSection::Rows {
+                title: Line::from("Todos"),
+                rows: &todo_rows,
+            },
         ];
         open.sidebar.rebuild_layout(&sections);
         let viewport = SidebarLayout::compute(area, heights).body.height as usize;
         open.sidebar.clamp_scroll(viewport);
         if open.sidebar.cursor.is_none() && open.focus == SidebarFocus::Sidebar {
-            open.sidebar.cursor = Some(Outline::build(disclosure, open.todo_count).default_cursor());
+            open.sidebar.cursor =
+                Some(Outline::build(disclosure, open.todo_count).default_cursor());
             open.reveal_pending = true;
         }
         if open.reveal_pending {

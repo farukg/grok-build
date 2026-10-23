@@ -138,9 +138,11 @@ impl ChildRunner for SnapshotProbeRunner {
     ) {
         terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
     }
-    fn on_published(&self, _: ChildCompletion<()>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
-        
-        
+    fn on_published(
+        &self,
+        _: ChildCompletion<()>,
+        published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>,
+    ) {
         published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }

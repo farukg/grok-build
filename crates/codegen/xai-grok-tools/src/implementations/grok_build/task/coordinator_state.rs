@@ -138,7 +138,10 @@ pub struct ChildRunOutput<D> {
 
 /// Coordinator-owned delivery decision passed to host presentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompletionReporting { Reportable, Silent }
+pub enum CompletionReporting {
+    Reportable,
+    Silent,
+}
 
 #[derive(Debug, Clone)]
 pub struct CompletionDisposition {
@@ -161,7 +164,10 @@ pub struct ChildCompletion<D> {
 }
 
 #[derive(Clone, Debug)]
-pub enum TerminalCommitResult { Committed, Rejected { error: String } }
+pub enum TerminalCommitResult {
+    Committed,
+    Rejected { error: String },
+}
 
 pub struct CompletionPreparation<'a, D> {
     pub attempt_id: &'a xai_message_delivery_core::AttemptId,
@@ -173,26 +179,50 @@ pub struct CompletionPreparation<'a, D> {
 }
 impl<D> ChildCompletion<D> {
     pub fn preparation(&mut self) -> CompletionPreparation<'_, D> {
-        CompletionPreparation { attempt_id: &self.attempt_id, request: &self.request, result: &self.result,
-            snapshot: &self.snapshot, completion_data: &mut self.completion_data, disposition: &self.disposition }
+        CompletionPreparation {
+            attempt_id: &self.attempt_id,
+            request: &self.request,
+            result: &self.result,
+            snapshot: &self.snapshot,
+            completion_data: &mut self.completion_data,
+            disposition: &self.disposition,
+        }
     }
 }
 impl<D: Clone> CompletionPreparation<'_, D> {
     pub fn snapshot(&self) -> ChildCompletion<D> {
-        ChildCompletion { attempt_id: self.attempt_id.clone(), request: self.request.clone(), result: self.result.clone(),
-            snapshot: self.snapshot.clone(), completion_data: self.completion_data.clone(), disposition: self.disposition.clone() }
+        ChildCompletion {
+            attempt_id: self.attempt_id.clone(),
+            request: self.request.clone(),
+            result: self.result.clone(),
+            snapshot: self.snapshot.clone(),
+            completion_data: self.completion_data.clone(),
+            disposition: self.disposition.clone(),
+        }
     }
 }
 
 pub(super) enum TerminalOutput<D> {
     Finishing(ChildRunOutput<D>),
     Committing(ChildCompletion<D>),
-    Publishing { attempt_id: xai_message_delivery_core::AttemptId, parent_session_id: String },
+    Publishing {
+        attempt_id: xai_message_delivery_core::AttemptId,
+        parent_session_id: String,
+    },
 }
 #[derive(Clone, Debug)]
-pub enum TerminalVisibilityResult { Published, Deferred { error: String } }
+pub enum TerminalVisibilityResult {
+    Published,
+    Deferred { error: String },
+}
 #[derive(Clone, Debug)]
-pub(super) enum TerminalPublicationState { Committing, Publishing, Published, Rejected { error: String }, HistoryBlocked { error: String } }
+pub(super) enum TerminalPublicationState {
+    Committing,
+    Publishing,
+    Published,
+    Rejected { error: String },
+    HistoryBlocked { error: String },
+}
 impl TerminalPublicationState {
     pub(super) fn is_committed(&self) -> bool {
         match self {
@@ -200,7 +230,9 @@ impl TerminalPublicationState {
             Self::Committing | Self::Rejected { .. } => false,
         }
     }
-    pub(super) fn is_published(&self) -> bool { matches!(self, Self::Published) }
+    pub(super) fn is_published(&self) -> bool {
+        matches!(self, Self::Published)
+    }
     pub(super) fn is_settled(&self) -> bool {
         match self {
             Self::Committing | Self::Publishing => false,
@@ -209,20 +241,37 @@ impl TerminalPublicationState {
     }
 }
 #[derive(Clone, Copy)]
-pub(super) enum CompletionDeadline { Unlimited, At(tokio::time::Instant) }
+pub(super) enum CompletionDeadline {
+    Unlimited,
+    At(tokio::time::Instant),
+}
 impl CompletionDeadline {
     pub(super) fn from_option(deadline: Option<tokio::time::Instant>) -> Self {
-        match deadline { Some(deadline) => Self::At(deadline), None => Self::Unlimited }
+        match deadline {
+            Some(deadline) => Self::At(deadline),
+            None => Self::Unlimited,
+        }
     }
 }
 pub(super) enum CompletionReplyTarget {
-    Foreground { result_tx: super::result_delivery::SubagentResultSender, deadline: CompletionDeadline },
+    Foreground {
+        result_tx: super::result_delivery::SubagentResultSender,
+        deadline: CompletionDeadline,
+    },
     Detached(super::result_delivery::SubagentResultSender),
     Absent,
 }
 pub(super) enum TerminalPublication {
-    Prepared { subagent_id: String, attempt_id: xai_message_delivery_core::AttemptId, result: TerminalCommitResult },
-    Visible { subagent_id: String, attempt_id: xai_message_delivery_core::AttemptId, result: TerminalVisibilityResult },
+    Prepared {
+        subagent_id: String,
+        attempt_id: xai_message_delivery_core::AttemptId,
+        result: TerminalCommitResult,
+    },
+    Visible {
+        subagent_id: String,
+        attempt_id: xai_message_delivery_core::AttemptId,
+        result: TerminalVisibilityResult,
+    },
 }
 
 pub(super) struct TerminalPublicationGuard {
@@ -230,8 +279,14 @@ pub(super) struct TerminalPublicationGuard {
     fallback: Option<TerminalPublication>,
 }
 impl TerminalPublicationGuard {
-    pub(super) fn new(sender: tokio::sync::mpsc::UnboundedSender<TerminalPublication>, fallback: TerminalPublication) -> Self {
-        Self { sender, fallback: Some(fallback) }
+    pub(super) fn new(
+        sender: tokio::sync::mpsc::UnboundedSender<TerminalPublication>,
+        fallback: TerminalPublication,
+    ) -> Self {
+        Self {
+            sender,
+            fallback: Some(fallback),
+        }
     }
     pub(super) fn resolve(mut self, publication: TerminalPublication) {
         self.fallback = None;
@@ -240,7 +295,9 @@ impl TerminalPublicationGuard {
 }
 impl Drop for TerminalPublicationGuard {
     fn drop(&mut self) {
-        if let Some(publication) = self.fallback.take() { let _ = self.sender.send(publication); }
+        if let Some(publication) = self.fallback.take() {
+            let _ = self.sender.send(publication);
+        }
     }
 }
 
@@ -277,7 +334,11 @@ pub trait ChildRunner: 'static {
         terminal_published: Box<dyn FnOnce(TerminalCommitResult) + Send>,
     );
 
-    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(TerminalVisibilityResult) + Send>);
+    fn on_published(
+        &self,
+        completion: ChildCompletion<Self::CompletionData>,
+        published: Box<dyn FnOnce(TerminalVisibilityResult) + Send>,
+    );
 
     fn on_commit_failed(&self, completion: ChildCompletion<Self::CompletionData>, error: String) {
         tracing::error!(subagent_id = %completion.request.id, %error, "child completion persistence failed");
@@ -647,7 +708,8 @@ pub(super) struct PendingChild {
     pub(super) request: SubagentRequest,
     pub(super) started_at: std::time::Instant,
     pub(super) cancellation: CancellationToken,
-    pub(super) spawn_reply: Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>,
+    pub(super) spawn_reply:
+        Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>,
     pub(super) foreground_deadline: Option<tokio::time::Instant>,
     pub(super) handle_only: bool,
     pub(super) disposition: PendingDisposition,
@@ -667,7 +729,8 @@ pub(super) struct ActiveChild<C> {
     pub(super) request: SubagentRequest,
     pub(super) started_at: std::time::Instant,
     pub(super) cancellation: CancellationToken,
-    pub(super) spawn_reply: Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>,
+    pub(super) spawn_reply:
+        Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>,
     pub(super) foreground_deadline: Option<tokio::time::Instant>,
     pub(super) handle_only: bool,
     /// Definition-declared background (see [`StartedChild`]): background for
@@ -712,7 +775,8 @@ pub(super) struct CompletedChild {
 }
 
 pub(super) struct BlockingWaiter {
-    pub(super) observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
+    pub(super) observations:
+        Option<crate::types::completion_observation::SubagentCompletionObservations>,
     pub(super) deadline: tokio::time::Instant,
     pub(super) respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
 }
@@ -891,7 +955,9 @@ pub(super) trait ForegroundChild {
     /// child was still treated as turn-blocking (old shell `ParentGone`).
     fn caller_gone(&self) -> bool;
     fn is_workflow(&self) -> bool;
-    fn take_reply(&mut self) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>;
+    fn take_reply(
+        &mut self,
+    ) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>;
     fn mark_backgrounded(&mut self);
     /// Cancel the child's execution (token + active control where present).
     fn cancel(&mut self);
@@ -922,7 +988,10 @@ impl ForegroundChild for PendingChild {
         self.request.owner.is_workflow()
     }
 
-    fn take_reply(&mut self) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender> {
+    fn take_reply(
+        &mut self,
+    ) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>
+    {
         self.spawn_reply.take()
     }
 
@@ -961,7 +1030,10 @@ impl<C: ChildControl> ForegroundChild for ActiveChild<C> {
         self.request.owner.is_workflow()
     }
 
-    fn take_reply(&mut self) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender> {
+    fn take_reply(
+        &mut self,
+    ) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>
+    {
         self.spawn_reply.take()
     }
 
@@ -977,14 +1049,27 @@ impl<C: ChildControl> ForegroundChild for ActiveChild<C> {
 }
 
 impl ForegroundChild for CompletedChild {
-    fn id(&self) -> &str { &self.request.id }
-    fn request(&self) -> &SubagentRequest { &self.request }
-    fn child_session_id(&self) -> &str { &self.child_session_id }
+    fn id(&self) -> &str {
+        &self.request.id
+    }
+    fn request(&self) -> &SubagentRequest {
+        &self.request
+    }
+    fn child_session_id(&self) -> &str {
+        &self.child_session_id
+    }
     fn deadline(&self) -> Option<tokio::time::Instant> {
         match &self.reply_target {
-            CompletionReplyTarget::Foreground { deadline: CompletionDeadline::At(deadline), .. } => Some(*deadline),
-            CompletionReplyTarget::Foreground { deadline: CompletionDeadline::Unlimited, .. }
-            | CompletionReplyTarget::Detached(_) | CompletionReplyTarget::Absent => None,
+            CompletionReplyTarget::Foreground {
+                deadline: CompletionDeadline::At(deadline),
+                ..
+            } => Some(*deadline),
+            CompletionReplyTarget::Foreground {
+                deadline: CompletionDeadline::Unlimited,
+                ..
+            }
+            | CompletionReplyTarget::Detached(_)
+            | CompletionReplyTarget::Absent => None,
         }
     }
     fn caller_gone(&self) -> bool {
@@ -993,15 +1078,22 @@ impl ForegroundChild for CompletedChild {
             CompletionReplyTarget::Detached(_) | CompletionReplyTarget::Absent => false,
         }
     }
-    fn is_workflow(&self) -> bool { self.request.owner.is_workflow() }
+    fn is_workflow(&self) -> bool {
+        self.request.owner.is_workflow()
+    }
     fn take_reply(&mut self) -> Option<super::result_delivery::SubagentResultSender> {
         match std::mem::replace(&mut self.reply_target, CompletionReplyTarget::Absent) {
-            CompletionReplyTarget::Foreground { result_tx, .. } | CompletionReplyTarget::Detached(result_tx) => Some(result_tx),
+            CompletionReplyTarget::Foreground { result_tx, .. }
+            | CompletionReplyTarget::Detached(result_tx) => Some(result_tx),
             CompletionReplyTarget::Absent => None,
         }
     }
-    fn mark_backgrounded(&mut self) { self.reply_target = CompletionReplyTarget::Absent; }
-    fn cancel(&mut self) { self.request.cancel_token.cancel(); }
+    fn mark_backgrounded(&mut self) {
+        self.reply_target = CompletionReplyTarget::Absent;
+    }
+    fn cancel(&mut self) {
+        self.request.cancel_token.cancel();
+    }
 }
 
 pub(super) fn background_at_deadline(
@@ -1228,12 +1320,24 @@ pub(super) fn completed_snapshot(
     persisted_output: Option<&str>,
 ) -> SubagentSnapshot {
     let mut snapshot = terminal_snapshot(
-        &child.request, &child.result, persisted_output, child.persona.clone(), instant_to_epoch_ms(child.started_at),
+        &child.request,
+        &child.result,
+        persisted_output,
+        child.persona.clone(),
+        instant_to_epoch_ms(child.started_at),
     );
     snapshot.status = match &child.publication {
-        TerminalPublicationState::Committing => SubagentSnapshotStatus::Finalizing { publication: super::types::SubagentFinalization::Writing },
-        TerminalPublicationState::Publishing | TerminalPublicationState::Published | TerminalPublicationState::HistoryBlocked { .. } => snapshot.status,
-        TerminalPublicationState::Rejected { error } => SubagentSnapshotStatus::Finalizing { publication: super::types::SubagentFinalization::Blocked { error: error.clone() } },
+        TerminalPublicationState::Committing => SubagentSnapshotStatus::Finalizing {
+            publication: super::types::SubagentFinalization::Writing,
+        },
+        TerminalPublicationState::Publishing
+        | TerminalPublicationState::Published
+        | TerminalPublicationState::HistoryBlocked { .. } => snapshot.status,
+        TerminalPublicationState::Rejected { error } => SubagentSnapshotStatus::Finalizing {
+            publication: super::types::SubagentFinalization::Blocked {
+                error: error.clone(),
+            },
+        },
     };
     snapshot
 }

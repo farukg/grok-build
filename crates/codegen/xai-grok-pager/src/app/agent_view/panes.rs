@@ -542,9 +542,17 @@ impl AgentView {
     }
 
     pub(crate) fn work_dock_at(&self, col: u16, row: u16) -> ratatui::layout::Rect {
-        let sidebar = ratatui::layout::Rect::new(self.f7_body.x, self.f7_body.y,
-            self.f7_body.width, self.dock_rows_in_sidebar);
-        if sidebar.contains((col, row).into()) { sidebar } else { self.pane_areas.dock }
+        let sidebar = ratatui::layout::Rect::new(
+            self.f7_body.x,
+            self.f7_body.y,
+            self.f7_body.width,
+            self.dock_rows_in_sidebar,
+        );
+        if sidebar.contains((col, row).into()) {
+            sidebar
+        } else {
+            self.pane_areas.dock
+        }
     }
 
     pub(crate) fn work_pane_at(&self, col: u16, row: u16) -> Option<super::AgentPane> {
@@ -1319,7 +1327,9 @@ impl AgentView {
             }
             return;
         }
-        let target = self.work_pane_at(col, row).unwrap_or(ActivePane::Scrollback);
+        let target = self
+            .work_pane_at(col, row)
+            .unwrap_or(ActivePane::Scrollback);
         match target {
             ActivePane::Scrollback => {
                 if lines > 0 {

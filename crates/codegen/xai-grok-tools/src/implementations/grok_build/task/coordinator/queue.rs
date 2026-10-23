@@ -93,7 +93,10 @@ impl QueuedCaller {
         matches!(self, Self::Backgrounded)
     }
 
-    pub(super) fn into_spawn_reply(self) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender> {
+    pub(super) fn into_spawn_reply(
+        self,
+    ) -> Option<crate::implementations::grok_build::task::result_delivery::SubagentResultSender>
+    {
         match self {
             Self::Awaiting { result_tx, .. } => Some(result_tx),
             Self::Backgrounded => None,

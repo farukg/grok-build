@@ -1143,7 +1143,13 @@ fn tab_from_dock_is_one_stop() {
     agent.dock_on = true;
     agent.active_pane = AgentPane::Dock;
     agent.dock_cursor = 0;
-    assert!(!agent.dock_items().contains(&crate::views::dock::DockItem::Header(crate::views::dock::Section::Queued)));
+    assert!(
+        !agent
+            .dock_items()
+            .contains(&crate::views::dock::DockItem::Header(
+                crate::views::dock::Section::Queued
+            ))
+    );
 
     let outcome = agent.handle_dock_key(&key(KeyCode::Tab, KeyModifiers::NONE));
     assert!(matches!(outcome, InputOutcome::Action(Action::FocusPrompt)));
@@ -1287,10 +1293,7 @@ fn clicking_a_section_header_clears_selection_after_collapse() {
     let _ = agent.handle_mouse(&mouse(MouseEventKind::Moved, 5, 0));
     let theme = crate::theme::Theme::tokyonight();
     assert_ne!(painted_header_bg(&agent, tasks), Some(theme.bg_highlight));
-    assert_ne!(
-        painted_header_bg(&agent, tasks),
-        Some(theme.row_hover_bg())
-    );
+    assert_ne!(painted_header_bg(&agent, tasks), Some(theme.row_hover_bg()));
 
     let y = agent.pane_areas.dock.y + header_row(&agent, tasks);
     let outcome = agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left), 5, y));
@@ -1349,9 +1352,14 @@ fn crowded_work_projection_does_not_own_queued_input() {
         ));
     let data = agent.dock_snapshot();
     let items = crate::views::dock::visible_items(&data);
-    assert!(!items.contains(&crate::views::dock::DockItem::Header(crate::views::dock::Section::Queued)));
+    assert!(!items.contains(&crate::views::dock::DockItem::Header(
+        crate::views::dock::Section::Queued
+    )));
     let area = Rect::new(0, 4, 80, crate::views::dock::desired_height(&data));
-    assert_eq!(crate::views::dock::queue_body_rect(area, &data), Rect::default());
+    assert_eq!(
+        crate::views::dock::queue_body_rect(area, &data),
+        Rect::default()
+    );
     agent.sync_queue_pane();
     assert!(agent.queue.overlay.visible);
     assert_eq!(agent.queue.entry_ids().len(), 1);

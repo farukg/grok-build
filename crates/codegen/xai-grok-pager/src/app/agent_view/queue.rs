@@ -856,32 +856,57 @@ mod queue_edit_routing_tests {
             for f7 in [false, true] {
                 for queued in [false, true] {
                     let mut agent = running_agent_local_only();
-                    if !queued { agent.session.pending_prompts.clear(); }
-                    if f7 { let _ = agent.toggle_context_sidebar(); }
-                    let registry = ActionRegistry::defaults();
-                    for (tasks, todo) in [(false, false), (false, true), (true, false), (true, true)] {
-                    agent.tasks.overlay.visible = tasks;
-                    agent.todo.overlay.visible = todo;
-                    for height in [40, 16, 24] {
-                        let area = Rect::new(0, 0, 100, height);
-                        let mut buf = Buffer::empty(area);
-                        agent.draw(area, &mut buf, &registry, &mut ScratchBuffer::new(), None, false,
-                            BannerSlotParams { height: 0, announcements: &[], hidden_ids: &std::collections::BTreeSet::new(), privacy_banner: false, mouse_pos: None, tip: None },
-                            false, &mut Vec::new(), AppRenderParams::default());
-                        assert_eq!(agent.queue.overlay.visible, queued);
-                        assert_eq!(agent.pane_areas.queue.height > 0, queued);
-                        assert_eq!(agent.dock_counts().queued, 0);
-                        assert!(agent.hit_queue_close.rect.is_none());
-                        if queued {
-                            assert_eq!(agent.pane_areas.queue.bottom(), agent.pane_areas.prompt.y);
-                            let ids = agent.queue.entry_ids();
-                            let _ = agent.toggle_queue_pane();
-                            agent.hide_queue_pane();
-                            agent.sync_queue_pane();
-                            assert!(agent.queue.overlay.visible);
-                            assert_eq!(agent.queue.entry_ids(), ids);
-                        }
+                    if !queued {
+                        agent.session.pending_prompts.clear();
                     }
+                    if f7 {
+                        let _ = agent.toggle_context_sidebar();
+                    }
+                    let registry = ActionRegistry::defaults();
+                    for (tasks, todo) in
+                        [(false, false), (false, true), (true, false), (true, true)]
+                    {
+                        agent.tasks.overlay.visible = tasks;
+                        agent.todo.overlay.visible = todo;
+                        for height in [40, 16, 24] {
+                            let area = Rect::new(0, 0, 100, height);
+                            let mut buf = Buffer::empty(area);
+                            agent.draw(
+                                area,
+                                &mut buf,
+                                &registry,
+                                &mut ScratchBuffer::new(),
+                                None,
+                                false,
+                                BannerSlotParams {
+                                    height: 0,
+                                    announcements: &[],
+                                    hidden_ids: &std::collections::BTreeSet::new(),
+                                    privacy_banner: false,
+                                    mouse_pos: None,
+                                    tip: None,
+                                },
+                                false,
+                                &mut Vec::new(),
+                                AppRenderParams::default(),
+                            );
+                            assert_eq!(agent.queue.overlay.visible, queued);
+                            assert_eq!(agent.pane_areas.queue.height > 0, queued);
+                            assert_eq!(agent.dock_counts().queued, 0);
+                            assert!(agent.hit_queue_close.rect.is_none());
+                            if queued {
+                                assert_eq!(
+                                    agent.pane_areas.queue.bottom(),
+                                    agent.pane_areas.prompt.y
+                                );
+                                let ids = agent.queue.entry_ids();
+                                let _ = agent.toggle_queue_pane();
+                                agent.hide_queue_pane();
+                                agent.sync_queue_pane();
+                                assert!(agent.queue.overlay.visible);
+                                assert_eq!(agent.queue.entry_ids(), ids);
+                            }
+                        }
                     }
                 }
             }

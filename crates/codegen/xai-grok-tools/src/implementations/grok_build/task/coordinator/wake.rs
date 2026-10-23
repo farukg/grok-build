@@ -64,13 +64,20 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             let _ = ingress.request.respond_to.send(outcome);
             return;
         }
-        if self.completed.get(&subagent_id).is_some_and(|completed| completed.publication.is_settled() && !completed.publication.is_published()) {
-            let _ = ingress.request.respond_to.send(ActiveAgentMessageOutcome::NotActiveOrFinalizing);
+        if self.completed.get(&subagent_id).is_some_and(|completed| {
+            completed.publication.is_settled() && !completed.publication.is_published()
+        }) {
+            let _ = ingress
+                .request
+                .respond_to
+                .send(ActiveAgentMessageOutcome::NotActiveOrFinalizing);
             return;
         }
-        if self.completed.get(&subagent_id).is_some_and(|completed| {
-            !completed.publication.is_published()
-        }) {
+        if self
+            .completed
+            .get(&subagent_id)
+            .is_some_and(|completed| !completed.publication.is_published())
+        {
             self.pending_wakes
                 .entry(subagent_id)
                 .or_default()
@@ -251,7 +258,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         self.restore_completed_incarnation(&id);
         let snapshot = self.completed_snapshot_for_query(&displaced.completed);
         for waiter in self.waiters.remove(&id).unwrap_or_default() {
-            if !waiter.respond_to.is_closed() && let Some(observer) = &waiter.observations {
+            if !waiter.respond_to.is_closed()
+                && let Some(observer) = &waiter.observations
+            {
                 observer.record(&displaced.completed.result, &displaced.completed.attempt_id);
             }
             let _ = waiter.respond_to.send(Some(snapshot.clone()));

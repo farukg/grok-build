@@ -75,7 +75,10 @@ fn paused_status_has_one_click_target_that_clears_when_terminal() {
         .rect
         .expect("paused workflow must arm one background status target");
     let outcome = agent.handle_input(&mouse_down(rect.x, rect.y), &registry);
-    assert!(matches!(outcome, InputOutcome::Action(crate::app::actions::Action::FetchContextPolicy)));
+    assert!(matches!(
+        outcome,
+        InputOutcome::Action(crate::app::actions::Action::FetchContextPolicy)
+    ));
     assert!(agent.sidebar_open_flags().1);
     assert!(!agent.tasks.overlay.visible);
     let outcome = agent.handle_input(&mouse_down(rect.x, rect.y), &registry);

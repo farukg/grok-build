@@ -1023,11 +1023,20 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     && let Some(output) = self.terminal_outputs.remove(subagent_id)
                 {
                     match output {
-                        super::super::coordinator_state::TerminalOutput::Finishing(output) => self.finish_terminalized_child(subagent_id, output, is_clean),
-                        super::super::coordinator_state::TerminalOutput::Committing(completion) => {
-                            self.terminal_outputs.insert(subagent_id.to_owned(), super::super::coordinator_state::TerminalOutput::Committing(completion));
+                        super::super::coordinator_state::TerminalOutput::Finishing(output) => {
+                            self.finish_terminalized_child(subagent_id, output, is_clean)
                         }
-                        output @ super::super::coordinator_state::TerminalOutput::Publishing { .. } => {
+                        super::super::coordinator_state::TerminalOutput::Committing(completion) => {
+                            self.terminal_outputs.insert(
+                                subagent_id.to_owned(),
+                                super::super::coordinator_state::TerminalOutput::Committing(
+                                    completion,
+                                ),
+                            );
+                        }
+                        output @ super::super::coordinator_state::TerminalOutput::Publishing {
+                            ..
+                        } => {
                             self.terminal_outputs.insert(subagent_id.to_owned(), output);
                         }
                     }

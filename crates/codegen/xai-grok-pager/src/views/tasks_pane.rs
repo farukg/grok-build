@@ -1906,11 +1906,17 @@ mod tests {
             make_bg_task("t-live", "cargo build", BgTaskStatus::Running),
         );
         pane.sync(&bg_tasks, &HashMap::new(), &HashMap::new(), &[]);
-        assert!(!pane.is_visible(), "live tasks must not override a hidden global preference");
+        assert!(
+            !pane.is_visible(),
+            "live tasks must not override a hidden global preference"
+        );
         pane.overlay.visible = true;
         bg_tasks.clear();
         pane.sync(&bg_tasks, &HashMap::new(), &HashMap::new(), &[]);
-        assert!(pane.is_visible(), "completion must not override a visible global preference");
+        assert!(
+            pane.is_visible(),
+            "completion must not override a visible global preference"
+        );
     }
     #[test]
     fn render_shows_plus_suffix_when_truncated() {

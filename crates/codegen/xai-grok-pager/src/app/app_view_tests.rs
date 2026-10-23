@@ -16,24 +16,43 @@ fn task_and_todo_preferences_apply_globally_and_survive_new_views_and_restart() 
     let root = tempfile::tempdir().unwrap();
     let mut app = test_app_with_agent();
     for (id, session) in [(AgentId(0), "display-a"), (AgentId(1), "display-b")] {
-        if id != AgentId(0) { app.agents.insert(id, make_agent()); }
+        if id != AgentId(0) {
+            app.agents.insert(id, make_agent());
+        }
         let agent = app.agents.get_mut(&id).unwrap();
         agent.session.session_id = Some(session.to_owned().into());
         agent.open_panel_settings_in(root.path());
-        agent.todo.update_todos(vec![xai_grok_shell::tools::TodoItem {
-            content: session.to_owned(), priority: Default::default(),
-            status: xai_grok_shell::tools::TodoStatus::Pending, meta: None,
-        }]);
+        agent
+            .todo
+            .update_todos(vec![xai_grok_shell::tools::TodoItem {
+                content: session.to_owned(),
+                priority: Default::default(),
+                status: xai_grok_shell::tools::TodoStatus::Pending,
+                meta: None,
+            }]);
     }
     app.reconcile_sidebar_chrome();
-    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
-    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)));
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    )));
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
     for (_, agent) in app.agents.all() {
         assert!(agent.tasks.overlay.visible && agent.todo.overlay.visible);
         assert_eq!(agent.todo.todos().len(), 1);
     }
-    super::super::dispatch::switch_to_agent(&mut app, AgentId(1), super::super::dispatch::SwitchCause::Load);
-    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    super::super::dispatch::switch_to_agent(
+        &mut app,
+        AgentId(1),
+        super::super::dispatch::SwitchCause::Load,
+    );
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    )));
     for (_, agent) in app.agents.all() {
         assert!(!agent.tasks.overlay.visible);
         assert!(agent.todo.overlay.visible);
@@ -46,8 +65,14 @@ fn task_and_todo_preferences_apply_globally_and_survive_new_views_and_restart() 
     restarted.session.session_id = Some("display-a".to_owned().into());
     restarted.open_panel_settings_in(root.path());
     assert!(!restarted.tasks.overlay.visible && restarted.todo.overlay.visible);
-    assert_eq!(app.agents.get(&AgentId(0)).unwrap().todo.todos()[0].content, "display-a");
-    assert_eq!(app.agents.get(&AgentId(1)).unwrap().todo.todos()[0].content, "display-b");
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().todo.todos()[0].content,
+        "display-a"
+    );
+    assert_eq!(
+        app.agents.get(&AgentId(1)).unwrap().todo.todos()[0].content,
+        "display-b"
+    );
     app.agents.insert(AgentId(2), new_view);
     super::super::dispatch::switch_to_agent(
         &mut app,
@@ -176,12 +201,23 @@ fn failed_global_visibility_write_keeps_live_intent_and_reports_the_storage_fail
     let root = tempfile::tempdir().unwrap();
     let mut app = test_app_with_agent();
     let id = crate::app::agent::AgentId(0);
-    app.agents.get_mut(&id).unwrap().open_panel_settings_in(root.path());
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .open_panel_settings_in(root.path());
     std::fs::create_dir(root.path().join("global.toml")).unwrap();
-    let _ = app.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)));
+    let _ = app.handle_input(&Event::Key(KeyEvent::new(
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    )));
     let agent = app.agents.get(&id).unwrap();
     assert!(agent.tasks.overlay.visible);
-    assert!(agent.toast.as_ref().is_some_and(|(text, _)| text.contains("Panel settings not saved")));
+    assert!(
+        agent
+            .toast
+            .as_ref()
+            .is_some_and(|(text, _)| text.contains("Panel settings not saved"))
+    );
     assert!(root.path().join("global.toml").is_dir());
     let new_id = crate::app::agent::AgentId(1);
     app.agents

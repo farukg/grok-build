@@ -1,4 +1,6 @@
 pub mod acp_types;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod admission_crash_tests_support;
 pub mod announcement_state;
 pub mod auto_mode;
 pub mod batch_dream;
@@ -6,9 +8,10 @@ pub mod commands;
 pub(crate) mod completion_delivery;
 pub mod delivery_receiver;
 pub mod receiver_execution;
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) mod admission_crash_tests_support;
-pub use completion_delivery::{CompletionWake, CompletionWakeKind, SubagentCompletionEvent, ProducerCommitAck, PublishedCompletion};
+pub use completion_delivery::{
+    CompletionWake, CompletionWakeKind, ProducerCommitAck, PublishedCompletion,
+    SubagentCompletionEvent,
+};
 pub(crate) mod compaction_config;
 pub(crate) mod doom_loop_telemetry;
 pub(crate) mod fork_status;
@@ -100,7 +103,10 @@ pub use xai_agent_lifecycle::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptOrigin {
     User,
-    Delivery { delivery_id: String, payload_digest: String },
+    Delivery {
+        delivery_id: String,
+        payload_digest: String,
+    },
     /// Auto-wake prompt injected when a background terminal task completed.
     TaskCompleted {
         /// The background task ID (without the `task-completed-` prefix).
@@ -210,17 +216,17 @@ impl PromptOrigin {
                 queue: QueuePolicy::Hidden,
                 shutdown: ShutdownPolicy::Drain,
             },
-            Self::TaskCompleted { .. }
-            | Self::WorkflowCompleted { .. }
-            | Self::SchedulerFired => InputPolicy {
-                authority: InputAuthority::RuntimeControl,
-                slash: SlashAuthority::Inert,
-                turn_boundary: TurnBoundary::Conversational,
-                analytics: AnalyticsClass::RuntimeWake,
-                compaction: CompactionClass::RuntimeEphemera,
-                queue: QueuePolicy::Hidden,
-                shutdown: ShutdownPolicy::CancelWithProducer,
-            },
+            Self::TaskCompleted { .. } | Self::WorkflowCompleted { .. } | Self::SchedulerFired => {
+                InputPolicy {
+                    authority: InputAuthority::RuntimeControl,
+                    slash: SlashAuthority::Inert,
+                    turn_boundary: TurnBoundary::Conversational,
+                    analytics: AnalyticsClass::RuntimeWake,
+                    compaction: CompactionClass::RuntimeEphemera,
+                    queue: QueuePolicy::Hidden,
+                    shutdown: ShutdownPolicy::CancelWithProducer,
+                }
+            }
             Self::NotificationDrain
             | Self::GoalSummary
             | Self::GoalClassifierNudge
@@ -291,7 +297,7 @@ impl PromptOrigin {
 }
 #[cfg(test)]
 mod tests {
-    use super::{PromptOrigin, QueuePolicy, CompletionWake, CompletionWakeKind};
+    use super::{CompletionWake, CompletionWakeKind, PromptOrigin, QueuePolicy};
     #[test]
     fn from_prompt_id_user() {
         assert_eq!(
@@ -359,7 +365,10 @@ mod tests {
     }
     #[test]
     fn client_completion_prefix_has_human_authority() {
-        assert_eq!(PromptOrigin::from_prompt_id("subagent-completed-child/at1.child"), PromptOrigin::User);
+        assert_eq!(
+            PromptOrigin::from_prompt_id("subagent-completed-child/at1.child"),
+            PromptOrigin::User
+        );
     }
     #[test]
     fn from_prompt_id_notification_drain() {
@@ -421,7 +430,13 @@ mod tests {
             ),
             (
                 PromptOrigin::SubagentCompleted {
-                    completion: CompletionWake { id: xai_chat_state::SubagentCompletionId { subagent_id: "s".into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, kind: CompletionWakeKind::Fresh },
+                    completion: CompletionWake {
+                        id: xai_chat_state::SubagentCompletionId {
+                            subagent_id: "s".into(),
+                            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+                        },
+                        kind: CompletionWakeKind::Fresh,
+                    },
                 },
                 QueuePolicy::Hidden,
             ),
@@ -477,9 +492,18 @@ mod tests {
         );
         assert!(!PromptOrigin::from_prompt_id("plan-resume-1").hide_user_echo_from_scrollback());
         assert!(PromptOrigin::from_prompt_id("task-completed-t1").hide_user_echo_from_scrollback());
-        assert!(PromptOrigin::SubagentCompleted { completion: CompletionWake { id: xai_chat_state::SubagentCompletionId {
-            subagent_id: "s1".into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1),
-        }, kind: CompletionWakeKind::Fresh } }.hide_user_echo_from_scrollback());
+        assert!(
+            PromptOrigin::SubagentCompleted {
+                completion: CompletionWake {
+                    id: xai_chat_state::SubagentCompletionId {
+                        subagent_id: "s1".into(),
+                        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+                    },
+                    kind: CompletionWakeKind::Fresh
+                }
+            }
+            .hide_user_echo_from_scrollback()
+        );
         assert!(
             PromptOrigin::from_prompt_id("notifications-uuid").hide_user_echo_from_scrollback()
         );

@@ -423,8 +423,11 @@ pub(crate) fn restore_wake_summary_locked(
     lock.lock_exclusive()?;
     let result = (|| {
         let current = read_summary(summary_path)?;
-        let mut restored: Summary = serde_json::from_slice(&prior.summary_bytes).map_err(io::Error::other)?;
-        if serde_json::to_value(&current.completion_delivery).map_err(io::Error::other)? == serde_json::to_value(&restored.completion_delivery).map_err(io::Error::other)? {
+        let mut restored: Summary =
+            serde_json::from_slice(&prior.summary_bytes).map_err(io::Error::other)?;
+        if serde_json::to_value(&current.completion_delivery).map_err(io::Error::other)?
+            == serde_json::to_value(&restored.completion_delivery).map_err(io::Error::other)?
+        {
             return super::write_bytes_atomic(summary_path, &prior.summary_bytes);
         }
         restored.completion_delivery = current.completion_delivery;
@@ -434,7 +437,11 @@ pub(crate) fn restore_wake_summary_locked(
     result
 }
 
-pub(crate) fn mutate_locked<T>(summary_path: &Path, lock_path: &Path, mutate: impl FnOnce(&mut Summary) -> io::Result<T>) -> io::Result<T> {
+pub(crate) fn mutate_locked<T>(
+    summary_path: &Path,
+    lock_path: &Path,
+    mutate: impl FnOnce(&mut Summary) -> io::Result<T>,
+) -> io::Result<T> {
     let lock = open_lock_file(lock_path)?;
     lock.lock_exclusive()?;
     let result = (|| {

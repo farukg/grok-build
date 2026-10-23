@@ -53,24 +53,73 @@ fn work_visibility_is_global_even_from_session_edits_and_preserves_other_writers
     let dir = tempfile::tempdir().unwrap();
     let mut first = open(dir.path(), Some("first")).store;
     let mut second = open(dir.path(), Some("second")).store;
-    first.set(Layer::Session, Setting::Section {
-        section: SidebarSection::Tasks, state: DisclosureState::Expanded,
-    }).unwrap();
-    second.set(Layer::Session, Setting::Section {
-        section: SidebarSection::Todo, state: DisclosureState::Expanded,
-    }).unwrap();
+    first
+        .set(
+            Layer::Session,
+            Setting::Section {
+                section: SidebarSection::Tasks,
+                state: DisclosureState::Expanded,
+            },
+        )
+        .unwrap();
+    second
+        .set(
+            Layer::Session,
+            Setting::Section {
+                section: SidebarSection::Todo,
+                state: DisclosureState::Expanded,
+            },
+        )
+        .unwrap();
     let restarted = open(dir.path(), Some("first")).store;
-    assert_eq!(restarted.global().section(SidebarSection::Tasks), Some(DisclosureState::Expanded));
-    assert_eq!(restarted.global().section(SidebarSection::Todo), Some(DisclosureState::Expanded));
-    assert!(restarted.session().unwrap().section(SidebarSection::Tasks).is_none());
-    assert!(restarted.session().unwrap().section(SidebarSection::Todo).is_none());
-    assert_eq!(read_toml(&dir.path().join("global.toml"))["sidebar"]["tasks"].as_str(), Some("expanded"));
+    assert_eq!(
+        restarted.global().section(SidebarSection::Tasks),
+        Some(DisclosureState::Expanded)
+    );
+    assert_eq!(
+        restarted.global().section(SidebarSection::Todo),
+        Some(DisclosureState::Expanded)
+    );
+    assert!(
+        restarted
+            .session()
+            .unwrap()
+            .section(SidebarSection::Tasks)
+            .is_none()
+    );
+    assert!(
+        restarted
+            .session()
+            .unwrap()
+            .section(SidebarSection::Todo)
+            .is_none()
+    );
+    assert_eq!(
+        read_toml(&dir.path().join("global.toml"))["sidebar"]["tasks"].as_str(),
+        Some("expanded")
+    );
     std::fs::create_dir_all(dir.path().join("sessions")).unwrap();
-    std::fs::write(dir.path().join("sessions/first.toml"), "version = 1\n[sidebar]\ntasks = 'collapsed'\ntodo = 'collapsed'\n").unwrap();
+    std::fs::write(
+        dir.path().join("sessions/first.toml"),
+        "version = 1\n[sidebar]\ntasks = 'collapsed'\ntodo = 'collapsed'\n",
+    )
+    .unwrap();
     let report = open(dir.path(), Some("first"));
     assert_eq!(report.warnings.len(), 2);
-    assert!(report.store.effective().section(SidebarSection::Tasks).is_expanded());
-    assert!(report.store.effective().section(SidebarSection::Todo).is_expanded());
+    assert!(
+        report
+            .store
+            .effective()
+            .section(SidebarSection::Tasks)
+            .is_expanded()
+    );
+    assert!(
+        report
+            .store
+            .effective()
+            .section(SidebarSection::Todo)
+            .is_expanded()
+    );
 }
 
 #[test]

@@ -160,9 +160,13 @@ impl AgentView {
         self.restore_panel_settings();
         if let Some(store) = self.panel_persistence.store_mut() {
             use crate::app::panel_settings::SidebarSection;
-            self.tasks.overlay.visible = store.global().section(SidebarSection::Tasks)
+            self.tasks.overlay.visible = store
+                .global()
+                .section(SidebarSection::Tasks)
                 .map_or(false, |state| state.is_expanded());
-            self.todo.overlay.visible = store.global().section(SidebarSection::Todo)
+            self.todo.overlay.visible = store
+                .global()
+                .section(SidebarSection::Todo)
                 .map_or(false, |state| state.is_expanded());
         }
         self.toast_load_warnings(&warnings);
@@ -172,8 +176,15 @@ impl AgentView {
         use crate::app::panel_settings::{DisclosureState, SidebarSection};
         for (section, visible) in [(SidebarSection::Tasks, tasks), (SidebarSection::Todo, todo)] {
             if let Some(visible) = visible {
-                let result = self.panel_persistence.store_mut().map(|store| store.set(Layer::Global,
-                    Setting::Section { section, state: DisclosureState::from_expanded(visible) }));
+                let result = self.panel_persistence.store_mut().map(|store| {
+                    store.set(
+                        Layer::Global,
+                        Setting::Section {
+                            section,
+                            state: DisclosureState::from_expanded(visible),
+                        },
+                    )
+                });
                 if let Some(result) = result {
                     self.report_panel_save(result);
                 }

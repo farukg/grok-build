@@ -1,5 +1,11 @@
 #[derive(Clone, Copy)]
-pub(crate) enum AdmissionCrashBoundary { ReceiverAdmitted, InputProjected, ReceiverTerminal, ProducerPrepared, ProducerPublished }
+pub(crate) enum AdmissionCrashBoundary {
+    ReceiverAdmitted,
+    InputProjected,
+    ReceiverTerminal,
+    ProducerPrepared,
+    ProducerPublished,
+}
 
 pub(crate) fn crash_at(boundary: AdmissionCrashBoundary) {
     let name = match boundary {
@@ -9,5 +15,7 @@ pub(crate) fn crash_at(boundary: AdmissionCrashBoundary) {
         AdmissionCrashBoundary::ProducerPrepared => "producer_prepared",
         AdmissionCrashBoundary::ProducerPublished => "producer_published",
     };
-    if std::env::var("GROK_ADMISSION_TEST_CRASH").ok().as_deref() == Some(name) { std::process::exit(86); }
+    if std::env::var("GROK_ADMISSION_TEST_CRASH").ok().as_deref() == Some(name) {
+        std::process::exit(86);
+    }
 }

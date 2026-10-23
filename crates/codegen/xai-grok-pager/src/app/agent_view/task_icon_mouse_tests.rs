@@ -316,7 +316,9 @@ fn task_preference_only_changes_the_additional_upper_projection() {
     let area = Rect::new(0, 0, 160, 40);
     let registry = ActionRegistry::defaults();
     let ctrl_g = Event::Key(crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Char('g'), KeyModifiers::CONTROL));
+        crossterm::event::KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    ));
     let buf = draw_frame(&mut agent, area);
     assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
     assert!(agent.pane_areas.dock.x >= agent.f7_body.x);
@@ -325,7 +327,12 @@ fn task_preference_only_changes_the_additional_upper_projection() {
     assert!(agent.tasks.overlay.visible);
     assert!(agent.pane_areas.dock.x < agent.f7_body.x);
     assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
-    let sidebar = Rect::new(agent.f7_body.x, agent.f7_body.y, agent.f7_body.width, agent.dock_rows_in_sidebar);
+    let sidebar = Rect::new(
+        agent.f7_body.x,
+        agent.f7_body.y,
+        agent.f7_body.width,
+        agent.dock_rows_in_sidebar,
+    );
     assert!(dock_row_has_tasks(&buf, sidebar));
     let _ = agent.handle_input(&ctrl_g, &registry);
     let buf = draw_frame(&mut agent, area);
@@ -337,24 +344,55 @@ fn both_work_projections_open_the_same_child_with_surface_local_indices() {
     crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
     agent.tasks.overlay.visible = true;
-    agent.subagent_sessions.insert("child-one".into(), super::test_fixtures::running_subagent_info("child-one"));
+    agent.subagent_sessions.insert(
+        "child-one".into(),
+        super::test_fixtures::running_subagent_info("child-one"),
+    );
     open_dock_sidebar(&mut agent);
     let registry = ActionRegistry::defaults();
     for size in [(160, 40), (120, 25)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let _ = draw_frame(&mut agent, area);
         let upper = agent.pane_areas.dock;
-        let sidebar = Rect::new(agent.f7_body.x, agent.f7_body.y, agent.f7_body.width, agent.dock_rows_in_sidebar);
+        let sidebar = Rect::new(
+            agent.f7_body.x,
+            agent.f7_body.y,
+            agent.f7_body.width,
+            agent.dock_rows_in_sidebar,
+        );
         assert!(upper.width > 0 && sidebar.width > 0);
         assert!(!upper.intersects(sidebar));
         for (rect, in_sidebar) in [(upper, false), (sidebar, true)] {
-            let row = (rect.y..rect.bottom()).find(|y| matches!(agent.dock_item_at(rect, *y),
-                Some(crate::views::dock::DockItem::Row(crate::views::dock::Section::Subagents, 0)))).unwrap();
-            let outcome = agent.handle_input(&Event::Mouse(mouse(MouseEventKind::Down(MouseButton::Left), rect.x + 3, row)), &registry);
-            assert!(matches!(outcome, InputOutcome::Action(Action::OpenSession(ref id)) if id == "child-one"));
+            let row = (rect.y..rect.bottom())
+                .find(|y| {
+                    matches!(
+                        agent.dock_item_at(rect, *y),
+                        Some(crate::views::dock::DockItem::Row(
+                            crate::views::dock::Section::Subagents,
+                            0
+                        ))
+                    )
+                })
+                .unwrap();
+            let outcome = agent.handle_input(
+                &Event::Mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    rect.x + 3,
+                    row,
+                )),
+                &registry,
+            );
+            assert!(
+                matches!(outcome, InputOutcome::Action(Action::OpenSession(ref id)) if id == "child-one")
+            );
             assert_eq!(agent.dock_focus_in_sidebar, in_sidebar);
-            let enter = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Enter, KeyModifiers::NONE);
-            assert!(matches!(agent.handle_dock_key(&enter), InputOutcome::Action(Action::OpenSession(ref id)) if id == "child-one"));
+            let enter = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                KeyModifiers::NONE,
+            );
+            assert!(
+                matches!(agent.handle_dock_key(&enter), InputOutcome::Action(Action::OpenSession(ref id)) if id == "child-one")
+            );
         }
     }
 }
@@ -514,32 +552,53 @@ fn f7_keeps_work_and_todos_when_upper_dock_and_preferences_are_off() {
             insert_running_task(&mut agent, "bg-1");
             agent.tasks.overlay.visible = visible;
             agent.todo.overlay.visible = visible;
-            agent.todo.update_todos(vec![xai_grok_shell::tools::TodoItem {
-                content: "persistent-todo-marker".into(), priority: Default::default(),
-                status: xai_grok_shell::tools::TodoStatus::Pending, meta: None,
-            }]);
+            agent
+                .todo
+                .update_todos(vec![xai_grok_shell::tools::TodoItem {
+                    content: "persistent-todo-marker".into(),
+                    priority: Default::default(),
+                    status: xai_grok_shell::tools::TodoStatus::Pending,
+                    meta: None,
+                }]);
             let mut child = super::test_fixtures::running_subagent_info("manual-child");
-            child.attempt.delivery = xai_grok_shell::extensions::notification::SubagentDelivery::Held;
-            child.attempt.completion = xai_grok_shell::extensions::notification::SubagentCompletion::Pending;
+            child.attempt.delivery =
+                xai_grok_shell::extensions::notification::SubagentDelivery::Held;
+            child.attempt.completion =
+                xai_grok_shell::extensions::notification::SubagentCompletion::Pending;
             child.attempt.caller = xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCaller::Waiting;
             agent.subagent_sessions.insert("manual-child".into(), child);
             open_dock_sidebar(&mut agent);
             let area = Rect::new(0, 0, 160, 40);
             let buf = draw_frame(&mut agent, area);
-            let sidebar = Rect::new(agent.f7_body.x, agent.f7_body.y, agent.f7_body.width, agent.dock_rows_in_sidebar);
+            let sidebar = Rect::new(
+                agent.f7_body.x,
+                agent.f7_body.y,
+                agent.f7_body.width,
+                agent.dock_rows_in_sidebar,
+            );
             assert!(dock_row_has_tasks(&buf, sidebar));
-            let warning: String = (sidebar.y..sidebar.bottom()).flat_map(|y|
-                (sidebar.x..sidebar.right()).map(move |x| (x, y)))
-                .map(|(x, y)| cell_symbol(&buf, x, y)).collect();
+            let warning: String = (sidebar.y..sidebar.bottom())
+                .flat_map(|y| (sidebar.x..sidebar.right()).map(move |x| (x, y)))
+                .map(|(x, y)| cell_symbol(&buf, x, y))
+                .collect();
             assert!(warning.contains("MANUAL"));
             assert!(warning.contains("CALLER BLOCKED"));
-            let _ = agent.handle_input(&Event::Key(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::End, KeyModifiers::NONE)), &ActionRegistry::defaults());
+            let _ = agent.handle_input(
+                &Event::Key(crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::End,
+                    KeyModifiers::NONE,
+                )),
+                &ActionRegistry::defaults(),
+            );
             let buf = draw_frame(&mut agent, area);
-            let text: String = (agent.f7_body.y..agent.f7_body.bottom()).flat_map(|y|
-                (agent.f7_body.x..agent.f7_body.right()).map(move |x| (x, y)))
-                .map(|(x, y)| cell_symbol(&buf, x, y)).collect();
-            assert!(text.contains("persistent-todo-marker"), "F7 keyboard navigation must reach real Todos independently of upper display preferences");
+            let text: String = (agent.f7_body.y..agent.f7_body.bottom())
+                .flat_map(|y| (agent.f7_body.x..agent.f7_body.right()).map(move |x| (x, y)))
+                .map(|(x, y)| cell_symbol(&buf, x, y))
+                .collect();
+            assert!(
+                text.contains("persistent-todo-marker"),
+                "F7 keyboard navigation must reach real Todos independently of upper display preferences"
+            );
             assert_eq!(agent.todo.todos()[0].content, "persistent-todo-marker");
             assert_eq!(agent.session.bg_tasks.len(), 1);
         }

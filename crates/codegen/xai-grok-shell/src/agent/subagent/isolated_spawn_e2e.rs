@@ -211,10 +211,13 @@ impl ChildRunner for Runner {
     ) {
         terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
     }
-    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+    fn on_published(
+        &self,
+        completion: ChildCompletion<Self::CompletionData>,
+        published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>,
+    ) {
         present_child_completion(completion, &self.gateway, false);
-        
-        
+
         published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }

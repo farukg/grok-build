@@ -2,7 +2,10 @@
 //! Also xAI-notification handling and the gateway-bridge dispatch shims.
 use super::*;
 
-enum NotificationPersistence { Append, Committed }
+enum NotificationPersistence {
+    Append,
+    Committed,
+}
 /// Hook / image-intake diagnostics and background_tasks snapshots leave the no-output rewind window open; every other variant closes it.
 /// `HookRunStarted` fires for the prompt gate before any output, so a Ctrl+C during a slow gate must still rewind the prompt.
 pub(super) fn closes_cancel_rewind_window(update: &XaiSessionUpdate) -> bool {
@@ -634,11 +637,22 @@ impl SessionActor {
     /// Handle xAI session notifications: store them in persistence.
     /// These are client-side events (like diff reviews) that should be part of session history.
     /// Exception: `SubagentProgress` ticks are transient and return before the store.
-    pub(super) async fn handle_xai_session_notification(&self, notification: XaiSessionNotification) {
-        self.handle_xai_session_notification_inner(notification, NotificationPersistence::Append).await;
+    pub(super) async fn handle_xai_session_notification(
+        &self,
+        notification: XaiSessionNotification,
+    ) {
+        self.handle_xai_session_notification_inner(notification, NotificationPersistence::Append)
+            .await;
     }
-    pub(super) async fn handle_committed_subagent_notification(&self, notification: XaiSessionNotification) {
-        self.handle_xai_session_notification_inner(notification, NotificationPersistence::Committed).await;
+    pub(super) async fn handle_committed_subagent_notification(
+        &self,
+        notification: XaiSessionNotification,
+    ) {
+        self.handle_xai_session_notification_inner(
+            notification,
+            NotificationPersistence::Committed,
+        )
+        .await;
     }
     async fn handle_xai_session_notification_inner(
         &self,
@@ -908,9 +922,12 @@ impl SessionActor {
         }
         match persistence {
             NotificationPersistence::Append => {
-                let _ = self.notifications.persistence_tx.send(PersistenceMsg::Update(
-                    crate::session::storage::SessionUpdate::Xai(Box::new(notification)),
-                ));
+                let _ = self
+                    .notifications
+                    .persistence_tx
+                    .send(PersistenceMsg::Update(
+                        crate::session::storage::SessionUpdate::Xai(Box::new(notification)),
+                    ));
             }
             NotificationPersistence::Committed => {}
         }

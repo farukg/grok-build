@@ -19,9 +19,9 @@ mod active_message;
 pub mod admission;
 mod agent_message_sender;
 pub mod backend;
-pub mod result_delivery;
 pub mod coordinator;
 mod coordinator_state;
+pub mod result_delivery;
 pub use coordinator_state::{cap_completion_output, completion_summary, terminal_snapshot};
 pub mod model_policy;
 pub use model_policy::TaskParams;
@@ -685,7 +685,10 @@ impl xai_tool_runtime::Tool for TaskTool {
             tool_call_id: Some(ctx.call_id.as_str().to_owned()),
         };
 
-        let completion_observations = ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>().map(|observer| (*observer).clone());
+        let completion_observations = ctx
+            .extensions
+            .get::<crate::types::completion_observation::SubagentCompletionObservations>()
+            .map(|observer| (*observer).clone());
         // 4. Background mode: await registration (pending/queued), not the
         // child session. `spawn()` stays the terminal result; late failures
         // are logged from a detached waiter.
@@ -756,7 +759,10 @@ impl xai_tool_runtime::Tool for TaskTool {
         }
 
         // 5. Blocking mode (default): spawn via backend and await result
-        let result = backend.backend().spawn(request, None, completion_observations).await;
+        let result = backend
+            .backend()
+            .spawn(request, None, completion_observations)
+            .await;
         if let Some(forwarder) = cancellation_forwarder {
             forwarder.abort();
         }

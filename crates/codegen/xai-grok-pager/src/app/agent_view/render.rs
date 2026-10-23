@@ -1077,7 +1077,9 @@ impl AgentView {
         let follow_ups_height = u16::from(self.follow_ups.is_some());
         let mut dock_data = (dock_slot.width > 0).then(|| self.dock_snapshot());
         let upper_dock = (dock_on && self.tasks.overlay.visible).then(|| self.dock_snapshot());
-        let upper_dock_rows = upper_dock.as_ref().map_or(0, crate::views::dock::desired_height)
+        let upper_dock_rows = upper_dock
+            .as_ref()
+            .map_or(0, crate::views::dock::desired_height)
             .min(area.height / 4);
         let dock_rows = dock_data
             .as_ref()
@@ -1126,7 +1128,9 @@ impl AgentView {
         if layout.todo.height == 0 && self.active_pane == ActivePane::Todo {
             self.set_active_pane(AgentPane::Scrollback, false);
         }
-        if upper_dock_rows == 0 { layout.dock = dock_rect; }
+        if upper_dock_rows == 0 {
+            layout.dock = dock_rect;
+        }
         let search_active =
             self.scrollback_search.is_some() && self.active_pane == AgentPane::Scrollback;
         let search_reserved_rows =
@@ -1187,7 +1191,9 @@ impl AgentView {
                         timeline_width: 0,
                         ..layout_params
                     });
-                    if upper_dock_rows == 0 { layout.dock = dock_rect; }
+                    if upper_dock_rows == 0 {
+                        layout.dock = dock_rect;
+                    }
                     if search_reserved_rows > 0 {
                         layout.scrollback.height -= search_reserved_rows;
                         layout.scrollback_content.height = layout
@@ -1206,8 +1212,14 @@ impl AgentView {
             self.timeline_hover = None;
             self.timeline_hover_preview = None;
         }
-        let upper_dock_rect = if upper_dock_rows > 0 { layout.dock } else { Rect::default() };
-        if upper_dock_rect.height == 0 { layout.dock = dock_rect; }
+        let upper_dock_rect = if upper_dock_rows > 0 {
+            layout.dock
+        } else {
+            Rect::default()
+        };
+        if upper_dock_rect.height == 0 {
+            layout.dock = dock_rect;
+        }
         if let Some(data) = &mut dock_data {
             if dock_rect.height > 0 {
                 data.max_rows =
@@ -1936,8 +1948,12 @@ impl AgentView {
             .take()
             .filter(|_| dock_rect.height > 0)
             .map(|mut data| {
-                data.focused = self.active_pane == ActivePane::Dock && (self.dock_focus_in_sidebar || upper_dock_rect.height == 0);
-                super::sidebars::PendingDock { data, rect: dock_rect }
+                data.focused = self.active_pane == ActivePane::Dock
+                    && (self.dock_focus_in_sidebar || upper_dock_rect.height == 0);
+                super::sidebars::PendingDock {
+                    data,
+                    rect: dock_rect,
+                }
             });
         self.last_btw_selection_model = ResolvedSelectionModel::default();
         self.last_btw_area = Rect::default();

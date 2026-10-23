@@ -227,7 +227,11 @@ async fn bench_cell(
         Mode::Image => "image",
         Mode::All => unreachable!("cells are per concrete mode"),
     };
-    tracing::info!(surface = <&str>::from(surface), mode = mode_str, "running cell");
+    tracing::info!(
+        surface = <&str>::from(surface),
+        mode = mode_str,
+        "running cell"
+    );
 
     let content = ContentController::start()
         .await

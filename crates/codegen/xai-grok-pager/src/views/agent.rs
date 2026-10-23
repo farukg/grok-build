@@ -220,18 +220,44 @@ impl AgentViewLayout {
         let tasks_height = if input_priority { 0 } else { tasks_height };
         let todo_height = if input_priority { 0 } else { todo_height };
         let btw_height = if input_priority { 0 } else { btw_height };
-        let turn_status_height = if input_priority { 0 } else { turn_status_height };
+        let turn_status_height = if input_priority {
+            0
+        } else {
+            turn_status_height
+        };
         let banner_height = if input_priority { 0 } else { banner_height };
         let cta_height = if input_priority { 0 } else { cta_height };
         let follow_ups_height = if input_priority { 0 } else { follow_ups_height };
         let dock_height = if input_priority { 0 } else { dock_height };
         let prompt_gap = if input_priority { 0 } else { prompt_gap };
-        let model_notice_height = if input_priority { 0 } else { model_notice_height };
-        let voice_recording_height = if input_priority { 0 } else { voice_recording_height };
+        let model_notice_height = if input_priority {
+            0
+        } else {
+            model_notice_height
+        };
+        let voice_recording_height = if input_priority {
+            0
+        } else {
+            voice_recording_height
+        };
         let shortcuts_height = if input_priority { 0 } else { shortcuts_height };
-        let status_line_height = if input_priority { 0 } else { status_line_height };
-        let queue_height = if input_priority { queue_height.min((area.height / 3).max(1)) } else { queue_height };
-        let prompt_height = if input_priority && prompt_height > 0 { prompt_height.min(area.height.saturating_sub(queue_height + 1)).max(1) } else { prompt_height };
+        let status_line_height = if input_priority {
+            0
+        } else {
+            status_line_height
+        };
+        let queue_height = if input_priority {
+            queue_height.min((area.height / 3).max(1))
+        } else {
+            queue_height
+        };
+        let prompt_height = if input_priority && prompt_height > 0 {
+            prompt_height
+                .min(area.height.saturating_sub(queue_height + 1))
+                .max(1)
+        } else {
+            prompt_height
+        };
         let top_vpad = if input_priority { 0 } else { outer_vpad };
         let outer_block = Block::default().padding(Padding::new(
             layout_cfg.eff_hpad_left(compact),
@@ -634,12 +660,20 @@ pub fn render_todo_chrome_with_close_label(
     Some(sel)
 }
 pub fn render_queue_chrome(
-    buf: &mut Buffer, area: Rect, layout_cfg: &LayoutConfig, focused: bool, theme: &Theme,
+    buf: &mut Buffer,
+    area: Rect,
+    layout_cfg: &LayoutConfig,
+    focused: bool,
+    theme: &Theme,
 ) {
     if focused && area.area() > 0 {
         let layout = HorizontalLayout::new(area, layout_cfg);
-        SelectionBox::new(layout.selection_area(), Style::default().fg(theme.selection_border))
-            .with_closable(false, false).render(buf);
+        SelectionBox::new(
+            layout.selection_area(),
+            Style::default().fg(theme.selection_border),
+        )
+        .with_closable(false, false)
+        .render(buf);
     }
 }
 

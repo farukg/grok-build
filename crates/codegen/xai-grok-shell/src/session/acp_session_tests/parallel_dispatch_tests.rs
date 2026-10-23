@@ -33,7 +33,9 @@ impl SubagentBackend for FixedActiveMessageBackend {
         &self,
         _: SubagentRequest,
         _: Option<tokio::sync::oneshot::Sender<()>>,
-        _observations: Option<xai_grok_tools::types::completion_observation::SubagentCompletionObservations>,
+        _observations: Option<
+            xai_grok_tools::types::completion_observation::SubagentCompletionObservations,
+        >,
     ) -> Result<SubagentResult, xai_tool_runtime::ToolError> {
         Err(xai_tool_runtime::ToolError::custom(
             "unsupported",
@@ -41,7 +43,13 @@ impl SubagentBackend for FixedActiveMessageBackend {
         ))
     }
 
-    async fn query(&self, _: &str, _: bool, _: Option<u64>, _: Option<xai_grok_tools::types::completion_observation::SubagentCompletionObservations>) -> Option<SubagentSnapshot> {
+    async fn query(
+        &self,
+        _: &str,
+        _: bool,
+        _: Option<u64>,
+        _: Option<xai_grok_tools::types::completion_observation::SubagentCompletionObservations>,
+    ) -> Option<SubagentSnapshot> {
         None
     }
 

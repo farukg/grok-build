@@ -608,8 +608,13 @@ pub enum SessionCommand {
     XaiSessionNotification {
         notification: SessionNotification,
     },
-    ReceiveDelivery { request: crate::session::delivery_receiver::DeliveryRequest, respond_to: oneshot::Sender<crate::session::delivery_receiver::DeliveryResult> },
-    ResumeDeliveries { deliveries: Vec<String> },
+    ReceiveDelivery {
+        request: crate::session::delivery_receiver::DeliveryRequest,
+        respond_to: oneshot::Sender<crate::session::delivery_receiver::DeliveryResult>,
+    },
+    ResumeDeliveries {
+        deliveries: Vec<String>,
+    },
     RestoreCompletionWakePolicy(crate::session::completion_delivery::CompletionWakePolicy),
     SubagentCompletionWake {
         prompt_id: String,

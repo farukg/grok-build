@@ -2221,15 +2221,20 @@ impl AppView {
         paste_provenance: PasteProvenance,
     ) -> InputOutcome {
         self.reconcile_work_visibility();
-        let before = self.active_view.agent_id().and_then(|id| self.agents.get(&id)
-            .map(|agent| (id, agent.tasks.overlay.visible, agent.todo.overlay.visible)));
+        let before = self.active_view.agent_id().and_then(|id| {
+            self.agents
+                .get(&id)
+                .map(|agent| (id, agent.tasks.overlay.visible, agent.todo.overlay.visible))
+        });
         let minimal_todo_before = self.minimal_state.show_todos;
         let outcome = self.handle_input_inner(ev, arrived_at, paste_provenance);
         if let Some((id, old_tasks, old_todo)) = before {
             let changed = self.agents.get(&id).and_then(|agent| {
                 let todo = if self.minimal_state.show_todos != minimal_todo_before {
                     self.minimal_state.show_todos
-                } else { agent.todo.overlay.visible };
+                } else {
+                    agent.todo.overlay.visible
+                };
                 let now = (agent.tasks.overlay.visible, todo);
                 (now != (old_tasks, old_todo)).then_some(now)
             });
@@ -2237,7 +2242,10 @@ impl AppView {
                 self.sidebar_chrome.work_visibility = Some((tasks, todo));
                 self.minimal_state.show_todos = todo;
                 if let Some(agent) = self.agents.get_mut(&id) {
-                    agent.save_global_work_visibility((tasks != old_tasks).then_some(tasks), (todo != old_todo).then_some(todo));
+                    agent.save_global_work_visibility(
+                        (tasks != old_tasks).then_some(tasks),
+                        (todo != old_todo).then_some(todo),
+                    );
                 }
                 for (_, agent) in self.agents.all_mut() {
                     agent.adopt_global_work_visibility(tasks, todo);

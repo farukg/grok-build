@@ -90,7 +90,10 @@ impl OpenContextSidebar {
     fn repair_cursor(&mut self) {
         let outline = Outline::build(self.disclosure, self.todo_count);
         if self.sidebar.cursor.is_some() {
-            self.sidebar.cursor = self.sidebar.cursor.and_then(|line| outline.visible_line(line))
+            self.sidebar.cursor = self
+                .sidebar
+                .cursor
+                .and_then(|line| outline.visible_line(line))
                 .or_else(|| Some(outline.default_cursor()));
         }
         self.reveal_pending = true;

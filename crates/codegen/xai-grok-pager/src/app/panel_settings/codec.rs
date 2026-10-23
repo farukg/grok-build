@@ -116,7 +116,9 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
                 if section.storage_layer(layer) != layer {
                     decoded.problems.push(LoadProblem::IgnoredEntry { key });
                 } else {
-                    decoded.settings.apply(&Edit::Set(Setting::Section { section, state }));
+                    decoded
+                        .settings
+                        .apply(&Edit::Set(Setting::Section { section, state }));
                 }
             }
             (None, _) | (_, None) => decoded.problems.push(LoadProblem::IgnoredEntry { key }),

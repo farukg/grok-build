@@ -534,7 +534,10 @@ impl SubagentBackend for ChannelBackend {
             .event_sender()
             .send(SubagentEvent::Spawn(SubagentSpawnRequest {
                 request: Box::new(request),
-                result_tx: super::result_delivery::SubagentResultSender::new(respond_to, observations),
+                result_tx: super::result_delivery::SubagentResultSender::new(
+                    respond_to,
+                    observations,
+                ),
                 registered_tx,
             }))
             .map_err(|_| {

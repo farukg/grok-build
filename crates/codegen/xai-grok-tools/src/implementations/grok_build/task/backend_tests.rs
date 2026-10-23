@@ -83,14 +83,28 @@ impl super::super::coordinator::ChildRunner for BackendTestRunner {
 
     fn on_completed(
         &self,
-        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
-        terminal_published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+        _completion: crate::implementations::grok_build::task::coordinator::CompletionPreparation<
+            '_,
+            Self::CompletionData,
+        >,
+        terminal_published: Box<
+            dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalCommitResult)
+                + Send,
+        >,
     ) {
-        terminal_published(crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+        terminal_published(
+            crate::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed,
+        );
     }
-    fn on_published(&self, _: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
-        
-        
+    fn on_published(
+        &self,
+        _: ChildCompletion<Self::CompletionData>,
+        published: Box<
+            dyn FnOnce(
+                    crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult,
+                ) + Send,
+        >,
+    ) {
         published(crate::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }

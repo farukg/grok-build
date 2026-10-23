@@ -416,8 +416,10 @@ impl AgentView {
                 match self.work_pane_at(mouse.column, mouse.row) {
                     Some(AgentPane::Dock) => {
                         self.clear_context_sidebar_focus();
-                        self.dock_focus_in_sidebar = self.f7_body.contains((mouse.column, mouse.row).into());
-                        let item = self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
+                        self.dock_focus_in_sidebar =
+                            self.f7_body.contains((mouse.column, mouse.row).into());
+                        let item = self
+                            .dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
                         if let Some(hit) = self
                             .dock_stop_button
                             .clone()
@@ -457,8 +459,10 @@ impl AgentView {
                                     self.set_active_pane(AgentPane::Prompt, false);
                                 }
                                 let outcome = self.activate_dock_item(item);
-                                self.dock_hovered =
-                                    self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
+                                self.dock_hovered = self.dock_item_at(
+                                    self.work_dock_at(mouse.column, mouse.row),
+                                    mouse.row,
+                                );
                                 self.cache_dock_stop_button();
                                 match outcome {
                                     InputOutcome::Changed | InputOutcome::Unchanged => {
@@ -1033,7 +1037,8 @@ impl AgentView {
                     changed = true;
                 }
                 if hit == Some(AgentPane::Dock) {
-                    let new = self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
+                    let new =
+                        self.dock_item_at(self.work_dock_at(mouse.column, mouse.row), mouse.row);
                     if new != self.dock_hovered {
                         self.dock_hovered = new;
                         changed = true;

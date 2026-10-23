@@ -71,8 +71,7 @@ impl HostedSection for DockSlot {
 impl AgentView {
     /// Paint the dock into the F7 column, after the sidebar chrome.
     pub(super) fn draw_pending_dock(&mut self, buf: &mut Buffer) {
-        let Some(PendingDock { data, rect }) = self.pending_dock.take()
-        else {
+        let Some(PendingDock { data, rect }) = self.pending_dock.take() else {
             return;
         };
         let theme = Theme::current();

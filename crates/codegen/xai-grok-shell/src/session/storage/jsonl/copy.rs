@@ -276,12 +276,17 @@ impl JsonlStorageAdapter {
         // Canonical creator: the fork target chain is born owner-only.
         let target_dir = self.create_session_dir_owner_only(target_info)?;
         let _target_chat_lock = Self::lock_append(&self.chat_file(target_info))?;
-        let target_summary_lock = crate::session::storage::summary_write::open_lock_file(&self.summary_lock_file(target_info))?;
+        let target_summary_lock = crate::session::storage::summary_write::open_lock_file(
+            &self.summary_lock_file(target_info),
+        )?;
         fs2::FileExt::lock_exclusive(&target_summary_lock)?;
         let retained_admissions = match self.read_summary_sync(target_info) {
             Ok(summary) => {
                 if !summary.completion_delivery.receiver.records.is_empty() {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "fork target owns durable delivery receipts; choose a new session identity"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "fork target owns durable delivery receipts; choose a new session identity",
+                    ));
                 }
                 summary.completion_delivery
             }
@@ -381,7 +386,10 @@ impl JsonlStorageAdapter {
             },
         );
         target_summary.completion_delivery = retained_admissions;
-        crate::session::storage::write_bytes_atomic(&self.summary_file(target_info), &serde_json::to_vec_pretty(&target_summary).map_err(invalid_data)?)?;
+        crate::session::storage::write_bytes_atomic(
+            &self.summary_file(target_info),
+            &serde_json::to_vec_pretty(&target_summary).map_err(invalid_data)?,
+        )?;
         let minted_agent_id = target_summary.agent_id.clone();
 
         let plan_copied = copy_sidecar_file(
