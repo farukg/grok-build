@@ -282,7 +282,6 @@ impl ChatPersistence for NullChatPersistence {
         &mut self,
         _projection: &crate::InputProjection,
         _admission: &crate::InputAdmission,
-        admission: &crate::InputAdmission,
     ) -> oneshot::Receiver<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>> {
         let (tx, rx) = oneshot::channel();
         let _ = tx.send(Ok(crate::completion::CompletionProjectionAck::Appended));
