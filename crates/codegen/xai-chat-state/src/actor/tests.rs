@@ -4205,54 +4205,62 @@ async fn apply_turn_request_pruning_soft_trims_old_results_over_half_window() {
     use crate::persistence::MockChatPersistence;
     use crate::types::PruningConfig;
 
-    let (mock, _rx) = MockChatPersistence::new();
-    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
-    let token = tokio_util::sync::CancellationToken::new();
-    let config = PruningConfig {
-        keep_last_n_turns: 2,
-        soft_trim_threshold: 4000,
-        soft_trim_head: 20,
-        soft_trim_tail: 20,
-        hard_clear_age_turns: 10,
-        ..Default::default()
-    };
-    let handle = ChatStateActor::spawn_with_pruning(
-        vec![],
-        test_config_with_window(10_000),
-        config,
-        Box::new(mock),
-        event_tx,
-        token,
-    );
+    for provider_tokens in [6_001, 4_000] {
+        let (mock, _rx) = MockChatPersistence::new();
+        let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let token = tokio_util::sync::CancellationToken::new();
+        let config = PruningConfig {
+            keep_last_n_turns: 2,
+            soft_trim_threshold: 4000,
+            soft_trim_head: 20,
+            soft_trim_tail: 20,
+            hard_clear_age_turns: 10,
+            ..Default::default()
+        };
+        let handle = ChatStateActor::spawn_with_pruning(
+            vec![],
+            test_config_with_window(10_000),
+            config,
+            Box::new(mock),
+            event_tx,
+            token,
+        );
 
-    push_turns(&handle, 5, 8_000).await;
-    handle.record_token_usage(6_001);
-    let _ = handle.get_total_tokens().await;
+        push_turns(&handle, 5, 8_000).await;
+        handle.record_token_usage(provider_tokens);
+        assert_eq!(handle.get_total_tokens().await, provider_tokens);
 
-    let conv = handle.get_conversation().await;
-    let pruned = handle.apply_turn_request_pruning(conv.clone()).await;
+        let conv = handle.get_conversation().await;
+        assert!(super::state::estimate_conversation_tokens(&conv) > 5_000);
+        let pruned = handle.apply_turn_request_pruning(conv.clone()).await;
 
-    let stored_oldest = match conv.get(2) {
-        Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
-        other => panic!("expected ToolResult at index 2, got {other:?}"),
-    };
-    assert_eq!(stored_oldest, 8_000);
+        let stored_oldest = match conv.get(2) {
+            Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
+            other => panic!("expected ToolResult at index 2, got {other:?}"),
+        };
+        assert_eq!(stored_oldest, 8_000);
 
-    let pruned_oldest = match pruned.get(2) {
-        Some(ConversationItem::ToolResult(tr)) => tr.content.as_ref(),
-        other => panic!("expected ToolResult at index 2, got {other:?}"),
-    };
-    assert!(
-        pruned_oldest.contains("[…trimmed…]"),
-        "expected soft trim, got {pruned_oldest:?}"
-    );
-    assert!(pruned_oldest.len() < 8_000);
+        let pruned_oldest = match pruned.get(2) {
+            Some(ConversationItem::ToolResult(tr)) => tr.content.as_ref(),
+            other => panic!("expected ToolResult at index 2, got {other:?}"),
+        };
+        assert!(
+            pruned_oldest.contains("[…trimmed…]"),
+            "expected soft trim, got {pruned_oldest:?}"
+        );
+        assert!(pruned_oldest.len() < 8_000);
 
-    let recent = match pruned.get(4 * 3 + 2) {
-        Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
-        other => panic!("expected ToolResult, got {other:?}"),
-    };
-    assert_eq!(recent, 8_000);
+        let recent = match pruned.get(4 * 3 + 2) {
+            Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
+            other => panic!("expected ToolResult, got {other:?}"),
+        };
+        assert_eq!(recent, 8_000);
+        assert_eq!(handle.get_conversation().await.len(), conv.len());
+        let stored = handle.get_conversation().await;
+        assert!(
+            matches!(stored.get(2), Some(ConversationItem::ToolResult(result)) if result.content.len() == 8_000)
+        );
+    }
 }
 
 #[tokio::test]
@@ -4265,7 +4273,7 @@ async fn apply_turn_request_pruning_is_noop_under_half_window() {
     let token = tokio_util::sync::CancellationToken::new();
     let handle = ChatStateActor::spawn_with_pruning(
         vec![],
-        test_config_with_window(10_000),
+        test_config_with_window(32_000),
         Default::default(),
         Box::new(mock),
         event_tx,
@@ -4277,6 +4285,7 @@ async fn apply_turn_request_pruning_is_noop_under_half_window() {
     let _ = handle.get_total_tokens().await;
 
     let conv = handle.get_conversation().await;
+    assert!(super::state::estimate_conversation_tokens(&conv) < 16_000);
     let pruned = handle.apply_turn_request_pruning(conv.clone()).await;
     let oldest = match pruned.get(2) {
         Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
