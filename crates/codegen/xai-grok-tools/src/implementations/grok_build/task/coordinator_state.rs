@@ -208,6 +208,7 @@ pub(super) enum TerminalOutput<D> {
     Publishing {
         attempt_id: xai_message_delivery_core::AttemptId,
         parent_session_id: String,
+        buffered: CompletionBufferPublication,
     },
 }
 #[derive(Clone, Debug)]
@@ -781,12 +782,57 @@ pub(super) struct BlockingWaiter {
     pub(super) respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
 }
 
+pub(super) enum CompletionBufferPublication {
+    Silent,
+    Pending(BufferedCompletion),
+}
+
 pub(super) struct BufferedCompletion {
     pub(super) parent_session_id: String,
     pub(super) summary: SubagentCompletionSummary,
 }
 
+impl CompletionBufferPublication {
+    pub(super) fn retire_parent(&mut self, parent_session_id: &str) {
+        match self {
+            Self::Silent => {}
+            Self::Pending(completion) => {
+                if completion.is_owned_by(Some(parent_session_id)) {
+                    *self = Self::Silent;
+                }
+            }
+        }
+    }
+
+    pub(super) fn acknowledge(
+        &mut self,
+        parent_session_id: &str,
+        completions: &[xai_message_delivery_core::SubagentCompletionId],
+    ) {
+        match self {
+            Self::Silent => {}
+            Self::Pending(completion) => {
+                if completion.is_acknowledged_by(parent_session_id, completions) {
+                    *self = Self::Silent;
+                }
+            }
+        }
+    }
+}
+
 impl BufferedCompletion {
+    pub(super) fn is_acknowledged_by(
+        &self,
+        parent_session_id: &str,
+        completions: &[xai_message_delivery_core::SubagentCompletionId],
+    ) -> bool {
+        self.parent_session_id == parent_session_id
+            && completions.iter().any(|id| {
+                id.subagent_id == self.summary.subagent_id()
+                    && id.attempt_id == self.summary.attempt_id
+            })
+    }
+
     pub(super) fn is_owned_by(&self, parent_session_id: Option<&str>) -> bool {
         parent_session_id.is_none_or(|id| self.parent_session_id == id)
     }

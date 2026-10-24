@@ -23,7 +23,7 @@ impl SessionActor {
             .persisted_completion_state()
             .await
             .map_err(StrictAppendError::NotCommitted)?;
-        let receipts = state.receipts;
+        let receipts = &state.receipts;
         if receipts
             .iter()
             .any(|receipt| receipt.completion == completion.id)
@@ -64,7 +64,7 @@ impl SessionActor {
             .filter(|summary| completion_state_permits_wake(&summary.snapshot.status.state()))
             .collect();
         let bridge = self.agent.borrow().tool_bridge().clone();
-        let text = if summaries.is_empty() {
+        let mut text = if summaries.is_empty() {
             fallback
         } else {
             let contains_primary = summaries.iter().any(|summary| {
@@ -79,6 +79,22 @@ impl SessionActor {
                 format!("{fallback}\n\n{digest}")
             }
         };
+        let summary_path =
+            crate::session::persistence::session_dir(&self.session_info).join("summary.json");
+        for summary in &summaries {
+            let id = xai_chat_state::SubagentCompletionId {
+                subagent_id: summary.subagent_id().to_owned(),
+                attempt_id: summary.attempt_id.clone(),
+            };
+            if let Some(reference) = state.result_reference(&id, &summary_path) {
+                text.push_str("\n\n");
+                text.push_str(
+                    &crate::session::completion_delivery::completion_reference_text(
+                        &id, &reference,
+                    ),
+                );
+            }
+        }
         let mut projection =
             CompletionProjection::new(completion.id.clone(), prompt_id.to_owned(), text);
         projection.additional_receipts = summaries

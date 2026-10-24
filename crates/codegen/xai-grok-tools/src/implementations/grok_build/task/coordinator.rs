@@ -492,12 +492,16 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 completions,
             } => {
                 self.pending_completions.retain(|completion| {
-                    completion.parent_session_id != parent_session_id
-                        || !completions.iter().any(|id| {
-                            id.subagent_id == completion.summary.subagent_id()
-                                && id.attempt_id == completion.summary.attempt_id
-                        })
+                    !completion.is_acknowledged_by(&parent_session_id, &completions)
                 });
+                for output in self.terminal_outputs.values_mut() {
+                    if let super::coordinator_state::TerminalOutput::Publishing {
+                        buffered, ..
+                    } = output
+                    {
+                        buffered.acknowledge(&parent_session_id, &completions);
+                    }
+                }
             }
             SubagentEvent::PeekCompletions(request) => {
                 let completions = self
@@ -518,8 +522,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 parent_session_id,
                 respond_to,
             } => {
-                self.pending_completions
-                    .retain(|completion| completion.parent_session_id != parent_session_id);
+                self.purge_completions_for_spawner(&parent_session_id);
                 self.teardown_session_children(&parent_session_id);
                 // Only the delete path (responder present) holds spawn admission closed until children drain, so a next-turn
                 // OpenSpawnAdmission cannot reopen Task spawns mid-delete. Close / idle unload (no responder) keep the pre-existing
@@ -806,16 +809,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             .map(str::to_owned);
         match result {
             TerminalCommitResult::Committed => {
-                if !completion.disposition.explicitly_killed
+                let buffered = if !completion.disposition.explicitly_killed
                     && completion.result.permits_completion_wake()
                 {
-                    self.buffer_completion(
+                    self.prepare_buffered_completion(
                         &completion.request,
                         &completion.result,
                         &completion.snapshot,
                         &completion.attempt_id,
-                    );
-                }
+                    )
+                } else {
+                    super::coordinator_state::CompletionBufferPublication::Silent
+                };
                 let published_tx = self.terminal_published_tx.clone();
                 let published_id = subagent_id.clone();
                 let published_attempt = completion.attempt_id.clone();
@@ -824,6 +829,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     TerminalOutput::Publishing {
                         attempt_id: published_attempt.clone(),
                         parent_session_id: parent_session_id.clone(),
+                        buffered,
                     },
                 );
                 let callback = super::coordinator_state::TerminalPublicationGuard::new(published_tx,
@@ -866,17 +872,22 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         {
             return;
         }
-        let parent_session_id = match self.terminal_outputs.remove(&subagent_id) {
+        let (parent_session_id, buffered) = match self.terminal_outputs.remove(&subagent_id) {
             Some(TerminalOutput::Publishing {
                 attempt_id: pending_attempt,
                 parent_session_id,
-            }) if pending_attempt == attempt_id => parent_session_id,
+                buffered,
+            }) if pending_attempt == attempt_id => (parent_session_id, buffered),
             Some(output) => {
                 self.terminal_outputs.insert(subagent_id, output);
                 return;
             }
             None => return,
         };
+        match &result {
+            TerminalVisibilityResult::Published => self.publish_buffered_completion(buffered),
+            TerminalVisibilityResult::Deferred { .. } => {}
+        }
         if let Some(child) = self.completed.get_mut(&subagent_id) {
             child.publication = match result {
                 TerminalVisibilityResult::Published => TerminalPublicationState::Published,

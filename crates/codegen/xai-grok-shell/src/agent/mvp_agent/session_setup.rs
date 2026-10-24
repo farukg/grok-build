@@ -1089,13 +1089,29 @@ impl MvpAgent {
             goal_mode_state: _persisted_goal_mode,
             workflow_runs: persisted_workflow_runs,
         } = persistence_info;
-        let summary = if !self.is_resident(&session_id) && !summary.completion_delivery.obligations.is_empty() {
+        let summary = if !self.is_resident(&session_id)
+            && !summary.completion_delivery.obligations.is_empty()
+        {
             let (respond_to, receive) = tokio::sync::oneshot::channel();
-            persistence.tx.send(crate::session::persistence::PersistenceMsg::RecoverSubagentCompletions { respond_to })
-                .map_err(|_| acp::Error::internal_error().data("completion recovery owner closed"))?;
-            receive.await.map_err(|_| acp::Error::internal_error().data("completion recovery acknowledgement lost"))?
+            persistence
+                .tx
+                .send(
+                    crate::session::persistence::PersistenceMsg::RecoverSubagentCompletions {
+                        respond_to,
+                    },
+                )
+                .map_err(|_| {
+                    acp::Error::internal_error().data("completion recovery owner closed")
+                })?;
+            receive
+                .await
+                .map_err(|_| {
+                    acp::Error::internal_error().data("completion recovery acknowledgement lost")
+                })?
                 .map_err(|error| acp::Error::internal_error().data(error.to_string()))?
-        } else { summary };
+        } else {
+            summary
+        };
         let persisted_base_url = self
             .resolve_sampling_config_for_model(&summary.current_model_id, origin_client.clone())
             .base_url;
@@ -1480,25 +1496,49 @@ impl MvpAgent {
         self.restore_persisted_model(&session_id, &summary, initial_reasoning_effort)
             .await;
         if restored_from_disk && let Some(handle) = self.resident_handle(&session_id) {
-            let _ = handle.cmd_tx.send(SessionCommand::RestoreCompletionWakePolicy(summary.completion_delivery.wake_policy));
+            let _ = handle
+                .cmd_tx
+                .send(SessionCommand::RestoreCompletionWakePolicy(
+                    summary.completion_delivery.wake_policy,
+                ));
             let deliveries = summary.completion_delivery.receiver.recoverable_ids();
             if !deliveries.is_empty() {
-                let _ = handle.cmd_tx.send(SessionCommand::ResumeDeliveries { deliveries });
+                let _ = handle
+                    .cmd_tx
+                    .send(SessionCommand::ResumeDeliveries { deliveries });
             }
             for obligation in &summary.completion_delivery.obligations {
-                use crate::session::completion_delivery::{CompletionObligation, CompletionEventPolicy};
+                use crate::session::completion_delivery::{
+                    CompletionEventPolicy, CompletionObligation,
+                };
                 let (id, text, policy) = match obligation {
                     CompletionObligation::Preparing { .. } => continue,
-                    CompletionObligation::Pending { id, payload } => (id, payload.text.clone(), payload.policy),
-                    CompletionObligation::Projected { receipt, payload } => (&receipt.completion, payload.text.clone(), payload.policy),
+                    CompletionObligation::Pending { id, payload } => {
+                        (id, payload.model_text(id), payload.policy)
+                    }
+                    CompletionObligation::Projected { receipt, payload } => (
+                        &receipt.completion,
+                        payload.model_text(&receipt.completion),
+                        payload.policy,
+                    ),
                 };
                 let kind = match policy {
                     CompletionEventPolicy::Silent => continue,
-                    CompletionEventPolicy::Automatic => crate::session::CompletionWakeKind::Recovery,
-                    CompletionEventPolicy::BoundaryOnly => crate::session::CompletionWakeKind::BoundaryRecovery,
+                    CompletionEventPolicy::Automatic => {
+                        crate::session::CompletionWakeKind::Recovery
+                    }
+                    CompletionEventPolicy::BoundaryOnly => {
+                        crate::session::CompletionWakeKind::BoundaryRecovery
+                    }
                 };
-                crate::agent::subagent::enqueue_completion_wake(&handle.cmd_tx, id,
-                    kind, text, session_id.0.as_ref(), &None);
+                crate::agent::subagent::enqueue_completion_wake(
+                    &handle.cmd_tx,
+                    id,
+                    kind,
+                    text,
+                    session_id.0.as_ref(),
+                    &None,
+                );
             }
         }
         let (model_state, response_meta) = self

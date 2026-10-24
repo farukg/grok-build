@@ -53,7 +53,7 @@ pub struct PublishedCompletion {
     pub text: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CompletionResultReference {
     Prepared {
         path: std::path::PathBuf,
@@ -75,10 +75,25 @@ pub struct SubagentCompletionFact {
 pub(crate) struct CompletionPayload {
     pub text: String,
     pub policy: CompletionEventPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<CompletionResultReference>,
 }
 
-pub(crate) fn completion_text_with_reference(
-    event: &SubagentCompletionEvent,
+impl CompletionPayload {
+    pub(crate) fn model_text(&self, id: &SubagentCompletionId) -> String {
+        match &self.reference {
+            Some(reference) => format!(
+                "{}\n\n{}",
+                self.text,
+                completion_reference_text(id, reference)
+            ),
+            None => self.text.clone(),
+        }
+    }
+}
+
+pub(crate) fn completion_reference_text(
+    id: &SubagentCompletionId,
     source: &CompletionResultReference,
 ) -> String {
     let location = match source {
@@ -91,12 +106,19 @@ pub(crate) fn completion_text_with_reference(
     };
     let note = xai_grok_tools::reminders::task_completion::neutralize_reminder_tags(&format!(
         "Exact durable result for completion {}/{}: {location}.",
-        event.id.subagent_id, event.id.attempt_id
+        id.subagent_id, id.attempt_id
     ));
+    xai_grok_tools::reminders::wrap_reminder(&note)
+}
+
+pub(crate) fn completion_text_with_reference(
+    event: &SubagentCompletionEvent,
+    source: &CompletionResultReference,
+) -> String {
     format!(
         "{}\n\n{}",
         event.text,
-        xai_grok_tools::reminders::wrap_reminder(&note)
+        completion_reference_text(&event.id, source)
     )
 }
 
@@ -227,6 +249,24 @@ impl CompletionDeliveryState {
         }
     }
 
+    pub(crate) fn result_reference(
+        &self,
+        id: &SubagentCompletionId,
+        prepared_path: &std::path::Path,
+    ) -> Option<CompletionResultReference> {
+        match self
+            .obligations
+            .iter()
+            .find(|obligation| obligation.id() == id)?
+        {
+            CompletionObligation::Preparing { .. } => Some(CompletionResultReference::Prepared {
+                path: prepared_path.to_path_buf(),
+            }),
+            CompletionObligation::Pending { payload, .. }
+            | CompletionObligation::Projected { payload, .. } => payload.reference.clone(),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.receiver.records.is_empty()
             && self.obligations.is_empty()
@@ -263,10 +303,9 @@ impl CompletionDeliveryState {
                                         Some(CompletionObligation::Pending {
                                             id: event.id.clone(),
                                             payload: CompletionPayload {
-                                                text: completion_text_with_reference(
-                                                    event, reference,
-                                                ),
+                                                text: event.text.clone(),
                                                 policy: event.policy,
+                                                reference: Some(reference.clone()),
                                             },
                                         })
                                     }
@@ -274,10 +313,9 @@ impl CompletionDeliveryState {
                                         Some(CompletionObligation::Projected {
                                             receipt: receipt.clone(),
                                             payload: CompletionPayload {
-                                                text: completion_text_with_reference(
-                                                    event, reference,
-                                                ),
+                                                text: event.text.clone(),
                                                 policy: event.policy,
+                                                reference: Some(reference.clone()),
                                             },
                                         })
                                     }

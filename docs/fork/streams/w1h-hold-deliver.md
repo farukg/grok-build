@@ -61,7 +61,11 @@ Projection receipts share the chat record and survive history replacement in the
 summary owner. Retry reconciles the actual stored occurrence; unfinished projections can
 continue under a new parent-task instance without appending another input. Parent-task and
 receiver-origin fencing also survives cancellation teardown. Scheduler liveness includes
-terminal publication still in flight.
+terminal publication still in flight. Passive buffer visibility waits for committed terminal
+history; an earlier projection ACK or caller teardown retires the same pending publication.
+Idle digests and active drains retain typed occurrence-bound full-result references. Recovery
+continues all outstanding receipts from the prior parent-task turn together, including batch
+tool results, rather than reexecuting sibling occurrences as separate inputs.
 
 Native `x.ai/session/delivery` has a separate durable human-delivery receipt lifecycle:
 exact payload binding, idempotent admit, side-effect-free observe, conflict, monotone
@@ -71,10 +75,15 @@ AutoWake and ordinary bash/workflow goal policy remain independent.
 
 Authored regressions cover strict append/ack failure, actual-occurrence reconciliation,
 late-parent fencing, child-ID reuse, history replacement, native foreground/background
-success/error through idle, sampling, tool and goal paths, receiver cancellation, and
+success/error through idle, sampling, tool and goal paths, a child created before later parent
+goal activation, receiver cancellation, and
 subprocess crashes after preparation/publication/input projection/receiver terminal commit.
-None has run for this source. The continuation's edited Rust files pass the pinned formatter;
-compilation, CI and runtime acceptance remain Lead-owned. No commit or publication was made.
+None has run for this source. The continuation's edited Rust files have pinned formatting;
+compilation, CI and runtime acceptance remain Lead-owned. Supplied CI run `40003673652`
+failed on the earlier `c8e075ea29ab74356cb477f05dcd70cdf7eb0e4c` fixture state; its missing
+helpers, stale signatures and primitive pre-commit terminal metadata expectations have been
+reconciled in the current owner, without claiming that run verified these later changes.
+No commit or publication was made by this worker.
 Historical interruptions without a typed cause remain unresolved pending a migration decision.
 Decisions:
 `context-modules.d/500_work.d/epics.d/product.d/grok-build/001-subagent-results-during-goals.adr.md`

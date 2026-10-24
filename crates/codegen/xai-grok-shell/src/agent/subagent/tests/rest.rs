@@ -585,6 +585,53 @@ async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
         crate::session::storage::SessionUpdate::Xai(notification) if matches!(&notification.update,
             SessionUpdate::SubagentFinished { subagent_id, status, .. } if subagent_id == "sa-promote" && status == "completed"))).count(), 1);
 }
+/// Snapshot persistence cannot establish a terminal outcome without the producer commit.
+#[tokio::test]
+async fn snapshot_ref_write_requires_a_producer_commit_before_terminal_promotion() {
+    let mut ctx = ctx_with_toggle(std::collections::HashMap::new());
+    let fixture = DurableCompletionFixture::new(&mut ctx).await;
+    let mut request = auto_wake_test_request("sa-promote");
+    request.parent_session_id = ctx.parent_session_id.clone();
+    let meta_dir = fixture.directory.path().join("subagents").join(&request.id);
+    let mut metadata = snapshot_test_meta(&request.id);
+    metadata.parent_session_id = ctx.parent_session_id.clone();
+    metadata.attempt_id = Some(xai_message_delivery_core::AttemptId::mint(1).to_string());
+    metadata.status = SubagentMetaStatus::Running;
+    metadata.completed_at = None;
+    metadata.duration_ms = None;
+    metadata.tool_calls = None;
+    metadata.turns = None;
+    let completion_data = completion_data_with_initial_meta(&ctx, metadata, &meta_dir);
+    assert!(update_subagent_meta_snapshot_ref(&meta_dir, "refs/grok/subagents/x"));
+    let reread: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
+    assert_eq!(Some("refs/grok/subagents/x"), reread.snapshot_ref.as_deref());
+    assert_eq!(SubagentMetaStatus::Running, reread.status);
+    completion_data.set_terminal_snapshot_ref(reread.snapshot_ref.clone());
+    let initial_metadata = std::fs::read(meta_dir.join("meta.json")).unwrap();
+    let result = SubagentResult { state: SubagentState::Completed, subagent_id: request.id.clone(), child_session_id: "child-sa-promote".into(), ..Default::default() };
+    let completion = ChildCompletion {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+        snapshot: test_snapshot(&request, &result),
+        request,
+        result,
+        completion_data,
+        disposition: CompletionDisposition {
+            foreground_delivered: true,
+            backgrounded: false,
+            waiter_delivered: false,
+            explicitly_killed: false,
+            reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
+        },
+    };
+    prepare_completion_admission(&completion).await.expect("actual producer commit");
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
+    let (gateway, _gateway_rx) = test_gateway_with_receiver();
+    assert!(matches!(publish_committed_completion(completion, gateway).await,
+        xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published));
+    let committed: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
+    assert_eq!(SubagentMetaStatus::Completed, committed.status);
+    assert_eq!(committed.snapshot_ref.as_deref(), Some("refs/grok/subagents/x"));
+}
 /// With no config and no remote value, the gate defaults OFF and snapshotting is disabled.
 /// The completion path keeps the worktree (no production change).
 #[test]

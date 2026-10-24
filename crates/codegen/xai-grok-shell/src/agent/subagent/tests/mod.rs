@@ -27,7 +27,7 @@ use super::handle_request::{
     take_child_turn_messages,
 };
 use crate::agent::remote_config::task_model_policy::TaskModelSelection;
-use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway_with_receiver};
+use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway, test_gateway_with_receiver};
 use xai_grok_subagent_resolution::resolve_effective_overrides;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildCompletion, CompletionDisposition,
