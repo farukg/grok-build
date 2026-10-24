@@ -1,5 +1,10 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
+#[path = "completion_fixtures.rs"]
+mod completion_fixtures;
+use completion_fixtures::{DurableCompletionFixture, completion_data_with_initial_meta};
+use crate::session::storage::StorageAdapter;
+use super::completion_publication::{prepare_completion_admission, publish_committed_completion};
 use crate::session::SessionThread;
 use super::spawn::{
     inject_subagent_completed_prompt, join_worker_task, present_child_completion,
@@ -21,7 +26,7 @@ use super::handle_request::{
     take_child_turn_messages,
 };
 use crate::agent::remote_config::task_model_policy::TaskModelSelection;
-use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway_with_receiver};
+use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway, test_gateway_with_receiver};
 use xai_grok_subagent_resolution::resolve_effective_overrides;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildCompletion, CompletionDisposition,
@@ -104,7 +109,6 @@ async fn usage_ack_precedes_terminal_presentation() {
     request.run_in_background = false;
     let completion_data = ShellCompletionData::from_context(
         &ctx,
-        xai_message_delivery_core::AttemptId::mint(1),
         None,
     );
     completion_data.mark_spawned_notification_emitted();
@@ -132,7 +136,7 @@ async fn usage_ack_precedes_terminal_presentation() {
     present_child_completion(completion, &gateway, will_wake);
     assert!(matches!(
             parent_cmd_rx.try_recv(),
-            Ok(SessionCommand::XaiSessionNotification {
+            Ok(SessionCommand::SubagentCompletionPublished {
                 notification: SessionNotification {
                     update: SessionUpdate::SubagentFinished { .. },
                     ..
@@ -720,13 +724,13 @@ async fn completion_errors_admit_parent_wake_but_explicit_stop_stays_silent() {
         present_child_completion(completion, &test_gateway(), wake);
         let mut prompts = Vec::new();
         while let Ok(command) = commands.try_recv() {
-            if let SessionCommand::Prompt { prompt_blocks, .. } = command {
-                prompts.push(prompt_blocks);
+            if let SessionCommand::SubagentCompletionWake { text, .. } = command {
+                prompts.push(text);
             }
         }
         assert_eq!(prompts.len(), usize::from(wake));
         if wake {
-            assert!(prompt_text(&prompts[0]).contains("wake-error-class"));
+            assert!(prompts[0].contains("wake-error-class"));
         }
     }
 }
@@ -734,7 +738,6 @@ async fn completion_errors_admit_parent_wake_but_explicit_stop_stays_silent() {
 #[test]
 fn should_auto_wake_subagent_truth_table() {
     let wakeable = AutoWakeInputs {
-        run_in_background: true,
         cancelled: false,
         auto_wake_enabled: true,
         explicitly_killed: false,
@@ -838,7 +841,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
     let mut prompt_count = 0;
     while let Ok(command) = parent_cmd_rx.try_recv() {
         match command {
-            SessionCommand::XaiSessionNotification {
+            SessionCommand::SubagentCompletionPublished {
                 notification: SessionNotification {
                     update: SessionUpdate::SubagentFinished {
                         status,
@@ -852,7 +855,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
                 assert_eq!((status.as_str(), turns, will_wake), ("completed", 2, true));
                 finish_count += 1;
             }
-            SessionCommand::Prompt { prompt_id, .. } => {
+            SessionCommand::SubagentCompletionWake { prompt_id, .. } => {
                 assert!(prompt_id.starts_with("subagent-completed-"));
                 prompt_count += 1;
             }
@@ -861,8 +864,10 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
     }
     assert_eq!((finish_count, prompt_count), (1, 1));
 }
-#[test]
-fn inject_subagent_completed_prompt_sends_prompt() {
+#[tokio::test(flavor = "current_thread")]
+async fn inject_subagent_completed_prompt_sends_prompt() {
+    tokio::task::LocalSet::new().run_until(async {
+    let receiver = crate::session::acp_session::completion_receiver_fixture::completion_wake_receiver_fixture().await;
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
     let mut request = auto_wake_test_request("sa-1");
     request.runtime_overrides.loop_task_id = Some("loop-123".into());
@@ -885,9 +890,18 @@ fn inject_subagent_completed_prompt_sends_prompt() {
         scheduler_create_tool_name: Some("renamed_scheduler_create"),
         synthetic_trace_tx: &None,
     });
-    match cmd_rx.try_recv().expect("expected synthetic Prompt") {
-        SessionCommand::Prompt { prompt_id, prompt_blocks, verbatim, .. } => {
-            assert!(prompt_id.starts_with("subagent-completed-"));
+    let command = cmd_rx.try_recv().expect("expected synthetic completion wake");
+    let SessionCommand::SubagentCompletionWake { ref prompt_id, .. } = command else {
+        panic!("expected SessionCommand::SubagentCompletionWake");
+    };
+    assert!(prompt_id.starts_with("subagent-completed-"));
+    let prompt_id = prompt_id.clone();
+    receiver.sender.send(command).expect("real receiver must be open");
+    let (responds_to, receive) = tokio::sync::oneshot::channel();
+    receiver.sender.send(SessionCommand::GetCurrentPromptMode { responds_to }).expect("receiver barrier");
+    tokio::time::timeout(std::time::Duration::from_secs(5), receive).await.expect("receiver deadline").expect("receiver barrier acknowledgement");
+    let (verbatim, prompt_blocks) = receiver.actor.state.lock().await.pending_inputs.iter().find(|input| input.prompt_id == prompt_id)
+        .map(|input| (input.verbatim, input.prompt_blocks.clone())).expect("typed completion in real input queue");
             assert!(verbatim);
             let prompt = prompt_text(&prompt_blocks);
             let block = prompt
@@ -905,9 +919,7 @@ fn inject_subagent_completed_prompt_sends_prompt() {
                     "renamed_scheduler_create(new_prompt, interval, \"loop-123\")"
                 ));
             assert!(!prompt.contains("update it with scheduler_create("));
-        }
-        _ => panic!("expected SessionCommand::Prompt"),
-    }
+    }).await;
 }
 #[test]
 fn inject_subagent_completed_prompt_copies_capped_task_output() {
@@ -933,12 +945,11 @@ fn inject_subagent_completed_prompt_copies_capped_task_output() {
         scheduler_create_tool_name: None,
         synthetic_trace_tx: &None,
     });
-    let SessionCommand::Prompt { prompt_blocks, .. } = cmd_rx
+    let SessionCommand::SubagentCompletionWake { text: prompt, .. } = cmd_rx
         .try_recv()
-        .expect("expected synthetic Prompt") else {
-        panic!("expected SessionCommand::Prompt");
+        .expect("expected synthetic completion wake") else {
+        panic!("expected SessionCommand::SubagentCompletionWake");
     };
-    let prompt = prompt_text(&prompt_blocks);
     assert!(prompt.contains("\n=== Task sa-1 ===\n"), "{prompt}");
     assert!(
             prompt.contains(&format!(
@@ -979,12 +990,11 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
         scheduler_create_tool_name: Some("scheduler_create"),
         synthetic_trace_tx: &None,
     });
-    let SessionCommand::Prompt { prompt_blocks, .. } = cmd_rx
+    let SessionCommand::SubagentCompletionWake { text: prompt, .. } = cmd_rx
         .try_recv()
-        .expect("expected synthetic Prompt") else {
-        panic!("expected SessionCommand::Prompt");
+        .expect("expected synthetic completion wake") else {
+        panic!("expected SessionCommand::SubagentCompletionWake");
     };
-    let prompt = prompt_text(&prompt_blocks);
     assert!(!prompt.contains("scheduler_delete"));
     assert!(!prompt.contains("no longer relevant"));
     assert!(!prompt.contains("Check the subagent output"));
@@ -2276,19 +2286,20 @@ fn test_gcs_context(ctx: &SubagentSpawnContext) -> GcsUploadContext {
 #[tokio::test]
 async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
     let mut ctx = ctx_with_toggle(HashMap::new());
-    let (parent_cmd_tx, mut parent_cmd_rx) = mpsc::unbounded_channel();
-    ctx.parent_cmd_tx = Some(parent_cmd_tx);
+    let fixture = DurableCompletionFixture::new(&mut ctx).await;
     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
     let (gateway, mut gateway_rx) = test_gateway_with_receiver();
-    let request = auto_wake_test_request("promote-cancel");
-    let meta_dir = tempfile::tempdir().expect("meta dir");
+    let mut request = auto_wake_test_request("promote-cancel");
+    request.parent_session_id = ctx.parent_session_id.clone();
+    let meta_dir = fixture.directory.path().join("subagents").join(&request.id);
+    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId { subagent_id: request.id.clone(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, &meta_dir);
     let result = cancel_pending_shell_child(
             &child_cmd_tx,
             SessionThread::from_handle(std::thread::spawn(|| {})),
             &ctx.workspace_ops,
             &request.id,
             &acp::SessionId::new(request.id.clone()),
-            meta_dir.path(),
+            &meta_dir,
             None,
             false,
             42,
@@ -2296,6 +2307,7 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
             UnpromotedChildDisposition::Cancelled,
             true,
+            &completion_data,
         )
         .await;
     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
@@ -2305,11 +2317,6 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
         ));
     assert!(result.is_interrupted());
     assert!(!result.success());
-    let completion_data = ShellCompletionData::from_context(
-        &ctx,
-        xai_message_delivery_core::AttemptId::mint(1),
-        None,
-    );
     completion_data.mark_spawned_notification_emitted();
     let completion = ChildCompletion {
         attempt_id: xai_message_delivery_core::AttemptId::mint(1),
@@ -2326,21 +2333,14 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
         },
     };
     let will_wake = will_wake_for(&completion);
-    present_child_completion(completion, &gateway, will_wake);
-    let mut persisted = 0;
-    while let Ok(command) = parent_cmd_rx.try_recv() {
-        if matches!(
-                command,
-                SessionCommand::XaiSessionNotification {
-                    notification: SessionNotification {
-                        update: SessionUpdate::SubagentFinished { status, .. },
-                        ..
-                    }
-                } if status == "cancelled"
-            ) {
-            persisted += 1;
-        }
-    }
+    assert!(!will_wake);
+    prepare_completion_admission(&completion).await.expect("actual producer commit");
+    assert!(matches!(publish_committed_completion(completion, gateway).await,
+        xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published));
+    let updates = fixture.storage.load_session(&fixture.info).await.expect("persisted lifecycle").updates;
+    let persisted = updates.iter().filter(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification) if matches!(&notification.update,
+            SessionUpdate::SubagentFinished { subagent_id, status, .. } if subagent_id == "promote-cancel" && status == "cancelled"))).count();
     assert_eq!(persisted, 1);
     let mut live = 0;
     while let Ok(message) = gateway_rx.try_recv() {
@@ -2361,6 +2361,7 @@ async fn run_promote_cancel_with_worktree(
     let ctx = ctx_with_toggle(HashMap::new());
     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
     let meta_dir = tempfile::tempdir().expect("meta dir");
+    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId { subagent_id: "worktree-cancel".into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, meta_dir.path());
     let result = cancel_pending_shell_child(
             &child_cmd_tx,
             SessionThread::from_handle(std::thread::spawn(|| {})),
@@ -2375,6 +2376,7 @@ async fn run_promote_cancel_with_worktree(
             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
             UnpromotedChildDisposition::Cancelled,
             true,
+            &completion_data,
         )
         .await;
     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
@@ -2438,13 +2440,20 @@ fn running_meta_json(id: &str) -> String {
             }}"#
         )
 }
+fn pending_shell_completion_fixture(ctx: &SubagentSpawnContext, id: xai_chat_state::SubagentCompletionId, meta_dir: &Path) -> ShellCompletionData {
+    let mut metadata: SubagentMeta = serde_json::from_str(&running_meta_json(&id.subagent_id)).expect("initial running metadata");
+    metadata.parent_session_id = ctx.parent_session_id.clone();
+    metadata.attempt_id = Some(id.attempt_id.to_string());
+    completion_data_with_initial_meta(ctx, metadata, meta_dir)
+}
 #[tokio::test]
 async fn unproven_thread_exit_preserves_fresh_worktree() {
-    let ctx = ctx_with_toggle(HashMap::new());
+    let mut ctx = ctx_with_toggle(HashMap::new());
+    let fixture = DurableCompletionFixture::new(&mut ctx).await;
     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
-    let meta_dir = tempfile::tempdir().expect("meta dir");
-    std::fs::write(meta_dir.path().join("meta.json"), running_meta_json("unproven-exit"))
-        .expect("write running meta");
+    let mut request = auto_wake_test_request("unproven-exit");
+    request.parent_session_id = ctx.parent_session_id.clone();
+    let meta_dir = fixture.directory.path().join("subagents").join(&request.id);
     let worktree = tempfile::tempdir().expect("worktree");
     let (hold_tx, hold_rx) = std::sync::mpsc::channel::<()>();
     let thread = SessionThread::from_handle(
@@ -2452,13 +2461,15 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             let _ = hold_rx.recv();
         }),
     );
+    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId { subagent_id: request.id.clone(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, &meta_dir);
+    let initial_metadata = std::fs::read(meta_dir.join("meta.json")).expect("initial metadata");
     let result = cancel_pending_shell_child(
             &child_cmd_tx,
             thread,
             &ctx.workspace_ops,
-            "unproven-exit",
-            &acp::SessionId::new("unproven-exit"),
-            meta_dir.path(),
+            &request.id,
+            &acp::SessionId::new(request.id.clone()),
+            &meta_dir,
             Some(worktree.path()),
             true,
             42,
@@ -2466,6 +2477,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             std::time::Duration::ZERO,
             UnpromotedChildDisposition::Cancelled,
             true,
+            &completion_data,
         )
         .await;
     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
@@ -2478,11 +2490,19 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             worktree.path().exists(),
             "worktree must stay when actor exit is not proven"
         );
-    let meta: SubagentMeta = serde_json::from_str(
-            &std::fs::read_to_string(meta_dir.path().join("meta.json"))
-                .expect("read meta"),
-        )
-        .expect("parse meta");
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
+    let completion = ChildCompletion {
+        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+        snapshot: test_snapshot(&request, &result), request, result, completion_data,
+        disposition: CompletionDisposition { foreground_delivered: false, backgrounded: false, waiter_delivered: false, explicitly_killed: false,
+            reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent },
+    };
+    prepare_completion_admission(&completion).await.expect("actual producer commit");
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
+    let (gateway, _gateway_rx) = test_gateway_with_receiver();
+    assert!(matches!(publish_committed_completion(completion, gateway).await,
+        xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published));
+    let meta: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).expect("published metadata")).expect("typed metadata");
     assert_eq!(meta.status, SubagentMetaStatus::Cancelled);
     assert!(meta.completed_at.is_some());
     assert_eq!(meta.error.as_deref(), Some("Subagent was cancelled"));
@@ -2491,21 +2511,21 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
 #[tokio::test]
 async fn startup_admission_timeout_is_failed_not_cancelled() {
     let mut ctx = ctx_with_toggle(HashMap::new());
-    let (parent_cmd_tx, mut parent_cmd_rx) = mpsc::unbounded_channel();
-    ctx.parent_cmd_tx = Some(parent_cmd_tx);
+    let fixture = DurableCompletionFixture::new(&mut ctx).await;
     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
     let (gateway, mut gateway_rx) = test_gateway_with_receiver();
-    let request = auto_wake_test_request("promote-timeout");
-    let meta_dir = tempfile::tempdir().expect("meta dir");
-    std::fs::write(meta_dir.path().join("meta.json"), running_meta_json(&request.id))
-        .expect("write running meta");
+    let mut request = auto_wake_test_request("promote-timeout");
+    request.parent_session_id = ctx.parent_session_id.clone();
+    let meta_dir = fixture.directory.path().join("subagents").join(&request.id);
+    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId { subagent_id: request.id.clone(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, &meta_dir);
+    let initial_metadata = std::fs::read(meta_dir.join("meta.json")).expect("initial metadata");
     let result = cancel_pending_shell_child(
             &child_cmd_tx,
             SessionThread::from_handle(std::thread::spawn(|| {})),
             &ctx.workspace_ops,
             &request.id,
             &acp::SessionId::new(request.id.clone()),
-            meta_dir.path(),
+            &meta_dir,
             None,
             false,
             42,
@@ -2513,6 +2533,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
             UnpromotedChildDisposition::AdmissionTimedOut,
             true,
+            &completion_data,
         )
         .await;
     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
@@ -2527,17 +2548,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             result.error().as_deref(),
             Some("Subagent initial prompt was not admitted before the deadline")
         );
-    let meta: SubagentMeta = serde_json::from_str(
-            &std::fs::read_to_string(meta_dir.path().join("meta.json"))
-                .expect("read meta"),
-        )
-        .expect("parse meta");
-    assert_eq!(meta.status, SubagentMetaStatus::Failed);
-    let completion_data = ShellCompletionData::from_context(
-        &ctx,
-        xai_message_delivery_core::AttemptId::mint(1),
-        None,
-    );
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
     completion_data.mark_spawned_notification_emitted();
     let completion = ChildCompletion {
         attempt_id: xai_message_delivery_core::AttemptId::mint(1),
@@ -2554,21 +2565,19 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
         },
     };
     let will_wake = will_wake_for(&completion);
-    present_child_completion(completion, &gateway, will_wake);
-    let mut persisted = 0;
-    while let Ok(command) = parent_cmd_rx.try_recv() {
-        if matches!(
-                command,
-                SessionCommand::XaiSessionNotification {
-                    notification: SessionNotification {
-                        update: SessionUpdate::SubagentFinished { status, .. },
-                        ..
-                    }
-                } if status == "failed"
-            ) {
-            persisted += 1;
-        }
-    }
+    assert!(!will_wake);
+    prepare_completion_admission(&completion).await.expect("actual producer commit");
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
+    assert!(matches!(publish_committed_completion(completion, gateway).await,
+        xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published));
+    let meta: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).expect("published metadata")).expect("typed metadata");
+    assert_eq!(meta.status, SubagentMetaStatus::Failed);
+    assert!(meta.completed_at.is_some());
+    assert_eq!(meta.error.as_deref(), Some("Subagent initial prompt was not admitted before the deadline"));
+    let updates = fixture.storage.load_session(&fixture.info).await.expect("persisted lifecycle").updates;
+    let persisted = updates.iter().filter(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification) if matches!(&notification.update,
+            SessionUpdate::SubagentFinished { subagent_id, status, .. } if subagent_id == "promote-timeout" && status == "failed"))).count();
     assert_eq!(persisted, 1);
     let mut live = 0;
     while let Ok(message) = gateway_rx.try_recv() {
@@ -2824,7 +2833,6 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
     request.run_in_background = false;
     let completion_data = ShellCompletionData {
         parent_cmd_tx: Some(parent_cmd_tx),
-        attempt_id: Some(xai_message_delivery_core::AttemptId::mint(0xface)),
         ..Default::default()
     };
     let worker_completion_data = completion_data.clone();
@@ -2851,7 +2859,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
     let snapshot = test_snapshot(&request, &output.result);
     present_child_completion(
         ChildCompletion {
-            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+            attempt_id: xai_message_delivery_core::AttemptId::mint(0xface),
             snapshot,
             request,
             result: output.result,
@@ -2869,7 +2877,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
     );
     let finishes = std::iter::from_fn(|| parent_cmd_rx.try_recv().ok())
         .filter_map(|command| match command {
-            SessionCommand::XaiSessionNotification {
+            SessionCommand::SubagentCompletionPublished {
                 notification: SessionNotification {
                     update: SessionUpdate::SubagentFinished { attempt_id, .. },
                     ..

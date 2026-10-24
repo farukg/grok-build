@@ -10,18 +10,17 @@ use crate::implementations::grok_build::task::admission::{
 use crate::implementations::grok_build::task::agent_message_sender::AgentMessageSender;
 use crate::implementations::grok_build::task::backend::SubagentCoordinatorSender;
 use crate::implementations::grok_build::task::coordinator::active_message::tests::{
-    AdmissionCall, TestControl, TestCoordinator, begin_send, finish_child, fixture,
-    insert_child_with, insert_pending, promote_pending, recv_with_timeout, release_admission,
-    response_outcome,
+    AdmissionCall, TestControl, TestCoordinator, begin_send, finish_child,
+    finish_child_before_visibility, finish_child_with_result,
+    finish_child_with_result_before_visibility, fixture, insert_child_with, insert_pending,
+    promote_pending, recv_with_timeout, release_admission, response_outcome,
 };
 use crate::implementations::grok_build::task::coordinator::agent_quotas::MAX_SENDER_TARGET_IN_FLIGHT;
 use crate::implementations::grok_build::task::coordinator::{
     ActiveChildGeneration, ActiveMessageAdmission,
 };
 use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
-use crate::implementations::grok_build::task::coordinator_state::{
-    ChildRunOutput, InternalEvent, StartedChild,
-};
+use crate::implementations::grok_build::task::coordinator_state::{InternalEvent, StartedChild};
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageOperation, ActiveAgentMessageRequest, SubagentActiveMessageRequest,
     SubagentCancelOutcome, SubagentOwner, SubagentResult,
@@ -356,11 +355,6 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
         }
         let mut wake = begin(&mut c, &tx, &sender, agent(3));
         assert!(wake.try_recv().is_err(), "{exit}");
-        let output = |result: SubagentResult| ChildRunOutput {
-            result,
-            completion_data: (),
-            snapshot_ref: None,
-        };
         match exit {
             "killed" | "cancelled" | "deferred_cancelled" | "deferred_rejected" => {
                 assert!(c.pending.contains_key(IDS[3]), "{exit}");
@@ -394,7 +388,7 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
                         message: "".to_owned(),
                     },
                 );
-                c.finish_child(IDS[3], output(result));
+                finish_child_with_result(&mut c, IDS[3], result);
             }
             "queued_cancelled" => {
                 assert!(c.queued.contains_id(IDS[3]), "{exit}");
@@ -411,7 +405,7 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
             }
             "setup_failure" => {
                 let result = SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "");
-                c.finish_child(IDS[3], output(result));
+                finish_child_with_result(&mut c, IDS[3], result);
             }
             _ => unreachable!("fixed table"),
         }
@@ -477,24 +471,18 @@ pub(in super::super) async fn replay_root_and_granted_wakes() {
         let (mut c, tx, admissions, mut calls) = fixture();
         let sender = granted.then(|| holder(&mut c, admissions.clone(), None));
         add(&mut c, admissions.clone(), IDS[3], "other", None);
-        finish_child(&mut c, IDS[3]);
-        c.completed
-            .get(IDS[3])
-            .unwrap()
-            .terminal_published
-            .store(false, std::sync::atomic::Ordering::Release);
+        finish_child_before_visibility(&mut c, IDS[3]);
         let mut send = || match sender.as_ref() {
             Some(sender) => begin(&mut c, &tx, sender, agent(3)),
             None => begin_send(&mut c, &tx, IDS[3], "other"),
         };
         let responses = [send(), send()];
         assert_eq!(c.pending_wakes.get(IDS[3]).unwrap().len(), 2);
-        c.completed
-            .get(IDS[3])
-            .unwrap()
-            .terminal_published
-            .store(true, std::sync::atomic::Ordering::Release);
-        c.handle_terminal_published(IDS[3].to_owned());
+        let publication = c
+            .terminal_published_rx
+            .try_recv()
+            .expect("host visibility callback");
+        c.handle_terminal_publication(publication);
         let pending_id = c
             .pending
             .keys()
@@ -523,12 +511,7 @@ async fn granted_legacy_wakes_keep_one_pair_incarnation() {
         let sender = holder(&mut c, admissions.clone(), None);
         add(&mut c, admissions, IDS[3], IDS[2], None);
         let address = c.active.get(IDS[3]).unwrap().agent_address.clone().unwrap();
-        finish_child(&mut c, IDS[3]);
-        c.completed
-            .get(IDS[3])
-            .unwrap()
-            .terminal_published
-            .store(false, std::sync::atomic::Ordering::Release);
+        finish_child_before_visibility(&mut c, IDS[3]);
 
         let mut responses = vec![
             begin(
@@ -545,12 +528,11 @@ async fn granted_legacy_wakes_keep_one_pair_incarnation() {
             ),
         ];
         assert_eq!(vec![2], c.agent_message_quotas.pair_in_flight_counts());
-        c.completed
-            .get(IDS[3])
-            .unwrap()
-            .terminal_published
-            .store(true, std::sync::atomic::Ordering::Release);
-        c.handle_terminal_published(IDS[3].to_owned());
+        let publication = c
+            .terminal_published_rx
+            .try_recv()
+            .expect("host visibility callback");
+        c.handle_terminal_publication(publication);
         assert_eq!(vec![2], c.agent_message_quotas.pair_in_flight_counts());
         responses.extend([
             begin(
@@ -584,20 +566,8 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
     // A spawn that failed before start leaves an eligible record that never had an incarnation.
     insert_pending(&mut c, IDS[3], "other");
     let failed = SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "");
-    c.finish_child(
-        IDS[3],
-        ChildRunOutput {
-            result: failed,
-            completion_data: (),
-            snapshot_ref: None,
-        },
-    );
+    finish_child_with_result_before_visibility(&mut c, IDS[3], failed);
     assert!(c.completed.get(IDS[3]).unwrap().wake_eligible);
-    c.completed
-        .get(IDS[3])
-        .unwrap()
-        .terminal_published
-        .store(false, std::sync::atomic::Ordering::Release);
     let root = begin_send(&mut c, &tx, IDS[3], "other");
     let granted = (0..MAX_SENDER_TARGET_IN_FLIGHT)
         .map(|_| begin(&mut c, &tx, &sender, agent(3)))
@@ -606,12 +576,11 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
         vec![MAX_SENDER_TARGET_IN_FLIGHT],
         c.agent_message_quotas.pair_in_flight_counts()
     );
-    c.completed
-        .get(IDS[3])
-        .unwrap()
-        .terminal_published
-        .store(true, std::sync::atomic::Ordering::Release);
-    c.handle_terminal_published(IDS[3].to_owned());
+    let publication = c
+        .terminal_published_rx
+        .try_recv()
+        .expect("host visibility callback");
+    c.handle_terminal_publication(publication);
     assert!(c.pending.contains_key(IDS[3]));
     assert_eq!(
         ActiveAgentMessageOutcome::QuotaExceeded {
@@ -669,14 +638,7 @@ async fn abandoned_incarnations_release_their_pair_permits() {
                 },
             )
         };
-        c.finish_child(
-            IDS[3],
-            ChildRunOutput {
-                result,
-                completion_data: (),
-                snapshot_ref: None,
-            },
-        );
+        finish_child_with_result(&mut c, IDS[3], result);
         assert!(c.completed.contains_key(IDS[3]), "{exit}");
         // A user cancel withdraws granted re-wakes, so the root wakes that one (taking no permit).
         let granted_wakes = if exit == "pending_cancelled" {
@@ -789,14 +751,14 @@ async fn target_transitions_and_drop_preserve_pair_quota() {
     c.active_messages.clear();
     c.graph.remove(IDS[3]);
     add(&mut c, admissions.clone(), IDS[3], "other", None);
-    finish_child(&mut c, IDS[3]);
-    c.completed
-        .get(IDS[3])
-        .unwrap()
-        .terminal_published
-        .store(false, std::sync::atomic::Ordering::Release);
+    finish_child_before_visibility(&mut c, IDS[3]);
     let mut wake = begin(&mut c, &tx, &sender, agent(3));
     assert!(wake.try_recv().is_err());
+    let publication = c
+        .terminal_published_rx
+        .try_recv()
+        .expect("host visibility callback");
+    c.handle_terminal_publication(publication);
     promote_pending(&mut c, admissions.clone(), IDS[3]);
     for _ in 0..3 {
         let mut response = begin(&mut c, &tx, &sender, agent(3));

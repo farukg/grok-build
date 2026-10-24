@@ -1,5 +1,5 @@
 //! One isolated `run_shell_child` spawn for grove-e2e. Feature `test-support`.
-use super::spawn::present_child_completion;
+use super::completion_publication::{prepare_completion_admission, publish_committed_completion};
 use super::{ShellChildRuntime, ShellCompletionData, SubagentSpawnContext, run_shell_child};
 use crate::session::SessionCommand;
 use crate::util::config::RemoteSettings;
@@ -206,16 +206,26 @@ impl ChildRunner for Runner {
     }
     fn on_completed(
         &self,
-        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+        completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
         terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
     ) {
-        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
+        let completion = completion.snapshot();
+        tokio::task::spawn_local(async move {
+            terminal_published(match prepare_completion_admission(&completion).await {
+                Ok(()) => xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed,
+                Err(error) => xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Rejected { error: error.to_string() },
+            });
+        });
     }
-    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
-        present_child_completion(completion, &self.gateway, false);
-        
-        
-        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
+    fn on_published(
+        &self,
+        completion: ChildCompletion<Self::CompletionData>,
+        published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>,
+    ) {
+        let gateway = self.gateway.clone();
+        tokio::task::spawn_local(async move {
+            published(publish_committed_completion(completion, gateway).await);
+        });
     }
 }
 /// Spawn one isolated subagent from `parent_cwd`. Must run on a `LocalSet`.
@@ -234,9 +244,45 @@ pub async fn spawn_isolated_subagent_for_e2e(
     ctx.sampling_config.model = "test-model".into();
     ctx.sampling_config.api_backend = crate::sampling::ApiBackend::Responses;
     ctx.model_id = acp::ModelId::new("test-model");
+    let parent_info = crate::session::info::Info {
+        id: acp::SessionId::new(ctx.parent_session_id.clone()),
+        cwd: parent_cwd.to_string_lossy().into_owned(),
+    };
+    let persistence = async {
+        let client = crate::sampling::Client::new(ctx.sampling_config.clone())
+            .map_err(std::io::Error::other)?;
+        crate::session::persistence::new_with_explicit_dir(
+            &parent_info,
+            crate::session::persistence::session_dir(&parent_info),
+            ctx.model_id.clone(),
+            client,
+            ctx.sampling_config.model.clone(),
+            crate::session::persistence::ExplicitSessionOpen::New {
+                identity: None,
+                next_trace_turn: None,
+            },
+        )
+        .await
+    }
+    .await;
+    let persistence = match persistence {
+        Ok(persistence) => persistence,
+        Err(error) => {
+            return IsolatedSubagentSpawn {
+                success: false,
+                worktree_path: None,
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    ctx.parent_persistence_tx = Some(persistence.tx.clone());
+    ctx.parent_session_info = Some(parent_info);
     let (parent_cmd_tx, parent_cmd_rx) = mpsc::unbounded_channel();
     ctx.parent_cmd_tx = Some(parent_cmd_tx);
-    let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(parent_cmd_rx));
+    let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(
+        parent_cmd_rx,
+        persistence.tx.clone(),
+    ));
     let (gateway, _gateway_rx) = test_gateway_with_receiver();
     let (command_tx, command_rx) = SubagentCoordinator::<Runner>::channel();
     let coordinator = tokio::task::spawn_local(
@@ -294,10 +340,26 @@ pub async fn spawn_isolated_subagent_for_e2e(
         },
     }
 }
-async fn acknowledge_parent_usage(mut parent_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>) {
+async fn acknowledge_parent_usage(
+    mut parent_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
+    persistence_tx: mpsc::UnboundedSender<crate::session::persistence::PersistenceMsg>,
+) {
     while let Some(command) = parent_cmd_rx.recv().await {
         if let SessionCommand::RecordSubagentUsage { respond_to, .. } = command {
             let _ = respond_to.send(());
+        } else if let SessionCommand::PublishSubagentCompletion {
+            event,
+            will_wake,
+            respond_to,
+        } = command
+        {
+            let _ = persistence_tx.send(
+                crate::session::persistence::PersistenceMsg::PublishSubagentCompletion {
+                    event,
+                    will_wake,
+                    respond_to,
+                },
+            );
         }
     }
 }

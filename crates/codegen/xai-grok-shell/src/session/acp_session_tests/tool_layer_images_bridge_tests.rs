@@ -211,7 +211,6 @@ fn mcp_text_result(marker: &str) -> ToolRunResult {
     }
 }
 fn bash_text_result(marker: &str) -> ToolRunResult {
-    completed_subagents: Vec::new(),
     let output: ToolOutput = serde_json::from_value(serde_json::json!({
         "type": "Bash",
         "output": [],

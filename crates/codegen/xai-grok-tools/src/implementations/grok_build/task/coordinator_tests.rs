@@ -102,7 +102,7 @@ type WakeRun = (
 );
 
 #[derive(Clone, Copy, Default)]
-enum ProducerCommitBehavior {
+pub(in crate::implementations::grok_build::task::coordinator) enum ProducerCommitBehavior {
     #[default]
     Commit,
     Reject {
@@ -113,7 +113,8 @@ enum ProducerCommitBehavior {
 
 #[derive(Clone, Copy, Default)]
 pub(in crate::implementations::grok_build::task::coordinator) struct RunnerBehavior {
-    producer_commit: ProducerCommitBehavior,
+    pub(in crate::implementations::grok_build::task::coordinator) producer_commit:
+        ProducerCommitBehavior,
     pub(in crate::implementations::grok_build::task::coordinator) wait_before_start: bool,
     pub(in crate::implementations::grok_build::task::coordinator) fail_wake_before_start: bool,
     pub(in crate::implementations::grok_build::task::coordinator) reject_wake_after_deferred_start:
@@ -696,7 +697,7 @@ fn spawn_noting_registration(
 ) {
     let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
-        SubagentBackend::spawn(&backend, request, Some(registered_tx)).await
+        SubagentBackend::spawn(&backend, request, Some(registered_tx), None).await
     });
     (registered_rx, handle)
 }

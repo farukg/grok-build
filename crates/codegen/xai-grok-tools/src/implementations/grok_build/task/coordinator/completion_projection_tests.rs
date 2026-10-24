@@ -98,6 +98,94 @@ async fn tool_reminders_reservations_and_foreign_acks_cannot_consume_child_occur
     harness.actor.abort();
 }
 
+#[derive(Clone, Copy)]
+enum BeforeVisibility {
+    Retain,
+    Acknowledge,
+    Teardown,
+}
+
+#[tokio::test]
+async fn completion_buffer_waits_for_visibility_and_late_publication_respects_receipts_and_teardown()
+ {
+    for action in [
+        BeforeVisibility::Retain,
+        BeforeVisibility::Acknowledge,
+        BeforeVisibility::Teardown,
+    ] {
+        let mut harness = harness_with_options(
+            RunnerBehavior {
+                hold_terminal_publication: true,
+                ..Default::default()
+            },
+            buffering(),
+        );
+        let spawn = tokio::spawn({
+            let backend = harness.backend.clone();
+            async move {
+                backend
+                    .spawn(request("visible-child", true), None, None)
+                    .await
+            }
+        });
+        assert_eq!(
+            harness.started.recv().await.as_deref(),
+            Some("visible-child")
+        );
+        let (_, attempt_id, ..) = harness.wake_runs.recv().await.unwrap();
+        harness.finish.send(()).unwrap();
+        assert!(spawn.await.unwrap().unwrap().success());
+        let publish = harness.terminal_publications.recv().await.unwrap();
+        assert!(
+            peeked_completion_ids(&harness, Some("parent"))
+                .await
+                .is_empty(),
+            "a prepared result without committed history is not a passive model input"
+        );
+        match action {
+            BeforeVisibility::Retain => {}
+            BeforeVisibility::Acknowledge => harness
+                .backend
+                .sender()
+                .send(SubagentEvent::AcknowledgeCompletions {
+                    parent_session_id: "parent".into(),
+                    completions: vec![xai_message_delivery_core::SubagentCompletionId {
+                        subagent_id: "visible-child".into(),
+                        attempt_id: attempt_id.clone(),
+                    }],
+                })
+                .unwrap(),
+            BeforeVisibility::Teardown => harness
+                .backend
+                .sender()
+                .send(SubagentEvent::TeardownSession {
+                    parent_session_id: "parent".into(),
+                    respond_to: None,
+                })
+                .unwrap(),
+        }
+        assert!(
+            peeked_completion_ids(&harness, Some("parent"))
+                .await
+                .is_empty()
+        );
+        publish();
+        let pending =
+            completions_via(&harness, Some("parent"), SubagentEvent::PeekCompletions).await;
+        match action {
+            BeforeVisibility::Retain => {
+                assert_eq!(pending.len(), 1);
+                assert_eq!(pending[0].attempt_id, attempt_id);
+            }
+            BeforeVisibility::Acknowledge | BeforeVisibility::Teardown => assert!(
+                pending.is_empty(),
+                "late visibility must not resurrect a settled occurrence"
+            ),
+        }
+        harness.actor.abort();
+    }
+}
+
 #[tokio::test]
 async fn producer_commit_failure_fails_the_caller_and_leaves_no_phantom_completion() {
     let dropped_ack_rejection = "host producer callback dropped before durable acknowledgement";
