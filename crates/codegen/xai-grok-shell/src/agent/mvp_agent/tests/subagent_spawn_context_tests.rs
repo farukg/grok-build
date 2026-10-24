@@ -275,6 +275,27 @@ async fn subagent_spawn_context_shares_parent_goal_loop_gate() {
         }
     }).await;
 }
+
+#[tokio::test]
+async fn subagent_spawn_context_keeps_completion_policy_when_parent_goal_changes() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let agent = build_minimal_agent_for_tests();
+    let sid = acp::SessionId::new("parent-goal");
+    let handle = make_test_handle("test-model", false, None);
+    let parent_gate = handle.tool_context.goal_loop_active_gate.clone();
+    agent.insert_resident(&sid, handle);
+    let before = agent
+        .build_subagent_spawn_context(sid.0.as_ref())
+        .auto_wake_enabled;
+    parent_gate.store(true, Relaxed);
+    let after = agent
+        .build_subagent_spawn_context(sid.0.as_ref())
+        .auto_wake_enabled;
+    assert_eq!(
+        after, before,
+        "parent goal execution must not suppress child completion policy"
+    );
+}
 #[tokio::test]
 async fn subagent_spawn_context_disables_ask_user_question_from_enabled_parent() {
     let agent = build_minimal_agent_for_tests();

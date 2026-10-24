@@ -482,6 +482,10 @@ fn child_completion(boundary: CallerBoundary) {
                 .expect("real completion reaches parent sampler")
                 .to_string();
             assert_eq!(body.matches(marker).count(), 1);
+            assert!(
+                body.contains(&format!("Exact durable result for completion {CHILD}/")),
+                "the model must retain the occurrence-bound full-result reference"
+            );
             if matches!(boundary, CallerBoundary::Tool | CallerBoundary::GoalTool) {
                 assert!(body.find("caller-tool-done") < body.find(marker));
             }

@@ -303,6 +303,18 @@ impl SessionActor {
         let Ok(completions) = receive.await else {
             return false;
         };
+        if completions.is_empty() {
+            return false;
+        }
+        let persisted = match self.persisted_completion_state().await {
+            Ok(persisted) => persisted,
+            Err(error) => {
+                tracing::error!(%error, "buffered completion remains pending after state observation failure");
+                return false;
+            }
+        };
+        let summary_path =
+            crate::session::persistence::session_dir(&self.session_info).join("summary.json");
         let bridge = self.agent.borrow().tool_bridge().clone();
         let mut changed = false;
         for summary in completions {
@@ -320,7 +332,16 @@ impl SessionActor {
             let reminder = xai_grok_tools::reminders::task_completion::format_between_turn_completion_reminder(
                 &[summary], &bridge,
             ).await;
-            let text = reminder_text(&reminder, self.reminder_wrapper_tag());
+            let mut text = reminder_text(&reminder, self.reminder_wrapper_tag());
+            if let Some(reference) = persisted.result_reference(&completion.id, &summary_path) {
+                text.push_str("\n\n");
+                text.push_str(
+                    &crate::session::completion_delivery::completion_reference_text(
+                        &completion.id,
+                        &reference,
+                    ),
+                );
+            }
             match self
                 .project_subagent_completion(&completion, prompt_id, text)
                 .await

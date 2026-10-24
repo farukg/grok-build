@@ -11,7 +11,9 @@ use crate::implementations::grok_build::task::agent_message_sender::AgentMessage
 use crate::implementations::grok_build::task::backend::SubagentCoordinatorSender;
 use crate::implementations::grok_build::task::coordinator::active_message::tests::{
     AdmissionCall, TestControl, TestCoordinator, begin_send, finish_child,
-    finish_child_before_visibility, fixture, insert_child_with, insert_pending, promote_pending,
+    finish_child_before_visibility, finish_child_with_result,
+    finish_child_with_result_before_visibility, fixture, insert_child_with, insert_pending,
+    promote_pending,
     recv_with_timeout, release_admission, response_outcome,
 };
 use crate::implementations::grok_build::task::coordinator::agent_quotas::MAX_SENDER_TARGET_IN_FLIGHT;
@@ -19,9 +21,7 @@ use crate::implementations::grok_build::task::coordinator::{
     ActiveChildGeneration, ActiveMessageAdmission,
 };
 use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
-use crate::implementations::grok_build::task::coordinator_state::{
-    ChildRunOutput, InternalEvent, StartedChild,
-};
+use crate::implementations::grok_build::task::coordinator_state::{InternalEvent, StartedChild};
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageOperation, ActiveAgentMessageRequest, SubagentActiveMessageRequest,
     SubagentCancelOutcome, SubagentOwner, SubagentResult,
@@ -356,11 +356,6 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
         }
         let mut wake = begin(&mut c, &tx, &sender, agent(3));
         assert!(wake.try_recv().is_err(), "{exit}");
-        let output = |result: SubagentResult| ChildRunOutput {
-            result,
-            completion_data: (),
-            snapshot_ref: None,
-        };
         match exit {
             "killed" | "cancelled" | "deferred_cancelled" | "deferred_rejected" => {
                 assert!(c.pending.contains_key(IDS[3]), "{exit}");
@@ -394,7 +389,7 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
                         message: "".to_owned(),
                     },
                 );
-                c.finish_child(IDS[3], output(result));
+                finish_child_with_result(&mut c, IDS[3], result);
             }
             "queued_cancelled" => {
                 assert!(c.queued.contains_id(IDS[3]), "{exit}");
@@ -411,7 +406,7 @@ async fn pre_start_wake_rollback_keeps_the_activation_disposition() {
             }
             "setup_failure" => {
                 let result = SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "");
-                c.finish_child(IDS[3], output(result));
+                finish_child_with_result(&mut c, IDS[3], result);
             }
             _ => unreachable!("fixed table"),
         }
@@ -572,14 +567,7 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
     // A spawn that failed before start leaves an eligible record that never had an incarnation.
     insert_pending(&mut c, IDS[3], "other");
     let failed = SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "");
-    c.begin_terminalization(
-        IDS[3],
-        ChildRunOutput {
-            result: failed,
-            completion_data: (),
-            snapshot_ref: None,
-        },
-    );
+    finish_child_with_result_before_visibility(&mut c, IDS[3], failed);
     let publication = c
         .terminal_published_rx
         .try_recv()
@@ -656,14 +644,7 @@ async fn abandoned_incarnations_release_their_pair_permits() {
                 },
             )
         };
-        c.finish_child(
-            IDS[3],
-            ChildRunOutput {
-                result,
-                completion_data: (),
-                snapshot_ref: None,
-            },
-        );
+        finish_child_with_result(&mut c, IDS[3], result);
         assert!(c.completed.contains_key(IDS[3]), "{exit}");
         // A user cancel withdraws granted re-wakes, so the root wakes that one (taking no permit).
         let granted_wakes = if exit == "pending_cancelled" {

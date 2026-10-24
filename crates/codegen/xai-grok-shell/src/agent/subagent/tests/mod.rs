@@ -1,8 +1,8 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
-use crate::session::SessionThread;
 use crate::session::storage::StorageAdapter;
 use super::completion_publication::{prepare_completion_admission, publish_committed_completion};
+use crate::session::SessionThread;
 use super::completion_test_support::{
     CoordinatorFixture, DurableCompletionFixture, auto_wake_test_request,
     completion_data_with_initial_meta, pending_shell_completion_fixture,
@@ -27,7 +27,7 @@ use super::handle_request::{
     take_child_turn_messages,
 };
 use crate::agent::remote_config::task_model_policy::TaskModelSelection;
-use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway_with_receiver};
+use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway, test_gateway_with_receiver};
 use xai_grok_subagent_resolution::resolve_effective_overrides;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildCompletion, CompletionDisposition,
@@ -877,7 +877,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
 #[tokio::test(flavor = "current_thread")]
 async fn inject_subagent_completed_prompt_sends_prompt() {
     tokio::task::LocalSet::new().run_until(async {
-        let receiver = crate::session::acp_session::support::completion_wake_receiver_fixture().await;
+        let receiver = crate::session::acp_session::completion_receiver_fixture::completion_wake_receiver_fixture().await;
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
         let mut request = auto_wake_test_request("sa-1");
         request.runtime_overrides.loop_task_id = Some("loop-123".into());
@@ -919,23 +919,16 @@ async fn inject_subagent_completed_prompt_sends_prompt() {
         };
         assert!(verbatim);
         let prompt = prompt_text(&prompt_blocks);
-        let block = prompt
-            .find("\n=== Output ===\nPING\n\n<subagent_meta>")
-            .expect("inlined task output");
-        let cleanup = prompt
-            .find("If this schedule is no longer relevant")
-            .expect("cleanup hint");
+        let block = prompt.find("\n=== Output ===\nPING\n\n<subagent_meta>").expect("inlined task output");
+        let cleanup = prompt.find("If this schedule is no longer relevant").expect("cleanup hint");
         assert!(block < cleanup, "task output precedes the hints: {prompt}");
-        assert!(prompt.contains(
-                "Check the subagent output using get_command_or_subagent_output(\"sa-1\")"
-            ));
+        assert!(prompt.contains("Check the subagent output using get_command_or_subagent_output(\"sa-1\")"));
         assert!(prompt.contains("renamed_scheduler_delete(\"loop-123\")"));
-        assert!(prompt.contains(
-                "renamed_scheduler_create(new_prompt, interval, \"loop-123\")"
-            ));
+        assert!(prompt.contains("renamed_scheduler_create(new_prompt, interval, \"loop-123\")"));
         assert!(!prompt.contains("update it with scheduler_create("));
     }).await;
 }
+
 #[test]
 fn inject_subagent_completed_prompt_copies_capped_task_output() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
@@ -2381,10 +2374,7 @@ async fn run_promote_cancel_with_worktree(
     let ctx = ctx_with_toggle(HashMap::new());
     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
     let meta_dir = tempfile::tempdir().expect("meta dir");
-    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId {
-        subagent_id: "worktree-cancel".into(),
-        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
-    }, meta_dir.path());
+    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId { subagent_id: "worktree-cancel".into(), attempt_id: xai_message_delivery_core::AttemptId::mint(1) }, meta_dir.path());
     let result = cancel_pending_shell_child(
             &child_cmd_tx,
             SessionThread::from_handle(std::thread::spawn(|| {})),
@@ -2699,7 +2689,8 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
         }
         notifications
     }).await.expect("whole replay observation");
-    // Raw delivery is at-least-once; the real AppView replay test owns visible exactly-once.
+    // Raw delivery is at-least-once; rest.rs reconcile_dedups_replay_and_running_meta_sources
+    // owns deduped replay, and the persisted-count assertion below pins visible exactly-once.
     assert!(live.len() > 1, "the repeated publisher must actually reach the consumer transport");
     for notification in &live {
         assert!(matches!(&notification.update, SessionUpdate::SubagentFinished { status, error, .. }

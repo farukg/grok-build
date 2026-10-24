@@ -1,7 +1,10 @@
 #[path = "completion_queue_lifecycle_tests.rs"]
 mod queue_lifecycle;
 use super::support::*;
+#[path = "auto_wake_fixtures.rs"]
+mod fixtures;
 use super::*;
+use fixtures::*;
 use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
 use xai_grok_tools::types::output::{BashOutput, TextOutput, ToolOutput};
 use xai_tool_types::{
@@ -28,6 +31,12 @@ fn test_completion_wake(id: &str) -> crate::session::CompletionWake {
         kind: crate::session::CompletionWakeKind::Fresh,
     }
 }
+fn completion_wake_prompt_id(completion: &crate::session::CompletionWake) -> String {
+    format!(
+        "subagent-completed-{}/{}",
+        completion.id.subagent_id, completion.id.attempt_id
+    )
+}
 fn wake_request(
     prompt_blocks: Vec<acp::ContentBlock>,
     subagent_id: &str,
@@ -36,10 +45,7 @@ fn wake_request(
     let completion = test_completion_wake(subagent_id);
     let mut request = QueueInputRequest::from_input_origin(
         prompt_blocks,
-        format!(
-            "subagent-completed-{subagent_id}/{}",
-            completion.id.attempt_id
-        ),
+        completion_wake_prompt_id(&completion),
         InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted { completion }),
         PromptMode::Agent,
         respond_to,
@@ -69,11 +75,10 @@ async fn mark_completion_projected(actor: &SessionActor, id: &str) {
         .expect("durable fixture projection");
 }
 fn subagent_completed_input(subagent_id: &str) -> InputItem {
+    let completion = test_completion_wake(subagent_id);
     input_with_origin(
-        &format!("subagent-completed-{subagent_id}/at1.1"),
-        crate::session::PromptOrigin::SubagentCompleted {
-            completion: test_completion_wake(subagent_id),
-        },
+        &completion_wake_prompt_id(&completion),
+        crate::session::PromptOrigin::SubagentCompleted { completion },
     )
 }
 fn notification_drain_input(prompt_id: &str) -> InputItem {
@@ -101,11 +106,12 @@ async fn run_wake_turn(
     subagent_id: &str,
     persist_ack: Option<oneshot::Sender<()>>,
 ) -> PromptTurnResult {
-    let prompt_id = format!("subagent-completed-{subagent_id}/at1.1");
+    let completion = test_completion_wake(subagent_id);
+    let prompt_id = completion_wake_prompt_id(&completion);
     let mut task = running_task_stub(&prompt_id);
     let _admission = task.admission.clone().drop_guard();
     task.input_origin = InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted {
-        completion: test_completion_wake(subagent_id),
+        completion: completion.clone(),
     });
     actor.state.lock().await.running_task = Some(task);
     actor.signals_handle().increment_turn();
@@ -114,7 +120,7 @@ async fn run_wake_turn(
         actor.handle_turn_input(TurnInputRequest {
             prompt_id,
             input_origin: InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted {
-                completion: test_completion_wake(subagent_id),
+                completion,
             }),
             prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(wake_body(
                 subagent_id,
@@ -1299,6 +1305,9 @@ async fn shutdown_drops_pending_ephemeral_inputs() {
                     .pending_inputs
                     .push_back(goal_summary_input("goal-summary-019e2d3e"));
                 state
+                    .pending_inputs
+                    .push_back(subagent_completed_input("sub-1"));
+                state
                     .pending_notifications
                     .push(bash_completed_notification("bg-2"));
                 state
@@ -1316,7 +1325,7 @@ async fn shutdown_drops_pending_ephemeral_inputs() {
                 remaining_ids,
                 vec!["user-1", "user-2"],
                 "real user inputs must be preserved; every ephemeral origin \
-                     (TaskCompleted, NotificationDrain, GoalSummary) \
+                     (TaskCompleted, NotificationDrain, GoalSummary, SubagentCompleted) \
                      must be dropped"
             );
             assert!(
@@ -1624,16 +1633,16 @@ async fn promotion_drops_reported_wake_without_running_turn() {
                 .queue_input(wake_request(vec![], "sa-dup", respond_to))
                 .await;
             let (respond_to, mut live_rx) = oneshot::channel();
-            let _ = actor
-                .queue_input(wake_request(vec![], "sa-live", respond_to))
-                .await;
+            let live_request = wake_request(vec![], "sa-live", respond_to);
+            let expected_live_prompt_id = live_request.prompt_id.clone();
+            let _ = actor.queue_input(live_request).await;
             let (completion_tx, _completion_rx) = tokio::sync::mpsc::unbounded_channel();
             actor.clone().maybe_start_running_task(completion_tx).await;
             {
                 let mut state = actor.state.try_lock().expect("uncontended test state");
                 assert_eq!(
                     state.running_prompt_id(),
-                    Some("subagent-completed-sa-live/at1.1"),
+                    Some(expected_live_prompt_id.as_str()),
                     "the unreported sibling behind the dead wake must be promoted"
                 );
                 let queued: Vec<&str> = state
@@ -1641,7 +1650,7 @@ async fn promotion_drops_reported_wake_without_running_turn() {
                     .iter()
                     .map(|i| i.prompt_id.as_str())
                     .collect();
-                assert_eq!(queued, ["subagent-completed-sa-live/at1.1"]);
+                assert_eq!(queued, [expected_live_prompt_id.as_str()]);
                 if let Some(task) = state.running_task.take() {
                     task.abort();
                 }
