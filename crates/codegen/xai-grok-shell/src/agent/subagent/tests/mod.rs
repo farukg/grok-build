@@ -2511,13 +2511,42 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
             reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
         },
     };
+    let initial: SubagentMeta = serde_json::from_slice(&initial_metadata).unwrap();
+    assert_eq!(initial.status, SubagentMetaStatus::Running);
+    assert!(initial.completed_at.is_none());
+    let before_commit = fixture.storage.load_session(&fixture.info).await.expect("history before producer commit");
+    assert!(!before_commit.updates.iter().any(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification)
+            if matches!(notification.update, SessionUpdate::SubagentFinished { .. }))));
     prepare_completion_admission(&completion).await.expect("actual producer commit");
-    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
+    let producer = completion.completion_data.prepared_producer().expect("actual producer acknowledgement");
+    assert_eq!(producer.event.state, SubagentState::Interrupted {
+        cause: InterruptionCause::Error { message: "Subagent was cancelled".into() },
+    });
+    let committed_data = std::fs::read(meta_dir.join("meta.json")).unwrap();
+    let committed: SubagentMeta = serde_json::from_slice(&committed_data).unwrap();
+    let expected_terminal = SubagentMeta {
+        status: SubagentMetaStatus::Cancelled,
+        completed_at: Some(producer.event.completed_at),
+        duration_ms: Some(42),
+        tool_calls: Some(0),
+        turns: Some(0),
+        error: Some("Subagent was cancelled".into()),
+        ..initial
+    };
+    assert_eq!(serde_json::to_value(&committed).unwrap(), serde_json::to_value(&expected_terminal).unwrap());
+    assert!(committed.snapshot_ref.is_none());
+    assert!(worktree.path().exists(), "producer acknowledgement must not release an unproven worker's worktree");
+    let after_commit = fixture.storage.load_session(&fixture.info).await.expect("history after producer acknowledgement");
+    assert!(!after_commit.updates.iter().any(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification)
+            if matches!(notification.update, SessionUpdate::SubagentFinished { .. }))));
     let (gateway, _gateway_rx) = test_gateway_with_receiver();
     assert!(matches!(
         publish_committed_completion(completion.clone(), gateway.clone()).await,
         xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published
     ));
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
     let meta: SubagentMeta = serde_json::from_str(
             &std::fs::read_to_string(meta_dir.join("meta.json"))
                 .expect("read meta"),
@@ -2531,6 +2560,8 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
         publish_committed_completion(completion, gateway).await,
         xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published
     ));
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
+    assert!(worktree.path().exists(), "publication replay must not release an unproven worker's worktree");
     let repeated: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
     assert_eq!(serde_json::to_value(&repeated).unwrap(), serde_json::to_value(&meta).unwrap());
     let persisted = fixture.storage.load_session(&fixture.info).await.expect("actual persisted lifecycle");
@@ -2600,12 +2631,40 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
     };
     let will_wake = will_wake_for(&completion);
     assert!(!will_wake);
+    let initial: SubagentMeta = serde_json::from_slice(&initial_metadata).unwrap();
+    assert_eq!(initial.status, SubagentMetaStatus::Running);
+    assert!(initial.completed_at.is_none());
+    let before_commit = fixture.storage.load_session(&fixture.info).await.expect("history before producer commit");
+    assert!(!before_commit.updates.iter().any(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification)
+            if matches!(notification.update, SessionUpdate::SubagentFinished { .. }))));
     prepare_completion_admission(&completion).await.expect("actual producer commit");
-    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), initial_metadata);
+    let producer = completion.completion_data.prepared_producer().expect("actual producer acknowledgement");
+    assert_eq!(producer.event.state, SubagentState::Failed {
+        message: "Subagent initial prompt was not admitted before the deadline".into(),
+    });
+    let committed_data = std::fs::read(meta_dir.join("meta.json")).unwrap();
+    let committed: SubagentMeta = serde_json::from_slice(&committed_data).unwrap();
+    let expected_terminal = SubagentMeta {
+        status: SubagentMetaStatus::Failed,
+        completed_at: Some(producer.event.completed_at),
+        duration_ms: Some(42),
+        tool_calls: Some(0),
+        turns: Some(0),
+        error: Some("Subagent initial prompt was not admitted before the deadline".into()),
+        ..initial
+    };
+    assert_eq!(serde_json::to_value(&committed).unwrap(), serde_json::to_value(&expected_terminal).unwrap());
+    assert!(committed.snapshot_ref.is_none());
+    let after_commit = fixture.storage.load_session(&fixture.info).await.expect("history after producer acknowledgement");
+    assert!(!after_commit.updates.iter().any(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification)
+            if matches!(notification.update, SessionUpdate::SubagentFinished { .. }))));
     assert!(matches!(
         publish_committed_completion(completion.clone(), gateway.clone()).await,
         xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published
     ));
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
     let meta: SubagentMeta = serde_json::from_str(
             &std::fs::read_to_string(meta_dir.join("meta.json"))
                 .expect("read meta"),
@@ -2647,6 +2706,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
             if status == "failed" && error.as_deref() == Some("Subagent initial prompt was not admitted before the deadline")));
         assert_eq!(notification.meta.as_ref().unwrap()["eventId"], live[0].meta.as_ref().unwrap()["eventId"]);
     }
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
     let repeated: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
     assert_eq!(serde_json::to_value(&repeated).unwrap(), serde_json::to_value(&meta).unwrap());
     let updates = fixture.storage.load_session(&fixture.info).await.expect("replayed persisted lifecycle").updates;

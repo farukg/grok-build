@@ -1,3 +1,5 @@
+#[path = "completion_queue_lifecycle_tests.rs"]
+mod queue_lifecycle;
 use super::support::*;
 use super::*;
 use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
@@ -25,6 +27,25 @@ fn test_completion_wake(id: &str) -> crate::session::CompletionWake {
         },
         kind: crate::session::CompletionWakeKind::Fresh,
     }
+}
+fn wake_request(
+    prompt_blocks: Vec<acp::ContentBlock>,
+    subagent_id: &str,
+    respond_to: oneshot::Sender<PromptTurnResult>,
+) -> QueueInputRequest {
+    let completion = test_completion_wake(subagent_id);
+    let mut request = QueueInputRequest::from_input_origin(
+        prompt_blocks,
+        format!(
+            "subagent-completed-{subagent_id}/{}",
+            completion.id.attempt_id
+        ),
+        InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted { completion }),
+        PromptMode::Agent,
+        respond_to,
+    );
+    request.verbatim = true;
+    request
 }
 async fn completion_projected(actor: &SessionActor, id: &str) -> bool {
     actor.chat_state_handle.get_conversation().await.iter().any(|item| matches!(item,
@@ -87,24 +108,33 @@ async fn run_wake_turn(
         completion: test_completion_wake(subagent_id),
     });
     actor.state.lock().await.running_task = Some(task);
-    actor
-        .handle_prompt(
-            &format!("subagent-completed-{subagent_id}/at1.1"),
-            vec![acp::ContentBlock::Text(acp::TextContent::new(wake_body(
+    actor.signals_handle().increment_turn();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        actor.handle_turn_input(TurnInputRequest {
+            prompt_id,
+            input_origin: InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted {
+                completion: test_completion_wake(subagent_id),
+            }),
+            prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(wake_body(
                 subagent_id,
             )))],
-            PromptMode::Agent,
-            None,
-            None,
-            None,
-            None,
-            true,
-            false,
-            None,
+            prompt_mode: PromptMode::Agent,
+            trace_gcs_config: None,
+            artifact_tracker: None,
+            client_identifier: None,
+            screen_mode: None,
+            verbatim: true,
+            send_now: false,
+            json_schema: None,
             persist_ack,
-            None,
-        )
-        .await
+            parsed_prompt_tx: None,
+            traceparent: None,
+            start_gate: None,
+        }),
+    )
+    .await
+    .expect("wake must commit or finish within its protocol budget")
 }
 /// Aborts the wake turn after its commit: the test sampler never answers.
 async fn run_wake_turn_to_commit(actor: &std::sync::Arc<SessionActor>, subagent_id: &str) {
@@ -124,6 +154,7 @@ async fn run_wake_turn_to_commit(actor: &std::sync::Arc<SessionActor>, subagent_
 async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
     tokio::task::LocalSet::new().run_until(async {
         for (failed, goal_active) in [(false, false), (true, false), (false, true), (true, true)] {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
             drain_gateway(gateway_rx);
             let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
@@ -154,10 +185,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
                 state.running_task = Some(running_task_stub("working"));
             }
             let (respond_to, mut receipt) = oneshot::channel();
-            actor.queue_input(QueueInputRequest {
-                verbatim: true,
-                ..queue_input_request(vec![acp::ContentBlock::from(wake_text)], "subagent-completed-safe-child/at1.1", respond_to)
-            }).await;
+            actor.queue_input(wake_request(vec![acp::ContentBlock::from(wake_text)], "safe-child", respond_to)).await;
             assert!(matches!(receipt.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
             assert!(actor.drain_admitted_messages_at_safe_point().await);
             assert!(!actor.drain_admitted_messages_at_safe_point().await);
@@ -172,13 +200,11 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
             assert_eq!(fake.acknowledged().await, ["safe-child"], "only the durably projected attempt is acknowledged");
             assert_eq!(actor.state.lock().await.running_prompt_id(), Some("working"));
             let (retry_tx, retry_rx) = oneshot::channel();
-            actor.queue_input(QueueInputRequest {
-                verbatim: true,
-                ..queue_input_request(vec![], "subagent-completed-safe-child/at1.1", retry_tx)
-            }).await;
+            actor.queue_input(wake_request(vec![], "safe-child", retry_tx)).await;
             assert!(!actor.drain_admitted_messages_at_safe_point().await);
             assert!(retry_rx.await.expect("duplicate receipt").is_ok());
             assert_eq!(actor.chat_state_handle.get_conversation().await.len(), conversation.len());
+            }).await.expect("active caller must finish safe-point receipt and duplicate replay within the wake protocol budget");
         }
     }).await;
 }
@@ -1016,8 +1042,10 @@ async fn subagent_completed_drops_matching_pending_input() {
             let (gateway_tx, _) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+            *actor.current_prompt_id.lock().unwrap() = Some("working".into());
             {
                 let mut state = actor.state.lock().await;
+                state.running_task = Some(running_task_stub("working"));
                 state
                     .pending_inputs
                     .push_back(subagent_completed_input("sub-target"));
@@ -1049,6 +1077,35 @@ async fn subagent_completed_drops_matching_pending_input() {
             actor
                 .drop_pending_items_for_consumed_completions(&consumed)
                 .await;
+            let completion = test_completion_wake("sub-target");
+            actor.chat_state_handle.push_user_message(ConversationItem::user("Read the finished child result"));
+            actor.chat_state_handle.push_assistant_response(ConversationItem::assistant_tool_calls(vec![
+                xai_grok_sampling_types::ToolCall {
+                    id: "child-result".into(),
+                    name: "get_command_or_subagent_output".into(),
+                    arguments: r#"{"task_id":"sub-target"}"#.into(),
+                },
+            ]));
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                actor.commit_observed_subagent_tool_result(
+                    ConversationItem::tool_result("child-result", "done"),
+                    vec![xai_grok_tools::types::completion_observation::ObservedSubagentCompletion {
+                        subagent_id: completion.id.subagent_id.clone(),
+                        attempt_id: completion.id.attempt_id.clone(),
+                        text: "done".into(),
+                    }],
+                ).await.expect("actual tool-result commit must bind the observed attempt");
+                assert!(!actor.drain_admitted_messages_at_safe_point().await,
+                    "the queued wake is already consumed by the committed tool result");
+                let history = actor.chat_state_handle.get_conversation().await;
+                assert_eq!(history.iter().filter(|item| matches!(item,
+                    ConversationItem::ToolResult(result) if result.tool_call_id == "child-result")).count(), 1);
+                assert!(!history.iter().any(|item| matches!(item,
+                    ConversationItem::User(user) if user.synthetic_reason == SyntheticReason::SubagentCompleted)));
+                let persisted = actor.persisted_completion_state().await.unwrap();
+                assert_eq!(persisted.receipts.len(), 1);
+                assert_eq!(persisted.receipts[0].completion, completion.id);
+            }).await.expect("consumed child wake must settle within the receipt budget");
             let state = actor.state.lock().await;
             let remaining_ids: Vec<&str> = state
                 .pending_inputs
@@ -1223,7 +1280,7 @@ async fn sweep_clears_matching_pending_notifications() {
         .await;
 }
 #[tokio::test(flavor = "current_thread")]
-async fn shutdown_drops_pending_synthetic_inputs() {
+async fn shutdown_drops_pending_ephemeral_inputs() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -1235,9 +1292,6 @@ async fn shutdown_drops_pending_synthetic_inputs() {
                 state.pending_inputs.push_back(user_input("user-1"));
                 state.pending_inputs.push_back(task_completed_input("bg-1"));
                 state.pending_inputs.push_back(user_input("user-2"));
-                state
-                    .pending_inputs
-                    .push_back(subagent_completed_input("sub-1"));
                 state
                     .pending_inputs
                     .push_back(notification_drain_input("notifications-019e0000"));
@@ -1261,8 +1315,8 @@ async fn shutdown_drops_pending_synthetic_inputs() {
             assert_eq!(
                 remaining_ids,
                 vec!["user-1", "user-2"],
-                "real user inputs must be preserved; every synthetic origin \
-                     (TaskCompleted, SubagentCompleted, NotificationDrain, GoalSummary) \
+                "real user inputs must be preserved; every ephemeral origin \
+                     (TaskCompleted, NotificationDrain, GoalSummary) \
                      must be dropped"
             );
             assert!(
@@ -1567,17 +1621,11 @@ async fn promotion_drops_reported_wake_without_running_turn() {
             mark_completion_projected(&actor, "sa-dup").await;
             let (respond_to, mut dup_rx) = oneshot::channel();
             let _ = actor
-                .queue_input(QueueInputRequest {
-                    verbatim: true,
-                    ..queue_input_request(vec![], "subagent-completed-sa-dup/at1.1", respond_to)
-                })
+                .queue_input(wake_request(vec![], "sa-dup", respond_to))
                 .await;
             let (respond_to, mut live_rx) = oneshot::channel();
             let _ = actor
-                .queue_input(QueueInputRequest {
-                    verbatim: true,
-                    ..queue_input_request(vec![], "subagent-completed-sa-live/at1.1", respond_to)
-                })
+                .queue_input(wake_request(vec![], "sa-live", respond_to))
                 .await;
             let (completion_tx, _completion_rx) = tokio::sync::mpsc::unbounded_channel();
             actor.clone().maybe_start_running_task(completion_tx).await;
@@ -1616,7 +1664,7 @@ async fn promotion_drops_reported_wake_without_running_turn() {
         .await;
 }
 #[tokio::test(flavor = "current_thread")]
-async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
+async fn queued_child_survives_user_priority_until_next_between_turn_drain() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -1625,12 +1673,9 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
             let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             let fake = spawn_fake_coordinator(&mut actor, vec![subagent_summary("sa-pre")]);
             actor.state.lock().await.running_task = Some(running_task_stub("user-running"));
-            let (respond_to, _wake_rx) = oneshot::channel();
+            let (respond_to, wake_rx) = oneshot::channel();
             let _ = actor
-                .queue_input(QueueInputRequest {
-                    verbatim: true,
-                    ..queue_input_request(vec![], "subagent-completed-sa-pre/at1.1", respond_to)
-                })
+                .queue_input(wake_request(vec![], "sa-pre", respond_to))
                 .await;
             assert!(
                 !completion_projected(&actor, "sa-pre").await,
@@ -1640,6 +1685,25 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
             let _ = actor
                 .queue_input(queue_input_request(vec![], "user-typed", respond_to))
                 .await;
+            {
+                let state = actor.state.lock().await;
+                assert_eq!(state.pending_inputs.len(), 2);
+                assert!(matches!(state.pending_inputs.front().unwrap().input_origin.as_prompt_origin(),
+                    crate::session::PromptOrigin::SubagentCompleted { completion } if completion.id == test_completion_wake("sa-pre").id));
+            }
+            assert!(fake.acknowledged().await.is_empty(), "queueing a human follow-up does not consume the child result");
+            assert!(
+                !completion_projected(&actor, "sa-pre").await,
+                "a queued wake must leave the ledger untouched"
+            );
+            actor.state.lock().await.running_task = Some(running_task_stub("user-typed"));
+            *actor.current_prompt_id.lock().unwrap() = Some("user-typed".into());
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                actor.drain_between_turn_completions(&[]).await;
+                assert!(!actor.drain_admitted_messages_at_safe_point().await,
+                    "the pending wake must reuse the between-turn receipt without another model input");
+                assert!(wake_rx.await.expect("actual queued wake receipt").is_ok());
+            }).await.expect("the real between-turn commit must settle the queued child wake");
             let remaining: Vec<String> = actor
                 .state
                 .lock()
@@ -1649,13 +1713,6 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
                 .map(|i| i.prompt_id.clone())
                 .collect();
             assert_eq!(remaining, ["user-typed"]);
-            assert!(
-                !completion_projected(&actor, "sa-pre").await,
-                "a dropped wake must leave the ledger untouched"
-            );
-            actor.state.lock().await.running_task = Some(running_task_stub("user-typed"));
-            *actor.current_prompt_id.lock().unwrap() = Some("user-typed".into());
-            actor.drain_between_turn_completions(&[]).await;
             assert_eq!(fake.acknowledged().await, ["sa-pre"]);
             let conversation = actor.chat_state_handle.get_conversation().await;
             let digests: Vec<&ConversationItem> = conversation
@@ -1668,7 +1725,7 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
                     [ConversationItem::User(u)]
                         if u.synthetic_reason == SyntheticReason::SubagentCompleted
                 ),
-                "the dropped wake must be redelivered as exactly one digest: {digests:?}"
+                "the queued wake must be delivered as exactly one digest: {digests:?}"
             );
             assert!(completion_projected(&actor, "sa-pre").await);
         })

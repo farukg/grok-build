@@ -505,7 +505,7 @@ fn update_subagent_meta_snapshot_ref_reports_failure_when_meta_missing() {
             "refs/grok/subagents/sa-missing"
         ));
 }
-/// Snapshotref writes retain initial metadata until durable completion publication.
+/// Snapshotref writes retain initial metadata until the durable producer commit.
 #[tokio::test]
 async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
     let mut ctx = ctx_with_toggle(HashMap::new());
@@ -560,13 +560,38 @@ async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
             reporting: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionReporting::Silent,
         },
     };
-    prepare_completion_admission(&completion).await.expect("actual producer commit");
+    assert_eq!(reread.status, SubagentMetaStatus::Running);
+    assert!(reread.completed_at.is_none());
     assert_eq!(std::fs::read_to_string(meta_dir.join("meta.json")).unwrap(), data);
+    let before_commit = fixture.storage.load_session(&fixture.info).await.expect("history before producer commit");
+    assert!(!before_commit.updates.iter().any(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification)
+            if matches!(notification.update, SessionUpdate::SubagentFinished { .. }))));
+    prepare_completion_admission(&completion).await.expect("actual producer commit");
+    let producer = completion.completion_data.prepared_producer().expect("actual producer acknowledgement");
+    assert_eq!(producer.event.state, SubagentState::Completed);
+    let committed_data = std::fs::read(meta_dir.join("meta.json")).unwrap();
+    let committed: SubagentMeta = serde_json::from_slice(&committed_data).unwrap();
+    let expected_terminal = SubagentMeta {
+        status: SubagentMetaStatus::Completed,
+        completed_at: Some(producer.event.completed_at),
+        duration_ms: Some(42),
+        tool_calls: Some(3),
+        turns: Some(1),
+        error: None,
+        ..reread.clone()
+    };
+    assert_eq!(serde_json::to_value(&committed).unwrap(), serde_json::to_value(&expected_terminal).unwrap());
+    let after_commit = fixture.storage.load_session(&fixture.info).await.expect("history after producer acknowledgement");
+    assert!(!after_commit.updates.iter().any(|update| matches!(update,
+        crate::session::storage::SessionUpdate::Xai(notification)
+            if matches!(notification.update, SessionUpdate::SubagentFinished { .. }))));
     let (gateway, _gateway_rx) = test_gateway_with_receiver();
     assert!(matches!(
         publish_committed_completion(completion.clone(), gateway.clone()).await,
         xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published
     ));
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
     let reread: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
     assert_eq!(SubagentMetaStatus::Completed, reread.status);
     assert_eq!(Some("refs/grok/subagents/x"), reread.snapshot_ref.as_deref());
@@ -578,6 +603,7 @@ async fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
         publish_committed_completion(completion, gateway).await,
         xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published
     ));
+    assert_eq!(std::fs::read(meta_dir.join("meta.json")).unwrap(), committed_data);
     let repeated: SubagentMeta = serde_json::from_slice(&std::fs::read(meta_dir.join("meta.json")).unwrap()).unwrap();
     assert_eq!(serde_json::to_value(repeated).unwrap(), serde_json::to_value(reread).unwrap());
     let persisted = fixture.storage.load_session(&fixture.info).await.expect("actual persisted lifecycle");

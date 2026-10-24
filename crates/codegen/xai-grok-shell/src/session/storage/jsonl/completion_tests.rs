@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "completion_batch_tests.rs"]
 mod batch;
+#[path = "completion_metadata_tests.rs"]
+mod metadata;
 #[path = "completion_recovery_tests.rs"]
 mod recovery;
 use crate::session::completion_delivery::{

@@ -55,6 +55,11 @@ impl JsonlStorageAdapter {
                     ..Default::default()
                 },
             )?;
+            crate::agent::subagent::materialize_completion_artifacts(
+                &storage.session_dir(&info),
+                &info.id.to_string(),
+                &event,
+            )?;
             Ok(crate::session::ProducerCommitAck {
                 event,
                 summary_path: storage.summary_file(&info),
@@ -74,11 +79,6 @@ impl JsonlStorageAdapter {
         let info = info.clone();
         let event = event.clone();
         tokio::task::spawn_blocking(move || {
-            crate::agent::subagent::materialize_completion_artifacts(
-                &storage.session_dir(&info),
-                &info.id.to_string(),
-                &event,
-            )?;
             let path = storage.updates_file(&info);
             let _lock = Self::lock_append(&path)?;
             let summary = storage.read_summary_sync(&info)?;
@@ -198,6 +198,18 @@ impl JsonlStorageAdapter {
                 ..
             } = obligation
             {
+                let parent = self.session_dir(info);
+                let parent_session = info.id.to_string();
+                let artifacts = event.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::agent::subagent::materialize_completion_artifacts(
+                        &parent,
+                        &parent_session,
+                        &artifacts,
+                    )
+                })
+                .await
+                .map_err(io::Error::other)??;
                 self.publish_completion(info, event, false).await?;
             }
         }
