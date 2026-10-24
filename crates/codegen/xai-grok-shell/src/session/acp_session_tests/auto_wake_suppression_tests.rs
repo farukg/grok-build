@@ -1,10 +1,7 @@
 #[path = "completion_queue_lifecycle_tests.rs"]
 mod queue_lifecycle;
 use super::support::*;
-#[path = "auto_wake_fixtures.rs"]
-mod fixtures;
 use super::*;
-use fixtures::*;
 use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
 use xai_grok_tools::types::output::{BashOutput, TextOutput, ToolOutput};
 use xai_tool_types::{
