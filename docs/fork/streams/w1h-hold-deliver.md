@@ -86,5 +86,5 @@ reconciled in the current owner, without claiming that run verified these later 
 No commit or publication was made by this worker.
 Historical interruptions without a typed cause remain unresolved pending a migration decision.
 Decisions:
-`context-modules.d/500_work.d/epics.d/product.d/grok-build/001-subagent-results-during-goals.adr.md`
+`docs/fork/decisions/001-subagent-results-during-goals.adr.md`
 and `002-attempt-bound-input-admission.adr.md`.
