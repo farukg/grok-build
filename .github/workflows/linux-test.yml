@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       filter:
-        description: "Optional test name filter passed to the pager and chat-state test runs (the shell run defaults to 'remove')"
+        description: "Optional test name filter for pager, shell, chat-state and sampling-types runs; empty runs all unit tests"
         required: false
         default: ""
 
@@ -88,7 +88,7 @@ jobs:
       - name: Test subagent delivery and live steering
         if: always()
         run: |
-          cargo test -p xai-grok-tools --lib --locked coordinator_tests
+          cargo test -p xai-grok-tools --lib --locked implementations::grok_build::task::
           cargo test -p xai-grok-shell --lib --locked parent_message
           cargo test -p xai-grok-shell --lib --locked prompt_turn_receipt
           cargo test -p xai-grok-shell --lib --locked live_steers_
@@ -97,16 +97,18 @@ jobs:
         if: always()
         run: |
           cargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked
+          cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked send_subagent_message_row
+          PAGER_BINARY="$PWD/target/debug/xai-grok-pager" cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked send_subagent_message_row -- --ignored
           PAGER_BINARY="$PWD/target/debug/xai-grok-pager" cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked finished_child_manual_compact_cancel -- --ignored
 
       - name: Test pager
         shell: bash
         run: cargo test -p xai-grok-pager --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee pager-test.log; exit "${PIPESTATUS[0]}"
 
-      - name: Test shell removal paths
+      - name: Test shell
         if: always()
         shell: bash
-        run: cargo test -p xai-grok-shell --lib --locked --no-fail-fast -- "${TEST_FILTER:-remove}" 2>&1 | tee shell-test.log; exit "${PIPESTATUS[0]}"
+        run: cargo test -p xai-grok-shell --lib --locked --no-fail-fast -- "$TEST_FILTER" 2>&1 | tee shell-test.log; exit "${PIPESTATUS[0]}"
 
       - name: Test chat state and sampling types
         if: always()
