@@ -940,7 +940,7 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
             );
             request.parent_session_id = "parent".to_owned();
             crate::implementations::grok_build::task::backend::SubagentBackend::spawn(
-                &backend, request, None,
+                &backend, request, None, None,
             )
             .await
         }
@@ -1268,7 +1268,7 @@ fn insert_queued(
             request: Box::new(request),
             queued_at: tokio::time::Instant::now(),
             caller: super::super::queue::QueuedCaller::Awaiting {
-                result_tx,
+                result_tx: crate::implementations::grok_build::task::result_delivery::SubagentResultSender::new(result_tx, None),
                 deadline: None,
             },
             agent_address: None,

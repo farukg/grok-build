@@ -2,7 +2,10 @@
 #[path = "completion_persistence.rs"]
 mod completion_persistence;
 use super::*;
-pub(crate) use completion_persistence::create_completion_test_actor;
+pub(crate) use completion_persistence::{
+    ChatFixtureEvent, create_completion_test_actor, create_completion_test_actor_ex,
+    create_observed_completion_test_actor,
+};
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCompletionSummary, SubagentSnapshot, SubagentSnapshotStatus,
 };
@@ -1012,6 +1015,129 @@ pub(crate) async fn disk_full_actor() -> SessionActor {
     let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
     actor.notifications.disk_full = tokio::sync::watch::channel(true).1;
     actor
+}
+pub(crate) struct CompletionWakeReceiverFixture {
+    pub(crate) actor: Arc<SessionActor>,
+    pub(crate) sender: mpsc::UnboundedSender<SessionCommand>,
+    pub(crate) writes: mpsc::UnboundedReceiver<ChatFixtureEvent>,
+    pub(crate) task: tokio_util::task::AbortOnDropHandle<()>,
+}
+pub(crate) async fn completion_wake_receiver_fixture() -> CompletionWakeReceiverFixture {
+    let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
+    drain_gateway(gateway_rx);
+    let (actor, event_rx, writes) =
+        create_observed_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+    actor.state.lock().await.running_task = Some(running_task_stub("caller-busy"));
+    let actor = Arc::new(actor);
+    let (sender, commands) = mpsc::unbounded_channel();
+    let (chat_sender, chat_events) = mpsc::unbounded_channel();
+    let receiver_actor = actor.clone();
+    let task = tokio::task::spawn_local(async move {
+        let _chat_sender = chat_sender;
+        super::run_session(
+            receiver_actor,
+            commands,
+            chat_events,
+            event_rx,
+            None,
+            Arc::new(parking_lot::Mutex::new(
+                xai_grok_workspace::file_system::CodebaseIndexManager::new(),
+            )),
+            std::path::PathBuf::from("/tmp"),
+            crate::session::fs_watch::FsWatchCapabilities::none(),
+        )
+        .await;
+    });
+    CompletionWakeReceiverFixture {
+        actor,
+        sender,
+        writes,
+        task: tokio_util::task::AbortOnDropHandle::new(task),
+    }
+}
+pub(crate) fn bash_completed_notification(task_id: &str) -> PendingNotification {
+    PendingNotification {
+        prompt_id: format!("task-completed-{task_id}"),
+        prompt_blocks: vec![acp::ContentBlock::from(format!(
+            "Background task {task_id} completed."
+        ))],
+        priority: NotificationPriority::Later,
+        source: NotificationSource::BashTaskCompleted {
+            task_id: task_id.into(),
+        },
+    }
+}
+pub(crate) fn monitor_event_notification(task_id: &str) -> PendingNotification {
+    PendingNotification {
+        prompt_id: format!("monitor-event-{task_id}"),
+        prompt_blocks: vec![acp::ContentBlock::from(format!("Monitor {task_id} event."))],
+        priority: NotificationPriority::Next,
+        source: NotificationSource::MonitorEvent {
+            task_id: task_id.into(),
+        },
+    }
+}
+pub(crate) fn monitor_completed_notification(task_id: &str) -> PendingNotification {
+    PendingNotification {
+        prompt_id: format!("task-completed-{task_id}"),
+        prompt_blocks: vec![acp::ContentBlock::from(format!(
+            "Monitor {task_id} completed."
+        ))],
+        priority: NotificationPriority::Later,
+        source: NotificationSource::MonitorCompleted {
+            task_id: task_id.into(),
+        },
+    }
+}
+pub(crate) fn task_wake_admission(
+    source: NotificationSource,
+) -> (TaskWakeAdmission, oneshot::Receiver<bool>) {
+    let task_id = source.task_id();
+    let (respond_to, receive) = oneshot::channel();
+    (
+        TaskWakeAdmission {
+            respond_to,
+            fallback: TaskWakeFallback {
+                prompt_id: format!("task-completed-{task_id}"),
+                prompt_blocks: vec![acp::ContentBlock::from(format!(
+                    "Background task {task_id} completed."
+                ))],
+                source,
+            },
+        },
+        receive,
+    )
+}
+pub(crate) enum TaskOutputFixture {
+    Running,
+    Completed,
+    Failed,
+    InterruptedWait,
+}
+pub(crate) fn task_output_result(
+    task_id: &str,
+    fixture: TaskOutputFixture,
+) -> xai_tool_types::TaskOutputResult {
+    let (status, exit_code) = match fixture {
+        TaskOutputFixture::Running => ("running", None),
+        TaskOutputFixture::Completed => ("completed", Some(0)),
+        TaskOutputFixture::Failed => ("failed", Some(1)),
+        TaskOutputFixture::InterruptedWait => ("cancelled", None),
+    };
+    let output = format!("output {task_id}");
+    xai_tool_types::TaskOutputResult {
+        task_id: task_id.into(),
+        status: status.into(),
+        command: format!("echo {task_id}"),
+        exit_code,
+        started: "2026-01-01T00:00:00Z".into(),
+        ended: exit_code.map(|_| "2026-01-01T00:00:01Z".into()),
+        duration_secs: 1.0,
+        raw_output_bytes: output.len(),
+        output,
+        output_file: format!("/tmp/{task_id}.output"),
+        ..Default::default()
+    }
 }
 pub(crate) fn subagent_summary(id: &str) -> SubagentCompletionSummary {
     SubagentCompletionSummary {

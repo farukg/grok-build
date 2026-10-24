@@ -3,6 +3,9 @@
 
 pub mod e2e;
 
+pub use crate::agent::subagent::completion_test_support::{
+    CompletionReplay, completion_replay_for_e2e,
+};
 pub use crate::agent::subagent::isolated_spawn_e2e::{
     IsolatedSubagentSpawn, spawn_isolated_subagent_for_e2e,
 };

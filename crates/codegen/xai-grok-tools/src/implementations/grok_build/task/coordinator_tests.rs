@@ -696,7 +696,7 @@ fn spawn_noting_registration(
 ) {
     let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
-        SubagentBackend::spawn(&backend, request, Some(registered_tx)).await
+        SubagentBackend::spawn(&backend, request, Some(registered_tx), None).await
     });
     (registered_rx, handle)
 }

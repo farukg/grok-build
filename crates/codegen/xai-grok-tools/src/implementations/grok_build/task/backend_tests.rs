@@ -1,3 +1,4 @@
+use super::super::coordinator::ChildCompletion;
 use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
 use super::*;
 use crate::implementations::grok_build::task::types::{

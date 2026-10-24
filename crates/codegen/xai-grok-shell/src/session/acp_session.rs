@@ -1518,7 +1518,7 @@ mod replace_system_prompt_tests;
 mod served_route_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/support.rs"]
-mod support;
+pub(crate) mod support;
 #[cfg(test)]
 #[path = "acp_session_tests/usage_categories_tests.rs"]
 mod usage_categories_tests;

@@ -2363,6 +2363,7 @@ mod interjection;
 mod session_routing;
 mod plugins;
 mod subagents;
+mod completion_replay;
 mod subagent_attempt_lifecycle;
 mod subagent_delivery;
 mod goals;

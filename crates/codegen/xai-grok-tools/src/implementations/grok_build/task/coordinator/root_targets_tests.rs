@@ -8,8 +8,8 @@ use xai_message_delivery_core::{AgentId, AttemptId};
 
 use super::*;
 use crate::implementations::grok_build::task::coordinator::active_message::tests::{
-    TestCoordinator, finish_child, fixture, insert_child_with, insert_pending, promote_pending,
-    recv_with_timeout, release_admission, response_outcome,
+    TestCoordinator, finish_child, finish_child_before_visibility, fixture, insert_child_with,
+    insert_pending, promote_pending, recv_with_timeout, release_admission, response_outcome,
 };
 use crate::implementations::grok_build::task::coordinator::agent_targets::tests::holder;
 use crate::implementations::grok_build::task::coordinator::{
@@ -221,16 +221,18 @@ async fn root_resolution_routes_and_completion_are_exact() {
     assert!(coordinator.root_active_messages.is_empty());
     coordinator.terminal_outputs.insert(
         CHILD.to_owned(),
-        crate::implementations::grok_build::task::coordinator::ChildRunOutput {
-            result: crate::implementations::grok_build::task::types::SubagentResult {
-                state: SubagentState::Completed,
-                subagent_id: CHILD.to_owned(),
-                output: "sentinel".into(),
-                ..Default::default()
+        crate::implementations::grok_build::task::coordinator_state::TerminalOutput::Finishing(
+            crate::implementations::grok_build::task::coordinator::ChildRunOutput {
+                result: crate::implementations::grok_build::task::types::SubagentResult {
+                    state: SubagentState::Completed,
+                    subagent_id: CHILD.to_owned(),
+                    output: "sentinel".into(),
+                    ..Default::default()
+                },
+                completion_data: (),
+                snapshot_ref: None,
             },
-            completion_data: (),
-            snapshot_ref: None,
-        },
+        ),
     );
     let response = begin(
         &mut coordinator,

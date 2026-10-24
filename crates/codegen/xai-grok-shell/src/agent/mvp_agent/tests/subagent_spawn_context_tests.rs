@@ -158,21 +158,122 @@ async fn memory_reapply_updates_future_spawn_contexts_only() {
         "the existing session snapshot must remain unchanged"
     );
 }
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn subagent_spawn_context_shares_parent_goal_loop_gate() {
-    use std::sync::atomic::Ordering::Relaxed;
-    let agent = build_minimal_agent_for_tests();
-    let sid = acp::SessionId::new("parent-goal");
-    let handle = make_test_handle("test-model", false, None);
-    let parent_gate = handle.tool_context.goal_loop_active_gate.clone();
-    agent.insert_resident(&sid, handle);
-    let ctx = agent.build_subagent_spawn_context(sid.0.as_ref());
-    assert!(!ctx.goal_loop_active.load(Relaxed));
-    parent_gate.store(true, Relaxed);
-    assert!(
-        ctx.goal_loop_active.load(Relaxed),
-        "subagent context must observe the parent's goal-loop gate (same Arc)"
-    );
+    use crate::session::acp_session::support::{
+        ChatFixtureEvent, completion_wake_receiver_fixture, set_goal_harness_for_tests,
+    };
+    use crate::session::goal_tracker::{GoalPauseReason, GoalStatus};
+    use crate::session::{NotificationPriority, NotificationSource, SessionCommand};
+    use xai_grok_tools::reminders::task_completion::ReportedTaskCompletions;
+    use xai_grok_tools::types::resources::State;
+
+    tokio::task::LocalSet::new().run_until(async {
+        for target in [None, Some(GoalStatus::Active), Some(GoalStatus::UserPaused)] {
+            let mut receiver = completion_wake_receiver_fixture().await;
+            receiver.actor.last_live_orphan_reconcile.set(Some(std::time::Instant::now()));
+            let agent = build_minimal_agent_for_tests();
+            let sid = receiver.actor.session_info.id.clone();
+            let mut handle = make_test_handle("test-model", false, None);
+            handle.cmd_tx = receiver.sender.clone();
+            handle.persistence_tx = receiver.actor.notifications.persistence_tx.clone();
+            handle.chat_state_handle = receiver.actor.chat_state_handle.clone();
+            handle.info = receiver.actor.session_info.clone();
+            agent.insert_resident(&sid, handle);
+            let ctx = agent.build_subagent_spawn_context(sid.0.as_ref());
+            assert_eq!(receiver.actor.goal_tracker.lock().status(), None);
+            set_goal_harness_for_tests(&receiver.actor);
+            if target.is_some() {
+                receiver.actor.goal_tracker.lock().create_goal(
+                    "later-parent-goal".into(),
+                    "observe late goal activation".into(),
+                    None,
+                    0,
+                    "2026-01-01T00:00:00Z".into(),
+                    None,
+                );
+                if target == Some(GoalStatus::UserPaused) {
+                    assert!(receiver.actor.goal_tracker.lock().pause(GoalPauseReason::User));
+                }
+            }
+            assert_eq!(receiver.actor.goal_tracker.lock().status(), target);
+            drop(receiver.actor.state.lock().await.running_task.take());
+            let parent = ctx.parent_cmd_tx.as_ref().expect("prebuilt child parent channel");
+            parent.send(SessionCommand::InjectNotification {
+                prompt_id: "task-completed-late-goal-probe".into(),
+                prompt_blocks: vec![acp::ContentBlock::from("late ordinary task result")],
+                priority: NotificationPriority::Later,
+                source: NotificationSource::BashTaskCompleted { task_id: "late-goal-probe".into() },
+            }).expect("real parent receiver");
+            let (respond_to, settled) = tokio::sync::oneshot::channel();
+            parent.send(SessionCommand::GetToolOverrides { respond_to }).expect("parent FIFO barrier");
+            tokio::time::timeout(std::time::Duration::from_secs(5), settled).await
+                .expect("notification drain FIFO").expect("real receiver acknowledgement");
+            let bridge = receiver.actor.agent.borrow().tool_bridge().clone();
+            let resources = bridge.shared_resources().await;
+            assert!(resources.lock().await.get::<State<ReportedTaskCompletions>>()
+                .is_some_and(|reported| reported.is_reported("late-goal-probe")));
+            if target == Some(GoalStatus::Active) {
+                assert!(receiver.actor.state.lock().await.pending_inputs.is_empty());
+                assert!(receiver.actor.state.lock().await.running_task.is_none());
+                assert!(receiver.actor.state.lock().await.pending_notifications.is_empty());
+                assert!(!receiver.actor.chat_state_handle.get_conversation().await.iter()
+                    .any(|item| item.text_content().contains("late ordinary task result")),
+                    "a context built before activation must not bypass the current parent Goal");
+                let id = xai_chat_state::SubagentCompletionId {
+                    subagent_id: "late-goal-child".into(),
+                    attempt_id: xai_message_delivery_core::AttemptId::mint(0xab),
+                };
+                crate::agent::subagent::enqueue_completion_wake(
+                    parent,
+                    &id,
+                    crate::session::CompletionWakeKind::Fresh,
+                    xai_grok_tools::reminders::wrap_reminder("late child result"),
+                    &ctx.parent_session_id,
+                    &None,
+                );
+                let acknowledged = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        match receiver.writes.recv().await.expect("actual chat persistence observation") {
+                            ChatFixtureEvent::InputAcknowledged { projection, acknowledgement } => {
+                                if let xai_chat_state::InputProjection::Subagent(projected) = projection
+                                    && projected.receipt.completion == id {
+                                    break acknowledgement;
+                                }
+                            }
+                            ChatFixtureEvent::MessageQueued(_) => {}
+                        }
+                    }
+                }).await.expect("child results remain admissible under the newly active Goal");
+                assert!(matches!(acknowledged, xai_chat_state::CompletionProjectionAck::Appended));
+                let conversation = receiver.actor.chat_state_handle.get_conversation().await;
+                assert_eq!(conversation.iter().filter(|item| matches!(item,
+                    xai_grok_sampling_types::ConversationItem::User(user)
+                        if user.synthetic_reason == xai_grok_sampling_types::SyntheticReason::SubagentCompleted
+                            && item.text_content().contains("late child result"))).count(), 1);
+                assert_eq!(conversation.iter().filter(|item| item.text_content().contains("late child result")).count(), 1);
+                let (respond_to, receive) = tokio::sync::oneshot::channel();
+                receiver.actor.notifications.persistence_tx.send(
+                    crate::session::persistence::PersistenceMsg::GetCompletionState { respond_to }
+                ).expect("real completion receipt owner");
+                let persisted = receive.await.expect("receipt acknowledgement").expect("durable receipts");
+                assert_eq!(persisted.receipts.iter().filter(|receipt| receipt.completion == id).count(), 1);
+            } else {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        match receiver.writes.recv().await.expect("actual chat write observation") {
+                            ChatFixtureEvent::MessageQueued(item) => {
+                                if item.text_content().contains("late ordinary task result") { break; }
+                            }
+                            ChatFixtureEvent::InputAcknowledged { .. } => {}
+                        }
+                    }
+                }).await.expect("an absent or paused Goal must permit ordinary task completion");
+                let conversation = receiver.actor.chat_state_handle.get_conversation().await;
+                assert_eq!(conversation.iter().filter(|item| item.text_content().contains("late ordinary task result")).count(), 1);
+            }
+        }
+    }).await;
 }
 #[tokio::test]
 async fn subagent_spawn_context_disables_ask_user_question_from_enabled_parent() {

@@ -295,12 +295,10 @@ async fn closed_admission_ack_stores_fallback_before_prompt_rejection() {
             let origin = crate::session::PromptOrigin::TaskCompleted {
                 task_id: "mon-timeout".to_string(),
             };
-            let (admission, response_rx) = task_wake_admission(
-                "mon-timeout",
-                NotificationSource::MonitorCompleted {
+            let (admission, response_rx) =
+                task_wake_admission(NotificationSource::MonitorCompleted {
                     task_id: "mon-timeout".to_string(),
-                },
-            );
+                });
             drop(response_rx);
             assert!(
                 actor
@@ -328,12 +326,10 @@ async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             actor.state.lock().await.notifications_suppressed = true;
-            let (admission, response_rx) = task_wake_admission(
-                "sub-1",
-                NotificationSource::BashTaskCompleted {
+            let (admission, response_rx) =
+                task_wake_admission(NotificationSource::BashTaskCompleted {
                     task_id: "sub-1".to_string(),
-                },
-            );
+                });
             assert!(
                 actor
                     .admit_task_completion_wake(
@@ -368,12 +364,10 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
                 .as_ref()
                 .expect("completion reservations")
                 .reserve("bg-normal".to_string());
-            let (admission, response_rx) = task_wake_admission(
-                "bg-normal",
-                NotificationSource::BashTaskCompleted {
+            let (admission, response_rx) =
+                task_wake_admission(NotificationSource::BashTaskCompleted {
                     task_id: "bg-normal".to_string(),
-                },
-            );
+                });
             let fallback = actor
                 .admit_task_completion_wake(&origin, admission)
                 .await
@@ -752,7 +746,7 @@ async fn task_output_completed_drops_matching_pending_input() {
             }
             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
                 "bg-target",
-                "completed",
+                TaskOutputFixture::Completed,
             )));
             let consumed = consumed_completion_ids(&output);
             assert_eq!(consumed, vec!["bg-target"]);
@@ -794,8 +788,8 @@ async fn task_output_failed_drops_matching_pending_input() {
                 ToolOutput::TaskOutput(TaskOutputOutput::MultiResult(MultiTaskOutputResult {
                     mode: "wait_all".into(),
                     results: vec![
-                        task_output_result("bg-failed", "failed"),
-                        task_output_result("bg-running", "running"),
+                        task_output_result("bg-failed", TaskOutputFixture::Failed),
+                        task_output_result("bg-running", TaskOutputFixture::Running),
                     ],
                     summary: String::new(),
                 }));
@@ -830,7 +824,7 @@ async fn interrupted_wait_placeholder_keeps_pending_input() {
                 .push_back(task_completed_input("bg-still-running"));
             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
                 "bg-still-running",
-                "cancelled",
+                TaskOutputFixture::InterruptedWait,
             )));
             let consumed = consumed_completion_ids(&output);
             assert!(consumed.is_empty());
@@ -1099,9 +1093,9 @@ async fn multi_task_output_drops_each_completed_id() {
                 ToolOutput::TaskOutput(TaskOutputOutput::MultiResult(MultiTaskOutputResult {
                     mode: "all".into(),
                     results: vec![
-                        task_output_result("bg-done-1", "completed"),
-                        task_output_result("bg-done-2", "completed"),
-                        task_output_result("bg-running", "running"),
+                        task_output_result("bg-done-1", TaskOutputFixture::Completed),
+                        task_output_result("bg-done-2", TaskOutputFixture::Completed),
+                        task_output_result("bg-running", TaskOutputFixture::Running),
                     ],
                     summary: String::new(),
                 }));
@@ -1137,7 +1131,7 @@ async fn task_output_running_does_not_drop_pending_input() {
             }
             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
                 "bg-running",
-                "running",
+                TaskOutputFixture::Running,
             )));
             let consumed = consumed_completion_ids(&output);
             assert!(
@@ -1299,7 +1293,7 @@ async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
             }
             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
                 "bg-foo",
-                "completed",
+                TaskOutputFixture::Completed,
             )));
             let result = ToolRunResult {
                 completed_subagents: Vec::new(),

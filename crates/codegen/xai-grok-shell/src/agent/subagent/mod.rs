@@ -2901,6 +2901,8 @@ pub(crate) async fn reconcile_live_orphaned_subagents(
     )
     .await;
 }
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod completion_test_support;
 #[cfg(feature = "test-support")]
 pub(crate) mod isolated_spawn_e2e;
 #[cfg(test)]
