@@ -86,8 +86,13 @@ change and rollout boundary — never unilateral gateway edits (outside grok-bui
 
 ## Verification boundaries
 
+- **GitHub Actions quota is scarce and binding**: at most one consolidated run per wave,
+  only after the full static pass (refuter + lead review + typo/API self-check). Never
+  iterate CI reflexively; analyze failures from the run capture. An unavoidable extra run
+  after root-causing from a capture is the honest fallback, not the default loop.
 - Workers author only; every build/check/test runs through GitHub Actions after the batch
-  is integrated (repo rule; no local cargo).
+  is integrated (repo rule; no local cargo on the integration path; a local
+  committed-state build happens only if a toolchain exists — see plan step 3).
 - Pushes only to `farukg/grok-build` (`origin`); never to `xai-org/grok-build`.
 - No force-push on `main`; integration branch may be force-pushed with lease.
 - Stream file updates per lane; `docs/fork/STATUS.md` only when something lands on `main`.
