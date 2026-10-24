@@ -1,0 +1,3 @@
+[unbuilt] [ci] cover completion and goal fixtures in remote regression runs
+
+Run the full shell library suite by default, cover the complete task coordinator and backend namespace, and execute selection helper tests plus both child-navigation PTY scenarios. Keep all Rust execution in GitHub Actions.

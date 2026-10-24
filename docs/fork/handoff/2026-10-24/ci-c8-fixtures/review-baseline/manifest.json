@@ -1,0 +1,74 @@
+[
+  {
+    "path": "crates/codegen/xai-chat-state/src/actor/tests.rs",
+    "sha256": "2eeebf8823c2b57868fe7ea5a0b8460c80a0be554d696f27abd09e4bc7bb7f22"
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs",
+    "sha256": "b0d24d6ada734a05410c9cddce797db99cd287305a0ac0864743064a7251bf4b"
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_selection.rs",
+    "sha256": "a611a88ad392c1bac47017bb415b6dc49d5f434a36bfdc9276db80f5bf3ba1cb"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs",
+    "sha256": "d61a9460dca004bf62b0c0ae376ed1ac7812a4726c91a0344b3143c902b1aea2"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs",
+    "sha256": "cf4dd5fddf7d15925ebba0a48de6c5107a572e26f2ffc910bb017738524dfcb0"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/completion_fixture.rs",
+    "sha256": "f9adbb05f623d9048a908266e5743194a85311ad2e9f153c368c239a8f1b62df"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/coordinator_fixture.rs",
+    "sha256": "96ca1acb9ec708cc64b731b2f08951c4ba11a4889b8128fbb69b7e05f7817c81"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "sha256": "cc88f6d89735f73df1986eabbe42f32f8ee31dab030fc7c724cd79ebfa3453bb"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "sha256": "4322470710c7bc820a505541ff3c880f3bc499cfd4e5436ce42fc7eafba7fc90"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session.rs",
+    "sha256": "1a8078722c230629658342365205b9420a410aee35d65a8edb2365546d539764"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "sha256": "87be37ae0829d823401c09fc9d4496848416604f988f1f1089548922009b8507"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_persistence.rs",
+    "sha256": "012be7da8e8ce903e29e579238b9e98def46c2ded7cdd151d8ca9eddc0afb449"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs",
+    "sha256": "f4fa5eda9ad365009a3c8845022434b725e1d797312875720de6d235abe344b4"
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs",
+    "sha256": "e44b19f78f0a6f6fb8404653a6c609f23e2ecc80ee6afae98867d67c3a658500"
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs",
+    "sha256": "f71f985adb155c9b6cd506974cbcfaf081f1e9f68da2066b2862afae602af04f"
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "sha256": "be2464f541ca5d91eeaade8b01346c189e323fe2b7c57fde8dadad8224c9107c"
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs",
+    "sha256": "60b70ff1dc9866522ff945e2d7c0403d947d90239bd54755d78cbf2bf50e97b2"
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+    "sha256": "d702f6479012f4dbe61ff356c4298463b11ad90aba7469485a8717566388f8e4"
+  }
+]

@@ -1,0 +1,3 @@
+[unbuilt] [test] prove PTY focus with actual selection transitions
+
+Observe the real message selection frame, its disappearance before clicking, and its new appearance afterward. Compare composer snapshots with matching focus while retaining the child identity, compaction, cancellation and reopen assertions and the original deadline.

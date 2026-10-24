@@ -1,0 +1,39 @@
+crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs:162: async fn subagent_spawn_context_keeps_completion_policy_when_parent_goal_changes() {
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:510: async fn snapshot_ref_write_requires_a_producer_commit_before_terminal_promotion() {
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:11: pub(super) async fn persisted_completion_state(
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:32: pub(super) async fn input_turn_binding(&self, prompt_id: &str) -> InputTurnBinding {
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:63: pub(super) async fn current_turn_admission(
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:112: pub(super) async fn commit_subagent_projection(
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:146: pub(super) async fn commit_observed_subagent_tool_result(
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_digest.rs:8: pub(super) async fn project_subagent_wake_turn(
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/delivery_receiver.rs:18: pub(super) async fn receive_durable_delivery(&self, request: DeliveryRequest) -> DeliveryResult {
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/delivery_receiver.rs:76: pub(super) async fn project_durable_delivery(&self, delivery_id: &str, digest: &str, turn_id: &str, payload: String) -> Result<bool, acp::Error> {
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs:388: pub(super) async fn emit_turn_completed(
+crates/codegen/xai-grok-shell/src/session/completion_delivery.rs:95: pub(crate) fn completion_reference_text(
+crates/codegen/xai-grok-shell/src/session/completion_delivery.rs:252: pub(crate) fn result_reference(
+crates/codegen/xai-grok-shell/src/session/delivery_receiver.rs:318: pub(crate) fn settle_turn(
+crates/codegen/xai-grok-shell/src/session/receiver_execution.rs:38: pub(crate) fn bind_turn(
+crates/codegen/xai-grok-shell/src/session/receiver_execution.rs:70: pub(crate) fn finish_turn(&mut self, turn_id: &str, parent_task: &xai_chat_state::ParentTask) {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs:245: pub(super) fn read_completion_state_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs:289: pub(crate) fn append_completion_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs:515: fn reconcile_completion_turns_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_batch_tests.rs:6: async fn multi_result_commit_loss_recovers_one_input_and_one_continuation_for_the_whole_parent() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:52: async fn retry_uses_the_actual_committed_occurrence_not_the_retry_prompt() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:135: async fn restart_continues_existing_projection_and_fences_late_parent_terminals() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:233: async fn closed_parent_admission_cannot_project_or_rebind_a_completion() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:271: async fn receiver_recovery_preserves_parent_fencing_and_never_requeues_visible_input() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:80: fn recover_delivery_state(&self, info: &Info, summary: &mut Summary) -> io::Result<()> {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:174: fn reconcile_delivery_terminals(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:358: pub(crate) fn append_delivery_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:509: pub(super) fn finish_delivery_turn_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:544: pub(super) async fn recover_deliveries_owned(&self, info: &Info) -> io::Result<Summary> {
+crates/codegen/xai-grok-shell/tests/test_completion_admission.rs:106: fn native_receiver_cancel_retains_its_parent_binding_after_task_teardown() {
+crates/codegen/xai-grok-shell/tests/test_completion_admission.rs:265: fn foreground_child_success_and_error_commit_the_observed_tool_result_once() {
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs:713: fn handle_terminal_prepared(
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs:861: fn handle_terminal_visible(
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion.rs:13: pub(super) fn prepare_buffered_completion(
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion.rs:48: pub(super) fn publish_buffered_completion(&mut self, publication: CompletionBufferPublication) {
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs:10: async fn tool_reminders_reservations_and_foreign_acks_cannot_consume_child_occurrences() {
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs:109: async fn completion_buffer_waits_for_visibility_and_late_publication_respects_receipts_and_teardown()
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs:190: async fn producer_commit_failure_fails_the_caller_and_leaves_no_phantom_completion() {
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs:242: async fn reused_child_keeps_both_attempts_and_a_late_ack_cannot_consume_the_new_one() {

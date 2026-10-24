@@ -1,0 +1,6 @@
+[unbuilt] [test] verify pruning against retained history across responses
+
+Keep the below-half fixture's retained estimate below its documented gate
+while retaining an old result eligible for trimming. Exercise successive
+provider usage reports to detect pruning oscillation without mutating the
+retained conversation or weakening the original no-prune assertion.

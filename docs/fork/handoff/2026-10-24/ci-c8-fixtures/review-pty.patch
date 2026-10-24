@@ -1,0 +1,126 @@
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+--- a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+@@ -149,6 +149,8 @@
+     pub(crate) fn focus_scrollback(&mut self) {
+         let deadline = Instant::now() + ROW_TIMEOUT;
+         let before = selection::frames(&self.harness);
++        let focused_draft =
++            selection::composer_text(&self.harness).expect("focused composer contents");
+         self.harness.inject_keys(b"\t").expect("focus scrollback");
+         self.harness
+             .wait_until(
+@@ -178,6 +180,33 @@
+             .expect("bounded Home navigation must reach the original go prompt");
+         let (row, col) = selection::selected_prompt(&self.harness)
+             .expect("structurally selected original prompt");
++        let go_frame = selection::selected_prompt_frame(&self.harness).expect("concrete go frame");
++        let draft = selection::composer_text(&self.harness).expect("current composer contents");
++        let (composer_row, composer_col) =
++            selection::composer_location(&self.harness).expect("actual composer focus target");
++        self.harness
++            .inject_keys(sgr_mouse(0, composer_row, composer_col, 'M').as_bytes())
++            .expect("press composer without editing the draft");
++        self.harness
++            .inject_keys(sgr_mouse(0, composer_row, composer_col, 'm').as_bytes())
++            .expect("release composer focus click");
++        self.harness
++            .wait_until(
++                "the same go prompt visible without its former selection frame",
++                deadline.saturating_duration_since(Instant::now()),
++                |harness| {
++                    selection::prompt_location(harness) == Some((row, col))
++                        && !selection::frames(harness).contains(&go_frame)
++                        && selection::selected_prompt(harness).is_none()
++                },
++            )
++            .expect("composer focus must visibly remove the concrete go selection");
++        assert_eq!(
++            selection::composer_text(&self.harness).as_ref(),
++            Some(&focused_draft),
++            "focus-only mouse routing must not prefill a draft"
++        );
++        let unfocused = selection::frames(&self.harness);
+         self.harness
+             .inject_keys(sgr_mouse(0, row, col, 'M').as_bytes())
+             .expect("press the actual go prompt");
+@@ -188,9 +217,17 @@
+             .wait_until(
+                 "the clicked go prompt inside its scrollback selection frame",
+                 deadline.saturating_duration_since(Instant::now()),
+-                |harness| selection::selected_prompt(harness).is_some(),
+-            )
+-            .expect("click must retain the actual prompt selection");
++                |harness| {
++                    selection::selected_prompt(harness) == Some((row, col))
++                        && selection::selected_prompt_frame(harness)
++                            .is_some_and(|frame| !unfocused.contains(&frame))
++                },
++            )
++            .expect("click must create a new actual prompt selection frame");
++        assert_eq!(
++            selection::composer_text(&self.harness).as_ref(),
++            Some(&draft)
++        );
+         self.harness
+             .inject_keys(keys::RIGHT)
+             .expect("open the original prompt's turn");
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_selection.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_selection.rs
+--- a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_selection.rs
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_selection.rs
+@@ -100,10 +100,14 @@
+                         .all(|ch| ch.is_whitespace())
+                 });
+             let pushed_header = self.cells[start - 1][5] == '❯';
++            let pushed_two_rows = self.cells[start - 2][5] == '❯'
++                && self.cells[start - 1][2..usize::from(DEFAULT_COLS) - 2]
++                    .iter()
++                    .all(|ch| ch.is_whitespace());
+             let top = if self.edges(start - 1) == Some(('┌', '┐')) {
+                 Edge::Corners
+             } else if self.edges(start) == Some(('┆', '┆'))
+-                && (start == 3 || pinned_header || pushed_header)
++                && (start == 3 || pinned_header || pushed_header || pushed_two_rows)
+             {
+                 Edge::Clipped
+             } else {
+@@ -147,12 +151,34 @@
+     Screen::read(harness).map_or_else(Vec::new, |screen| screen.frames())
+ }
+ 
+-pub(super) fn selected_prompt(harness: &PtyHarness) -> Option<(u16, u16)> {
++pub(super) fn prompt_location(harness: &PtyHarness) -> Option<(u16, u16)> {
++    Screen::read(harness)?.prompt()
++}
++
++pub(super) fn composer_location(harness: &PtyHarness) -> Option<(u16, u16)> {
+     let screen = Screen::read(harness)?;
+-    let (row, col) = screen.prompt()?;
++    Some(((screen.composer_top + 1) as u16, 5))
++}
++
++pub(super) fn composer_text(harness: &PtyHarness) -> Option<String> {
++    let screen = Screen::read(harness)?;
++    Some(
++        screen.cells[screen.composer_top + 1][3..usize::from(DEFAULT_COLS) - 3]
++            .iter()
++            .collect(),
++    )
++}
++
++pub(super) fn selected_prompt_frame(harness: &PtyHarness) -> Option<SelectionFrame> {
++    let screen = Screen::read(harness)?;
++    let (row, _) = screen.prompt()?;
+     screen
+         .frames()
+-        .iter()
+-        .any(|frame| frame.body.contains(&usize::from(row)))
+-        .then_some((row, col))
++        .into_iter()
++        .find(|frame| frame.body.contains(&usize::from(row)))
+ }
++
++pub(super) fn selected_prompt(harness: &PtyHarness) -> Option<(u16, u16)> {
++    selected_prompt_frame(harness)?;
++    prompt_location(harness)
++}

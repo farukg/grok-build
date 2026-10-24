@@ -1,0 +1,14 @@
+ M crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs
+ M crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+ M crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs
+ M crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+ M crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs
+ M crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs
+ M crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs
+ M crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+?? crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs
+?? crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs
+?? crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs

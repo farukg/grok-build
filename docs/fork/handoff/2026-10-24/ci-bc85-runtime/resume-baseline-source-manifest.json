@@ -1,0 +1,120 @@
+{
+  "head": "bc85ceb95ee122ed436cfbe516c41bd6208d4fb2",
+  "source_tree": "a2dda6d3ea8d2ec96a3d7779a39b88e69c1b2d94",
+  "sources": [
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs",
+      "head_sha256": null,
+      "current_sha256": "5ab4300441fe129bb3dd3ef75ca041cd410f56c280652b778f8b9fd96bf1055b"
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs",
+      "head_sha256": "52bea345a700792dc99ba001493e6f097485358e11d8663f7634a4a644fa0f40",
+      "current_sha256": "bcd5c594c1b4168e7aa4a86fe80399d70e786987d337e25411c9eca7394f749c"
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs",
+      "head_sha256": "f22efce217074a8d17e1e07bb751362560884cdeaf4673f8f411f263c8143921",
+      "current_sha256": "7efc7cb73906ac25c188e35117b9d2cf4a0c290ed204420c7d525d2f07dd738f"
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs",
+      "head_sha256": "b144117d7a8366a748d5c3b86c2c1fd6b70f5cf11f1d2678d9d68b521ac20efa",
+      "current_sha256": "5529b411719daa591ff8da98001bcde8b5a79b9b99805333593dedfb6b9cf077"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+      "head_sha256": "87be37ae0829d823401c09fc9d4496848416604f988f1f1089548922009b8507",
+      "current_sha256": "3ea8aebd1bba659e4b1c4d1eaaa50476905f04d79314f116131cbaf8be3f5aa0"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs",
+      "head_sha256": "3f79a1d2524db30c4dfc87291cd30dcf935529d65ad7f0601253b9b2d33971df",
+      "current_sha256": "901752181bda5dc9f07eafa25990f1fc6dc99e16b677af68e04ea3dbb6c11bc4"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs",
+      "head_sha256": "4a1ddc227e19a7af0a8437ba9f62ed3d64b9da68a674e9dabd69a110845b5f15",
+      "current_sha256": "128b2262071ae99ae6c983e69df058659f5b7252c6cc74eab9a392d75d04c925"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs",
+      "head_sha256": null,
+      "current_sha256": "c13812f5729ab1efa6485c7a0e9ddd42e8a66f83d7f63772df49cf9bd4bd3b17"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs",
+      "head_sha256": "91720004b6cee031c77b55ce1ecc5ba5be32aa85ac18bfdbf8b2df1f0632ba6f",
+      "current_sha256": "6d44717a4017cc765bfb9e409e15fc1f36975a231bf8d489edb326fdf3289351"
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+      "head_sha256": "d702f6479012f4dbe61ff356c4298463b11ad90aba7469485a8717566388f8e4",
+      "current_sha256": "67a5a41460ecc2e50308dec7a7a0237b26c04bf2c58a23d9dc073f6f48a3a9dd"
+    }
+  ],
+  "protected_sources": [
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/metadata_store.rs",
+      "head_sha256": "fe77af8d0bae8c77ab6d9e4ccb686081771f41312bc0c97af3eaedb0ba234e5e",
+      "current_sha256": "fe77af8d0bae8c77ab6d9e4ccb686081771f41312bc0c97af3eaedb0ba234e5e"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/completion_publication.rs",
+      "head_sha256": "56fa29f05dbbcca861b9cc6eac32cab491d4463ba6f0d2392c75e1e5d33febee",
+      "current_sha256": "56fa29f05dbbcca861b9cc6eac32cab491d4463ba6f0d2392c75e1e5d33febee"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs",
+      "head_sha256": "9e65c937a93509a4ce1945f4feff8ea9fecff23d876c69d95c742d4537ea42e1",
+      "current_sha256": "9e65c937a93509a4ce1945f4feff8ea9fecff23d876c69d95c742d4537ea42e1"
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager/src/app/acp_handler/tests/completion_replay.rs",
+      "head_sha256": "b70ef9b494f5d34c3134a12bbe0a3c8bd7f5c49cb4cf1be03b668afd85dab777",
+      "current_sha256": "b70ef9b494f5d34c3134a12bbe0a3c8bd7f5c49cb4cf1be03b668afd85dab777"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+      "head_sha256": "5a9c98c2bce204f388d5795217cb2431ac656ec0c06ea4e5a2644cd19c3f78b0",
+      "current_sha256": "5a9c98c2bce204f388d5795217cb2431ac656ec0c06ea4e5a2644cd19c3f78b0"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-fixtures/bc85-failed-ci.raw",
+      "bytes": 1374665,
+      "sha256": "2b1970de6697281eec1baa9a7f82a67f33f69dfb0f23dcabae455d98cea928d9"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-fixtures/bc85-failed-ci.log",
+      "bytes": 1374665,
+      "sha256": "2b1970de6697281eec1baa9a7f82a67f33f69dfb0f23dcabae455d98cea928d9"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/normalized.log",
+      "bytes": 1342419,
+      "sha256": "abceeecc9880ecd9ba6769e5582e39bd7bf0b28fff3c8073ebf8762dd88ab13c"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/diagnostics.json",
+      "bytes": 3781,
+      "sha256": "adfa2c64f650e99e1ef282919a0ffdf833272dd90353d6fb45e487b0ef709e3d"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/runtime.patch",
+      "bytes": 29820,
+      "sha256": "c8637fe499c5d7be7edcfcbdc1dc9427412a4d204330e872332cf0a0cbce264b"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/production.patch",
+      "bytes": 798,
+      "sha256": "5d1074848957afcd97df986cb5a29612de0be86abb4b2c3823d27ef4dc3c8046"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/fixtures.patch",
+      "bytes": 29022,
+      "sha256": "2f01c7a6027db18f64562575b3d03c0f972ec89bd32507b11d88057911ebdcf9"
+    }
+  ]
+}

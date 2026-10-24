@@ -1,0 +1,169 @@
+{
+  "repo": "/home/fg/projects/org/forks/grok-build",
+  "head": "c8e075ea29ab74356cb477f05dcd70cdf7eb0e4c",
+  "branch": "main",
+  "files": [
+    {
+      "path": "context-modules.d/500_work.d/epics.d/product.d/grok-build/002-attempt-bound-input-admission.adr.md",
+      "bytes": 6279,
+      "sha256": "524db9622e25cc38258b675c0d177cfe38100bdcb1b37aee83021664002087ce",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs",
+      "bytes": 99056,
+      "sha256": "c9e401f165680ab9e3812bf8b430cd0926520a4a5349a9ac846d8713175aecec",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs",
+      "bytes": 18955,
+      "sha256": "a8f6f9c106cbed0372865aa4094229df4a943510c54c87b39f070922b41dec6c",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs",
+      "bytes": 14727,
+      "sha256": "cf4dd5fddf7d15925ebba0a48de6c5107a572e26f2ffc910bb017738524dfcb0",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/completion_fixtures.rs",
+      "bytes": 2943,
+      "sha256": "c12aed2631adf5f8cfeddf136b3db350b2c70a54456cb5ad242d07da0aec1590",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+      "bytes": 117107,
+      "sha256": "48c34183e8e6a6f9c30c0902773edbb0ea70225232761aacdd081fd06d37203e",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+      "bytes": 130537,
+      "sha256": "da5bb624c93c78eccb9f38b6abf7e33d04308b0d6517531397741b49878325f9",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session.rs",
+      "bytes": 116352,
+      "sha256": "57a6fd11e1e9ae98aa602453d306bd66c0cc304090edb1d667c8e6dbd187f8f6",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs",
+      "bytes": 13572,
+      "sha256": "1d15e1296cb5c8202a4561662ee76666f528866e3d01042bdf464146f8540cdd",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_digest.rs",
+      "bytes": 4649,
+      "sha256": "6fc1bbaa2819755f9925b6ecd0e9c896207db5ffd0101f8dc551ae00f047e42e",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_fixtures.rs",
+      "bytes": 2314,
+      "sha256": "913ee498342b1acf7c6e479475f2b715e4849f09c76eb022b4ac85e19946a9d7",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+      "bytes": 94509,
+      "sha256": "3e181bd0a778530aa30b97841fcc418e3dd8271c6802b7343170b04db2d32d3d",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_receiver_fixture.rs",
+      "bytes": 1643,
+      "sha256": "5f8ca63d939364be6578f46c9b322f07a73585c9e9399f4445bacee081d5b4e5",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs",
+      "bytes": 15977,
+      "sha256": "02a72499a91b38966e9ea70d8c86cb6703c22eff92c84aeb8fae87e6c040312a",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/completion_delivery.rs",
+      "bytes": 15576,
+      "sha256": "f4844e8baef08896e9ffac6267b214cd506453f99efa75f61076dacee687dafe",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/tests/test_completion_admission.rs",
+      "bytes": 21797,
+      "sha256": "39d1fac4f218855f52c3e8829c934c9660de846b5c96522b9e961df5909213ec",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/tests/test_completion_goal_activation.rs",
+      "bytes": 5138,
+      "sha256": "8eaf5ab48a51e672cad303ad42823ef6c01c75ccce3ffd6b1e9e834fd3c4e418",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs",
+      "bytes": 37475,
+      "sha256": "f5c97afc59576603193df285d8069dab400b1e18a809a0544401a8e9c3aa281a",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs",
+      "bytes": 93893,
+      "sha256": "7b0b486f0e76cc792fbb989cff443790e0ca6438a1280f7d8f9660df3fd01fa6",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs",
+      "bytes": 62459,
+      "sha256": "9cc69ceafa020aea1264bbd873817b7bc123e6c032a7d3b6dc3ec7799e4d7c5e",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+      "bytes": 32521,
+      "sha256": "e9a5cd1973f3be91d89f1db8fad9c8c6f832091a450cb0522be306562025222a",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion.rs",
+      "bytes": 3337,
+      "sha256": "1c2333d8b2cf7a7daaf3db8938881bd18a028a4effd768737174c3783fcbb3e8",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs",
+      "bytes": 10930,
+      "sha256": "14ec09584bf61e7caf6e32c71eb1fc92152cb261db1a65be186ce26cac9c4580",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs",
+      "bytes": 13830,
+      "sha256": "60b70ff1dc9866522ff945e2d7c0403d947d90239bd54755d78cbf2bf50e97b2",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs",
+      "bytes": 49677,
+      "sha256": "04a2d5eca945563051f4144743e16d275b2c5a44707588aba8096b64bbfa83e6",
+      "newline_at_eof": true
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+      "bytes": 172291,
+      "sha256": "67a5a41460ecc2e50308dec7a7a0237b26c04bf2c58a23d9dc073f6f48a3a9dd",
+      "newline_at_eof": true
+    },
+    {
+      "path": "docs/fork/streams/w1h-hold-deliver.md",
+      "bytes": 6311,
+      "sha256": "38c85046cf7db8729304ab6519bb556ecb04c727c6d1d3de2ff02ecd471a8b16",
+      "newline_at_eof": true
+    }
+  ]
+}

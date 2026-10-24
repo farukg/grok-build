@@ -1,0 +1,95 @@
+{
+  "failed_tests": {
+    "agent::mvp_agent::tests::child_prompt_tests::finished_coordinator_child_compacts_persisted_checkpoint_without_parent_delivery": [
+      1237,
+      1722,
+      3239
+    ],
+    "send_subagent_message_row_opens_child::send_subagent_message_row_opens_child": [
+      2404
+    ],
+    "agent::config::tests::resolve_model_list_inherits_agent_type_and_api_backend": [
+      2967
+    ],
+    "agent::config::tests::slug_propagation_inherits_api_backend_but_not_agent_type": [
+      3004
+    ],
+    "agent::config::tests::slug_propagation_inherits_api_backend_into_config_entry_without_one": [
+      3005
+    ],
+    "session::acp_session::auto_wake_suppression_tests::already_reported_wake_ends_turn_without_sampling": [
+      5587
+    ],
+    "session::acp_session::auto_wake_suppression_tests::idle_caller_commits_success_and_error_wakes_without_a_human_prompt": [
+      5595
+    ],
+    "session::acp_session::auto_wake_suppression_tests::preempted_wake_is_redelivered_by_next_between_turn_drain": [
+      5605
+    ],
+    "session::acp_session::auto_wake_suppression_tests::promotion_drops_reported_wake_without_running_turn": [
+      5606
+    ],
+    "session::acp_session::auto_wake_suppression_tests::refused_wake_leaves_completion_unreported": [
+      5607
+    ],
+    "session::acp_session::auto_wake_suppression_tests::shutdown_drops_pending_synthetic_inputs": [
+      5612
+    ],
+    "session::acp_session::auto_wake_suppression_tests::subagent_completed_drops_matching_pending_input": [
+      5617
+    ],
+    "session::acp_session::auto_wake_suppression_tests::wake_missing_from_buffer_falls_back_to_injected_body": [
+      5627
+    ],
+    "session::acp_session::auto_wake_suppression_tests::wake_turn_digest_coalesces_unreported_siblings": [
+      5628
+    ],
+    "session::acp_session::auto_wake_suppression_tests::wake_turn_under_goal_loop_projects_success_and_error_without_a_human_prompt": [
+      5629
+    ],
+    "session::acp_session::mcp_file_input::tests::file_advertisement_requires_host_preparation_and_bounded_filesystem": [
+      6062
+    ],
+    "session::acp_session::mcp_file_input::tests::finalized_randomized_wrapper_preserves_canonical_file_keys": [
+      6063
+    ],
+    "session::acp_session::mcp_file_input::tests::messages_backend_advertises_inline_only_use_tool": [
+      6067
+    ],
+    "session::acp_session::prompt_mode_transition_tests::a_synthetic_turn_inherits_plan_mode_instead_of_ending_it": [
+      6324
+    ],
+    "session::acp_session::tool_call_telemetry_tests::execute_tool_calls_records_the_product_row_and_execution_span": [
+      6671
+    ],
+    "session::persistence::cleanup_stale_sessions_tests::active_session_keeps_backdated_write_once_artifacts": [
+      8118
+    ],
+    "session::persistence::cleanup_stale_sessions_tests::active_session_sweeps_only_backdated_blob_files": [
+      8119
+    ],
+    "session::persistence::cleanup_stale_sessions_tests::dot_entries_are_kept_while_stray_files_follow_the_mtime_rule": [
+      8121
+    ],
+    "session::persistence::cleanup_stale_sessions_tests::emptied_cwd_dir_is_removed_only_after_a_session_removal": [
+      8122
+    ],
+    "session::persistence::cleanup_stale_sessions_tests::idle_session_is_removed_whole": [
+      8123
+    ],
+    "session::persistence::cleanup_stale_sessions_tests::mark_session_live_keeps_an_idle_session_out_of_a_foreign_sweep": [
+      8125
+    ],
+    "session::unified_list::tests::parse_list_req_forces_kind_under_process_chat_mode_only": [
+      9077
+    ]
+  },
+  "hanging_tests": {
+    "send_subagent_message_row_opens_child::send_subagent_message_row_opens_child": [
+      2403
+    ],
+    "session::acp_session::auto_wake_suppression_tests::active_caller_projects_success_and_error_wakes_at_safe_point_once": [
+      7889
+    ]
+  }
+}

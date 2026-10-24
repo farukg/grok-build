@@ -1,0 +1,16 @@
+{
+  "canonical": {
+    "repo": "/home/fg/projects/org/forks/grok-build",
+    "head": "c8e075ea29ab74356cb477f05dcd70cdf7eb0e4c",
+    "branch": "main",
+    "changed_paths": 27,
+    "manifest_sha256": "02380cdf156f4aebfc52a3c4541d2705c5b5a59bd7065136eee5c42aa326db0b"
+  },
+  "runtime": {
+    "repo": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format",
+    "head": "bc85ceb95ee122ed436cfbe516c41bd6208d4fb2",
+    "branch": "sokrates/ci-c8-format",
+    "changed_paths": 14,
+    "manifest_sha256": "96d1786098d5c8a6258c81c4b140411ef13f0e808c230e8a427694e1e4752dd5"
+  }
+}

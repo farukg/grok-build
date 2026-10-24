@@ -1,0 +1,5 @@
+[unbuilt] [test] observe child completion and terminal compact cancellation
+
+Wait for the parent's scripted completion wake before opening the child,
+then assert the child output in its own transcript. Await the rendered
+terminal cancellation acknowledgement while the auxiliary reply is held.

@@ -1,0 +1,5 @@
+[unbuilt] [ci] preserve Rust cache after late test failures
+
+Use the cache action's supported failure policy so a late regression does
+not discard the dependency build cache before the next repair iteration.
+All existing compilation and test gates remain unchanged.

@@ -1,0 +1,119 @@
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+--- a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+@@ -122,113 +122,114 @@
+         scenario
+     }
+ 
+     /// The screen line carrying `header` ends with it: a collapsed row is the header alone.
+     fn assert_row_is_bare(&self, header: &str) {
+         let screen = self.harness.screen_contents();
+         let line = screen
+             .lines()
+             .find(|line| line.contains(header))
+             .unwrap_or_else(|| panic!("{header:?} not on screen:\n{screen}"));
+         assert!(
+             line.trim_end().ends_with(header),
+             "collapsed row must carry no tail: {line:?}\nscreen:\n{screen}"
+         );
+     }
+ 
+     pub(crate) fn wait_for_row(&mut self, text: &str) {
+         self.harness
+             .wait_for_text(text, ROW_TIMEOUT)
+             .unwrap_or_else(|error| {
+                 panic!(
+                     "{error}\n--- non-system messages ---\n{}",
+                     dump_non_system_messages(&self.content.request_bodies())
+                 )
+             });
+     }
+ 
+     pub(crate) fn focus_scrollback(&mut self) {
+         let deadline = Instant::now() + ROW_TIMEOUT;
+         let before = selection::frames(&self.harness);
++        let focused_draft = selection::composer_text(&self.harness).expect("focused composer contents");
+         self.harness.inject_keys(b"\t").expect("focus scrollback");
+         self.harness
+             .wait_until(
+                 "one new structural scrollback selection frame after Tab",
+                 deadline.saturating_duration_since(Instant::now()),
+                 |harness| {
+                     selection::frames(harness)
+                         .iter()
+                         .filter(|frame| !before.contains(frame))
+                         .count()
+                         == 1
+                 },
+             )
+             .expect("Tab must visibly transfer selection focus into the transcript");
+         // The scripted parent has its initial turn and at most one completion-wake turn.
+         for _ in 0..3 {
+             self.harness
+                 .inject_keys(b"\x1b[H")
+                 .expect("Home to the original user prompt");
+         }
+         self.harness
+             .wait_until(
+                 "the actual go prompt inside its scrollback selection frame",
+                 deadline.saturating_duration_since(Instant::now()),
+                 |harness| selection::selected_prompt(harness).is_some(),
+             )
+             .expect("bounded Home navigation must reach the original go prompt");
+         let (row, col) = selection::selected_prompt(&self.harness)
+             .expect("structurally selected original prompt");
+         let go_frame = selection::selected_prompt_frame(&self.harness).expect("concrete go frame");
+         let draft = selection::composer_text(&self.harness).expect("current composer contents");
+         let (composer_row, composer_col) =
+             selection::composer_location(&self.harness).expect("actual composer focus target");
+         self.harness
+             .inject_keys(sgr_mouse(0, composer_row, composer_col, 'M').as_bytes())
+             .expect("press composer without editing the draft");
+         self.harness
+             .inject_keys(sgr_mouse(0, composer_row, composer_col, 'm').as_bytes())
+             .expect("release composer focus click");
+         self.harness
+             .wait_until(
+                 "the same go prompt visible without its former selection frame",
+                 deadline.saturating_duration_since(Instant::now()),
+                 |harness| {
+                     selection::prompt_location(harness) == Some((row, col))
+                         && !selection::frames(harness).contains(&go_frame)
+                         && selection::selected_prompt(harness).is_none()
+                 },
+             )
+             .expect("composer focus must visibly remove the concrete go selection");
+         assert_eq!(
+             selection::composer_text(&self.harness).as_ref(),
+-            Some(&draft),
++            Some(&focused_draft),
+             "focus-only mouse routing must not prefill a draft"
+         );
+         let unfocused = selection::frames(&self.harness);
+         self.harness
+             .inject_keys(sgr_mouse(0, row, col, 'M').as_bytes())
+             .expect("press the actual go prompt");
+         self.harness
+             .inject_keys(sgr_mouse(0, row, col, 'm').as_bytes())
+             .expect("release the actual go prompt");
+         self.harness
+             .wait_until(
+                 "the clicked go prompt inside its scrollback selection frame",
+                 deadline.saturating_duration_since(Instant::now()),
+                 |harness| {
+                     selection::selected_prompt(harness) == Some((row, col))
+                         && selection::selected_prompt_frame(harness)
+                             .is_some_and(|frame| !unfocused.contains(&frame))
+                 },
+             )
+             .expect("click must create a new actual prompt selection frame");
+         assert_eq!(
+             selection::composer_text(&self.harness).as_ref(),
+             Some(&draft)
+         );
+         self.harness
+             .inject_keys(keys::RIGHT)
+             .expect("open the original prompt's turn");
+         self.harness
+             .wait_for_text(
+                 &format!("Message sent to {CHILD_LABEL}"),

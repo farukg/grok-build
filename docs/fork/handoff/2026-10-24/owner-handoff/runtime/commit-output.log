@@ -1,0 +1,5 @@
+[sokrates/ci-c8-format 14a5f56c] [unbuilt] [checkpoint] preserve runtime repairs at the Grok owner handoff
+ 14 files changed, 649 insertions(+), 153 deletions(-)
+ create mode 100644 crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs
+ create mode 100644 crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs
+ create mode 100644 crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs

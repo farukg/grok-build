@@ -1,0 +1,6 @@
+[unbuilt] [test] exercise finished-child compaction cancellation through PTY
+
+Drive manual compaction and cancellation through the pager terminal, then
+verify session info and reopening the finished child. Run the ignored
+scenario in GitHub Actions against an explicitly selected pager binary.
+Include the scoped delivery regression commands for the following integration.

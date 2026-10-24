@@ -1,0 +1,22 @@
+[
+  {
+    "package": "xai-grok-sampler",
+    "exit_code": 0
+  },
+  {
+    "package": "xai-grok-shell",
+    "exit_code": 0
+  },
+  {
+    "package": "xai-grok-tools",
+    "exit_code": 0
+  },
+  {
+    "package": "xai-grok-pager",
+    "exit_code": 0
+  },
+  {
+    "package": "xai-grok-pager-pty-harness",
+    "exit_code": 0
+  }
+]

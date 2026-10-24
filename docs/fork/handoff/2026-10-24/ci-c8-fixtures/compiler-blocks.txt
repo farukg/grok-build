@@ -1,0 +1,1062 @@
+error: expected identifier, found `:`
+   --> /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs:214:24
+    |
+214 |     completed_subagents: Vec::new(),
+    |                        ^ expected identifier
+
+error: expected identifier, found `:`
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs:214:24
+    |
+214 |     completed_subagents: Vec::new(),
+    |                        ^ expected identifier
+
+error[E0425]: cannot find function `test_gateway` in this scope
+   --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:720:47
+    |
+720 |         present_child_completion(completion, &test_gateway(), wake);
+    |                                               ^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  2 + use crate::test_support::lsp_runtime::test_gateway;
+    |
+
+error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2364:18
+     |
+2364 |       let result = cancel_pending_shell_child(
+     |  __________________^^^^^^^^^^^^^^^^^^^^^^^^^^-
+2365 | |             &child_cmd_tx,
+2366 | |             SessionThread::from_handle(std::thread::spawn(|| {})),
+2367 | |             &ctx.workspace_ops,
+...    |
+2377 | |             true,
+2378 | |         )
+     | |_________- argument #14 of type `&subagent::ShellCompletionData` is missing
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2093:10
+     |
+2093 | async fn cancel_pending_shell_child(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2107 |     completion_data: &ShellCompletionData,
+     |     -------------------------------------
+help: provide the argument
+     |
+2364 |     let result = cancel_pending_shell_child(
+ ...
+2377 |             true,
+2378 ~             /* &ShellCompletionData */,
+2379 ~     )
+     |
+
+error[E0609]: no field `goal_loop_active` on type `subagent::SubagentSpawnContext`
+   --> crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs:170:18
+    |
+170 |     assert!(!ctx.goal_loop_active.load(Relaxed));
+    |                  ^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `lsp`, `process_scope`, `client_hooks`, `sampling_config`, `setup_failure` ... and 91 others
+
+error[E0609]: no field `goal_loop_active` on type `subagent::SubagentSpawnContext`
+   --> crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs:173:13
+    |
+173 |         ctx.goal_loop_active.load(Relaxed),
+    |             ^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `lsp`, `process_scope`, `client_hooks`, `sampling_config`, `setup_failure` ... and 91 others
+
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+   --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:105:27
+    |
+105 |     let completion_data = ShellCompletionData::from_context(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+106 |         &ctx,
+107 |         xai_message_delivery_core::AttemptId::mint(1),
+    |         --------------------------------------------- unexpected argument #2 of type `xai_message_delivery_core::AttemptId`
+    |
+note: associated function defined here
+   --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:584:8
+    |
+584 |     fn from_context(ctx: &SubagentSpawnContext, turn_number: Option<u64>) -> Self {
+    |        ^^^^^^^^^^^^
+help: remove the extra argument
+    |
+106 -         &ctx,
+107 -         xai_message_delivery_core::AttemptId::mint(1),
+106 +         &ctx,
+    |
+
+error[E0560]: struct `AutoWakeInputs` has no field named `run_in_background`
+   --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:737:9
+    |
+737 |         run_in_background: true,
+    |         ^^^^^^^^^^^^^^^^^ `AutoWakeInputs` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2285:18
+     |
+2285 |       let result = cancel_pending_shell_child(
+     |  __________________^^^^^^^^^^^^^^^^^^^^^^^^^^-
+2286 | |             &child_cmd_tx,
+2287 | |             SessionThread::from_handle(std::thread::spawn(|| {})),
+2288 | |             &ctx.workspace_ops,
+...    |
+2298 | |             true,
+2299 | |         )
+     | |_________- argument #14 of type `&subagent::ShellCompletionData` is missing
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2093:10
+     |
+2093 | async fn cancel_pending_shell_child(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2107 |     completion_data: &ShellCompletionData,
+     |     -------------------------------------
+help: provide the argument
+     |
+2285 |     let result = cancel_pending_shell_child(
+ ...
+2298 |             true,
+2299 ~             /* &ShellCompletionData */,
+2300 ~     )
+     |
+
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2308:27
+     |
+2308 |     let completion_data = ShellCompletionData::from_context(
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2309 |         &ctx,
+2310 |         xai_message_delivery_core::AttemptId::mint(1),
+     |         --------------------------------------------- unexpected argument #2 of type `xai_message_delivery_core::AttemptId`
+     |
+note: associated function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:584:8
+     |
+ 584 |     fn from_context(ctx: &SubagentSpawnContext, turn_number: Option<u64>) -> Self {
+     |        ^^^^^^^^^^^^
+help: remove the extra argument
+     |
+2309 -         &ctx,
+2310 -         xai_message_delivery_core::AttemptId::mint(1),
+2309 +         &ctx,
+     |
+
+error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2455:18
+     |
+2455 |       let result = cancel_pending_shell_child(
+     |  __________________^^^^^^^^^^^^^^^^^^^^^^^^^^-
+2456 | |             &child_cmd_tx,
+2457 | |             thread,
+2458 | |             &ctx.workspace_ops,
+...    |
+2468 | |             true,
+2469 | |         )
+     | |_________- argument #14 of type `&subagent::ShellCompletionData` is missing
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2093:10
+     |
+2093 | async fn cancel_pending_shell_child(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2107 |     completion_data: &ShellCompletionData,
+     |     -------------------------------------
+help: provide the argument
+     |
+2455 |     let result = cancel_pending_shell_child(
+ ...
+2468 |             true,
+2469 ~             /* &ShellCompletionData */,
+2470 ~     )
+     |
+
+error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2502:18
+     |
+2502 |       let result = cancel_pending_shell_child(
+     |  __________________^^^^^^^^^^^^^^^^^^^^^^^^^^-
+2503 | |             &child_cmd_tx,
+2504 | |             SessionThread::from_handle(std::thread::spawn(|| {})),
+2505 | |             &ctx.workspace_ops,
+...    |
+2515 | |             true,
+2516 | |         )
+     | |_________- argument #14 of type `&subagent::ShellCompletionData` is missing
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2093:10
+     |
+2093 | async fn cancel_pending_shell_child(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2107 |     completion_data: &ShellCompletionData,
+     |     -------------------------------------
+help: provide the argument
+     |
+2502 |     let result = cancel_pending_shell_child(
+ ...
+2515 |             true,
+2516 ~             /* &ShellCompletionData */,
+2517 ~     )
+     |
+
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2536:27
+     |
+2536 |     let completion_data = ShellCompletionData::from_context(
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2537 |         &ctx,
+2538 |         xai_message_delivery_core::AttemptId::mint(1),
+     |         --------------------------------------------- unexpected argument #2 of type `xai_message_delivery_core::AttemptId`
+     |
+note: associated function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:584:8
+     |
+ 584 |     fn from_context(ctx: &SubagentSpawnContext, turn_number: Option<u64>) -> Self {
+     |        ^^^^^^^^^^^^
+help: remove the extra argument
+     |
+2537 -         &ctx,
+2538 -         xai_message_delivery_core::AttemptId::mint(1),
+2537 +         &ctx,
+     |
+
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:480:13
+     |
+ 480 |             update_subagent_meta_snapshot_ref(
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 483 |                 SubagentMetaStatus::Completed
+     |                 ----------------------------- unexpected argument #3 of type `subagent::SubagentMetaStatus`
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2561:4
+     |
+2561 | fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+     |
+ 482 -                 "refs/grok/subagents/sa-write",
+ 483 -                 SubagentMetaStatus::Completed
+ 482 +                 "refs/grok/subagents/sa-write"
+     |
+
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:504:14
+     |
+ 504 |     assert!(!update_subagent_meta_snapshot_ref(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 507 |             SubagentMetaStatus::Completed
+     |             ----------------------------- unexpected argument #3 of type `subagent::SubagentMetaStatus`
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2561:4
+     |
+2561 | fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+     |
+ 506 -             "refs/grok/subagents/sa-missing",
+ 507 -             SubagentMetaStatus::Completed
+ 506 +             "refs/grok/subagents/sa-missing"
+     |
+
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:518:13
+     |
+ 518 |     assert!(update_subagent_meta_snapshot_ref(
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 521 |             SubagentMetaStatus::Completed
+     |             ----------------------------- unexpected argument #3 of type `subagent::SubagentMetaStatus`
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs:2561:4
+     |
+2561 | fn update_subagent_meta_snapshot_ref(dir: &Path, snapshot_ref: &str) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+     |
+ 520 -             "refs/grok/subagents/x",
+ 521 -             SubagentMetaStatus::Completed
+ 520 +             "refs/grok/subagents/x"
+     |
+
+error[E0061]: this function takes 4 arguments but 5 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:602:20
+     |
+ 602 |     let disposal = crate::agent::subagent::handle_request::dispose_worktree_after_completion(
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 606 |             SubagentMetaStatus::Completed,
+     |             ----------------------------- unexpected argument #4 of type `subagent::SubagentMetaStatus`
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs:2499:21
+     |
+2499 | pub(crate) async fn dispose_worktree_after_completion(
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+     |
+ 605 -             &meta_dir,
+ 606 -             SubagentMetaStatus::Completed,
+ 605 +             &meta_dir,
+     |
+
+error[E0061]: this function takes 4 arguments but 5 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:644:20
+     |
+ 644 |     let disposal = crate::agent::subagent::handle_request::dispose_worktree_after_completion(
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 648 |             SubagentMetaStatus::Completed,
+     |             ----------------------------- unexpected argument #4 of type `subagent::SubagentMetaStatus`
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs:2499:21
+     |
+2499 | pub(crate) async fn dispose_worktree_after_completion(
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+     |
+ 647 -             &meta_dir,
+ 648 -             SubagentMetaStatus::Completed,
+ 647 +             &meta_dir,
+     |
+
+error[E0061]: this function takes 4 arguments but 5 arguments were supplied
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:682:20
+     |
+ 682 |     let disposal = crate::agent::subagent::handle_request::dispose_worktree_after_completion(
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 686 |             SubagentMetaStatus::Completed,
+     |             ----------------------------- unexpected argument #4 of type `subagent::SubagentMetaStatus`
+     |
+note: function defined here
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs:2499:21
+     |
+2499 | pub(crate) async fn dispose_worktree_after_completion(
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+     |
+ 685 -             &meta_dir,
+ 686 -             SubagentMetaStatus::Completed,
+ 685 +             &meta_dir,
+     |
+
+error[E0560]: struct `subagent::ShellCompletionData` has no field named `attempt_id`
+    --> crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2827:9
+     |
+2827 |         attempt_id: Some(xai_message_delivery_core::AttemptId::mint(0xface)),
+     |         ^^^^^^^^^^ `subagent::ShellCompletionData` does not have this field
+     |
+     = note: available fields are: `auto_wake_enabled`, `parent_session_info`, `parent_persistence_tx`, `task_output_tool_name`, `scheduler_delete_tool_name` ... and 4 others
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:235:28
+    |
+235 |             let mut bash = bash_completed_notification("bg-1");
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_wake_admission` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:298:44
+    |
+298 |             let (admission, response_rx) = task_wake_admission(
+    |                                            ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_wake_admission` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:331:44
+    |
+331 |             let (admission, response_rx) = task_wake_admission(
+    |                                            ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_wake_admission` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:371:44
+    |
+371 |             let (admission, response_rx) = task_wake_admission(
+    |                                            ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `monitor_event_notification` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:534:27
+    |
+534 |                     .push(monitor_event_notification("mon-quiet"));
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `monitor_completed_notification` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:535:46
+    |
+535 |                 let mut monitor_completion = monitor_completed_notification("mon-quiet");
+    |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:539:43
+    |
+539 |                 let mut bash_completion = bash_completed_notification("bash-deferred");
+    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:708:28
+    |
+708 |             let mut bash = bash_completed_notification("shared");
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:753:74
+    |
+753 |             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+    |                                                                          ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:797:25
+    |
+797 |                         task_output_result("bg-failed", "failed"),
+    |                         ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:798:25
+    |
+798 |                         task_output_result("bg-running", "running"),
+    |                         ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+   --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:831:74
+    |
+831 |             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+    |                                                                          ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1035:27
+     |
+1035 |                     .push(bash_completed_notification("sub-target"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1038:27
+     |
+1038 |                     .push(bash_completed_notification("bg-survives"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1102:25
+     |
+1102 |                         task_output_result("bg-done-1", "completed"),
+     |                         ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1103:25
+     |
+1103 |                         task_output_result("bg-done-2", "completed"),
+     |                         ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1104:25
+     |
+1104 |                         task_output_result("bg-running", "running"),
+     |                         ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1138:74
+     |
+1138 |             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+     |                                                                          ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1204:27
+     |
+1204 |                     .push(bash_completed_notification("bg-A"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `monitor_event_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1207:27
+     |
+1207 |                     .push(monitor_event_notification("bg-A"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1210:27
+     |
+1210 |                     .push(bash_completed_notification("bg-B"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1255:27
+     |
+1255 |                     .push(bash_completed_notification("bg-2"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `monitor_event_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1258:27
+     |
+1258 |                     .push(monitor_event_notification("mon-1"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `task_output_result` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1300:74
+     |
+1300 |             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+     |                                                                          ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1357:9
+     |
+1357 |         bash_completed_notification("bg-goal"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1358:9
+     |
+1358 |         bash_completed_notification("bg-user"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `monitor_event_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1359:9
+     |
+1359 |         monitor_event_notification("bg-goal"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1378:9
+     |
+1378 |         bash_completed_notification("bg-1"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1379:9
+     |
+1379 |         bash_completed_notification("bg-2"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1390:9
+     |
+1390 |         bash_completed_notification("bg-1"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `monitor_event_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1391:9
+     |
+1391 |         monitor_event_notification("mon-1"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1415:27
+     |
+1415 |                     .push(bash_completed_notification("bg-goal"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `bash_completed_notification` in this scope
+    --> crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1462:27
+     |
+1462 |                     .push(bash_completed_notification("bg-skeptic"));
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error: could not compile `xai-grok-shell` (lib test) due to 52 previous errors
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-grok-shell --lib --locked child_prompt_tests
+cargo test -p xai-grok-shell --lib --locked child_prompt_tests
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+
+error: could not compile `xai-grok-shell` (lib test) due to 52 previous errors
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-grok-shell --lib --locked management_recipe
+cargo test -p xai-grok-shell --lib --locked management_recipe
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+
+error: could not compile `xai-grok-shell` (lib test) due to 52 previous errors
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-grok-shell --lib --locked compact
+cargo test -p xai-grok-shell --lib --locked compact
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+
+error: could not compile `xai-grok-shell` (lib test) due to 52 previous errors
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-grok-pager --lib --locked compact
+cargo test -p xai-grok-pager --lib --locked compact
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+   Compiling xai-grok-extra-ca v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-extra-ca)
+   Compiling xai-grok-tools-api v0.1.220-alpha.4 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-tools-api)
+   Compiling xai-grok-auth v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-auth)
+   Compiling xai-tracing v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tracing)
+   Compiling xai-grok-otel v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-otel)
+   Compiling xai-grok-sandbox v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sandbox)
+   Compiling xai-grok-sampling-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sampling-types)
+   Compiling xai-file-utils v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-file-utils)
+   Compiling xai-tool-runtime v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tool-runtime)
+   Compiling xai-computer-hub-core v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-computer-hub-core)
+   Compiling xai-computer-hub-sdk v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-computer-hub-sdk)
+   Compiling xai-grok-tools v0.1.220-alpha.4 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-tools)
+   Compiling xai-grok-sampler v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sampler)
+   Compiling xai-mixpanel v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-mixpanel)
+   Compiling xai-hunk-tracker v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-hunk-tracker)
+   Compiling xai-grok-egress-proxy v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-egress-proxy)
+   Compiling xai-grok-config-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-config-types)
+   Compiling xai-grok-telemetry v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-telemetry)
+   Compiling xai-grok-workspace-daemon v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-workspace-daemon)
+
+error[E0432]: unresolved import `super::spawn::present_child_completion`
+  --> crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs:2:5
+   |
+ 2 | use super::spawn::present_child_completion;
+   |     ^^^^^^^^^^^^^^------------------------
+   |                   |
+   |                   no `present_child_completion` in `agent::subagent::spawn`
+   |
+note: found an item that was configured out
+  --> crates/codegen/xai-grok-shell/src/agent/subagent/spawn.rs:64:47
+   |
+63 | #[cfg(test)]
+   |       ---- the item is gated here
+64 | pub(crate) use super::completion_publication::present_child_completion;
+   |                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+help: a similar name exists in the module
+   |
+ 2 - use super::spawn::present_child_completion;
+ 2 + use super::spawn::publish_child_completion;
+   |
+
+error: could not compile `xai-grok-shell` (lib) due to 1 previous error
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-grok-tools --lib --locked coordinator_tests
+cargo test -p xai-grok-tools --lib --locked coordinator_tests
+cargo test -p xai-grok-shell --lib --locked parent_message
+cargo test -p xai-grok-shell --lib --locked prompt_turn_receipt
+cargo test -p xai-grok-shell --lib --locked live_steers_
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+   Compiling num-traits v0.2.19
+   Compiling tokio v1.52.3
+   Compiling serde_json v1.0.149
+   Compiling generic-array v0.14.7
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.6
+   Compiling digest v0.10.7
+   Compiling icu_normalizer v2.0.0
+   Compiling hdrhistogram v7.5.4
+   Compiling sha1 v0.10.6
+   Compiling idna_adapter v1.2.1
+   Compiling idna v1.1.0
+   Compiling rustls v0.23.37
+   Compiling url v2.5.8
+   Compiling num-integer v0.1.46
+   Compiling regex-automata v0.4.13
+   Compiling chrono v0.4.44
+   Compiling bytes-utils v0.1.4
+   Compiling tokio-util v0.7.17
+   Compiling h2 v0.4.19
+   Compiling tower v0.5.2
+   Compiling tokio-rustls v0.26.4
+   Compiling sha2 v0.10.9
+   Compiling aws-smithy-types v1.4.3
+   Compiling signature v2.2.0
+   Compiling tower-http v0.6.8
+   Compiling aws-smithy-async v1.2.14
+   Compiling tungstenite v0.28.0
+   Compiling aws-smithy-runtime-api v1.11.3
+   Compiling rustix v1.1.4
+   Compiling schemars v1.0.4
+   Compiling tokio-tungstenite v0.28.0
+   Compiling hyper v1.8.1
+   Compiling tokio-stream v0.1.17
+   Compiling axum-core v0.5.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling hyper-util v0.1.20
+   Compiling x509-cert v0.2.5
+   Compiling async-compression v0.4.19
+   Compiling reqwest v0.13.4
+   Compiling hyper-timeout v0.5.2
+   Compiling axum v0.8.6
+   Compiling hyper-rustls v0.27.7
+   Compiling aws-smithy-eventstream v0.60.18
+   Compiling regex v1.12.4
+   Compiling opentelemetry v0.32.0
+   Compiling regex-syntax v0.8.11
+   Compiling aws-smithy-http v0.62.6
+   Compiling reqwest v0.12.24
+
+error[E0425]: cannot find type `ChildCompletion` in this scope
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs:91:31
+    |
+ 91 |     fn on_published(&self, _: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(crate::implementations::grok_build::...
+    |                               ^^^^^^^^^^^^^^^ not found in this scope
+    |
+note: struct `crate::registry::types::tests::grok_build::task::coordinator_state::ChildCompletion` exists but is inaccessible
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs:154:1
+    |
+154 | pub struct ChildCompletion<D> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+error[E0425]: cannot find function `finish_child_before_visibility` in this scope
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs:339:13
+    |
+339 |             finish_child_before_visibility(&mut c, CHILD);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+note: function `crate::registry::types::tests::grok_build::task::coordinator::active_message::tests::finish_child_before_visibility` exists but is inaccessible
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs:463:1
+    |
+463 | / pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_before_visibility(
+464 | |     coordinator: &mut TestCoordinator,
+465 | |     id: &str,
+466 | | ) {
+467 | |     finish_child_at(coordinator, id, PublicationCheckpoint::Prepared);
+468 | | }
+    | |_^ not accessible
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:484:14
+    |
+484 |             .terminal_published
+    |              ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:495:14
+    |
+495 |             .terminal_published
+    |              ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0599]: no method named `handle_terminal_published` found for struct `coordinator::SubagentCoordinator<R>` in the current scope
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:497:11
+    |
+497 |         c.handle_terminal_published(IDS[3].to_owned());
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs:70:1
+    |
+ 70 | pub struct SubagentCoordinator<R: ChildRunner> {
+    | ---------------------------------------------- method `handle_terminal_published` not found for this struct
+    |
+help: there is a method `handle_terminal_publication` with a similar name
+    |
+497 -         c.handle_terminal_published(IDS[3].to_owned());
+497 +         c.handle_terminal_publication(IDS[3].to_owned());
+    |
+
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs:942:13
+    |
+942 |               crate::implementations::grok_build::task::backend::SubagentBackend::spawn(
+    |  _____________^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+943 | |                 &backend, request, None,
+944 | |             )
+    | |_____________- argument #4 of type `std::option::Option<SubagentCompletionObservations>` is missing
+    |
+note: method defined here
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend.rs:37:14
+    |
+ 37 |     async fn spawn(
+    |              ^^^^^
+...
+ 41 |         observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
+    |         ------------
+help: provide the argument
+    |
+942 -             crate::implementations::grok_build::task::backend::SubagentBackend::spawn(
+943 -                 &backend, request, None,
+944 -             )
+942 +             crate::implementations::grok_build::task::backend::SubagentBackend::spawn(&backend, request, None, /* Option<SubagentCompletionObservations> */)
+    |
+
+error[E0308]: mismatched types
+    --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs:1271:17
+     |
+1271 |                 result_tx,
+     |                 ^^^^^^^^^ expected `SubagentResultSender`, found `Sender<_>`
+     |
+     = note: expected struct `SubagentResultSender`
+                found struct `tokio::sync::oneshot::Sender<_>`
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:530:14
+    |
+530 |             .terminal_published
+    |              ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:551:14
+    |
+551 |             .terminal_published
+    |              ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0599]: no method named `handle_terminal_published` found for struct `coordinator::SubagentCoordinator<R>` in the current scope
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:553:11
+    |
+553 |         c.handle_terminal_published(IDS[3].to_owned());
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs:70:1
+    |
+ 70 | pub struct SubagentCoordinator<R: ChildRunner> {
+    | ---------------------------------------------- method `handle_terminal_published` not found for this struct
+    |
+help: there is a method `handle_terminal_publication` with a similar name
+    |
+553 -         c.handle_terminal_published(IDS[3].to_owned());
+553 +         c.handle_terminal_publication(IDS[3].to_owned());
+    |
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:599:10
+    |
+599 |         .terminal_published
+    |          ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:612:10
+    |
+612 |         .terminal_published
+    |          ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0599]: no method named `handle_terminal_published` found for struct `coordinator::SubagentCoordinator<R>` in the current scope
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:614:7
+    |
+614 |     c.handle_terminal_published(IDS[3].to_owned());
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs:70:1
+    |
+ 70 | pub struct SubagentCoordinator<R: ChildRunner> {
+    | ---------------------------------------------- method `handle_terminal_published` not found for this struct
+    |
+help: there is a method `handle_terminal_publication` with a similar name
+    |
+614 -     c.handle_terminal_published(IDS[3].to_owned());
+614 +     c.handle_terminal_publication(IDS[3].to_owned());
+    |
+
+error[E0609]: no field `terminal_published` on type `&CompletedChild`
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs:796:10
+    |
+796 |         .terminal_published
+    |          ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `attempt_id`, `completion_age`, `publication`, `reply_target`, `request` ... and 13 others
+
+error[E0308]: mismatched types
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs:224:9
+    |
+222 |       coordinator.terminal_outputs.insert(
+    |                                    ------ arguments to this method are incorrect
+223 |           CHILD.to_owned(),
+224 | /         crate::implementations::grok_build::task::coordinator::ChildRunOutput {
+225 | |             result: crate::implementations::grok_build::task::types::SubagentResult {
+226 | |                 state: SubagentState::Completed,
+227 | |                 subagent_id: CHILD.to_owned(),
+...   |
+232 | |             snapshot_ref: None,
+233 | |         },
+    | |_________^ expected `TerminalOutput<()>`, found `ChildRunOutput<()>`
+    |
+    = note: expected enum `TerminalOutput<()>`
+             found struct `coordinator_state::ChildRunOutput<()>`
+help: the return type of this call is `coordinator_state::ChildRunOutput<()>` due to the type of the argument passed
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs:222:5
+    |
+222 | /      coordinator.terminal_outputs.insert(
+223 | |          CHILD.to_owned(),
+224 | |/         crate::implementations::grok_build::task::coordinator::ChildRunOutput {
+225 | ||             result: crate::implementations::grok_build::task::types::SubagentResult {
+226 | ||                 state: SubagentState::Completed,
+227 | ||                 subagent_id: CHILD.to_owned(),
+...   ||
+232 | ||             snapshot_ref: None,
+233 | ||         },
+    | ||_________- this argument influences the return type of `insert`
+234 | |      );
+    | |______^
+note: method defined here
+   --> /rustc/c98d0cb27cc63afdd62602a52eb4feb8a1c682dd/library/std/src/collections/hash/map.rs:1333:11
+help: try wrapping the expression in `implementations::grok_build::task::coordinator_state::TerminalOutput::Finishing`
+    |
+224 ~         implementations::grok_build::task::coordinator_state::TerminalOutput::Finishing(crate::implementations::grok_build::task::coordinator::ChildRunOutput {
+225 |             result: crate::implementations::grok_build::task::types::SubagentResult {
+...
+232 |             snapshot_ref: None,
+233 ~         }),
+    |
+
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs:699:9
+    |
+699 |         SubagentBackend::spawn(&backend, request, Some(registered_tx)).await
+    |         ^^^^^^^^^^^^^^^^^^^^^^---------------------------------------- argument #4 of type `std::option::Option<SubagentCompletionObservations>` is missing
+    |
+note: method defined here
+   --> crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend.rs:37:14
+    |
+ 37 |     async fn spawn(
+    |              ^^^^^
+...
+ 41 |         observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
+    |         ------------
+help: provide the argument
+    |
+699 |         SubagentBackend::spawn(&backend, request, Some(registered_tx), /* Option<SubagentCompletionObservations> */).await
+    |                                                                      ++++++++++++++++++++++++++++++++++++++++++++++
+
+error: could not compile `xai-grok-tools` (lib test) due to 16 previous errors; 3 warnings emitted
+##[error]Process completed with exit code 101.
+##[group]Run cargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked
+cargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked
+PAGER_BINARY="$PWD/target/debug/xai-grok-pager" cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked finished_child_manual_compact_cancel -- --ignored
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+   Compiling cfg-if v1.0.4
+   Compiling serde_core v1.0.228
+   Compiling libc v0.2.186
+   Compiling memchr v2.8.2
+   Compiling value-bag v1.12.0
+   Compiling log v0.4.32
+   Compiling itoa v1.0.17
+   Compiling portable-atomic v1.11.1
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling pin-project-lite v0.2.16
+   Compiling equivalent v1.0.2
+   Compiling once_cell v1.21.3
+   Compiling bitflags v2.13.0
+   Compiling hashbrown v0.17.1
+   Compiling zeroize v1.8.2
+   Compiling thiserror v2.0.18
+   Compiling futures-core v0.3.32
+   Compiling libm v0.2.15
+   Compiling subtle v2.6.1
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling stable_deref_trait v1.2.1
+   Compiling mio v1.2.1
+   Compiling serde v1.0.228
+   Compiling indexmap v2.14.0
+   Compiling num-traits v0.2.19
+   Compiling smallvec v1.15.1
+   Compiling parking_lot_core v0.9.12
+   Compiling bytes v1.11.1
+   Compiling futures-io v0.3.32
+   Compiling parking_lot v0.12.5
+   Compiling tracing-core v0.1.36
+   Compiling typenum v1.19.0
+   Compiling slab v0.4.11
+   Compiling tracing v0.1.44
+   Compiling percent-encoding v2.3.2
+   Compiling socket2 v0.6.4
+   Compiling futures-sink v0.3.32
+   Compiling futures-channel v0.3.32
+   Compiling futures-task v0.3.32
+   Compiling crc32fast v1.5.0
+   Compiling zmij v1.0.19
+   Compiling futures-util v0.3.32
+   Compiling const-oid v0.9.6
+   Compiling tokio v1.52.3
+   Compiling serde_json v1.0.149
+   Compiling generic-array v0.14.7
+   Compiling crypto-common v0.1.6
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+
+error: test failed, to rerun pass `-p xai-grok-pager-pty-harness --test pty_e2e_shell_tools`
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-grok-shell --lib --locked --no-fail-fast -- "${TEST_FILTER:-remove}" 2>&1 | tee shell-test.log; exit "${PIPESTATUS[0]}"
+cargo test -p xai-grok-shell --lib --locked --no-fail-fast -- "${TEST_FILTER:-remove}" 2>&1 | tee shell-test.log; exit "${PIPESTATUS[0]}"
+shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+
+error: could not compile `xai-grok-shell` (lib test) due to 52 previous errors
+##[error]Process completed with exit code 101.
+##[group]Run cargo test -p xai-chat-state -p xai-grok-sampling-types --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee types-test.log; exit "${PIPESTATUS[0]}"
+cargo test -p xai-chat-state -p xai-grok-sampling-types --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee types-test.log; exit "${PIPESTATUS[0]}"
+shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 16777216
+  TEST_FILTER: 
+  PROTOC: /usr/bin/protoc
+  CACHE_ON_FAILURE: true
+##[endgroup]
+   Compiling xai-grok-compaction v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-grok-compaction)
+   Compiling xai-tool-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tool-types)
+   Compiling xai-circuit-breaker v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-circuit-breaker)
+   Compiling xai-grok-sampling-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sampling-types)
+   Compiling xai-compaction-transcript v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-compaction-transcript)
+   Compiling xai-chat-state v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-chat-state)
+
+error: test failed, to rerun pass `-p xai-chat-state --lib`
+     Running unittests src/lib.rs (target/debug/build/xai-grok-sampling-types/efdeae35cf394489/out/xai_grok_sampling_types-efdeae35cf394489)
+
+error: 1 target failed:
+    `-p xai-chat-state --lib`
+##[error]Process completed with exit code 101.

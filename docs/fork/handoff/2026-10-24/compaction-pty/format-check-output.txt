@@ -1,0 +1,9 @@
+CI formatter step (linux-test.yml:50):
+cargo +nightly-2026-08-13 fmt -p xai-grok-sampler -p xai-grok-shell -p xai-grok-tools -p xai-grok-pager -p xai-grok-pager-pty-harness -- --check
+
+No cargo fmt invocation (or cargo build/check/test) was run. Equivalent formatting operation: pinned rustfmt nightly-2026-08-13, edition 2024, --config skip_children=true, on tracked .rs files in those exact five package roots. Root rustfmt.toml honored.
+First four package formatter: exit 0; 95 files changed, 1605 insertions, 562 deletions.
+PTY harness formatter: exit 0; 1 authored file changed, 5 insertions, 1 deletion (6-line diff hunk).
+Combined five-package formatter repeat after commits: no changes (idempotence PASS).
+git diff --check: PASS.
+Builds/checks/tests: NOT RUN.

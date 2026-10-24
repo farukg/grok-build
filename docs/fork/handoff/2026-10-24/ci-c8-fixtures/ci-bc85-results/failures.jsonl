@@ -1,0 +1,7 @@
+{"key": "40058633091:job:120767075033:step:10", "detail": {"job": "test", "step": "Test child management lifecycle", "conclusion": "failure"}}
+{"key": "40058633091:job:120767075033:step:12", "detail": {"job": "test", "step": "Test shell compaction", "conclusion": "failure"}}
+{"key": "40058633091:job:120767075033:step:14", "detail": {"job": "test", "step": "Test subagent delivery and live steering", "conclusion": "failure"}}
+{"key": "40058633091:job:120767075033:step:15", "detail": {"job": "test", "step": "Test finished child compaction through the terminal", "conclusion": "failure"}}
+{"key": "40058633091:job:120767075033:step:17", "detail": {"job": "test", "step": "Test shell", "conclusion": "failure"}}
+{"key": "40058633091:job:120767075033", "detail": "cancelled"}
+{"key": "run:40058633091", "detail": "cancelled"}

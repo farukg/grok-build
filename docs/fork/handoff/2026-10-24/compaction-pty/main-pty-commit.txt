@@ -1,0 +1,5 @@
+[unbuilt] [test] integrate verified finished-child compaction terminal flow
+
+Port the PTY scenario that passed on a0cbf7c4, including real parent/child
+navigation, terminal cancellation and the preserved child session identity.
+The larger main-worktree integration still requires GitHub verification.

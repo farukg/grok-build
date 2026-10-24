@@ -1,0 +1,8 @@
+{
+  "handoff_sha256": "a2a9e32b43518aeaeceada5ea2ab2efccdee66c489b06fa1ef2c3dc29ee49755",
+  "links_exist": true,
+  "checkpoints_match_source_manifests": true,
+  "both_working_trees_clean": true,
+  "publication_authorized": false,
+  "new_compile_or_runtime_acceptance": false
+}

@@ -1,0 +1,20 @@
+{
+  "canonical": {
+    "repo": "/home/fg/projects/org/forks/grok-build",
+    "commit": "074f54b599d2bdd46c150124de4dc5f117641565",
+    "branch": "handoff/grok-canonical-20261024",
+    "parent": "c8e075ea29ab74356cb477f05dcd70cdf7eb0e4c",
+    "preserved_paths": 27,
+    "working_tree_clean": true,
+    "published": false
+  },
+  "runtime": {
+    "repo": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format",
+    "commit": "14a5f56c12f423f58540f649360fc10a115c92f0",
+    "branch": "handoff/grok-runtime-20261024",
+    "parent": "bc85ceb95ee122ed436cfbe516c41bd6208d4fb2",
+    "preserved_paths": 14,
+    "working_tree_clean": true,
+    "published": false
+  }
+}

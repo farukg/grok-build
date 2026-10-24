@@ -1,0 +1,1 @@
+Einmalige Mitteilung an die beteiligten Autoren und Reviewer: [Faruks aktuelle Klarstellung](/tmp/grok-goal-caf6cd6eb110/implementer/current-user-writing-and-ownership-clarification.message.md). Dauerhafte Regeln gehören an die vorhandenen Governance-Owner.

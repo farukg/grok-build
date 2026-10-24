@@ -1,0 +1,5 @@
+[unbuilt] [test] migrate durable completion and goal fixtures
+
+Drive the shipped coordinator, persistence and AppView receiver for completion replay and late parent goal changes. Preserve terminal outcomes, history, worktree ownership, exact attempts and observable once-only results across the current two-phase completion contract.
+
+Local evidence: pinned formatting and independent intent review. Compilation and runtime verification remain assigned to GitHub Actions.

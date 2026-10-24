@@ -1,0 +1,1041 @@
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs
+new file mode 100644
+index 00000000..bdc9f297
+--- /dev/null
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs
+@@ -0,0 +1,38 @@
++use super::*;
++
++pub(crate) const PARENT_NAVIGATION: &str = "[↑]";
++
++impl SendMessageScenario {
++    pub(crate) fn verify_child_session_info(&mut self) {
++        self.harness
++            .inject_keys(b"/session-info\r")
++            .expect("request child session info");
++        self.harness
++            .wait_for_text("Session info", Duration::from_secs(20))
++            .expect("child session info opens");
++        self.harness
++            .wait_for_text(CHILD_ID, ROW_TIMEOUT)
++            .expect("session info identifies the fixture child");
++        self.harness
++            .inject_keys(keys::ESC)
++            .expect("close session info");
++        self.harness
++            .wait_for_text_absent("Session info", Duration::from_secs(10))
++            .expect("session info closes");
++    }
++
++    pub(crate) fn return_to_parent(&mut self, parent_text: &str) {
++        let (row, col) = locate_screen_text(&self.harness.screen_contents(), PARENT_NAVIGATION)
++            .expect("child header exposes its parent navigation button");
++        self.harness
++            .inject_keys(sgr_mouse(0, row, col, 'M').as_bytes())
++            .expect("press parent navigation");
++        self.harness
++            .inject_keys(sgr_mouse(0, row, col, 'm').as_bytes())
++            .expect("release parent navigation");
++        self.harness
++            .wait_for_text_absent(PARENT_NAVIGATION, ROW_TIMEOUT)
++            .expect("fixture root parent is visible");
++        self.wait_for_row(parent_text);
++    }
++}
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs
+index c9817ee7..20774739 100644
+--- a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs
+@@ -3,54 +3,12 @@
+ #[allow(unused_imports)]
+ use super::common::*;
+ use super::send_subagent_message_row::{
+-    CHILD_ID, CHILD_LABEL, ROW_TIMEOUT, SendMessageScenario, WAKE_DONE,
++    CHILD_LABEL, PARENT_NAVIGATION, ROW_TIMEOUT, SendMessageScenario, WAKE_DONE,
+ };
+ 
+-const PARENT_NAVIGATION: &str = "[↑]";
+ const AUX_HOLD_TIMEOUT: Duration = Duration::from_secs(30);
+ const COMPACT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(45);
+ 
+-fn return_to_parent(scenario: &mut SendMessageScenario) {
+-    let (row, col) = locate_screen_text(&scenario.harness.screen_contents(), PARENT_NAVIGATION)
+-        .expect("child header exposes its parent navigation button");
+-    scenario
+-        .harness
+-        .inject_keys(sgr_mouse(0, row, col, 'M').as_bytes())
+-        .expect("press parent navigation");
+-    scenario
+-        .harness
+-        .inject_keys(sgr_mouse(0, row, col, 'm').as_bytes())
+-        .expect("release parent navigation");
+-    scenario
+-        .harness
+-        .wait_for_text_absent(PARENT_NAVIGATION, ROW_TIMEOUT)
+-        .expect("fixture root parent is visible");
+-    scenario.wait_for_row(WAKE_DONE);
+-}
+-
+-fn verify_child_session_info(scenario: &mut SendMessageScenario) {
+-    scenario
+-        .harness
+-        .inject_keys(b"/session-info\r")
+-        .expect("request child session info");
+-    scenario
+-        .harness
+-        .wait_for_text("Session info", Duration::from_secs(20))
+-        .expect("child session info opens");
+-    scenario
+-        .harness
+-        .wait_for_text(CHILD_ID, ROW_TIMEOUT)
+-        .expect("session info identifies the fixture child");
+-    scenario
+-        .harness
+-        .inject_keys(keys::ESC)
+-        .expect("close session info");
+-    scenario
+-        .harness
+-        .wait_for_text_absent("Session info", Duration::from_secs(10))
+-        .expect("session info closes");
+-}
+-
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ #[ignore = "PTY e2e; run the owning pty_e2e_shell_tools Cargo test with --ignored"]
+ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
+@@ -113,8 +71,8 @@ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
+         )
+         .expect("cancelling state cleared on acknowledged terminal result");
+ 
+-    verify_child_session_info(&mut scenario);
+-    return_to_parent(&mut scenario);
++    scenario.verify_child_session_info();
++    scenario.return_to_parent(WAKE_DONE);
+     scenario.select_row(&child_row);
+     scenario
+         .harness
+@@ -125,7 +83,7 @@ async fn finished_child_manual_compact_cancel_returns_to_reopenable_child() {
+         .wait_for_text(PARENT_NAVIGATION, ROW_TIMEOUT)
+         .expect("reopened child header exposes parent navigation");
+     scenario.wait_for_row("CHILD_DONE");
+-    verify_child_session_info(&mut scenario);
+-    return_to_parent(&mut scenario);
++    scenario.verify_child_session_info();
++    scenario.return_to_parent(WAKE_DONE);
+     scenario.finish("finished_child_manual_compact_cancel.cast");
+ }
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+index a926993a..1acf7e69 100644
+--- a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs
+@@ -8,8 +8,11 @@
+ #[allow(unused_imports)]
+ use super::common::*;
+ use xai_grok_test_support::{Conversation, MockToolCall, Tool};
++#[path = "child_session_navigation.rs"]
++mod child_navigation;
+ #[path = "send_subagent_message_selection.rs"]
+ mod selection;
++pub(crate) use child_navigation::PARENT_NAVIGATION;
+ 
+ /// Spawn rejects an injected id that is not a UUIDv7; the bogus one shares its shape and ends in a readable tail.
+ pub(crate) const CHILD_ID: &str = "01a06b44-0000-7000-8000-00000000c41d";
+diff --git a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs
+index ee50aa5d..9f2c9b4c 100644
+--- a/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs
++++ b/crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs
+@@ -1,33 +1,30 @@
+-//! PTY: Enter and Ctrl+F on a `Message sent to Subagent “sleeper”` row open the child's takeover, exactly as on its
+-//! `Subagent` row, and `q` comes back; Enter on the rejected row (an id no spawn named) stays in the parent.
++//! PTY: Enter and Ctrl+F on a message row open the exact child session; unresolved targets stay in the parent.
+ // Unix only: shares the `/bin/sleep`-held child of `send_subagent_message_row`.
+ #![cfg(unix)]
+ #[allow(unused_imports)]
+ use super::common::*;
+ use super::send_subagent_message_row::{
+-    CHILD_LABEL, PARENT_DONE, ROW_TIMEOUT, SendMessageScenario,
++    CHILD_LABEL, PARENT_DONE, PARENT_NAVIGATION, ROW_TIMEOUT, SendMessageScenario,
+ };
+ 
+-/// The footer hint pinned only while a child takeover is up; the dock shows the child's title and `[✗]` in the
+-/// parent too, so neither of those can stand in for it.
+-const TAKEOVER_HINT: &str = "q/Esc:back";
+ const CTRL_F: &[u8] = b"\x06";
+ 
+-fn assert_takeover_open(harness: &mut PtyHarness, chord: &str) {
+-    harness
+-        .wait_for_text(TAKEOVER_HINT, ROW_TIMEOUT)
+-        .unwrap_or_else(|error| panic!("{chord} did not open the takeover: {error}"));
++fn assert_child_open(scenario: &mut SendMessageScenario, chord: &str) {
++    scenario
++        .harness
++        .wait_for_text(PARENT_NAVIGATION, ROW_TIMEOUT)
++        .unwrap_or_else(|error| panic!("{chord} did not open the child session: {error}"));
+     assert!(
+-        !harness.contains_text(PARENT_DONE),
+-        "{chord}: the takeover must replace the parent transcript\nscreen:\n{}",
+-        harness.screen_contents()
++        !scenario.harness.contains_text(PARENT_DONE),
++        "{chord}: the child session must replace the parent transcript\nscreen:\n{}",
++        scenario.harness.screen_contents()
+     );
++    scenario.verify_child_session_info();
+ }
+ 
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ #[ignore = "PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml)"]
+ async fn send_subagent_message_row_opens_child() {
+-    // The child must still be running: closing the takeover of a finished child evicts its view.
+     let mut scenario = SendMessageScenario::start().await;
+     let steer_row = format!("Message sent to {CHILD_LABEL}");
+     scenario.focus_scrollback();
+@@ -37,22 +34,14 @@ async fn send_subagent_message_row_opens_child() {
+         .harness
+         .inject_keys(keys::ENTER)
+         .expect("press Enter");
+-    assert_takeover_open(&mut scenario.harness, "Enter");
++    assert_child_open(&mut scenario, "Enter");
+     write_screen_dump_if_requested(&scenario.harness, "send_row_enter_opens_child");
+-    scenario.harness.inject_keys(keys::Q).expect("press q");
+-    scenario
+-        .harness
+-        .wait_for_text_absent(TAKEOVER_HINT, ROW_TIMEOUT)
+-        .expect("q returns to the parent");
+-    scenario.wait_for_row(&format!("\u{203a} {steer_row}"));
++    scenario.return_to_parent(PARENT_DONE);
++    scenario.select_row(&steer_row);
+ 
+     scenario.harness.inject_keys(CTRL_F).expect("press Ctrl+F");
+-    assert_takeover_open(&mut scenario.harness, "Ctrl+F");
+-    scenario.harness.inject_keys(keys::Q).expect("press q");
+-    scenario
+-        .harness
+-        .wait_for_text_absent(TAKEOVER_HINT, ROW_TIMEOUT)
+-        .expect("q returns to the parent again");
++    assert_child_open(&mut scenario, "Ctrl+F");
++    scenario.return_to_parent(PARENT_DONE);
+ 
+     // The rejected row's target never resolved through a spawn, so Enter has no child to open.
+     scenario.select_row("Message rejected \u{b7} subagent");
+@@ -66,9 +55,13 @@ async fn send_subagent_message_row_opens_child() {
+             "parent transcript stays after Enter on the rejected row",
+             Duration::from_secs(6),
+             Duration::from_secs(3),
+-            |h| !h.contains_text(TAKEOVER_HINT) && h.contains_text("\u{203a} Message rejected"),
++            |h| {
++                !h.contains_text(PARENT_NAVIGATION)
++                    && h.contains_text("\u{203a} Message rejected")
++                    && h.contains_text(PARENT_DONE)
++            },
+         )
+-        .expect("no takeover for an unresolved target");
++        .expect("no child session for an unresolved target");
+     write_screen_dump_if_requested(&scenario.harness, "send_row_rejected_enter_stays");
+ 
+     scenario.finish("send_subagent_message_row_opens_child.cast");
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
+index 9a14b7a5..fdfd19da 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
+@@ -1,3 +1,5 @@
++#[path = "completion_queue_lifecycle_tests.rs"]
++mod queue_lifecycle;
+ use super::support::*;
+ use super::*;
+ use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
+@@ -26,6 +28,25 @@ fn test_completion_wake(id: &str) -> crate::session::CompletionWake {
+         kind: crate::session::CompletionWakeKind::Fresh,
+     }
+ }
++fn wake_request(
++    prompt_blocks: Vec<acp::ContentBlock>,
++    subagent_id: &str,
++    respond_to: oneshot::Sender<PromptTurnResult>,
++) -> QueueInputRequest {
++    let completion = test_completion_wake(subagent_id);
++    let mut request = QueueInputRequest::from_input_origin(
++        prompt_blocks,
++        format!(
++            "subagent-completed-{subagent_id}/{}",
++            completion.id.attempt_id
++        ),
++        InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted { completion }),
++        PromptMode::Agent,
++        respond_to,
++    );
++    request.verbatim = true;
++    request
++}
+ async fn completion_projected(actor: &SessionActor, id: &str) -> bool {
+     actor.chat_state_handle.get_conversation().await.iter().any(|item| matches!(item,
+         ConversationItem::User(user) if user.synthetic_reason == xai_grok_sampling_types::SyntheticReason::SubagentCompleted && item.text_content().contains(id)))
+@@ -87,24 +108,33 @@ async fn run_wake_turn(
+         completion: test_completion_wake(subagent_id),
+     });
+     actor.state.lock().await.running_task = Some(task);
+-    actor
+-        .handle_prompt(
+-            &format!("subagent-completed-{subagent_id}/at1.1"),
+-            vec![acp::ContentBlock::Text(acp::TextContent::new(wake_body(
++    actor.signals_handle().increment_turn();
++    tokio::time::timeout(
++        std::time::Duration::from_secs(5),
++        actor.handle_turn_input(TurnInputRequest {
++            prompt_id,
++            input_origin: InputOrigin::new(crate::session::PromptOrigin::SubagentCompleted {
++                completion: test_completion_wake(subagent_id),
++            }),
++            prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(wake_body(
+                 subagent_id,
+             )))],
+-            PromptMode::Agent,
+-            None,
+-            None,
+-            None,
+-            None,
+-            true,
+-            false,
+-            None,
++            prompt_mode: PromptMode::Agent,
++            trace_gcs_config: None,
++            artifact_tracker: None,
++            client_identifier: None,
++            screen_mode: None,
++            verbatim: true,
++            send_now: false,
++            json_schema: None,
+             persist_ack,
+-            None,
+-        )
+-        .await
++            parsed_prompt_tx: None,
++            traceparent: None,
++            start_gate: None,
++        }),
++    )
++    .await
++    .expect("wake must commit or finish within its protocol budget")
+ }
+ /// Aborts the wake turn after its commit: the test sampler never answers.
+ async fn run_wake_turn_to_commit(actor: &std::sync::Arc<SessionActor>, subagent_id: &str) {
+@@ -124,6 +154,7 @@ async fn run_wake_turn_to_commit(actor: &std::sync::Arc<SessionActor>, subagent_
+ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
+     tokio::task::LocalSet::new().run_until(async {
+         for (failed, goal_active) in [(false, false), (true, false), (false, true), (true, true)] {
++            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+             let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
+             drain_gateway(gateway_rx);
+             let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+@@ -154,10 +185,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
+                 state.running_task = Some(running_task_stub("working"));
+             }
+             let (respond_to, mut receipt) = oneshot::channel();
+-            actor.queue_input(QueueInputRequest {
+-                verbatim: true,
+-                ..queue_input_request(vec![acp::ContentBlock::from(wake_text)], "subagent-completed-safe-child/at1.1", respond_to)
+-            }).await;
++            actor.queue_input(wake_request(vec![acp::ContentBlock::from(wake_text)], "safe-child", respond_to)).await;
+             assert!(matches!(receipt.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+             assert!(actor.drain_admitted_messages_at_safe_point().await);
+             assert!(!actor.drain_admitted_messages_at_safe_point().await);
+@@ -172,13 +200,11 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
+             assert_eq!(fake.acknowledged().await, ["safe-child"], "only the durably projected attempt is acknowledged");
+             assert_eq!(actor.state.lock().await.running_prompt_id(), Some("working"));
+             let (retry_tx, retry_rx) = oneshot::channel();
+-            actor.queue_input(QueueInputRequest {
+-                verbatim: true,
+-                ..queue_input_request(vec![], "subagent-completed-safe-child/at1.1", retry_tx)
+-            }).await;
++            actor.queue_input(wake_request(vec![], "safe-child", retry_tx)).await;
+             assert!(!actor.drain_admitted_messages_at_safe_point().await);
+             assert!(retry_rx.await.expect("duplicate receipt").is_ok());
+             assert_eq!(actor.chat_state_handle.get_conversation().await.len(), conversation.len());
++            }).await.expect("active caller must finish safe-point receipt and duplicate replay within the wake protocol budget");
+         }
+     }).await;
+ }
+@@ -1016,8 +1042,10 @@ async fn subagent_completed_drops_matching_pending_input() {
+             let (gateway_tx, _) =
+                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+             let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
++            *actor.current_prompt_id.lock().unwrap() = Some("working".into());
+             {
+                 let mut state = actor.state.lock().await;
++                state.running_task = Some(running_task_stub("working"));
+                 state
+                     .pending_inputs
+                     .push_back(subagent_completed_input("sub-target"));
+@@ -1049,6 +1077,35 @@ async fn subagent_completed_drops_matching_pending_input() {
+             actor
+                 .drop_pending_items_for_consumed_completions(&consumed)
+                 .await;
++            let completion = test_completion_wake("sub-target");
++            actor.chat_state_handle.push_user_message(ConversationItem::user("Read the finished child result"));
++            actor.chat_state_handle.push_assistant_response(ConversationItem::assistant_tool_calls(vec![
++                xai_grok_sampling_types::ToolCall {
++                    id: "child-result".into(),
++                    name: "get_command_or_subagent_output".into(),
++                    arguments: r#"{"task_id":"sub-target"}"#.into(),
++                },
++            ]));
++            tokio::time::timeout(std::time::Duration::from_secs(5), async {
++                actor.commit_observed_subagent_tool_result(
++                    ConversationItem::tool_result("child-result", "done"),
++                    vec![xai_grok_tools::types::completion_observation::ObservedSubagentCompletion {
++                        subagent_id: completion.id.subagent_id.clone(),
++                        attempt_id: completion.id.attempt_id.clone(),
++                        text: "done".into(),
++                    }],
++                ).await.expect("actual tool-result commit must bind the observed attempt");
++                assert!(!actor.drain_admitted_messages_at_safe_point().await,
++                    "the queued wake is already consumed by the committed tool result");
++                let history = actor.chat_state_handle.get_conversation().await;
++                assert_eq!(history.iter().filter(|item| matches!(item,
++                    ConversationItem::ToolResult(result) if result.tool_call_id == "child-result")).count(), 1);
++                assert!(!history.iter().any(|item| matches!(item,
++                    ConversationItem::User(user) if user.synthetic_reason == SyntheticReason::SubagentCompleted)));
++                let persisted = actor.persisted_completion_state().await.unwrap();
++                assert_eq!(persisted.receipts.len(), 1);
++                assert_eq!(persisted.receipts[0].completion, completion.id);
++            }).await.expect("consumed child wake must settle within the receipt budget");
+             let state = actor.state.lock().await;
+             let remaining_ids: Vec<&str> = state
+                 .pending_inputs
+@@ -1223,7 +1280,7 @@ async fn sweep_clears_matching_pending_notifications() {
+         .await;
+ }
+ #[tokio::test(flavor = "current_thread")]
+-async fn shutdown_drops_pending_synthetic_inputs() {
++async fn shutdown_drops_pending_ephemeral_inputs() {
+     let local = tokio::task::LocalSet::new();
+     local
+         .run_until(async {
+@@ -1235,9 +1292,6 @@ async fn shutdown_drops_pending_synthetic_inputs() {
+                 state.pending_inputs.push_back(user_input("user-1"));
+                 state.pending_inputs.push_back(task_completed_input("bg-1"));
+                 state.pending_inputs.push_back(user_input("user-2"));
+-                state
+-                    .pending_inputs
+-                    .push_back(subagent_completed_input("sub-1"));
+                 state
+                     .pending_inputs
+                     .push_back(notification_drain_input("notifications-019e0000"));
+@@ -1261,8 +1315,8 @@ async fn shutdown_drops_pending_synthetic_inputs() {
+             assert_eq!(
+                 remaining_ids,
+                 vec!["user-1", "user-2"],
+-                "real user inputs must be preserved; every synthetic origin \
+-                     (TaskCompleted, SubagentCompleted, NotificationDrain, GoalSummary) \
++                "real user inputs must be preserved; every ephemeral origin \
++                     (TaskCompleted, NotificationDrain, GoalSummary) \
+                      must be dropped"
+             );
+             assert!(
+@@ -1567,17 +1621,11 @@ async fn promotion_drops_reported_wake_without_running_turn() {
+             mark_completion_projected(&actor, "sa-dup").await;
+             let (respond_to, mut dup_rx) = oneshot::channel();
+             let _ = actor
+-                .queue_input(QueueInputRequest {
+-                    verbatim: true,
+-                    ..queue_input_request(vec![], "subagent-completed-sa-dup/at1.1", respond_to)
+-                })
++                .queue_input(wake_request(vec![], "sa-dup", respond_to))
+                 .await;
+             let (respond_to, mut live_rx) = oneshot::channel();
+             let _ = actor
+-                .queue_input(QueueInputRequest {
+-                    verbatim: true,
+-                    ..queue_input_request(vec![], "subagent-completed-sa-live/at1.1", respond_to)
+-                })
++                .queue_input(wake_request(vec![], "sa-live", respond_to))
+                 .await;
+             let (completion_tx, _completion_rx) = tokio::sync::mpsc::unbounded_channel();
+             actor.clone().maybe_start_running_task(completion_tx).await;
+@@ -1616,7 +1664,7 @@ async fn promotion_drops_reported_wake_without_running_turn() {
+         .await;
+ }
+ #[tokio::test(flavor = "current_thread")]
+-async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
++async fn queued_child_survives_user_priority_until_next_between_turn_drain() {
+     let local = tokio::task::LocalSet::new();
+     local
+         .run_until(async {
+@@ -1625,12 +1673,9 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
+             let mut actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+             let fake = spawn_fake_coordinator(&mut actor, vec![subagent_summary("sa-pre")]);
+             actor.state.lock().await.running_task = Some(running_task_stub("user-running"));
+-            let (respond_to, _wake_rx) = oneshot::channel();
++            let (respond_to, wake_rx) = oneshot::channel();
+             let _ = actor
+-                .queue_input(QueueInputRequest {
+-                    verbatim: true,
+-                    ..queue_input_request(vec![], "subagent-completed-sa-pre/at1.1", respond_to)
+-                })
++                .queue_input(wake_request(vec![], "sa-pre", respond_to))
+                 .await;
+             assert!(
+                 !completion_projected(&actor, "sa-pre").await,
+@@ -1640,6 +1685,25 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
+             let _ = actor
+                 .queue_input(queue_input_request(vec![], "user-typed", respond_to))
+                 .await;
++            {
++                let state = actor.state.lock().await;
++                assert_eq!(state.pending_inputs.len(), 2);
++                assert!(matches!(state.pending_inputs.front().unwrap().input_origin.as_prompt_origin(),
++                    crate::session::PromptOrigin::SubagentCompleted { completion } if completion.id == test_completion_wake("sa-pre").id));
++            }
++            assert!(fake.acknowledged().await.is_empty(), "queueing a human follow-up does not consume the child result");
++            assert!(
++                !completion_projected(&actor, "sa-pre").await,
++                "a queued wake must leave the ledger untouched"
++            );
++            actor.state.lock().await.running_task = Some(running_task_stub("user-typed"));
++            *actor.current_prompt_id.lock().unwrap() = Some("user-typed".into());
++            tokio::time::timeout(std::time::Duration::from_secs(5), async {
++                actor.drain_between_turn_completions(&[]).await;
++                assert!(!actor.drain_admitted_messages_at_safe_point().await,
++                    "the pending wake must reuse the between-turn receipt without another model input");
++                assert!(wake_rx.await.expect("actual queued wake receipt").is_ok());
++            }).await.expect("the real between-turn commit must settle the queued child wake");
+             let remaining: Vec<String> = actor
+                 .state
+                 .lock()
+@@ -1649,13 +1713,6 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
+                 .map(|i| i.prompt_id.clone())
+                 .collect();
+             assert_eq!(remaining, ["user-typed"]);
+-            assert!(
+-                !completion_projected(&actor, "sa-pre").await,
+-                "a dropped wake must leave the ledger untouched"
+-            );
+-            actor.state.lock().await.running_task = Some(running_task_stub("user-typed"));
+-            *actor.current_prompt_id.lock().unwrap() = Some("user-typed".into());
+-            actor.drain_between_turn_completions(&[]).await;
+             assert_eq!(fake.acknowledged().await, ["sa-pre"]);
+             let conversation = actor.chat_state_handle.get_conversation().await;
+             let digests: Vec<&ConversationItem> = conversation
+@@ -1668,7 +1725,7 @@ async fn preempted_wake_is_redelivered_by_next_between_turn_drain() {
+                     [ConversationItem::User(u)]
+                         if u.synthetic_reason == SyntheticReason::SubagentCompleted
+                 ),
+-                "the dropped wake must be redelivered as exactly one digest: {digests:?}"
++                "the queued wake must be delivered as exactly one digest: {digests:?}"
+             );
+             assert!(completion_projected(&actor, "sa-pre").await);
+         })
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs
+new file mode 100644
+index 00000000..11e913b2
+--- /dev/null
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs
+@@ -0,0 +1,141 @@
++use super::*;
++use crate::session::completion_delivery::{
++    CompletionArtifacts, CompletionEventPolicy, CompletionObligation, SubagentCompletionEvent,
++};
++
++async fn shutdown_and_recover_child() {
++    let CompletionWakeReceiverFixture {
++        actor,
++        sender,
++        task,
++        writes: _writes,
++    } = completion_wake_receiver_fixture().await;
++    let completion = test_completion_wake("shutdown-child");
++    let event = SubagentCompletionEvent {
++        id: completion.id.clone(),
++        state: xai_grok_tools::implementations::grok_build::task::types::SubagentState::Failed {
++            message: "child upload denied during shutdown".into(),
++        },
++        text: "shutdown-child: child upload denied during shutdown".into(),
++        output: "child upload denied during shutdown".into(),
++        child_session_id: "shutdown-child-session".into(),
++        tool_calls: 2,
++        turns: 1,
++        duration_ms: 100,
++        tokens_used: 11,
++        completed_at: chrono::Utc::now(),
++        policy: CompletionEventPolicy::Automatic,
++        artifacts: CompletionArtifacts::None,
++    };
++    let (respond_to, receive) = oneshot::channel();
++    actor
++        .notifications
++        .persistence_tx
++        .send(PersistenceMsg::PrepareSubagentCompletion {
++            event: event.clone(),
++            respond_to,
++        })
++        .unwrap();
++    let committed = receive
++        .await
++        .expect("producer acknowledgement")
++        .expect("actual producer commit");
++    assert_eq!(committed.event.completed_at, event.completed_at);
++    assert_eq!(committed.event.state, event.state);
++    let (respond_to, receive) = oneshot::channel();
++    sender
++        .send(SessionCommand::PublishSubagentCompletion {
++            event: committed.event,
++            will_wake: true,
++            respond_to,
++        })
++        .unwrap();
++    let publication = receive
++        .await
++        .expect("publication acknowledgement")
++        .expect("real parent publication");
++    let (respond_to, wake_receipt) = oneshot::channel();
++    sender
++        .send(SessionCommand::SubagentCompletionWake {
++            prompt_id: "shutdown-child-wake".into(),
++            completion: completion.clone(),
++            text: publication.text.clone(),
++            respond_to,
++        })
++        .unwrap();
++    let (respond_to, receive) = oneshot::channel();
++    sender
++        .send(SessionCommand::GetToolOverrides { respond_to })
++        .unwrap();
++    receive
++        .await
++        .expect("parent FIFO includes the real child wake");
++    assert!(actor.state.lock().await.pending_inputs.iter().any(|item| {
++        matches!(item.input_origin.as_prompt_origin(),
++            crate::session::PromptOrigin::SubagentCompleted { completion: queued }
++                if queued.id == completion.id)
++    }));
++    assert!(!completion_projected(&actor, "shutdown-child").await);
++
++    sender
++        .send(SessionCommand::Shutdown(
++            crate::session::ShutdownKind::CancelRunningTurn,
++        ))
++        .unwrap();
++    task.await.expect("actual session shutdown completes");
++    assert_eq!(
++        wake_receipt
++            .await
++            .expect("shutdown settles the queued wake")
++            .unwrap()
++            .stop_reason,
++        acp::StopReason::Cancelled
++    );
++    assert!(actor.state.lock().await.pending_inputs.is_empty());
++    assert!(!completion_projected(&actor, "shutdown-child").await);
++    let (respond_to, receive) = oneshot::channel();
++    actor
++        .notifications
++        .persistence_tx
++        .send(PersistenceMsg::RecoverSubagentCompletions { respond_to })
++        .unwrap();
++    let recovered = receive
++        .await
++        .expect("recovery acknowledgement")
++        .expect("real persisted recovery");
++    assert!(matches!(
++        recovered.completion_delivery.wake_policy,
++        crate::session::completion_delivery::CompletionWakePolicy::Automatic
++    ));
++    assert!(
++        recovered.completion_delivery.receipts.is_empty(),
++        "shutdown did not attest model consumption"
++    );
++    assert!(
++        matches!(recovered.completion_delivery.obligations.as_slice(),
++        [CompletionObligation::Pending { id, payload }]
++            if id == &completion.id && payload.text == publication.text)
++    );
++    assert!(
++        publication
++            .text
++            .contains("child upload denied during shutdown")
++    );
++    assert!(matches!(publication.notification.update,
++        crate::extensions::notification::SessionUpdate::SubagentFinished {
++            child_session_id, status, error, ..
++        } if child_session_id == "shutdown-child-session"
++            && status == "failed"
++            && error.as_deref() == Some("child upload denied during shutdown")));
++}
++
++#[tokio::test(flavor = "current_thread")]
++async fn shutdown_preserves_unprojected_child_for_real_persistence_recovery() {
++    tokio::task::LocalSet::new()
++        .run_until(tokio::time::timeout(
++            std::time::Duration::from_secs(5),
++            shutdown_and_recover_child(),
++        ))
++        .await
++        .expect("shutdown and durable child recovery must finish within the protocol budget");
++}
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs
+index ec6b809f..3ddde5df 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs
+@@ -192,31 +192,43 @@ async fn a_synthetic_turn_inherits_plan_mode_instead_of_ending_it() {
+             actor.reconcile_plan_mode_with_prompt(PromptMode::Plan);
+             actor.plan_mode.lock().activate();
+             let _ = mode_updates(&mut event_rx);
+-            for prompt_id in [
+-                "task-completed-abc",
+-                "subagent-completed-abc",
+-                "workflow-completed-abc",
+-                "notifications-1",
+-                "goal-summary-1",
+-                "goal-classifier-nudge-1",
+-                "scheduler-fired-1",
+-                "plan-resume-1",
++            let child = subagent_summary("abc");
++            for origin in [
++                crate::session::PromptOrigin::TaskCompleted {
++                    task_id: "abc".into(),
++                },
++                crate::session::PromptOrigin::SubagentCompleted {
++                    completion: crate::session::CompletionWake {
++                        id: xai_chat_state::SubagentCompletionId {
++                            subagent_id: child.subagent_id().to_owned(),
++                            attempt_id: child.attempt_id,
++                        },
++                        kind: crate::session::CompletionWakeKind::Fresh,
++                    },
++                },
++                crate::session::PromptOrigin::WorkflowCompleted {
++                    completion_id: "abc".into(),
++                },
++                crate::session::PromptOrigin::NotificationDrain,
++                crate::session::PromptOrigin::GoalSummary,
++                crate::session::PromptOrigin::GoalClassifierNudge,
++                crate::session::PromptOrigin::SchedulerFired,
++                crate::session::PromptOrigin::PlanResume,
+             ] {
+-                let origin = crate::session::PromptOrigin::from_prompt_id(prompt_id);
+                 let resolved = actor.resolve_turn_prompt_mode(&origin, PromptMode::Agent);
+                 assert_eq!(
+                     actor.plan_mode.lock().state(),
+                     PlanModeState::Active,
+-                    "{prompt_id} must not end plan mode"
++                    "{origin:?} must not end plan mode"
+                 );
+                 assert_eq!(
+                     resolved,
+                     PromptMode::Plan,
+-                    "{prompt_id} runs under the session's mode, so it is recorded under it too"
++                    "{origin:?} runs under the session's mode, so it is recorded under it too"
+                 );
+                 assert!(
+                     mode_updates(&mut event_rx).is_empty(),
+-                    "{prompt_id} changed no mode, so it must announce none"
++                    "{origin:?} changed no mode, so it must announce none"
+                 );
+             }
+         })
+diff --git a/crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs b/crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs
+index f4ac6050..0f9fb2cb 100644
+--- a/crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs
+@@ -25,7 +25,18 @@ fn write(path: &Path, age: FileTime) {
+ /// `sessions/<cwd>/<id>/` with `summary.json` and `updates.jsonl` at `age`.
+ fn write_session(root: &Path, cwd: &str, id: &str, age: FileTime) -> PathBuf {
+     let dir = root.join(cwd).join(id);
+-    write(&dir.join("summary.json"), age);
++    std::fs::create_dir_all(&dir).unwrap();
++    let summary = super::Summary::new(
++        &super::Info {
++            id: agent_client_protocol::SessionId::new(id),
++            cwd: root.join(cwd).to_string_lossy().into_owned(),
++        },
++        agent_client_protocol::ModelId::new("test"),
++    )
++    .unwrap();
++    let path = dir.join("summary.json");
++    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
++    filetime::set_file_mtime(&path, age).unwrap();
+     write(&dir.join("updates.jsonl"), age);
+     dir
+ }
+@@ -116,7 +127,7 @@ fn idle_session_is_removed_whole() {
+     write(&idle.join("compaction_checkpoints/a.json"), days_ago(40));
+     let fresh = write_session(tmp.path(), "cwd", "fresh", days_ago(0));
+     let summary_rewritten = write_session(tmp.path(), "cwd", "summary-rewritten", days_ago(40));
+-    write(&summary_rewritten.join("summary.json"), days_ago(1));
++    filetime::set_file_mtime(summary_rewritten.join("summary.json"), days_ago(1)).unwrap();
+ 
+     let stats = sweep(tmp.path(), &no_live());
+ 
+@@ -286,3 +297,26 @@ fn symlinked_session_dir_is_skipped() {
+     assert!(target.join("summary.json").is_file());
+     assert!(cwd.join("link").symlink_metadata().is_ok());
+ }
++
++#[test]
++fn malformed_summary_keeps_stale_session_for_admission_recovery() {
++    let tmp = TempDir::new().unwrap();
++    let session = write_session(tmp.path(), "cwd", "invalid", days_ago(40));
++    write(&session.join("summary.json"), days_ago(40));
++    let before = std::fs::read(session.join("updates.jsonl")).unwrap();
++
++    let stats = sweep(tmp.path(), &no_live());
++
++    assert_eq!(
++        CleanupStats {
++            errors: 1,
++            ..CleanupStats::default()
++        },
++        stats
++    );
++    assert_eq!(std::fs::read(session.join("summary.json")).unwrap(), b"x");
++    assert_eq!(
++        std::fs::read(session.join("updates.jsonl")).unwrap(),
++        before
++    );
++}
+diff --git a/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs b/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs
+index fdafc527..e6c9dda0 100644
+--- a/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs
++++ b/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs
+@@ -55,6 +55,11 @@ impl JsonlStorageAdapter {
+                     ..Default::default()
+                 },
+             )?;
++            crate::agent::subagent::materialize_completion_artifacts(
++                &storage.session_dir(&info),
++                &info.id.to_string(),
++                &event,
++            )?;
+             Ok(crate::session::ProducerCommitAck {
+                 event,
+                 summary_path: storage.summary_file(&info),
+@@ -74,11 +79,6 @@ impl JsonlStorageAdapter {
+         let info = info.clone();
+         let event = event.clone();
+         tokio::task::spawn_blocking(move || {
+-            crate::agent::subagent::materialize_completion_artifacts(
+-                &storage.session_dir(&info),
+-                &info.id.to_string(),
+-                &event,
+-            )?;
+             let path = storage.updates_file(&info);
+             let _lock = Self::lock_append(&path)?;
+             let summary = storage.read_summary_sync(&info)?;
+@@ -198,6 +198,18 @@ impl JsonlStorageAdapter {
+                 ..
+             } = obligation
+             {
++                let parent = self.session_dir(info);
++                let parent_session = info.id.to_string();
++                let artifacts = event.clone();
++                tokio::task::spawn_blocking(move || {
++                    crate::agent::subagent::materialize_completion_artifacts(
++                        &parent,
++                        &parent_session,
++                        &artifacts,
++                    )
++                })
++                .await
++                .map_err(io::Error::other)??;
+                 self.publish_completion(info, event, false).await?;
+             }
+         }
+diff --git a/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs b/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs
+new file mode 100644
+index 00000000..b185689c
+--- /dev/null
++++ b/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs
+@@ -0,0 +1,159 @@
++use super::*;
++use crate::agent::subagent::{SubagentMeta, SubagentMetaStatus};
++use crate::extensions::subagent_context::SubagentContext;
++
++#[tokio::test]
++async fn producer_commit_materializes_terminal_metadata_without_parent_publication() {
++    for (state, status, error, policy) in [
++        (
++            SubagentState::Completed,
++            SubagentMetaStatus::Completed,
++            None,
++            CompletionEventPolicy::Automatic,
++        ),
++        (
++            SubagentState::Failed {
++                message: "upload denied".into(),
++            },
++            SubagentMetaStatus::Failed,
++            Some("upload denied"),
++            CompletionEventPolicy::Automatic,
++        ),
++        (
++            SubagentState::Interrupted {
++                cause: InterruptionCause::Error {
++                    message: "receipt actor failed".into(),
++                },
++            },
++            SubagentMetaStatus::Cancelled,
++            Some("receipt actor failed"),
++            CompletionEventPolicy::Automatic,
++        ),
++        (
++            SubagentState::Interrupted {
++                cause: InterruptionCause::ExplicitStop {
++                    actor: xai_tool_types::SubagentActor::Human,
++                },
++            },
++            SubagentMetaStatus::Cancelled,
++            Some("Subagent was stopped by human user."),
++            CompletionEventPolicy::Silent,
++        ),
++    ] {
++        let (directory, storage, info) = fixture().await;
++        let mut outcome = event(
++            "child",
++            xai_message_delivery_core::AttemptId::mint(1),
++            state,
++        );
++        outcome.policy = policy;
++        let metadata = SubagentMeta {
++            subagent_id: outcome.id.subagent_id.clone(),
++            attempt_id: Some(outcome.id.attempt_id.to_string()),
++            parent_session_id: info.id.to_string(),
++            child_session_id: outcome.child_session_id.clone(),
++            subagent_type: "general-purpose".into(),
++            description: "producer metadata".into(),
++            prompt: "original child work".into(),
++            status: SubagentMetaStatus::Running,
++            started_at: outcome.completed_at - chrono::Duration::milliseconds(100),
++            completed_at: None,
++            duration_ms: None,
++            tool_calls: None,
++            turns: None,
++            error: None,
++            context: SubagentContext::Unreported,
++            persona: None,
++            resumed_from: None,
++            child_cwd: Some("/tmp/child".into()),
++            worktree_path: Some("/tmp/original-worktree".into()),
++            snapshot_ref: Some("refs/grok/child-snapshot".into()),
++            effective_model_id: Some("original-model".into()),
++        };
++        let path = directory.path().join("subagents/child/meta.json");
++        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
++        std::fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
++        let read =
++            || serde_json::from_slice::<SubagentMeta>(&std::fs::read(&path).unwrap()).unwrap();
++        assert_eq!(read().status, SubagentMetaStatus::Running);
++        outcome.artifacts = CompletionArtifacts::Metadata {
++            metadata: Box::new(metadata.clone()),
++        };
++        storage
++            .prepare_subagent_completion(&info, outcome.clone())
++            .await
++            .unwrap();
++        let terminal = read();
++        assert_eq!(terminal.status, status);
++        assert_eq!(terminal.error.as_deref(), error);
++        assert_eq!(terminal.completed_at, Some(outcome.completed_at));
++        assert_eq!(terminal.duration_ms, Some(100));
++        assert_eq!(terminal.tool_calls, Some(2));
++        assert_eq!(terminal.turns, Some(1));
++        assert_eq!(terminal.started_at, metadata.started_at);
++        assert_eq!(terminal.snapshot_ref, metadata.snapshot_ref);
++        assert_eq!(terminal.worktree_path, metadata.worktree_path);
++        assert_eq!(terminal.attempt_id, metadata.attempt_id);
++        assert_eq!(terminal.child_session_id, metadata.child_session_id);
++        assert_eq!(terminal.effective_model_id, metadata.effective_model_id);
++        let summary = storage.load_summary(&info).await.unwrap();
++        assert!(matches!(summary.completion_delivery.obligations.as_slice(),
++            [CompletionObligation::Preparing { event, .. }] if event.id == outcome.id && event.state == outcome.state && event.completed_at == outcome.completed_at));
++        assert!(storage.read_updates_jsonl(storage.updates_file(&info)).unwrap().iter().all(|update|
++            !matches!(update, crate::session::storage::SessionUpdate::Xai(notification)
++                if matches!(notification.update, crate::extensions::notification::SessionUpdate::SubagentFinished { .. }))));
++        let committed = std::fs::read(&path).unwrap();
++        outcome.completed_at += chrono::Duration::hours(1);
++        let replay = storage
++            .prepare_subagent_completion(&info, outcome)
++            .await
++            .unwrap();
++        assert_eq!(
++            std::fs::read(&path).unwrap(),
++            committed,
++            "producer replay preserves the committed timestamp and metadata"
++        );
++        std::fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
++        let reloaded =
++            JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
++        let recovered = reloaded.recover_subagent_completions(&info).await.unwrap();
++        assert_eq!(
++            std::fs::read(&path).unwrap(),
++            committed,
++            "recovery materializes the committed outcome after a crash before the metadata write"
++        );
++        match policy {
++            CompletionEventPolicy::Automatic | CompletionEventPolicy::BoundaryOnly => {
++                assert!(
++                    matches!(recovered.completion_delivery.obligations.as_slice(),
++                    [CompletionObligation::Pending { id, .. }] if id == &replay.event.id)
++                );
++            }
++            CompletionEventPolicy::Silent => {
++                assert!(recovered.completion_delivery.obligations.is_empty());
++            }
++        }
++        let notifications = reloaded
++            .read_updates_jsonl(reloaded.updates_file(&info))
++            .unwrap();
++        let finishes: Vec<_> = notifications.iter().filter(|update| matches!(update,
++            crate::session::storage::SessionUpdate::Xai(notification)
++                if matches!(notification.update, crate::extensions::notification::SessionUpdate::SubagentFinished { .. }))).collect();
++        assert_eq!(finishes.len(), 1);
++        let crate::session::storage::SessionUpdate::Xai(finish) = finishes[0] else {
++            panic!("the durable finish must carry its exact completion fact");
++        };
++        let fact: crate::session::completion_delivery::SubagentCompletionFact =
++            serde_json::from_value(finish.meta.as_ref().unwrap()["subagentCompletion"].clone())
++                .unwrap();
++        assert_eq!(fact.id, replay.event.id);
++        assert_eq!(fact.state, replay.event.state);
++        let updates = std::fs::read(reloaded.updates_file(&info)).unwrap();
++        reloaded.recover_subagent_completions(&info).await.unwrap();
++        assert_eq!(std::fs::read(&path).unwrap(), committed);
++        assert_eq!(
++            std::fs::read(reloaded.updates_file(&info)).unwrap(),
++            updates
++        );
++    }
++}
+diff --git a/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs b/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs
+index 8c28a093..6c74a8de 100644
+--- a/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs
+@@ -2,6 +2,8 @@ use super::*;
+ 
+ #[path = "completion_batch_tests.rs"]
+ mod batch;
++#[path = "completion_metadata_tests.rs"]
++mod metadata;
+ #[path = "completion_recovery_tests.rs"]
+ mod recovery;
+ use crate::session::completion_delivery::{
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+index a4650ad7..e1388744 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+@@ -102,7 +102,7 @@ type WakeRun = (
+ );
+ 
+ #[derive(Clone, Copy, Default)]
+-enum ProducerCommitBehavior {
++pub(in crate::implementations::grok_build::task::coordinator) enum ProducerCommitBehavior {
+     #[default]
+     Commit,
+     Reject {
+@@ -113,7 +113,8 @@ enum ProducerCommitBehavior {
+ 
+ #[derive(Clone, Copy, Default)]
+ pub(in crate::implementations::grok_build::task::coordinator) struct RunnerBehavior {
+-    producer_commit: ProducerCommitBehavior,
++    pub(in crate::implementations::grok_build::task::coordinator) producer_commit:
++        ProducerCommitBehavior,
+     pub(in crate::implementations::grok_build::task::coordinator) wait_before_start: bool,
+     pub(in crate::implementations::grok_build::task::coordinator) fail_wake_before_start: bool,
+     pub(in crate::implementations::grok_build::task::coordinator) reject_wake_after_deferred_start:

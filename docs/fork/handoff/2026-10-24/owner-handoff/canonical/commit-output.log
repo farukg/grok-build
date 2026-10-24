@@ -1,0 +1,6 @@
+[main 074f54b5] [unbuilt] [checkpoint] preserve remaining attempt-admission work for handoff
+ 27 files changed, 1308 insertions(+), 375 deletions(-)
+ create mode 100644 crates/codegen/xai-grok-shell/src/agent/subagent/tests/completion_fixtures.rs
+ create mode 100644 crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_fixtures.rs
+ create mode 100644 crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_receiver_fixture.rs
+ create mode 100644 crates/codegen/xai-grok-shell/tests/test_completion_goal_activation.rs

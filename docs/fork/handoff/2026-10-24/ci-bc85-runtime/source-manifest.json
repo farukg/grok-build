@@ -1,0 +1,284 @@
+{
+  "head": "bc85ceb95ee122ed436cfbe516c41bd6208d4fb2",
+  "source_tree": "a2dda6d3ea8d2ec96a3d7779a39b88e69c1b2d94",
+  "sources": [
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs",
+      "head_sha256": null,
+      "current_sha256": "5ab4300441fe129bb3dd3ef75ca041cd410f56c280652b778f8b9fd96bf1055b",
+      "bytes": 1488,
+      "ends_with_newline": true,
+      "final_lines": [
+        "            .inject_keys(sgr_mouse(0, row, col, 'm').as_bytes())",
+        "            .expect(\"release parent navigation\");",
+        "        self.harness",
+        "            .wait_for_text_absent(PARENT_NAVIGATION, ROW_TIMEOUT)",
+        "            .expect(\"fixture root parent is visible\");",
+        "        self.wait_for_row(parent_text);",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs",
+      "head_sha256": "52bea345a700792dc99ba001493e6f097485358e11d8663f7634a4a644fa0f40",
+      "current_sha256": "bcd5c594c1b4168e7aa4a86fe80399d70e786987d337e25411c9eca7394f749c",
+      "bytes": 3223,
+      "ends_with_newline": true,
+      "final_lines": [
+        "        .harness",
+        "        .wait_for_text(PARENT_NAVIGATION, ROW_TIMEOUT)",
+        "        .expect(\"reopened child header exposes parent navigation\");",
+        "    scenario.wait_for_row(\"CHILD_DONE\");",
+        "    scenario.verify_child_session_info();",
+        "    scenario.return_to_parent(WAKE_DONE);",
+        "    scenario.finish(\"finished_child_manual_compact_cancel.cast\");",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs",
+      "head_sha256": "f22efce217074a8d17e1e07bb751362560884cdeaf4673f8f411f263c8143921",
+      "current_sha256": "7efc7cb73906ac25c188e35117b9d2cf4a0c290ed204420c7d525d2f07dd738f",
+      "bytes": 15365,
+      "ends_with_newline": true,
+      "final_lines": [
+        "        .expect(\"collapse rejected row\");",
+        "    scenario",
+        "        .harness",
+        "        .wait_for_text_absent(REJECTED_REASON, ROW_TIMEOUT)",
+        "        .expect(\"Left folds the reason away\");",
+        "",
+        "    scenario.finish(\"send_subagent_message_row.cast\");",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs",
+      "head_sha256": "b144117d7a8366a748d5c3b86c2c1fd6b70f5cf11f1d2678d9d68b521ac20efa",
+      "current_sha256": "1b84c99ee1463c788f2ea7e7a2539f5b888b8a9fca66edc607cb3db7f3d1e91f",
+      "bytes": 2681,
+      "ends_with_newline": true,
+      "final_lines": [
+        "                    && h.contains_text(PARENT_DONE)",
+        "            },",
+        "        )",
+        "        .expect(\"no child session for an unresolved target\");",
+        "    write_screen_dump_if_requested(&scenario.harness, \"send_row_rejected_enter_stays\");",
+        "",
+        "    scenario.finish(\"send_subagent_message_row_opens_child.cast\");",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+      "head_sha256": "87be37ae0829d823401c09fc9d4496848416604f988f1f1089548922009b8507",
+      "current_sha256": "bf47a870a620fbd18564cd2ae167be10dffc796cbce1b16a38de42f050d8190f",
+      "bytes": 98328,
+      "ends_with_newline": true,
+      "final_lines": [
+        "            assert_eq!(shared_buffer.len(), 1, \"own-turn monitor events go to the turn loop's buffer\");",
+        "            assert!(",
+        "                actor.state.lock().await.pending_notifications.is_empty(),",
+        "                \"own-turn monitor events must not also queue a wake\"",
+        "            );",
+        "        })",
+        "        .await;",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs",
+      "head_sha256": null,
+      "current_sha256": "87ac1dc6d1e4c83666e547ef87e7f3609e750a1ee9d48e591c311b7ee4cbb1bd",
+      "bytes": 5127,
+      "ends_with_newline": true,
+      "final_lines": [
+        "    tokio::task::LocalSet::new()",
+        "        .run_until(tokio::time::timeout(",
+        "            std::time::Duration::from_secs(5),",
+        "            shutdown_and_recover_child(),",
+        "        ))",
+        "        .await",
+        "        .expect(\"shutdown and durable child recovery must finish within the protocol budget\");",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs",
+      "head_sha256": "3f79a1d2524db30c4dfc87291cd30dcf935529d65ad7f0601253b9b2d33971df",
+      "current_sha256": "e1febdc334622874ded60beb981c1380713df02ea485b37bf17f6daf30c08738",
+      "bytes": 11076,
+      "ends_with_newline": true,
+      "final_lines": [
+        "            assert!(!origin.is_synthetic(), \"precondition\");",
+        "            let resolved = actor.resolve_turn_prompt_mode(&origin, PromptMode::Plan);",
+        "            assert_eq!(resolved, PromptMode::Plan);",
+        "            assert_eq!(actor.plan_mode.lock().state(), PlanModeState::Pending);",
+        "            assert_eq!(mode_updates(&mut event_rx), vec![\"plan\".to_string()]);",
+        "        })",
+        "        .await;",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs",
+      "head_sha256": "5242da224ce7676514e6a3a08b743637287da58bd57a4c9086490ad79ef20692",
+      "current_sha256": "920cf5a925c49cbaf96b44522da615bd849839ea00f2ccb5875347e49aac9a1a",
+      "bytes": 10467,
+      "ends_with_newline": true,
+      "final_lines": [
+        "        stats",
+        "    );",
+        "    assert_eq!(std::fs::read(session.join(\"summary.json\")).unwrap(), b\"x\");",
+        "    assert_eq!(",
+        "        std::fs::read(session.join(\"updates.jsonl\")).unwrap(),",
+        "        before",
+        "    );",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs",
+      "head_sha256": "4a1ddc227e19a7af0a8437ba9f62ed3d64b9da68a674e9dabd69a110845b5f15",
+      "current_sha256": "cad01c1562add963842483daa4a437910c1ed2deb05ca437d766d0ecc7f3ae9e",
+      "bytes": 25798,
+      "ends_with_newline": true,
+      "final_lines": [
+        "                )?;",
+        "            }",
+        "            crate::session::storage::write_jsonl_atomic(&path, &items)",
+        "        })",
+        "        .await",
+        "        .map_err(io::Error::other)?",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs",
+      "head_sha256": null,
+      "current_sha256": "9047107e84fcdbe916364dda5cb921fa6c1c96e01b9eea816de99ad397915877",
+      "bytes": 7372,
+      "ends_with_newline": true,
+      "final_lines": [
+        "        reloaded.recover_subagent_completions(&info).await.unwrap();",
+        "        assert_eq!(std::fs::read(&path).unwrap(), committed);",
+        "        assert_eq!(",
+        "            std::fs::read(reloaded.updates_file(&info)).unwrap(),",
+        "            updates",
+        "        );",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs",
+      "head_sha256": "91720004b6cee031c77b55ce1ecc5ba5be32aa85ac18bfdbf8b2df1f0632ba6f",
+      "current_sha256": "6d44717a4017cc765bfb9e409e15fc1f36975a231bf8d489edb326fdf3289351",
+      "bytes": 9854,
+      "ends_with_newline": true,
+      "final_lines": [
+        "            .recover_subagent_completions(&info)",
+        "            .await",
+        "            .unwrap()",
+        "            .completion_delivery",
+        "            .obligations",
+        "            .is_empty()",
+        "    );",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+      "head_sha256": "d702f6479012f4dbe61ff356c4298463b11ad90aba7469485a8717566388f8e4",
+      "current_sha256": "67a5a41460ecc2e50308dec7a7a0237b26c04bf2c58a23d9dc073f6f48a3a9dd",
+      "bytes": 172291,
+      "ends_with_newline": true,
+      "final_lines": [
+        "        workflow",
+        "            .await",
+        "            .expect(\"join\")",
+        "            .expect(\"spawn round-trips\")",
+        "            .success()",
+        "    );",
+        "    harness.actor.abort();",
+        "}"
+      ]
+    }
+  ],
+  "protected_sources": [
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/metadata_store.rs",
+      "head_sha256": "fe77af8d0bae8c77ab6d9e4ccb686081771f41312bc0c97af3eaedb0ba234e5e",
+      "current_sha256": "fe77af8d0bae8c77ab6d9e4ccb686081771f41312bc0c97af3eaedb0ba234e5e"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/completion_publication.rs",
+      "head_sha256": "56fa29f05dbbcca861b9cc6eac32cab491d4463ba6f0d2392c75e1e5d33febee",
+      "current_sha256": "56fa29f05dbbcca861b9cc6eac32cab491d4463ba6f0d2392c75e1e5d33febee"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs",
+      "head_sha256": "9e65c937a93509a4ce1945f4feff8ea9fecff23d876c69d95c742d4537ea42e1",
+      "current_sha256": "9e65c937a93509a4ce1945f4feff8ea9fecff23d876c69d95c742d4537ea42e1"
+    },
+    {
+      "path": "crates/codegen/xai-grok-pager/src/app/acp_handler/tests/completion_replay.rs",
+      "head_sha256": "b70ef9b494f5d34c3134a12bbe0a3c8bd7f5c49cb4cf1be03b668afd85dab777",
+      "current_sha256": "b70ef9b494f5d34c3134a12bbe0a3c8bd7f5c49cb4cf1be03b668afd85dab777"
+    },
+    {
+      "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+      "head_sha256": "5a9c98c2bce204f388d5795217cb2431ac656ec0c06ea4e5a2644cd19c3f78b0",
+      "current_sha256": "5a9c98c2bce204f388d5795217cb2431ac656ec0c06ea4e5a2644cd19c3f78b0"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-fixtures/bc85-failed-ci.raw",
+      "bytes": 1374665,
+      "sha256": "2b1970de6697281eec1baa9a7f82a67f33f69dfb0f23dcabae455d98cea928d9"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-fixtures/bc85-failed-ci.log",
+      "bytes": 1374665,
+      "sha256": "2b1970de6697281eec1baa9a7f82a67f33f69dfb0f23dcabae455d98cea928d9"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/normalized.log",
+      "bytes": 1342419,
+      "sha256": "abceeecc9880ecd9ba6769e5582e39bd7bf0b28fff3c8073ebf8762dd88ab13c"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/diagnostics.json",
+      "bytes": 3781,
+      "sha256": "adfa2c64f650e99e1ef282919a0ffdf833272dd90353d6fb45e487b0ef709e3d"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/runtime.patch",
+      "bytes": 50504,
+      "sha256": "465f34305d0e3ea24ef8a6fed36d50fbad8f8f83e2f4278938d1d2681f59431d"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/production.patch",
+      "bytes": 2054,
+      "sha256": "dca31661724f60439920ed2b323005925c2297cd96afd422485d0906664817fc"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/fixtures.patch",
+      "bytes": 48450,
+      "sha256": "6ac7a61dc335706318ac0528ae77705afc1bd28a23a11190a5c1a7ac58a0de40"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/resume-integrity.json",
+      "bytes": 6530,
+      "sha256": "4bffef4c191a5b106aa9687f86ecdce48b2e2460536b4115d591f4abe714b3ba"
+    },
+    {
+      "path": "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-bc85-runtime/resume-baseline-source-manifest.json",
+      "bytes": 5899,
+      "sha256": "51e60b0741ca7f9c7c14b2a4c17822328fa99893ff1c6466e6df09e1104e2380"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+Koordination zum neuen Farukfehler nach Mid-Run-Steer: Completion meldet serialization error: missing field model. Ein konkreter gleicher Fehler ist für unser Sol-Child01a164a2-3412-7770-9e4a-f6a4150b2d1f in Child-updates122–124/Parentupdates5797 belegt. Der fehlerhafte Provider-Frame fehlt bisher; Steering-Kausalität und Neustart als Lösung sind unbewiesen.
+
+Grok dekodiert bekannte Responses-Events vor Lite-Output-Rekonstruktion über den gepinnten async-openai Response-Typ mit verpflichtendem model:String. 22fd28fb/b82768d4 lösen andere Lite-Outputprobleme und belegen hier keinen Fix. Aktuelles Gateway internal ResponsesCompleted.model_name ist optional; native Terminalprojektion in server/sse.rs375–414 ergänzt created_at. Das ist eine zu prüfende Vertragsgrenze, kein Beweis für den Producerfehler.
+
+BLDlog20261022-201016 meldet aktive Fremdänderung an infra/gateway/src/routing/opaque_reasoning/responses_terminal.rs. Bitte nenne mir den tatsächlichen aktiven Owner dieses Gateway-Terminalpfads oder leite diese konkrete Diagnose an ihn weiter. Ich vermeide dort konkurrierende Edits. Benötigt wird ein redigierter betroffener Terminal-/Errorframe mit Eventtyp, Response-ID und Modellprovenienz ohne Authheader; dann korrekter Producer-/Wirevertrag samt realer Regression, keine erfundene model-Vorgabe.
+
+Unser aktueller Publish-/Wakeupfix läuft weiter; Orchestrator-Baseline ist vollständig erfolgreich bld-1792692612571-284e68bd9ad44511abd5e6247948055a. Lokaler Diagnosebericht: /tmp/grok-goal-4f7553a1dbe6/implementer/missing-model/result.md.

@@ -1,0 +1,51 @@
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:720:47 error[E0425]: cannot find function `test_gateway` in this scope
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2364:18 error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs:170:18 error[E0609]: no field `goal_loop_active` on type `subagent::SubagentSpawnContext`
+crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs:173:13 error[E0609]: no field `goal_loop_active` on type `subagent::SubagentSpawnContext`
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:105:27 error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:737:9 error[E0560]: struct `AutoWakeInputs` has no field named `run_in_background`
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2285:18 error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2308:27 error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2455:18 error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2502:18 error[E0061]: this function takes 14 arguments but 13 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2536:27 error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:480:13 error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:504:14 error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:518:13 error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:602:20 error[E0061]: this function takes 4 arguments but 5 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:644:20 error[E0061]: this function takes 4 arguments but 5 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs:682:20 error[E0061]: this function takes 4 arguments but 5 arguments were supplied
+crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs:2827:9 error[E0560]: struct `subagent::ShellCompletionData` has no field named `attempt_id`
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:235:28 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:298:44 error[E0425]: cannot find function `task_wake_admission` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:331:44 error[E0425]: cannot find function `task_wake_admission` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:371:44 error[E0425]: cannot find function `task_wake_admission` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:534:27 error[E0425]: cannot find function `monitor_event_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:535:46 error[E0425]: cannot find function `monitor_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:539:43 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:708:28 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:753:74 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:797:25 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:798:25 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:831:74 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1035:27 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1038:27 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1102:25 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1103:25 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1104:25 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1138:74 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1204:27 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1207:27 error[E0425]: cannot find function `monitor_event_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1210:27 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1255:27 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1258:27 error[E0425]: cannot find function `monitor_event_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1300:74 error[E0425]: cannot find function `task_output_result` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1357:9 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1358:9 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1359:9 error[E0425]: cannot find function `monitor_event_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1378:9 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1379:9 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1390:9 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1391:9 error[E0425]: cannot find function `monitor_event_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1415:27 error[E0425]: cannot find function `bash_completed_notification` in this scope
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs:1462:27 error[E0425]: cannot find function `bash_completed_notification` in this scope

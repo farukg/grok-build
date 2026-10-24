@@ -1,0 +1,172 @@
+[
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs",
+    "bytes": 1488,
+    "matches_previous_handoff": true,
+    "sha256": "5ab4300441fe129bb3dd3ef75ca041cd410f56c280652b778f8b9fd96bf1055b",
+    "ends_with_newline": true,
+    "final_lines": [
+      "            .inject_keys(sgr_mouse(0, row, col, 'm').as_bytes())",
+      "            .expect(\"release parent navigation\");",
+      "        self.harness",
+      "            .wait_for_text_absent(PARENT_NAVIGATION, ROW_TIMEOUT)",
+      "            .expect(\"fixture root parent is visible\");",
+      "        self.wait_for_row(parent_text);",
+      "    }",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs",
+    "bytes": 3223,
+    "matches_previous_handoff": true,
+    "sha256": "bcd5c594c1b4168e7aa4a86fe80399d70e786987d337e25411c9eca7394f749c",
+    "ends_with_newline": true,
+    "final_lines": [
+      "        .harness",
+      "        .wait_for_text(PARENT_NAVIGATION, ROW_TIMEOUT)",
+      "        .expect(\"reopened child header exposes parent navigation\");",
+      "    scenario.wait_for_row(\"CHILD_DONE\");",
+      "    scenario.verify_child_session_info();",
+      "    scenario.return_to_parent(WAKE_DONE);",
+      "    scenario.finish(\"finished_child_manual_compact_cancel.cast\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs",
+    "bytes": 15365,
+    "matches_previous_handoff": true,
+    "sha256": "7efc7cb73906ac25c188e35117b9d2cf4a0c290ed204420c7d525d2f07dd738f",
+    "ends_with_newline": true,
+    "final_lines": [
+      "        .expect(\"collapse rejected row\");",
+      "    scenario",
+      "        .harness",
+      "        .wait_for_text_absent(REJECTED_REASON, ROW_TIMEOUT)",
+      "        .expect(\"Left folds the reason away\");",
+      "",
+      "    scenario.finish(\"send_subagent_message_row.cast\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs",
+    "bytes": 2609,
+    "matches_previous_handoff": true,
+    "sha256": "5529b411719daa591ff8da98001bcde8b5a79b9b99805333593dedfb6b9cf077",
+    "ends_with_newline": true,
+    "final_lines": [
+      "            Duration::from_secs(3),",
+      "            |h| !h.contains_text(PARENT_NAVIGATION) && h.contains_text(\"\\u{203a} Message rejected\") && h.contains_text(PARENT_DONE),",
+      "        )",
+      "        .expect(\"no child session for an unresolved target\");",
+      "    write_screen_dump_if_requested(&scenario.harness, \"send_row_rejected_enter_stays\");",
+      "",
+      "    scenario.finish(\"send_subagent_message_row_opens_child.cast\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "bytes": 95207,
+    "matches_previous_handoff": true,
+    "sha256": "3ea8aebd1bba659e4b1c4d1eaaa50476905f04d79314f116131cbaf8be3f5aa0",
+    "ends_with_newline": true,
+    "final_lines": [
+      "            assert_eq!(shared_buffer.len(), 1, \"own-turn monitor events go to the turn loop's buffer\");",
+      "            assert!(",
+      "                actor.state.lock().await.pending_notifications.is_empty(),",
+      "                \"own-turn monitor events must not also queue a wake\"",
+      "            );",
+      "        })",
+      "        .await;",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs",
+    "bytes": 11002,
+    "matches_previous_handoff": true,
+    "sha256": "901752181bda5dc9f07eafa25990f1fc6dc99e16b677af68e04ea3dbb6c11bc4",
+    "ends_with_newline": true,
+    "final_lines": [
+      "            assert!(!origin.is_synthetic(), \"precondition\");",
+      "            let resolved = actor.resolve_turn_prompt_mode(&origin, PromptMode::Plan);",
+      "            assert_eq!(resolved, PromptMode::Plan);",
+      "            assert_eq!(actor.plan_mode.lock().state(), PlanModeState::Pending);",
+      "            assert_eq!(mode_updates(&mut event_rx), vec![\"plan\".to_string()]);",
+      "        })",
+      "        .await;",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs",
+    "bytes": 25481,
+    "matches_previous_handoff": true,
+    "sha256": "128b2262071ae99ae6c983e69df058659f5b7252c6cc74eab9a392d75d04c925",
+    "ends_with_newline": true,
+    "final_lines": [
+      "                )?;",
+      "            }",
+      "            crate::session::storage::write_jsonl_atomic(&path, &items)",
+      "        })",
+      "        .await",
+      "        .map_err(io::Error::other)?",
+      "    }",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs",
+    "bytes": 4919,
+    "matches_previous_handoff": true,
+    "sha256": "c13812f5729ab1efa6485c7a0e9ddd42e8a66f83d7f63772df49cf9bd4bd3b17",
+    "ends_with_newline": true,
+    "final_lines": [
+      "            .unwrap();",
+      "        assert_eq!(",
+      "            std::fs::read(&path).unwrap(),",
+      "            committed,",
+      "            \"producer replay preserves the committed timestamp and metadata\"",
+      "        );",
+      "    }",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs",
+    "bytes": 9854,
+    "matches_previous_handoff": true,
+    "sha256": "6d44717a4017cc765bfb9e409e15fc1f36975a231bf8d489edb326fdf3289351",
+    "ends_with_newline": true,
+    "final_lines": [
+      "            .recover_subagent_completions(&info)",
+      "            .await",
+      "            .unwrap()",
+      "            .completion_delivery",
+      "            .obligations",
+      "            .is_empty()",
+      "    );",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+    "bytes": 172291,
+    "matches_previous_handoff": true,
+    "sha256": "67a5a41460ecc2e50308dec7a7a0237b26c04bf2c58a23d9dc073f6f48a3a9dd",
+    "ends_with_newline": true,
+    "final_lines": [
+      "        workflow",
+      "            .await",
+      "            .expect(\"join\")",
+      "            .expect(\"spawn round-trips\")",
+      "            .success()",
+      "    );",
+      "    harness.actor.abort();",
+      "}"
+    ]
+  }
+]

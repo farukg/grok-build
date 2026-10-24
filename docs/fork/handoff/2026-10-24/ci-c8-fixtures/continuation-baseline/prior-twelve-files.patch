@@ -1,0 +1,1083 @@
+diff --git a/crates/codegen/xai-chat-state/src/actor/tests.rs b/crates/codegen/xai-chat-state/src/actor/tests.rs
+index 969a89aa..0bb03c2c 100644
+--- a/crates/codegen/xai-chat-state/src/actor/tests.rs
++++ b/crates/codegen/xai-chat-state/src/actor/tests.rs
+@@ -4265,7 +4265,7 @@ async fn apply_turn_request_pruning_is_noop_under_half_window() {
+     let token = tokio_util::sync::CancellationToken::new();
+     let handle = ChatStateActor::spawn_with_pruning(
+         vec![],
+-        test_config_with_window(10_000),
++        test_config_with_window(32_000),
+         Default::default(),
+         Box::new(mock),
+         event_tx,
+@@ -4277,6 +4277,7 @@ async fn apply_turn_request_pruning_is_noop_under_half_window() {
+     let _ = handle.get_total_tokens().await;
+ 
+     let conv = handle.get_conversation().await;
++    assert!(super::state::estimate_conversation_tokens(&conv) < 16_000);
+     let pruned = handle.apply_turn_request_pruning(conv.clone()).await;
+     let oldest = match pruned.get(2) {
+         Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs
+index c4d89d91..5df7533e 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs
+@@ -1,5 +1,5 @@
+ //! One isolated `run_shell_child` spawn for grove-e2e. Feature `test-support`.
+-use super::spawn::present_child_completion;
++use super::completion_publication::{prepare_completion_admission, publish_committed_completion};
+ use super::{ShellChildRuntime, ShellCompletionData, SubagentSpawnContext, run_shell_child};
+ use crate::session::SessionCommand;
+ use crate::util::config::RemoteSettings;
+@@ -206,19 +206,26 @@ impl ChildRunner for Runner {
+     }
+     fn on_completed(
+         &self,
+-        _completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
++        completion: xai_grok_tools::implementations::grok_build::task::coordinator::CompletionPreparation<'_, Self::CompletionData>,
+         terminal_published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult) + Send>,
+     ) {
+-        terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
++        let completion = completion.snapshot();
++        tokio::task::spawn_local(async move {
++            terminal_published(match prepare_completion_admission(&completion).await {
++                Ok(()) => xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed,
++                Err(error) => xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Rejected { error: error.to_string() },
++            });
++        });
+     }
+     fn on_published(
+         &self,
+         completion: ChildCompletion<Self::CompletionData>,
+         published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>,
+     ) {
+-        present_child_completion(completion, &self.gateway, false);
+-
+-        published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
++        let gateway = self.gateway.clone();
++        tokio::task::spawn_local(async move {
++            published(publish_committed_completion(completion, gateway).await);
++        });
+     }
+ }
+ /// Spawn one isolated subagent from `parent_cwd`. Must run on a `LocalSet`.
+@@ -237,9 +244,45 @@ pub async fn spawn_isolated_subagent_for_e2e(
+     ctx.sampling_config.model = "test-model".into();
+     ctx.sampling_config.api_backend = crate::sampling::ApiBackend::Responses;
+     ctx.model_id = acp::ModelId::new("test-model");
++    let parent_info = crate::session::info::Info {
++        id: acp::SessionId::new(ctx.parent_session_id.clone()),
++        cwd: parent_cwd.to_string_lossy().into_owned(),
++    };
++    let persistence = async {
++        let client = crate::sampling::Client::new(ctx.sampling_config.clone())
++            .map_err(std::io::Error::other)?;
++        crate::session::persistence::new_with_explicit_dir(
++            &parent_info,
++            crate::session::persistence::session_dir(&parent_info),
++            ctx.model_id.clone(),
++            client,
++            ctx.sampling_config.model.clone(),
++            crate::session::persistence::ExplicitSessionOpen::New {
++                identity: None,
++                next_trace_turn: None,
++            },
++        )
++        .await
++    }
++    .await;
++    let persistence = match persistence {
++        Ok(persistence) => persistence,
++        Err(error) => {
++            return IsolatedSubagentSpawn {
++                success: false,
++                worktree_path: None,
++                error: Some(error.to_string()),
++            };
++        }
++    };
++    ctx.parent_persistence_tx = Some(persistence.tx.clone());
++    ctx.parent_session_info = Some(parent_info);
+     let (parent_cmd_tx, parent_cmd_rx) = mpsc::unbounded_channel();
+     ctx.parent_cmd_tx = Some(parent_cmd_tx);
+-    let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(parent_cmd_rx));
++    let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(
++        parent_cmd_rx,
++        persistence.tx.clone(),
++    ));
+     let (gateway, _gateway_rx) = test_gateway_with_receiver();
+     let (command_tx, command_rx) = SubagentCoordinator::<Runner>::channel();
+     let coordinator = tokio::task::spawn_local(
+@@ -297,10 +340,26 @@ pub async fn spawn_isolated_subagent_for_e2e(
+         },
+     }
+ }
+-async fn acknowledge_parent_usage(mut parent_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>) {
++async fn acknowledge_parent_usage(
++    mut parent_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
++    persistence_tx: mpsc::UnboundedSender<crate::session::persistence::PersistenceMsg>,
++) {
+     while let Some(command) = parent_cmd_rx.recv().await {
+         if let SessionCommand::RecordSubagentUsage { respond_to, .. } = command {
+             let _ = respond_to.send(());
++        } else if let SessionCommand::PublishSubagentCompletion {
++            event,
++            will_wake,
++            respond_to,
++        } = command
++        {
++            let _ = persistence_tx.send(
++                crate::session::persistence::PersistenceMsg::PublishSubagentCompletion {
++                    event,
++                    will_wake,
++                    respond_to,
++                },
++            );
+         }
+     }
+ }
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+index f424388e..1d4a4e9a 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+@@ -21,7 +21,7 @@ use super::handle_request::{
+     take_child_turn_messages,
+ };
+ use crate::agent::remote_config::task_model_policy::TaskModelSelection;
+-use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway_with_receiver};
++use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway, test_gateway_with_receiver};
+ use xai_grok_subagent_resolution::resolve_effective_overrides;
+ use xai_grok_tools::implementations::grok_build::task::coordinator::{
+     ChildCompletion, CompletionDisposition,
+@@ -104,7 +104,6 @@ async fn usage_ack_precedes_terminal_presentation() {
+     request.run_in_background = false;
+     let completion_data = ShellCompletionData::from_context(
+         &ctx,
+-        xai_message_delivery_core::AttemptId::mint(1),
+         None,
+     );
+     completion_data.mark_spawned_notification_emitted();
+@@ -132,7 +131,7 @@ async fn usage_ack_precedes_terminal_presentation() {
+     present_child_completion(completion, &gateway, will_wake);
+     assert!(matches!(
+             parent_cmd_rx.try_recv(),
+-            Ok(SessionCommand::XaiSessionNotification {
++            Ok(SessionCommand::SubagentCompletionPublished {
+                 notification: SessionNotification {
+                     update: SessionUpdate::SubagentFinished { .. },
+                     ..
+@@ -720,13 +719,13 @@ async fn completion_errors_admit_parent_wake_but_explicit_stop_stays_silent() {
+         present_child_completion(completion, &test_gateway(), wake);
+         let mut prompts = Vec::new();
+         while let Ok(command) = commands.try_recv() {
+-            if let SessionCommand::Prompt { prompt_blocks, .. } = command {
+-                prompts.push(prompt_blocks);
++            if let SessionCommand::SubagentCompletionWake { text, .. } = command {
++                prompts.push(text);
+             }
+         }
+         assert_eq!(prompts.len(), usize::from(wake));
+         if wake {
+-            assert!(prompt_text(&prompts[0]).contains("wake-error-class"));
++            assert!(prompts[0].contains("wake-error-class"));
+         }
+     }
+ }
+@@ -734,7 +733,6 @@ async fn completion_errors_admit_parent_wake_but_explicit_stop_stays_silent() {
+ #[test]
+ fn should_auto_wake_subagent_truth_table() {
+     let wakeable = AutoWakeInputs {
+-        run_in_background: true,
+         cancelled: false,
+         auto_wake_enabled: true,
+         explicitly_killed: false,
+@@ -838,7 +836,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
+     let mut prompt_count = 0;
+     while let Ok(command) = parent_cmd_rx.try_recv() {
+         match command {
+-            SessionCommand::XaiSessionNotification {
++            SessionCommand::SubagentCompletionPublished {
+                 notification: SessionNotification {
+                     update: SessionUpdate::SubagentFinished {
+                         status,
+@@ -852,7 +850,7 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
+                 assert_eq!((status.as_str(), turns, will_wake), ("completed", 2, true));
+                 finish_count += 1;
+             }
+-            SessionCommand::Prompt { prompt_id, .. } => {
++            SessionCommand::SubagentCompletionWake { prompt_id, .. } => {
+                 assert!(prompt_id.starts_with("subagent-completed-"));
+                 prompt_count += 1;
+             }
+@@ -861,53 +859,65 @@ fn completed_followup_wakes_parent_with_exactly_one_prompt() {
+     }
+     assert_eq!((finish_count, prompt_count), (1, 1));
+ }
+-#[test]
+-fn inject_subagent_completed_prompt_sends_prompt() {
+-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
+-    let mut request = auto_wake_test_request("sa-1");
+-    request.runtime_overrides.loop_task_id = Some("loop-123".into());
+-    let result = SubagentResult {
+-        state: SubagentState::Completed,
+-        output: std::sync::Arc::from("PING"),
+-        subagent_id: "sa-1".into(),
+-        child_session_id: "sa-1".into(),
+-        ..Default::default()
+-    };
+-    inject_subagent_completed_prompt(InjectParams {
+-        attempt_id: &xai_message_delivery_core::AttemptId::mint(1),
+-        subagent_id: "sa-1",
+-        result: &result,
+-        request: &request,
+-        snapshot: &test_snapshot(&request, &result),
+-        parent_cmd_tx: Some(&cmd_tx),
+-        task_output_tool_name: "get_command_or_subagent_output",
+-        scheduler_delete_tool_name: Some("renamed_scheduler_delete"),
+-        scheduler_create_tool_name: Some("renamed_scheduler_create"),
+-        synthetic_trace_tx: &None,
+-    });
+-    match cmd_rx.try_recv().expect("expected synthetic Prompt") {
+-        SessionCommand::Prompt { prompt_id, prompt_blocks, verbatim, .. } => {
+-            assert!(prompt_id.starts_with("subagent-completed-"));
+-            assert!(verbatim);
+-            let prompt = prompt_text(&prompt_blocks);
+-            let block = prompt
+-                .find("\n=== Output ===\nPING\n\n<subagent_meta>")
+-                .expect("inlined task output");
+-            let cleanup = prompt
+-                .find("If this schedule is no longer relevant")
+-                .expect("cleanup hint");
+-            assert!(block < cleanup, "task output precedes the hints: {prompt}");
+-            assert!(prompt.contains(
+-                    "Check the subagent output using get_command_or_subagent_output(\"sa-1\")"
+-                ));
+-            assert!(prompt.contains("renamed_scheduler_delete(\"loop-123\")"));
+-            assert!(prompt.contains(
+-                    "renamed_scheduler_create(new_prompt, interval, \"loop-123\")"
+-                ));
+-            assert!(!prompt.contains("update it with scheduler_create("));
+-        }
+-        _ => panic!("expected SessionCommand::Prompt"),
+-    }
++#[tokio::test(flavor = "current_thread")]
++async fn inject_subagent_completed_prompt_sends_prompt() {
++    tokio::task::LocalSet::new().run_until(async {
++        let receiver = crate::session::acp_session::support::completion_wake_receiver_fixture().await;
++        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
++        let mut request = auto_wake_test_request("sa-1");
++        request.runtime_overrides.loop_task_id = Some("loop-123".into());
++        let result = SubagentResult {
++            state: SubagentState::Completed,
++            output: std::sync::Arc::from("PING"),
++            subagent_id: "sa-1".into(),
++            child_session_id: "sa-1".into(),
++            ..Default::default()
++        };
++        inject_subagent_completed_prompt(InjectParams {
++            attempt_id: &xai_message_delivery_core::AttemptId::mint(1),
++            subagent_id: "sa-1",
++            result: &result,
++            request: &request,
++            snapshot: &test_snapshot(&request, &result),
++            parent_cmd_tx: Some(&cmd_tx),
++            task_output_tool_name: "get_command_or_subagent_output",
++            scheduler_delete_tool_name: Some("renamed_scheduler_delete"),
++            scheduler_create_tool_name: Some("renamed_scheduler_create"),
++            synthetic_trace_tx: &None,
++        });
++        let command = cmd_rx.try_recv().expect("expected synthetic completion wake");
++        let SessionCommand::SubagentCompletionWake { ref prompt_id, .. } = command else {
++            panic!("expected SessionCommand::SubagentCompletionWake");
++        };
++        assert!(prompt_id.starts_with("subagent-completed-"));
++        let prompt_id = prompt_id.clone();
++        receiver.sender.send(command).expect("real receiver must be open");
++        let (verbatim, prompt_blocks) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
++            loop {
++                if let Some(input) = receiver.actor.state.lock().await.pending_inputs.iter().find(|input| input.prompt_id == prompt_id) {
++                    break (input.verbatim, input.prompt_blocks.clone());
++                }
++                tokio::task::yield_now().await;
++            }
++        }).await.expect("typed completion must reach the real input queue");
++        assert!(verbatim);
++        let prompt = prompt_text(&prompt_blocks);
++        let block = prompt
++            .find("\n=== Output ===\nPING\n\n<subagent_meta>")
++            .expect("inlined task output");
++        let cleanup = prompt
++            .find("If this schedule is no longer relevant")
++            .expect("cleanup hint");
++        assert!(block < cleanup, "task output precedes the hints: {prompt}");
++        assert!(prompt.contains(
++                "Check the subagent output using get_command_or_subagent_output(\"sa-1\")"
++            ));
++        assert!(prompt.contains("renamed_scheduler_delete(\"loop-123\")"));
++        assert!(prompt.contains(
++                "renamed_scheduler_create(new_prompt, interval, \"loop-123\")"
++            ));
++        assert!(!prompt.contains("update it with scheduler_create("));
++    }).await;
+ }
+ #[test]
+ fn inject_subagent_completed_prompt_copies_capped_task_output() {
+@@ -933,12 +943,11 @@ fn inject_subagent_completed_prompt_copies_capped_task_output() {
+         scheduler_create_tool_name: None,
+         synthetic_trace_tx: &None,
+     });
+-    let SessionCommand::Prompt { prompt_blocks, .. } = cmd_rx
++    let SessionCommand::SubagentCompletionWake { text: prompt, .. } = cmd_rx
+         .try_recv()
+-        .expect("expected synthetic Prompt") else {
+-        panic!("expected SessionCommand::Prompt");
++        .expect("expected synthetic completion wake") else {
++        panic!("expected SessionCommand::SubagentCompletionWake");
+     };
+-    let prompt = prompt_text(&prompt_blocks);
+     assert!(prompt.contains("\n=== Task sa-1 ===\n"), "{prompt}");
+     assert!(
+             prompt.contains(&format!(
+@@ -979,12 +988,11 @@ fn inject_subagent_completed_prompt_omits_cleanup_without_loop_task() {
+         scheduler_create_tool_name: Some("scheduler_create"),
+         synthetic_trace_tx: &None,
+     });
+-    let SessionCommand::Prompt { prompt_blocks, .. } = cmd_rx
++    let SessionCommand::SubagentCompletionWake { text: prompt, .. } = cmd_rx
+         .try_recv()
+-        .expect("expected synthetic Prompt") else {
+-        panic!("expected SessionCommand::Prompt");
++        .expect("expected synthetic completion wake") else {
++        panic!("expected SessionCommand::SubagentCompletionWake");
+     };
+-    let prompt = prompt_text(&prompt_blocks);
+     assert!(!prompt.contains("scheduler_delete"));
+     assert!(!prompt.contains("no longer relevant"));
+     assert!(!prompt.contains("Check the subagent output"));
+@@ -2282,6 +2290,10 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
+     let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+     let request = auto_wake_test_request("promote-cancel");
+     let meta_dir = tempfile::tempdir().expect("meta dir");
++    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId {
++        subagent_id: request.id.clone(),
++        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
++    }, meta_dir.path());
+     let result = cancel_pending_shell_child(
+             &child_cmd_tx,
+             SessionThread::from_handle(std::thread::spawn(|| {})),
+@@ -2296,6 +2308,7 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
+             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
+             UnpromotedChildDisposition::Cancelled,
+             true,
++            &completion_data,
+         )
+         .await;
+     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
+@@ -2305,11 +2318,6 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
+         ));
+     assert!(result.is_interrupted());
+     assert!(!result.success());
+-    let completion_data = ShellCompletionData::from_context(
+-        &ctx,
+-        xai_message_delivery_core::AttemptId::mint(1),
+-        None,
+-    );
+     completion_data.mark_spawned_notification_emitted();
+     let completion = ChildCompletion {
+         attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+@@ -2331,7 +2339,7 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
+     while let Ok(command) = parent_cmd_rx.try_recv() {
+         if matches!(
+                 command,
+-                SessionCommand::XaiSessionNotification {
++                SessionCommand::SubagentCompletionPublished {
+                     notification: SessionNotification {
+                         update: SessionUpdate::SubagentFinished { status, .. },
+                         ..
+@@ -2361,6 +2369,10 @@ async fn run_promote_cancel_with_worktree(
+     let ctx = ctx_with_toggle(HashMap::new());
+     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
+     let meta_dir = tempfile::tempdir().expect("meta dir");
++    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId {
++        subagent_id: "worktree-cancel".into(),
++        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
++    }, meta_dir.path());
+     let result = cancel_pending_shell_child(
+             &child_cmd_tx,
+             SessionThread::from_handle(std::thread::spawn(|| {})),
+@@ -2375,6 +2387,7 @@ async fn run_promote_cancel_with_worktree(
+             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
+             UnpromotedChildDisposition::Cancelled,
+             true,
++            &completion_data,
+         )
+         .await;
+     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
+@@ -2438,13 +2451,28 @@ fn running_meta_json(id: &str) -> String {
+             }}"#
+         )
+ }
++fn pending_shell_completion_fixture(
++    ctx: &SubagentSpawnContext,
++    id: xai_chat_state::SubagentCompletionId,
++    meta_dir: &Path,
++) -> ShellCompletionData {
++    let mut metadata: SubagentMeta = serde_json::from_str(&running_meta_json(&id.subagent_id))
++        .expect("running child metadata fixture");
++    metadata.parent_session_id = ctx.parent_session_id.clone();
++    metadata.attempt_id = Some(id.attempt_id.to_string());
++    assert!(write_subagent_meta(meta_dir, &metadata));
++    let completion_data = ShellCompletionData::from_context(ctx, None);
++    completion_data.state.lock().terminal_artifacts = TerminalArtifacts::StartPublished {
++        dir: meta_dir.to_owned(),
++        metadata: Box::new(metadata),
++    };
++    completion_data
++}
+ #[tokio::test]
+ async fn unproven_thread_exit_preserves_fresh_worktree() {
+     let ctx = ctx_with_toggle(HashMap::new());
+     let (child_cmd_tx, mut child_cmd_rx) = mpsc::unbounded_channel();
+     let meta_dir = tempfile::tempdir().expect("meta dir");
+-    std::fs::write(meta_dir.path().join("meta.json"), running_meta_json("unproven-exit"))
+-        .expect("write running meta");
+     let worktree = tempfile::tempdir().expect("worktree");
+     let (hold_tx, hold_rx) = std::sync::mpsc::channel::<()>();
+     let thread = SessionThread::from_handle(
+@@ -2452,6 +2480,10 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
+             let _ = hold_rx.recv();
+         }),
+     );
++    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId {
++        subagent_id: "unproven-exit".into(),
++        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
++    }, meta_dir.path());
+     let result = cancel_pending_shell_child(
+             &child_cmd_tx,
+             thread,
+@@ -2466,6 +2498,7 @@ async fn unproven_thread_exit_preserves_fresh_worktree() {
+             std::time::Duration::ZERO,
+             UnpromotedChildDisposition::Cancelled,
+             true,
++            &completion_data,
+         )
+         .await;
+     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
+@@ -2497,8 +2530,10 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
+     let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+     let request = auto_wake_test_request("promote-timeout");
+     let meta_dir = tempfile::tempdir().expect("meta dir");
+-    std::fs::write(meta_dir.path().join("meta.json"), running_meta_json(&request.id))
+-        .expect("write running meta");
++    let completion_data = pending_shell_completion_fixture(&ctx, xai_chat_state::SubagentCompletionId {
++        subagent_id: request.id.clone(),
++        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
++    }, meta_dir.path());
+     let result = cancel_pending_shell_child(
+             &child_cmd_tx,
+             SessionThread::from_handle(std::thread::spawn(|| {})),
+@@ -2513,6 +2548,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
+             UNPROMOTED_SESSION_THREAD_EXIT_TIMEOUT,
+             UnpromotedChildDisposition::AdmissionTimedOut,
+             true,
++            &completion_data,
+         )
+         .await;
+     assert!(matches!(child_cmd_rx.try_recv(), Ok(SessionCommand::Cancel(_))));
+@@ -2533,11 +2569,6 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
+         )
+         .expect("parse meta");
+     assert_eq!(meta.status, SubagentMetaStatus::Failed);
+-    let completion_data = ShellCompletionData::from_context(
+-        &ctx,
+-        xai_message_delivery_core::AttemptId::mint(1),
+-        None,
+-    );
+     completion_data.mark_spawned_notification_emitted();
+     let completion = ChildCompletion {
+         attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+@@ -2559,7 +2590,7 @@ async fn startup_admission_timeout_is_failed_not_cancelled() {
+     while let Ok(command) = parent_cmd_rx.try_recv() {
+         if matches!(
+                 command,
+-                SessionCommand::XaiSessionNotification {
++                SessionCommand::SubagentCompletionPublished {
+                     notification: SessionNotification {
+                         update: SessionUpdate::SubagentFinished { status, .. },
+                         ..
+@@ -2824,7 +2855,6 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
+     request.run_in_background = false;
+     let completion_data = ShellCompletionData {
+         parent_cmd_tx: Some(parent_cmd_tx),
+-        attempt_id: Some(xai_message_delivery_core::AttemptId::mint(0xface)),
+         ..Default::default()
+     };
+     let worker_completion_data = completion_data.clone();
+@@ -2851,7 +2881,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
+     let snapshot = test_snapshot(&request, &output.result);
+     present_child_completion(
+         ChildCompletion {
+-            attempt_id: xai_message_delivery_core::AttemptId::mint(1),
++            attempt_id: xai_message_delivery_core::AttemptId::mint(0xface),
+             snapshot,
+             request,
+             result: output.result,
+@@ -2869,7 +2899,7 @@ async fn panicked_announced_foreground_child_emits_one_typed_finish() {
+     );
+     let finishes = std::iter::from_fn(|| parent_cmd_rx.try_recv().ok())
+         .filter_map(|command| match command {
+-            SessionCommand::XaiSessionNotification {
++            SessionCommand::SubagentCompletionPublished {
+                 notification: SessionNotification {
+                     update: SessionUpdate::SubagentFinished { attempt_id, .. },
+                     ..
+diff --git a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
+index 401bdf7a..c6ddbdf4 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
+@@ -479,8 +479,7 @@ fn update_subagent_meta_snapshot_ref_persists_to_disk() {
+     assert!(
+             update_subagent_meta_snapshot_ref(
+                 dir.path(),
+-                "refs/grok/subagents/sa-write",
+-                SubagentMetaStatus::Completed
++                "refs/grok/subagents/sa-write"
+             ),
+             "persisting the ref into an existing meta.json must report success"
+         );
+@@ -503,8 +502,7 @@ fn update_subagent_meta_snapshot_ref_reports_failure_when_meta_missing() {
+     let dir = tempfile::TempDir::new().unwrap();
+     assert!(!update_subagent_meta_snapshot_ref(
+             dir.path(),
+-            "refs/grok/subagents/sa-missing",
+-            SubagentMetaStatus::Completed
++            "refs/grok/subagents/sa-missing"
+         ));
+ }
+ /// A stale non-terminal record (e.g. the completed-status write failed) is promoted to terminal alongside the snapshot_ref.
+@@ -517,8 +515,7 @@ fn snapshot_ref_write_promotes_nonterminal_status_to_terminal() {
+     assert!(write_subagent_meta(dir.path(), &meta));
+     assert!(update_subagent_meta_snapshot_ref(
+             dir.path(),
+-            "refs/grok/subagents/x",
+-            SubagentMetaStatus::Completed
++            "refs/grok/subagents/x"
+         ));
+     let data = std::fs::read_to_string(dir.path().join("meta.json")).unwrap();
+     let reread: SubagentMeta = serde_json::from_str(&data).unwrap();
+@@ -603,7 +600,6 @@ async fn kept_worktree_leaves_no_resume_pointer() {
+             &wt,
+             &repo,
+             &meta_dir,
+-            SubagentMetaStatus::Completed,
+             "keeps-1",
+         )
+         .await;
+@@ -645,7 +641,6 @@ async fn disposed_linked_worktree_persists_the_pointer_then_removes_the_director
+             &wt,
+             &repo,
+             &meta_dir,
+-            SubagentMetaStatus::Completed,
+             "reclaim-1",
+         )
+         .await;
+@@ -683,7 +678,6 @@ async fn disposal_names_a_reflog_only_commit_before_removing_the_worktree() {
+             &wt,
+             &repo,
+             &meta_dir,
+-            SubagentMetaStatus::Completed,
+             "reclaim-2",
+         )
+         .await;
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session.rs b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+index 9ccafcdb..41a2862c 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session.rs
+@@ -1518,7 +1518,7 @@ mod replace_system_prompt_tests;
+ mod served_route_tests;
+ #[cfg(test)]
+ #[path = "acp_session_tests/support.rs"]
+-mod support;
++pub(crate) mod support;
+ #[cfg(test)]
+ #[path = "acp_session_tests/usage_categories_tests.rs"]
+ mod usage_categories_tests;
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
+index c8b6c74a..9a14b7a5 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
+@@ -295,12 +295,10 @@ async fn closed_admission_ack_stores_fallback_before_prompt_rejection() {
+             let origin = crate::session::PromptOrigin::TaskCompleted {
+                 task_id: "mon-timeout".to_string(),
+             };
+-            let (admission, response_rx) = task_wake_admission(
+-                "mon-timeout",
+-                NotificationSource::MonitorCompleted {
++            let (admission, response_rx) =
++                task_wake_admission(NotificationSource::MonitorCompleted {
+                     task_id: "mon-timeout".to_string(),
+-                },
+-            );
++                });
+             drop(response_rx);
+             assert!(
+                 actor
+@@ -328,12 +326,10 @@ async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
+                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+             let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+             actor.state.lock().await.notifications_suppressed = true;
+-            let (admission, response_rx) = task_wake_admission(
+-                "sub-1",
+-                NotificationSource::BashTaskCompleted {
++            let (admission, response_rx) =
++                task_wake_admission(NotificationSource::BashTaskCompleted {
+                     task_id: "sub-1".to_string(),
+-                },
+-            );
++                });
+             assert!(
+                 actor
+                     .admit_task_completion_wake(
+@@ -368,12 +364,10 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
+                 .as_ref()
+                 .expect("completion reservations")
+                 .reserve("bg-normal".to_string());
+-            let (admission, response_rx) = task_wake_admission(
+-                "bg-normal",
+-                NotificationSource::BashTaskCompleted {
++            let (admission, response_rx) =
++                task_wake_admission(NotificationSource::BashTaskCompleted {
+                     task_id: "bg-normal".to_string(),
+-                },
+-            );
++                });
+             let fallback = actor
+                 .admit_task_completion_wake(&origin, admission)
+                 .await
+@@ -752,7 +746,7 @@ async fn task_output_completed_drops_matching_pending_input() {
+             }
+             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+                 "bg-target",
+-                "completed",
++                TaskOutputFixture::Completed,
+             )));
+             let consumed = consumed_completion_ids(&output);
+             assert_eq!(consumed, vec!["bg-target"]);
+@@ -794,8 +788,8 @@ async fn task_output_failed_drops_matching_pending_input() {
+                 ToolOutput::TaskOutput(TaskOutputOutput::MultiResult(MultiTaskOutputResult {
+                     mode: "wait_all".into(),
+                     results: vec![
+-                        task_output_result("bg-failed", "failed"),
+-                        task_output_result("bg-running", "running"),
++                        task_output_result("bg-failed", TaskOutputFixture::Failed),
++                        task_output_result("bg-running", TaskOutputFixture::Running),
+                     ],
+                     summary: String::new(),
+                 }));
+@@ -830,7 +824,7 @@ async fn interrupted_wait_placeholder_keeps_pending_input() {
+                 .push_back(task_completed_input("bg-still-running"));
+             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+                 "bg-still-running",
+-                "cancelled",
++                TaskOutputFixture::InterruptedWait,
+             )));
+             let consumed = consumed_completion_ids(&output);
+             assert!(consumed.is_empty());
+@@ -1099,9 +1093,9 @@ async fn multi_task_output_drops_each_completed_id() {
+                 ToolOutput::TaskOutput(TaskOutputOutput::MultiResult(MultiTaskOutputResult {
+                     mode: "all".into(),
+                     results: vec![
+-                        task_output_result("bg-done-1", "completed"),
+-                        task_output_result("bg-done-2", "completed"),
+-                        task_output_result("bg-running", "running"),
++                        task_output_result("bg-done-1", TaskOutputFixture::Completed),
++                        task_output_result("bg-done-2", TaskOutputFixture::Completed),
++                        task_output_result("bg-running", TaskOutputFixture::Running),
+                     ],
+                     summary: String::new(),
+                 }));
+@@ -1137,7 +1131,7 @@ async fn task_output_running_does_not_drop_pending_input() {
+             }
+             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+                 "bg-running",
+-                "running",
++                TaskOutputFixture::Running,
+             )));
+             let consumed = consumed_completion_ids(&output);
+             assert!(
+@@ -1299,7 +1293,7 @@ async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
+             }
+             let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_output_result(
+                 "bg-foo",
+-                "completed",
++                TaskOutputFixture::Completed,
+             )));
+             let result = ToolRunResult {
+                 completed_subagents: Vec::new(),
+diff --git a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
+index 04f83452..960b6889 100644
+--- a/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
++++ b/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs
+@@ -1013,6 +1013,128 @@ pub(crate) async fn disk_full_actor() -> SessionActor {
+     actor.notifications.disk_full = tokio::sync::watch::channel(true).1;
+     actor
+ }
++pub(crate) struct CompletionWakeReceiverFixture {
++    pub(crate) actor: Arc<SessionActor>,
++    pub(crate) sender: mpsc::UnboundedSender<SessionCommand>,
++    pub(crate) task: tokio_util::task::AbortOnDropHandle<()>,
++}
++pub(crate) async fn completion_wake_receiver_fixture() -> CompletionWakeReceiverFixture {
++    let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
++    drain_gateway(gateway_rx);
++    let (persistence_tx, persistence_rx) = mpsc::unbounded_channel();
++    drain_persistence(persistence_rx);
++    let (actor, event_rx) = create_test_actor_ex(0, 256_000, 85, gateway_tx, persistence_tx).await;
++    actor.state.lock().await.running_task = Some(running_task_stub("caller-busy"));
++    let actor = Arc::new(actor);
++    let (sender, commands) = mpsc::unbounded_channel();
++    let (chat_sender, chat_events) = mpsc::unbounded_channel();
++    let receiver_actor = actor.clone();
++    let task = tokio::task::spawn_local(async move {
++        let _chat_sender = chat_sender;
++        super::run_session(
++            receiver_actor,
++            commands,
++            chat_events,
++            event_rx,
++            None,
++            Arc::new(parking_lot::Mutex::new(
++                xai_grok_workspace::file_system::CodebaseIndexManager::new(),
++            )),
++            std::path::PathBuf::from("/tmp"),
++            crate::session::fs_watch::FsWatchCapabilities::none(),
++        )
++        .await;
++    });
++    CompletionWakeReceiverFixture {
++        actor,
++        sender,
++        task: tokio_util::task::AbortOnDropHandle::new(task),
++    }
++}
++pub(crate) fn bash_completed_notification(task_id: &str) -> PendingNotification {
++    PendingNotification {
++        prompt_id: format!("task-completed-{task_id}"),
++        prompt_blocks: vec![acp::ContentBlock::from(format!(
++            "Background task {task_id} completed."
++        ))],
++        priority: NotificationPriority::Later,
++        source: NotificationSource::BashTaskCompleted {
++            task_id: task_id.into(),
++        },
++    }
++}
++pub(crate) fn monitor_event_notification(task_id: &str) -> PendingNotification {
++    PendingNotification {
++        prompt_id: format!("monitor-event-{task_id}"),
++        prompt_blocks: vec![acp::ContentBlock::from(format!("Monitor {task_id} event."))],
++        priority: NotificationPriority::Next,
++        source: NotificationSource::MonitorEvent {
++            task_id: task_id.into(),
++        },
++    }
++}
++pub(crate) fn monitor_completed_notification(task_id: &str) -> PendingNotification {
++    PendingNotification {
++        prompt_id: format!("task-completed-{task_id}"),
++        prompt_blocks: vec![acp::ContentBlock::from(format!(
++            "Monitor {task_id} completed."
++        ))],
++        priority: NotificationPriority::Later,
++        source: NotificationSource::MonitorCompleted {
++            task_id: task_id.into(),
++        },
++    }
++}
++pub(crate) fn task_wake_admission(
++    source: NotificationSource,
++) -> (TaskWakeAdmission, oneshot::Receiver<bool>) {
++    let task_id = source.task_id();
++    let (respond_to, receive) = oneshot::channel();
++    (
++        TaskWakeAdmission {
++            respond_to,
++            fallback: TaskWakeFallback {
++                prompt_id: format!("task-completed-{task_id}"),
++                prompt_blocks: vec![acp::ContentBlock::from(format!(
++                    "Background task {task_id} completed."
++                ))],
++                source,
++            },
++        },
++        receive,
++    )
++}
++pub(crate) enum TaskOutputFixture {
++    Running,
++    Completed,
++    Failed,
++    InterruptedWait,
++}
++pub(crate) fn task_output_result(
++    task_id: &str,
++    fixture: TaskOutputFixture,
++) -> xai_tool_types::TaskOutputResult {
++    let (status, exit_code) = match fixture {
++        TaskOutputFixture::Running => ("running", None),
++        TaskOutputFixture::Completed => ("completed", Some(0)),
++        TaskOutputFixture::Failed => ("failed", Some(1)),
++        TaskOutputFixture::InterruptedWait => ("cancelled", None),
++    };
++    let output = format!("output {task_id}");
++    xai_tool_types::TaskOutputResult {
++        task_id: task_id.into(),
++        status: status.into(),
++        command: format!("echo {task_id}"),
++        exit_code,
++        started: "2026-01-01T00:00:00Z".into(),
++        ended: exit_code.map(|_| "2026-01-01T00:00:01Z".into()),
++        duration_secs: 1.0,
++        raw_output_bytes: output.len(),
++        output,
++        output_file: format!("/tmp/{task_id}.output"),
++        ..Default::default()
++    }
++}
+ pub(crate) fn subagent_summary(id: &str) -> SubagentCompletionSummary {
+     SubagentCompletionSummary {
+         attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs
+index 57091262..4e6051e3 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs
+@@ -1,3 +1,4 @@
++use super::super::coordinator::ChildCompletion;
+ use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
+ use super::*;
+ use crate::implementations::grok_build::task::types::{
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs
+index 10556ec1..96ec56f1 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs
+@@ -940,7 +940,7 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
+             );
+             request.parent_session_id = "parent".to_owned();
+             crate::implementations::grok_build::task::backend::SubagentBackend::spawn(
+-                &backend, request, None,
++                &backend, request, None, None,
+             )
+             .await
+         }
+@@ -1268,7 +1268,7 @@ fn insert_queued(
+             request: Box::new(request),
+             queued_at: tokio::time::Instant::now(),
+             caller: super::super::queue::QueuedCaller::Awaiting {
+-                result_tx,
++                result_tx: crate::implementations::grok_build::task::result_delivery::SubagentResultSender::new(result_tx, None),
+                 deadline: None,
+             },
+             agent_address: None,
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs
+index 9f1a5f79..1771a627 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs
+@@ -10,9 +10,9 @@ use crate::implementations::grok_build::task::admission::{
+ use crate::implementations::grok_build::task::agent_message_sender::AgentMessageSender;
+ use crate::implementations::grok_build::task::backend::SubagentCoordinatorSender;
+ use crate::implementations::grok_build::task::coordinator::active_message::tests::{
+-    AdmissionCall, TestControl, TestCoordinator, begin_send, finish_child, fixture,
+-    insert_child_with, insert_pending, promote_pending, recv_with_timeout, release_admission,
+-    response_outcome,
++    AdmissionCall, TestControl, TestCoordinator, begin_send, finish_child,
++    finish_child_before_visibility, fixture, insert_child_with, insert_pending, promote_pending,
++    recv_with_timeout, release_admission, response_outcome,
+ };
+ use crate::implementations::grok_build::task::coordinator::agent_quotas::MAX_SENDER_TARGET_IN_FLIGHT;
+ use crate::implementations::grok_build::task::coordinator::{
+@@ -477,24 +477,18 @@ pub(in super::super) async fn replay_root_and_granted_wakes() {
+         let (mut c, tx, admissions, mut calls) = fixture();
+         let sender = granted.then(|| holder(&mut c, admissions.clone(), None));
+         add(&mut c, admissions.clone(), IDS[3], "other", None);
+-        finish_child(&mut c, IDS[3]);
+-        c.completed
+-            .get(IDS[3])
+-            .unwrap()
+-            .terminal_published
+-            .store(false, std::sync::atomic::Ordering::Release);
++        finish_child_before_visibility(&mut c, IDS[3]);
+         let mut send = || match sender.as_ref() {
+             Some(sender) => begin(&mut c, &tx, sender, agent(3)),
+             None => begin_send(&mut c, &tx, IDS[3], "other"),
+         };
+         let responses = [send(), send()];
+         assert_eq!(c.pending_wakes.get(IDS[3]).unwrap().len(), 2);
+-        c.completed
+-            .get(IDS[3])
+-            .unwrap()
+-            .terminal_published
+-            .store(true, std::sync::atomic::Ordering::Release);
+-        c.handle_terminal_published(IDS[3].to_owned());
++        let publication = c
++            .terminal_published_rx
++            .try_recv()
++            .expect("host visibility callback");
++        c.handle_terminal_publication(publication);
+         let pending_id = c
+             .pending
+             .keys()
+@@ -523,12 +517,7 @@ async fn granted_legacy_wakes_keep_one_pair_incarnation() {
+         let sender = holder(&mut c, admissions.clone(), None);
+         add(&mut c, admissions, IDS[3], IDS[2], None);
+         let address = c.active.get(IDS[3]).unwrap().agent_address.clone().unwrap();
+-        finish_child(&mut c, IDS[3]);
+-        c.completed
+-            .get(IDS[3])
+-            .unwrap()
+-            .terminal_published
+-            .store(false, std::sync::atomic::Ordering::Release);
++        finish_child_before_visibility(&mut c, IDS[3]);
+ 
+         let mut responses = vec![
+             begin(
+@@ -545,12 +534,11 @@ async fn granted_legacy_wakes_keep_one_pair_incarnation() {
+             ),
+         ];
+         assert_eq!(vec![2], c.agent_message_quotas.pair_in_flight_counts());
+-        c.completed
+-            .get(IDS[3])
+-            .unwrap()
+-            .terminal_published
+-            .store(true, std::sync::atomic::Ordering::Release);
+-        c.handle_terminal_published(IDS[3].to_owned());
++        let publication = c
++            .terminal_published_rx
++            .try_recv()
++            .expect("host visibility callback");
++        c.handle_terminal_publication(publication);
+         assert_eq!(vec![2], c.agent_message_quotas.pair_in_flight_counts());
+         responses.extend([
+             begin(
+@@ -584,7 +572,7 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
+     // A spawn that failed before start leaves an eligible record that never had an incarnation.
+     insert_pending(&mut c, IDS[3], "other");
+     let failed = SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "");
+-    c.finish_child(
++    c.begin_terminalization(
+         IDS[3],
+         ChildRunOutput {
+             result: failed,
+@@ -592,12 +580,12 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
+             snapshot_ref: None,
+         },
+     );
++    let publication = c
++        .terminal_published_rx
++        .try_recv()
++        .expect("host commit callback");
++    c.handle_terminal_publication(publication);
+     assert!(c.completed.get(IDS[3]).unwrap().wake_eligible);
+-    c.completed
+-        .get(IDS[3])
+-        .unwrap()
+-        .terminal_published
+-        .store(false, std::sync::atomic::Ordering::Release);
+     let root = begin_send(&mut c, &tx, IDS[3], "other");
+     let granted = (0..MAX_SENDER_TARGET_IN_FLIGHT)
+         .map(|_| begin(&mut c, &tx, &sender, agent(3)))
+@@ -606,12 +594,11 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
+         vec![MAX_SENDER_TARGET_IN_FLIGHT],
+         c.agent_message_quotas.pair_in_flight_counts()
+     );
+-    c.completed
+-        .get(IDS[3])
+-        .unwrap()
+-        .terminal_published
+-        .store(true, std::sync::atomic::Ordering::Release);
+-    c.handle_terminal_published(IDS[3].to_owned());
++    let publication = c
++        .terminal_published_rx
++        .try_recv()
++        .expect("host visibility callback");
++    c.handle_terminal_publication(publication);
+     assert!(c.pending.contains_key(IDS[3]));
+     assert_eq!(
+         ActiveAgentMessageOutcome::QuotaExceeded {
+@@ -789,14 +776,14 @@ async fn target_transitions_and_drop_preserve_pair_quota() {
+     c.active_messages.clear();
+     c.graph.remove(IDS[3]);
+     add(&mut c, admissions.clone(), IDS[3], "other", None);
+-    finish_child(&mut c, IDS[3]);
+-    c.completed
+-        .get(IDS[3])
+-        .unwrap()
+-        .terminal_published
+-        .store(false, std::sync::atomic::Ordering::Release);
++    finish_child_before_visibility(&mut c, IDS[3]);
+     let mut wake = begin(&mut c, &tx, &sender, agent(3));
+     assert!(wake.try_recv().is_err());
++    let publication = c
++        .terminal_published_rx
++        .try_recv()
++        .expect("host visibility callback");
++    c.handle_terminal_publication(publication);
+     promote_pending(&mut c, admissions.clone(), IDS[3]);
+     for _ in 0..3 {
+         let mut response = begin(&mut c, &tx, &sender, agent(3));
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs
+index 9c4af5d5..f2f08049 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs
+@@ -8,8 +8,8 @@ use xai_message_delivery_core::{AgentId, AttemptId};
+ 
+ use super::*;
+ use crate::implementations::grok_build::task::coordinator::active_message::tests::{
+-    TestCoordinator, finish_child, fixture, insert_child_with, insert_pending, promote_pending,
+-    recv_with_timeout, release_admission, response_outcome,
++    TestCoordinator, finish_child, finish_child_before_visibility, fixture, insert_child_with,
++    insert_pending, promote_pending, recv_with_timeout, release_admission, response_outcome,
+ };
+ use crate::implementations::grok_build::task::coordinator::agent_targets::tests::holder;
+ use crate::implementations::grok_build::task::coordinator::{
+@@ -221,16 +221,18 @@ async fn root_resolution_routes_and_completion_are_exact() {
+     assert!(coordinator.root_active_messages.is_empty());
+     coordinator.terminal_outputs.insert(
+         CHILD.to_owned(),
+-        crate::implementations::grok_build::task::coordinator::ChildRunOutput {
+-            result: crate::implementations::grok_build::task::types::SubagentResult {
+-                state: SubagentState::Completed,
+-                subagent_id: CHILD.to_owned(),
+-                output: "sentinel".into(),
+-                ..Default::default()
++        crate::implementations::grok_build::task::coordinator_state::TerminalOutput::Finishing(
++            crate::implementations::grok_build::task::coordinator::ChildRunOutput {
++                result: crate::implementations::grok_build::task::types::SubagentResult {
++                    state: SubagentState::Completed,
++                    subagent_id: CHILD.to_owned(),
++                    output: "sentinel".into(),
++                    ..Default::default()
++                },
++                completion_data: (),
++                snapshot_ref: None,
+             },
+-            completion_data: (),
+-            snapshot_ref: None,
+-        },
++        ),
+     );
+     let response = begin(
+         &mut coordinator,
+diff --git a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+index 0486b7cd..a4650ad7 100644
+--- a/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
++++ b/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+@@ -696,7 +696,7 @@ fn spawn_noting_registration(
+ ) {
+     let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+     let handle = tokio::spawn(async move {
+-        SubagentBackend::spawn(&backend, request, Some(registered_tx)).await
++        SubagentBackend::spawn(&backend, request, Some(registered_tx), None).await
+     });
+     (registered_rx, handle)
+ }

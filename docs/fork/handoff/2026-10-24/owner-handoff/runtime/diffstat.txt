@@ -1,0 +1,12 @@
+ crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs  |  52 +++----------------------------
+ crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs             |   3 ++
+ crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs |  51 ++++++++++++++-----------------
+ crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs                                    |  64 ++++++++++++++++++++++++++++++++++++--
+ crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs                                   |  30 ++++++++++++++++--
+ crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs       | 159 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------
+ crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs      |  38 +++++++++++++++--------
+ crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs            |  38 +++++++++++++++++++++--
+ crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs                            |  22 +++++++++++---
+ crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs                      |   2 ++
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs           |   5 +--
+ 11 files changed, 311 insertions(+), 153 deletions(-)

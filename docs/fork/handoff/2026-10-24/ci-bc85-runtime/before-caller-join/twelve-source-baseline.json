@@ -1,0 +1,62 @@
+[
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs",
+    "expected": "5ab4300441fe129bb3dd3ef75ca041cd410f56c280652b778f8b9fd96bf1055b",
+    "actual": "5ab4300441fe129bb3dd3ef75ca041cd410f56c280652b778f8b9fd96bf1055b"
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs",
+    "expected": "bcd5c594c1b4168e7aa4a86fe80399d70e786987d337e25411c9eca7394f749c",
+    "actual": "bcd5c594c1b4168e7aa4a86fe80399d70e786987d337e25411c9eca7394f749c"
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs",
+    "expected": "7efc7cb73906ac25c188e35117b9d2cf4a0c290ed204420c7d525d2f07dd738f",
+    "actual": "7efc7cb73906ac25c188e35117b9d2cf4a0c290ed204420c7d525d2f07dd738f"
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs",
+    "expected": "1b84c99ee1463c788f2ea7e7a2539f5b888b8a9fca66edc607cb3db7f3d1e91f",
+    "actual": "1b84c99ee1463c788f2ea7e7a2539f5b888b8a9fca66edc607cb3db7f3d1e91f"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "expected": "bf47a870a620fbd18564cd2ae167be10dffc796cbce1b16a38de42f050d8190f",
+    "actual": "bf47a870a620fbd18564cd2ae167be10dffc796cbce1b16a38de42f050d8190f"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs",
+    "expected": "87ac1dc6d1e4c83666e547ef87e7f3609e750a1ee9d48e591c311b7ee4cbb1bd",
+    "actual": "87ac1dc6d1e4c83666e547ef87e7f3609e750a1ee9d48e591c311b7ee4cbb1bd"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs",
+    "expected": "e1febdc334622874ded60beb981c1380713df02ea485b37bf17f6daf30c08738",
+    "actual": "e1febdc334622874ded60beb981c1380713df02ea485b37bf17f6daf30c08738"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs",
+    "expected": "920cf5a925c49cbaf96b44522da615bd849839ea00f2ccb5875347e49aac9a1a",
+    "actual": "920cf5a925c49cbaf96b44522da615bd849839ea00f2ccb5875347e49aac9a1a"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs",
+    "expected": "cad01c1562add963842483daa4a437910c1ed2deb05ca437d766d0ecc7f3ae9e",
+    "actual": "cad01c1562add963842483daa4a437910c1ed2deb05ca437d766d0ecc7f3ae9e"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs",
+    "expected": "9047107e84fcdbe916364dda5cb921fa6c1c96e01b9eea816de99ad397915877",
+    "actual": "9047107e84fcdbe916364dda5cb921fa6c1c96e01b9eea816de99ad397915877"
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs",
+    "expected": "6d44717a4017cc765bfb9e409e15fc1f36975a231bf8d489edb326fdf3289351",
+    "actual": "6d44717a4017cc765bfb9e409e15fc1f36975a231bf8d489edb326fdf3289351"
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+    "expected": "67a5a41460ecc2e50308dec7a7a0237b26c04bf2c58a23d9dc073f6f48a3a9dd",
+    "actual": "67a5a41460ecc2e50308dec7a7a0237b26c04bf2c58a23d9dc073f6f48a3a9dd"
+  }
+]

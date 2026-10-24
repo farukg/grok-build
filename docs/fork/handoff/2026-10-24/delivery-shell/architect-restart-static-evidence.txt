@@ -1,0 +1,59 @@
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_batch_tests.rs: +132 -0
+crates/codegen/xai-grok-shell/src/session/acp_session.rs: +6 -4
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_digest.rs: +101 -0
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/notification_drain.rs: +33 -5
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/reminders.rs: +15 -0
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs: +42 -16
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs: +53 -26
+Deleted function names: returned,suppress_seen
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_persistence.rs: +55 -14
+crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs: +117 -53
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs: +59 -41
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs: +267 -93
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs: +147 -34
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs: +78 -15
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/wake_tests.rs: +17 -17
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs: +8 -14
+crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs: +171 -0
+crates/codegen/xai-grok-tools/src/reminders/task_completion.rs: +39 -193
+Deleted function names: goal_loop_surfaces_subagent_results_but_suppresses_ordinary_background_tasks,reserved_ids_do_not_suppress_subagent_reminders,shared_with_subagent_completions,subagent_and_bash_completions_together,subagent_completion_dedup_across_calls,subagent_completion_suppressed_by_task_output,subagent_completion_suppressed_by_wait_tasks_multi_result
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs: +455 -95
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs: +466 -134
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs: +257 -47
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs: +361 -0
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/mod.rs: +111 -26
+crates/codegen/xai-grok-shell/src/session/storage/mod.rs: +113 -29
+crates/codegen/xai-grok-shell/src/session/persistence.rs: +240 -58
+crates/codegen/xai-grok-shell/src/session/receiver_execution.rs: +45 -10
+crates/codegen/xai-grok-shell/src/session/delivery_receiver.rs: +280 -76
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs: +25 -12
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/cancel.rs: +31 -6
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_task.rs: +6 -0
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs: +239 -51
+crates/codegen/xai-grok-shell/src/agent/subagent/mod.rs: +119 -65
+crates/codegen/xai-grok-tools/src/implementations/grok_build/scheduler/actor.rs: +1 -4
+crates/codegen/xai-grok-shell/tests/test_completion_admission.rs: +380 -60
+crates/codegen/xai-grok-shell/tests/test_admission_process_recovery.rs: +177 -41
+Index identical to captured baseline: True
+Scoped git diff --check exit: 0
+
+Pinned formatter --check exit: 0
+
+Removed obsolete completion mode references: True
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs:289: pub(crate) fn append_completion_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs:515: fn reconcile_completion_turns_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:80: fn recover_delivery_state(&self, info: &Info, summary: &mut Summary) -> io::Result<()> {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:174: fn reconcile_delivery_terminals(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:358: pub(crate) fn append_delivery_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:509: pub(super) fn finish_delivery_turn_sync(
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/delivery_receiver.rs:544: pub(super) async fn recover_deliveries_owned(&self, info: &Info) -> io::Result<Summary> {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:52: async fn retry_uses_the_actual_committed_occurrence_not_the_retry_prompt() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:135: async fn restart_continues_existing_projection_and_fences_late_parent_terminals() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:233: async fn closed_parent_admission_cannot_project_or_rebind_a_completion() {
+crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_recovery_tests.rs:271: async fn receiver_recovery_preserves_parent_fencing_and_never_requeues_visible_input() {
+crates/codegen/xai-grok-shell/src/session/receiver_execution.rs:38: pub(crate) fn bind_turn(
+crates/codegen/xai-grok-shell/src/session/receiver_execution.rs:70: pub(crate) fn finish_turn(&mut self, turn_id: &str, parent_task: &xai_chat_state::ParentTask) {
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:32: pub(super) async fn input_turn_binding(&self, prompt_id: &str) -> InputTurnBinding {
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs:63: pub(super) async fn current_turn_admission(
+crates/codegen/xai-grok-shell/tests/test_completion_admission.rs:106: fn native_receiver_cancel_retains_its_parent_binding_after_task_teardown() {
+crates/codegen/xai-grok-shell/tests/test_completion_admission.rs:265: fn foreground_child_success_and_error_commit_the_observed_tool_result_once() {

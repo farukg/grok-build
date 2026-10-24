@@ -1,0 +1,554 @@
+[
+  {
+    "code": "E0609",
+    "message": "no field `goal_loop_active` on type `subagent::SubagentSpawnContext`",
+    "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs",
+    "line": 170,
+    "column": 18,
+    "occurrences": 5
+  },
+  {
+    "code": "E0609",
+    "message": "no field `goal_loop_active` on type `subagent::SubagentSpawnContext`",
+    "path": "crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs",
+    "line": 173,
+    "column": 13,
+    "occurrences": 5
+  },
+  {
+    "code": "E0432",
+    "message": "unresolved import `super::spawn::present_child_completion`",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs",
+    "line": 2,
+    "column": 5,
+    "occurrences": 1
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 2 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 105,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `test_gateway` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 720,
+    "column": 47,
+    "occurrences": 5
+  },
+  {
+    "code": "E0560",
+    "message": "struct `AutoWakeInputs` has no field named `run_in_background`",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 737,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 14 arguments but 13 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2285,
+    "column": 18,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 2 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2308,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 14 arguments but 13 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2364,
+    "column": 18,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 14 arguments but 13 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2455,
+    "column": 18,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 14 arguments but 13 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2502,
+    "column": 18,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 2 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2536,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0560",
+    "message": "struct `subagent::ShellCompletionData` has no field named `attempt_id`",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+    "line": 2827,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 2 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "line": 480,
+    "column": 13,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 2 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "line": 504,
+    "column": 14,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 2 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "line": 518,
+    "column": 13,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 4 arguments but 5 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "line": 602,
+    "column": 20,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 4 arguments but 5 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "line": 644,
+    "column": 20,
+    "occurrences": 5
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 4 arguments but 5 arguments were supplied",
+    "path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+    "line": 682,
+    "column": 20,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 235,
+    "column": 28,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_wake_admission` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 298,
+    "column": 44,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_wake_admission` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 331,
+    "column": 44,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_wake_admission` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 371,
+    "column": 44,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `monitor_event_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 534,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `monitor_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 535,
+    "column": 46,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 539,
+    "column": 43,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 708,
+    "column": 28,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 753,
+    "column": 74,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 797,
+    "column": 25,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 798,
+    "column": 25,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 831,
+    "column": 74,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1035,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1038,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1102,
+    "column": 25,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1103,
+    "column": 25,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1104,
+    "column": 25,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1138,
+    "column": 74,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1204,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `monitor_event_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1207,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1210,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1255,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `monitor_event_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1258,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `task_output_result` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1300,
+    "column": 74,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1357,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1358,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `monitor_event_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1359,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1378,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1379,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1390,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `monitor_event_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1391,
+    "column": 9,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1415,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `bash_completed_notification` in this scope",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "line": 1462,
+    "column": 27,
+    "occurrences": 5
+  },
+  {
+    "code": "syntax",
+    "message": "expected identifier, found `:`",
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs",
+    "line": 214,
+    "column": 24,
+    "occurrences": 6
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find type `ChildCompletion` in this scope",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs",
+    "line": 91,
+    "column": 31,
+    "occurrences": 1
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 4 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs",
+    "line": 942,
+    "column": 13,
+    "occurrences": 1
+  },
+  {
+    "code": "E0308",
+    "message": "mismatched types",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs",
+    "line": 1271,
+    "column": 17,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 484,
+    "column": 14,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 495,
+    "column": 14,
+    "occurrences": 1
+  },
+  {
+    "code": "E0599",
+    "message": "no method named `handle_terminal_published` found for struct `coordinator::SubagentCoordinator<R>` in the current scope",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 497,
+    "column": 11,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 530,
+    "column": 14,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 551,
+    "column": 14,
+    "occurrences": 1
+  },
+  {
+    "code": "E0599",
+    "message": "no method named `handle_terminal_published` found for struct `coordinator::SubagentCoordinator<R>` in the current scope",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 553,
+    "column": 11,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 599,
+    "column": 10,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 612,
+    "column": 10,
+    "occurrences": 1
+  },
+  {
+    "code": "E0599",
+    "message": "no method named `handle_terminal_published` found for struct `coordinator::SubagentCoordinator<R>` in the current scope",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 614,
+    "column": 7,
+    "occurrences": 1
+  },
+  {
+    "code": "E0609",
+    "message": "no field `terminal_published` on type `&CompletedChild`",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+    "line": 796,
+    "column": 10,
+    "occurrences": 1
+  },
+  {
+    "code": "E0308",
+    "message": "mismatched types",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs",
+    "line": 224,
+    "column": 9,
+    "occurrences": 1
+  },
+  {
+    "code": "E0425",
+    "message": "cannot find function `finish_child_before_visibility` in this scope",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs",
+    "line": 339,
+    "column": 13,
+    "occurrences": 1
+  },
+  {
+    "code": "E0061",
+    "message": "this function takes 4 arguments but 3 arguments were supplied",
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+    "line": 699,
+    "column": 9,
+    "occurrences": 1
+  }
+]

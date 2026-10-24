@@ -1,0 +1,194 @@
+[
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/child_session_navigation.rs",
+    "bytes": 1488,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "            .inject_keys(sgr_mouse(0, row, col, 'm').as_bytes())",
+      "            .expect(\"release parent navigation\");",
+      "        self.harness",
+      "            .wait_for_text_absent(PARENT_NAVIGATION, ROW_TIMEOUT)",
+      "            .expect(\"fixture root parent is visible\");",
+      "        self.wait_for_row(parent_text);",
+      "    }",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/finished_child_manual_compact_cancel.rs",
+    "bytes": 3223,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "        .harness",
+      "        .wait_for_text(PARENT_NAVIGATION, ROW_TIMEOUT)",
+      "        .expect(\"reopened child header exposes parent navigation\");",
+      "    scenario.wait_for_row(\"CHILD_DONE\");",
+      "    scenario.verify_child_session_info();",
+      "    scenario.return_to_parent(WAKE_DONE);",
+      "    scenario.finish(\"finished_child_manual_compact_cancel.cast\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs",
+    "bytes": 15365,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "        .expect(\"collapse rejected row\");",
+      "    scenario",
+      "        .harness",
+      "        .wait_for_text_absent(REJECTED_REASON, ROW_TIMEOUT)",
+      "        .expect(\"Left folds the reason away\");",
+      "",
+      "    scenario.finish(\"send_subagent_message_row.cast\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row_opens_child.rs",
+    "bytes": 2609,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "            Duration::from_secs(3),",
+      "            |h| !h.contains_text(PARENT_NAVIGATION) && h.contains_text(\"\\u{203a} Message rejected\") && h.contains_text(PARENT_DONE),",
+      "        )",
+      "        .expect(\"no child session for an unresolved target\");",
+      "    write_screen_dump_if_requested(&scenario.harness, \"send_row_rejected_enter_stays\");",
+      "",
+      "    scenario.finish(\"send_subagent_message_row_opens_child.cast\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+    "bytes": 98328,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "            assert_eq!(shared_buffer.len(), 1, \"own-turn monitor events go to the turn loop's buffer\");",
+      "            assert!(",
+      "                actor.state.lock().await.pending_notifications.is_empty(),",
+      "                \"own-turn monitor events must not also queue a wake\"",
+      "            );",
+      "        })",
+      "        .await;",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_queue_lifecycle_tests.rs",
+    "bytes": 5127,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "    tokio::task::LocalSet::new()",
+      "        .run_until(tokio::time::timeout(",
+      "            std::time::Duration::from_secs(5),",
+      "            shutdown_and_recover_child(),",
+      "        ))",
+      "        .await",
+      "        .expect(\"shutdown and durable child recovery must finish within the protocol budget\");",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/prompt_mode_transition_tests.rs",
+    "bytes": 11002,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "            assert!(!origin.is_synthetic(), \"precondition\");",
+      "            let resolved = actor.resolve_turn_prompt_mode(&origin, PromptMode::Plan);",
+      "            assert_eq!(resolved, PromptMode::Plan);",
+      "            assert_eq!(actor.plan_mode.lock().state(), PlanModeState::Pending);",
+      "            assert_eq!(mode_updates(&mut event_rx), vec![\"plan\".to_string()]);",
+      "        })",
+      "        .await;",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/persistence_cleanup_stale_sessions_tests.rs",
+    "bytes": 10467,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "        stats",
+      "    );",
+      "    assert_eq!(std::fs::read(session.join(\"summary.json\")).unwrap(), b\"x\");",
+      "    assert_eq!(",
+      "        std::fs::read(session.join(\"updates.jsonl\")).unwrap(),",
+      "        before",
+      "    );",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion.rs",
+    "bytes": 25798,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "                )?;",
+      "            }",
+      "            crate::session::storage::write_jsonl_atomic(&path, &items)",
+      "        })",
+      "        .await",
+      "        .map_err(io::Error::other)?",
+      "    }",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_metadata_tests.rs",
+    "bytes": 7372,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "        reloaded.recover_subagent_completions(&info).await.unwrap();",
+      "        assert_eq!(std::fs::read(&path).unwrap(), committed);",
+      "        assert_eq!(",
+      "            std::fs::read(reloaded.updates_file(&info)).unwrap(),",
+      "            updates",
+      "        );",
+      "    }",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-shell/src/session/storage/jsonl/completion_tests.rs",
+    "bytes": 9854,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "            .recover_subagent_completions(&info)",
+      "            .await",
+      "            .unwrap()",
+      "            .completion_delivery",
+      "            .obligations",
+      "            .is_empty()",
+      "    );",
+      "}"
+    ]
+  },
+  {
+    "path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+    "bytes": 172291,
+    "matches_handoff": true,
+    "ends_with_newline": true,
+    "final_lines": [
+      "        workflow",
+      "            .await",
+      "            .expect(\"join\")",
+      "            .expect(\"spawn round-trips\")",
+      "            .success()",
+      "    );",
+      "    harness.actor.abort();",
+      "}"
+    ]
+  }
+]

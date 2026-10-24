@@ -1,0 +1,92 @@
+{
+  "worktree": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format",
+  "branch": "sokrates/ci-c8-format",
+  "head": "bb36f7bd58f057e0909759f0f10c54cf13ccc7ba",
+  "baseline": "c8e075ea29ab74356cb477f05dcd70cdf7eb0e4c",
+  "preserved": {
+    "4302b167": "4302b167a92acd77b76aeac16dbaa2a382ee3691",
+    "04121ef5": "04121ef55075f91e6685b9ba5757c0615a3f4ab8",
+    "bb36f7bd": "bb36f7bd58f057e0909759f0f10c54cf13ccc7ba"
+  },
+  "patch_sha256": "33d0c8d252f18da03046aff401b3c9805d9ac90cbc330b718e4930f66c7cc090",
+  "inputs": {
+    "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-format/result.md": "ba2fbe2cb1635c8423af7d06d69fa0bc5b21304878d299885dbbf6813608271f",
+    "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-format/review.md": "4d1a5aeab0083b27e174a5dcaeed2b093f62d4fad7af5b84e9f0d76762455a07",
+    "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-format/failed-ci.log": "947825dd02848b285644f571263f6bcd63b8a394960f8bf645e758de53baf523",
+    "/tmp/grok-goal-4f7553a1dbe6/implementer/ci-c8-format/failed-ci-readable.log": "947825dd02848b285644f571263f6bcd63b8a394960f8bf645e758de53baf523"
+  },
+  "sources": [
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-chat-state/src/actor/tests.rs",
+      "relative_path": "crates/codegen/xai-chat-state/src/actor/tests.rs",
+      "head_sha256": "9c4f0c36637f312d9a7ba64ed8d457f6c36753548cbcf96aedfc0ef500fe0863",
+      "authored_sha256": "2eeebf8823c2b57868fe7ea5a0b8460c80a0be554d696f27abd09e4bc7bb7f22"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs",
+      "relative_path": "crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs",
+      "head_sha256": "28ee8f8fc293909b765959136f7ea75b9a7b969d720a149fb4a2703ef78c38c2",
+      "authored_sha256": "cf4dd5fddf7d15925ebba0a48de6c5107a572e26f2ffc910bb017738524dfcb0"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+      "relative_path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs",
+      "head_sha256": "1e1721428e67f7c4c93c3fc66637cd92f3e75ccc753dd25d401d793da236178b",
+      "authored_sha256": "e064e0f9412a5905734d3bb2c3dae7e622baf5bd9c530c6a4faa44b647c6d3dc"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+      "relative_path": "crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs",
+      "head_sha256": "b094766537c0333f62979058b9171704e8f3d072a604eb23fe5a1fb644b11d74",
+      "authored_sha256": "22eeeb827b5c4af3391808aa5e1542b806c1ec03bde1ba8a341241f828694e06"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-shell/src/session/acp_session.rs",
+      "relative_path": "crates/codegen/xai-grok-shell/src/session/acp_session.rs",
+      "head_sha256": "df2237a857161b712b84149b31f0dad69d0f29762e6dcdc56befc5142acf6747",
+      "authored_sha256": "1a8078722c230629658342365205b9420a410aee35d65a8edb2365546d539764"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+      "relative_path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs",
+      "head_sha256": "971be0fe5d217109e1e7a0f1662c48dd8dc46535ce583b2a8079f1ddb6795ea8",
+      "authored_sha256": "87be37ae0829d823401c09fc9d4496848416604f988f1f1089548922009b8507"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs",
+      "relative_path": "crates/codegen/xai-grok-shell/src/session/acp_session_tests/support.rs",
+      "head_sha256": "49294403101313a4967fa930b3e29f3c3798eb6170dc97087838030ae74cf5b9",
+      "authored_sha256": "55a6a91aae0921da49c4c132e8fdc7e7a912b12b6617f9c1b082c11d5de93fe5"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs",
+      "relative_path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs",
+      "head_sha256": "b409793e2c7b5abba8092a8aead02213968f0eb28162decb1572eae89f84b3c3",
+      "authored_sha256": "e44b19f78f0a6f6fb8404653a6c609f23e2ecc80ee6afae98867d67c3a658500"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs",
+      "relative_path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs",
+      "head_sha256": "9edbbe33a7051d1a8babd2a25568709e329b49fd882836ef8d3e0a391b5011ff",
+      "authored_sha256": "f71f985adb155c9b6cd506974cbcfaf081f1e9f68da2066b2862afae602af04f"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+      "relative_path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs",
+      "head_sha256": "f452b78ae094d7f35868cddeadd9387dc39a91f24b93049dd8da4f957045440d",
+      "authored_sha256": "be2464f541ca5d91eeaade8b01346c189e323fe2b7c57fde8dadad8224c9107c"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs",
+      "relative_path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs",
+      "head_sha256": "40f87f782157679a04db0e45d537cf3d3cc86dd597302c758682030d523c238e",
+      "authored_sha256": "60b70ff1dc9866522ff945e2d7c0403d947d90239bd54755d78cbf2bf50e97b2"
+    },
+    {
+      "path": "/home/fg/projects/worktrees.d/org/forks/grok-build@ci-c8-format/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+      "relative_path": "crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs",
+      "head_sha256": "50f3553690e5ad6534c47db7be21a3a7ab6a3275fbd58f38ddd3dcc47f90cc8c",
+      "authored_sha256": "d702f6479012f4dbe61ff356c4298463b11ad90aba7469485a8717566388f8e4"
+    }
+  ]
+}

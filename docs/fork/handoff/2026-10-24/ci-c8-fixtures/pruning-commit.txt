@@ -1,0 +1,3 @@
+[unbuilt] [test] distinguish retained history from provider usage
+
+Keep the under-half-window fixture within the actual retained budget and add the opposite-gate case where retained history requires pruning while reported provider usage remains below the threshold. Preserve stored history and the requested trim behavior.

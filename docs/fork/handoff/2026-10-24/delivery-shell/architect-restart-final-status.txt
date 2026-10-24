@@ -1,0 +1,27 @@
+ M context-modules.d/500_work.d/epics.d/product.d/grok-build/002-attempt-bound-input-admission.adr.md
+ M crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs
+ M crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs
+ M crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs
+ M crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs
+ M crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_digest.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs
+ M crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
+ M crates/codegen/xai-grok-shell/src/session/completion_delivery.rs
+ M crates/codegen/xai-grok-shell/tests/test_completion_admission.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs
+ M crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs
+ M docs/fork/streams/w1h-hold-deliver.md
+?? crates/codegen/xai-grok-shell/src/agent/subagent/tests/completion_fixtures.rs
+?? crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_fixtures.rs
+?? crates/codegen/xai-grok-shell/src/session/acp_session_tests/completion_receiver_fixture.rs
+?? crates/codegen/xai-grok-shell/tests/test_completion_goal_activation.rs

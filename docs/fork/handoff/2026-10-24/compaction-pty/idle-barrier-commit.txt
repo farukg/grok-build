@@ -1,0 +1,5 @@
+[unbuilt] [test] follow actual child navigation and verify session identity
+
+Open the navigable message row and use the rendered parent header button.
+Check the fixture child session ID before and after returning and reopening,
+while preserving the held compaction cancellation acknowledgement.

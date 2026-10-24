@@ -1,0 +1,1255 @@
+test	Test finished child compaction through the terminal	﻿2026-10-22T19:27:56.5716295Z ##[group]Run cargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5716944Z ^[[36;1mcargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5717848Z ^[[36;1mPAGER_BINARY="$PWD/target/debug/xai-grok-pager" cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked finished_child_manual_compact_cancel -- --ignored^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5803867Z shell: /usr/bin/bash -e {0}
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5804140Z env:
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5804348Z   CARGO_INCREMENTAL: 0
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5804599Z   CARGO_TERM_COLOR: always
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5804843Z   RUST_MIN_STACK: 16777216
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5805075Z   TEST_FILTER: 
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5805292Z   PROTOC: /usr/bin/protoc
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5805545Z   CACHE_ON_FAILURE: false
+test	Test finished child compaction through the terminal	2026-10-22T19:27:56.5805774Z ##[endgroup]
+test	Test finished child compaction through the terminal	2026-10-22T19:27:57.6081303Z ^[[1m^[[92m   Compiling^[[0m cfg-if v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:27:57.6083287Z ^[[1m^[[92m   Compiling^[[0m serde_core v1.0.228
+test	Test finished child compaction through the terminal	2026-10-22T19:27:57.6084553Z ^[[1m^[[92m   Compiling^[[0m libc v0.2.186
+test	Test finished child compaction through the terminal	2026-10-22T19:27:57.6248187Z ^[[1m^[[92m   Compiling^[[0m memchr v2.8.2
+test	Test finished child compaction through the terminal	2026-10-22T19:27:57.6425343Z ^[[1m^[[92m   Compiling^[[0m value-bag v1.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:27:57.9392887Z ^[[1m^[[92m   Compiling^[[0m log v0.4.32
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.2994205Z ^[[1m^[[92m   Compiling^[[0m itoa v1.0.17
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.3155240Z ^[[1m^[[92m   Compiling^[[0m portable-atomic v1.11.1
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.4513393Z ^[[1m^[[92m   Compiling^[[0m scopeguard v1.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.5042897Z ^[[1m^[[92m   Compiling^[[0m lock_api v0.4.14
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.7622956Z ^[[1m^[[92m   Compiling^[[0m pin-project-lite v0.2.16
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.8163288Z ^[[1m^[[92m   Compiling^[[0m once_cell v1.21.3
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.9183395Z ^[[1m^[[92m   Compiling^[[0m equivalent v1.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.9702695Z ^[[1m^[[92m   Compiling^[[0m bitflags v2.13.0
+test	Test finished child compaction through the terminal	2026-10-22T19:27:58.9776276Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.17.1
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.1422945Z ^[[1m^[[92m   Compiling^[[0m zeroize v1.8.2
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.2822863Z ^[[1m^[[92m   Compiling^[[0m thiserror v2.0.18
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.3393152Z ^[[1m^[[92m   Compiling^[[0m futures-core v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.3679698Z ^[[1m^[[92m   Compiling^[[0m libm v0.2.15
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.4371096Z ^[[1m^[[92m   Compiling^[[0m subtle v2.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.5352875Z ^[[1m^[[92m   Compiling^[[0m errno v0.3.14
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.5733467Z ^[[1m^[[92m   Compiling^[[0m stable_deref_trait v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.6247157Z ^[[1m^[[92m   Compiling^[[0m signal-hook-registry v1.4.8
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.6553407Z ^[[1m^[[92m   Compiling^[[0m mio v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:27:59.8793559Z ^[[1m^[[92m   Compiling^[[0m serde v1.0.228
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.0322920Z ^[[1m^[[92m   Compiling^[[0m indexmap v2.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.2192746Z ^[[1m^[[92m   Compiling^[[0m futures-io v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.3483041Z ^[[1m^[[92m   Compiling^[[0m num-traits v0.2.19
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.5012809Z ^[[1m^[[92m   Compiling^[[0m smallvec v1.15.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.6972774Z ^[[1m^[[92m   Compiling^[[0m parking_lot_core v0.9.12
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.7092545Z ^[[1m^[[92m   Compiling^[[0m bytes v1.11.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.7672809Z ^[[1m^[[92m   Compiling^[[0m tracing-core v0.1.36
+test	Test finished child compaction through the terminal	2026-10-22T19:28:00.9143516Z ^[[1m^[[92m   Compiling^[[0m parking_lot v0.12.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.0792817Z ^[[1m^[[92m   Compiling^[[0m typenum v1.19.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.2822966Z ^[[1m^[[92m   Compiling^[[0m slab v0.4.11
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.3553327Z ^[[1m^[[92m   Compiling^[[0m tracing v0.1.44
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.3957964Z ^[[1m^[[92m   Compiling^[[0m percent-encoding v2.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.4012122Z ^[[1m^[[92m   Compiling^[[0m socket2 v0.6.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.5539885Z ^[[1m^[[92m   Compiling^[[0m futures-sink v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.6043559Z ^[[1m^[[92m   Compiling^[[0m futures-task v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.6192863Z ^[[1m^[[92m   Compiling^[[0m futures-channel v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.7410537Z ^[[1m^[[92m   Compiling^[[0m tokio v1.52.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.7944979Z ^[[1m^[[92m   Compiling^[[0m futures-util v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.8791760Z ^[[1m^[[92m   Compiling^[[0m crc32fast v1.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:01.8883729Z ^[[1m^[[92m   Compiling^[[0m zmij v1.0.19
+test	Test finished child compaction through the terminal	2026-10-22T19:28:02.0282876Z ^[[1m^[[92m   Compiling^[[0m const-oid v0.9.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:02.1460165Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.149
+test	Test finished child compaction through the terminal	2026-10-22T19:28:03.2053365Z ^[[1m^[[92m   Compiling^[[0m generic-array v0.14.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:03.7930182Z ^[[1m^[[92m   Compiling^[[0m crypto-common v0.1.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:03.8692980Z ^[[1m^[[92m   Compiling^[[0m block-buffer v0.10.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:03.8842693Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.2.16
+test	Test finished child compaction through the terminal	2026-10-22T19:28:03.9542922Z ^[[1m^[[92m   Compiling^[[0m digest v0.10.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:04.0554171Z ^[[1m^[[92m   Compiling^[[0m regex-syntax v0.8.11
+test	Test finished child compaction through the terminal	2026-10-22T19:28:04.1152863Z ^[[1m^[[92m   Compiling^[[0m aho-corasick v1.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:04.5202957Z ^[[1m^[[92m   Compiling^[[0m byteorder v1.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:04.6953253Z ^[[1m^[[92m   Compiling^[[0m fnv v1.0.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:04.7430746Z ^[[1m^[[92m   Compiling^[[0m crossbeam-utils v0.8.21
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.2572776Z ^[[1m^[[92m   Compiling^[[0m form_urlencoded v1.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.3782738Z ^[[1m^[[92m   Compiling^[[0m rand_core v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.4763409Z ^[[1m^[[92m   Compiling^[[0m cpufeatures v0.2.17
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.5222594Z ^[[1m^[[92m   Compiling^[[0m zerofrom v0.1.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.6189152Z ^[[1m^[[92m   Compiling^[[0m yoke v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.7742924Z ^[[1m^[[92m   Compiling^[[0m regex-automata v0.4.13
+test	Test finished child compaction through the terminal	2026-10-22T19:28:05.8637841Z ^[[1m^[[92m   Compiling^[[0m http v1.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:06.5039828Z ^[[1m^[[92m   Compiling^[[0m zerovec v0.11.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:06.8784753Z ^[[1m^[[92m   Compiling^[[0m ryu v1.0.20
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.0349012Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.2602969Z ^[[1m^[[92m   Compiling^[[0m tokio-util v0.7.17
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.4652849Z ^[[1m^[[92m   Compiling^[[0m tinystr v0.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.4903829Z ^[[1m^[[92m   Compiling^[[0m writeable v0.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.6212917Z ^[[1m^[[92m   Compiling^[[0m litemap v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.7642955Z ^[[1m^[[92m   Compiling^[[0m potential_utf v0.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.7953116Z ^[[1m^[[92m   Compiling^[[0m icu_locale_core v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:07.8743739Z ^[[1m^[[92m   Compiling^[[0m zerotrie v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.1977836Z ^[[1m^[[92m   Compiling^[[0m icu_collections v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.3702785Z ^[[1m^[[92m   Compiling^[[0m icu_provider v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.6673124Z ^[[1m^[[92m   Compiling^[[0m http-body v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.7194887Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer_data v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.7613451Z ^[[1m^[[92m   Compiling^[[0m icu_properties_data v2.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.7762723Z ^[[1m^[[92m   Compiling^[[0m base64 v0.22.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.7828995Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:08.9023391Z ^[[1m^[[92m   Compiling^[[0m icu_properties v2.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.0850381Z ^[[1m^[[92m   Compiling^[[0m pin-utils v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.1312937Z ^[[1m^[[92m   Compiling^[[0m utf8_iter v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.2442972Z ^[[1m^[[92m   Compiling^[[0m http-body-util v0.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.3320036Z ^[[1m^[[92m   Compiling^[[0m fastrand v2.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.4413150Z ^[[1m^[[92m   Compiling^[[0m zerocopy v0.8.48
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.5523399Z ^[[1m^[[92m   Compiling^[[0m untrusted v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:09.6192907Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.0513742Z ^[[1m^[[92m   Compiling^[[0m idna_adapter v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.0733107Z ^[[1m^[[92m   Compiling^[[0m sha1 v0.10.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.1302992Z ^[[1m^[[92m   Compiling^[[0m idna v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.2762626Z ^[[1m^[[92m   Compiling^[[0m atomic-waker v1.1.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.3500667Z ^[[1m^[[92m   Compiling^[[0m simd-adler32 v0.3.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.5673275Z ^[[1m^[[92m   Compiling^[[0m url v2.5.8
+test	Test finished child compaction through the terminal	2026-10-22T19:28:10.7693321Z ^[[1m^[[92m   Compiling^[[0m aws-lc-sys v0.39.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:11.3663527Z ^[[1m^[[92m   Compiling^[[0m untrusted v0.7.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:11.3852928Z ^[[1m^[[92m   Compiling^[[0m rustls-pki-types v1.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:11.4300288Z ^[[1m^[[92m   Compiling^[[0m aws-lc-rs v1.16.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:11.6773264Z ^[[1m^[[92m   Compiling^[[0m adler2 v2.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:11.7623461Z ^[[1m^[[92m   Compiling^[[0m linux-raw-sys v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:11.8965579Z ^[[1m^[[92m   Compiling^[[0m miniz_oxide v0.8.9
+test	Test finished child compaction through the terminal	2026-10-22T19:28:12.5703078Z ^[[1m^[[92m   Compiling^[[0m tower-service v0.3.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:12.6249165Z ^[[1m^[[92m   Compiling^[[0m httparse v1.10.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:12.9393658Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.13
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.0522691Z ^[[1m^[[92m   Compiling^[[0m bstr v1.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.2722830Z ^[[1m^[[92m   Compiling^[[0m rustix v1.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.3842783Z ^[[1m^[[92m   Compiling^[[0m try-lock v0.2.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.4382862Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.37
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.7872852Z ^[[1m^[[92m   Compiling^[[0m zlib-rs v0.5.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.8782899Z ^[[1m^[[92m   Compiling^[[0m tower-layer v0.3.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:13.9920708Z ^[[1m^[[92m   Compiling^[[0m want v0.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:14.1053069Z ^[[1m^[[92m   Compiling^[[0m h2 v0.4.19
+test	Test finished child compaction through the terminal	2026-10-22T19:28:17.5888696Z ^[[1m^[[92m   Compiling^[[0m httpdate v1.0.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:17.8153419Z ^[[1m^[[92m   Compiling^[[0m openssl-probe v0.1.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:17.9442840Z ^[[1m^[[92m   Compiling^[[0m rustls-native-certs v0.8.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.2344966Z ^[[1m^[[92m   Compiling^[[0m hyper v1.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.4508039Z ^[[1m^[[92m   Compiling^[[0m libz-rs-sys v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.5858166Z ^[[1m^[[92m   Compiling^[[0m flate2 v1.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.8287264Z ^[[1m^[[92m   Compiling^[[0m webpki-roots v1.0.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.8686934Z ^[[1m^[[92m   Compiling^[[0m sync_wrapper v1.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.9308524Z ^[[1m^[[92m   Compiling^[[0m ipnet v2.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:18.9433061Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.0343435Z ^[[1m^[[92m   Compiling^[[0m hdrhistogram v7.5.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.1472844Z ^[[1m^[[92m   Compiling^[[0m mime v0.3.17
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.2153522Z ^[[1m^[[92m   Compiling^[[0m tower v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.3690570Z ^[[1m^[[92m   Compiling^[[0m hyper-util v0.1.20
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.4043909Z ^[[1m^[[92m   Compiling^[[0m ppv-lite86 v0.2.21
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.7315237Z ^[[1m^[[92m   Compiling^[[0m serde_urlencoded v0.7.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.9232718Z ^[[1m^[[92m   Compiling^[[0m iana-time-zone v0.1.64
+test	Test finished child compaction through the terminal	2026-10-22T19:28:19.9603080Z ^[[1m^[[92m   Compiling^[[0m powerfmt v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:20.1433041Z ^[[1m^[[92m   Compiling^[[0m deranged v0.5.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:20.2152864Z ^[[1m^[[92m   Compiling^[[0m chrono v0.4.44
+test	Test finished child compaction through the terminal	2026-10-22T19:28:20.6872812Z ^[[1m^[[92m   Compiling^[[0m time-core v0.1.8
+test	Test finished child compaction through the terminal	2026-10-22T19:28:20.8042876Z ^[[1m^[[92m   Compiling^[[0m same-file v1.0.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:20.9488532Z ^[[1m^[[92m   Compiling^[[0m num-conv v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.0556348Z ^[[1m^[[92m   Compiling^[[0m walkdir v2.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.2450584Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.3.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.3242203Z ^[[1m^[[92m   Compiling^[[0m time v0.3.47
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.3575641Z ^[[1m^[[92m   Compiling^[[0m tinyvec_macros v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.3943125Z ^[[1m^[[92m   Compiling^[[0m tinyvec v1.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.4352979Z ^[[1m^[[92m   Compiling^[[0m rand_core v0.6.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.6379496Z ^[[1m^[[92m   Compiling^[[0m sha1_smol v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.7536257Z ^[[1m^[[92m   Compiling^[[0m uuid v1.23.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.8122907Z ^[[1m^[[92m   Compiling^[[0m either v1.15.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.8403406Z ^[[1m^[[92m   Compiling^[[0m unicase v2.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:21.9783067Z ^[[1m^[[92m   Compiling^[[0m allocator-api2 v0.2.21
+test	Test finished child compaction through the terminal	2026-10-22T19:28:22.0152879Z ^[[1m^[[92m   Compiling^[[0m encoding_rs v0.8.35
+test	Test finished child compaction through the terminal	2026-10-22T19:28:22.2372728Z ^[[1m^[[92m   Compiling^[[0m hex v0.4.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:22.2832874Z ^[[1m^[[92m   Compiling^[[0m unicode-normalization v0.1.25
+test	Test finished child compaction through the terminal	2026-10-22T19:28:22.4562769Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:22.7122766Z ^[[1m^[[92m   Compiling^[[0m iri-string v0.7.9
+test	Test finished child compaction through the terminal	2026-10-22T19:28:22.7414697Z ^[[1m^[[92m   Compiling^[[0m mime_guess v2.0.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.0423283Z ^[[1m^[[92m   Compiling^[[0m rand_core v0.9.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.2152990Z ^[[1m^[[92m   Compiling^[[0m rand_chacha v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.2647079Z ^[[1m^[[92m   Compiling^[[0m anyhow v1.0.104
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.5473159Z ^[[1m^[[92m   Compiling^[[0m rand v0.9.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.6152822Z ^[[1m^[[92m   Compiling^[[0m zstd-sys v2.1.0+zstd.1.5.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.6980141Z ^[[1m^[[92m   Compiling^[[0m zstd-safe v7.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.7983194Z ^[[1m^[[92m   Compiling^[[0m crossbeam-channel v0.5.15
+test	Test finished child compaction through the terminal	2026-10-22T19:28:23.8592977Z ^[[1m^[[92m   Compiling^[[0m zstd v0.13.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.1373108Z ^[[1m^[[92m   Compiling^[[0m tower-http v0.6.8
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.2363312Z ^[[1m^[[92m   Compiling^[[0m futures-executor v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.3274126Z ^[[1m^[[92m   Compiling^[[0m spin v0.9.9
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.4283726Z ^[[1m^[[92m   Compiling^[[0m base64ct v1.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.4742480Z ^[[1m^[[92m   Compiling^[[0m ref-cast v1.0.25
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.4872549Z ^[[1m^[[92m   Compiling^[[0m strum v0.27.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.5213681Z ^[[1m^[[92m   Compiling^[[0m concurrent-queue v2.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.5491316Z ^[[1m^[[92m   Compiling^[[0m flagset v0.4.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.6313200Z ^[[1m^[[92m   Compiling^[[0m parking v2.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.6538193Z ^[[1m^[[92m   Compiling^[[0m pem-rfc7468 v0.7.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.6961962Z ^[[1m^[[92m   Compiling^[[0m num-integer v0.1.46
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.7633071Z ^[[1m^[[92m   Compiling^[[0m alloc-no-stdlib v2.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.8349993Z ^[[1m^[[92m   Compiling^[[0m der v0.7.10
+test	Test finished child compaction through the terminal	2026-10-22T19:28:24.9711093Z ^[[1m^[[92m   Compiling^[[0m alloc-stdlib v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.0033430Z ^[[1m^[[92m   Compiling^[[0m utf-8 v0.7.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.0406934Z ^[[1m^[[92m   Compiling^[[0m sha2 v0.10.9
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.1583796Z ^[[1m^[[92m   Compiling^[[0m gix-trace v0.1.20
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.2259151Z ^[[1m^[[92m   Compiling^[[0m dyn-clone v1.0.20
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.2333851Z ^[[1m^[[92m   Compiling^[[0m gix-validate v0.11.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.2973064Z ^[[1m^[[92m   Compiling^[[0m schemars v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.3222859Z ^[[1m^[[92m   Compiling^[[0m event-listener v5.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.4962711Z ^[[1m^[[92m   Compiling^[[0m gix-path v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.5253150Z ^[[1m^[[92m   Compiling^[[0m futures v0.3.32
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.5677500Z ^[[1m^[[92m   Compiling^[[0m memmap2 v0.9.11
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.7496844Z ^[[1m^[[92m   Compiling^[[0m spki v0.7.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.8892998Z ^[[1m^[[92m   Compiling^[[0m event-listener-strategy v0.5.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.9183499Z ^[[1m^[[92m   Compiling^[[0m brotli-decompressor v4.0.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:25.9628786Z ^[[1m^[[92m   Compiling^[[0m gix-utils v0.3.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.2643031Z ^[[1m^[[92m   Compiling^[[0m signature v2.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.2893002Z ^[[1m^[[92m   Compiling^[[0m arrayvec v0.7.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.3577071Z ^[[1m^[[92m   Compiling^[[0m regex v1.12.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.4472839Z ^[[1m^[[92m   Compiling^[[0m prodash v31.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.5812813Z ^[[1m^[[92m   Compiling^[[0m zlib-rs v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.8172818Z ^[[1m^[[92m   Compiling^[[0m foldhash v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:26.9573489Z ^[[1m^[[92m   Compiling^[[0m brotli v7.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:27.0533197Z ^[[1m^[[92m   Compiling^[[0m siphasher v1.0.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:27.0893854Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.15.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:27.3448342Z ^[[1m^[[92m   Compiling^[[0m tempfile v3.27.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:27.6908672Z ^[[1m^[[92m   Compiling^[[0m winnow v0.7.14
+test	Test finished child compaction through the terminal	2026-10-22T19:28:28.0022952Z ^[[1m^[[92m   Compiling^[[0m jiff v0.2.28
+test	Test finished child compaction through the terminal	2026-10-22T19:28:29.3698041Z ^[[1m^[[92m   Compiling^[[0m thiserror v1.0.69
+test	Test finished child compaction through the terminal	2026-10-22T19:28:29.4243478Z ^[[1m^[[92m   Compiling^[[0m webpki-roots v0.26.11
+test	Test finished child compaction through the terminal	2026-10-22T19:28:29.4603610Z ^[[1m^[[92m   Compiling^[[0m rustls-platform-verifier v0.6.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:29.6242861Z ^[[1m^[[92m   Compiling^[[0m tokio-stream v0.1.17
+test	Test finished child compaction through the terminal	2026-10-22T19:28:30.0023525Z ^[[1m^[[92m   Compiling^[[0m async-compression v0.4.19
+test	Test finished child compaction through the terminal	2026-10-22T19:28:30.2753208Z ^[[1m^[[92m   Compiling^[[0m outref v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:30.3282701Z ^[[1m^[[92m   Compiling^[[0m vsimd v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:30.5723507Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.12.24
+test	Test finished child compaction through the terminal	2026-10-22T19:28:30.7302811Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.13.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:31.4752821Z ^[[1m^[[92m   Compiling^[[0m gix-features v0.48.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:31.8113374Z ^[[1m^[[92m   Compiling^[[0m lazy_static v1.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:31.8543009Z ^[[1m^[[92m   Compiling^[[0m gix-error v0.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:32.1352710Z ^[[1m^[[92m   Compiling^[[0m http v0.2.12
+test	Test finished child compaction through the terminal	2026-10-22T19:28:32.4173655Z ^[[1m^[[92m   Compiling^[[0m data-encoding v2.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:33.0694277Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.14.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:33.1304572Z ^[[1m^[[92m   Compiling^[[0m http-body v0.4.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:33.3028360Z ^[[1m^[[92m   Compiling^[[0m tungstenite v0.28.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:33.6433851Z ^[[1m^[[92m   Compiling^[[0m dashmap v6.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.0538917Z ^[[1m^[[92m   Compiling^[[0m pin-project v1.1.11
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.0987142Z ^[[1m^[[92m   Compiling^[[0m base64-simd v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.2513519Z ^[[1m^[[92m   Compiling^[[0m bytes-utils v0.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.3172242Z ^[[1m^[[92m   Compiling^[[0m hash32 v0.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.3762896Z ^[[1m^[[92m   Compiling^[[0m serde_path_to_error v0.1.20
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.4192871Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-types v1.4.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.4808864Z ^[[1m^[[92m   Compiling^[[0m heapless v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.4906863Z ^[[1m^[[92m   Compiling^[[0m nix v0.30.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.7362973Z ^[[1m^[[92m   Compiling^[[0m tokio-tungstenite v0.28.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.9003296Z ^[[1m^[[92m   Compiling^[[0m foldhash v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:34.9802974Z ^[[1m^[[92m   Compiling^[[0m dunce v1.0.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.0093463Z ^[[1m^[[92m   Compiling^[[0m cpufeatures v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.0352569Z ^[[1m^[[92m   Compiling^[[0m arrayref v0.3.9
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.0602827Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.16.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.0733057Z ^[[1m^[[92m   Compiling^[[0m faster-hex v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.3252683Z ^[[1m^[[92m   Compiling^[[0m multer v3.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.6418538Z ^[[1m^[[92m   Compiling^[[0m rand_chacha v0.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.7646102Z ^[[1m^[[92m   Compiling^[[0m axum-core v0.5.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.8657414Z ^[[1m^[[92m   Compiling^[[0m hmac v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:35.9513193Z ^[[1m^[[92m   Compiling^[[0m matchit v0.8.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:36.0013067Z ^[[1m^[[92m   Compiling^[[0m option-ext v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:36.0485433Z ^[[1m^[[92m   Compiling^[[0m bytemuck v1.25.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:36.2697253Z ^[[1m^[[92m   Compiling^[[0m rand v0.8.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:36.9893307Z ^[[1m^[[92m   Compiling^[[0m async-broadcast v0.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:37.1628014Z ^[[1m^[[92m   Compiling^[[0m axum v0.8.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:37.3094640Z ^[[1m^[[92m   Compiling^[[0m urlencoding v2.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:37.4733717Z ^[[1m^[[92m   Compiling^[[0m xai-tty-utils v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-tty-utils)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:37.7002804Z ^[[1m^[[92m   Compiling^[[0m sha1-checked v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:38.0452751Z ^[[1m^[[92m   Compiling^[[0m pem v3.0.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:38.3702915Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-async v1.2.14
+test	Test finished child compaction through the terminal	2026-10-22T19:28:38.5333466Z ^[[1m^[[92m   Compiling^[[0m semver v1.0.28
+test	Test finished child compaction through the terminal	2026-10-22T19:28:38.5852948Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-runtime-api v1.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:38.8642757Z ^[[1m^[[92m   Compiling^[[0m gix-hash v0.25.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:39.1592857Z ^[[1m^[[92m   Compiling^[[0m crossbeam-epoch v0.9.20
+test	Test finished child compaction through the terminal	2026-10-22T19:28:39.4552874Z ^[[1m^[[92m   Compiling^[[0m chacha20 v0.10.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:39.7003554Z ^[[1m^[[92m   Compiling^[[0m xai-dirs v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-dirs)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:39.9313400Z ^[[1m^[[92m   Compiling^[[0m toml_parser v1.0.9+spec-1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.2642906Z ^[[1m^[[92m   Compiling^[[0m prost v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.5132126Z ^[[1m^[[92m   Compiling^[[0m hyper-timeout v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.6173064Z ^[[1m^[[92m   Compiling^[[0m serde_spanned v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.6622536Z ^[[1m^[[92m   Compiling^[[0m toml_datetime v0.7.5+spec-1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.6742834Z ^[[1m^[[92m   Compiling^[[0m unicode-width v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.7112864Z ^[[1m^[[92m   Compiling^[[0m static_assertions v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.7553109Z ^[[1m^[[92m   Compiling^[[0m toml_writer v1.0.6+spec-1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.8663285Z ^[[1m^[[92m   Compiling^[[0m tonic v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.9101165Z ^[[1m^[[92m   Compiling^[[0m toml v0.9.12+spec-1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:40.9266054Z ^[[1m^[[92m   Compiling^[[0m tls_codec v0.4.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:41.5333154Z ^[[1m^[[92m   Compiling^[[0m strum v0.28.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:41.6988905Z ^[[1m^[[92m   Compiling^[[0m rand v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.2292431Z ^[[1m^[[92m   Compiling^[[0m derive_more v2.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.3157116Z ^[[1m^[[92m   Compiling^[[0m xai-grok-version v1.0.45 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-version)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.3664912Z ^[[1m^[[92m   Compiling^[[0m dirs-sys v0.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.4753579Z ^[[1m^[[92m   Compiling^[[0m pkcs8 v0.10.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.4882789Z ^[[1m^[[92m   Compiling^[[0m dirs v6.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.5683033Z ^[[1m^[[92m   Compiling^[[0m agent-client-protocol-schema v0.11.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.6437202Z ^[[1m^[[92m   Compiling^[[0m x509-cert v0.2.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.6963111Z ^[[1m^[[92m   Compiling^[[0m crossbeam-deque v0.8.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:42.8313235Z ^[[1m^[[92m   Compiling^[[0m gix-date v0.15.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:43.4392995Z ^[[1m^[[92m   Compiling^[[0m sharded-slab v0.1.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:43.9758005Z ^[[1m^[[92m   Compiling^[[0m matchers v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:44.0622929Z ^[[1m^[[92m   Compiling^[[0m hybrid-array v0.4.10
+test	Test finished child compaction through the terminal	2026-10-22T19:28:44.3872903Z ^[[1m^[[92m   Compiling^[[0m opentelemetry v0.32.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:44.5933145Z ^[[1m^[[92m   Compiling^[[0m tracing-log v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:44.8041800Z ^[[1m^[[92m   Compiling^[[0m tracing-serde v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:44.9154162Z ^[[1m^[[92m   Compiling^[[0m fs2 v0.4.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.0492481Z ^[[1m^[[92m   Compiling^[[0m thread_local v1.1.9
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.1737748Z ^[[1m^[[92m   Compiling^[[0m nu-ansi-term v0.50.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.2718763Z ^[[1m^[[92m   Compiling^[[0m env_home v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.3423720Z ^[[1m^[[92m   Compiling^[[0m new_debug_unreachable v1.0.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.3873445Z ^[[1m^[[92m   Compiling^[[0m constant_time_eq v0.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.4426681Z ^[[1m^[[92m   Compiling^[[0m blake3 v1.8.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.4844594Z ^[[1m^[[92m   Compiling^[[0m tracing-subscriber v0.3.23
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.6553344Z ^[[1m^[[92m   Compiling^[[0m which v8.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.8779647Z ^[[1m^[[92m   Compiling^[[0m gix-actor v0.41.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:45.9233574Z ^[[1m^[[92m   Compiling^[[0m tonic-prost v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:46.0523924Z ^[[1m^[[92m   Compiling^[[0m prod-mc-cli-chat-proxy-types v0.1.0 (/home/runner/work/grok-build/grok-build/prod/mc/cli-chat-proxy-types)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:46.0833330Z ^[[1m^[[92m   Compiling^[[0m gix-hashtable v0.15.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:46.1643355Z ^[[1m^[[92m   Compiling^[[0m xai-tool-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tool-types)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:47.6322924Z ^[[1m^[[92m   Compiling^[[0m linux-raw-sys v0.4.15
+test	Test finished child compaction through the terminal	2026-10-22T19:28:47.9662865Z ^[[1m^[[92m   Compiling^[[0m rustix v0.38.44
+test	Test finished child compaction through the terminal	2026-10-22T19:28:48.2592909Z ^[[1m^[[92m   Compiling^[[0m phf_generator v0.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:48.3892815Z ^[[1m^[[92m   Compiling^[[0m gix-object v0.60.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:49.1413080Z ^[[1m^[[92m   Compiling^[[0m shellexpand v3.1.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:49.6433005Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-eventstream v0.60.18
+test	Test finished child compaction through the terminal	2026-10-22T19:28:50.0403480Z ^[[1m^[[92m   Compiling^[[0m xai-grok-env v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-env)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:50.2093028Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-http v0.62.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.0413247Z ^[[1m^[[92m   Compiling^[[0m opentelemetry_sdk v0.32.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.2992720Z ^[[1m^[[92m   Compiling^[[0m ff v0.13.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.3853061Z ^[[1m^[[92m   Compiling^[[0m filetime v0.2.29
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.5539067Z ^[[1m^[[92m   Compiling^[[0m web-time v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.6009978Z ^[[1m^[[92m   Compiling^[[0m precomputed-hash v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.6480297Z ^[[1m^[[92m   Compiling^[[0m base16ct v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:51.8152985Z ^[[1m^[[92m   Compiling^[[0m agent-client-protocol v0.10.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:52.0595259Z ^[[1m^[[92m   Compiling^[[0m anstyle v1.0.13
+test	Test finished child compaction through the terminal	2026-10-22T19:28:52.2442933Z ^[[1m^[[92m   Compiling^[[0m prost-build v0.14.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:53.4733308Z ^[[1m^[[92m   Compiling^[[0m xai-grok-config v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-config)
+test	Test finished child compaction through the terminal	2026-10-22T19:28:53.5316598Z ^[[1m^[[92m   Compiling^[[0m sec1 v0.7.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:53.7942810Z ^[[1m^[[92m   Compiling^[[0m group v0.13.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:53.9233052Z ^[[1m^[[92m   Compiling^[[0m crypto-common v0.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:54.0082809Z ^[[1m^[[92m   Compiling^[[0m enumflags2 v0.7.12
+test	Test finished child compaction through the terminal	2026-10-22T19:28:54.1422896Z ^[[1m^[[92m   Compiling^[[0m prost-types v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:54.8599043Z ^[[1m^[[92m   Compiling^[[0m aws-credential-types v1.2.8
+test	Test finished child compaction through the terminal	2026-10-22T19:28:55.2356892Z ^[[1m^[[92m   Compiling^[[0m sigstore-types v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:55.4222741Z ^[[1m^[[92m   Compiling^[[0m hkdf v0.12.4
+test	Test finished child compaction through the terminal	2026-10-22T19:28:55.5043421Z ^[[1m^[[92m   Compiling^[[0m reqwest-middleware v0.4.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:55.5772846Z ^[[1m^[[92m   Compiling^[[0m num-iter v0.1.45
+test	Test finished child compaction through the terminal	2026-10-22T19:28:55.6413264Z ^[[1m^[[92m   Compiling^[[0m num-bigint v0.4.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:55.9463419Z ^[[1m^[[92m   Compiling^[[0m crypto-bigint v0.5.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:56.7873126Z ^[[1m^[[92m   Compiling^[[0m fdeflate v0.3.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.0652184Z ^[[1m^[[92m   Compiling^[[0m const-hex v1.18.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.2230244Z ^[[1m^[[92m   Compiling^[[0m utf8parse v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.2813027Z ^[[1m^[[92m   Compiling^[[0m minimal-lexical v0.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.2933223Z ^[[1m^[[92m   Compiling^[[0m opentelemetry-proto v0.32.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.3962880Z ^[[1m^[[92m   Compiling^[[0m anstyle-parse v0.2.7
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.5420513Z ^[[1m^[[92m   Compiling^[[0m nom v7.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:57.5914805Z ^[[1m^[[92m   Compiling^[[0m png v0.18.0
+test	Test finished child compaction through the terminal	2026-10-22T19:28:58.7743066Z ^[[1m^[[92m   Compiling^[[0m elliptic-curve v0.13.8
+test	Test finished child compaction through the terminal	2026-10-22T19:28:59.0773255Z ^[[1m^[[92m   Compiling^[[0m sigstore-crypto v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:28:59.1879252Z ^[[1m^[[92m   Compiling^[[0m tonic-prost-build v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:28:59.5652758Z ^[[1m^[[92m   Compiling^[[0m tonic-types v0.14.5
+test	Test finished child compaction through the terminal	2026-10-22T19:28:59.7022964Z ^[[1m^[[92m   Compiling^[[0m opentelemetry-http v0.32.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:00.2081824Z ^[[1m^[[92m   Compiling^[[0m cms v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:00.3123343Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-observability v0.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:00.3572749Z ^[[1m^[[92m   Compiling^[[0m gix-fs v0.21.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:00.5398152Z ^[[1m^[[92m   Compiling^[[0m debugid v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:00.7222797Z ^[[1m^[[92m   Compiling^[[0m fastant v0.1.10
+test	Test finished child compaction through the terminal	2026-10-22T19:29:00.9292829Z ^[[1m^[[92m   Compiling^[[0m crmf v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:01.0852603Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-runtime v1.9.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:01.3323174Z ^[[1m^[[92m   Compiling^[[0m opentelemetry-otlp v0.32.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:01.3403807Z ^[[1m^[[92m   Compiling^[[0m xai-proto-build v0.0.0 (/home/runner/work/grok-build/grok-build/crates/build/xai-proto-build)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:01.7682935Z ^[[1m^[[92m   Compiling^[[0m aws-types v1.3.9
+test	Test finished child compaction through the terminal	2026-10-22T19:29:02.2562883Z ^[[1m^[[92m   Compiling^[[0m aws-sigv4 v1.3.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:02.4113212Z ^[[1m^[[92m   Compiling^[[0m libz-sys v1.1.22
+test	Test finished child compaction through the terminal	2026-10-22T19:29:02.4713597Z ^[[1m^[[92m   Compiling^[[0m tracing-opentelemetry v0.33.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:02.7732949Z ^[[1m^[[92m   Compiling^[[0m rfc6979 v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:02.8413075Z ^[[1m^[[92m   Compiling^[[0m gix-chunk v0.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.0263002Z ^[[1m^[[92m   Compiling^[[0m lru v0.12.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.1287920Z ^[[1m^[[92m   Compiling^[[0m arc-swap v1.9.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.1388513Z ^[[1m^[[92m   Compiling^[[0m globset v0.4.18
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.1492611Z ^[[1m^[[92m   Compiling^[[0m is_terminal_polyfill v1.70.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.1863004Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-language v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.2313393Z ^[[1m^[[92m   Compiling^[[0m nonempty v0.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.3302600Z ^[[1m^[[92m   Compiling^[[0m zune-core v0.5.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.3680271Z ^[[1m^[[92m   Compiling^[[0m weezl v0.1.10
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.5684991Z ^[[1m^[[92m   Compiling^[[0m rtrb v0.3.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.7374498Z ^[[1m^[[92m   Compiling^[[0m quick-error v2.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.7879990Z ^[[1m^[[92m   Compiling^[[0m colorchoice v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.7969235Z ^[[1m^[[92m   Compiling^[[0m anstyle-query v1.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.8315210Z ^[[1m^[[92m   Compiling^[[0m fastrace v0.7.18
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.8419539Z ^[[1m^[[92m   Compiling^[[0m anstream v0.6.21
+test	Test finished child compaction through the terminal	2026-10-22T19:29:03.8581161Z ^[[1m^[[92m   Compiling^[[0m aws-runtime v1.5.12
+test	Test finished child compaction through the terminal	2026-10-22T19:29:04.1573301Z ^[[1m^[[92m   Compiling^[[0m zune-jpeg v0.5.15
+test	Test finished child compaction through the terminal	2026-10-22T19:29:04.6662831Z ^[[1m^[[92m   Compiling^[[0m ignore v0.4.24
+test	Test finished child compaction through the terminal	2026-10-22T19:29:04.8168696Z ^[[1m^[[92m   Compiling^[[0m typeshare v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:04.9286079Z ^[[1m^[[92m   Compiling^[[0m fax v0.2.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:05.0072770Z ^[[1m^[[92m   Compiling^[[0m ecdsa v0.16.9
+test	Test finished child compaction through the terminal	2026-10-22T19:29:05.2142921Z ^[[1m^[[92m   Compiling^[[0m libgit2-sys v0.18.2+1.9.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:05.4593205Z ^[[1m^[[92m   Compiling^[[0m xai-grok-tools-api v0.1.220-alpha.4 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-tools-api)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:05.4722755Z ^[[1m^[[92m   Compiling^[[0m cmpv2 v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:05.9722938Z ^[[1m^[[92m   Compiling^[[0m gix-tempfile v23.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.0112854Z ^[[1m^[[92m   Compiling^[[0m primeorder v0.13.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.1282977Z ^[[1m^[[92m   Compiling^[[0m eventsource-stream v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.2063606Z ^[[1m^[[92m   Compiling^[[0m phf_codegen v0.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.2402990Z ^[[1m^[[92m   Compiling^[[0m block-buffer v0.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.2889063Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-json v0.61.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.3284625Z ^[[1m^[[92m   Compiling^[[0m gix-quote v0.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.3363946Z ^[[1m^[[92m   Compiling^[[0m phf_shared v0.13.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.3952866Z ^[[1m^[[92m   Compiling^[[0m half v2.7.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.5140853Z ^[[1m^[[92m   Compiling^[[0m pxfm v0.1.25
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.5349464Z ^[[1m^[[92m   Compiling^[[0m spin v0.10.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.6654615Z ^[[1m^[[92m   Compiling^[[0m instant v0.1.12
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.6937846Z ^[[1m^[[92m   Compiling^[[0m byteorder-lite v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.7213384Z ^[[1m^[[92m   Compiling^[[0m regex-lite v0.1.8
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.7830595Z ^[[1m^[[92m   Compiling^[[0m const-oid v0.10.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.8983287Z ^[[1m^[[92m   Compiling^[[0m futures-timer v3.0.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:06.9713081Z ^[[1m^[[92m   Compiling^[[0m color_quant v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:07.1143017Z ^[[1m^[[92m   Compiling^[[0m gif v0.14.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:07.2189145Z ^[[1m^[[92m   Compiling^[[0m reqwest-eventsource v0.6.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:07.6233452Z ^[[1m^[[92m   Compiling^[[0m digest v0.11.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:07.7242390Z ^[[1m^[[92m   Compiling^[[0m image-webp v0.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:07.7649722Z ^[[1m^[[92m   Compiling^[[0m backoff v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:07.8852840Z ^[[1m^[[92m   Compiling^[[0m curve25519-dalek v4.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:09.1023755Z ^[[1m^[[92m   Compiling^[[0m moxcms v0.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:09.3302847Z ^[[1m^[[92m   Compiling^[[0m tiff v0.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:09.3792890Z ^[[1m^[[92m   Compiling^[[0m gix-lock v23.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:09.9752983Z ^[[1m^[[92m   Compiling^[[0m x509-tsp v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:10.1343151Z ^[[1m^[[92m   Compiling^[[0m git2 v0.20.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:10.8594066Z ^[[1m^[[92m   Compiling^[[0m derive_builder v0.20.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:10.9263146Z ^[[1m^[[92m   Compiling^[[0m libsqlite3-sys v0.35.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:11.1203547Z ^[[1m^[[92m   Compiling^[[0m xai-tool-protocol v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tool-protocol)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:12.4092840Z ^[[1m^[[92m   Compiling^[[0m num-bigint-dig v0.8.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:13.6419214Z ^[[1m^[[92m   Compiling^[[0m sigstore-merkle v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:13.6523446Z ^[[1m^[[92m   Compiling^[[0m pkcs1 v0.7.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:13.7703783Z ^[[1m^[[92m   Compiling^[[0m ed25519 v2.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:13.9673677Z ^[[1m^[[92m   Compiling^[[0m xai-grok-extra-ca v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-extra-ca)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.0453305Z ^[[1m^[[92m   Compiling^[[0m gix-glob v0.26.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.4269048Z ^[[1m^[[92m   Compiling^[[0m hashlink v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.4519199Z ^[[1m^[[92m   Compiling^[[0m phf_shared v0.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.5871300Z ^[[1m^[[92m   Compiling^[[0m secrecy v0.10.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.6673470Z ^[[1m^[[92m   Compiling^[[0m core_maths v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.6843737Z ^[[1m^[[92m   Compiling^[[0m xai-circuit-breaker v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-circuit-breaker)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.7272852Z ^[[1m^[[92m   Compiling^[[0m gimli v0.32.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.8840665Z ^[[1m^[[92m   Compiling^[[0m float-cmp v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:14.9642954Z ^[[1m^[[92m   Compiling^[[0m crc-catalog v2.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.0187685Z ^[[1m^[[92m   Compiling^[[0m rustc-demangle v0.1.26
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.1843055Z ^[[1m^[[92m   Compiling^[[0m fallible-streaming-iterator v0.1.9
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.2819409Z ^[[1m^[[92m   Compiling^[[0m xmlparser v0.13.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.4212990Z ^[[1m^[[92m   Compiling^[[0m fallible-iterator v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.7173458Z ^[[1m^[[92m   Compiling^[[0m unicode-segmentation v1.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.7259720Z ^[[1m^[[92m   Compiling^[[0m rusqlite v0.37.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.7402907Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-xml v0.60.11
+test	Test finished child compaction through the terminal	2026-10-22T19:29:15.9972764Z ^[[1m^[[92m   Compiling^[[0m crc v3.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:16.1253184Z ^[[1m^[[92m   Compiling^[[0m strict-num v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:16.2003427Z ^[[1m^[[92m   Compiling^[[0m async-openai v0.33.1 (https://github.com/our-forks/async-openai.git?rev=95b52ebdedf42143083cf3d6f0e0be7c84e9c808#95b52ebd)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:16.2212700Z ^[[1m^[[92m   Compiling^[[0m ttf-parser v0.25.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:17.0477670Z ^[[1m^[[92m   Compiling^[[0m addr2line v0.25.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:17.3842842Z ^[[1m^[[92m   Compiling^[[0m ed25519-dalek v2.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:17.6562780Z ^[[1m^[[92m   Compiling^[[0m rsa v0.9.10
+test	Test finished child compaction through the terminal	2026-10-22T19:29:18.3422891Z ^[[1m^[[92m   Compiling^[[0m sigstore-rekor v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:18.8392843Z ^[[1m^[[92m   Compiling^[[0m phf v0.13.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:18.9442637Z ^[[1m^[[92m   Compiling^[[0m image v0.25.10
+test	Test finished child compaction through the terminal	2026-10-22T19:29:20.2292842Z ^[[1m^[[92m   Compiling^[[0m sigstore-tsa v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:20.2592928Z ^[[1m^[[92m   Compiling^[[0m slotmap v1.0.7
+test	Test finished child compaction through the terminal	2026-10-22T19:29:20.7063342Z ^[[1m^[[92m   Compiling^[[0m object v0.37.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:21.3273062Z ^[[1m^[[92m   Compiling^[[0m rayon-core v1.13.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:22.0086034Z ^[[1m^[[92m   Compiling^[[0m string_cache v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:22.1992899Z ^[[1m^[[92m   Compiling^[[0m p256 v0.13.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:22.5278223Z ^[[1m^[[92m   Compiling^[[0m p384 v0.13.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:23.0952919Z ^[[1m^[[92m   Compiling^[[0m gix-commitgraph v0.37.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:23.5472836Z ^[[1m^[[92m   Compiling^[[0m simple_asn1 v0.6.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:23.7406237Z ^[[1m^[[92m   Compiling^[[0m phf_macros v0.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.0806911Z ^[[1m^[[92m   Compiling^[[0m protobuf-support v3.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.1743423Z ^[[1m^[[92m   Compiling^[[0m procfs-core v0.17.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.1871301Z ^[[1m^[[92m   Compiling^[[0m quick-xml v0.41.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.2705412Z ^[[1m^[[92m   Compiling^[[0m nom v8.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.5372791Z ^[[1m^[[92m   Compiling^[[0m unicode-bom v2.0.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.6672793Z ^[[1m^[[92m   Compiling^[[0m ryu-js v1.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:24.9003179Z ^[[1m^[[92m   Compiling^[[0m unicode-properties v0.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:25.0713294Z ^[[1m^[[92m   Compiling^[[0m roxmltree v0.20.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:25.7707687Z ^[[1m^[[92m   Compiling^[[0m pollster v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:25.8622102Z ^[[1m^[[92m   Compiling^[[0m fastrace-opentelemetry v0.18.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:25.9503245Z ^[[1m^[[92m   Compiling^[[0m fontconfig-parser v0.5.8
+test	Test finished child compaction through the terminal	2026-10-22T19:29:26.1643288Z ^[[1m^[[92m   Compiling^[[0m serde_json_canonicalizer v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:26.5153376Z ^[[1m^[[92m   Compiling^[[0m protobuf v3.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:26.6166570Z ^[[1m^[[92m   Compiling^[[0m procfs v0.17.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:27.0843337Z ^[[1m^[[92m   Compiling^[[0m phf v0.11.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:27.1752880Z ^[[1m^[[92m   Compiling^[[0m strum v0.26.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:27.1966451Z ^[[1m^[[92m   Compiling^[[0m backtrace v0.3.76
+test	Test finished child compaction through the terminal	2026-10-22T19:29:27.2363213Z ^[[1m^[[92m   Compiling^[[0m jsonwebtoken v10.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:28.4273130Z ^[[1m^[[92m   Compiling^[[0m gix-revwalk v0.31.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:28.4852809Z ^[[1m^[[92m   Compiling^[[0m web_atoms v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:28.6643126Z ^[[1m^[[92m   Compiling^[[0m rayon v1.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:29.0993408Z ^[[1m^[[92m   Compiling^[[0m sigstore-bundle v0.6.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:29.2593565Z ^[[1m^[[92m   Compiling^[[0m xai-tool-runtime v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tool-runtime)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:29.3126698Z ^[[1m^[[92m   Compiling^[[0m xai-sqlite-journal v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-sqlite-journal)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:29.6453209Z ^[[1m^[[92m   Compiling^[[0m tiny-skia-path v0.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:30.3622916Z ^[[1m^[[92m   Compiling^[[0m crc-fast v1.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:30.6772849Z ^[[1m^[[92m   Compiling^[[0m sha2 v0.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:30.9913132Z ^[[1m^[[92m   Compiling^[[0m fastrace-reqwest v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:31.1112889Z ^[[1m^[[92m   Compiling^[[0m fastrace-tonic v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:31.1712805Z ^[[1m^[[92m   Compiling^[[0m sentry-types v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:31.4602857Z ^[[1m^[[92m   Compiling^[[0m sigstore-trust-root v0.6.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.0963371Z ^[[1m^[[92m   Compiling^[[0m xai-grok-auth v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-auth)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.2282938Z ^[[1m^[[92m   Compiling^[[0m string_cache_codegen v0.5.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.5232799Z ^[[1m^[[92m   Compiling^[[0m tendril v0.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.5812611Z ^[[1m^[[92m   Compiling^[[0m block-padding v0.4.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.6532852Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-query v0.60.8
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.7545634Z ^[[1m^[[92m   Compiling^[[0m font-types v0.10.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.7672657Z ^[[1m^[[92m   Compiling^[[0m gcloud-metadata v1.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:32.9783556Z ^[[1m^[[92m   Compiling^[[0m xai-grok-secrets v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-secrets)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.1462743Z ^[[1m^[[92m   Compiling^[[0m itertools v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.4183531Z ^[[1m^[[92m   Compiling^[[0m token-source v1.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.4793168Z ^[[1m^[[92m   Compiling^[[0m md-5 v0.10.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.5613048Z ^[[1m^[[92m   Compiling^[[0m unicode-ccc v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.6310432Z ^[[1m^[[92m   Compiling^[[0m mac v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.6752831Z ^[[1m^[[92m   Compiling^[[0m unicode-script v0.5.8
+test	Test finished child compaction through the terminal	2026-10-22T19:29:33.9812777Z ^[[1m^[[92m   Compiling^[[0m path-clean v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.0013276Z ^[[1m^[[92m   Compiling^[[0m unicode-bidi-mirroring v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.0673393Z ^[[1m^[[92m   Compiling^[[0m unicode-bidi v0.3.18
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.0754894Z ^[[1m^[[92m   Compiling^[[0m home v0.5.12
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.1501093Z ^[[1m^[[92m   Compiling^[[0m bitflags v1.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.1602761Z ^[[1m^[[92m   Compiling^[[0m gcloud-auth v1.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.1932973Z ^[[1m^[[92m   Compiling^[[0m prometheus-parse v0.2.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.5853303Z ^[[1m^[[92m   Compiling^[[0m rustybuzz v0.20.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.6042884Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-checksums v0.63.13
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.9155987Z ^[[1m^[[92m   Compiling^[[0m futf v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:34.9882892Z ^[[1m^[[92m   Compiling^[[0m sentry-core v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:35.1352826Z ^[[1m^[[92m   Compiling^[[0m read-fonts v0.35.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:35.8392731Z ^[[1m^[[92m   Compiling^[[0m markup5ever v0.38.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:36.0623767Z ^[[1m^[[92m   Compiling^[[0m aws-sdk-sts v1.88.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:37.4543129Z ^[[1m^[[92m   Compiling^[[0m inout v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:37.5685069Z ^[[1m^[[92m   Compiling^[[0m markup5ever v0.14.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:37.6073591Z ^[[1m^[[92m   Compiling^[[0m sigstore-verify v0.6.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:38.2243321Z ^[[1m^[[92m   Compiling^[[0m xai-tracing v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-tracing)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:39.0673523Z ^[[1m^[[92m   Compiling^[[0m xai-computer-hub-core v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-computer-hub-core)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:39.0902788Z ^[[1m^[[92m   Compiling^[[0m prometheus v0.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:40.2282919Z ^[[1m^[[92m   Compiling^[[0m nix v0.31.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:40.5558687Z ^[[1m^[[92m   Compiling^[[0m fontdb v0.23.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:41.0789855Z ^[[1m^[[92m   Compiling^[[0m aws-sdk-sso v1.86.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:41.6142752Z ^[[1m^[[92m   Compiling^[[0m aws-sdk-ssooidc v1.89.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:41.8692859Z ^[[1m^[[92m   Compiling^[[0m landlock v0.4.4
+test	Test finished child compaction through the terminal	2026-10-22T19:29:42.2562886Z ^[[1m^[[92m   Compiling^[[0m getopts v0.2.24
+test	Test finished child compaction through the terminal	2026-10-22T19:29:42.6263374Z ^[[1m^[[92m   Compiling^[[0m kstring v2.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:42.7692903Z ^[[1m^[[92m   Compiling^[[0m dirs-sys v0.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:43.0623365Z ^[[1m^[[92m   Compiling^[[0m regress v0.11.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:43.1662900Z ^[[1m^[[92m   Compiling^[[0m reqwest-middleware v0.5.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:43.6113148Z ^[[1m^[[92m   Compiling^[[0m reflink-copy v0.1.28
+test	Test finished child compaction through the terminal	2026-10-22T19:29:43.7543363Z ^[[1m^[[92m   Compiling^[[0m dtoa v1.0.10
+test	Test finished child compaction through the terminal	2026-10-22T19:29:43.8503456Z ^[[1m^[[92m   Compiling^[[0m unicode-linebreak v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.0012994Z ^[[1m^[[92m   Compiling^[[0m rustc-hash v2.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.0510147Z ^[[1m^[[92m   Compiling^[[0m bumpalo v3.19.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.0693263Z ^[[1m^[[92m   Compiling^[[0m dtoa-short v0.3.5
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.1383219Z ^[[1m^[[92m   Compiling^[[0m async-stream v0.3.6
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.2113062Z ^[[1m^[[92m   Compiling^[[0m gcloud-storage v1.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.2783147Z ^[[1m^[[92m   Compiling^[[0m zopfli v0.8.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:44.5513400Z ^[[1m^[[92m   Compiling^[[0m aws-config v1.8.8
+test	Test finished child compaction through the terminal	2026-10-22T19:29:45.0182828Z ^[[1m^[[92m   Compiling^[[0m nono v0.53.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:45.8783060Z ^[[1m^[[92m   Compiling^[[0m dirs v5.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:45.9449871Z ^[[1m^[[92m   Compiling^[[0m gix-attributes v0.33.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:46.6883328Z ^[[1m^[[92m   Compiling^[[0m xai-computer-hub-sdk v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-computer-hub-sdk)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:48.6520576Z ^[[1m^[[92m   Compiling^[[0m cipher v0.5.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:48.7003260Z ^[[1m^[[92m   Compiling^[[0m tendril v0.4.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:48.8523684Z ^[[1m^[[92m   Compiling^[[0m aws-sdk-s3 v1.109.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:48.8863025Z ^[[1m^[[92m   Compiling^[[0m camino v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:49.2603803Z ^[[1m^[[92m   Compiling^[[0m xai-grok-otel v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-otel)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:50.5573264Z ^[[1m^[[92m   Compiling^[[0m tiny-skia v0.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:50.8782621Z ^[[1m^[[92m   Compiling^[[0m string_cache v0.8.9
+test	Test finished child compaction through the terminal	2026-10-22T19:29:51.0534074Z ^[[1m^[[92m   Compiling^[[0m selectors v0.26.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:51.2792956Z ^[[1m^[[92m   Compiling^[[0m aws-smithy-http-client v1.1.9
+test	Test finished child compaction through the terminal	2026-10-22T19:29:52.6969490Z ^[[1m^[[92m   Compiling^[[0m kurbo v0.12.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:53.6606310Z ^[[1m^[[92m   Compiling^[[0m xattr v1.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:53.8993015Z ^[[1m^[[92m   Compiling^[[0m fxhash v0.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:53.9713261Z ^[[1m^[[92m   Compiling^[[0m gix-sec v0.14.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:53.9842858Z ^[[1m^[[92m   Compiling^[[0m shell-words v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:53.9934261Z ^[[1m^[[92m   Compiling^[[0m xai-token-estimation v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-token-estimation)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.0422916Z ^[[1m^[[92m   Compiling^[[0m typed-path v0.12.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.0950196Z ^[[1m^[[92m   Compiling^[[0m pulldown-cmark-escape v0.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.1643576Z ^[[1m^[[92m   Compiling^[[0m unsafe-libyaml v0.2.11
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.1873419Z ^[[1m^[[92m   Compiling^[[0m debug_unsafe v0.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.2289109Z ^[[1m^[[92m   Compiling^[[0m streaming-iterator v0.1.9
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.5016861Z ^[[1m^[[92m   Compiling^[[0m tree-sitter v0.26.13
+test	Test finished child compaction through the terminal	2026-10-22T19:29:54.9823440Z ^[[1m^[[92m   Compiling^[[0m zip v8.6.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:55.0942998Z ^[[1m^[[92m   Compiling^[[0m serde_yaml v0.9.34+deprecated
+test	Test finished child compaction through the terminal	2026-10-22T19:29:55.3752863Z ^[[1m^[[92m   Compiling^[[0m atoi_simd v0.18.1
+test	Test finished child compaction through the terminal	2026-10-22T19:29:55.5413008Z ^[[1m^[[92m   Compiling^[[0m pulldown-cmark v0.13.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:56.2675805Z ^[[1m^[[92m   Compiling^[[0m cssparser v0.34.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:56.7623374Z ^[[1m^[[92m   Compiling^[[0m tar v0.4.46
+test	Test finished child compaction through the terminal	2026-10-22T19:29:57.0843015Z ^[[1m^[[92m   Compiling^[[0m write-fonts v0.43.0
+test	Test finished child compaction through the terminal	2026-10-22T19:29:57.6733202Z ^[[1m^[[92m   Compiling^[[0m xai-grok-paths v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-paths)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:57.8578348Z ^[[1m^[[92m   Compiling^[[0m xai-grok-sandbox v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sandbox)
+test	Test finished child compaction through the terminal	2026-10-22T19:29:57.9492921Z ^[[1m^[[92m   Compiling^[[0m findshlibs v0.10.2
+test	Test finished child compaction through the terminal	2026-10-22T19:29:58.2093033Z ^[[1m^[[92m   Compiling^[[0m skrifa v0.37.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:01.7852955Z ^[[1m^[[92m   Compiling^[[0m xml5ever v0.38.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:02.3663878Z ^[[1m^[[92m   Compiling^[[0m html5ever v0.38.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:03.2229045Z ^[[1m^[[92m   Compiling^[[0m xai-grok-image v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-image)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:03.3123074Z ^[[1m^[[92m   Compiling^[[0m gix-ref v0.63.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:04.1452743Z ^[[1m^[[92m   Compiling^[[0m phf_shared v0.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:04.3938046Z ^[[1m^[[92m   Compiling^[[0m env_filter v0.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:30:04.7133336Z ^[[1m^[[92m   Compiling^[[0m gix-config-value v0.18.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:04.7288260Z ^[[1m^[[92m   Compiling^[[0m brotli-decompressor v5.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:05.1183281Z ^[[1m^[[92m   Compiling^[[0m xai-grok-compaction v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-grok-compaction)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:05.5452597Z ^[[1m^[[92m   Compiling^[[0m cfb v0.7.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:05.9052796Z ^[[1m^[[92m   Compiling^[[0m servo_arc v0.4.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.0122912Z ^[[1m^[[92m   Compiling^[[0m fast-float2 v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.1852822Z ^[[1m^[[92m   Compiling^[[0m grid v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.2954608Z ^[[1m^[[92m   Compiling^[[0m hayro-ccitt v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.3603545Z ^[[1m^[[92m   Compiling^[[0m cpubits v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.3983334Z ^[[1m^[[92m   Compiling^[[0m taffy v0.12.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.4092946Z ^[[1m^[[92m   Compiling^[[0m aes v0.9.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.4630573Z ^[[1m^[[92m   Compiling^[[0m hayro-jbig2 v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:06.9004182Z ^[[1m^[[92m   Compiling^[[0m office_oxide v0.1.9
+test	Test finished child compaction through the terminal	2026-10-22T19:30:07.9467889Z ^[[1m^[[92m   Compiling^[[0m xai-grok-sampling-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sampling-types)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:07.9714490Z ^[[1m^[[92m   Compiling^[[0m html5ever v0.29.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:09.9633396Z ^[[1m^[[92m   Compiling^[[0m xai-file-utils v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-file-utils)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:13.5012932Z ^[[1m^[[92m   Compiling^[[0m brotli v8.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:14.1652821Z ^[[1m^[[92m   Compiling^[[0m env_logger v0.11.8
+test	Test finished child compaction through the terminal	2026-10-22T19:30:14.5522774Z ^[[1m^[[92m   Compiling^[[0m phf v0.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:14.6591826Z ^[[1m^[[92m   Compiling^[[0m markup5ever_rcdom v0.38.0+unofficial
+test	Test finished child compaction through the terminal	2026-10-22T19:30:14.9783292Z ^[[1m^[[92m   Compiling^[[0m subsetter v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:15.4878802Z ^[[1m^[[92m   Compiling^[[0m xai-grok-tools v0.1.220-alpha.4 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-tools)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.0893491Z ^[[1m^[[92m   Compiling^[[0m const-random-macro v0.1.16
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.2652374Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-bash v0.25.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.3147202Z ^[[1m^[[92m   Compiling^[[0m gix-command v0.9.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.3282742Z ^[[1m^[[92m   Compiling^[[0m cbc v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.4012785Z ^[[1m^[[92m   Compiling^[[0m sentry-backtrace v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.4463238Z ^[[1m^[[92m   Compiling^[[0m fast_image_resize v6.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.5536751Z ^[[1m^[[92m   Compiling^[[0m stringprep v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.7764921Z ^[[1m^[[92m   Compiling^[[0m lsp-types v0.95.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:16.9855810Z ^[[1m^[[92m   Compiling^[[0m jpeg-decoder v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.0102683Z ^[[1m^[[92m   Compiling^[[0m gix-traverse v0.57.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.5453135Z ^[[1m^[[92m   Compiling^[[0m md-5 v0.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.6943356Z ^[[1m^[[92m   Compiling^[[0m gix-packetline v0.21.5
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.7254800Z ^[[1m^[[92m   Compiling^[[0m gix-bitmap v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.8000869Z ^[[1m^[[92m   Compiling^[[0m xai-grok-workspace-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-workspace-types)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.9056186Z ^[[1m^[[92m   Compiling^[[0m waitpid-any v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:18.9583148Z ^[[1m^[[92m   Compiling^[[0m vte v0.14.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:19.0402660Z ^[[1m^[[92m   Compiling^[[0m qcms v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:19.0912808Z ^[[1m^[[92m   Compiling^[[0m weezl v0.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:19.5533483Z ^[[1m^[[92m   Compiling^[[0m ego-tree v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:19.7732818Z ^[[1m^[[92m   Compiling^[[0m similar v2.7.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:19.8772782Z ^[[1m^[[92m   Compiling^[[0m glob v0.3.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:20.2383803Z ^[[1m^[[92m   Compiling^[[0m hayro-jpeg2000 v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:20.6212758Z ^[[1m^[[92m   Compiling^[[0m memo-map v0.3.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:20.7092986Z ^[[1m^[[92m   Compiling^[[0m minijinja v2.18.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:21.8362944Z ^[[1m^[[92m   Compiling^[[0m pdf_oxide v0.3.74
+test	Test finished child compaction through the terminal	2026-10-22T19:30:25.2772905Z ^[[1m^[[92m   Compiling^[[0m async-lsp v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:25.4264221Z ^[[1m^[[92m   Compiling^[[0m xai-grok-permission-rules v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-permission-rules)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:26.1872978Z ^[[1m^[[92m   Compiling^[[0m scraper v0.23.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:27.4503619Z ^[[1m^[[92m   Compiling^[[0m strip-ansi-escapes v0.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:27.6193015Z ^[[1m^[[92m   Compiling^[[0m gix-index v0.51.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:29.1243065Z ^[[1m^[[92m   Compiling^[[0m const-random v0.1.18
+test	Test finished child compaction through the terminal	2026-10-22T19:30:29.1853032Z ^[[1m^[[92m   Compiling^[[0m htmd v0.5.4
+test	Test finished child compaction through the terminal	2026-10-22T19:30:29.2902994Z ^[[1m^[[92m   Compiling^[[0m infer v0.19.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:29.4072781Z ^[[1m^[[92m   Compiling^[[0m gix-pathspec v0.18.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:29.7293517Z ^[[1m^[[92m   Compiling^[[0m xai-grok-feedback v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-feedback)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:30.1013084Z ^[[1m^[[92m   Compiling^[[0m gix-ignore v0.21.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:30.3263774Z ^[[1m^[[92m   Compiling^[[0m command-fds v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:30.4213436Z ^[[1m^[[92m   Compiling^[[0m futures-lite v2.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:30.5302740Z ^[[1m^[[92m   Compiling^[[0m zip v3.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.0553608Z ^[[1m^[[92m   Compiling^[[0m xai-interjection-core v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-interjection-core)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.2193145Z ^[[1m^[[92m   Compiling^[[0m hostname v0.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.2299459Z ^[[1m^[[92m   Compiling^[[0m uname v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.3293863Z ^[[1m^[[92m   Compiling^[[0m wildmatch v2.6.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.3373462Z ^[[1m^[[92m   Compiling^[[0m xai-message-delivery-core v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-message-delivery-core)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.3983473Z ^[[1m^[[92m   Compiling^[[0m sentry-contexts v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.5278640Z ^[[1m^[[92m   Compiling^[[0m gix-worktree v0.52.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.6000918Z ^[[1m^[[92m   Compiling^[[0m ahash v0.8.12
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.7042997Z ^[[1m^[[92m   Compiling^[[0m sentry-panic v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.8312989Z ^[[1m^[[92m   Compiling^[[0m sentry-anyhow v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.8736567Z ^[[1m^[[92m   Compiling^[[0m sentry-debug-images v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:31.9172931Z ^[[1m^[[92m   Compiling^[[0m gix-url v0.36.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:32.0064802Z ^[[1m^[[92m   Compiling^[[0m hmac-sha256 v1.1.12
+test	Test finished child compaction through the terminal	2026-10-22T19:30:32.0763391Z ^[[1m^[[92m   Compiling^[[0m sentry v0.42.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:32.1599409Z ^[[1m^[[92m   Compiling^[[0m mid v4.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:32.3853251Z ^[[1m^[[92m   Compiling^[[0m gix-filter v0.30.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:32.4973506Z ^[[1m^[[92m   Compiling^[[0m xai-grok-sampler v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-sampler)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:33.0633104Z ^[[1m^[[92m   Compiling^[[0m gix-discover v0.51.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:33.4083445Z ^[[1m^[[92m   Compiling^[[0m xai-mixpanel v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-mixpanel)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:33.4613949Z ^[[1m^[[92m   Compiling^[[0m gix-revision v0.45.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:33.6422911Z ^[[1m^[[92m   Compiling^[[0m tracing-chrome v0.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:33.8170414Z ^[[1m^[[92m   Compiling^[[0m tracing-appender v0.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:30:33.9902975Z ^[[1m^[[92m   Compiling^[[0m gix-imara-diff v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:34.6314183Z ^[[1m^[[92m   Compiling^[[0m xai-grok-session-events v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-session-events)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:34.6432642Z ^[[1m^[[92m   Compiling^[[0m whoami v1.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:34.9292919Z ^[[1m^[[92m   Compiling^[[0m clru v0.6.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:35.0943490Z ^[[1m^[[92m   Compiling^[[0m async-task v4.7.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:35.2080308Z ^[[1m^[[92m   Compiling^[[0m strsim v0.11.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:35.2722849Z ^[[1m^[[92m   Compiling^[[0m clap_lex v0.7.6
+test	Test finished child compaction through the terminal	2026-10-22T19:30:35.4922923Z ^[[1m^[[92m   Compiling^[[0m clap_builder v4.5.53
+test	Test finished child compaction through the terminal	2026-10-22T19:30:35.5678590Z ^[[1m^[[92m   Compiling^[[0m gix-pack v0.70.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:37.0343495Z ^[[1m^[[92m   Compiling^[[0m xai-grok-telemetry v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-telemetry)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:38.5252819Z ^[[1m^[[92m   Compiling^[[0m gix-diff v0.63.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:39.6492826Z ^[[1m^[[92m   Compiling^[[0m gix-refspec v0.41.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:40.3233093Z ^[[1m^[[92m   Compiling^[[0m gix-dir v0.25.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:40.6002975Z ^[[1m^[[92m   Compiling^[[0m gix-transport v0.57.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:40.8319460Z ^[[1m^[[92m   Compiling^[[0m gix-config v0.56.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:40.8695676Z ^[[1m^[[92m   Compiling^[[0m gix-shallow v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:41.1442956Z ^[[1m^[[92m   Compiling^[[0m async-channel v2.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:41.2923617Z ^[[1m^[[92m   Compiling^[[0m polling v3.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:41.5542900Z ^[[1m^[[92m   Compiling^[[0m inotify-sys v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:30:41.6072852Z ^[[1m^[[92m   Compiling^[[0m unicode-ident v1.0.24
+test	Test finished child compaction through the terminal	2026-10-22T19:30:41.6902854Z ^[[1m^[[92m   Compiling^[[0m downcast-rs v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:41.7378113Z ^[[1m^[[92m   Compiling^[[0m gix-submodule v0.30.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:42.3133016Z ^[[1m^[[92m   Compiling^[[0m proc-macro2 v1.0.106
+test	Test finished child compaction through the terminal	2026-10-22T19:30:42.4103347Z ^[[1m^[[92m   Compiling^[[0m gix-protocol v0.61.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:42.7932872Z ^[[1m^[[92m   Compiling^[[0m inotify v0.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:43.0393018Z ^[[1m^[[92m   Compiling^[[0m clap v4.5.53
+test	Test finished child compaction through the terminal	2026-10-22T19:30:43.0822888Z ^[[1m^[[92m   Compiling^[[0m async-io v2.6.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:43.2172951Z ^[[1m^[[92m   Compiling^[[0m gix-status v0.30.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:43.7343355Z ^[[1m^[[92m   Compiling^[[0m gix-odb v0.80.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:43.7702601Z ^[[1m^[[92m   Compiling^[[0m async-lock v3.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:44.3863624Z ^[[1m^[[92m   Compiling^[[0m piper v0.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:30:44.5565586Z ^[[1m^[[92m   Compiling^[[0m notify-types v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:44.7452308Z ^[[1m^[[92m   Compiling^[[0m notify v8.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:45.2732973Z ^[[1m^[[92m   Compiling^[[0m gix v0.83.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:45.4982958Z ^[[1m^[[92m   Compiling^[[0m blocking v1.6.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:45.8122882Z ^[[1m^[[92m   Compiling^[[0m wayland-sys v0.31.8
+test	Test finished child compaction through the terminal	2026-10-22T19:30:45.8812688Z ^[[1m^[[92m   Compiling^[[0m quote v1.0.45
+test	Test finished child compaction through the terminal	2026-10-22T19:30:45.8990565Z ^[[1m^[[92m   Compiling^[[0m crossbeam-queue v0.3.12
+test	Test finished child compaction through the terminal	2026-10-22T19:30:45.9973326Z ^[[1m^[[92m   Compiling^[[0m crossbeam v0.8.4
+test	Test finished child compaction through the terminal	2026-10-22T19:30:46.0452954Z ^[[1m^[[92m   Compiling^[[0m syn v2.0.117
+test	Test finished child compaction through the terminal	2026-10-22T19:30:46.1593008Z ^[[1m^[[92m   Compiling^[[0m wayland-backend v0.3.12
+test	Test finished child compaction through the terminal	2026-10-22T19:30:47.0933320Z ^[[1m^[[92m   Compiling^[[0m libmimalloc-sys v0.1.44
+test	Test finished child compaction through the terminal	2026-10-22T19:30:47.1385327Z ^[[1m^[[92m   Compiling^[[0m nucleo-matcher v0.3.1 (https://github.com/helix-editor/nucleo.git?rev=5b74652#5b74652e)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:47.9084000Z ^[[1m^[[92m   Compiling^[[0m oauth2 v5.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:49.1798399Z ^[[1m^[[92m   Compiling^[[0m xai-gix-status v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-gix-status)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:49.3333060Z ^[[1m^[[92m   Compiling^[[0m sse-stream v0.2.5
+test	Test finished child compaction through the terminal	2026-10-22T19:30:49.5143192Z ^[[1m^[[92m   Compiling^[[0m num_cpus v1.17.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:49.8883594Z ^[[1m^[[92m   Compiling^[[0m file-id v0.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:49.9552881Z ^[[1m^[[92m   Compiling^[[0m base64 v0.23.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:50.2693441Z ^[[1m^[[92m   Compiling^[[0m fixedbitset v0.4.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:50.4272933Z ^[[1m^[[92m   Compiling^[[0m petgraph v0.6.5
+test	Test finished child compaction through the terminal	2026-10-22T19:30:50.4653988Z ^[[1m^[[92m   Compiling^[[0m rmcp v3.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:51.2293357Z ^[[1m^[[92m   Compiling^[[0m notify-debouncer-full v0.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:51.5512885Z ^[[1m^[[92m   Compiling^[[0m zvariant_utils v3.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:51.9139028Z ^[[1m^[[92m   Compiling^[[0m nucleo v0.5.0 (https://github.com/helix-editor/nucleo.git?rev=5b74652#5b74652e)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:51.9393306Z ^[[1m^[[92m   Compiling^[[0m mimalloc v0.1.48
+test	Test finished child compaction through the terminal	2026-10-22T19:30:51.9833167Z ^[[1m^[[92m   Compiling^[[0m wayland-client v0.31.12
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.2172904Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-rust v0.24.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.2693888Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-go v0.25.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.3242997Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-python v0.25.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.3696024Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-typescript v0.23.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.4332927Z ^[[1m^[[92m   Compiling^[[0m tree-sitter-javascript v0.25.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.4832972Z ^[[1m^[[92m   Compiling^[[0m async-executor v1.13.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:52.8173201Z ^[[1m^[[92m   Compiling^[[0m rapidhash v4.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:53.1622956Z ^[[1m^[[92m   Compiling^[[0m webbrowser v1.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:30:53.6943391Z ^[[1m^[[92m   Compiling^[[0m serde_spanned v0.6.9
+test	Test finished child compaction through the terminal	2026-10-22T19:30:53.7265218Z ^[[1m^[[92m   Compiling^[[0m toml_datetime v0.6.11
+test	Test finished child compaction through the terminal	2026-10-22T19:30:53.7763079Z ^[[1m^[[92m   Compiling^[[0m wait-timeout v0.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:53.9620804Z ^[[1m^[[92m   Compiling^[[0m fixedbitset v0.5.7
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.0193435Z ^[[1m^[[92m   Compiling^[[0m toml_write v0.1.2
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.1572902Z ^[[1m^[[92m   Compiling^[[0m endi v1.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.2538616Z ^[[1m^[[92m   Compiling^[[0m humantime v2.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.2643598Z ^[[1m^[[92m   Compiling^[[0m nohash-hasher v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.3193461Z ^[[1m^[[92m   Compiling^[[0m xai-codebase-graph v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-codebase-graph)
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.5113222Z ^[[1m^[[92m   Compiling^[[0m humantime-serde v1.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:30:54.5832664Z ^[[1m^[[92m   Compiling^[[0m zvariant v5.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:30:57.3262845Z ^[[1m^[[92m   Compiling^[[0m petgraph v0.8.3
+test	Test finished child compaction through the terminal	2026-10-22T19:30:57.5473261Z ^[[1m^[[92m   Compiling^[[0m toml_edit v0.22.27
+test	Test finished child compaction through the terminal	2026-10-22T19:30:58.9767732Z ^[[1m^[[92m   Compiling^[[0m wayland-protocols v0.32.10
+test	Test finished child compaction through the terminal	2026-10-22T19:31:00.3388942Z ^[[1m^[[92m   Compiling^[[0m xai-fast-worktree v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-fast-worktree)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:03.3263523Z ^[[1m^[[92m   Compiling^[[0m xai-fuzzy-file-search v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-fuzzy-file-search)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:04.4675591Z ^[[1m^[[92m   Compiling^[[0m xai-fsnotify v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-fsnotify)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:06.2333316Z ^[[1m^[[92m   Compiling^[[0m xai-hunk-tracker v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-hunk-tracker)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:07.5007817Z ^[[1m^[[92m   Compiling^[[0m async-signal v0.2.13
+test	Test finished child compaction through the terminal	2026-10-22T19:31:07.6904073Z ^[[1m^[[92m   Compiling^[[0m xai-grok-workspace-daemon v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-workspace-daemon)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:08.2653415Z ^[[1m^[[92m   Compiling^[[0m xai-grok-workspace-client v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-workspace-client)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:08.4907513Z ^[[1m^[[92m   Compiling^[[0m xai-grok-egress-proxy v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-egress-proxy)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:08.7793662Z ^[[1m^[[92m   Compiling^[[0m xai-grok-config-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-config-types)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:09.5493717Z ^[[1m^[[92m   Compiling^[[0m xai-computer-hub-mcp-adapter v0.1.0 (/home/runner/work/grok-build/grok-build/crates/common/xai-computer-hub-mcp-adapter)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:10.2160428Z ^[[1m^[[92m   Compiling^[[0m xai-acp-lib v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-acp-lib)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:10.2491074Z ^[[1m^[[92m   Compiling^[[0m xai-grok-diag-server v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-diag-server)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:10.4336864Z ^[[1m^[[92m   Compiling^[[0m xai-grok-lifecycle v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-lifecycle)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:11.8464945Z ^[[1m^[[92m   Compiling^[[0m castaway v0.2.4
+test	Test finished child compaction through the terminal	2026-10-22T19:31:11.9142882Z ^[[1m^[[92m   Compiling^[[0m async-process v2.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:12.5083488Z ^[[1m^[[92m   Compiling^[[0m wayland-protocols-wlr v0.3.10
+test	Test finished child compaction through the terminal	2026-10-22T19:31:12.8872921Z ^[[1m^[[92m   Compiling^[[0m tree_magic_mini v3.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:13.3623384Z ^[[1m^[[92m   Compiling^[[0m signal-hook v0.3.18
+test	Test finished child compaction through the terminal	2026-10-22T19:31:13.6583220Z ^[[1m^[[92m   Compiling^[[0m zbus_names v4.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:13.6773075Z ^[[1m^[[92m   Compiling^[[0m gethostname v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:13.7497059Z ^[[1m^[[92m   Compiling^[[0m ordered-stream v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:13.8222905Z ^[[1m^[[92m   Compiling^[[0m os_pipe v1.2.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:13.9272948Z ^[[1m^[[92m   Compiling^[[0m x11rb-protocol v0.13.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:14.0013129Z ^[[1m^[[92m   Compiling^[[0m wl-clipboard-rs v0.9.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:14.2725419Z ^[[1m^[[92m   Compiling^[[0m zbus v5.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:15.1063056Z ^[[1m^[[92m   Compiling^[[0m signal-hook-mio v0.2.5
+test	Test finished child compaction through the terminal	2026-10-22T19:31:15.1723318Z ^[[1m^[[92m   Compiling^[[0m equator v0.4.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:15.3793211Z ^[[1m^[[92m   Compiling^[[0m crossterm v0.28.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:16.5883015Z ^[[1m^[[92m   Compiling^[[0m cpp_demangle v0.4.5
+test	Test finished child compaction through the terminal	2026-10-22T19:31:18.2312866Z ^[[1m^[[92m   Compiling^[[0m x11rb v0.13.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:18.2482989Z ^[[1m^[[92m   Compiling^[[0m symbolic-common v12.16.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:18.6193597Z ^[[1m^[[92m   Compiling^[[0m xai-grok-status-line v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-status-line)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:19.1923673Z ^[[1m^[[92m   Compiling^[[0m arboard v3.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:19.3914096Z ^[[1m^[[92m   Compiling^[[0m itertools v0.13.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:20.7796356Z ^[[1m^[[92m   Compiling^[[0m xai-grok-models v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-models)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:20.9663516Z ^[[1m^[[92m   Compiling^[[0m unicode-width v0.1.14
+test	Test finished child compaction through the terminal	2026-10-22T19:31:20.9783549Z ^[[1m^[[92m   Compiling^[[0m xai-grok-shared v0.0.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shared)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:21.1552854Z ^[[1m^[[92m   Compiling^[[0m unicode-truncate v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:21.2423626Z ^[[1m^[[92m   Compiling^[[0m symbolic-demangle v12.16.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:21.5703246Z ^[[1m^[[92m   Compiling^[[0m aligned-vec v0.6.4
+test	Test finished child compaction through the terminal	2026-10-22T19:31:21.7453044Z ^[[1m^[[92m   Compiling^[[0m compact_str v0.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:22.3697609Z ^[[1m^[[92m   Compiling^[[0m nix v0.26.4
+test	Test finished child compaction through the terminal	2026-10-22T19:31:22.5742963Z ^[[1m^[[92m   Compiling^[[0m cassowary v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:22.9852982Z ^[[1m^[[92m   Compiling^[[0m ratatui v0.29.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:23.2333363Z ^[[1m^[[92m   Compiling^[[0m pprof v0.15.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:23.3943288Z ^[[1m^[[92m   Compiling^[[0m sqlite-vec v0.1.7-alpha.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:23.4382904Z ^[[1m^[[92m   Compiling^[[0m onig_sys v69.9.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:23.5363427Z ^[[1m^[[92m   Compiling^[[0m num-rational v0.4.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:23.8432893Z ^[[1m^[[92m   Compiling^[[0m polycool v0.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:24.1122764Z ^[[1m^[[92m   Compiling^[[0m itertools v0.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:24.1788162Z ^[[1m^[[92m   Compiling^[[0m num-complex v0.4.6
+test	Test finished child compaction through the terminal	2026-10-22T19:31:24.5993003Z ^[[1m^[[92m   Compiling^[[0m linked-hash-map v0.5.6
+test	Test finished child compaction through the terminal	2026-10-22T19:31:24.7242779Z ^[[1m^[[92m   Compiling^[[0m borrow-or-share v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:24.7722951Z ^[[1m^[[92m   Compiling^[[0m bit-vec v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:24.9642811Z ^[[1m^[[92m   Compiling^[[0m bit-set v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:25.0772906Z ^[[1m^[[92m   Compiling^[[0m fluent-uri v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:25.4422681Z ^[[1m^[[92m   Compiling^[[0m unicode-truncate v2.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:25.5270183Z ^[[1m^[[92m   Compiling^[[0m yaml-rust v0.4.5
+test	Test finished child compaction through the terminal	2026-10-22T19:31:25.7445937Z ^[[1m^[[92m   Compiling^[[0m num v0.4.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:25.7802889Z ^[[1m^[[92m   Compiling^[[0m kurbo v0.13.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:25.7906435Z ^[[1m^[[92m   Compiling^[[0m onig v6.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:26.2093373Z ^[[1m^[[92m   Compiling^[[0m xai-grok-shell-base v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell-base)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:26.5423300Z ^[[1m^[[92m   Compiling^[[0m nix v0.29.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:27.1923128Z ^[[1m^[[92m   Compiling^[[0m smartstring v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:27.4614004Z ^[[1m^[[92m   Compiling^[[0m xai-system-power v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-system-power)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:27.7349052Z ^[[1m^[[92m   Compiling^[[0m compact_str v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:27.7823431Z ^[[1m^[[92m   Compiling^[[0m plist v1.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.1862827Z ^[[1m^[[92m   Compiling^[[0m lru v0.16.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.3241968Z ^[[1m^[[92m   Compiling^[[0m kasuari v0.4.11
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.3954093Z ^[[1m^[[92m   Compiling^[[0m filedescriptor v0.8.3 (https://github.com/wezterm/wezterm.git?rev=c8c592d19298cb68b8370f4e151f1591333b7f4a#c8c592d1)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.5750362Z ^[[1m^[[92m   Compiling^[[0m backon v1.6.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.7833305Z ^[[1m^[[92m   Compiling^[[0m thin-vec v0.2.18
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.7955213Z ^[[1m^[[92m   Compiling^[[0m bincode v1.3.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:28.8452823Z ^[[1m^[[92m   Compiling^[[0m serial2 v0.2.34
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.0193234Z ^[[1m^[[92m   Compiling^[[0m obfstr v0.4.4
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.1553308Z ^[[1m^[[92m   Compiling^[[0m smawk v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.1847457Z ^[[1m^[[92m   Compiling^[[0m event-listener v2.5.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.2183825Z ^[[1m^[[92m   Compiling^[[0m ordered_hashmap v0.0.3 (/home/runner/work/grok-build/grok-build/third_party/ordered_hashmap)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.2443447Z ^[[1m^[[92m   Compiling^[[0m cached_proc_macro_types v0.1.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.2935375Z ^[[1m^[[92m   Compiling^[[0m cached v0.56.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.3042517Z ^[[1m^[[92m   Compiling^[[0m graphlib_rust v0.0.2 (/home/runner/work/grok-build/grok-build/third_party/graphlib_rust)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.3441996Z ^[[1m^[[92m   Compiling^[[0m async-channel v1.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.4569159Z ^[[1m^[[92m   Compiling^[[0m textwrap v0.16.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.5002762Z ^[[1m^[[92m   Compiling^[[0m syntect v5.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.5323848Z ^[[1m^[[92m   Compiling^[[0m portable-pty v0.9.0 (https://github.com/wezterm/wezterm.git?rev=c8c592d19298cb68b8370f4e151f1591333b7f4a#c8c592d1)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:29.9762871Z ^[[1m^[[92m   Compiling^[[0m rhai v1.25.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:30.2353013Z ^[[1m^[[92m   Compiling^[[0m ratatui-core v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:31.8723086Z ^[[1m^[[92m   Compiling^[[0m svgtypes v0.16.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:32.1572923Z ^[[1m^[[92m   Compiling^[[0m fraction v0.15.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:32.5262847Z ^[[1m^[[92m   Compiling^[[0m stop-words v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:32.6463452Z ^[[1m^[[92m   Compiling^[[0m referencing v0.30.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:32.6828602Z ^[[1m^[[92m   Compiling^[[0m fancy-regex v0.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:33.6143617Z ^[[1m^[[92m   Compiling^[[0m async-global-executor v2.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:33.6922975Z ^[[1m^[[92m   Compiling^[[0m async-net v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:34.0572794Z ^[[1m^[[92m   Compiling^[[0m async-fs v2.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:34.1873664Z ^[[1m^[[92m   Compiling^[[0m xai-compaction-transcript v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-compaction-transcript)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:34.4193424Z ^[[1m^[[92m   Compiling^[[0m xai-grok-shell v1.0.45 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:34.8463934Z ^[[1m^[[92m   Compiling^[[0m xai-grok-hooks v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-hooks)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:34.8672615Z ^[[1m^[[92m   Compiling^[[0m xai-grok-mcp v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-mcp)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:38.7283371Z ^[[1m^[[92m   Compiling^[[0m xai-grok-agent v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-agent)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:42.3074642Z ^[[1m^[[92m   Compiling^[[0m process-wrap v9.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:42.9075625Z ^[[1m^[[92m   Compiling^[[0m xai-grok-workspace v0.1.220-alpha.4 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-workspace)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:44.2092819Z ^[[1m^[[92m   Compiling^[[0m uuid-simd v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:44.5210383Z ^[[1m^[[92m   Compiling^[[0m phf_shared v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:44.6499238Z ^[[1m^[[92m   Compiling^[[0m rust-stemmers v1.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:45.0123151Z ^[[1m^[[92m   Compiling^[[0m xai-hooks-plugins-types v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-hooks-plugins-types)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:45.9824434Z ^[[1m^[[92m   Compiling^[[0m email_address v0.2.9
+test	Test finished child compaction through the terminal	2026-10-22T19:31:46.1173107Z ^[[1m^[[92m   Compiling^[[0m simplecss v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:46.2077036Z ^[[1m^[[92m   Compiling^[[0m kv-log-macro v1.0.7
+test	Test finished child compaction through the terminal	2026-10-22T19:31:46.2939123Z ^[[1m^[[92m   Compiling^[[0m roxmltree v0.21.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:46.5843691Z ^[[1m^[[92m   Compiling^[[0m tikv-jemalloc-sys v0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8
+test	Test finished child compaction through the terminal	2026-10-22T19:31:46.8232559Z ^[[1m^[[92m   Compiling^[[0m imagesize v0.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.0484600Z ^[[1m^[[92m   Compiling^[[0m num-cmp v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.3063016Z ^[[1m^[[92m   Compiling^[[0m tagptr v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.3406498Z ^[[1m^[[92m   Compiling^[[0m data-url v0.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.4064250Z ^[[1m^[[92m   Compiling^[[0m bytecount v0.6.9
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.5759765Z ^[[1m^[[92m   Compiling^[[0m is_ci v1.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.6328982Z ^[[1m^[[92m   Compiling^[[0m xmlwriter v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.6819115Z ^[[1m^[[92m   Compiling^[[0m shlex v1.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.8282951Z ^[[1m^[[92m   Compiling^[[0m unicode-vo v0.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.8455670Z ^[[1m^[[92m   Compiling^[[0m utf8-width v0.1.7
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.8843222Z ^[[1m^[[92m   Compiling^[[0m pico-args v0.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:47.8853814Z ^[[1m^[[92m   Compiling^[[0m deunicode v1.6.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:48.0863114Z ^[[1m^[[92m   Compiling^[[0m bm25 v2.3.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:48.1084516Z ^[[1m^[[92m   Compiling^[[0m usvg v0.47.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:48.5742917Z ^[[1m^[[92m   Compiling^[[0m html-escape v0.2.13
+test	Test finished child compaction through the terminal	2026-10-22T19:31:49.2042905Z ^[[1m^[[92m   Compiling^[[0m supports-color v3.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:49.3182231Z ^[[1m^[[92m   Compiling^[[0m jsonschema v0.30.0
+test	Test finished child compaction through the terminal	2026-10-22T19:31:50.9905819Z ^[[1m^[[92m   Compiling^[[0m moka v0.12.11
+test	Test finished child compaction through the terminal	2026-10-22T19:31:52.3763245Z ^[[1m^[[92m   Compiling^[[0m async-std v1.13.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:53.4999330Z ^[[1m^[[92m   Compiling^[[0m xai-grok-plugin-marketplace v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-plugin-marketplace)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:54.0811897Z ^[[1m^[[92m   Compiling^[[0m phf v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:31:54.1543572Z ^[[1m^[[92m   Compiling^[[0m xai-grok-subagent-resolution v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-subagent-resolution)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:55.0684184Z ^[[1m^[[92m   Compiling^[[0m xai-workflow v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-workflow)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:55.5998932Z ^[[1m^[[92m   Compiling^[[0m xai-grok-announcements v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-announcements)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:56.2970283Z ^[[1m^[[92m   Compiling^[[0m xai-chat-state v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-chat-state)
+test	Test finished child compaction through the terminal	2026-10-22T19:31:56.9656868Z ^[[1m^[[92m   Compiling^[[0m ashpd v0.10.3
+test	Test finished child compaction through the terminal	2026-10-22T19:31:58.7819827Z ^[[1m^[[92m   Compiling^[[0m tui-scrollbar v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:31:58.9763179Z ^[[1m^[[92m   Compiling^[[0m anstyle-syntect v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:31:59.0535469Z ^[[1m^[[92m   Compiling^[[0m dagre_rust v0.0.5 (/home/runner/work/grok-build/grok-build/third_party/dagre_rust)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:00.6989692Z ^[[1m^[[92m   Compiling^[[0m notify-debouncer-mini v0.6.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:00.9170604Z ^[[1m^[[92m   Compiling^[[0m xai-grok-session-search v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-session-search)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:01.5172688Z ^[[1m^[[92m   Compiling^[[0m infer v0.15.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:01.9353258Z ^[[1m^[[92m   Compiling^[[0m xai-grok-bundle v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-bundle)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:02.6804489Z ^[[1m^[[92m   Compiling^[[0m xai-grok-markdown-core v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-markdown-core)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:02.9915395Z ^[[1m^[[92m   Compiling^[[0m xai-grok-foreign-sessions v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-foreign-sessions)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:03.4494561Z ^[[1m^[[92m   Compiling^[[0m xai-grok-external-agent-migration v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-external-agent-migration)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.1722682Z ^[[1m^[[92m   Compiling^[[0m anstyle-lossy v1.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.2027108Z ^[[1m^[[92m   Compiling^[[0m console v0.16.1
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.2508615Z ^[[1m^[[92m   Compiling^[[0m tokio-retry v0.3.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.3865518Z ^[[1m^[[92m   Compiling^[[0m rgb v0.8.52
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.6963520Z ^[[1m^[[92m   Compiling^[[0m xai-agent-lifecycle v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-agent-lifecycle)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.7923427Z ^[[1m^[[92m   Compiling^[[0m xai-prompt-queue v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-prompt-queue)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:04.9712220Z ^[[1m^[[92m   Compiling^[[0m xai-grok-file-lock v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-file-lock)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.1032815Z ^[[1m^[[92m   Compiling^[[0m serde_ignored v0.1.14
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.2628913Z ^[[1m^[[92m   Compiling^[[0m linkify v0.10.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.4479061Z ^[[1m^[[92m   Compiling^[[0m tdigests v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.4823172Z ^[[1m^[[92m   Compiling^[[0m xai-tracing-macros v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-tracing-macros)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.5330302Z ^[[1m^[[92m   Compiling^[[0m unit-prefix v0.5.1
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.6232396Z ^[[1m^[[92m   Compiling^[[0m indicatif v0.18.3
+test	Test finished child compaction through the terminal	2026-10-22T19:32:05.6683958Z ^[[1m^[[92m   Compiling^[[0m xai-grok-markdown v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-markdown)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:06.4614038Z ^[[1m^[[92m   Compiling^[[0m resvg v0.47.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:07.0443991Z ^[[1m^[[92m   Compiling^[[0m dark-light v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:07.3249711Z ^[[1m^[[92m   Compiling^[[0m mermaid-to-svg v0.1.0 (/home/runner/work/grok-build/grok-build/third_party/mermaid-to-svg)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:08.7723299Z ^[[1m^[[92m   Compiling^[[0m xai-ratatui-textarea v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-ratatui-textarea)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:09.7476857Z ^[[1m^[[92m   Compiling^[[0m documented v0.9.2
+test	Test finished child compaction through the terminal	2026-10-22T19:32:09.8219553Z ^[[1m^[[92m   Compiling^[[0m xai-ratatui-inline v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-ratatui-inline)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:10.1993161Z ^[[1m^[[92m   Compiling^[[0m xai-grok-gboom v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-gboom)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:10.5962896Z ^[[1m^[[92m   Compiling^[[0m vte v0.15.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:10.7115304Z ^[[1m^[[92m   Compiling^[[0m simdutf8 v0.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:32:10.9200886Z ^[[1m^[[92m   Compiling^[[0m ansi-to-tui v7.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:32:11.2545042Z ^[[1m^[[92m   Compiling^[[0m xai-grok-mermaid v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-mermaid)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:11.7633314Z ^[[1m^[[92m   Compiling^[[0m xai-grok-pager-diff v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-pager-diff)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:11.9882958Z ^[[1m^[[92m   Compiling^[[0m clap_complete v4.6.5
+test	Test finished child compaction through the terminal	2026-10-22T19:32:12.5303092Z ^[[1m^[[92m   Compiling^[[0m xai-grok-dashboard-store v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-dashboard-store)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:12.6386820Z ^[[1m^[[92m   Compiling^[[0m xai-crash-handler v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-crash-handler)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:13.0313323Z ^[[1m^[[92m   Compiling^[[0m xai-grok-voice v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-voice)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:13.6254226Z ^[[1m^[[92m   Compiling^[[0m xai-grok-active-sessions v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-active-sessions)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:14.2373267Z ^[[1m^[[92m   Compiling^[[0m xai-grok-pager-bin v1.0.45 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-pager-bin)
+test	Test finished child compaction through the terminal	2026-10-22T19:32:14.5472835Z ^[[1m^[[92m   Compiling^[[0m labyrinth_macros v3.0.2
+test	Test finished child compaction through the terminal	2026-10-22T19:32:14.8743053Z ^[[1m^[[92m   Compiling^[[0m cryptify v3.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:33:09.3693303Z ^[[1m^[[92m   Compiling^[[0m xai-grok-http v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-http)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:09.4140070Z ^[[1m^[[92m   Compiling^[[0m xai-grok-shell-terminal v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell-terminal)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:10.2248710Z ^[[1m^[[92m   Compiling^[[0m xai-grok-memory v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-memory)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:13.4043704Z ^[[1m^[[92m   Compiling^[[0m xai-grok-shell-session-support v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell-session-support)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:14.5173504Z ^[[1m^[[92m   Compiling^[[0m xai-grok-pager-render v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-pager-render)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:18.2960203Z ^[[1m^[[92m   Compiling^[[0m xai-grok-login v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-login)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:24.5418801Z ^[[1m^[[92m   Compiling^[[0m xai-grok-cloud-config v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-cloud-config)
+test	Test finished child compaction through the terminal	2026-10-22T19:33:34.5338822Z ^[[1m^[[92m   Compiling^[[0m tikv-jemallocator v0.7.0
+test	Test finished child compaction through the terminal	2026-10-22T19:33:34.5340548Z ^[[1m^[[92m   Compiling^[[0m tikv-jemalloc-ctl v0.7.0
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2595554Z ^[[1m^[[33mwarning^[[0m^[[1m: unreachable `pub` item^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2596569Z   ^[[1m^[[94m--> ^[[0mcrates/codegen/xai-grok-shell/src/session/file_acceleration.rs:34:1
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2597340Z    ^[[1m^[[94m|^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2598081Z ^[[1m^[[94m34^[[0m ^[[1m^[[94m|^[[0m pub fn settings(config: &Config) -> FileAccelerationSettings {
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2599097Z    ^[[1m^[[94m|^[[0m ^[[1m^[[94m---^[[0m^[[1m^[[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2599821Z    ^[[1m^[[94m|^[[0m ^[[1m^[[94m|^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2600566Z    ^[[1m^[[94m|^[[0m ^[[1m^[[94mhelp: consider restricting its visibility: `pub(crate)`^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2601274Z    ^[[1m^[[94m|^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2602222Z    ^[[1m^[[94m= ^[[0m^[[1mhelp^[[0m: or consider exporting it for use by other crates
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2602977Z ^[[1m^[[92mnote^[[0m: the lint level is defined here
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2603660Z   ^[[1m^[[94m--> ^[[0mcrates/codegen/xai-grok-shell/src/lib.rs:8:9
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2604232Z    ^[[1m^[[94m|^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2604716Z ^[[1m^[[94m 8^[[0m ^[[1m^[[94m|^[[0m #![warn(unreachable_pub)]
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2605308Z    ^[[1m^[[94m|^[[0m         ^[[1m^[[92m^^^^^^^^^^^^^^^^[[0m
+test	Test finished child compaction through the terminal	2026-10-22T19:34:26.2605684Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:34:41.9119440Z ^[[1m^[[92m   Compiling^[[0m xai-grok-update v0.1.220-alpha.4 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-update)
+test	Test finished child compaction through the terminal	2026-10-22T19:34:43.9473448Z ^[[1m^[[92m   Compiling^[[0m xai-grok-pager v1.0.45 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-pager)
+test	Test finished child compaction through the terminal	2026-10-22T19:35:10.4332068Z ^[[1m^[[33mwarning^[[0m: `xai-grok-shell` (lib) generated 1 warning (run `cargo fix --lib -p xai-grok-shell` to apply 1 suggestion)
+test	Test finished child compaction through the terminal	2026-10-22T19:35:19.9110388Z ^[[1m^[[92m   Compiling^[[0m xai-grok-pager-minimal v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-pager-minimal)
+test	Test finished child compaction through the terminal	2026-10-22T19:35:45.2871902Z ^[[1m^[[92m    Finished^[[0m `dev` profile [unoptimized + debuginfo] target(s) in 7m 48s
+test	Test finished child compaction through the terminal	2026-10-22T19:35:45.2931794Z ^[[1m^[[33mwarning^[[0m: the following packages contain code that will be rejected by a future version of Rust: nix v0.29.0, nix v0.30.1, nix v0.31.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:45.2933202Z ^[[1m^[[92mnote^[[0m: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 2`
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.6062945Z ^[[1m^[[92m   Compiling^[[0m libc v0.2.186
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.6108954Z ^[[1m^[[92m   Compiling^[[0m smallvec v1.15.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.6151957Z ^[[1m^[[92m   Compiling^[[0m bytes v1.11.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.6191621Z ^[[1m^[[92m   Compiling^[[0m once_cell v1.21.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.7753586Z ^[[1m^[[92m   Compiling^[[0m lock_api v0.4.14
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.7862990Z ^[[1m^[[92m   Compiling^[[0m tracing-core v0.1.36
+test	Test finished child compaction through the terminal	2026-10-22T19:35:46.9762976Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.149
+test	Test finished child compaction through the terminal	2026-10-22T19:35:47.0722868Z ^[[1m^[[92m   Compiling^[[0m tokio v1.52.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:47.2763229Z ^[[1m^[[92m   Compiling^[[0m tracing v0.1.44
+test	Test finished child compaction through the terminal	2026-10-22T19:35:47.3383673Z ^[[1m^[[92m   Compiling^[[0m http v1.4.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:47.5332993Z ^[[1m^[[92m   Compiling^[[0m bitflags v2.13.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:47.7313220Z ^[[1m^[[92m   Compiling^[[0m rustix v1.1.4
+test	Test finished child compaction through the terminal	2026-10-22T19:35:47.9892759Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.17.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:48.0885597Z ^[[1m^[[92m   Compiling^[[0m errno v0.3.14
+test	Test finished child compaction through the terminal	2026-10-22T19:35:48.1883426Z ^[[1m^[[92m   Compiling^[[0m signal-hook-registry v1.4.8
+test	Test finished child compaction through the terminal	2026-10-22T19:35:48.3892965Z ^[[1m^[[92m   Compiling^[[0m parking_lot_core v0.9.12
+test	Test finished child compaction through the terminal	2026-10-22T19:35:48.4672995Z ^[[1m^[[92m   Compiling^[[0m mio v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:48.6012037Z ^[[1m^[[92m   Compiling^[[0m parking_lot v0.12.5
+test	Test finished child compaction through the terminal	2026-10-22T19:35:48.6309342Z ^[[1m^[[92m   Compiling^[[0m socket2 v0.6.4
+test	Test finished child compaction through the terminal	2026-10-22T19:35:49.0702703Z ^[[1m^[[92m   Compiling^[[0m indexmap v2.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:49.3322983Z ^[[1m^[[92m   Compiling^[[0m stable_deref_trait v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:49.3633221Z ^[[1m^[[92m   Compiling^[[0m yoke v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:49.4962952Z ^[[1m^[[92m   Compiling^[[0m http-body v1.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:49.7112870Z ^[[1m^[[92m   Compiling^[[0m zerovec v0.11.4
+test	Test finished child compaction through the terminal	2026-10-22T19:35:50.2362712Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.3.4
+test	Test finished child compaction through the terminal	2026-10-22T19:35:50.7292908Z ^[[1m^[[92m   Compiling^[[0m num-traits v0.2.19
+test	Test finished child compaction through the terminal	2026-10-22T19:35:50.8911006Z ^[[1m^[[92m   Compiling^[[0m zerocopy v0.8.48
+test	Test finished child compaction through the terminal	2026-10-22T19:35:50.9242829Z ^[[1m^[[92m   Compiling^[[0m typenum v1.19.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:51.6142972Z ^[[1m^[[92m   Compiling^[[0m tokio-util v0.7.17
+test	Test finished child compaction through the terminal	2026-10-22T19:35:52.7219467Z ^[[1m^[[92m   Compiling^[[0m generic-array v0.14.7
+test	Test finished child compaction through the terminal	2026-10-22T19:35:53.2704154Z ^[[1m^[[92m   Compiling^[[0m rand_core v0.9.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:53.4282821Z ^[[1m^[[92m   Compiling^[[0m h2 v0.4.19
+test	Test finished child compaction through the terminal	2026-10-22T19:35:54.6272896Z ^[[1m^[[92m   Compiling^[[0m tinystr v0.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:54.7608256Z ^[[1m^[[92m   Compiling^[[0m ppv-lite86 v0.2.21
+test	Test finished child compaction through the terminal	2026-10-22T19:35:54.8179756Z ^[[1m^[[92m   Compiling^[[0m signal-hook v0.4.4
+test	Test finished child compaction through the terminal	2026-10-22T19:35:54.8922768Z ^[[1m^[[92m   Compiling^[[0m zeroize v1.8.2
+test	Test finished child compaction through the terminal	2026-10-22T19:35:55.0253334Z ^[[1m^[[92m   Compiling^[[0m icu_locale_core v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:55.0579431Z ^[[1m^[[92m   Compiling^[[0m rand_chacha v0.9.0
+test	Test finished child compaction through the terminal	2026-10-22T19:35:55.3922827Z ^[[1m^[[92m   Compiling^[[0m rand v0.9.5
+test	Test finished child compaction through the terminal	2026-10-22T19:35:56.0845437Z ^[[1m^[[92m   Compiling^[[0m tower v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:35:57.2223561Z ^[[1m^[[92m   Compiling^[[0m crypto-common v0.1.6
+test	Test finished child compaction through the terminal	2026-10-22T19:35:57.2782891Z ^[[1m^[[92m   Compiling^[[0m block-buffer v0.10.4
+test	Test finished child compaction through the terminal	2026-10-22T19:35:57.3462830Z ^[[1m^[[92m   Compiling^[[0m hyper v1.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:57.4187039Z ^[[1m^[[92m   Compiling^[[0m potential_utf v0.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:57.5312998Z ^[[1m^[[92m   Compiling^[[0m http-body-util v0.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:57.7272768Z ^[[1m^[[92m   Compiling^[[0m zerotrie v0.2.2
+test	Test finished child compaction through the terminal	2026-10-22T19:35:58.0227050Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.2.16
+test	Test finished child compaction through the terminal	2026-10-22T19:35:58.5643531Z ^[[1m^[[92m   Compiling^[[0m crossbeam-utils v0.8.21
+test	Test finished child compaction through the terminal	2026-10-22T19:35:58.8372671Z ^[[1m^[[92m   Compiling^[[0m aho-corasick v1.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:35:59.0793722Z ^[[1m^[[92m   Compiling^[[0m linux-raw-sys v0.12.1
+test	Test finished child compaction through the terminal	2026-10-22T19:35:59.2473323Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+test	Test finished child compaction through the terminal	2026-10-22T19:35:59.4862889Z ^[[1m^[[92m   Compiling^[[0m hyper-util v0.1.20
+test	Test finished child compaction through the terminal	2026-10-22T19:35:59.9163518Z ^[[1m^[[92m   Compiling^[[0m regex-automata v0.4.13
+test	Test finished child compaction through the terminal	2026-10-22T19:36:01.4512945Z ^[[1m^[[92m   Compiling^[[0m concurrent-queue v2.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:01.6012949Z ^[[1m^[[92m   Compiling^[[0m icu_provider v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:01.9013199Z ^[[1m^[[92m   Compiling^[[0m icu_collections v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:02.4693352Z ^[[1m^[[92m   Compiling^[[0m digest v0.10.7
+test	Test finished child compaction through the terminal	2026-10-22T19:36:02.6032956Z ^[[1m^[[92m   Compiling^[[0m rustls-pki-types v1.14.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:03.0880122Z ^[[1m^[[92m   Compiling^[[0m event-listener v5.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:03.2738272Z ^[[1m^[[92m   Compiling^[[0m aws-lc-rs v1.16.2
+test	Test finished child compaction through the terminal	2026-10-22T19:36:03.3066459Z ^[[1m^[[92m   Compiling^[[0m sha1 v0.10.6
+test	Test finished child compaction through the terminal	2026-10-22T19:36:03.6562879Z ^[[1m^[[92m   Compiling^[[0m tungstenite v0.28.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:04.6344795Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.13
+test	Test finished child compaction through the terminal	2026-10-22T19:36:04.7014982Z ^[[1m^[[92m   Compiling^[[0m deranged v0.5.5
+test	Test finished child compaction through the terminal	2026-10-22T19:36:04.7952877Z ^[[1m^[[92m   Compiling^[[0m schemars v1.0.4
+test	Test finished child compaction through the terminal	2026-10-22T19:36:05.8122939Z ^[[1m^[[92m   Compiling^[[0m icu_properties v2.0.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:06.0082962Z ^[[1m^[[92m   Compiling^[[0m icu_normalizer v2.0.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:06.3717369Z ^[[1m^[[92m   Compiling^[[0m event-listener-strategy v0.5.4
+test	Test finished child compaction through the terminal	2026-10-22T19:36:06.5832764Z ^[[1m^[[92m   Compiling^[[0m hyper-timeout v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:36:06.7118359Z ^[[1m^[[92m   Compiling^[[0m tokio-stream v0.1.17
+test	Test finished child compaction through the terminal	2026-10-22T19:36:06.9823200Z ^[[1m^[[92m   Compiling^[[0m subtle v2.6.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:07.0679525Z ^[[1m^[[92m   Compiling^[[0m time v0.3.47
+test	Test finished child compaction through the terminal	2026-10-22T19:36:07.0813034Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.37
+test	Test finished child compaction through the terminal	2026-10-22T19:36:07.1428707Z ^[[1m^[[92m   Compiling^[[0m axum-core v0.5.5
+test	Test finished child compaction through the terminal	2026-10-22T19:36:07.5812850Z ^[[1m^[[92m   Compiling^[[0m tonic v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:36:07.5913069Z ^[[1m^[[92m   Compiling^[[0m agent-client-protocol-schema v0.11.4
+test	Test finished child compaction through the terminal	2026-10-22T19:36:08.7924483Z ^[[1m^[[92m   Compiling^[[0m filedescriptor v0.8.3 (https://github.com/wezterm/wezterm.git?rev=c8c592d19298cb68b8370f4e151f1591333b7f4a#c8c592d1)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:08.9632879Z ^[[1m^[[92m   Compiling^[[0m idna_adapter v1.2.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:09.0273650Z ^[[1m^[[92m   Compiling^[[0m async-broadcast v0.7.2
+test	Test finished child compaction through the terminal	2026-10-22T19:36:09.1962914Z ^[[1m^[[92m   Compiling^[[0m tokio-tungstenite v0.28.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:09.3822022Z ^[[1m^[[92m   Compiling^[[0m opentelemetry v0.32.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:10.1501183Z ^[[1m^[[92m   Compiling^[[0m prost v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:36:10.6163399Z ^[[1m^[[92m   Compiling^[[0m nix v0.29.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:11.4333283Z ^[[1m^[[92m   Compiling^[[0m serial2 v0.2.34
+test	Test finished child compaction through the terminal	2026-10-22T19:36:11.7923168Z ^[[1m^[[92m   Compiling^[[0m lazy_static v1.5.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:11.8292887Z ^[[1m^[[92m   Compiling^[[0m cursor-icon v1.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:11.8833561Z ^[[1m^[[92m   Compiling^[[0m idna v1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:12.3204702Z ^[[1m^[[92m   Compiling^[[0m portable-pty v0.9.0 (https://github.com/wezterm/wezterm.git?rev=c8c592d19298cb68b8370f4e151f1591333b7f4a#c8c592d1)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:12.5313318Z ^[[1m^[[92m   Compiling^[[0m vte v0.15.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:12.7603026Z ^[[1m^[[92m   Compiling^[[0m sharded-slab v0.1.7
+test	Test finished child compaction through the terminal	2026-10-22T19:36:13.2923335Z ^[[1m^[[92m   Compiling^[[0m axum v0.8.6
+test	Test finished child compaction through the terminal	2026-10-22T19:36:17.0143319Z ^[[1m^[[92m   Compiling^[[0m agent-client-protocol v0.10.4
+test	Test finished child compaction through the terminal	2026-10-22T19:36:17.5723297Z ^[[1m^[[92m   Compiling^[[0m flate2 v1.1.5
+test	Test finished child compaction through the terminal	2026-10-22T19:36:17.6522752Z ^[[1m^[[92m   Compiling^[[0m pxfm v0.1.25
+test	Test finished child compaction through the terminal	2026-10-22T19:36:17.9763330Z ^[[1m^[[92m   Compiling^[[0m tokio-rustls v0.26.4
+test	Test finished child compaction through the terminal	2026-10-22T19:36:18.1703355Z ^[[1m^[[92m   Compiling^[[0m tonic-prost v0.14.3
+test	Test finished child compaction through the terminal	2026-10-22T19:36:18.2631294Z ^[[1m^[[92m   Compiling^[[0m opentelemetry_sdk v0.32.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:19.2003566Z ^[[1m^[[92m   Compiling^[[0m yasna v0.5.2
+test	Test finished child compaction through the terminal	2026-10-22T19:36:19.8692963Z ^[[1m^[[92m   Compiling^[[0m rustix-openpty v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:19.9462543Z ^[[1m^[[92m   Compiling^[[0m polling v3.11.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.0887067Z ^[[1m^[[92m   Compiling^[[0m openssl-sys v0.9.117
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.2083637Z ^[[1m^[[92m   Compiling^[[0m matchers v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.2714083Z ^[[1m^[[92m   Compiling^[[0m regex v1.12.4
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.4442867Z ^[[1m^[[92m   Compiling^[[0m nix v0.30.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.5011361Z ^[[1m^[[92m   Compiling^[[0m fs-err v3.1.3
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.8682641Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.4.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:20.8792748Z ^[[1m^[[92m   Compiling^[[0m tracing-log v0.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:21.0129305Z ^[[1m^[[92m   Compiling^[[0m either v1.15.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:21.0566344Z ^[[1m^[[92m   Compiling^[[0m tower-http v0.6.8
+test	Test finished child compaction through the terminal	2026-10-22T19:36:21.0833174Z ^[[1m^[[92m   Compiling^[[0m tracing-subscriber v0.3.23
+test	Test finished child compaction through the terminal	2026-10-22T19:36:21.1753166Z ^[[1m^[[92m   Compiling^[[0m axum-server v0.8.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:21.7578690Z ^[[1m^[[92m   Compiling^[[0m tempfile v3.27.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:21.7842570Z ^[[1m^[[92m   Compiling^[[0m alacritty_terminal v0.26.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:23.0082965Z ^[[1m^[[92m   Compiling^[[0m rcgen v0.13.2
+test	Test finished child compaction through the terminal	2026-10-22T19:36:23.3294016Z ^[[1m^[[92m   Compiling^[[0m xai-tty-utils v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-tty-utils)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:23.5844520Z ^[[1m^[[92m   Compiling^[[0m opentelemetry-proto v0.32.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:24.3000665Z ^[[1m^[[92m   Compiling^[[0m png v0.18.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:24.6332842Z ^[[1m^[[92m   Compiling^[[0m moxcms v0.8.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:25.5884739Z ^[[1m^[[92m   Compiling^[[0m xai-acp-lib v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-acp-lib)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:26.7482868Z ^[[1m^[[92m   Compiling^[[0m url v2.5.8
+test	Test finished child compaction through the terminal	2026-10-22T19:36:27.2825026Z ^[[1m^[[92m   Compiling^[[0m terminput v0.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:27.5422937Z ^[[1m^[[92m   Compiling^[[0m bytemuck v1.25.2
+test	Test finished child compaction through the terminal	2026-10-22T19:36:27.8883230Z ^[[1m^[[92m   Compiling^[[0m ptyctl v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/ptyctl)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:28.5112888Z ^[[1m^[[92m   Compiling^[[0m serde_yaml v0.9.34+deprecated
+test	Test finished child compaction through the terminal	2026-10-22T19:36:29.2063710Z ^[[1m^[[92m   Compiling^[[0m image v0.25.10
+test	Test finished child compaction through the terminal	2026-10-22T19:36:30.1585965Z ^[[1m^[[92m   Compiling^[[0m xai-grok-test-support v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-test-support)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:31.1242930Z ^[[1m^[[92m   Compiling^[[0m libssh2-sys v0.3.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:34.4793664Z ^[[1m^[[92m   Compiling^[[0m xai-grok-pager-pty-harness v0.1.0 (/home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-pager-pty-harness)
+test	Test finished child compaction through the terminal	2026-10-22T19:36:45.2904370Z ^[[1m^[[92m   Compiling^[[0m libgit2-sys v0.18.2+1.9.1
+test	Test finished child compaction through the terminal	2026-10-22T19:36:54.0118237Z ^[[1m^[[92m   Compiling^[[0m hyper-rustls v0.27.7
+test	Test finished child compaction through the terminal	2026-10-22T19:36:55.8979391Z ^[[1m^[[92m   Compiling^[[0m toml v0.9.12+spec-1.1.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:56.3373379Z ^[[1m^[[92m   Compiling^[[0m serial_test v3.2.0
+test	Test finished child compaction through the terminal	2026-10-22T19:36:56.8726430Z ^[[1m^[[92m   Compiling^[[0m reqwest v0.12.24
+test	Test finished child compaction through the terminal	2026-10-22T19:37:10.5080341Z ^[[1m^[[92m   Compiling^[[0m git2 v0.20.2
+test	Test finished child compaction through the terminal	2026-10-22T19:37:14.0837609Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 1m 28s
+test	Test finished child compaction through the terminal	2026-10-22T19:37:14.0881087Z ^[[1m^[[33mwarning^[[0m: the following packages contain code that will be rejected by a future version of Rust: nix v0.29.0, nix v0.30.1
+test	Test finished child compaction through the terminal	2026-10-22T19:37:14.0883337Z ^[[1m^[[92mnote^[[0m: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+test	Test finished child compaction through the terminal	2026-10-22T19:37:14.1129587Z ^[[1m^[[92m     Running^[[0m tests/pty_e2e_shell_tools.rs (target/debug/build/xai-grok-pager-pty-harness/ae2e196906856e15/out/pty_e2e_shell_tools-ae2e196906856e15)
+test	Test finished child compaction through the terminal	2026-10-22T19:37:14.1169346Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:37:14.1169740Z running 1 test
+test	Test finished child compaction through the terminal	2026-10-22T19:38:14.1172880Z test finished_child_manual_compact_cancel::finished_child_manual_compact_cancel_returns_to_reopenable_child has been running for over 60 seconds
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5303753Z test finished_child_manual_compact_cancel::finished_child_manual_compact_cancel_returns_to_reopenable_child ... FAILED
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5304632Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5304741Z failures:
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5304937Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5305437Z ---- finished_child_manual_compact_cancel::finished_child_manual_compact_cancel_returns_to_reopenable_child stdout ----
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5306051Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5307067Z thread 'finished_child_manual_compact_cancel::finished_child_manual_compact_cancel_returns_to_reopenable_child' (107192) panicked at crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/send_subagent_message_row.rs:140:17:
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5322794Z timed out after 60s waiting for screen text "› Subagent “sleeper”"
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5323441Z process running: true
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5324084Z process tree: tree_label="grok PTY child" pid=107195 tree_attached=true tree_attach_error=None
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5324795Z screen contents:
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5324999Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5325574Z   ~                                                                                11 / 256K │ [↓] │ [✗] │ [Dashboard]
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5326031Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5326037Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5326468Z      ❯ go                                                                                                    7:37 PM
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5326933Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5326939Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5327419Z  ┌   ◈ Ran 1 subagent                                                                                                 ┐
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5328524Z  │   › Message sent to Subagent “sleeper”                                                                             │
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5329641Z  │   ◆ Message queued for Subagent “sleeper”                                                                          │
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5330959Z  │   ◆ Message interjected to Subagent “sleeper”                                                                      │
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5332344Z  │   ◆ Message rejected · subagent …deadbeef                                                                          │
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5333361Z  └                                                                                                                    ┘
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5334152Z      PARENT_TURN_DONE                                                                                        7:37 PM
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5335113Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5335247Z      Worked for 0.3s
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5335458Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5335644Z      ◈ Ran 1 subagent
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5336070Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5336409Z      PARENT_WAKE_DONE                                                                                        7:37 PM
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5336921Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337051Z      Worked for 0.1s
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337254Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337260Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337265Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337269Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337273Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337278Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337282Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337285Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337290Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337294Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337299Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337303Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337307Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337311Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337316Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337321Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337332Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337337Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337342Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337347Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337364Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5337369Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5338010Z   ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5339066Z   │ ❯ Build anything                                                                                                 │
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5340173Z   ╰──────────────────────────────────────────────────────────────────────────────────── test-model · always-approve ─╯
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5340754Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5341071Z   →:expand  │  Ctrl+e:collapse thinking  │  Ctrl+x:shortcuts
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5341891Z --- non-system messages ---
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5342529Z [req0 user] {"content":"<user_query>\ngo\n</user_query>","role":"user","type":"message"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5348913Z [req1 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5357143Z [req1 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5360583Z [req1 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5367370Z [req2 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5375948Z [req2 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5379196Z [req2 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5381285Z [req2 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"background\":true,\"description\":\"sleeper\",\"prompt\":\"SLEEPER_CHILD_PROMPT wait for the flag\",\"subagent_type\":\"general-purpose\",\"task_id\":\"01a06b44-0000-7000-8000-00000000c41d\"}","name":"spawn_subagent"},"id":"call_mock_1_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5383968Z [req2 tool] {"content":"Subagent started in background.\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\ndescription: sleeper\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"01a06b44-0000-7000-8000-00000000c41d\"] and a positive timeout_ms.","role":"tool","tool_call_id":"call_mock_1_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5385372Z [req3 user] {"content":"<user_query>\nSLEEPER_CHILD_PROMPT wait for the flag\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5389284Z [req4 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5394271Z [req4 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5396187Z [req4 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5397601Z [req4 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"background\":true,\"description\":\"sleeper\",\"prompt\":\"SLEEPER_CHILD_PROMPT wait for the flag\",\"subagent_type\":\"general-purpose\",\"task_id\":\"01a06b44-0000-7000-8000-00000000c41d\"}","name":"spawn_subagent"},"id":"call_mock_1_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5399795Z [req4 tool] {"content":"Subagent started in background.\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\ndescription: sleeper\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"01a06b44-0000-7000-8000-00000000c41d\"] and a positive timeout_ms.","role":"tool","tool_call_id":"call_mock_1_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5402185Z [req4 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"STEER_MARKER re-check the arm64 job\"}","name":"send_subagent_message"},"id":"call_mock_1_2","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5403677Z [req4 tool] {"content":"Message accepted (message_id: 01a1651e-1ca5-7d61-9761-a561c5cb9b64).","role":"tool","tool_call_id":"call_mock_1_2"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5404377Z [req5 user] {"content":"SLEEPER_CHILD_PROMPT wait for the flag","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5405095Z [req5 user] {"content":"[Message authored by another agent; not a human request or approval.]\nSTEER_MARKER re-check the arm64 job","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5409083Z [req6 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5413959Z [req6 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5415850Z [req6 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5417226Z [req6 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"background\":true,\"description\":\"sleeper\",\"prompt\":\"SLEEPER_CHILD_PROMPT wait for the flag\",\"subagent_type\":\"general-purpose\",\"task_id\":\"01a06b44-0000-7000-8000-00000000c41d\"}","name":"spawn_subagent"},"id":"call_mock_1_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5419445Z [req6 tool] {"content":"Subagent started in background.\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\ndescription: sleeper\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"01a06b44-0000-7000-8000-00000000c41d\"] and a positive timeout_ms.","role":"tool","tool_call_id":"call_mock_1_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5421590Z [req6 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"STEER_MARKER re-check the arm64 job\"}","name":"send_subagent_message"},"id":"call_mock_1_2","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5422977Z [req6 tool] {"content":"Message accepted (message_id: 01a1651e-1ca5-7d61-9761-a561c5cb9b64).","role":"tool","tool_call_id":"call_mock_1_2"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5424365Z [req6 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"queue\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"QUEUE_MARKER then summarize\"}","name":"send_subagent_message"},"id":"call_mock_1_3","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5425744Z [req6 tool] {"content":"Message accepted (message_id: 01a1651e-1cd1-7db2-9860-72b57e904aae).","role":"tool","tool_call_id":"call_mock_1_3"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5429880Z [req7 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5434939Z [req7 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5436848Z [req7 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5438221Z [req7 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"background\":true,\"description\":\"sleeper\",\"prompt\":\"SLEEPER_CHILD_PROMPT wait for the flag\",\"subagent_type\":\"general-purpose\",\"task_id\":\"01a06b44-0000-7000-8000-00000000c41d\"}","name":"spawn_subagent"},"id":"call_mock_1_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5440406Z [req7 tool] {"content":"Subagent started in background.\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\ndescription: sleeper\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"01a06b44-0000-7000-8000-00000000c41d\"] and a positive timeout_ms.","role":"tool","tool_call_id":"call_mock_1_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5442568Z [req7 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"STEER_MARKER re-check the arm64 job\"}","name":"send_subagent_message"},"id":"call_mock_1_2","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5443906Z [req7 tool] {"content":"Message accepted (message_id: 01a1651e-1ca5-7d61-9761-a561c5cb9b64).","role":"tool","tool_call_id":"call_mock_1_2"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5445281Z [req7 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"queue\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"QUEUE_MARKER then summarize\"}","name":"send_subagent_message"},"id":"call_mock_1_3","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5446658Z [req7 tool] {"content":"Message accepted (message_id: 01a1651e-1cd1-7db2-9860-72b57e904aae).","role":"tool","tool_call_id":"call_mock_1_3"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5448082Z [req7 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"interject\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"INTERJECT_MARKER stop after this step\"}","name":"send_subagent_message"},"id":"call_mock_1_4","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5449502Z [req7 tool] {"content":"Message accepted (message_id: 01a1651e-1cfa-7bb3-b858-a84247987942).","role":"tool","tool_call_id":"call_mock_1_4"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5453668Z [req8 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5458578Z [req8 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5460509Z [req8 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5462117Z [req8 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"background\":true,\"description\":\"sleeper\",\"prompt\":\"SLEEPER_CHILD_PROMPT wait for the flag\",\"subagent_type\":\"general-purpose\",\"task_id\":\"01a06b44-0000-7000-8000-00000000c41d\"}","name":"spawn_subagent"},"id":"call_mock_1_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5464338Z [req8 tool] {"content":"Subagent started in background.\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\ndescription: sleeper\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"01a06b44-0000-7000-8000-00000000c41d\"] and a positive timeout_ms.","role":"tool","tool_call_id":"call_mock_1_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5466295Z [req8 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"STEER_MARKER re-check the arm64 job\"}","name":"send_subagent_message"},"id":"call_mock_1_2","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5467636Z [req8 tool] {"content":"Message accepted (message_id: 01a1651e-1ca5-7d61-9761-a561c5cb9b64).","role":"tool","tool_call_id":"call_mock_1_2"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5469487Z [req8 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"queue\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"QUEUE_MARKER then summarize\"}","name":"send_subagent_message"},"id":"call_mock_1_3","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5472270Z [req8 tool] {"content":"Message accepted (message_id: 01a1651e-1cd1-7db2-9860-72b57e904aae).","role":"tool","tool_call_id":"call_mock_1_3"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5474442Z [req8 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"interject\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"INTERJECT_MARKER stop after this step\"}","name":"send_subagent_message"},"id":"call_mock_1_4","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5476025Z [req8 tool] {"content":"Message accepted (message_id: 01a1651e-1cfa-7bb3-b858-a84247987942).","role":"tool","tool_call_id":"call_mock_1_4"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5477329Z [req8 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-0000deadbeef\",\"text\":\"BOGUS_MARKER hello\"}","name":"send_subagent_message"},"id":"call_mock_1_5","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5478547Z [req8 tool] {"content":"Subagent not found or not owned by this session.","role":"tool","tool_call_id":"call_mock_1_5"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5479351Z [req9 user] {"content":"SLEEPER_CHILD_PROMPT wait for the flag","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5480069Z [req9 user] {"content":"[Message authored by another agent; not a human request or approval.]\nSTEER_MARKER re-check the arm64 job","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5481968Z [req9 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"command\":\"while [ ! -e /tmp/.tmpK2y9Jd/home/sleeper_hold_flag ]; do /bin/sleep 0.2; done\",\"description\":\"hold until released\"}","name":"run_terminal_command"},"id":"call_mock_2_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5483208Z [req9 tool] {"content":"exit: 0\n","role":"tool","tool_call_id":"call_mock_2_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5483921Z [req9 user] {"content":"[Message authored by another agent; not a human request or approval.]\nINTERJECT_MARKER stop after this step","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5484642Z [req10 user] {"content":"SLEEPER_CHILD_PROMPT wait for the flag","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5485361Z [req10 user] {"content":"[Message authored by another agent; not a human request or approval.]\nSTEER_MARKER re-check the arm64 job","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5486813Z [req10 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"command\":\"while [ ! -e /tmp/.tmpK2y9Jd/home/sleeper_hold_flag ]; do /bin/sleep 0.2; done\",\"description\":\"hold until released\"}","name":"run_terminal_command"},"id":"call_mock_2_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5488022Z [req10 tool] {"content":"exit: 0\n","role":"tool","tool_call_id":"call_mock_2_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5488729Z [req10 user] {"content":"[Message authored by another agent; not a human request or approval.]\nINTERJECT_MARKER stop after this step","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5489471Z [req10 assistant] {"content":"CHILD_DONE","model_id":"test-model","role":"assistant"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5490268Z [req10 user] {"content":"[Message authored by another agent; not a human request or approval.]\n<user_query>\nQUEUE_MARKER then summarize\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5494676Z [req11 user] {"content":"<user_info>\nOS Version: linux\nShell: /bin/bash\nWorkspace Path: /tmp/.tmpK2y9Jd/home\nToday's date: 2026-10-22\n</user_info>\n<rules>\nThe rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n\n<user_rules description=\"These are rules set by the user that you should follow if appropriate.\">\n<user_rule>\nState points directly in affirmative language. Avoid unnecessary contrastive negation such as “X, not Y,” especially clarifications about alternatives the user did not mention.\n</user_rule>\n\n<user_rule>\nWhen implementing or fixing anything in a web application (UI, layout, styling, routing, client state, or rendered data), verify your work in the browser before declaring the 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5499356Z [req11 user] {"content":"<system-reminder>\nThe following workflows are available:\n\n- deep-research: Research a query with bounded parallelism, cross-check the evidence, and write a cited report\n  Use when: Compare, investigate, or research a question that needs sourced claims. /deep-research, research this, write a cited report.\n  Absolute path: /home/runner/work/grok-build/grok-build/crates/codegen/xai-grok-shell/src/session/workflows/deep_research.rhai\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5501302Z [req11 user] {"content":"<user_query>\ngo\n</user_query>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5502958Z [req11 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"background\":true,\"description\":\"sleeper\",\"prompt\":\"SLEEPER_CHILD_PROMPT wait for the flag\",\"subagent_type\":\"general-purpose\",\"task_id\":\"01a06b44-0000-7000-8000-00000000c41d\"}","name":"spawn_subagent"},"id":"call_mock_1_1","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5505331Z [req11 tool] {"content":"Subagent started in background.\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\ndescription: sleeper\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"01a06b44-0000-7000-8000-00000000c41d\"] and a positive timeout_ms.","role":"tool","tool_call_id":"call_mock_1_1"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5507384Z [req11 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"STEER_MARKER re-check the arm64 job\"}","name":"send_subagent_message"},"id":"call_mock_1_2","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5508733Z [req11 tool] {"content":"Message accepted (message_id: 01a1651e-1ca5-7d61-9761-a561c5cb9b64).","role":"tool","tool_call_id":"call_mock_1_2"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5510131Z [req11 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"queue\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"QUEUE_MARKER then summarize\"}","name":"send_subagent_message"},"id":"call_mock_1_3","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5511756Z [req11 tool] {"content":"Message accepted (message_id: 01a1651e-1cd1-7db2-9860-72b57e904aae).","role":"tool","tool_call_id":"call_mock_1_3"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5513198Z [req11 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"delivery\":\"interject\",\"subagent_id\":\"01a06b44-0000-7000-8000-00000000c41d\",\"text\":\"INTERJECT_MARKER stop after this step\"}","name":"send_subagent_message"},"id":"call_mock_1_4","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5514634Z [req11 tool] {"content":"Message accepted (message_id: 01a1651e-1cfa-7bb3-b858-a84247987942).","role":"tool","tool_call_id":"call_mock_1_4"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5515928Z [req11 assistant] {"content":"","model_id":"test-model","role":"assistant","tool_calls":[{"function":{"arguments":"{\"subagent_id\":\"01a06b44-0000-7000-8000-0000deadbeef\",\"text\":\"BOGUS_MARKER hello\"}","name":"send_subagent_message"},"id":"call_mock_1_5","type":"function"}]}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5517165Z [req11 tool] {"content":"Subagent not found or not owned by this session.","role":"tool","tool_call_id":"call_mock_1_5"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5517825Z [req11 assistant] {"content":"PARENT_TURN_DONE","model_id":"test-model","role":"assistant"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5520862Z [req11 user] {"content":"<system-reminder>\nWhile you were idle, 1 background subagent completed:\n- [general-purpose] \"sleeper\" — completed successfully (0.4s, 1 tool calls)\n=== Task 01a06b44-0000-7000-8000-00000000c41d ===\nCommand: [subagent:general-purpose] sleeper\nStatus: completed\nDuration: 0.43s\nExit Code: 0\n\n=== Output ===\nCHILD_DONE\n\n<subagent_meta>id=01a06b44-0000-7000-8000-00000000c41d, tool_calls=1, turns=2, duration_ms=434</subagent_meta>\n\n<subagent_result>\nsubagent_id: 01a06b44-0000-7000-8000-00000000c41d\nTo continue this subagent's conversation, use resume_from=\"01a06b44-0000-7000-8000-00000000c41d\".\n</subagent_result>\n\n</system-reminder>","role":"user"}
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5523427Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5523647Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5523958Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5523963Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5524041Z failures:
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5524469Z     finished_child_manual_compact_cancel::finished_child_manual_compact_cancel_returns_to_reopenable_child
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5524876Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5525147Z test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 25 filtered out; finished in 61.41s
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5525522Z 
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5525917Z ^[[1m^[[91merror^[[0m: test failed, to rerun pass `-p xai-grok-pager-pty-harness --test pty_e2e_shell_tools`
+test	Test finished child compaction through the terminal	2026-10-22T19:38:15.5572183Z ##[error]Process completed with exit code 101.

@@ -1,0 +1,24 @@
+ context-modules.d/500_work.d/epics.d/product.d/grok-build/002-attempt-bound-input-admission.adr.md           |   8 ++-
+ crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs                                           |  68 +++++++++++++++----
+ crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/subagent_spawn_context_tests.rs                      |  16 +++--
+ crates/codegen/xai-grok-shell/src/agent/subagent/isolated_spawn_e2e.rs                                       |  82 +++++++++++++++++++---
+ crates/codegen/xai-grok-shell/src/agent/subagent/tests/mod.rs                                                | 204 ++++++++++++++++++++++++++++---------------------------
+ crates/codegen/xai-grok-shell/src/agent/subagent/tests/rest.rs                                               |  64 ++++++++++--------
+ crates/codegen/xai-grok-shell/src/session/acp_session.rs                                                     |   3 +
+ crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_admission.rs                           |  23 ++++++-
+ crates/codegen/xai-grok-shell/src/session/acp_session_impl/completion_digest.rs                              |  20 +++++-
+ crates/codegen/xai-grok-shell/src/session/acp_session_tests/auto_wake_suppression_tests.rs                   |   3 +
+ crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs                |   1 -
+ crates/codegen/xai-grok-shell/src/session/completion_delivery.rs                                             | 307 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++----------------
+ crates/codegen/xai-grok-shell/tests/test_completion_admission.rs                                             |   4 ++
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend_tests.rs                           |  27 ++++++--
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator.rs                             |  37 ++++++----
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/active_message_tests.rs        |  12 +++-
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/agent_targets_tests.rs         | 102 +++++++++-------------------
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion.rs                  |  35 +++++++---
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/completion_projection_tests.rs |  88 ++++++++++++++++++++++++
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator/root_targets_tests.rs          |  24 ++++---
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_state.rs                       | 228 ++++++++++++++++++++++++++++++++++++++++++++++++++-----------
+ crates/codegen/xai-grok-tools/src/implementations/grok_build/task/coordinator_tests.rs                       |   7 +-
+ docs/fork/streams/w1h-hold-deliver.md                                                                        |  17 +++--
+ 23 files changed, 1005 insertions(+), 375 deletions(-)
