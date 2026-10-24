@@ -24,6 +24,28 @@ Status: planned — implementation starts only after Faruk's explicit GO.
 
 Branch: `grb/owner-takeover` cut from `origin/main` (`bc85ceb9`).
 
+Dispatch surface: workflow `grok-owner-wave-a` (`~/.grok/workflows/grok-owner-wave-a.rhai`,
+smoke-checked 2026-10-24). Three agents: merge+oracle author (`sigma/openai/gpt-6-luna`,
+read-write), CI triage analyst (`sigma/anthropic/claude-sonnet-5-5`, read-only) in one
+parallel wave; then merge-fidelity refuter (`sigma/anthropic/claude-opus-5-5`, read-only).
+Lead launch runbook:
+
+1. `git worktree add /home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover -b grb/owner-takeover bc85ceb9`
+2. In the worktree: `git merge --no-commit handoff/grok-runtime-20261024` (same base,
+   clean), then `git merge --no-commit handoff/grok-canonical-20261024` (conflicts surface).
+3. `git diff --name-only --diff-filter=U > <wave-a>/merge-conflicts.txt`.
+4. Export both checkpoint sides of every conflicted path:
+   `git show 074f54b5:<path>` → `<wave-a>/baseline/canonical/<path>`,
+   `git show 14a5f56c:<path>` → `<wave-a>/baseline/runtime/<path>`.
+5. Launch the workflow with args: worktree, conflicts, baseline, reports (all under
+   `context-modules.d/500_work.d/epics.d/product.d/grok-build/wave-a/`), runtime_wt
+   (`worktrees.d/org/forks/grok-build@ci-c8-format`), diag (`docs/fork/handoff/2026-10-24/ci-bc85-runtime/diagnostics.json`),
+   capture (`docs/fork/handoff/2026-10-24/ci-c8-fixtures/bc85-failed-ci.log`).
+6. On completion: Lead reviews the merge report + refuter verdict; triage report files the
+   classification; then commit the resolution in coherent increments, push the branch,
+   observe the exact commit's `linux-build` (+ scoped `linux-test`), iterate failures
+   (fix wave via a second workflow once real CI evidence exists).
+
 1. Lead: create integration worktree, `git merge` both handoff branches; surface conflicts.
 2. Worker A1 (merge + phase oracles, one subject — same files): resolve the four overlap
    files semantically (attempt-admission fixtures vs runtime wake-fixture migration) and
