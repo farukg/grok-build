@@ -24,41 +24,39 @@ Status: planned — implementation starts only after Faruk's explicit GO.
 
 Branch: `grb/owner-takeover` cut from `origin/main` (`bc85ceb9`).
 
-Dispatch surface: workflow `grok-owner-wave-a` (`~/.grok/workflows/grok-owner-wave-a.rhai`,
-smoke-checked 2026-10-24). Three agents: merge+oracle author (`sigma/openai/gpt-6-luna`,
-read-write), CI triage analyst (`sigma/anthropic/claude-sonnet-5-5`, read-only) in one
-parallel wave; then merge-fidelity refuter (`sigma/anthropic/claude-opus-5-5`, read-only).
-Lead launch runbook:
+Progress 2026-10-24: steps 1–4 executed. The runtime checkpoint fast-forwarded
+(`14a5f56c`), the canonical merge (`074f54b5`) is in progress in the worktree
+`worktrees.d/org/forks/grok-build@owner-takeover` with five conflicted files:
+`subagent_spawn_context_tests.rs`, `agent/subagent/tests/mod.rs`, `tests/rest.rs`,
+`session/completion_delivery.rs`, `coordinator/agent_targets_tests.rs`.
+Conflict list: `docs/fork/handoff/2026-10-24/wave-a/merge-conflicts.txt`; both checkpoint
+sides of each path exported to `/home/fg/projects/tmp.d/grok-wave-a/baseline/{canonical,runtime}/`
+(transient — git holds the authoritative bytes).
 
-1. `git worktree add /home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover -b grb/owner-takeover bc85ceb9`
-2. In the worktree: `git merge --no-commit handoff/grok-runtime-20261024` (same base,
-   clean), then `git merge --no-commit handoff/grok-canonical-20261024` (conflicts surface).
-3. `git diff --name-only --diff-filter=U > <wave-a>/merge-conflicts.txt`.
-4. Export both checkpoint sides of every conflicted path:
-   `git show 074f54b5:<path>` → `<wave-a>/baseline/canonical/<path>`,
-   `git show 14a5f56c:<path>` → `<wave-a>/baseline/runtime/<path>`.
-5. Launch the workflow with args: worktree, conflicts, baseline, reports (all under
-   `context-modules.d/500_work.d/epics.d/product.d/grok-build/wave-a/`), runtime_wt
-   (`worktrees.d/org/forks/grok-build@ci-c8-format`), diag (`docs/fork/handoff/2026-10-24/ci-bc85-runtime/diagnostics.json`),
-   capture (`docs/fork/handoff/2026-10-24/ci-c8-fixtures/bc85-failed-ci.log`).
-6. On completion: Lead reviews the merge report + refuter verdict; triage report files the
-   classification; then commit the resolution in coherent increments, push the branch,
-   observe the exact commit's `linux-build` (+ scoped `linux-test`), iterate failures
-   (fix wave via a second workflow once real CI evidence exists).
+Dispatch surface: native subagents (resume-first), one merge author per conflicted file
+plus a CI triage analyst, then an adversarial merge-fidelity refuter. A workflow-based
+variant (`~/.grok/workflows/grok-owner-wave-a.rhai`) was tried and abandoned 2026-10-24:
+the workflow agent surface rejects the anthropic Sigma slugs (HTTP 400 unknown model) and
+Faruk ordered native subagents with session-id resume.
 
-1. Lead: create integration worktree, `git merge` both handoff branches; surface conflicts.
-2. Worker A1 (merge + phase oracles, one subject — same files): resolve the four overlap
-   files semantically (attempt-admission fixtures vs runtime wake-fixture migration) and
-   finish the three interrupted phase oracles per review.md P1. Author only; no build.
-3. Worker A2 (CI failure triage + fixes): from `diagnostics.json` + capture, partition the
-   27+2 into: addressed by checkpoint content, known environment failures (STATUS.md list:
-   `agent::config` ×3, `mcp_file_input` ×3, `unified_list` ×1), and genuinely open;
-   root-cause the open ones from source + assertion output and author fixes
-   (incl. `tool_call_telemetry` — no assertion stdout in capture, needs source analysis).
-   Author only; no build.
-4. Lead: review diffs, commit in coherent increments, push to `farukg/grok-build`
-   integration branch, observe the exact commit's `linux-build` (+ scoped `linux-test`
-   where warranted), iterate failures until green.
+1. Resume the loaded contexts: file 1 (`subagent_spawn_context_tests.rs`) resumes the
+   run-2 luna author (full inspection done, reported blocked on scope); files 2–4 resume
+   the run-3 cancelled luna authors. File 5 (`agent_targets_tests.rs`) and the triage
+   analyst spawn fresh (their opus jobs died in <1s on the workflow surface).
+2. Triage analyst (read-only): classify the 27+2 failures from
+   `docs/fork/handoff/2026-10-24/ci-bc85-runtime/diagnostics.json` and the capture
+   `docs/fork/handoff/2026-10-24/ci-c8-fixtures/bc85-failed-ci.log` into env /
+   addressed-by-checkpoints / open with file:line hypotheses (STATUS.md 'Known failures'
+   is the env reference; the telemetry test has no assertion stdout and needs source
+   analysis).
+3. After all five files resolve: one adversarial refuter (read-only) checks dropped
+   semantics against both exported sides, the three phase oracles
+   (rest.rs ~563, mod.rs ~2514/2604) and the code rules.
+4. Lead: review reports + refuter verdict, commit the resolution in coherent increments,
+   relocate the checkpoint ADRs 001/002 out of `context-modules.d/` into `docs/fork/`
+   (that tree stays sigma-repo-only) with the stream-file reference updated, push the
+   branch, observe the exact commit's `linux-build` (+ scoped `linux-test`), iterate
+   failures until green.
 5. Gate: same final SHA green in build + relevant tests.
 
 ## Wave B — Faruk's issue list + carried-over orders (parallel lanes after A, or on GO per lane)
