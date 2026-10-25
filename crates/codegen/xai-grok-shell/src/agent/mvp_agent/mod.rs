@@ -1245,9 +1245,9 @@ pub use session_setup::SessionSetupPhase;
 mod subagent_spawn;
 pub(crate) mod test_hooks;
 mod turn_end;
-pub(crate) use session_registry::{ChildHost, ChildReach, ChildResidence, RunningChild};
+pub(crate) use session_registry::{ChildHost, ChildReach, ChildResidence, DeliveryDispatch, RunningChild, SessionHost};
 use session_registry::{
-    IdentityStamp, SessionHost, SessionRegistry, StampResolution, WithdrawnInstall,
+    IdentityStamp, SessionRegistry, StampResolution, WithdrawnInstall,
 };
 pub(crate) use session_lifecycle::RegistrySnapshot;
 pub(super) use super::ext_parsers;

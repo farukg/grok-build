@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::mvp_agent::DeliveryDispatch;
 use crate::session::delivery_receiver::{DeliveryAction, DeliveryRequest, DeliveryResult};
 use crate::session::storage::StorageAdapter;
 
@@ -10,11 +11,15 @@ pub(crate) async fn handle(agent: &crate::agent::MvpAgent, args: &acp::ExtReques
         });
     }
     let sid = acp::SessionId::new(request.session_id.clone());
-    if let Some(handle) = agent.session_handle_waiting_for_load(&sid).await {
-        if agent.child_writer_is_active(&sid) {
-            return to_raw_response(&DeliveryResult::Rejected { reason: "receiver requires a root session; child ingress retains its own receipt and Held policy".into() });
+    agent.wait_for_in_flight_session_load(&sid).await;
+    match agent.dispatch_session_delivery(&sid, &request) {
+        DeliveryDispatch::Receiving(receive) => {
+            return receive_resident(receive).await;
         }
-        return receive_resident(&handle.cmd_tx, request).await;
+        DeliveryDispatch::Refused(result) => {
+            return to_raw_response(&result);
+        }
+        DeliveryDispatch::NotResident => {}
     }
     let lookup_id = request.session_id.clone();
     let summary = match tokio::task::spawn_blocking(move || {
@@ -78,22 +83,7 @@ pub(crate) async fn handle(agent: &crate::agent::MvpAgent, args: &acp::ExtReques
     to_raw_response(&result)
 }
 
-async fn receive_resident(
-    sender: &tokio::sync::mpsc::UnboundedSender<crate::session::SessionCommand>,
-    request: DeliveryRequest,
-) -> ExtResult {
-    let (respond_to, receive) = tokio::sync::oneshot::channel();
-    if sender
-        .send(crate::session::SessionCommand::ReceiveDelivery {
-            request,
-            respond_to,
-        })
-        .is_err()
-    {
-        return to_raw_response(&DeliveryResult::Indeterminate {
-            reason: "receiver actor closed".into(),
-        });
-    }
+async fn receive_resident(receive: tokio::sync::oneshot::Receiver<DeliveryResult>) -> ExtResult {
     let result = receive
         .await
         .unwrap_or_else(|_| DeliveryResult::Indeterminate {

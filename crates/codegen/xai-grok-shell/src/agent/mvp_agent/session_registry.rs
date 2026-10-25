@@ -2,6 +2,8 @@
 //! Distinct from `agent::session_registry_client`, which talks to the remote registry.
 use super::*;
 use xai_grok_tools::registry::types::FinalizedToolset;
+mod delivery;
+pub(crate) use delivery::DeliveryDispatch;
 /// The map stays private so every caller goes through a named operation.
 #[derive(Clone, Default)]
 pub(super) struct SessionRegistry {
@@ -805,10 +807,10 @@ impl SessionRegistry {
         outcome: IdentityStamp,
     ) -> StampResolution {
         let mut entries = self.sessions.borrow_mut();
-        let Some(presence) = entries
-            .get_mut(id)
-            .and_then(|entry| entry.presence.as_mut())
-        else {
+        let Some(entry) = entries.get_mut(id) else {
+            return StampResolution::Superseded;
+        };
+        let Some(presence) = entry.presence.as_mut() else {
             return StampResolution::Superseded;
         };
         let Some(installed) = presence
@@ -818,6 +820,12 @@ impl SessionRegistry {
             return StampResolution::Superseded;
         };
         installed.stamp.send_replace(outcome);
+        if outcome == IdentityStamp::Durable
+            && presence.root_identity().is_some()
+            && entry.host.is_none()
+        {
+            entry.host = Some(SessionHost::Root);
+        }
         match presence {
             SessionPresence::Attaching {
                 handle,
