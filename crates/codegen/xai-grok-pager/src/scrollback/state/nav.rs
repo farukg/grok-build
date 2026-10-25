@@ -38,7 +38,14 @@ impl ScrollbackState {
         let mut current_start: Option<usize> = None;
 
         for (i, entry) in self.entries.values().enumerate() {
-            if matches!(entry.block, RenderBlock::UserPrompt(_)) {
+            // A user prompt, or an injected auto-wake echo that opened a numbered turn, starts a
+            // new turn in the outline. Mid-turn injected records never split their turn.
+            let starts_turn = matches!(entry.block, RenderBlock::UserPrompt(_))
+                || matches!(
+                    &entry.block,
+                    RenderBlock::Injected(block) if block.starts_turn
+                );
+            if starts_turn {
                 // Close previous turn
                 if let Some(start) = current_start {
                     self.turns.push(Turn {

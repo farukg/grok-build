@@ -15,6 +15,29 @@ use crate::scrollback::state::ScrollbackState;
 use agent_client_protocol as acp;
 use std::time::Instant;
 
+fn register_compact(
+    agent: &mut AgentView,
+    owner: crate::app::agent::CompactInvocationOwner,
+) -> crate::app::agent::CompactInvocationId {
+    use crate::app::agent::{CompactInvocation, CompactInvocationId, CompactInvocationOwner};
+    agent.compact_invocations.retain(|_, invocation| {
+        invocation.settlement != crate::app::agent::CompactInvocationSettlement::RpcSettled
+    });
+    if matches!(owner, CompactInvocationOwner::Command) {
+        for invocation in agent.compact_invocations.values_mut() {
+            invocation.owner = CompactInvocationOwner::Concurrent;
+        }
+    }
+    let id = CompactInvocationId(uuid::Uuid::new_v4());
+    agent.compact_invocations.insert(id, CompactInvocation {
+        settlement: crate::app::agent::CompactInvocationSettlement::AwaitingRpc,
+        owner,
+        started_at: Instant::now(),
+        binding_epoch: agent.session_binding_epoch,
+    });
+    id
+}
+
 fn page_flip_on_send() -> bool {
     crate::appearance::cache::load_page_flip_on_send()
 }
@@ -329,13 +352,19 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
         }
     };
 
-    if !agent.session.state.is_idle() {
+    let compact_at_front = agent.session.pending_prompts.front().is_some_and(|queued| {
+        queued.kind == QueueEntryKind::Command
+            && crate::slash::parse_invocation(&queued.text).is_some_and(|inv| inv.token == "compact")
+    });
+    let admit_compact = compact_at_front
+        && (agent.session.state.is_idle() || agent.session.state.is_turn_running());
+    if !agent.session.state.is_idle() && !admit_compact {
         log_blocked("turn_running", sid);
         return QueueDrain::blocked();
     }
     // The pane stays Idle around a non-adopted wake; draining here would
     // `start_turn` a fake local turn that the shell will only queue.
-    if agent.running_wake_turn.is_some() {
+    if agent.running_wake_turn.is_some() && !admit_compact {
         log_blocked("wake_turn_running", sid);
         return QueueDrain::blocked();
     }
@@ -362,6 +391,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
         .shared_queue
         .iter()
         .any(|e| Some(e.id.as_str()) != running)
+        && !admit_compact
     {
         log_blocked("server_queue_owns_next_turn", sid);
         return QueueDrain::blocked();
@@ -399,6 +429,21 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
         Some(q) => q,
         None => return QueueDrain::blocked(),
     };
+
+    if admit_compact
+        && (agent.session.state.is_turn_running() || agent.running_wake_turn.is_some())
+    {
+        let invocation_id = register_compact(agent, crate::app::agent::CompactInvocationOwner::Concurrent);
+        agent.scrollback.push_block(RenderBlock::session_event(SessionEvent::CompactStarted));
+        return QueueDrain {
+            effects: vec![Effect::Compact {
+                agent_id: agent.session.id,
+                session_id,
+                invocation_id,
+            }],
+            page_flip_entry: None,
+        };
+    }
 
     // A new turn is starting: follow-up chips belong to the previous response and must not linger into it
     agent.clear_follow_ups();
@@ -609,6 +654,7 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     Effect::Compact {
                         agent_id,
                         session_id,
+                        invocation_id: register_compact(agent, crate::app::agent::CompactInvocationOwner::Command),
                     },
                 ),
             };
@@ -1306,6 +1352,10 @@ pub(super) fn dispatch_run_edited_queued_command(
 }
 
 #[cfg(test)]
+#[path = "compact_result_tests.rs"]
+mod compact_result_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::actions::{Action, SharedQueueTarget};
@@ -1399,6 +1449,55 @@ mod tests {
     }
 
     #[test]
+    fn compact_mid_turn_submits_without_replacing_the_running_turn() {
+        let mut app = test_app_with_agent();
+        let id = AgentId(0);
+        app.agents.get_mut(&id).unwrap().begin_local_turn("still-running");
+
+        let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
+
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Compact { .. })));
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::CancelTurn { .. })));
+        let agent = test_agent(&app, id);
+        assert!(agent.session.state.is_turn_running());
+        assert_eq!(agent.session.current_prompt_id.as_deref(), Some("still-running"));
+        assert!(agent.session.pending_prompts.is_empty());
+    }
+
+    #[test]
+    fn compact_submits_during_a_live_subagent_wait_without_cancelling_it() {
+        let mut app = test_app_with_agent();
+        let id = AgentId(0);
+        dispatch(Action::SendPrompt("first".into()), &mut app);
+        simulate_subagent_wait(app.agents.get_mut(&id).unwrap());
+        let prompt_id = test_agent(&app, id).session.current_prompt_id.clone();
+
+        let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
+
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Compact { .. })));
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::CancelTurn { .. })));
+        let agent = test_agent(&app, id);
+        assert!(agent.session.state.is_turn_running());
+        assert_eq!(agent.session.current_prompt_id, prompt_id);
+        assert!(agent.session.pending_prompts.is_empty());
+    }
+
+    #[test]
+    fn compact_does_not_jump_an_earlier_local_prompt() {
+        let mut app = test_app_with_agent();
+        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+        agent.begin_local_turn("still-running");
+        agent.session.enqueue_prompt("before compact".into());
+
+        let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
+
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Compact { .. })));
+        let agent = test_agent(&app, AgentId(0));
+        assert_eq!(agent.session.pending_prompts.len(), 2);
+        assert_eq!(agent.session.pending_prompts.front().unwrap().text, "before compact");
+    }
+
+    #[test]
     fn compact_drain_pushes_one_marker_paired_with_its_outcome() {
         use crate::app::actions::TaskResult;
         use crate::app::dispatch::task_result::dispatch_task_result;
@@ -1427,6 +1526,10 @@ mod tests {
             dispatch_task_result(
                 TaskResult::CompactComplete {
                     agent_id: id,
+                    invocation_id: match drain.effects.as_slice() {
+                        [Effect::Compact { invocation_id, .. }] => *invocation_id,
+                        other => panic!("expected compact effect, got {other:?}"),
+                    },
                     result: Err(crate::app::effects::compact_error(&wire_error)),
                 },
                 &mut app,

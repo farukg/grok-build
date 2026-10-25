@@ -9,7 +9,7 @@ use crate::app::agent_view::test_fixtures::{
     add_running_execute, make_followup_permission_state, running_subagent_info,
 };
 use crate::scrollback::block::RenderBlock;
-use crate::views::dashboard::row::{DashboardRow, build_rows_with_roster};
+use crate::views::dashboard::row::{DashboardRow, SessionLane, build_rows_with_roster};
 use crate::views::dashboard::state::{Filter, Grouping};
 use crate::views::workflows::WorkflowRunSnapshot;
 
@@ -32,6 +32,7 @@ fn row(agent: AgentView) -> DashboardRow {
         &Filter::None,
         None,
         &[],
+        SessionLane::Main,
     )
     .remove(0)
 }

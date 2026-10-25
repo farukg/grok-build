@@ -8,7 +8,7 @@
 //!
 //! 1. Opened via `:` in dropdown, `Ctrl-L` on element, or `<left>:` after element.
 //! 2. User navigates with j/k, searches with `/`, selects range with `v`.
-//! 3. **Enter** confirms: the element is updated with the line range and the undo group is closed.
+//! 3. **x** confirms the file path without a line range; Enter does not alter the prompt.
 //! 4. **Esc** cancels: the undo group is cancelled, reverting to the pre-viewer state.
 
 use std::ops::Range;

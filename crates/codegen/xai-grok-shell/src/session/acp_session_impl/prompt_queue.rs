@@ -102,6 +102,7 @@ impl SessionActor {
     pub(super) fn commit_queued_delivery(&self, state: &mut State, prepared: PreparedDelivery) {
         #[cfg(test)]
         QUEUED_COMMITS.with(|count| count.set(count.get() + 1));
+        self.observe_wait_input(prepared.0.input_origin.as_prompt_origin());
         state.pending_inputs.push_back(prepared.0);
         self.broadcast_queue_changed(state);
     }
@@ -161,7 +162,10 @@ impl SessionActor {
         // Bump before any await so a LocalSet recap cannot commit/emit after this Prompt was accepted but before handle_prompt runs
         if policy.authority.is_human_intent() {
             self.invalidate_side_calls_for_new_prompt();
+            self.clear_wake_suppression("user_intake").await;
+            self.set_goal_loop_active_resource(false).await;
         }
+        self.observe_wait_input(input_origin.as_prompt_origin());
 
         // Prompt history is human-authored history, not a generic conversational log.
         if policy.analytics.is_human_prompt()
@@ -234,8 +238,14 @@ impl SessionActor {
                     && state.running_prompt_id() != Some(i.prompt_id.as_str())
             });
             if preempt_armed {
-                let dropped =
-                    state.sweep_pending_inputs(|i| i.input_origin.is_preemptible_runtime_wake());
+                let dropped = state.sweep_pending_inputs(|i| {
+                    i.input_origin.is_preemptible_runtime_wake()
+                        && !matches!(
+                            i.input_origin.as_prompt_origin(),
+                            PromptOrigin::WorkflowCompleted { .. }
+                                | PromptOrigin::NotificationDrain
+                        )
+                });
                 if let Some(reservations) = &self.tool_context.task_completion_reservations {
                     for task_id in dropped
                         .iter()

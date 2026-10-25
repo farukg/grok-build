@@ -23,20 +23,6 @@ fn running_markdown_pane(text: &str) -> BlockViewerPane {
 }
 
 #[test]
-fn format_blockquote_cases() {
-    assert_eq!(format_blockquote(""), "");
-    assert_eq!(format_blockquote("\n"), "");
-    assert_eq!(format_blockquote("\n\n"), "");
-    assert_eq!(format_blockquote("hello"), "> hello");
-    assert_eq!(format_blockquote("hello\n"), "> hello");
-    assert_eq!(format_blockquote("one\n\ntwo"), "> one\n>\n> two");
-    assert_eq!(
-        format_blockquote("one\ntwo\nthree\n"),
-        "> one\n> two\n> three"
-    );
-}
-
-#[test]
 fn mouse_up_leaves_sticky_highlight() {
     let mut pane = pane("hello world");
     pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 0, 2);

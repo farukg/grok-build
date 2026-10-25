@@ -144,7 +144,7 @@ mod cta;
 mod elicitation;
 pub(crate) use elicitation::UnansweredElicitation;
 mod input;
-pub(crate) use input::ExternalPromptEditorAccess;
+pub(crate) use input::{ExternalPromptEditorAccess, VisibleFocus};
 mod interactions;
 mod jump;
 mod key_owner;
@@ -182,6 +182,8 @@ mod model_notice_tests;
 mod rewind;
 mod role;
 pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
+#[cfg(test)]
+mod role_tests;
 mod context_removal;
 mod context_sidebar;
 #[cfg(test)]
@@ -192,6 +194,7 @@ pub(crate) mod removal_test_support;
 pub(crate) mod removal_verdict;
 mod selection;
 mod session;
+pub(crate) use session::stamp_child_role_for_session;
 mod session_mode;
 mod shell_completion;
 mod sidebars;
@@ -630,6 +633,12 @@ pub(crate) struct SessionReload {
     /// rationale).
     last_applied_event_seq: Option<u64>,
     last_applied_xai_event_seq: Option<u64>,
+    /// Exact-id dedup memory as of window open. The window itself starts with
+    /// a cleared memory (replayed lifecycle must re-apply onto the rebuilt
+    /// transcript even if this client already applied it live pre-reload); the
+    /// captured copy is restored only when the reload fails and the pre-reload
+    /// transcript comes back.
+    applied_background_event_ids: VecDeque<String>,
     /// Whether any `isReplay` update applied during this window. False means
     /// the agent resolved the cursor and sent only a live post-cursor tail.
     saw_replay: bool,
@@ -755,6 +764,10 @@ pub(crate) struct BlockViewerResume {
 pub struct AgentView {
     pub session: AgentSession,
     pub(crate) session_binding_epoch: u32,
+    pub(crate) compact_invocations: std::collections::HashMap<
+        crate::app::agent::CompactInvocationId,
+        crate::app::agent::CompactInvocation,
+    >,
     pub scrollback: ScrollbackState,
     pub prompt: PromptWidget,
     /// Sticky: once the user types in the prompt, hide the tip for the session.
@@ -780,6 +793,16 @@ pub struct AgentView {
     pub last_applied_event_seq: Option<u64>,
     /// xAI-stream sibling of [`Self::last_applied_event_seq`] (see there for why the highwaters are split). Same drop rule, replay-exempt. Durable subagent lifecycle events bypass that drop check but still lift this highwater via `max` so later ordinary updates on the cursor tail stay deduped.
     pub last_applied_xai_event_seq: Option<u64>,
+    /// Raw `eventId`s of recently delivered background-thing lifecycle updates
+    /// (task/scheduler/subagent lifecycle, monitor events, `background_tasks`
+    /// snapshots), bounded FIFO. Replay and live re-delivery of the SAME
+    /// persisted event carry the same id, so an exact match is a duplicate no
+    /// matter which stream (or replay flag) it arrives with — the highwater
+    /// above cannot cover it because lifecycle ids may legitimately arrive out
+    /// of stream order. Admission goes through
+    /// [`Self::admit_background_lifecycle_event`]; a reconnect reload window
+    /// resets it (see [`SessionReload`]) so the replay rebuild can re-apply.
+    pub(crate) applied_background_event_ids: VecDeque<String>,
     /// Raw `eventId` of the most recent update APPLIED to this root session, replay or live, on both the ACP and xAI paths; dropped updates (dedup, promptId gate, unexpected replay) don't move it. Sent as `_meta.cursor`
     /// on a reconnect `session/load` so the agent replays only the post-cursor tail. Why the full string: see
     /// [`crate::acp::meta::NotificationMeta::event_id`]. Forward-only: a later applied lower-ID lifecycle update must not regress this cursor. All writers go through [`Self::advance_last_seen_event_id`].
@@ -1561,6 +1584,11 @@ pub struct AgentView {
 /// Cap on [`AgentView::self_originated_prompt_ids`]. Only recent ids matter (a stale post-rewind chunk arrives right after its turn ends), so a small bounded ring is plenty and keeps a long-lived session from growing the set without bound.
 const SELF_ORIGINATED_PROMPT_CAP: usize = 64;
 const REWOUND_PROMPT_ID_CAP: usize = 64;
+/// Cap on [`AgentView::applied_background_event_ids`]. Only recent ids can be
+/// re-delivered (a replay/live overlap or a reconnect tail), so a bounded ring
+/// is plenty; overflow drops the oldest id, worst case re-applying one stale
+/// event the per-kind reducers already sequence-guard.
+pub(crate) const APPLIED_BACKGROUND_EVENT_ID_LIMIT: usize = 512;
 /// Cap on [`AgentView::follow_up_pending`]. Only a handful of turns can ever be "buffered but not-yet-adopted" at once (the ext/`session/update` race window is tiny), so a small bounded map is plenty; an overflow evicts the oldest buffered entry (FIFO) rather than the whole map.
 const MAX_PENDING_FOLLOW_UPS: usize = 16;
 /// Cap on [`AgentView::pending_adoption_updates`]. Overflow drops the NEWEST
@@ -1912,8 +1940,13 @@ fn is_hash_key(key: &KeyEvent) -> bool {
 fn remember_mode_enabled() -> bool {
     let path =
         xai_grok_tools::util::grok_home::grok_home().join(xai_grok_config::USER_CONFIG_FILENAME);
-    let Some(doc) = crate::config_toml_edit::read_config_document_for_edit(&path) else {
-        return false;
+    let doc = match crate::config_toml_edit::read_config_document_for_edit(&path) {
+        Ok(Some(doc)) => doc,
+        Ok(None) => return false,
+        Err(error) => {
+            tracing::warn!(%error, "failed to read remember-mode preference");
+            return false;
+        }
     };
     doc.get("features")
         .and_then(|f| f.get("remember_mode"))

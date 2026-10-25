@@ -30,20 +30,23 @@ mod persistence;
 use outline::{CursorTarget, Outline};
 pub(crate) use outline::{SectionDisclosure, SectionId};
 
-/// Section 0 is the blank slot the dock paints over, then the context switches, then message display.
-const CONTEXT_SECTION: SectionIdx = SectionIdx(1);
-const DISPLAY_SECTION: SectionIdx = SectionIdx(2);
-const TODO_SECTION: SectionIdx = SectionIdx(3);
+const DOCK_SECTION: SectionIdx = SectionIdx(0);
+const TODO_SECTION: SectionIdx = SectionIdx(2);
+const CONTEXT_SECTION: SectionIdx = SectionIdx(3);
+const DISPLAY_SECTION: SectionIdx = SectionIdx(4);
 
 /// What a row of the sidebar changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowTarget {
+    DockPlacement,
     Context(ContextCategory),
     Display(MessageKind),
 }
 
 fn row_target(section: SectionIdx, RowIdx(index): RowIdx) -> Option<RowTarget> {
-    if section == CONTEXT_SECTION {
+    if section == DOCK_SECTION {
+        (index == 0).then_some(RowTarget::DockPlacement)
+    } else if section == CONTEXT_SECTION {
         all_categories().get(index).copied().map(RowTarget::Context)
     } else if section == DISPLAY_SECTION {
         MessageKind::settings_kinds()
@@ -180,6 +183,7 @@ fn kind_label(kind: MessageKind) -> &'static str {
         MessageKind::Btw => "Side questions",
         MessageKind::ContextInfo => "Context info",
         MessageKind::MemoryCapture => "Memory captures",
+        MessageKind::Injected => "Injected context",
         MessageKind::Stub => "Stub",
     }
 }
@@ -249,6 +253,18 @@ fn rows<'a>(
 }
 
 impl AgentView {
+    pub(crate) fn context_dock_geometry(&self) -> Option<(Rect, u16)> {
+        let ContextSidebar::Open(open) = &self.context_sidebar else { return None; };
+        open.layout?.hosted_rect(SectionIdx(1), &open.sidebar)
+    }
+
+    pub(crate) fn context_dock_expanded(&self) -> bool {
+        match &self.context_sidebar {
+            ContextSidebar::Open(open) => open.disclosure.is_expanded(SectionId::Dock),
+            ContextSidebar::Closed => false,
+        }
+    }
+
     /// Body rect of the F7 column, or empty while it is closed.
     pub(super) fn context_sidebar_body(&mut self, column: Rect) -> Rect {
         if !matches!(self.context_sidebar, ContextSidebar::Open(_)) || column.width == 0 {
@@ -269,6 +285,13 @@ impl AgentView {
         self.timeline_mode
             .panel()
             .is_some_and(|panel| panel.focus == crate::views::timeline_panel::PanelFocus::Panel)
+    }
+
+    pub(crate) fn focus_context_sidebar(&mut self) {
+        if let ContextSidebar::Open(open) = &mut self.context_sidebar {
+            open.focus = SidebarFocus::Sidebar;
+            open.reveal_pending = true;
+        }
     }
 
     pub(crate) fn clear_context_sidebar_focus(&mut self) {
@@ -330,7 +353,7 @@ impl AgentView {
                     layout: None,
                     policy: PolicyState::Loading,
                     disclosure: self.restored_section_disclosure(),
-                    todo_count: self.todo.todos().len(),
+                    todo_count: self.todo.sidebar_row_count(),
                     reveal_pending: f7_focused,
                 });
             } else if let ContextSidebar::Open(open) = &mut self.context_sidebar {
@@ -359,7 +382,7 @@ impl AgentView {
                     layout: None,
                     policy: PolicyState::Loading,
                     disclosure: self.restored_section_disclosure(),
-                    todo_count: self.todo.todos().len(),
+                    todo_count: self.todo.sidebar_row_count(),
                     reveal_pending: false,
                 });
                 self.clear_timeline_panel_focus();
@@ -514,32 +537,38 @@ impl AgentView {
             Some(lines::display_summary(defaults)),
             &theme,
         );
-        let todo_rows: Vec<SidebarRow<'static>> = self
-            .todo
-            .todos()
-            .iter()
-            .map(|item| {
-                use xai_grok_shell::tools::TodoStatus;
-                let status = match item.status {
-                    TodoStatus::Pending => "pending",
-                    TodoStatus::InProgress => "in progress",
-                    TodoStatus::Completed => "completed",
-                    TodoStatus::Cancelled => "cancelled",
-                };
-                SidebarRow {
-                    left: Line::from(item.content.clone()),
-                    right: Some(Line::from(status)),
-                    detail: &[],
-                }
-            })
-            .collect();
-        if open.todo_count != todo_rows.len() {
-            open.todo_count = todo_rows.len();
+        self.todo.refresh_entries();
+        let todo_count = self.todo.sidebar_row_count();
+        if open.todo_count != todo_count {
+            open.todo_count = todo_count;
             open.apply_disclosure(open.disclosure);
         }
-        let dock_slot = super::sidebars::DockSlot(self.dock_rows_in_sidebar);
+        let pending_dock = self.pending_dock.take();
+        let dock_height = if disclosure.is_expanded(SectionId::Dock) {
+            pending_dock.as_ref().map_or(0, |dock| dock.rect.height)
+        } else { 0 };
+        let dock_data = pending_dock.map(|dock| std::cell::RefCell::new(dock.data));
+        let dock_slot = super::sidebars::DockSlot {
+            data: dock_data.as_ref(),
+            height: dock_height,
+            pointer: self.last_mouse_pos,
+        };
+        let dock_controls = [SidebarRow {
+            left: Line::from("  Placement"),
+            right: Some(Line::from(crate::views::dock::placement().label())),
+            detail: &[],
+        }];
         let sections = [
+            SidebarSection::Rows {
+                title: lines::title_line(SectionId::Dock, disclosure.is_expanded(SectionId::Dock), None, &theme),
+                rows: disclosure.visible(SectionId::Dock, &dock_controls),
+            },
             SidebarSection::Hosted(&dock_slot),
+            SidebarSection::LazyRows {
+                title: lines::title_line(SectionId::Todo, disclosure.is_expanded(SectionId::Todo), None, &theme),
+                count: if disclosure.is_expanded(SectionId::Todo) { todo_count } else { 0 },
+                source: &self.todo,
+            },
             SidebarSection::Rows {
                 title: context_title,
                 rows: disclosure.visible(SectionId::Context, &rows),
@@ -547,10 +576,6 @@ impl AgentView {
             SidebarSection::Rows {
                 title: display_title,
                 rows: disclosure.visible(SectionId::Display, &display),
-            },
-            SidebarSection::Rows {
-                title: Line::from("Todos"),
-                rows: &todo_rows,
             },
         ];
         open.sidebar.rebuild_layout(&sections);
@@ -592,5 +617,30 @@ impl AgentView {
             },
             buf,
         ));
+        let dock_rect = open.layout.and_then(|layout| layout.hosted_rect(SectionIdx(1), &open.sidebar));
+        if self.f7_body.contains((self.pane_areas.dock.x, self.pane_areas.dock.y).into()) {
+            self.pane_areas.dock = dock_rect.map(|(rect, _)| rect).unwrap_or_default();
+        }
+        let standalone = self.pane_areas.dock.area() > 0
+            && dock_rect.is_none_or(|(rect, _)| rect != self.pane_areas.dock);
+        self.dock_shown = standalone || dock_rect.is_some();
+        if self.active_pane == super::AgentPane::Dock {
+            if !self.dock_shown {
+                self.set_active_pane(super::AgentPane::Scrollback, false);
+            } else {
+                self.dock_focus_in_sidebar = !standalone
+                    || (self.dock_focus_in_sidebar && dock_rect.is_some());
+            }
+        }
+        if self.dock_shown {
+            self.clamp_dock_overflow();
+        }
+        if let (Some((rect, _)), Some(data)) = (dock_rect, dock_data.as_ref()) {
+            let data = data.borrow();
+            if rect.contains(self.last_mouse_pos.into()) {
+                self.dock_hovered = data.hovered;
+                self.cache_dock_stop_at(rect, &data);
+            }
+        }
     }
 }

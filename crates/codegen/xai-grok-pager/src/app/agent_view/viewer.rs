@@ -6,23 +6,17 @@ use crate::key;
 use crate::scrollback::selection::SelectionBox;
 use crate::scrollback::types::DisplayMode;
 use crate::theme::Theme;
-use crate::views::block_viewer::{BlockViewerPane, format_blockquote};
+use crate::views::block_viewer::BlockViewerPane;
 use crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX;
 use crate::views::file_search::line_viewer::{LineViewerState, PlanViewerItem};
 use crate::views::list_pane::ListItem;
 use crate::views::plan_approval_view::PlanApprovalFocus;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use xai_grok_telemetry::events::{BlockViewerOpened, BlockViewerQuoted};
+use xai_grok_telemetry::events::BlockViewerOpened;
 use xai_grok_telemetry::session_ctx::log_event;
-
-pub(crate) enum IdleEnterQuote {
-    NotHandled,
-    ConsumedEmpty,
-    Quoted(String),
-}
 
 impl AgentView {
     // ── Line viewer methods ────────────────────────────────────────────
@@ -185,11 +179,6 @@ impl AgentView {
             if self.is_plan_viewer() {
                 return self.enter_casual_plan_commenting();
             }
-            let has_visual = self
-                .line_viewer
-                .as_ref()
-                .is_some_and(|v| v.list_state.visual_mode);
-            self.confirm_line_viewer(has_visual);
             return InputOutcome::Changed;
         }
         if key!('x').matches(key) {
@@ -1024,62 +1013,6 @@ impl AgentView {
         self.block_viewer = Some(pane);
     }
 
-    pub(crate) fn try_take_idle_enter_quote(&mut self, key: &KeyEvent) -> IdleEnterQuote {
-        let Some(viewer) = self.block_viewer.as_ref() else {
-            return IdleEnterQuote::NotHandled;
-        };
-        if viewer.list_state.input_mode().is_some()
-            || key.code != KeyCode::Enter
-            || key.modifiers != KeyModifiers::NONE
-            || key.kind != KeyEventKind::Press
-        {
-            return IdleEnterQuote::NotHandled;
-        }
-        let quoted = format_blockquote(&viewer.selected_plain_text());
-        if quoted.is_empty() {
-            return IdleEnterQuote::ConsumedEmpty;
-        }
-        log_event(BlockViewerQuoted {
-            kind: viewer.kind.telemetry_kind(),
-        });
-        self.dismiss_block_viewer();
-        IdleEnterQuote::Quoted(quoted)
-    }
-
-    pub(crate) fn insert_quoted_reply(&mut self, quoted: &str) {
-        self.prompt_input_mode = super::PromptInputMode::Normal;
-        let delim_at = self
-            .prompt
-            .textarea
-            .selection_range()
-            .map(|range| range.start)
-            .unwrap_or_else(|| self.prompt.cursor());
-        let at_line_start = delim_at == 0
-            || self
-                .prompt
-                .text()
-                .as_bytes()
-                .get(delim_at - 1)
-                .is_some_and(|b| *b == b'\n');
-        self.prompt.textarea.begin_undo_group();
-        if !at_line_start {
-            self.prompt.insert_replacing_selection("\n");
-        } else if self.prompt.textarea.selection_range().is_some() {
-            self.prompt.insert_replacing_selection("");
-        }
-        self.prompt.handle_paste(quoted);
-        self.prompt.insert_replacing_selection("\n\n");
-        self.prompt.textarea.end_undo_group();
-        self.prompt.refresh_slash(&self.session.models);
-        if let Some(eff) = self.notify_suggestion_text_changed() {
-            self.pending_effects.push(eff);
-        }
-        if let Some(eff) = self.notify_plugin_cta_text_changed() {
-            self.pending_effects.push(eff);
-        }
-        self.set_active_pane(AgentPane::Prompt, true);
-    }
-
     /// Handle a key event when the block viewer is open.
     ///
     /// Returns `Changed` if consumed, `Unchanged` if the key should bubble up.
@@ -1091,15 +1024,6 @@ impl AgentView {
         if viewer.is_close_key(key) {
             self.dismiss_block_viewer();
             return InputOutcome::Changed;
-        }
-
-        match self.try_take_idle_enter_quote(key) {
-            IdleEnterQuote::NotHandled => {}
-            IdleEnterQuote::ConsumedEmpty => return InputOutcome::Changed,
-            IdleEnterQuote::Quoted(quoted) => {
-                self.insert_quoted_reply(&quoted);
-                return InputOutcome::Changed;
-            }
         }
 
         let Some(ref mut viewer) = self.block_viewer else {

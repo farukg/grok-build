@@ -1,11 +1,62 @@
 # Fork status
 
-As of 2026-10-20. Upstream base: `origin/main` = `2bdd1d6a` (`xai-org/grok-build`).
-`main` is the integration branch: everything that compiles and passes its tests lands here.
-On 2026-10-19 Faruk ordered a one-time history fold: `main`'s fork delta over `2bdd1d6a`
-was re-committed as the seven thematic fold commits below with a byte-identical tree.
-The pre-fold history (all commit shas cited below as "pre-fold") is preserved in the local
-`archive/pre-fold-main` branch and was the last state of the old remote `main`.
+Current delivery status: 2026-10-25. The fork is `farukg/grok-build` (`origin`);
+`xai-org/grok-build` is upstream, not the push destination.
+
+The preserved owner and started-work source has been integrated into the current
+`main` source tree; its final integration commit is pending. Release-build acceptance
+is pending for that final commit. No current-wave build result, staging, activation,
+or verified installed/running artifact is established. Preserved references include
+canonical `875ff73c` and owner `e7ceeb50`; these are preservation commits, not the
+final integrated SHA.
+
+Historical published `main` at `ba47d59ffc2538a6f4138ce61fd186376776fe21` was an
+independently source-reviewed Root/Child intermediate. GitHub Actions
+[linux-build run 40178088795](https://github.com/farukg/grok-build/actions/runs/40178088795)
+completed successfully at that exact SHA (created 2026-10-25T08:48:29Z), automatically
+triggered by the intermediate push. This is historical build-only evidence;
+same-SHA `linux-test` acceptance was unverified and it does not establish current
+main's build or acceptance.
+
+**Effective policy: no local executing checks, builds, tests, formatters,
+validation scripts or hooks, including `sig build`. Executing verification belongs
+exclusively to GitHub Actions. No sig-orch communications are authorized.** No force
+push is authorized on any branch. Historical local results and older handoff
+instructions do not override this policy.
+
+The [owner-takeover plan](plan/owner-takeover.md) owns active delivery and acceptance
+details; its existing [handoff](handoff/2026-10-24/owner-handoff/handoff.md) and
+[Wave B references](handoff/2026-10-24/wave-b/) retain requirements and history.
+Current evidence supersedes their older local-verification and gateway-owner text.
+
+## Current source join and open gates
+
+- R: stable terminal execution identity and finite enrollment/kill settlement remain
+  under correction and review; no runtime acceptance is established.
+- D: producer claim → successful durable write → fallible local handoff is narrowly
+  source-reviewed. Detached blocking-write execution lease lifetime, authoritative
+  durable teardown and independent recovery/receipt oracles remain open.
+- S: the original durable goal-suppression route is source-reviewed. Existing terminal
+  receipts must not consume newly owned unrelated transient MonitorEvents; that
+  ownership repair and retry oracles remain open.
+- Compaction: bounded invocation-correlation production is source-reviewed; added
+  replay, original persistence-ACK and decoder oracles are authored but unexecuted
+  and still require independent oracle review and integrated acceptance. Historical
+  tagged manual lifecycle does not restore RPC-only local markers after restart.
+- Legacy untagged compaction producer ambiguity and capability compatibility remain
+  deferred external gates. Maomao is the current sigma-crates owner. Schema/pass-through,
+  correlated producer availability and consumer-first rollout acceptance are unverified.
+  SIG delivery-outage diagnosis is separate; no shared restart is authorized.
+- Source-only closures are not compilation, test discovery, execution or UI acceptance.
+  Final integrated review and same-final-SHA GitHub Actions build/tests remain required,
+  followed by explicit staging, selected/running artifact evidence and interaction acceptance.
+
+## Historical fold baseline
+
+The 2026-10-19 fold used upstream base `2bdd1d6a`. The following inventory preserves
+previously delivered capabilities and historical evidence, not current-wave verification.
+Pre-fold references use `archive/pre-fold-main` as the recorded historical retrieval owner;
+its present local availability has not been checked.
 
 ## Fold legend (main = `2bdd1d6a` + f1…f7)
 
@@ -63,34 +114,72 @@ W2, W1-S, W1-H stream runs green; F6/F7 release build and new tests green in CI 
 2026-10-19 (`51886e04` pre-fold); the chat-state fix green in build and manual test.
 The fold is tree-identical: the same code, re-committed.
 
-### Known failures (not regressions)
+### Historical known failures (not current-source verdicts)
+
+Later handoff evidence at `bc85ceb9` records a green build and 27 distinct failed
+test identities plus two hang entries: 28 unique identities, because the PTY case
+appears as both failure and hang. At Wave A baseline `5abbd3c`, the build succeeded
+but the test run was cancelled after authorized abort of the stalled step. Cancellation
+is neither test failure nor acceptance. The unavailable job log and historical exit
+code 143 do not identify a product cause or the stalled command.
+
+The telemetry failure `execute_tool_calls_records_the_product_row_and_execution_span`
+has no individual assertion stdout; its exact historical cause remains unknown.
+A historical isolated pass does not establish cause or current acceptance. Typed
+wake/ACK and serialized Summary fixture repairs are present at source level, but
+shared helper repairs do not prove every historical failure fixed. Reconciliation
+of the independent `SubagentCompleted` shutdown assertion and producer terminal
+persistence for `finished_coordinator_child_compacts_persisted_checkpoint_without_parent_delivery`
+(historical `NotTerminal`) remains open. PTY navigation hints were updated at source;
+runtime acceptance is unverified. See the
+[plan's historical evidence](plan/owner-takeover.md#input-and-historical-evidence).
 - Upstream, also failing on upstream `main`: `diagnostics::doctor_format::tests::limited_color_output_is_stable`,
   `doctor_cmd::tests::{human_mixed_fixture_is_exact, json_contract_is_structural_stable_ordered_and_ansi_free, json_empty_fixture_pins_null_policy}`
   (fixtures expect 6 themes, the tree has 7).
-- Shell lib tests failing on `main` in the cloud container (environment, not code): four
-  `agent::config::tests` api_backend/citation cases, `agent::subagent::tests::rest::read_parent_sampling_config_*` (2),
-  `session::acp_session::mcp_file_input::tests::*` (3), `session::unified_list::tests::parse_list_req_forces_kind_under_process_chat_mode_only`.
+- Earlier status attributed these cloud-container shell failures to environment:
+  four `agent::config::tests` api_backend/citation cases,
+  `agent::subagent::tests::rest::read_parent_sampling_config_*` (2),
+  `session::acp_session::mcp_file_input::tests::*` (3), and
+  `session::unified_list::tests::parse_list_req_forces_kind_under_process_chat_mode_only`.
+  These remain historical environment candidates, not proven non-code failures.
+  Current evidence does not establish environment prerequisites for the seven later
+  config/MCP/unified-list cases; ambient configuration alone does not prove cause.
+  Neither a blanket seven-environment classification nor complete current closure
+  is supported.
   `agent::mvp_agent::tests::a_cancelled_installer_retires_its_thread_when_a_reinstall_takes_the_slot`
-  overflows the default 2 MiB test stack and aborts the run: use `RUST_MIN_STACK=16777216`.
+  historically overflowed the default 2 MiB test stack and aborted the run;
+  the recorded CI stack requirement is `RUST_MIN_STACK=16777216`, not local execution permission.
 - Flaky: `app::acp_handler::tests::settings::settings_update_clearing_group_tool_verbs_reverts_to_default`.
   Appearance caches (`crate::appearance::cache::*`) are thread-local and seed from the developer's
   `[ui]` config on first read; tests that depend on them must set the value they need first.
 
-## Continuing from the cloud (no access to the author's machine)
+## Continuing delivery
 
-Cloud agents work purely from GitHub: `https://github.com/farukg/grok-build` (push remote `ours`).
-Everything needed is on `main`: the fold put all landed work there; there are no stream branches to
-fetch. Upstream `xai-org/grok-build` is `origin`; the fork base is `2bdd1d6a`.
+Use the [owner-takeover plan](plan/owner-takeover.md), preserving existing author
+source and canonical documentation for integration. Not all required work is on
+published `main`. Push normally only to `farukg/grok-build` (`origin`); no force
+push is authorized, including force-with-lease on stream branches.
 
-- No local machine access: no cargo, no local grok runtime, no SIG tooling. GitHub Actions is the only build/test oracle: `linux-build` builds `grok` on every push to `main`; the manual `linux-test` workflow (workflow_dispatch) runs the pager, shell-removal, chat-state and sampling-types tests.
-- Read this file first, then `docs/fork/skills/` (implementation bar), then the stream file for your task; designs in `design/`, review verdicts in `reviews/`, briefs in `briefs/`, recon in `recon/`.
-- Branch workflow: cut `grb/<stream>` from `main` to work; once green, squash onto `main` and push (no PR); stream branches may be force-pushed with lease; `main` never.
-- Expect the known failures listed above and the environment-dependent shell tests; `streams/f6-f7-trees.md` records what green means in CI.
-- Commit-sha citations in the stream files and `plan/grb-001.md` refer to pre-fold history (`archive/pre-fold-main` locally); the fold legend above maps areas to the new fold commits.
+The release workflow is artifact-build/package-only; formatting guard execution stays
+in `linux-test`, not `linux-build`. Current integration remains in progress and has
+no final SHA. The current delivery instruction authorizes only the necessary GitHub
+release build for current `main`; no tests, local checks, formatters or `sig build`
+are authorized. Stage only the exact current-main artifact after that release build
+succeeds. Historical failure evidence above must not be treated as current acceptance.
+
+Historical stream references and `plan/grb-001.md` remain useful capability/design
+owners, not authority to restart obsolete branch or local-verification workflows.
 
 ## Context reporting and tool-call diagnosis
 
-F7 function-tool schema accounting is included in the installed `0d4dd3b2` artifact (GitHub build `39768893207`); hosted-tool accounting and fresh/resumed/child UI acceptance remain open. Existing session prefixes/catalogs can also put workspace rules under Environment and skills under SystemReminder, leaving their intended rows at zero. The gateway now exposes GPT-6/6.1 through native Responses Lite. Grok's native stream reducer still needs the `22fd28fb` artifact to assemble `output_item.done` items when terminal `output` is empty; otherwise successful text turns repeat. Findings and remaining acceptance criteria are maintained in `streams/f1-context-provenance.md` under “Verified defects and TODO”.
+Historical F7 function-tool schema accounting and native Responses Lite findings
+remain documented in `streams/f1-context-provenance.md` under “Verified defects and TODO”.
+Hosted-tool accounting and fresh/resumed/child UI acceptance remain unverified.
+Existing session prefixes/catalogs can put workspace rules under Environment and
+skills under SystemReminder, leaving their intended rows at zero. Historical native
+stream reduction needed to assemble `output_item.done` items when terminal `output`
+is empty to avoid repeated successful text turns. None of these historical artifact
+references establishes the currently selected or running binary.
 
 Intermittent model claims of missing tools are reproduced independently of those display errors: the gateway's outbound capture contains all 29 declarations, and identical fresh-session payloads can produce either a denial or a successful call. A causal regression in Grok CLI or the gateway has not yet been isolated.
 
@@ -108,11 +197,10 @@ Intermittent model claims of missing tools are reproduced independently of those
 | F2/F3 F6/F7 sidebars wired into the view | on `main` (f4); open: F6/F7 hang on very large sessions (see stream file), dock glyph/hover polish | `streams/f2-f3-sidebars.md` |
 | F6/F7 trees, removal, colours, saved panel settings (GRB-001 M12–M15) | on `main` (f3, f4), CI green 2026-10-19; open points in the stream file | `streams/f6-f7-trees.md` |
 
-Suggested order: the open W3 items, M11 and F1-display, then the F1-core mixed sections.
-The planned context-control items (inspection, prompt editing, tool toggles, LLM view) are
-GRB-001 S-N to S-U and not started. Before starting, cut your stream branch from `main`;
-a stream is done only when `main` contains its progress: once green, squash it onto `main`
-and push (no PR).
+This table is the historical stream inventory, not the current delivery queue.
+Use the [owner-takeover plan](plan/owner-takeover.md) for active ordering and gates.
+GRB-001 remains the historical design owner for context-control proposals; this
+inventory does not establish their current implementation or acceptance state.
 
 ## Branch dispositions (2026-10-19 fold)
 

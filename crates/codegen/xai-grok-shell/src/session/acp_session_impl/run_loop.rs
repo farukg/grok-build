@@ -145,6 +145,10 @@ impl SessionActor {
         let super::PromptOrigin::TaskCompleted { task_id } = origin else {
             return respond_to.send(true).is_ok().then_some(fallback);
         };
+        let Some(fallback) = self.retain_or_suppress_task_wake(fallback).await else {
+            let _ = respond_to.send(false);
+            return None;
+        };
         let gate_suppressed = self
             .tool_context
             .task_wake_suppressed
@@ -152,8 +156,7 @@ impl SessionActor {
             .is_some_and(|gate| gate.get());
         let mut state = self.state.lock().await;
         let state_suppressed = state.notifications_suppressed;
-        let admitted = !gate_suppressed && !state_suppressed;
-        if !admitted {
+        if CompletionWakeAdmission::classify(gate_suppressed, state_suppressed).is_parked() {
             Self::push_task_wake_fallback(&mut state, fallback);
             drop(state);
             xai_grok_telemetry::unified_log::info(
@@ -185,6 +188,101 @@ impl SessionActor {
             })),
         );
         Some(fallback)
+    }
+
+    /// Restart boundary: a persisted `HumanStopped` barrier must not silently survive
+    /// the process boundary (gb-wake-1). The restored session re-admits wakes; only a
+    /// fresh stop gesture re-arms suppression.
+    pub(super) async fn restore_completion_wake_policy(
+        &self,
+        policy: crate::session::completion_delivery::CompletionWakePolicy,
+    ) {
+        if policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped {
+            xai_grok_telemetry::unified_log::info(
+                "shell.task_wake.barrier_not_restored",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({ "persisted_policy": "human_stopped" })),
+            );
+        }
+        self.clear_wake_suppression("restart_restore").await;
+        if policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped {
+            self.set_completion_wake_policy(
+                crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+            );
+        }
+    }
+
+    /// Workflow completion wake on the shared admission path (gb-wake-1): an
+    /// unreported completion queues a synthetic row; under suppression the row parks
+    /// in the queue (the promoter defers) instead of being dropped.
+    pub(super) async fn handle_workflow_completion_turn(
+        self: std::sync::Arc<Self>,
+        completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
+        run_id: String,
+        revision: u64,
+    ) {
+        let unreported = self
+            .workflow_tracker()
+            .await
+            .lock()
+            .is_unreported_completion(&run_id, revision);
+        if !unreported {
+            return;
+        }
+        let (admission, already_queued) = {
+            let state = self.state.lock().await;
+            let gate_suppressed = self
+                .tool_context
+                .task_wake_suppressed
+                .as_ref()
+                .is_some_and(|gate| gate.get());
+            (
+                CompletionWakeAdmission::classify(gate_suppressed, state.notifications_suppressed),
+                state.pending_inputs.iter().any(|item| {
+                    matches!(
+                        item.input_origin.as_prompt_origin(),
+                        super::PromptOrigin::WorkflowCompleted { completion_id }
+                            if completion_id == &format!("{run_id}-{revision}")
+                    )
+                }),
+            )
+        };
+        if already_queued {
+            return;
+        }
+        let prompt_id = format!("workflow-completed-{run_id}-{revision}");
+        let prompt_text = "A background workflow stopped. Review the workflow completion reminder, report the result to the user, and take any appropriate next action.";
+        let (respond_to, _) = oneshot::channel();
+        {
+            let mut state = self.state.lock().await;
+            state.pending_inputs.push_back(InputItem {
+                prompt_id,
+                prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(prompt_text))],
+                prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+                trace_gcs_config: None,
+                artifact_tracker: None,
+                client_identifier: None,
+                screen_mode: None,
+                verbatim: true,
+                json_schema: None,
+                input_origin: InputOrigin::new(super::PromptOrigin::WorkflowCompleted {
+                    completion_id: format!("{run_id}-{revision}"),
+                }),
+                task_wake_fallback: None,
+                tool_overrides_update: None,
+                respond_to,
+                persist_ack: None,
+                parsed_prompt_tx: None,
+                initial_child_prompt_ready: None,
+                queue_meta: None,
+                queue_mutation_policy: QueueMutationPolicy::hidden(),
+                send_now: false,
+                traceparent: None,
+            });
+        }
+        if !admission.is_parked() {
+            SessionActor::maybe_start_running_task(self, completion_tx).await;
+        }
     }
 }
 async fn shutdown_workflows(session: &SessionActor, timer: &SharedSessionEndTimer) {
@@ -263,7 +361,7 @@ struct StartupTasks {
 }
 /// Startup tasks handed over by `&self` actor methods, each holding a strong `Arc` to the actor. Owned by the run
 /// loop, so no task keeps the session alive past it.
-pub(super) struct StartupTaskSet(std::rc::Rc<std::cell::RefCell<tokio::task::JoinSet<()>>>);
+pub(crate) struct StartupTaskSet(std::rc::Rc<std::cell::RefCell<tokio::task::JoinSet<()>>>);
 impl StartupTaskSet {
     pub(super) fn install(actor: &SessionActor) -> Self {
         let set = Self(std::rc::Rc::default());
@@ -522,6 +620,17 @@ pub(super) async fn run_session(
     loop {
         tokio::select! {
                 biased;
+                () = session.compaction.cancel.manual_finished.notified() => {
+                    session.join_manual_compact_worker().await;
+                    if !session.compaction.cancel.manual_is_sealed() {
+                        SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                        SessionActor::maybe_drain_notifications(session.clone(), completion_tx.clone()).await;
+                    }
+                }
+                id = session.pending_compact_cancellation() => {
+                    session.cancel_pending_compact(id).await;
+                    SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                }
                 // Idle flush timer fired: run background flush
                 _ = &mut idle_flush_sleep, if session.idle_flush_timeout.is_some()
                     && session.memory.uses_legacy_pipeline()
@@ -652,11 +761,8 @@ pub(super) async fn run_session(
                 }
                 maybe_cmd = cmd_rx.recv() => {
                     let Some(cmd) = maybe_cmd else {
-                        session
-                            .settle_all_parent_messages(
-                                xai_message_delivery_core::TerminalCause::ActorDrop,
-                            )
-                            .await;
+                        session.shutdown_compaction().await;
+                        session.stop_parent_messages_on_actor_exit().await;
                         // ── session_end (channel-closed path) ────────
                         // Queued reports first, so an earlier turn's report precedes the session-end `Stop`
                         // Hooks fire BEFORE memory auto-save
@@ -760,23 +866,6 @@ pub(super) async fn run_session(
                             // Clear suppression: the user is re-engaging
                             // Synthetic auto-wake prompts skip this; the user has not actually re-engaged, so post-cancel suppression must hold
                             if !origin.is_synthetic() {
-                                if let Some(gate) = &session.tool_context.task_wake_suppressed {
-                                    gate.set(false);
-                                }
-                                let mut state = session.state.lock().await;
-                                state.notifications_suppressed = false;
-                                if state.take_hook_block_hold() {
-                                    xai_grok_telemetry::unified_log::info(
-                                        "shell.prompt.hook_block_hold_released",
-                                        Some(session.session_info.id.0.as_ref()),
-                                        Some(serde_json::json!({ "reason": "user_intake" })),
-                                    );
-                                }
-                                xai_grok_telemetry::unified_log::info(
-                                    "shell.task_wake.gate_cleared",
-                                    Some(session.session_info.id.0.as_ref()),
-                                    Some(serde_json::json!({ "reason": "user_intake" })),
-                                );
                                 // Layer-3 LazinessDetector wake: bump the monotonic counter.
                                 // Any classifier poll-loop already running snapshots a stale value and aborts.
                                 // Synthetic prompts (NotificationDrain, GoalSummary, auto-wake) are not real user input and must NOT bump it.
@@ -1033,12 +1122,22 @@ pub(super) async fn run_session(
                                 }
                             }
                         }
+                        SessionCommand::ClassifyTerminalNotification { notification, respond_to } => {
+                            let result = session.classify_task_notification(notification).await.map(|surface| match surface {
+                                Some(_) => crate::session::commands::TerminalNotificationDecision::Surface,
+                                None => crate::session::commands::TerminalNotificationDecision::Suppressed,
+                            });
+                            let _ = respond_to.send(result);
+                        }
                         SessionCommand::InjectNotification { prompt_id, prompt_blocks, priority, source } => {
                             let is_turn_active = session
                                 .session_turn_active
                                 .load(std::sync::atomic::Ordering::SeqCst);
 
-                            if is_turn_active && priority == NotificationPriority::Next {
+                            if is_turn_active
+                                && priority == NotificationPriority::Next
+                                && matches!(source, NotificationSource::MonitorEvent { .. })
+                            {
                                 // Mid-turn and `Next` priority: push to the shared buffer for the turn loop's `inject_pending_monitor_events`
                                 if let Some(buffer) = &session.tool_context.monitor_event_buffer {
                                     let non_text_count = prompt_blocks.iter().filter(|b| !matches!(b, acp::ContentBlock::Text(_))).count();
@@ -1201,33 +1300,9 @@ pub(super) async fn run_session(
                                 }
                             }
                         }
-                        SessionCommand::CompactSession { cancellation, mut respond_to } => {
-                            let s = session.clone();
-                            tokio::task::spawn_local(async move {
-                                let compact = s.run_compact();
-                                tokio::pin!(compact);
-                                let result = tokio::select! {
-                                    biased;
-                                    () = cancellation.cancelled() => {
-                                        s.compaction.cancel.request_cancel();
-                                        if s.compaction.cancel.is_committing() {
-                                            compact.await
-                                        } else {
-                                            Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error())
-                                        }
-                                    }
-                                    () = respond_to.closed() => {
-                                        s.compaction.cancel.request_cancel();
-                                        if s.compaction.cancel.is_committing() {
-                                            compact.await
-                                        } else {
-                                            Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error())
-                                        }
-                                    }
-                                    result = &mut compact => result,
-                                };
-                                let _ = respond_to.send(result);
-                            });
+                        SessionCommand::CompactSession { invocation_id, cancellation, respond_to } => {
+                            session.enqueue_manual_compact(invocation_id, cancellation, respond_to).await;
+                            SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
                         }
                         SessionCommand::ReloadPlugins { registry } => {
                             if !session.startup_hints.is_subagent {
@@ -1383,10 +1458,12 @@ pub(super) async fn run_session(
                             session.handle_xai_session_notification(notification).await;
                         }
                         SessionCommand::RestoreCompletionWakePolicy(policy) => {
-                            if let Some(gate) = &session.tool_context.task_wake_suppressed {
-                                gate.set(policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped);
+                            session.restore_completion_wake_policy(policy).await;
+                            SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                            let has_parked_notifications = !session.state.lock().await.pending_notifications.is_empty();
+                            if has_parked_notifications {
+                                SessionActor::maybe_drain_notifications(session.clone(), completion_tx.clone()).await;
                             }
-                            session.state.lock().await.notifications_suppressed = policy == crate::session::completion_delivery::CompletionWakePolicy::HumanStopped;
                         }
                         SessionCommand::PublishSubagentCompletion { event, will_wake, respond_to } => {
                             let (reply, receive) = oneshot::channel();
@@ -2196,63 +2273,13 @@ pub(super) async fn run_session(
                             SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
                         }
                         SessionCommand::WorkflowCompletionTurn { run_id, revision } => {
-                            let state_suppressed = session.state.lock().await.notifications_suppressed;
-                            let wake_suppressed = state_suppressed
-                                || session.goal_loop_active()
-                                || session
-                                    .tool_context
-                                    .task_wake_suppressed
-                                    .as_ref()
-                                    .is_some_and(|gate| gate.get());
-                            let should_wake = if wake_suppressed {
-                                false
-                            } else {
-                                let tracker = session.workflow_tracker().await;
-                                tracker.lock().is_unreported_completion(&run_id, revision)
-                            };
-                            if !should_wake {
-                                continue;
-                            }
-                            let prompt_id = format!("workflow-completed-{run_id}-{revision}");
-                            let prompt_text = "A background workflow stopped. Review the workflow completion reminder, report the result to the user, and take any appropriate next action.";
-                            let (respond_to, _) = tokio::sync::oneshot::channel();
-                            {
-                                let mut state = session.state.lock().await;
-                                let workflow_wake_queued = state.pending_inputs.iter().any(|item| {
-                                    matches!(
-                                        item.input_origin.as_prompt_origin(),
-                                        super::PromptOrigin::WorkflowCompleted { .. }
-                                    )
-                                });
-                                if workflow_wake_queued {
-                                    continue;
-                                }
-                                state.pending_inputs.push_back(InputItem {
-                                    prompt_id,
-                                    prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(prompt_text))],
-                                    prompt_mode: crate::session::plan_mode::PromptMode::Agent,
-                                    trace_gcs_config: None,
-                                    artifact_tracker: None,
-                                    client_identifier: None,
-                                    screen_mode: None,
-                                    verbatim: true,
-                                    json_schema: None,
-                                    input_origin: InputOrigin::new(super::PromptOrigin::WorkflowCompleted {
-                                        completion_id: format!("{run_id}-{revision}"),
-                                    }),
-                                    task_wake_fallback: None,
-                                    tool_overrides_update: None,
-                                    respond_to,
-                                    persist_ack: None,
-                                    parsed_prompt_tx: None,
-                                    initial_child_prompt_ready: None,
-                                    queue_meta: None,
-                                    queue_mutation_policy: QueueMutationPolicy::hidden(),
-                                    send_now: false,
-                                    traceparent: None,
-                                });
-                            }
-                            SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                            session
+                                .clone()
+                                .handle_workflow_completion_turn(completion_tx.clone(), run_id, revision)
+                                .await;
+                        }
+                        SessionCommand::ResumeTerminalCompletion { id, text, policy } => {
+                            session.clone().resume_terminal_completion(completion_tx.clone(), id, text, policy).await;
                         }
                         SessionCommand::TakeTurnMessages { respond_to } => {
                             let result = session.chat_state_handle.take_turn_messages().await;
@@ -2304,8 +2331,7 @@ pub(super) async fn run_session(
                             let _ = respond_to.send(());
                         }
                         SessionCommand::Shutdown(kind) => {
-                            session.compaction.cancel.request_cancel();
-                            session.compaction.cancel.drain().await;
+                            session.shutdown_compaction().await;
                             let end_timer = session_end::SessionEndTimer::new_shared();
                             session.persist_resume_status().await;
                             shutdown_workflows(&session, &end_timer).await;
@@ -2318,10 +2344,16 @@ pub(super) async fn run_session(
                             // Session is ending: do not leave a side-call holding an Arc into this actor
                             session.abort_turn_summary();
                             session.abort_title_refresh();
+                            if kind == crate::session::ShutdownKind::Graceful {
+                                session.settle_parent_messages_for_exit(
+                                    xai_message_delivery_core::TerminalCause::HardTeardown,
+                                    super::parent_message::ParentRunningTeardown::Preserve,
+                                ).await.unwrap_or_else(|error| tracing::error!(%error, "parent teardown remains durably unsettled"));
+                            }
                             // This arm returns; an unanswered turn would race teardown and report `EndTurn` for unfinished work
                             if kind == crate::session::ShutdownKind::CancelRunningTurn {
                                 // Shutdown is not a stop gesture: the session-end `Stop` reports this teardown
-                                let _ = session
+                                let outcome = session
                                     .cancel_running_task(crate::session::CancelOptions {
                                         cancel_subagents: true,
                                         kill_background_tasks: true,
@@ -2330,12 +2362,10 @@ pub(super) async fn run_session(
                                         user_initiated: false,
                                     })
                                     .await;
+                                if !outcome.settled {
+                                    tracing::error!("shutdown has unresolved durable terminal settlement");
+                                }
                             }
-                            session
-                                .settle_all_parent_messages(
-                                    xai_message_delivery_core::TerminalCause::HardTeardown,
-                                )
-                                .await;
                             // Drop any queued synthetic auto-wake prompts and pending notifications before running hooks A synthetic prompt can slip through the per-tool-result sweep A later persistence path would then flush it to chat_history.jsonl.
                             // That leaves a trailing `<system-reminder>` with no assistant reply.
                             // Placed BEFORE hook dispatch so the cleanup runs even if hooks abort.
@@ -2376,11 +2406,7 @@ pub(super) async fn run_session(
                         processed,
                     }) = maybe_completion
                     else {
-                        session
-                            .settle_all_parent_messages(
-                                xai_message_delivery_core::TerminalCause::ActorDrop,
-                            )
-                            .await;
+                        session.stop_parent_messages_on_actor_exit().await;
                         // Completion channel closed: full feedback teardown so the final signal sync and upload drain still run
                         // Cancel alone does not force-sync; shutdown owns that
                         // No session-end hooks here, but the flush still precedes `shutdown_workflows`, which makes a queued report's entry durable
@@ -2628,3 +2654,7 @@ pub(super) fn turn_texts_for_feedback(
         model_fingerprint,
     }
 }
+
+#[cfg(test)]
+#[path = "run_loop_tests.rs"]
+mod tests;

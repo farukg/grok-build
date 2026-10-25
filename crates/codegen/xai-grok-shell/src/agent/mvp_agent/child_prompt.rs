@@ -237,3 +237,79 @@ pub(super) fn child_of(meta: Option<&acp::Meta>) -> Option<acp::SessionId> {
 fn refused_wake(outcome: SendSubagentMessageOutcome) -> acp::Error {
     acp::Error::invalid_request().data(serde_json::json!({ "childWake": outcome }))
 }
+
+/// Why a prompt to an id this shell hosts neither live nor loading was refused.
+/// `ReapedChild` replaces the old bare "unknown session id" for subagent children: the wire
+/// data names the child, its parent when the durable record carries one, and the recovery path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UnknownPromptTarget {
+    /// The id names a subagent child whose actor is gone (reaped or leader restart); its
+    /// durable record survives, so the child is recoverable through its parent session.
+    ReapedChild {
+        child: String,
+        parent_session_id: Option<String>,
+    },
+    /// No session with this id exists here or on disk.
+    Unknown { session_id: String },
+}
+
+impl UnknownPromptTarget {
+    /// The error's `data` payload: a bare string for unknown ids (byte-identical to the
+    /// pre-typed refusal), an object naming the reaped child, its parent, and the recovery
+    /// path for subagent children.
+    pub(super) fn wire_payload(&self) -> serde_json::Value {
+        match self {
+            Self::Unknown { .. } => serde_json::json!("unknown session id"),
+            Self::ReapedChild {
+                child,
+                parent_session_id,
+            } => {
+                let parent_clause = parent_session_id
+                    .as_deref()
+                    .map(|parent| format!(" of parent session '{parent}'"))
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "kind": "reapedChild",
+                    "sessionId": child,
+                    "parentSessionId": parent_session_id,
+                    "message": format!(
+                        "session '{child}' is a subagent session{parent_clause} that is no \
+                         longer running; open its parent session and resume the child from \
+                         there — prompts sent from the child's own view carry `_meta.childOf` \
+                         and continue it automatically",
+                    ),
+                })
+            }
+        }
+    }
+}
+
+impl From<UnknownPromptTarget> for acp::Error {
+    fn from(target: UnknownPromptTarget) -> Self {
+        acp::Error::invalid_params().data(target.wire_payload())
+    }
+}
+
+/// Typed refusal for a prompt to an id with no live host and no `_meta.childOf`.
+/// The durable subagent record (the child's own `summary.json`) decides between a reaped
+/// child, recoverable through its parent, and a genuinely unknown id.
+pub(super) async fn unknown_prompt_target_error(session_id: &str) -> acp::Error {
+    let id = session_id.to_owned();
+    let summary = tokio::task::spawn_blocking(move || {
+        crate::session::persistence::find_summary_by_session_id(&id)
+    })
+    .await
+    .ok()
+    .flatten();
+    match summary {
+        Some(summary) if summary.is_subagent_kind() => UnknownPromptTarget::ReapedChild {
+            child: session_id.to_owned(),
+            parent_session_id: summary.parent_session_id.clone(),
+        }
+        .into(),
+        Some(_) | None => UnknownPromptTarget::Unknown {
+            session_id: session_id.to_owned(),
+        }
+        .into(),
+    }
+}

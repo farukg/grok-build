@@ -8,6 +8,8 @@ use crate::agent::config::{EndpointsConfig, ModelEntry};
 use crate::agent::handlers::model_switch::SwitchContextWindow;
 use crate::extensions::code_nav::CodeNavEligibility;
 use std::num::NonZeroU64;
+#[path = "notification_suppression_load_tests.rs"]
+mod notification_suppression_load;
 /// Build an unsigned JWT with a `tier` claim (header.payload.sig base64url).
 fn jwt_with_tier(tier: u64) -> String {
     use base64::Engine;
@@ -3317,6 +3319,7 @@ async fn lazy_registry_build_resolves_real_remote_trust_before_reading_disk_conf
 }
 mod child_prompt_tests;
 mod list_running_heal_tests;
+mod roster_lane_tests;
 #[cfg(unix)]
 mod process_scope_reclaim;
 mod session_delivery_tests;

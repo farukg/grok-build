@@ -208,14 +208,21 @@ impl xai_tool_runtime::Tool for KillTaskTool {
         {
             KillOutcome::Killed => Ok(KillTaskOutput::Result(KillTaskResult {
                 task_id: input.task_id.clone(),
-                outcome: "killed".to_string(),
+                outcome: KillOutcome::Killed,
                 message: "Task was terminated successfully".to_string(),
             })),
             KillOutcome::AlreadyExited => Ok(KillTaskOutput::Result(KillTaskResult {
                 task_id: input.task_id.clone(),
-                outcome: "already_exited".to_string(),
+                outcome: KillOutcome::AlreadyExited,
                 message: "Task had already completed".to_string(),
             })),
+            outcome @ (KillOutcome::Indeterminate { .. } | KillOutcome::Failed { .. }) => {
+                Ok(KillTaskOutput::Result(KillTaskResult {
+                    task_id: input.task_id.clone(),
+                    outcome,
+                    message: outcome.to_string(),
+                }))
+            }
             KillOutcome::NotFound => {
                 // Try subagent cancel via backend
                 let backend = {
@@ -238,14 +245,14 @@ impl xai_tool_runtime::Tool for KillTaskTool {
                         SubagentCancelOutcome::Cancelled { .. } => {
                             KillTaskOutput::Result(KillTaskResult {
                                 task_id: input.task_id.clone(),
-                                outcome: "killed".to_string(),
+                                outcome: KillOutcome::Killed,
                                 message: "Subagent cancellation initiated".to_string(),
                             })
                         }
                         SubagentCancelOutcome::AlreadyFinished { state } => {
                             KillTaskOutput::Result(KillTaskResult {
                                 task_id: input.task_id.clone(),
-                                outcome: "already_exited".to_string(),
+                                outcome: KillOutcome::AlreadyExited,
                                 message: format!("Subagent already {}", state.legacy_status()),
                             })
                         }
@@ -564,7 +571,7 @@ mod tests {
 
         match result {
             KillTaskOutput::Result(r) => {
-                assert_eq!(r.outcome, "killed");
+                assert_eq!(r.outcome, KillOutcome::Killed);
                 assert_eq!(r.task_id, "task-1");
             }
             other => panic!("Expected Success, got {:?}", other),
@@ -586,7 +593,7 @@ mod tests {
         .unwrap();
 
         match result {
-            KillTaskOutput::Result(r) => assert_eq!(r.outcome, "already_exited"),
+            KillTaskOutput::Result(r) => assert_eq!(r.outcome, KillOutcome::AlreadyExited),
             other => panic!("Expected Success, got {:?}", other),
         }
     }
@@ -715,6 +722,54 @@ mod tests {
         (resources, rx)
     }
 
+    #[tokio::test]
+    async fn negative_kill_results_preserve_payload_without_subagent_fallback() {
+        use xai_tool_types::{KillFailureReason, KillProcessEffect, KillStage};
+        for outcome in [
+            KO::Indeterminate {
+                stage: KillStage::ProcessTermination,
+                process_effect: KillProcessEffect::Unknown,
+            },
+            KO::Indeterminate {
+                stage: KillStage::DurableEnrollment,
+                process_effect: KillProcessEffect::TerminalObserved,
+            },
+            KO::Failed {
+                stage: KillStage::ProcessTermination,
+                reason: KillFailureReason::PermissionDenied,
+            },
+        ] {
+            let (mut resources, mut cancel_rx) = resources_with_backend_cancel();
+            resources.insert(Terminal(Arc::new(MockTerminal {
+                outcome,
+                tasks: Vec::new(),
+            })));
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                xai_tool_runtime::Tool::run(
+                    &KillTaskTool,
+                    test_ctx_with_call_id(resources.into_shared(), "negative-kill"),
+                    KillTaskToolInput { task_id: "sub-1".into() },
+                ),
+            )
+            .await
+            .expect("negative terminal outcome must not wait for subagent cancellation")
+            .unwrap();
+            assert!(cancel_rx.try_recv().is_err(), "must not dispatch subagent cancel");
+            assert!(!result.was_killed());
+            let wire = serde_json::to_value(&result).unwrap();
+            let decoded: KillTaskOutput = serde_json::from_value(wire).unwrap();
+            match decoded {
+                KillTaskOutput::Result(result) => {
+                    assert_eq!(result.task_id, "sub-1");
+                    assert_eq!(result.outcome, outcome);
+                    assert!(!result.message.is_empty());
+                }
+                KillTaskOutput::TaskNotFound(message) => panic!("false absence: {message}"),
+            }
+        }
+    }
+
     fn unwrap_cancel(event: SubagentEvent) -> SubagentCancelRequest {
         match event {
             SubagentEvent::Cancel(r) => r,
@@ -756,7 +811,7 @@ mod tests {
 
         match result {
             KillTaskOutput::Result(r) => {
-                assert_eq!(r.outcome, "killed");
+                assert_eq!(r.outcome, KillOutcome::Killed);
                 assert!(
                     r.message.contains("Subagent cancellation"),
                     "msg: {}",
@@ -795,7 +850,7 @@ mod tests {
 
         match result {
             KillTaskOutput::Result(r) => {
-                assert_eq!(r.outcome, "already_exited");
+                assert_eq!(r.outcome, KillOutcome::AlreadyExited);
                 assert!(
                     r.message.contains("Subagent already completed"),
                     "msg: {}",

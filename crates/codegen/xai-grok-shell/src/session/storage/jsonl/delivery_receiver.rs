@@ -52,7 +52,7 @@ impl JsonlStorageAdapter {
             .open(self.receiver_lease_file(info))?;
         fs2::FileExt::try_lock_exclusive(&file)?;
         Ok(ReceiverExecutionLease {
-            _file: file,
+            _file: std::sync::Arc::new(file),
             session_id: info.id.to_string(),
         })
     }
@@ -78,6 +78,11 @@ impl JsonlStorageAdapter {
         .map_err(io::Error::other)?
     }
     fn recover_delivery_state(&self, info: &Info, summary: &mut Summary) -> io::Result<()> {
+        for binding in self.delivery_bindings(info)? {
+            if let Some(record) = summary.completion_delivery.receiver.records.get_mut(&binding.delivery_id) {
+                record.record_projection(&binding).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            }
+        }
         self.reconcile_delivery_terminals(info, summary, ReceiverPresence::Detached)?;
         for record in summary.completion_delivery.receiver.records.values_mut() {
             if let DeliveryExecution::Processing {
@@ -242,6 +247,133 @@ impl JsonlStorageAdapter {
             }
         }
         Ok(())
+    }
+
+    pub(super) async fn admit_parent_message_owned(
+        &self,
+        info: &Info,
+        admission: &crate::session::delivery_receiver::ParentMessageAdmission,
+        authority: crate::session::delivery_receiver::ParentAdmissionAuthority,
+        access: ReceiverAccess<'_>,
+    ) -> io::Result<crate::session::delivery_receiver::ParentAdmissionAck> {
+        use crate::session::delivery_receiver::{DeliveryProvenance, DeliveryRecord, ParentAdmissionAck, ParentAdmissionAuthority, ParentMessageOperation, ParentMessageSource, payload_digest};
+        use xai_grok_tools::implementations::grok_build::task::types::{ActiveAgentMessageOperation, ActiveAgentMessageSource};
+        if let ParentAdmissionAuthority::Coordinator(claim) = &authority {
+            let delivery = claim.delivery();
+            let message = delivery.message();
+            let source = match delivery.source() { ActiveAgentMessageSource::Agent => ParentMessageSource::Agent, ActiveAgentMessageSource::Human => ParentMessageSource::Human };
+            let operation_matches = match &admission.effective {
+                ParentMessageOperation::Queue => true,
+                ParentMessageOperation::Steer { .. } => delivery.operation() == ActiveAgentMessageOperation::Steer,
+                ParentMessageOperation::Interject { .. } => delivery.operation() == ActiveAgentMessageOperation::Interject,
+            };
+            if message.message_id != admission.message_id || message.sender_session_id != admission.sender_session_id
+                || message.text.as_ref() != admission.text || source != admission.source || !operation_matches
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "parent admission conflicts with its producer claim"));
+            }
+        }
+        let binding_valid = match &admission.effective {
+            ParentMessageOperation::Queue => true,
+            ParentMessageOperation::Steer { prompt_id, parent_task }
+            | ParentMessageOperation::Interject { prompt_id, parent_task } => {
+                !prompt_id.is_empty()
+                    && matches!(parent_task, xai_chat_state::ParentTask::Instance { id } if !id.is_empty())
+            }
+        };
+        if admission.message_id.is_empty() || admission.sender_session_id.is_empty()
+            || admission.prompt_id != format!("parent-message-{}", admission.message_id)
+            || !binding_valid
+        {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid parent admission binding"));
+        }
+        let lease = match access {
+            ReceiverAccess::Owner(lease) if lease.session_id == info.id.to_string() => lease.retain(),
+            ReceiverAccess::Owner(_) | ReceiverAccess::Observe => {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent admission requires the receiver execution owner"));
+            }
+        };
+        let storage = self.clone();
+        let info = info.clone();
+        let admission = admission.clone();
+        tokio::task::spawn_blocking(move || {
+            // Aborting the async observer cannot release execution before this write finishes.
+            let _lease = lease;
+            #[cfg(test)]
+            let _fault_scope = super::super::AtomicWriteFaultScope::enter();
+            #[cfg(test)]
+            if let Some(probe) = &storage.parent_admission_probe {
+                probe()?;
+            }
+            let _chat_lock = Self::lock_append(&storage.chat_file(&info))?;
+            mutate_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), |summary| {
+                if summary.is_hidden() {
+                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent admission requires a live session"));
+                }
+                let id = admission.delivery_id();
+                let records = &mut summary.completion_delivery.receiver.records;
+                if let Some(record) = records.get(&id) {
+                    return match &record.provenance {
+                        DeliveryProvenance::ParentMessage { admission: previous } if previous == &admission => Ok(()),
+                        DeliveryProvenance::External | DeliveryProvenance::ParentMessage { .. } => Err(io::Error::new(io::ErrorKind::AlreadyExists, "parent-message identity conflicts with durable admission")),
+                    };
+                }
+                records.insert(id, DeliveryRecord {
+                    provenance: DeliveryProvenance::ParentMessage { admission: admission.clone() },
+                    digest: payload_digest(&admission.text),
+                    revision: 1,
+                    execution: DeliveryExecution::Queued { payload: admission.text.clone(), prompt_id: admission.prompt_id.clone() },
+                });
+                Ok(())
+            })?;
+            Ok(match authority {
+                ParentAdmissionAuthority::Coordinator(claim) => ParentAdmissionAck::Coordinator(claim.commit()),
+                ParentAdmissionAuthority::DirectLocal => ParentAdmissionAck::DirectLocal,
+            })
+        }).await.map_err(io::Error::other)?
+    }
+
+    pub(super) async fn cancel_parent_messages_owned(
+        &self,
+        info: &Info,
+        message_ids: &[String],
+        access: ReceiverAccess<'_>,
+    ) -> io::Result<()> {
+        use crate::session::delivery_receiver::{DeliveryProvenance, parent_message_delivery_id};
+        let lease = match access {
+            ReceiverAccess::Owner(lease) if lease.session_id == info.id.to_string() => lease.retain(),
+            ReceiverAccess::Owner(_) | ReceiverAccess::Observe => {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent settlement requires the receiver execution owner"));
+            }
+        };
+        let storage = self.clone();
+        let info = info.clone();
+        let message_ids = message_ids.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            #[cfg(test)]
+            let _fault_scope = super::super::AtomicWriteFaultScope::enter();
+            #[cfg(test)]
+            if let Some(probe) = &storage.parent_settlement_probe { probe()?; }
+            let _chat_lock = Self::lock_append(&storage.chat_file(&info))?;
+            mutate_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), |summary| {
+                for message_id in &message_ids {
+                    let record = summary.completion_delivery.receiver.records.get_mut(&parent_message_delivery_id(message_id))
+                        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "parent settlement has no durable admission"))?;
+                    if !matches!(&record.provenance, DeliveryProvenance::ParentMessage { admission } if &admission.message_id == message_id) {
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, "parent settlement provenance mismatch"));
+                    }
+                    match record.execution {
+                        DeliveryExecution::Queued { .. } | DeliveryExecution::Processing { .. } | DeliveryExecution::Interrupted { .. } => {
+                            record.execution = DeliveryExecution::Cancelled { reason: "parent receiver authoritatively torn down".into() };
+                            record.revision = record.revision.saturating_add(1).max(4);
+                        }
+                        DeliveryExecution::Succeeded | DeliveryExecution::Failed { .. } | DeliveryExecution::Cancelled { .. } => {}
+                    }
+                }
+                Ok(())
+            })
+        }).await.map_err(io::Error::other)?
     }
 
     pub(super) async fn receive_delivery_owned(
@@ -413,6 +545,12 @@ impl JsonlStorageAdapter {
             )
             .map_err(StrictAppendError::Indeterminate)?;
             Self::sync_parent_directory(&path).map_err(StrictAppendError::Indeterminate)?;
+            mutate_locked(&self.summary_file(info), &self.summary_lock_file(info), |summary| {
+                if let Some(record) = summary.completion_delivery.receiver.records.get_mut(&existing.delivery_id) {
+                    record.record_projection(&existing).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                }
+                Ok(())
+            }).map_err(StrictAppendError::Indeterminate)?;
             return Ok(CompletionProjectionAck::AlreadyPresent {
                 history: self
                     .read_chat_history_sync(path, CHAT_FORMAT_VERSION)
@@ -440,40 +578,6 @@ impl JsonlStorageAdapter {
                 "delivery projection differs from admitted payload",
             )));
         }
-        mutate_locked(
-            &self.summary_file(info),
-            &self.summary_lock_file(info),
-            |summary| {
-                let record = summary
-                    .completion_delivery
-                    .receiver
-                    .records
-                    .get_mut(&binding.delivery_id)
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "admitted delivery disappeared")
-                    })?;
-                match &record.execution {
-                    DeliveryExecution::Queued { payload, .. } => {
-                        record.execution = DeliveryExecution::Processing {
-                            turn_id: binding.turn_id.clone(),
-                            parent_task: binding.parent_task.clone(),
-                            payload: payload.clone(),
-                        };
-                        record.revision = 2;
-                        Ok(())
-                    }
-                    DeliveryExecution::Processing { .. }
-                    | DeliveryExecution::Interrupted { .. }
-                    | DeliveryExecution::Succeeded
-                    | DeliveryExecution::Failed { .. }
-                    | DeliveryExecution::Cancelled { .. } => Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "delivery execution is already owned",
-                    )),
-                }
-            },
-        )
-        .map_err(StrictAppendError::NotCommitted)?;
         let mut line = serde_json::to_vec(projection)
             .map_err(|error| StrictAppendError::NotCommitted(io::Error::other(error)))?;
         line.push(b'\n');
@@ -495,6 +599,9 @@ impl JsonlStorageAdapter {
             &self.summary_file(info),
             &self.summary_lock_file(info),
             |summary| {
+                let record = summary.completion_delivery.receiver.records.get_mut(&binding.delivery_id)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "admitted delivery disappeared"))?;
+                record.record_projection(binding).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 summary.num_chat_messages = summary.num_chat_messages.saturating_add(1);
                 Ok(())
             },
@@ -518,6 +625,11 @@ impl JsonlStorageAdapter {
             &self.summary_file(info),
             &self.summary_lock_file(info),
             |summary| {
+                if matches!(progress, DeliveryProgress::Succeeded) {
+                    summary.completion_delivery.apply(&crate::session::completion_delivery::CompletionMutation::TurnEnded {
+                        prompt_id: turn_id.to_owned(), parent_task: parent_task.clone(),
+                    });
+                }
                 let ids = summary.completion_delivery.receiver.settle_turn(
                     turn_id,
                     parent_task,

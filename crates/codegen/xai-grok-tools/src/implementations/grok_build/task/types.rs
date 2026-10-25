@@ -31,7 +31,8 @@ pub use xai_tool_types::{InterruptionCause, SubagentActor, SubagentState};
 use crate::register_resource;
 
 pub use super::active_message::{
-    ActiveAgentMessage, ActiveAgentMessageDelivery, ActiveAgentMessageOperation,
+    ActiveAgentMessage, ActiveAgentMessageClaim, ActiveAgentMessageCommittedAdmission,
+    ActiveAgentMessageDelivery, ActiveAgentMessageOperation,
     ActiveAgentMessageOutcome, ActiveAgentMessageQuotaKind, ActiveAgentMessageRequest,
     ActiveAgentMessageSource, ActiveMessageRoute, ActiveMessageSenderContext, ActiveMessageTarget,
     AgentAddress, MAX_ACTIVE_AGENT_MESSAGE_BYTES, SubagentActiveMessageRequest,

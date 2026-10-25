@@ -131,6 +131,7 @@ pub enum DeliveryResult {
 pub enum ReceiverTurnOrigin {
     #[default]
     Other,
+    ParentMessage { message_id: String },
     Delivery {
         delivery_id: String,
         payload_digest: String,
@@ -146,11 +147,11 @@ impl ReceiverTurnOrigin {
                 delivery_id: delivery_id.clone(),
                 payload_digest: payload_digest.clone(),
             },
+            super::PromptOrigin::ParentAgentMessage { message_id, .. }
+            | super::PromptOrigin::ParentHumanMessage { message_id, .. } => Self::ParentMessage { message_id: message_id.clone() },
             super::PromptOrigin::User
             | super::PromptOrigin::TaskCompleted { .. }
             | super::PromptOrigin::SubagentCompleted { .. }
-            | super::PromptOrigin::ParentAgentMessage { .. }
-            | super::PromptOrigin::ParentHumanMessage { .. }
             | super::PromptOrigin::WorkflowCompleted { .. }
             | super::PromptOrigin::NotificationDrain
             | super::PromptOrigin::GoalSummary
@@ -196,14 +197,81 @@ pub(crate) enum DeliveryExecution {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParentMessageSource { Agent, Human }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+pub enum ParentMessageOperation {
+    Queue,
+    Steer { prompt_id: String, parent_task: xai_chat_state::ParentTask },
+    Interject { prompt_id: String, parent_task: xai_chat_state::ParentTask },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentMessageAdmission {
+    pub message_id: String,
+    pub sender_session_id: String,
+    pub source: ParentMessageSource,
+    pub effective: ParentMessageOperation,
+    pub prompt_id: String,
+    pub text: String,
+}
+
+#[derive(Debug)]
+pub enum ParentAdmissionAuthority {
+    Coordinator(xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim),
+    /// Receiver-local authority, never a fallback for a failed coordinator claim.
+    DirectLocal,
+}
+
+#[derive(Debug)]
+#[must_use]
+pub enum ParentAdmissionAck {
+    Coordinator(xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageCommittedAdmission),
+    DirectLocal,
+}
+
+impl ParentMessageAdmission {
+    pub(crate) fn delivery_id(&self) -> String { parent_message_delivery_id(&self.message_id) }
+}
+
+pub(crate) fn parent_message_delivery_id(message_id: &str) -> String {
+    format!("parent-message/{message_id}")
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum DeliveryProvenance {
+    #[default]
+    External,
+    ParentMessage { admission: ParentMessageAdmission },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct DeliveryRecord {
+    #[serde(default)]
+    pub provenance: DeliveryProvenance,
     pub digest: String,
     pub revision: u64,
     pub execution: DeliveryExecution,
 }
 
 impl DeliveryRecord {
+    pub(crate) fn record_projection(&mut self, binding: &xai_chat_state::DeliveryBinding) -> Result<(), &'static str> {
+        if self.digest != binding.payload_digest {
+            return Err("delivery history conflicts with durable admission");
+        }
+        if let DeliveryExecution::Queued { payload, .. } = &self.execution {
+            self.execution = DeliveryExecution::Processing {
+                turn_id: binding.turn_id.clone(), parent_task: binding.parent_task.clone(), payload: payload.clone(),
+            };
+            self.revision = 2;
+        }
+        Ok(())
+    }
+
     pub(crate) fn receipt(
         &self,
         session_id: &str,
@@ -304,6 +372,7 @@ impl DeliveryReceiverState {
             self.records.insert(
                 request.delivery_id.clone(),
                 DeliveryRecord {
+                    provenance: DeliveryProvenance::External,
                     digest: request.digest(),
                     revision: 1,
                     execution: DeliveryExecution::Queued {
@@ -344,6 +413,9 @@ impl DeliveryReceiverState {
                             && delivery_id == id
                             && payload_digest == &record.digest
                     }
+                    ReceiverTurnOrigin::ParentMessage { message_id } => prompt_id == turn_id
+                        && id == &parent_message_delivery_id(message_id)
+                        && matches!(&record.provenance, DeliveryProvenance::ParentMessage { admission } if &admission.message_id == message_id),
                     ReceiverTurnOrigin::Other => false,
                 },
                 DeliveryExecution::Succeeded

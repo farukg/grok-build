@@ -15355,6 +15355,7 @@ dependencies = [
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.18",
+ "xai-tool-types",
 ]
 
 [[package]]

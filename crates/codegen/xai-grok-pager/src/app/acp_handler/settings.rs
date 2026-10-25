@@ -164,6 +164,9 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
     }
     if let Some(remote_v) = update.dock_enabled {
         crate::views::dock::set_enabled(crate::app::resolve_dock_enabled(Some(remote_v)));
+        if let Some(agent) = app.active_view.agent_id().and_then(|id| app.agents.get(&id)) {
+            agent.restore_dock_placement();
+        }
     }
     // Presence-aware: omit (an older shell, or one without settings yet) keeps the seeded tier, null means fetched settings cleared it
     // Only the settings row reads it; running agents keep the mode they latched when built
@@ -423,6 +426,10 @@ pub(super) fn handle_sessions_changed(notif: &acp::ExtNotification, app: &mut Ap
     for sid in changed.removed {
         app.remove_roster_entry(&sid);
         affected = true;
+    }
+    if affected {
+        crate::app::dispatch::refresh_dashboard_child_layout(app);
+        app.invalidate_session_cycle();
     }
     affected
 }

@@ -1977,7 +1977,7 @@ impl FinalizedToolset {
         value: serde_json::Value,
         output_converter: &OutputConverter,
         effective_tool_name: Option<String>,
-        completed_subagents: Vec<crate::types::completion_observation::ObservedSubagentCompletion>,
+        completed_subagents: Vec<crate::types::completion_observation::ObservedCompletion>,
     ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
         let output = (output_converter)(value)
             .map_err(|e| xai_tool_runtime::ToolError::custom("output_decoding", e.to_string()))?;

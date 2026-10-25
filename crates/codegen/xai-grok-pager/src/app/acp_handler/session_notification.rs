@@ -45,7 +45,10 @@ pub(super) fn refresh_context_used(view: &mut AgentView, used: u64) {
 /// Without this refresh the bar shows the stale pre-turn number right next to the "N% full" banner.
 pub(super) fn compaction_context_refresh(update: &XaiSessionUpdate) -> Option<u64> {
     match update {
-        XaiSessionUpdate::AutoCompactStarted { tokens_used, .. } => Some(*tokens_used),
+        XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
+            tokens_used, ..
+        } => Some(*tokens_used),
         XaiSessionUpdate::AutoCompactCompleted { tokens_after, .. } => Some(*tokens_after),
         _ => None,
     }
@@ -221,6 +224,11 @@ pub(super) fn handle_session_notification_with_origin(
         }
     };
     let parent_id = matched.agent_id();
+    if let Some(agent) = app.agents.get_mut(&parent_id)
+        && !admit_compact_lifecycle(agent, &session_notif.update, session_notif.meta.as_ref())
+    {
+        return false;
+    }
     if is_child_view(app, parent_id) && is_child_turn_update(&session_notif.update) {
         return apply_child_xai_update(
             app,
@@ -253,6 +261,18 @@ pub(super) fn handle_session_notification_with_origin(
     let mut committed_subagent_lifecycle = None;
     let is_subagent_lifecycle =
         if let Some(lifecycle) = classify_subagent_lifecycle(&session_notif.update, origin) {
+            // Replay/live re-delivery of the same persisted lifecycle event carries the same
+            // eventId; the reducer's per-attempt sequence guards catch most overlaps, but a
+            // re-delivered event must not even reach it (an accepted re-apply would render a
+            // duplicate strip row or attempt).
+            if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+                tracing::debug!(
+                    child_session_id = lifecycle.child_session_id,
+                    event_id = meta.event_id.as_deref(),
+                    "duplicate subagent lifecycle re-delivery dropped"
+                );
+                return false;
+            }
             let Some(action) = prepare_tui_subagent_lifecycle(
                 agent,
                 &lifecycle,
@@ -694,7 +714,7 @@ pub(super) fn handle_session_notification_with_origin(
                 child_view.set_restricted_commands(&restricted);
                 child_view.role =
                     crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
-                        parent: parent_id,
+                        parent: Some(parent_id),
                         parent_session_id: acp::SessionId::new(parent_session_id),
                         subagent_id: child_session_id.clone(),
                         started_at: now,
@@ -1363,6 +1383,34 @@ pub(super) fn handle_session_notification_with_origin(
             status_snapshot_applied = true;
             false
         }
+        XaiSessionUpdate::BackgroundTasks {
+            ref tasks,
+            truncated,
+        } => {
+            // Authoritative last-wins registry snapshot. An exact-id re-delivery (replayed
+            // snapshot + live broadcast of the same emit) is dropped; the replace-merge itself
+            // is idempotent, but skipping it also skips the redraw.
+            if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+                tracing::debug!(
+                    event_id = meta.event_id.as_deref(),
+                    tasks = tasks.len(),
+                    "duplicate background_tasks snapshot re-delivery dropped"
+                );
+                false
+            } else {
+                apply_background_tasks_snapshot(agent, tasks, truncated, meta.is_replay)
+            }
+        }
+        XaiSessionUpdate::InjectedContextRecord {
+            ref kind,
+            ref text,
+        } => {
+            // Request-only content the model saw (memory-reminder splice, view transforms):
+            // one collapsed injected entry; the event-seq dedup above drops replay re-delivery.
+            let label = crate::scrollback::blocks::injected_label(kind);
+            agent.scrollback.push_block(RenderBlock::injected(label, text, false));
+            true
+        }
         _ => {
             tracing::trace!(
                 "Ignoring {}: {:?}",
@@ -1621,6 +1669,42 @@ fn apply_child_view_follow_up(app: &mut AppView, follow_up: ChildViewFollowUp) {
         }
     }
 }
+pub(crate) fn admit_compact_lifecycle(
+    agent: &mut AgentView,
+    update: &XaiSessionUpdate,
+    meta: Option<&serde_json::Value>,
+) -> bool {
+    use crate::app::agent::CompactInvocationSettlement;
+    use xai_grok_shell::session::acp_types::{CompactInvocationId, COMPACT_INVOCATION_META_KEY};
+    if !matches!(update,
+        XaiSessionUpdate::AutoCompactStarted { .. }
+        | XaiSessionUpdate::AutoCompactCompleted { .. }
+        | XaiSessionUpdate::AutoCompactFailed { .. }
+        | XaiSessionUpdate::AutoCompactCancelled { .. })
+    {
+        return true;
+    }
+    let Some(raw) = meta.and_then(|meta| meta.get(COMPACT_INVOCATION_META_KEY)) else {
+        return true;
+    };
+    let Ok(id) = serde_json::from_value::<CompactInvocationId>(raw.clone()) else {
+        return false;
+    };
+    if let Some(invocation) = agent.compact_invocations.get_mut(&id)
+        && invocation.binding_epoch == agent.session_binding_epoch
+        && !matches!(update, XaiSessionUpdate::AutoCompactStarted { .. })
+    {
+        match invocation.settlement {
+            CompactInvocationSettlement::AwaitingRpc => {
+                invocation.settlement = CompactInvocationSettlement::LifecycleObserved;
+            }
+            CompactInvocationSettlement::LifecycleObserved | CompactInvocationSettlement::RpcSettled => {}
+        }
+    }
+    // Only the original RPC may render a manual outcome, including after rebind or replay.
+    false
+}
+
 fn apply_compaction_or_retry_update(
     agent: &mut AgentView,
     update: &XaiSessionUpdate,
@@ -1630,17 +1714,15 @@ fn apply_compaction_or_retry_update(
     use crate::app::cancel_latency::TurnEnd;
     use std::time::Instant;
     use xai_grok_shell::extensions::notification::MODEL_FAMILY_SWITCH_COMPACT_BANNER;
-    let changed = apply_session_event(
-        update,
-        &mut agent.session,
-        &mut agent.scrollback,
-        is_api_key_auth,
-    );
+    let changed = apply_session_event(update, &mut agent.session, &mut agent.scrollback, is_api_key_auth);
     if let Some(used) = compaction_context_refresh(update) {
         refresh_context_used(agent, used);
     }
     match update {
-        XaiSessionUpdate::AutoCompactStarted { reason, .. } => {
+        XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
+            reason, ..
+        } => {
             if agent.session.state.is_idle()
                 && !agent.session.loading_replay
                 && reason == MODEL_FAMILY_SWITCH_COMPACT_BANNER
@@ -1665,16 +1747,6 @@ fn apply_compaction_or_retry_update(
         _ => {}
     }
     changed
-}
-/// Apply a compaction or retry event to a session's activity state and scrollback.
-/// A backend may report a manual `/compact`'s turn through the same notifications as an
-/// auto-compaction; `handle_compact_complete` paints that outcome, so these arms stay quiet
-fn manual_compact_in_flight(session: &AgentSession) -> bool {
-    session
-        .state
-        .command_in_flight()
-        .is_some_and(|command| command.is_compact())
-        && !session.state.is_switch_model_compact()
 }
 /// Lets dispatch tests replay notification sequences (`RetryState::Retrying` then `Exhausted`) through `apply_session_event`.
 /// A fixture that sets fields directly would skip the Retrying arm's clearing of `in_flight_prompt`.
@@ -1716,6 +1788,11 @@ pub(super) fn apply_session_event(
 ) -> bool {
     match update {
         XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Queued,
+            ..
+        } => false,
+        XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             percentage, reason, ..
         } => {
             tracing::info!("Auto-compact started: {percentage}% context used");
@@ -1749,7 +1826,7 @@ pub(super) fn apply_session_event(
                         elapsed_ms: *elapsed_ms,
                     },
                 ));
-            } else if !manual_compact_in_flight(session) {
+            } else {
                 session.defer_compaction(*tokens_before, *tokens_after, *elapsed_ms);
             }
             true
@@ -1757,22 +1834,18 @@ pub(super) fn apply_session_event(
         XaiSessionUpdate::AutoCompactFailed { error } => {
             tracing::error!(error = %error, "Auto-compaction failed");
             session.set_compaction_activity(None);
-            if !manual_compact_in_flight(session) {
-                scrollback.push_block(RenderBlock::session_event(SessionEvent::CompactionFailed {
-                    error: error.clone(),
-                }));
-            }
+            scrollback.push_block(RenderBlock::session_event(SessionEvent::CompactionFailed {
+                error: error.clone(),
+            }));
             true
         }
         XaiSessionUpdate::AutoCompactCancelled { .. } => {
             tracing::info!("Auto-compact cancelled");
             session.set_compaction_activity(None);
             session.compact_held_prompt = None;
-            if !manual_compact_in_flight(session) {
-                scrollback.push_block(RenderBlock::session_event(
-                    SessionEvent::CompactionCancelled,
-                ));
-            }
+            scrollback.push_block(RenderBlock::session_event(
+                SessionEvent::CompactionCancelled,
+            ));
             true
         }
         XaiSessionUpdate::RetryState(retry) => {

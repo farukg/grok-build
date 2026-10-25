@@ -166,12 +166,38 @@ pub struct LeaderServerMetadata {
     pub ws_url_suffix: String,
     pub leader_binary_version: String,
 }
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct TerminalOrphanStartup {
+    execute: Arc<dyn Fn() -> std::io::Result<xai_grok_tools::computer::local::terminal::TerminalOrphanSweepSummary> + Send + Sync>,
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for TerminalOrphanStartup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("TerminalOrphanStartup")
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl TerminalOrphanStartup {
+    async fn run(&self) -> std::io::Result<(xai_grok_tools::computer::local::terminal::TerminalOrphanSweepSummary, Duration)> {
+        let execute = Arc::clone(&self.execute);
+        tokio::task::spawn_blocking(move || {
+            let started = Instant::now();
+            execute().map(|summary| (summary, started.elapsed()))
+        }).await.map_err(std::io::Error::other)?
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LeaderServerControlState {
     pub metadata: LeaderServerMetadata,
     pub cpu_profile: Arc<Mutex<CpuProfileManager>>,
     pub workspace: Arc<WorkspaceControl>,
     pub(crate) cursor_worker: Arc<CursorWorkerControl>,
+    #[cfg(target_os = "linux")]
+    terminal_orphan_startup: TerminalOrphanStartup,
 }
 impl LeaderServerControlState {
     pub fn new(metadata: LeaderServerMetadata) -> Self {
@@ -185,6 +211,14 @@ impl LeaderServerControlState {
                 crate::util::grok_home::grok_home(),
                 ExternalRoster::new(),
             )),
+            #[cfg(target_os = "linux")]
+            terminal_orphan_startup: TerminalOrphanStartup {
+                #[cfg(not(test))]
+                execute: Arc::new(xai_grok_tools::computer::local::terminal::sweep_orphaned_process_groups),
+                // Unit tests must not sweep the invoking user's live registry.
+                #[cfg(test)]
+                execute: Arc::new(|| Ok(Default::default())),
+            },
         }
     }
     pub(crate) fn with_default_hub_url(mut self, default_hub_url: Option<String>) -> Self {
@@ -1521,6 +1555,11 @@ pub async fn run_leader_server(
     let shutdown_reason_rx = shutdown_tx.subscribe();
     let listener = LeaderListener::bind(&socket_path)?;
     info!("Leader server listening");
+    #[cfg(target_os = "linux")]
+    match control_state.terminal_orphan_startup.run().await {
+        Ok((summary, elapsed)) => info!(?summary, elapsed_us = elapsed.as_micros(), "terminal orphan startup sweep result"),
+        Err(error) => warn!(%error, "terminal orphan startup sweep unavailable"),
+    }
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ServerEvent>();
     let mut clients: HashMap<ClientId, ClientState> = HashMap::new();
     let mut session_driver: HashMap<String, ClientId> = HashMap::new();
@@ -2624,3 +2663,6 @@ pub async fn spawn_leader_server(socket_path: PathBuf) -> Result<ServerHandle, S
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "server_orphan_startup_tests.rs"]
+mod orphan_startup_tests;

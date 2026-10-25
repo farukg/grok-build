@@ -42,8 +42,11 @@ impl ChildControl for RecordingControl {
         delivery: ActiveAgentMessageDelivery,
     ) -> SendBoxFuture<ActiveMessageAdmission> {
         let record = (delivery.operation(), delivery.message().text.to_string());
-        let admitted = delivery.commit_admission(|| self.admitted.send(record).is_ok());
-        Box::pin(std::future::ready(if admitted == Some(true) {
+        let admitted = delivery
+            .claim_admission()
+            .map(|claim| claim.commit().try_handoff(|| self.admitted.send(record)))
+            .is_some_and(|result| result.is_ok());
+        Box::pin(std::future::ready(if admitted {
             ActiveMessageAdmission::Admitted
         } else {
             ActiveMessageAdmission::Rejected
@@ -51,6 +54,52 @@ impl ChildControl for RecordingControl {
     }
 
     fn cancel(&self) {}
+}
+
+#[tokio::test]
+async fn resume_recording_handoff_does_not_commit_a_failed_transfer() {
+    use crate::implementations::grok_build::task::active_message::ActiveMessageAdmissionLease;
+    use crate::implementations::grok_build::task::types::{
+        ActiveAgentMessage, ActiveAgentMessageSource, ActiveMessageRoute,
+    };
+
+    for closed in [false, true] {
+        let (admitted, mut received) = mpsc::unbounded_channel();
+        if closed {
+            received.close();
+        }
+        let control = RecordingControl { admitted };
+        let lease = ActiveMessageAdmissionLease::new();
+        let delivery = ActiveAgentMessageDelivery::new(
+            ActiveAgentMessage {
+                message_id: "resume-handoff".to_owned(),
+                sender_session_id: PARENT.to_owned(),
+                text: "follow up".into(),
+            },
+            ActiveAgentMessageOperation::Steer,
+            ActiveAgentMessageSource::Agent,
+            ActiveMessageRoute::ParentToOwnedDescendant,
+            lease.clone(),
+        );
+        assert_eq!(
+            if closed {
+                ActiveMessageAdmission::Rejected
+            } else {
+                ActiveMessageAdmission::Admitted
+            },
+            control.send_active_message(delivery).await,
+        );
+        if closed {
+            assert!(received.try_recv().is_err());
+        } else {
+            assert_eq!(
+                (ActiveAgentMessageOperation::Steer, "follow up".to_owned()),
+                received.try_recv().unwrap(),
+            );
+        }
+        assert_eq!(!closed, lease.settle(ActiveMessageAdmission::Admitted));
+        assert!(!lease.revoke());
+    }
 }
 
 /// A child prompted with [`HOLD`] stays running; any other child finishes at once.

@@ -2144,8 +2144,8 @@ impl xai_tool_runtime::Tool for BashTool {
             drop(command_wait_span);
 
             // ─── Backgrounded (user Ctrl+G or auto-timeout): return BackgroundTaskStarted ───
-            let auto_backgrounded = result.signal.as_deref() == Some("auto_backgrounded");
-            if auto_backgrounded || result.signal.as_deref() == Some("backgrounded") {
+            if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } = &result.disposition {
+                let auto_backgrounded = matches!(reason, crate::computer::types::BackgroundReason::ForegroundBudget);
                 let base = BashNotificationBase {
                     tool_call_id: tool_call_id.as_str().to_owned(),
                     command: input.command.clone(),
@@ -2157,14 +2157,14 @@ impl xai_tool_runtime::Tool for BashTool {
 
                 notification_handle.send_backgrounded(BashExecutionBackgrounded {
                     base,
-                    output_file: output_file.clone(),
-                    task_id: tool_call_id.as_str().to_owned(),
+                    output_file: handle.output_file.clone(),
+                    task_id: handle.task_id.clone(),
                     monitor_description: None,
                     description: Some(input.description.clone()).filter(|d| !d.trim().is_empty()),
                 });
 
                 let retrieval_hint =
-                    Self::background_retrieval_hint(&resources, tool_call_id.as_str()).await?;
+                    Self::background_retrieval_hint(&resources, &handle.task_id).await?;
 
                 let summary = if auto_backgrounded {
                     let desc = input.description.trim();
@@ -2177,7 +2177,7 @@ impl xai_tool_runtime::Tool for BashTool {
                     if single_knob {
                         let block_param =
                             Self::execute_param_name(&resources, "block_until_ms").await;
-                        block_expired_summary(label, wait_ms, &block_param, tool_call_id.as_str())
+                        block_expired_summary(label, wait_ms, &block_param, &handle.task_id)
                     } else {
                         auto_backgrounded_summary(label, wait_ms)
                     }
@@ -2189,18 +2189,15 @@ impl xai_tool_runtime::Tool for BashTool {
                 };
 
                 return Ok(BashToolOutput::Background(BackgroundTaskStarted {
-                    task_id: tool_call_id.as_str().to_owned(),
+                    task_id: handle.task_id.clone(),
                     task_type: "bash".to_string(),
-                    output_file: output_file.to_string_lossy().to_string(),
+                    output_file: handle.output_file.to_string_lossy().to_string(),
                     status: "running".to_string(),
                     command: input.command,
                     summary,
                     retrieval_hint,
                     pre_formatted: None,
-                    // Real PID from the foreground spawn surfaced via
-                    // `TerminalRunResult::pid`. Adapters rely on this
-                    // being non-None for their auto-bg template.
-                    pid: result.pid,
+                    pid: handle.pid,
                 }));
             }
 
@@ -2457,6 +2454,7 @@ mod tests {
         fn success(output: &str, exit_code: i32) -> Self {
             Self {
                 foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                     combined_output: output.to_string(),
                     exit_code: Some(exit_code),
                     truncated: false,
@@ -2477,6 +2475,7 @@ mod tests {
         fn timed_out(output: &str) -> Self {
             Self {
                 foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                     combined_output: output.to_string(),
                     exit_code: None,
                     truncated: false,
@@ -2508,6 +2507,7 @@ mod tests {
         fn background_ok(task_id: &str) -> Self {
             Self {
                 foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                     combined_output: String::new(),
                     exit_code: Some(0),
                     truncated: false,
@@ -2640,6 +2640,44 @@ mod tests {
             is_background: false,
             block_until_ms: None,
         }
+    }
+
+    #[tokio::test]
+    async fn actual_auto_background_handle_drives_notification_hint_summary_and_lookup() {
+        let directory = tempfile::tempdir().unwrap();
+        let backend = Arc::new(crate::computer::local::terminal::LocalTerminalBackend::new());
+        let (notifications, mut events) = ToolNotificationHandle::channel();
+        let mut resources = make_resources(MockTerminal::success("unused", 0));
+        resources.insert(Terminal(backend.clone()));
+        resources.insert(SessionFolder(directory.path().to_path_buf()));
+        resources.insert(NotificationHandle(notifications));
+        let ctx = crate::types::tool_metadata::test_ctx_with_call_id(resources.into_shared(), "model-call");
+        let mut input = make_input("sleep 60");
+        input.block_until_ms = Some(200);
+        let result = tokio::time::timeout(Duration::from_secs(5), xai_tool_runtime::Tool::run(&BashTool, ctx, input))
+            .await.unwrap().unwrap();
+        let BashToolOutput::Background(started) = result else { panic!("background result"); };
+        assert_ne!(started.task_id, "model-call");
+        assert!(uuid::Uuid::parse_str(&started.task_id).is_ok());
+        assert!(started.summary.contains(&started.task_id));
+        assert!(started.retrieval_hint.contains(&started.task_id));
+        let notification = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(crate::notification::ToolNotification::BashExecutionBackgrounded(notification)) = events.recv().await {
+                    break notification;
+                }
+            }
+        }).await.unwrap();
+        assert_eq!(notification.base.tool_call_id, "model-call");
+        assert_eq!(notification.task_id, started.task_id);
+        assert_eq!(notification.output_file.to_string_lossy(), started.output_file);
+        let snapshot = backend.get_task(&started.task_id).await.unwrap();
+        assert_eq!(snapshot.task_id, started.task_id);
+        assert!(snapshot.is_backgrounded);
+        assert!(!snapshot.completed);
+        assert_eq!(snapshot.output_file.to_string_lossy(), started.output_file);
+        assert_eq!(backend.kill_task(&started.task_id).await, KillOutcome::Killed);
+        assert_eq!(backend.wait_for_completion(&started.task_id, Some(Duration::from_secs(2))).await.unwrap().task_id, started.task_id);
     }
 
     fn make_bg_input(command: &str) -> BashToolInput {
@@ -5274,7 +5312,14 @@ mod tests {
         async fn expired_block_reports_the_block_as_the_wait() {
             let mut mock = MockTerminal::success("Compiling foo v0.1.0\n", 0);
             if let Ok(r) = mock.foreground_result.as_mut() {
-                r.signal = Some("auto_backgrounded".to_string());
+                r.disposition = crate::computer::types::RunDisposition::Backgrounded {
+                    handle: BackgroundHandle {
+                        task_id: "execution-9".to_string(),
+                        output_file: PathBuf::from("/tmp/actual-execution.log"),
+                        pid: Some(4242),
+                    },
+                    reason: crate::computer::types::BackgroundReason::ForegroundBudget,
+                };
                 r.exit_code = None;
                 r.pid = Some(4242);
             }
@@ -5304,11 +5349,13 @@ mod tests {
             let BashToolOutput::Background(bg) = result else {
                 panic!("expected the expired block to surface as a background task");
             };
-            assert_eq!(bg.task_id, "call-9");
+            assert_eq!(bg.task_id, "execution-9");
+            assert_eq!(bg.output_file, "/tmp/actual-execution.log");
+            assert!(bg.retrieval_hint.contains("execution-9"));
             assert_eq!(bg.pid, Some(4242));
             assert_eq!(
                 bg.summary,
-                "Command \"build the crate\" is still running after 45s (block_until_ms) and has been moved to the background as task call-9."
+                "Command \"build the crate\" is still running after 45s (block_until_ms) and has been moved to the background as task execution-9."
             );
             assert!(bg.retrieval_hint.contains("get_task_output"));
         }

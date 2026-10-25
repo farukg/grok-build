@@ -109,6 +109,27 @@ async fn batch_distinguishes_dropped_and_rejected_acknowledgements() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn acknowledgement_fanout_uses_one_absolute_deadline() {
+    let (first, mut first_rx) = ToolNotificationHandle::acknowledged_channel();
+    let (second, mut second_rx) = ToolNotificationHandle::acknowledged_channel();
+    let handle = ToolNotificationHandle::tee(vec![first, second]);
+    let batch = handle.send_scheduled_task_removed_acknowledged(removed("bounded"));
+    let first_ack = first_rx.recv().await.unwrap().acknowledgement.unwrap();
+    let second_ack = second_rx.recv().await.unwrap().acknowledgement.unwrap();
+    let started = tokio::time::Instant::now();
+    let deadline = started + TERMINAL_ACK_BUDGET;
+    let wait = tokio::spawn(batch.wait_until(deadline));
+    tokio::time::advance(TERMINAL_ACK_BUDGET - std::time::Duration::from_millis(1)).await;
+    first_ack.send(Ok(())).unwrap();
+    tokio::task::yield_now().await;
+    assert!(!wait.is_finished());
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    assert_eq!(wait.await.unwrap(), Err(NotificationAcknowledgementError::DeadlineElapsed));
+    assert_eq!(tokio::time::Instant::now() - started, TERMINAL_ACK_BUDGET);
+    assert!(second_ack.send(Ok(())).is_err(), "late ACK loss does not roll back consumer work");
+}
+
 #[tokio::test]
 async fn bounded_channel_drops_newest_when_full() {
     let (handle, mut receiver) = ToolNotificationHandle::bounded_channel(1);

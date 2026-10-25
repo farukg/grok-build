@@ -2399,6 +2399,7 @@ fn build_rows_idle_anchor_is_frozen_last_active_at() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let Some(row1) = rows1.first() else {
         panic!("expected an idle dashboard row: {rows1:?}");
@@ -2417,6 +2418,7 @@ fn build_rows_idle_anchor_is_frozen_last_active_at() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let Some(row2) = rows2.first() else {
         panic!("expected an idle dashboard row: {rows2:?}");
@@ -2447,6 +2449,7 @@ fn build_rows_working_anchor_is_turn_started_at() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let Some(row) = rows.first() else {
         panic!("expected a working dashboard row: {rows:?}");
@@ -2479,6 +2482,7 @@ fn build_rows_fallback_anchor_is_frozen_when_last_active_at_is_none() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let rows2 = build_rows_with_roster(
         &app.agents,
@@ -2488,6 +2492,7 @@ fn build_rows_fallback_anchor_is_frozen_when_last_active_at_is_none() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let (Some(r1), Some(r2)) = (rows1.first(), rows2.first()) else {
         panic!("expected dashboard rows: {rows1:?} {rows2:?}");
@@ -2553,6 +2558,7 @@ fn top_level_label_strips_control_characters() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let top = rows.first().expect("top row");
     assert!(

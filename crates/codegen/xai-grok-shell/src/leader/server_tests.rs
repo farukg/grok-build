@@ -4455,6 +4455,7 @@ async fn roster_merge_round_trips_namespaced_ids_and_broadcasts_changes() {
         cwd: "/home/u/.grok/worktrees/proj/cursor-bc-1".to_owned(),
         is_worktree: true,
         session_kind: Some("cursor-worker".to_owned()),
+        parent_session_id: None,
         model_id: None,
         reasoning_effort: None,
         yolo: false,

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use xai_chat_state::{CompletionReceipt, SubagentCompletionId};
+use xai_chat_state::completion::CompletionIdentity;
 use xai_grok_tools::implementations::grok_build::task::types::SubagentState;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -71,8 +72,19 @@ pub struct SubagentCompletionFact {
     pub state: SubagentState,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(tag = "origin", content = "snapshot", rename_all = "snake_case")]
+pub enum CompletionPayloadSource {
+    #[default]
+    Legacy,
+    Task(Box<xai_grok_tools::computer::types::TaskSnapshot>),
+    Workflow(Box<super::workflow::tracker::WorkflowRunState>),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CompletionPayload {
+    #[serde(default)]
+    pub source: CompletionPayloadSource,
     pub text: String,
     pub policy: CompletionEventPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -80,14 +92,14 @@ pub(crate) struct CompletionPayload {
 }
 
 impl CompletionPayload {
-    pub(crate) fn model_text(&self, id: &SubagentCompletionId) -> String {
-        match &self.reference {
-            Some(reference) => format!(
+    pub(crate) fn model_text(&self, identity: &CompletionIdentity) -> String {
+        match (&self.reference, identity.subagent()) {
+            (Some(reference), Some(id)) => format!(
                 "{}\n\n{}",
                 self.text,
                 completion_reference_text(id, reference)
             ),
-            None => self.text.clone(),
+            (None, _) | (Some(_), None) => self.text.clone(),
         }
     }
 }
@@ -147,16 +159,28 @@ pub(crate) enum CompletionAdmission {
     Settled,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionSuppression { GoalNotificationPolicy }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(tag = "state", content = "payload", rename_all = "snake_case")]
+pub(crate) enum SuppressedCompletionSource {
+    #[default]
+    AwaitingEnrollment,
+    Enrolled(CompletionPayload),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub(crate) enum CompletionObligation {
+    Suppressed { id: CompletionIdentity, reason: CompletionSuppression, #[serde(default)] source: SuppressedCompletionSource },
     Preparing {
         event: SubagentCompletionEvent,
         admission: CompletionAdmission,
     },
     Pending {
-        #[serde(with = "xai_chat_state::completion::completion_id_serde")]
-        id: SubagentCompletionId,
+        id: CompletionIdentity,
         payload: CompletionPayload,
     },
     Projected {
@@ -166,11 +190,11 @@ pub(crate) enum CompletionObligation {
 }
 
 impl CompletionObligation {
-    pub(crate) fn id(&self) -> &SubagentCompletionId {
+    pub(crate) fn id(&self) -> CompletionIdentity {
         match self {
-            Self::Preparing { event, .. } => &event.id,
-            Self::Pending { id, .. } => id,
-            Self::Projected { receipt, .. } => &receipt.completion,
+            Self::Preparing { event, .. } => event.id.clone().into(),
+            Self::Pending { id, .. } | Self::Suppressed { id, .. } => id.clone(),
+            Self::Projected { receipt, .. } => receipt.completion.clone(),
         }
     }
     pub(crate) fn receipt(&self) -> Option<&CompletionReceipt> {
@@ -184,7 +208,7 @@ impl CompletionObligation {
                 admission: CompletionAdmission::Pending | CompletionAdmission::Settled,
                 ..
             }
-            | Self::Pending { .. } => None,
+            | Self::Pending { .. } | Self::Suppressed { .. } => None,
         }
     }
 }
@@ -219,11 +243,17 @@ impl CompletionDeliveryState {
         let Some(obligation) = self
             .obligations
             .iter_mut()
-            .find(|obligation| obligation.id() == &receipt.completion)
+            .find(|obligation| obligation.id() == receipt.completion)
         else {
             return;
         };
         match obligation {
+            CompletionObligation::Suppressed { source, .. } => match source {
+                SuppressedCompletionSource::AwaitingEnrollment => {}
+                SuppressedCompletionSource::Enrolled(payload) => {
+                    *obligation = CompletionObligation::Projected { receipt: receipt.clone(), payload: payload.clone() };
+                }
+            },
             CompletionObligation::Preparing { admission, .. } => match admission {
                 CompletionAdmission::Pending => {
                     *admission = CompletionAdmission::Projected(receipt.clone())
@@ -257,8 +287,9 @@ impl CompletionDeliveryState {
         match self
             .obligations
             .iter()
-            .find(|obligation| obligation.id() == id)?
+            .find(|obligation| obligation.id() == *id)?
         {
+            CompletionObligation::Suppressed { .. } => None,
             CompletionObligation::Preparing { .. } => Some(CompletionResultReference::Prepared {
                 path: prepared_path.to_path_buf(),
             }),
@@ -276,8 +307,45 @@ impl CompletionDeliveryState {
     pub(crate) fn apply(&mut self, mutation: &CompletionMutation) {
         match mutation {
             CompletionMutation::WakePolicy(policy) => self.wake_policy = *policy,
+            CompletionMutation::Suppress { ids, reason } => {
+                for id in ids {
+                    if self.receipts.iter().any(|receipt| receipt.completion == *id)
+                        || self.obligations.iter().any(|obligation| obligation.id() == *id && obligation.receipt().is_some()) { continue; }
+                    let source = self.obligations.iter().find_map(|obligation| {
+                        if obligation.id() != *id { return None; }
+                        match obligation {
+                            CompletionObligation::Pending { payload, .. } => Some(SuppressedCompletionSource::Enrolled(payload.clone())),
+                            CompletionObligation::Suppressed { source, .. } => Some(source.clone()),
+                            CompletionObligation::Preparing { .. } | CompletionObligation::Projected { .. } => None,
+                        }
+                    }).unwrap_or_default();
+                    self.obligations.retain(|obligation| obligation.id() != *id);
+                    self.obligations.push(CompletionObligation::Suppressed { id: id.clone(), reason: *reason, source });
+                }
+            }
+            CompletionMutation::Enrolled { id, payload } => {
+                let observed = self.receipts.iter().find(|receipt| receipt.completion == *id).cloned();
+                if let Some(obligation @ CompletionObligation::Suppressed { .. }) = self.obligations.iter_mut().find(|obligation| obligation.id() == *id) {
+                    match observed {
+                        Some(receipt) => *obligation = CompletionObligation::Projected { receipt, payload: payload.clone() },
+                        None => {
+                            if let CompletionObligation::Suppressed { source, .. } = obligation {
+                                if matches!(source, SuppressedCompletionSource::AwaitingEnrollment) {
+                                    *source = SuppressedCompletionSource::Enrolled(payload.clone());
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+                if !self.receipts.iter().any(|receipt| receipt.completion == *id)
+                    && !self.obligations.iter().any(|obligation| obligation.id() == *id)
+                {
+                    self.obligations.push(CompletionObligation::Pending { id: id.clone(), payload: payload.clone() });
+                }
+            }
             CompletionMutation::Ready(event) => {
-                if !self.obligations.iter().any(|o| o.id() == &event.id) {
+                if !self.obligations.iter().any(|o| o.id() == event.id) {
                     let admission = match self.receipts.iter().find(|r| r.completion == event.id) {
                         Some(_) => CompletionAdmission::Settled,
                         None => CompletionAdmission::Pending,
@@ -290,7 +358,7 @@ impl CompletionDeliveryState {
             }
             CompletionMutation::PublicationFinished { id, reference } => {
                 self.obligations.retain_mut(|obligation| {
-                    if obligation.id() != id {
+                    if obligation.id() != *id {
                         return true;
                     }
                     let replacement = match obligation {
@@ -301,8 +369,9 @@ impl CompletionDeliveryState {
                                 | CompletionEventPolicy::BoundaryOnly => match admission {
                                     CompletionAdmission::Pending => {
                                         Some(CompletionObligation::Pending {
-                                            id: event.id.clone(),
+                                            id: event.id.clone().into(),
                                             payload: CompletionPayload {
+                                                source: CompletionPayloadSource::Legacy,
                                                 text: event.text.clone(),
                                                 policy: event.policy,
                                                 reference: Some(reference.clone()),
@@ -313,6 +382,7 @@ impl CompletionDeliveryState {
                                         Some(CompletionObligation::Projected {
                                             receipt: receipt.clone(),
                                             payload: CompletionPayload {
+                                                source: CompletionPayloadSource::Legacy,
                                                 text: event.text.clone(),
                                                 policy: event.policy,
                                                 reference: Some(reference.clone()),
@@ -324,7 +394,7 @@ impl CompletionDeliveryState {
                             }
                         }
                         CompletionObligation::Pending { .. }
-                        | CompletionObligation::Projected { .. } => return true,
+                        | CompletionObligation::Projected { .. } | CompletionObligation::Suppressed { .. } => return true,
                     };
                     match replacement {
                         Some(replacement) => {
@@ -354,7 +424,7 @@ impl CompletionDeliveryState {
                         if matches!(admission, CompletionAdmission::Projected(receipt) if &receipt.prompt_id == prompt_id && &receipt.parent_task == parent_task) { *admission = CompletionAdmission::Settled; }
                         true
                     }
-                    CompletionObligation::Pending { .. } => true,
+                    CompletionObligation::Pending { .. } | CompletionObligation::Suppressed { .. } => true,
                     CompletionObligation::Projected { receipt, .. } => &receipt.prompt_id != prompt_id || &receipt.parent_task != parent_task,
                 });
             }
@@ -365,6 +435,8 @@ impl CompletionDeliveryState {
 #[derive(Clone, Debug)]
 pub(crate) enum CompletionMutation {
     WakePolicy(CompletionWakePolicy),
+    Suppress { ids: Vec<CompletionIdentity>, reason: CompletionSuppression },
+    Enrolled { id: CompletionIdentity, payload: CompletionPayload },
     Ready(SubagentCompletionEvent),
     PublicationFinished {
         id: SubagentCompletionId,

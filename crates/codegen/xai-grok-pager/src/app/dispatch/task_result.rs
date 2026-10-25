@@ -751,6 +751,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         ),
         TaskResult::RosterLoaded { sessions } => {
             app.leader_roster = sessions;
+            super::dashboard::refresh_dashboard_child_layout(app);
             app.dashboard_sessions_loading = false;
             vec![]
         }
@@ -761,6 +762,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::DashboardSessionsLoaded { sessions } => {
             app.dashboard_local_sessions = sessions;
+            super::dashboard::refresh_dashboard_child_layout(app);
             app.dashboard_sessions_loading = false;
             vec![]
         }
@@ -1006,8 +1008,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
-        TaskResult::CompactComplete { agent_id, result } => {
-            handle_compact_complete(app, agent_id, result)
+        TaskResult::CompactComplete { agent_id, invocation_id, result } => {
+            handle_compact_complete(app, agent_id, invocation_id, result)
         }
         TaskResult::MemoryFlushComplete { agent_id, result } => handle_memory_command_complete(
             app,

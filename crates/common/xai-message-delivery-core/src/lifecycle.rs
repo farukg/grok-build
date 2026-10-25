@@ -132,6 +132,10 @@ impl<Identity, Source, Content, Completion, PromptId, Epoch>
     pub fn len(&self) -> usize {
         self.slots.len()
     }
+
+    pub fn identities(&self) -> impl Iterator<Item = &Identity> {
+        self.slots.iter().map(|slot| slot.owned().message.identity())
+    }
 }
 
 impl<Identity, Source, Content, Completion, PromptId, Epoch>

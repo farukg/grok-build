@@ -35,7 +35,9 @@ jobs:
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
 
       - name: Install pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:

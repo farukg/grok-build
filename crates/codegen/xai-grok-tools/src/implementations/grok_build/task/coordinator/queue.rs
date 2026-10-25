@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 
-use tokio::sync::oneshot;
 use xai_tool_types::InterruptionCause;
 
 use super::super::coordinator_state::{DisplacedCompletedChild, WakeOrigin};

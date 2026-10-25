@@ -152,12 +152,35 @@ fn save_failure_text(error: &SaveError) -> String {
 }
 
 impl AgentView {
+    pub(crate) fn restore_dock_placement(&self) {
+        if let Some(placement) = self.panel_persistence.store.as_ref().and_then(|store| store.global().dock_placement())
+            && crate::app::dock_requirement_pin().or_else(crate::app::dock_env_override)
+                .is_none_or(|pin| pin == placement.is_visible())
+        {
+            crate::views::dock::set_placement(placement);
+        }
+    }
+
+    pub(crate) fn set_dock_placement(&mut self, placement: crate::views::dock::DockPlacement) -> bool {
+        if crate::app::dock_requirement_pin().is_some_and(|pin| pin != placement.is_visible()) {
+            self.show_toast("Dock visibility is pinned by requirements.toml");
+            return false;
+        }
+        if let Some(store) = self.panel_persistence.store_mut() {
+            let result = store.set(Layer::Global, Setting::DockPlacement(placement));
+            if !self.report_panel_save(result) { return false; }
+        }
+        crate::views::dock::set_placement(placement);
+        true
+    }
+
     /// At view start: opens the store under `root` and applies it.
     pub(crate) fn open_panel_settings_in(&mut self, root: &Path) {
         let session = self.session.session_id.as_ref().map(|id| &*id.0);
         let (persistence, warnings) = PanelPersistence::open(root, session);
         self.panel_persistence = persistence;
         self.restore_panel_settings();
+        self.restore_dock_placement();
         if let Some(store) = self.panel_persistence.store_mut() {
             use crate::app::panel_settings::SidebarSection;
             self.tasks.overlay.visible = store

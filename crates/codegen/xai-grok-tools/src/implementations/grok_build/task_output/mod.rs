@@ -233,6 +233,9 @@ impl TaskOutputTool {
         };
 
         if let Some(snapshot) = snapshot {
+            if let Some(observer) = ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>() {
+                observer.record_task(&snapshot);
+            }
             let read_file_name;
             {
                 let res = resources.lock().await;
@@ -441,6 +444,7 @@ pub(crate) async fn resolve_tasks(
 
     for id in task_ids {
         if let Some(snap) = terminal.get_task(id).await {
+            observations.record_task(&snap);
             let is_pending = !snap.completed;
             results.push(apply_running_wait_hint(
                 snapshot_to_result(snap, read_file_name, max_output_bytes),

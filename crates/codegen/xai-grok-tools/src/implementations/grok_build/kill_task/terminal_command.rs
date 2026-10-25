@@ -195,7 +195,7 @@ mod tests {
 
         match result {
             KillTaskOutput::Result(r) => {
-                assert_eq!(r.outcome, "killed");
+                assert_eq!(r.outcome, KillOutcome::Killed);
                 assert_eq!(r.task_id, "tc-1");
             }
             other => panic!("Expected Result(killed), got {other:?}"),
@@ -216,7 +216,7 @@ mod tests {
         .unwrap();
 
         match result {
-            KillTaskOutput::Result(r) => assert_eq!(r.outcome, "already_exited"),
+            KillTaskOutput::Result(r) => assert_eq!(r.outcome, KillOutcome::AlreadyExited),
             other => panic!("Expected Result(already_exited), got {other:?}"),
         }
     }

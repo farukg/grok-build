@@ -7,6 +7,9 @@ use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCompletionsRequest, SubagentEvent,
 };
 
+#[path = "completion_transaction.rs"]
+mod transaction;
+
 impl SessionActor {
     pub(super) async fn persisted_completion_state(
         &self,
@@ -114,9 +117,10 @@ impl SessionActor {
         projection: CompletionProjection,
         prompt_id: &str,
     ) -> Result<bool, CompletionProjectionError> {
+        let terminal_ids: Vec<_> = projection.receipts().map(|receipt| receipt.completion.clone()).collect();
         let completions: Vec<_> = projection
             .receipts()
-            .map(|receipt| receipt.completion.clone())
+            .filter_map(|receipt| receipt.completion.subagent().cloned())
             .collect();
         let admission = self
             .current_turn_admission(prompt_id)
@@ -131,15 +135,19 @@ impl SessionActor {
                 for completion in &completions {
                     self.acknowledge_subagent_completion(completion);
                 }
+                self.acknowledge_terminal_receipts(&terminal_ids).await;
                 Ok(true)
             }
             CompletionProjectionAck::AlreadyPresent { .. } => {
                 for completion in &completions {
                     self.acknowledge_subagent_completion(completion);
                 }
+                self.acknowledge_terminal_receipts(&terminal_ids).await;
                 Ok(false)
             }
-            CompletionProjectionAck::TurnClosed => Ok(false),
+            CompletionProjectionAck::TurnClosed => Err(xai_chat_state::StrictAppendError::NotCommitted(
+                std::io::Error::new(std::io::ErrorKind::Interrupted, "caller closed before completion admission"),
+            )),
         }
     }
 
@@ -147,9 +155,26 @@ impl SessionActor {
         &self,
         item: ConversationItem,
         observations: Vec<
-            xai_grok_tools::types::completion_observation::ObservedSubagentCompletion,
+            xai_grok_tools::types::completion_observation::ObservedCompletion,
         >,
     ) -> Result<(), acp::Error> {
+        use xai_grok_tools::types::completion_observation::{ObservedCompletion, ObservedTerminalCompletion};
+        use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
+        let observations: Vec<CompletionIdentity> = observations.into_iter().map(|observed| match observed {
+            ObservedCompletion::Subagent(observed) => Ok(SubagentCompletionId { subagent_id: observed.subagent_id, attempt_id: observed.attempt_id }.into()),
+            ObservedCompletion::Terminal(ObservedTerminalCompletion::Task { snapshot }) => {
+                let owner_session_id = snapshot.owner_session_id.ok_or_else(|| acp::Error::internal_error().data("observed terminal result lacks owner identity"))?;
+                if owner_session_id != self.session_id_string() || !snapshot.completed {
+                    return Err(acp::Error::internal_error().data("observed terminal result is not owned and complete"));
+                }
+                Ok(TerminalCompletionId::Task { owner_session_id, task_id: snapshot.task_id, task_kind: match snapshot.kind {
+                    xai_grok_tools::computer::types::TaskKind::Bash => CompletionTaskKind::Bash,
+                    xai_grok_tools::computer::types::TaskKind::Monitor => CompletionTaskKind::Monitor,
+                }}.into())
+            }
+            ObservedCompletion::Terminal(ObservedTerminalCompletion::Workflow { run_id, revision }) => Ok(TerminalCompletionId::Workflow { run_id, revision }.into()),
+        }).collect::<Result<_, acp::Error>>()?;
+        let terminal_ids = observations.clone();
         let mut observations = observations.into_iter();
         let Some(first) = observations.next() else {
             self.chat_state_handle.push_tool_result(item);
@@ -163,28 +188,18 @@ impl SessionActor {
             .ok_or_else(|| {
                 acp::Error::internal_error().data("observed child result has no owning parent turn")
             })?;
-        let mut projection = CompletionProjection::new(
-            SubagentCompletionId {
-                subagent_id: first.subagent_id,
-                attempt_id: first.attempt_id,
-            },
-            prompt_id.clone(),
-            String::new(),
-        );
+        let mut projection = CompletionProjection::new(first, prompt_id.clone(), String::new());
         projection.item = item;
         projection.additional_receipts = observations
             .map(|observed| xai_chat_state::CompletionReceipt {
-                completion: SubagentCompletionId {
-                    subagent_id: observed.subagent_id,
-                    attempt_id: observed.attempt_id,
-                },
+                completion: observed,
                 prompt_id: prompt_id.clone(),
                 parent_task: xai_chat_state::ParentTask::Unknown,
             })
             .collect();
         let completions: Vec<_> = projection
             .receipts()
-            .map(|r| r.completion.clone())
+            .filter_map(|r| r.completion.subagent().cloned())
             .collect();
         let admission = self
             .current_turn_admission(&prompt_id)
@@ -209,6 +224,7 @@ impl SessionActor {
         for completion in completions {
             self.acknowledge_subagent_completion(&completion);
         }
+        self.acknowledge_terminal_receipts(&terminal_ids).await;
         Ok(())
     }
 
@@ -222,15 +238,18 @@ impl SessionActor {
     }
 
     pub(super) async fn drain_subagent_wakes_at_safe_point(&self) -> bool {
-        if self
-            .tool_context
-            .task_wake_suppressed
-            .as_ref()
-            .is_some_and(|gate| gate.get())
+        if CompletionWakeAdmission::classify(
+            self.tool_context
+                .task_wake_suppressed
+                .as_ref()
+                .is_some_and(|gate| gate.get()),
+            self.state.lock().await.notifications_suppressed,
+        )
+        .is_parked()
         {
             return false;
         }
-        let mut changed = false;
+        let mut changed = self.drain_terminal_wakes_at_safe_point().await;
         loop {
             let mut state = self.state.lock().await;
             let Some(running_id) = state.running_prompt_id().map(str::to_owned) else {
@@ -278,11 +297,14 @@ impl SessionActor {
     }
 
     pub(super) async fn drain_buffered_subagent_completions(&self, prompt_id: &str) -> bool {
-        if self
-            .tool_context
-            .task_wake_suppressed
-            .as_ref()
-            .is_some_and(|gate| gate.get())
+        if CompletionWakeAdmission::classify(
+            self.tool_context
+                .task_wake_suppressed
+                .as_ref()
+                .is_some_and(|gate| gate.get()),
+            self.state.lock().await.notifications_suppressed,
+        )
+        .is_parked()
         {
             return false;
         }

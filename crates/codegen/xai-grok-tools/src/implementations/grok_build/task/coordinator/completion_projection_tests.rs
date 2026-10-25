@@ -30,6 +30,7 @@ async fn tool_reminders_reservations_and_foreign_acks_cannot_consume_child_occur
     };
     let mut resources = Resources::new();
     resources.register_state::<ReportedTaskCompletions>();
+    resources.insert(State::<ReportedTaskCompletions>::default());
     resources.insert(SubagentEventSender(harness.backend.sender()));
     let reservations = TaskCompletionReservations::default();
     reservations.reserve("owned-child".into());
@@ -183,6 +184,68 @@ async fn completion_buffer_waits_for_visibility_and_late_publication_respects_re
             ),
         }
         harness.actor.abort();
+    }
+}
+
+#[tokio::test]
+async fn teardown_before_prepared_retires_direct_and_nested_completion_recipients() {
+    let wait = std::time::Duration::from_secs(1);
+    for nested in [false, true] {
+        let mut harness = harness_with_options(
+            RunnerBehavior {
+                producer_commit: ProducerCommitBehavior::HoldAcknowledgement,
+                hold_terminal_publication: true,
+                ..Default::default()
+            },
+            buffering(),
+        );
+        let spawner = if nested {
+            let backend = harness.backend.clone();
+            let spawn = tokio::spawn(async move {
+                backend.spawn(request("spawner", true), None, None).await
+            });
+            assert_eq!(harness.started.recv().await.as_deref(), Some("spawner"));
+            Some(spawn)
+        } else {
+            None
+        };
+        let recipient = if nested { "spawner" } else { "parent" };
+        let mut child = request("late-prepared", false);
+        child.parent_session_id = recipient.into();
+        let backend = harness.backend.clone();
+        let spawn = tokio::spawn(async move { backend.spawn(child, None, None).await });
+        assert_eq!(harness.started.recv().await.as_deref(), Some("late-prepared"));
+        harness.finish_one.send("late-prepared".into()).unwrap();
+        let commit = tokio::time::timeout(wait, harness.terminal_publications.recv())
+            .await.expect("producer preparation reached").unwrap();
+        assert!(!spawn.is_finished(), "terminal caller waits for producer commit");
+        let (respond_to, mut drain) = oneshot::channel();
+        harness.backend.sender().send(SubagentEvent::TeardownSession {
+            parent_session_id: recipient.into(),
+            respond_to: Some(respond_to),
+        }).unwrap();
+        assert!(peeked_completion_ids(&harness, Some(recipient)).await.is_empty());
+        assert!(matches!(drain.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        commit();
+        let result = tokio::time::timeout(wait, spawn)
+            .await.expect("committed caller settles").unwrap().unwrap();
+        assert!(result.success(), "teardown must not reject an admitted producer result");
+        assert_eq!(result.output.as_ref(), "work");
+        let visible = tokio::time::timeout(wait, harness.terminal_publications.recv())
+            .await.expect("visibility callback reached").unwrap();
+        assert_eq!(harness.completions.recv().await.unwrap().reporting, CompletionReporting::Silent);
+        assert!(peeked_completion_ids(&harness, Some(recipient)).await.is_empty());
+        assert!(matches!(drain.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "commit alone cannot drain a real visibility obligation");
+        visible();
+        tokio::time::timeout(wait, drain).await.expect("visibility drains teardown").unwrap();
+        assert!(peeked_completion_ids(&harness, Some(recipient)).await.is_empty(),
+            "late Prepared and Visible cannot resurrect a retired recipient");
+        assert!(peeked_completion_ids(&harness, Some("parent")).await.is_empty());
+        harness.actor.abort();
+        if let Some(spawner) = spawner {
+            spawner.abort();
+        }
     }
 }
 

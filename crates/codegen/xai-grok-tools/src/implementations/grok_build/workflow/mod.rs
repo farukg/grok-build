@@ -273,6 +273,11 @@ pub enum WorkflowLaunchAck {
         name: String,
         control: WorkflowControl,
     },
+    Stopped {
+        run_id: String,
+        name: String,
+        revision: u64,
+    },
     Rejected {
         code: &'static str,
         detail: String,
@@ -483,6 +488,15 @@ impl xai_tool_runtime::Tool for WorkflowTool {
                 name,
                 script_path: None,
             }),
+            Ok(WorkflowLaunchAck::Stopped { run_id, name, revision }) => {
+                if let Some(observer) = ctx.extensions.get::<crate::types::completion_observation::SubagentCompletionObservations>() {
+                    observer.record_workflow(run_id.clone(), revision);
+                }
+                Ok(WorkflowToolOutput {
+                    message: format!("Stopped workflow '{name}' (run id {run_id}, completion revision {revision}); its child agents were cancelled."),
+                    task_id: run_id.clone(), run_id, name, script_path: None,
+                })
+            }
             Ok(WorkflowLaunchAck::Rejected { code, detail }) => {
                 Err(xai_tool_runtime::ToolError::custom(code, detail))
             }

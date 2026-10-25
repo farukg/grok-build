@@ -858,3 +858,287 @@
         );
     }
 
+
+    // --- Authoritative background_tasks snapshot reconciler ---
+
+    use xai_grok_shell::extensions::background_task::{
+        BackgroundTaskRow, BackgroundTaskStatus as WireTaskStatus,
+    };
+
+    fn wire_row(task_id: &str, status: WireTaskStatus, kind: xai_grok_tools::computer::types::TaskKind) -> BackgroundTaskRow {
+        BackgroundTaskRow {
+            task_id: task_id.into(),
+            command: "tail -f deploy.log".into(),
+            display_command: None,
+            description: Some("watch deploys".into()),
+            cwd: "/tmp".into(),
+            kind,
+            status,
+            started_at: "2026-01-01T00:00:00Z".into(),
+            ended_at: (!matches!(status, WireTaskStatus::Running))
+                .then(|| "2026-01-01T00:01:00Z".to_string()),
+            output_file: Some("/tmp/rows.log".into()),
+            exit_code: None,
+            signal: None,
+        }
+    }
+
+    fn background_tasks_notif(
+        session_id: &str,
+        tasks: Vec<BackgroundTaskRow>,
+        truncated: bool,
+        event_id: Option<&str>,
+    ) -> acp::ExtNotification {
+        subagent_notification_with_event_id(
+            session_id,
+            XaiSessionUpdate::BackgroundTasks { tasks, truncated },
+            event_id,
+        )
+    }
+
+    fn bg_task_block_count(agent: &AgentView) -> usize {
+        (0..agent.scrollback.len())
+            .filter(|&index| {
+                matches!(
+                    agent.scrollback.get(index).map(|entry| &entry.block),
+                    Some(RenderBlock::BgTask(_))
+                )
+            })
+            .count()
+    }
+
+    /// Leader truth arrives as a snapshot on a freshly attached CLI whose replay never showed the
+    /// task: an unseen running row must surface in the pane store.
+    #[test]
+    fn background_tasks_snapshot_inserts_unseen_running_task() {
+        let mut app = make_app_with_agent("sess-1");
+        assert!(handle_ext_notification(
+            &background_tasks_notif(
+                "sess-1",
+                vec![wire_row("mon-9", WireTaskStatus::Running, xai_grok_tools::computer::types::TaskKind::Monitor)],
+                false,
+                Some("sess-1-30")
+            ),
+            &mut app
+        ));
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        let task = agent
+            .session
+            .bg_tasks
+            .get("mon-9")
+            .expect("snapshot row must enter bg_tasks");
+        assert_eq!(task.status, BgTaskStatus::Running);
+        assert!(task.is_monitor, "wire kind Monitor must tag the row");
+        assert!(!task.restored_from_replay, "live snapshot is not replay");
+        assert_eq!(task.description.as_deref(), Some("watch deploys"));
+    }
+
+    /// A complete snapshot is last-wins: rows the leader registry no longer holds (ghosts from an
+    /// earlier session) are cleared, along with their stdout-routing map entries.
+    #[test]
+    fn background_tasks_snapshot_clears_ghost_rows() {
+        let mut app = make_app_with_agent("sess-1");
+        seed_two_bg_tasks(&mut app, "sess-1");
+
+        assert!(handle_ext_notification(
+            &background_tasks_notif("sess-1", vec![wire_row("task-3", WireTaskStatus::Running, Default::default())], false, Some("sess-1-31")),
+            &mut app
+        ));
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        let task_ids: Vec<&str> = agent.session.bg_tasks.keys().map(String::as_str).collect();
+        assert_eq!(task_ids, ["task-3"], "complete snapshot must replace the set");
+        assert!(
+            !agent.session.bg_tool_call_to_task.contains_key("tc-1"),
+            "routing entries for cleared tasks must go too"
+        );
+    }
+
+    /// A truncated snapshot is not the complete set: missing rows must survive (clearing on a
+    /// truncated list would wipe running tasks that merely did not fit the frame).
+    #[test]
+    fn background_tasks_snapshot_truncated_keeps_missing_rows() {
+        let mut app = make_app_with_agent("sess-1");
+        seed_two_bg_tasks(&mut app, "sess-1");
+
+        handle_ext_notification(
+            &background_tasks_notif("sess-1", vec![wire_row("task-1", WireTaskStatus::Running, Default::default())], true, Some("sess-1-32")),
+            &mut app,
+        );
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert!(agent.session.bg_tasks.contains_key("task-1"));
+        assert!(
+            agent.session.bg_tasks.contains_key("task-2"),
+            "truncated snapshot must not clear rows it could not fit"
+        );
+    }
+
+    /// A snapshot-discovered terminal state updates the pane row and stops the "Task started"
+    /// bullet animation without pushing a duplicate completion block.
+    #[test]
+    fn background_tasks_snapshot_finishes_running_entry_without_new_block() {
+        let mut app = make_app_with_agent("sess-1");
+        let _ = handle_ext_notification(
+            &make_task_backgrounded_notif("sess-1", "tc-1", "task-1", "sleep 30"),
+            &mut app,
+        );
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert!(agent.scrollback.needs_animation());
+        let blocks_before = bg_task_block_count(agent);
+
+        let mut done = wire_row("task-1", WireTaskStatus::Completed, Default::default());
+        done.exit_code = Some(0);
+        assert!(handle_ext_notification(
+            &background_tasks_notif("sess-1", vec![done], false, Some("sess-1-33")),
+            &mut app
+        ));
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        let task = agent.session.bg_tasks.get("task-1").unwrap();
+        assert_eq!(task.status, BgTaskStatus::Done);
+        assert_eq!(task.exit_code, Some(0));
+        assert!(task.end_time.is_some());
+        assert!(
+            !agent.scrollback.needs_animation(),
+            "snapshot terminal must finish the started block's animation"
+        );
+        assert_eq!(
+            bg_task_block_count(agent),
+            blocks_before,
+            "reconciler must not push completion blocks"
+        );
+    }
+
+    /// Replay + live re-delivery of the same persisted snapshot share an eventId: only the first
+    /// applies (the duplicate would otherwise re-render against a cleared pane).
+    #[test]
+    fn background_tasks_snapshot_duplicate_event_id_dropped() {
+        let mut app = make_app_with_agent("sess-1");
+
+        let first = background_tasks_notif(
+            "sess-1",
+            vec![wire_row("snap-1", WireTaskStatus::Running, Default::default())],
+            false,
+            Some("sess-1-40"),
+        );
+        assert!(handle_ext_notification(&first, &mut app));
+
+        // Same eventId, but an extra row: a dropped duplicate must not apply the extra row either.
+        let duplicate = background_tasks_notif(
+            "sess-1",
+            vec![
+                wire_row("snap-1", WireTaskStatus::Running, Default::default()),
+                wire_row("snap-2", WireTaskStatus::Running, Default::default()),
+            ],
+            false,
+            Some("sess-1-40"),
+        );
+        assert!(!handle_ext_notification(&duplicate, &mut app));
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert!(!agent.session.bg_tasks.contains_key("snap-2"));
+
+        // A fresh eventId is a new snapshot and applies.
+        let fresh = background_tasks_notif(
+            "sess-1",
+            vec![
+                wire_row("snap-1", WireTaskStatus::Running, Default::default()),
+                wire_row("snap-2", WireTaskStatus::Running, Default::default()),
+            ],
+            false,
+            Some("sess-1-41"),
+        );
+        assert!(handle_ext_notification(&fresh, &mut app));
+        assert!(app.agents.get(&AgentId(0)).unwrap().session.bg_tasks.contains_key("snap-2"));
+    }
+
+    // --- eventId dedup across replay + live ---
+
+    /// The same persisted `TaskBackgrounded` delivered live (dedicated method) and then by replay
+    /// (`x.ai/session/update`) shares its eventId; the replay copy must not push a second
+    /// "Task started" block.
+    #[test]
+    fn task_backgrounded_live_then_replay_same_event_id_applies_once() {
+        let mut app = make_app_with_agent("sess-1");
+        let update = task_backgrounded_update("tc-dup", "task-dup", "sleep 60");
+
+        assert!(handle_ext_notification(
+            &ext_with_event_id("x.ai/task_backgrounded", "sess-1", update.clone(), Some("sess-1-7")),
+            &mut app
+        ));
+        assert_eq!(
+            bg_task_block_count(app.agents.get(&AgentId(0)).unwrap()),
+            1
+        );
+
+        let replayed = subagent_ext_replay("sess-1", serde_json::to_value(update).unwrap(), "sess-1-7");
+        assert!(!handle_ext_notification(&replayed, &mut app));
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert_eq!(bg_task_block_count(agent), 1, "replayed duplicate must not re-render");
+        assert!(agent.session.bg_tasks.contains_key("task-dup"));
+    }
+
+    /// A re-delivered `TaskCompleted` with the same eventId must not push a second
+    /// "Task completed" block into the transcript.
+    #[test]
+    fn task_completed_duplicate_event_id_pushes_one_block() {
+        let mut app = make_app_with_agent("sess-1");
+        let _ = handle_ext_notification(
+            &make_task_backgrounded_notif("sess-1", "tc-1", "task-1", "sleep 5"),
+            &mut app,
+        );
+
+        let completed = XaiSessionUpdate::TaskCompleted {
+            task_snapshot: race_snapshot("task-1", "sleep 5", Some(0)),
+            will_wake: false,
+        };
+        assert!(handle_ext_notification(
+            &ext_with_event_id("x.ai/task_completed", "sess-1", completed.clone(), Some("sess-1-8")),
+            &mut app
+        ));
+        assert!(
+            !handle_ext_notification(
+                &ext_with_event_id("x.ai/task_completed", "sess-1", completed, Some("sess-1-8")),
+                &mut app
+            ),
+            "exact-id re-delivery must be dropped"
+        );
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert_eq!(
+            bg_task_block_count(agent),
+            2,
+            "exactly one started + one completed block"
+        );
+        assert_eq!(agent.session.bg_tasks.get("task-1").unwrap().status, BgTaskStatus::Done);
+    }
+
+    /// Reconnect reload windows reset the exact-id memory so replay can rebuild the transcript,
+    /// and a failed reload restores the pre-window memory.
+    #[test]
+    fn reload_window_resets_and_restores_background_event_dedup_memory() {
+        let mut app = make_app_with_agent("sess-1");
+        {
+            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+            assert!(agent.admit_background_lifecycle_event(Some("sess-1-9")));
+            assert!(
+                !agent.admit_background_lifecycle_event(Some("sess-1-9")),
+                "second delivery of the same id must be rejected"
+            );
+            agent.begin_session_reload(1);
+            assert!(
+                agent.admit_background_lifecycle_event(Some("sess-1-9")),
+                "reload window must re-admit replayed lifecycle events"
+            );
+            assert!(agent.finish_session_reload(1, false));
+            assert!(
+                !agent.admit_background_lifecycle_event(Some("sess-1-9")),
+                "failed reload must restore the pre-window memory"
+            );
+        }
+        // Rebinding to another session clears the memory entirely.
+        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+        agent.bind_session_id(acp::SessionId::new("sess-other"));
+        assert!(agent.admit_background_lifecycle_event(Some("sess-1-9")));
+    }

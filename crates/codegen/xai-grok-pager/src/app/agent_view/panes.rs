@@ -59,6 +59,7 @@ impl AgentView {
             }
             if key.code == KeyCode::Tab
                 && self.dock_shown
+                && !self.dock_items().is_empty()
                 && self.set_active_pane(AgentPane::Dock, false)
             {
                 self.dock_cursor = 0;
@@ -542,12 +543,7 @@ impl AgentView {
     }
 
     pub(crate) fn work_dock_at(&self, col: u16, row: u16) -> ratatui::layout::Rect {
-        let sidebar = ratatui::layout::Rect::new(
-            self.f7_body.x,
-            self.f7_body.y,
-            self.f7_body.width,
-            self.dock_rows_in_sidebar,
-        );
+        let sidebar = self.context_dock_geometry().map(|(rect, _)| rect).unwrap_or_default();
         if sidebar.contains((col, row).into()) {
             sidebar
         } else {
@@ -570,8 +566,14 @@ impl AgentView {
         dock: ratatui::layout::Rect,
         row: u16,
     ) -> Option<crate::views::dock::DockItem> {
-        self.dock_layout_for(dock.height)
-            .item_at(row.checked_sub(dock.y)?)
+        let relative = row.checked_sub(dock.y)?;
+        if let Some((sidebar, offset)) = self.context_dock_geometry()
+            && sidebar == dock
+        {
+            return self.dock_layout_for(self.dock_rows_in_sidebar)
+                .item_at(relative.saturating_add(offset));
+        }
+        self.dock_layout_for(dock.height).item_at(relative)
     }
     /// Spends the pending reveal. Every path that ends a frame calls this, so a takeover that never paints the dock cannot leave it budgeting rows nothing put on screen.
     /// takeover that never paints the dock cannot leave it budgeting rows nothing
@@ -689,9 +691,9 @@ impl AgentView {
             self.dock_cursor.min(n - 1)
         };
     }
-    /// Pre-paint dock reconciliation, run from the draw state-update step rather than the paint pass. Section counts change from background events (task and subagent completion, queue refills), so a section that shrank back to the preview must drop its `show-all` and the cursor must stay in bounds even when no dock key was pressed since the change. Gated on the prior frame's `dock_on` so it does no work while the dock is off.
+    /// Reconcile changed work against the prior painted projection before drawing.
     pub(crate) fn reconcile_dock_before_paint(&mut self) {
-        if self.dock_on {
+        if self.dock_shown {
             self.clamp_dock_overflow();
         }
     }
@@ -775,8 +777,11 @@ impl AgentView {
         area: ratatui::layout::Rect,
         data: &crate::views::dock::DockData,
     ) {
+        let (offset, full_height) = self.context_dock_geometry()
+            .filter(|(rect, _)| *rect == area)
+            .map_or((0, area.height), |(_, offset)| (offset, self.dock_rows_in_sidebar));
         self.dock_stop_button =
-            crate::views::dock::hovered_stop_button_rect(area, data).and_then(|hit| {
+            crate::views::dock::hovered_stop_button_rect_with_offset(area, offset, full_height, data).and_then(|hit| {
                 self.dock_stop_action(hit.item)
                     .and_then(|action| super::DockKillId::from_action(&action))
                     .map(|id| super::CachedDockStop { rect: hit.rect, id })
@@ -970,6 +975,9 @@ impl AgentView {
             && key.modifiers == KeyModifiers::SHIFT;
         if !key.modifiers.is_empty() && !shift_tab {
             return InputOutcome::Unchanged;
+        }
+        if key!(Tab).matches(key) {
+            return InputOutcome::Action(Action::FocusPrompt);
         }
         self.clamp_dock_overflow();
         let items = self.dock_items();

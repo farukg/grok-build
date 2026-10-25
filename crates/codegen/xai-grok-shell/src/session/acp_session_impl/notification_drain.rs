@@ -2,13 +2,41 @@
 
 use super::*;
 
-/// Maximum number of pending notifications before oldest are dropped.
+/// Maximum number of transient monitor notifications retained.
 pub(super) const MAX_PENDING_NOTIFICATIONS: usize = 50;
 
 /// Mid-turn live-orphan scan interval.
 /// InjectNotification can fire often; one disk pass per window is enough since records persist first, so finalizing the same orphan again is a no-op.
 pub(crate) const LIVE_ORPHAN_RECONCILE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(30);
+
+/// The one admission decision for a completion wake, shared by every origin
+/// (subagent, workflow, bash task): deliver now, or park until human
+/// re-engagement. There is no third "drop" outcome — a wake is delivered or
+/// parked (gb-wake-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompletionWakeAdmission {
+    /// No suppression armed: the wake may start a caller turn now.
+    Deliver,
+    /// The StopGesture/`HumanStopped` barrier is armed: the wake parks (queued row
+    /// or fallback notification) and promotes when a human resumes the session.
+    ParkUntilHumanResume,
+}
+
+impl CompletionWakeAdmission {
+    /// The barrier test shared by every origin: the live gate or the actor's suppressed flag.
+    pub(super) fn classify(gate_suppressed: bool, notifications_suppressed: bool) -> Self {
+        if gate_suppressed || notifications_suppressed {
+            Self::ParkUntilHumanResume
+        } else {
+            Self::Deliver
+        }
+    }
+
+    pub(super) fn is_parked(self) -> bool {
+        matches!(self, Self::ParkUntilHumanResume)
+    }
+}
 
 /// A notification buffered for idle-gated drain (see `maybe_drain_notifications`).
 pub(crate) struct PendingNotification {
@@ -22,21 +50,39 @@ pub(crate) struct PendingNotification {
     pub(crate) source: NotificationSource,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NotificationBatchRow {
+    Terminal { id: xai_chat_state::completion::CompletionIdentity, text: String },
+    MonitorEvent { task_id: String, text: String },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum NotificationBatchPayload {
+    #[default]
+    TerminalOnly,
+    Rows { id: String, rows: Vec<NotificationBatchRow> },
+}
+
 impl SessionActor {
     pub(super) fn push_pending_notification(state: &mut State, notification: PendingNotification) {
         state.pending_notifications.push(notification);
-        let excess = state
+        let mut excess = state
             .pending_notifications
-            .len()
+            .iter()
+            .filter(|notification| matches!(notification.source, NotificationSource::MonitorEvent { .. }))
+            .count()
             .saturating_sub(MAX_PENDING_NOTIFICATIONS);
-        if excess > 0 {
-            state.pending_notifications.drain(..excess);
-            tracing::warn!(
-                dropped = excess,
-                "Dropped oldest pending notifications (exceeded cap of {})",
-                MAX_PENDING_NOTIFICATIONS,
-            );
-        }
+        // Completion rows hold parked obligations; only transient events may be evicted.
+        state.pending_notifications.retain(|notification| {
+            if excess > 0
+                && matches!(notification.source, NotificationSource::MonitorEvent { .. })
+            {
+                excess -= 1;
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub(super) fn push_task_wake_fallback(state: &mut State, fallback: TaskWakeFallback) {
@@ -49,6 +95,63 @@ impl SessionActor {
                 source: fallback.source,
             },
         );
+    }
+
+    fn notification_completion_ids(&self, notifications: &[PendingNotification]) -> Vec<xai_chat_state::completion::CompletionIdentity> {
+        use xai_chat_state::completion::{CompletionTaskKind, TerminalCompletionId};
+        notifications.iter().filter_map(|notification| {
+            let (task_id, task_kind) = match &notification.source {
+                NotificationSource::BashTaskCompleted { task_id } => (task_id, CompletionTaskKind::Bash),
+                NotificationSource::MonitorCompleted { task_id } => (task_id, CompletionTaskKind::Monitor),
+                NotificationSource::MonitorEvent { .. } => return None,
+            };
+            Some(TerminalCompletionId::Task { owner_session_id: self.session_id_string(), task_id: task_id.clone(), task_kind }.into())
+        }).collect()
+    }
+
+    fn notification_batch_payload(&self, notifications: &[PendingNotification]) -> NotificationBatchPayload {
+        let completed_monitors: std::collections::HashSet<_> = notifications.iter().filter_map(|row| match &row.source {
+            NotificationSource::MonitorCompleted { task_id } => Some(task_id.as_str()),
+            NotificationSource::MonitorEvent { .. } | NotificationSource::BashTaskCompleted { .. } => None,
+        }).collect();
+        NotificationBatchPayload::Rows { id: uuid::Uuid::now_v7().to_string(), rows: notifications.iter().filter_map(|row| {
+            let text = Self::queue_text_from_blocks(&row.prompt_blocks);
+            match &row.source {
+                NotificationSource::MonitorEvent { task_id } => {
+                    if completed_monitors.contains(task_id.as_str()) { return None; }
+                    Some(NotificationBatchRow::MonitorEvent { task_id: task_id.clone(), text })
+                }
+                NotificationSource::MonitorCompleted { .. } | NotificationSource::BashTaskCompleted { .. } => {
+                    self.notification_completion_ids(std::slice::from_ref(row)).into_iter().next()
+                        .map(|id| NotificationBatchRow::Terminal { id, text })
+                }
+            }
+        }).collect() }
+    }
+
+    pub(super) fn notification_batch_text(
+        &self,
+        payload: &NotificationBatchPayload,
+        terminals: &[(xai_chat_state::completion::CompletionIdentity, String)],
+    ) -> Option<String> {
+        use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
+        let NotificationBatchPayload::Rows { rows, .. } = payload else { return None; };
+        let notifications: Vec<_> = rows.iter().filter_map(|row| {
+            let (source, text) = match row {
+                NotificationBatchRow::Terminal { id, .. } => {
+                    let text = terminals.iter().find(|(fresh, _)| fresh == id)?.1.clone();
+                    let CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { task_id, task_kind, .. }, .. } = id else { return None; };
+                    let source = match task_kind {
+                        CompletionTaskKind::Bash => NotificationSource::BashTaskCompleted { task_id: task_id.clone() },
+                        CompletionTaskKind::Monitor => NotificationSource::MonitorCompleted { task_id: task_id.clone() },
+                    };
+                    (source, text)
+                }
+                NotificationBatchRow::MonitorEvent { task_id, text } => (NotificationSource::MonitorEvent { task_id: task_id.clone() }, text.clone()),
+            };
+            Some(PendingNotification { prompt_id: String::new(), prompt_blocks: vec![acp::ContentBlock::from(text)], priority: NotificationPriority::Later, source })
+        }).collect();
+        Some(Self::queue_text_from_blocks(&Self::notification_blocks(&notifications, &self.tool_context.task_output_tool_name)))
     }
 
     pub(super) async fn consume_deferred_completions(&self) -> Vec<String> {
@@ -100,10 +203,18 @@ impl SessionActor {
             .collect::<Vec<_>>()
             .join("\n");
         if !completion_text.is_empty() {
-            self.push_system_reminder(&completion_text);
+            let ids = self.notification_completion_ids(&deferred);
+            let prompt_id = self.state.lock().await.running_prompt_id().map(str::to_owned);
+            let committed = match prompt_id {
+                Some(prompt_id) => self.project_notification_batch(ids, &prompt_id, completion_text, &self.notification_batch_payload(&deferred)).await,
+                None => Err(xai_chat_state::StrictAppendError::NotCommitted(std::io::Error::new(std::io::ErrorKind::NotConnected, "deferred completion has no caller turn"))),
+            };
+            if let Err(error) = committed {
+                tracing::error!(%error, "deferred completions retained after projection failure");
+                self.state.lock().await.pending_notifications.extend(deferred);
+                return Vec::new();
+            }
         }
-        let completion_id_refs: Vec<&str> = completion_ids.iter().map(String::as_str).collect();
-        self.mark_completions_reported(&completion_id_refs).await;
         completion_ids
     }
 
@@ -120,10 +231,13 @@ impl SessionActor {
         self: Arc<Self>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
     ) {
+        if self.compaction.cancel.manual_is_sealed() {
+            return;
+        }
         // Fast path under the lock: nothing to promote.
         let may_combine;
         {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             if state.running_task.is_some() || state.finalization_gate.is_active() {
                 let queue_depth = state.pending_inputs.len();
                 if queue_depth > 0 {
@@ -151,11 +265,14 @@ impl SessionActor {
                 }
                 return;
             }
+            if self.start_pending_compact(&mut state) {
+                return;
+            }
             if state.pending_inputs.is_empty() {
                 return;
             }
             // A merge needs at least two queued prompts; sample here so the common single-prompt promote skips the config disk read below
-            may_combine = state.pending_inputs.len() >= 2;
+            may_combine = state.pending_inputs.len() >= 2 && !self.has_pending_compact();
         }
 
         // Config I/O outside the state lock, and only when a merge is even possible; keeps the single-prompt promote (the common case) off disk
@@ -184,7 +301,8 @@ impl SessionActor {
 
         let mut state = self.state.lock().await;
         // Re-check after the await gap.
-        if state.running_task.is_some()
+        if self.compaction.cancel.manual_is_sealed()
+            || state.running_task.is_some()
             || state.finalization_gate.is_active()
             || state.pending_inputs.is_empty()
         {
@@ -211,11 +329,25 @@ impl SessionActor {
             return;
         }
 
-        if self
-            .tool_context
-            .task_wake_suppressed
-            .as_ref()
-            .is_some_and(|gate| gate.get())
+        if let Some(index) = state.pending_inputs.iter()
+            .position(|input| self.pending_compact_allows_input(&input.prompt_id))
+            && index > 0
+            && let Some(input) = state.pending_inputs.remove(index)
+        {
+            state.pending_inputs.push_front(input);
+        }
+
+        // The park site for every queued completion-origin row (subagent, workflow,
+        // bash task): while the barrier is armed, a human-intent row jumps the queue
+        // and synthetic wakes stay parked until human re-engagement clears the gate.
+        if CompletionWakeAdmission::classify(
+            self.tool_context
+                .task_wake_suppressed
+                .as_ref()
+                .is_some_and(|gate| gate.get()),
+            state.notifications_suppressed,
+        )
+        .is_parked()
         {
             let human = state
                 .pending_inputs
@@ -226,10 +358,8 @@ impl SessionActor {
                 state.pending_inputs.push_front(input);
             }
         }
-        if state.pending_inputs.front().is_some_and(|item| matches!(item.input_origin.as_prompt_origin(),
-            super::PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery))) {
-            let boundary = state.pending_inputs.iter().position(|item| !matches!(item.input_origin.as_prompt_origin(),
-                super::PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery)));
+        if state.pending_inputs.front().is_some_and(|item| item.input_origin.is_boundary_completion()) {
+            let boundary = state.pending_inputs.iter().position(|item| !item.input_origin.is_boundary_completion());
             let Some(index) = boundary else { return };
             if let Some(input) = state.pending_inputs.remove(index) { state.pending_inputs.push_front(input); }
         }
@@ -259,7 +389,7 @@ impl SessionActor {
                         && !persisted
                             .obligations
                             .iter()
-                            .any(|obligation| obligation.id() == &completion.id)
+                            .any(|obligation| obligation.id() == completion.id)
                 }
                 Some(super::PromptOrigin::WorkflowCompleted { completion_id }) => {
                     match completion_id
@@ -288,6 +418,15 @@ impl SessionActor {
             if let Some(item) = state.pending_inputs.pop_front() {
                 Self::respond_removed_prompt(item.respond_to);
             }
+        }
+
+        if self.start_pending_compact(&mut state) {
+            return;
+        }
+        if self.compaction.cancel.manual_is_sealed()
+            || state.pending_inputs.front().is_some_and(|input| !self.pending_compact_allows_input(&input.prompt_id))
+        {
+            return;
         }
 
         // Drop holds for rows no longer queued, then expire leaked holds so a client crash or dropped release cannot park the queue forever
@@ -328,7 +467,7 @@ impl SessionActor {
             return;
         }
 
-        if combine_queued {
+        if combine_queued && !self.has_pending_compact() {
             let holds: Vec<String> = state.edit_holds.keys().cloned().collect();
             let skip: Vec<&str> = holds.iter().map(String::as_str).collect();
             SessionActor::combine_front_pending_inputs(&mut state.pending_inputs, &skip);
@@ -381,6 +520,7 @@ impl SessionActor {
             )
         };
         self.apply_tool_overrides_update(tool_overrides_update);
+        self.observe_wait_input(input_origin.as_prompt_origin());
         if input_origin.policy().authority.is_human_intent() {
             self.set_completion_wake_policy(
                 crate::session::completion_delivery::CompletionWakePolicy::Automatic,
@@ -410,6 +550,9 @@ impl SessionActor {
                 ),
             )
             .await;
+        if self.compaction.cancel.manual_is_sealed() {
+            return;
+        }
 
         tracing::debug!(
             target: "qtrace",
@@ -517,6 +660,9 @@ impl SessionActor {
         self: Arc<Self>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
     ) {
+        if self.compaction.cancel.manual_is_sealed() {
+            return;
+        }
         // Mid-turn tick: the parent may still be Responding so the idle hook never runs
         // Throttled so InjectNotification does not scan disk on every event
         if self
@@ -530,23 +676,26 @@ impl SessionActor {
         // Auto-wake notification turns are DROPPED both while the goal loop is active AND after the goal completes.
         // While active, a task or monitor completion turn would pull a weak model off the goal continuation.
         // After the goal completes the autonomous run is over; late dev-server completions should leave the session idle, not spawn post-goal turns.
-        let suppress_all = self.goal_harness_enabled()
-            && matches!(
-                self.goal_tracker.lock().status(),
-                Some(
-                    crate::session::goal_tracker::GoalStatus::Active
-                        | crate::session::goal_tracker::GoalStatus::Complete
-                )
-            );
+        let suppress_all = self.goal_suppresses_notifications();
 
-        let drained_task_ids: Vec<String>;
+        let suppressed_notifications;
 
         let drained = {
             let mut state = self.state.lock().await;
 
             // Shared idle predicate: the same conditions Layer 3 uses via `is_session_idle_for_injection`
             // Inlined here so the `mut state` borrow can survive into the take/push below
-            if !is_session_idle_for_injection(&state) {
+            if self.compaction.cancel.manual_is_sealed()
+                || !is_session_idle_for_injection(&state)
+                || CompletionWakeAdmission::classify(
+                    self.tool_context
+                        .task_wake_suppressed
+                        .as_ref()
+                        .is_some_and(|gate| gate.get()),
+                    state.notifications_suppressed,
+                )
+                .is_parked()
+            {
                 return;
             }
 
@@ -561,36 +710,33 @@ impl SessionActor {
             // Take all notifications and build merged blocks inside the lock
             let notifications = std::mem::take(&mut state.pending_notifications);
 
-            drained_task_ids = notifications
-                .iter()
-                .map(|n| n.source.task_id().to_string())
-                .collect();
-
-            let (to_surface, dropped) = {
+            // A completion of a declared wait target is the wake the session is
+            // waiting for (gb-wake-2): it must surface even under the goal-active
+            // blanket gate, or a waiting goal would stall with dead targets and no wake.
+            let (waited, notifications) = self.partition_declared_wait_completions(notifications);
+            if !waited.is_empty() { self.break_declared_wait(); }
+            let (mut to_surface, dropped) = {
                 let goal_turn_task_ids = self.goal_turn_task_ids.lock();
-                Self::split_goal_suppressed(suppress_all, &goal_turn_task_ids, notifications)
+                Self::partition_goal_suppressed(suppress_all, &goal_turn_task_ids, notifications)
             };
-            if dropped > 0 {
+            let dropped_count = dropped.len();
+            suppressed_notifications = dropped;
+            to_surface.splice(..0, waited);
+            if dropped_count > 0 {
                 tracing::info!(
-                    dropped,
+                    dropped = dropped_count,
                     suppress_all,
                     "dropping suppressed pending notifications (goal active/complete or goal-turn origin)"
                 );
             }
 
-            if to_surface.is_empty() {
-                false
-            } else {
-                Self::drain_notifications_into_turn(
-                    &mut state,
-                    to_surface,
-                    &self.tool_context.task_output_tool_name,
-                )
-            }
+            self.queue_notification_batch(&mut state, to_surface)
         };
-        // Mark reported whether dropped or surfaced, so the per-tool-call `TaskCompletionReminder` won't resurface the same completions
-        let ids: Vec<&str> = drained_task_ids.iter().map(String::as_str).collect();
-        self.mark_completions_reported(&ids).await;
+        let ids = self.notification_completion_ids(&suppressed_notifications);
+        if let Err(error) = self.suppress_terminal_notifications(ids).await {
+            tracing::error!(%error, "goal-suppressed completions retained until durable disposition");
+            self.state.lock().await.pending_notifications.extend(suppressed_notifications);
+        }
 
         if drained {
             SessionActor::maybe_start_running_task(self, completion_tx).await;
@@ -656,30 +802,95 @@ impl SessionActor {
         }
     }
 
+    fn goal_suppresses_notifications(&self) -> bool {
+        self.goal_harness_enabled() && matches!(
+            self.goal_tracker.lock().status(),
+            Some(crate::session::goal_tracker::GoalStatus::Active | crate::session::goal_tracker::GoalStatus::Complete)
+        )
+    }
+
+    pub(super) async fn retain_or_suppress_task_wake(&self, fallback: TaskWakeFallback) -> Option<TaskWakeFallback> {
+        self.classify_task_notification(fallback).await.ok().flatten()
+    }
+
+    pub(super) async fn classify_task_notification(&self, fallback: TaskWakeFallback) -> std::io::Result<Option<TaskWakeFallback>> {
+        let notification = PendingNotification {
+            prompt_id: fallback.prompt_id, prompt_blocks: fallback.prompt_blocks,
+            priority: NotificationPriority::Later, source: fallback.source,
+        };
+        let (mut waited, notifications) = self.partition_declared_wait_completions(vec![notification]);
+        let (mut surface, suppressed) = Self::partition_goal_suppressed(
+            self.goal_suppresses_notifications(), &self.goal_turn_task_ids.lock(), notifications,
+        );
+        waited.append(&mut surface);
+        if let Some(notification) = waited.pop() {
+            return Ok(Some(TaskWakeFallback { prompt_id: notification.prompt_id, prompt_blocks: notification.prompt_blocks, source: notification.source }));
+        }
+        if let Err(error) = self.suppress_terminal_notifications(self.notification_completion_ids(&suppressed)).await {
+            tracing::error!(%error, "task wake retained until goal suppression is durable");
+            self.state.lock().await.pending_notifications.extend(suppressed);
+            return Err(error);
+        }
+        Ok(None)
+    }
+
     /// Partition drained notifications into `(to_surface, dropped_count)`.
     /// `suppress_all` mirrors the goal Active/Complete blanket gate (drop everything).
     /// Independently, notifications whose source task is in `goal_turn_task_ids` are always dropped.
+    #[cfg(test)]
     pub(super) fn split_goal_suppressed(
         suppress_all: bool,
         goal_turn_task_ids: &std::collections::HashSet<String>,
         notifications: Vec<PendingNotification>,
     ) -> (Vec<PendingNotification>, usize) {
-        if suppress_all {
-            let dropped = notifications.len();
-            return (Vec::new(), dropped);
+        let (surface, suppressed) = Self::partition_goal_suppressed(suppress_all, goal_turn_task_ids, notifications);
+        (surface, suppressed.len())
+    }
+
+    fn partition_goal_suppressed(
+        suppress_all: bool,
+        goal_turn_task_ids: &std::collections::HashSet<String>,
+        notifications: Vec<PendingNotification>,
+    ) -> (Vec<PendingNotification>, Vec<PendingNotification>) {
+        notifications.into_iter().partition(|notification| {
+            !suppress_all && !goal_turn_task_ids.contains(notification.source.task_id())
+        })
+    }
+
+    /// Split completion notifications whose task is a declared wait target away from the rest.
+    /// Those surface unconditionally: they are the wake the waiting session asked for
+    /// (see [`Self::maybe_drain_notifications`]).
+    fn partition_declared_wait_completions(
+        &self,
+        notifications: Vec<PendingNotification>,
+    ) -> (Vec<PendingNotification>, Vec<PendingNotification>) {
+        let wait_state = self.turn_wait_declaration.borrow();
+        let declaration = &wait_state.declaration;
+        if declaration.is_empty() {
+            return (Vec::new(), notifications);
         }
-        let mut dropped = 0usize;
-        let to_surface = notifications
-            .into_iter()
-            .filter(|n| {
-                let keep = !goal_turn_task_ids.contains(n.source.task_id());
-                if !keep {
-                    dropped += 1;
+        let mut waited = Vec::new();
+        let mut rest = Vec::new();
+        for notification in notifications {
+            let is_waited = match &notification.source {
+                NotificationSource::BashTaskCompleted { task_id }
+                | NotificationSource::MonitorCompleted { task_id } => {
+                    declaration.contains(&super::stop_gate::WaitOnTarget::BashTask {
+                        task_id: task_id.clone(),
+                    }) || declaration.contains(&super::stop_gate::WaitOnTarget::Monitor {
+                        task_id: task_id.clone(),
+                    })
                 }
-                keep
-            })
-            .collect();
-        (to_surface, dropped)
+                NotificationSource::MonitorEvent { .. } => false,
+            };
+            if is_waited {
+                waited.push(notification);
+            } else {
+                rest.push(notification);
+            }
+        }
+        drop(wait_state);
+        (waited, rest)
     }
 
     fn notification_blocks(
@@ -749,6 +960,17 @@ impl SessionActor {
             blocks.extend(section.iter().cloned());
         }
         blocks
+    }
+
+    pub(super) fn queue_notification_batch(&self, state: &mut State, notifications: Vec<PendingNotification>) -> bool {
+        if notifications.is_empty() { return false; }
+        let ids = self.notification_completion_ids(&notifications);
+        let payload = self.notification_batch_payload(&notifications);
+        let drained = Self::drain_notifications_into_turn(state, notifications, &self.tool_context.task_output_tool_name);
+        if drained && let Some(input) = state.pending_inputs.back_mut() {
+            input.input_origin = input.input_origin.clone().with_completions(ids).with_notification_batch(payload);
+        }
+        drained
     }
 
     /// Merge notifications into one queued `NotificationDrain` turn.
@@ -1168,3 +1390,7 @@ mod live_orphan_hook_tests {
             .await;
     }
 }
+
+#[cfg(test)]
+#[path = "notification_drain_tests.rs"]
+mod tests;

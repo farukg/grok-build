@@ -2,8 +2,8 @@
 #[cfg(test)]
 use super::test_agent_view;
 use super::{
-    ActivePane, AgentRole, AgentView, InlineMediaHitAreas, InputMode, PaneAreas, PluginCtaState,
-    PromptInputMode, PromptMode, REWOUND_PROMPT_ID_CAP, ReplayRebuiltState,
+    ActivePane, AgentRole, AgentView, ChildLink, InlineMediaHitAreas, InputMode, PaneAreas,
+    PluginCtaState, PromptInputMode, PromptMode, REWOUND_PROMPT_ID_CAP, ReplayRebuiltState,
     SELF_ORIGINATED_PROMPT_CAP, SessionReload,
 };
 use crate::app::agent::{AgentSession, GoalDisplayStatus};
@@ -26,6 +26,45 @@ use xai_grok_telemetry::events::{CancellationCompleted, CancellationScope};
 fn post_turn_plan_review_default() -> bool {
     false
 }
+/// Roster parentage survives a missing parent view and a reaped child actor.
+pub(crate) fn stamp_child_role_for_session(
+    views: &mut crate::app::session_views::SessionViews,
+    opened: crate::app::agent::AgentId,
+    session_id: &str,
+    authoritative_parent: Option<&str>,
+) {
+    let parent_session_id = authoritative_parent
+        .map(agent_client_protocol::SessionId::new)
+        .or_else(|| {
+            views.all().find_map(|(_, view)| {
+                view.subagent_sessions
+                    .contains_key(session_id)
+                    .then(|| view.session.session_id.clone())
+                    .flatten()
+            })
+        });
+    let Some(parent_session_id) = parent_session_id.filter(|parent| parent.0.as_ref() != session_id) else {
+        return;
+    };
+    let parent = views.find_by_session_id(&parent_session_id.0);
+    if let Some(view) = views.get_mut(&opened) {
+        match &mut view.role {
+            AgentRole::Child(link)
+                if link.parent_session_id == parent_session_id && link.subagent_id == session_id =>
+            {
+                link.parent = parent;
+            }
+            AgentRole::Root | AgentRole::Child(_) => {
+                view.role = AgentRole::Child(ChildLink {
+                    parent,
+                    parent_session_id,
+                    subagent_id: session_id.to_owned(),
+                    started_at: Instant::now(),
+                });
+            }
+        }
+    }
+}
 impl AgentView {
     /// Always bumps [`Self::last_turn_summary_gen`] so a concurrent disk hydrate that captured an older generation cannot overwrite this write.
     pub(crate) fn set_last_turn_summary(&mut self, summary: Option<String>) {
@@ -38,10 +77,12 @@ impl AgentView {
     pub(crate) fn bind_session_id(&mut self, session_id: agent_client_protocol::SessionId) {
         if self.session.session_id.as_ref() != Some(&session_id) {
             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
+            self.compact_invocations.clear();
             self.last_seen_event_id = None;
             self.last_seen_event_seq = None;
             self.last_applied_event_seq = None;
             self.last_applied_xai_event_seq = None;
+            self.applied_background_event_ids.clear();
             self.deferred_subagent_finishes.clear();
             self.clear_minimal_btw_lifecycle();
             self.clear_kept_plan();
@@ -76,10 +117,35 @@ impl AgentView {
             self.last_seen_event_seq = new_seq.or(cur_seq);
         }
     }
+    /// Exact-`eventId` admission for background-thing lifecycle updates (task,
+    /// scheduler, subagent, monitor, `background_tasks` snapshots). `None`
+    /// (no id on the wire, synthetic payloads, internal re-dispatch) always
+    /// admits. An id already in the bounded memory is a replay/live
+    /// re-delivery of the same persisted event and is rejected; the id is
+    /// recorded on first delivery whether or not the reducer later drops the
+    /// event, so an exact re-delivery can never resurrect it.
+    pub(crate) fn admit_background_lifecycle_event(&mut self, event_id: Option<&str>) -> bool {
+        let Some(event_id) = event_id else {
+            return true;
+        };
+        if self
+            .applied_background_event_ids
+            .iter()
+            .any(|seen| seen == event_id)
+        {
+            return false;
+        }
+        self.applied_background_event_ids.push_back(event_id.to_owned());
+        while self.applied_background_event_ids.len() > super::APPLIED_BACKGROUND_EVENT_ID_LIMIT {
+            self.applied_background_event_ids.pop_front();
+        }
+        true
+    }
     /// Unbind this view from its current session identity.
     pub(crate) fn unbind_session_id(&mut self) {
         if self.session.session_id.take().is_some() {
             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
+            self.compact_invocations.clear();
             self.deferred_subagent_finishes.clear();
             self.clear_minimal_btw_lifecycle();
             self.clear_kept_plan();
@@ -138,6 +204,7 @@ impl AgentView {
         let mut view = Self {
             session,
             session_binding_epoch: 0,
+            compact_invocations: std::collections::HashMap::new(),
             scrollback,
             prompt,
             tip_typing_dismissed: false,
@@ -150,6 +217,7 @@ impl AgentView {
             rewound_prompt_ids: VecDeque::new(),
             last_applied_event_seq: None,
             last_applied_xai_event_seq: None,
+            applied_background_event_ids: VecDeque::new(),
             last_seen_event_id: None,
             last_seen_event_seq: None,
             deferred_subagent_finishes: Default::default(),
@@ -684,6 +752,7 @@ impl AgentView {
             last_seen_event_seq: self.last_seen_event_seq,
             last_applied_event_seq: self.last_applied_event_seq,
             last_applied_xai_event_seq: self.last_applied_xai_event_seq,
+            applied_background_event_ids: std::mem::take(&mut self.applied_background_event_ids),
             saw_replay: false,
             saw_todo_update: false,
             replayed_expiry_notices: Vec::new(),
@@ -1007,6 +1076,7 @@ impl AgentView {
             self.last_seen_event_seq = reload.last_seen_event_seq;
             self.last_applied_event_seq = reload.last_applied_event_seq;
             self.last_applied_xai_event_seq = reload.last_applied_xai_event_seq;
+            self.applied_background_event_ids = reload.applied_background_event_ids;
             dropped_heavy = true;
         }
         self.session.loading_replay = false;

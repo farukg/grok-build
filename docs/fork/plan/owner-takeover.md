@@ -1,19 +1,28 @@
 # Owner-takeover execution plan (Krillin, updated 2026-10-25)
 
-Status: implementation is authorized and in progress. No additional GO is required for
-this scope. Acceptance, staging and final same-SHA CI success are not yet established.
+Status: source integration of preserved owner and already-started work is complete
+in the current `main` source tree; its final integration commit is pending. The
+release build for that final commit remains unverified. No new feature or review
+project is authorized; no staging or runtime acceptance is established.
 
-**Verification boundary: locally no check, no build, no test.** This also forbids
-compiler/formatter verification commands, indirect test scripts and hooks. Local
-work is source reading/editing only; executing verification belongs exclusively
-to GitHub Actions. Every older local-guard instruction is superseded.
+**Verification boundary: no checks, tests, formatters, local builds, or `sig build`;
+no sig-orch communications.** This also forbids compiler/formatter verification
+commands, indirect test scripts and hooks. Source reading/editing only; the only
+verification in this delivery scope is the necessary GitHub release build after
+integration. Historical local-guard instructions are superseded.
 
 ## Current execution baseline
 
-- Author tree: `/home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover`.
-- Branch: `grb/owner-takeover`; Wave A baseline:
-  `5abbd3c5599c18133ea271049d8c3da3510cc736`. The checkpoint merge is completed;
-  subsequent author changes and preservation commits remain unverified.
+- Preserved canonical `main` commit: `875ff73c`.
+- Preserved owner commit: `e7ceeb50` in
+  `/home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover`.
+  Source integration of preserved owner and already-started work is complete in the
+  current main source tree, with its final integration commit pending. The preservation
+  commits and source integration have no release-build verification; neither
+  preservation commit is presented as the final integrated SHA.
+- Historical Wave A baseline: `5abbd3c5599c18133ea271049d8c3da3510cc736`.
+  Its checkpoint merge completed before preservation; historical acceptance facts
+  are retained below and do not describe current source acceptance.
 - `linux-build` run `40128349776` succeeded at
   `5abbd3c5599c18133ea271049d8c3da3510cc736`.
 - `linux-test` run `40128351855` completed as `cancelled` at the same SHA after
@@ -82,18 +91,19 @@ not restart conflict-resolution dispatch from the old five-file manifest.
 5. Complete refuter + lead review and the full source review by reading, including
    typo/API self-check. Integrate coherent commits and push normally to the fork.
    Do not run local compilation or tests.
-6. Use one consolidated `linux-build` + `linux-test` pair for the wave. Observe the
-   existing runs before deciding whether any additional run is justified; do not
-   launch replacements merely because this plan was refreshed. Extra CI is allowed
-   only after capture-based root-cause analysis and only at the minimum needed scope.
-7. Gate: verified green build + relevant tests on the same final SHA, with review
-   findings and the full source review by reading recorded. The baseline build succeeded;
-   its test run was cancelled, so final combined acceptance remains pending.
+6. Historical wave plan called for one consolidated `linux-build` + `linux-test`
+   pair. That historical instruction is not authorization for tests in the current
+   delivery scope.
+7. Historical acceptance gate remains unmet: the baseline build succeeded, its test
+   run was cancelled, and no current final-SHA acceptance is established. The current
+   scope authorizes only the necessary GitHub release build after started-work
+   integration; no tests or review project are authorized here.
 
 ## Wave B — Faruk's issue list + carried-over orders
 
-Implementation is authorized. Coordinate lane dependencies with Wave A; authorization
-is not evidence that Wave A's acceptance gate has passed.
+This table records previously started lane scope, not new implementation
+authorization. Preserve and integrate existing work only; no new features or review
+projects are in scope.
 
 | Lane | Covers | Entry evidence |
 |---|---|---|
@@ -128,15 +138,16 @@ owners and components; Lead integrates cross-lane behavior and acceptance eviden
 - Global pane state: Ctrl+G Tasks and Ctrl+T Todos toggles are global like F6/F7,
   preserved across session switches, new sessions and restarts, with focus continuity.
 
-Each lane uses native explore/author workers; Lead owns integration and verification.
-Workers remain author-only; Lead ensures review and a full static/source-format
-pass before the wave's consolidated CI pair. Compilation and Rust tests run only
-in GitHub Actions; no local builds or test runs. Coherent commit increments
-do not each trigger a separate CI cycle. Gateway/wire needs go to Sokrates
-(`orc.direct.Sokrates`) with concrete wire/request/receipt evidence, producer/consumer
-change and rollout boundary — never unilateral gateway edits (outside grok-build scope).
+These historical lane instructions do not authorize new workers, review projects,
+checks, tests, formatters, or sig-orch communication for the current preservation and
+integration scope. Preserve only work already started; gateway/wire coordination is
+outside this scope.
 
-## Wave C — final acceptance and staging
+## Historical Wave C — final acceptance and staging
+
+The following is prior delivery planning, not authorization for new review or tests
+in the current preservation/integration unit. Current main has no final integrated SHA;
+no build or staging success is claimed.
 
 1. Confirm review closure, the full source review by reading, and same-SHA green
    GitHub Actions build + relevant tests; record exact run IDs and conclusions.
@@ -155,14 +166,11 @@ change and rollout boundary — never unilateral gateway edits (outside grok-bui
 
 ## Verification and ownership boundaries
 
-- **GitHub Actions quota is scarce and binding**: one consolidated `linux-build` +
-  `linux-test` pair per wave, only after refuter + lead review and a full
-  source review by reading, including typo/API self-check. No local Grok builds
-  or test runs are permitted; compilation and Rust tests are CI-only. Analyze run captures before fixes;
-  additional CI requires capture-root-caused justification and minimum necessary scope.
-- Native subagents only; no model pinning and no workflows for dispatch.
+- Historical CI quota and wave-pair instructions do not override the current scope:
+  only the necessary GitHub release build after integration is authorized. No local
+  builds/checks/tests/formatters, `sig build`, or sig-orch communications.
 - Pushes only to `farukg/grok-build` (`origin`); never to `xai-org/grok-build`.
 - Normal pushes only. No force push is authorized on any branch.
-- Stream file updates per lane; `docs/fork/STATUS.md` only when something lands on `main`.
-- Implementation authorization does not waive review, the source review by reading, same-SHA CI,
-  runtime acceptance, or evidence requirements.
+- Preserve and integrate started work only; no new features or review projects.
+- Historical review, test, and runtime acceptance gates remain unverified and are not
+  claimed complete by the current preservation/integration work.

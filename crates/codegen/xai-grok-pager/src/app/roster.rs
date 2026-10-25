@@ -42,9 +42,14 @@ pub struct RosterEntry {
     #[serde(default)]
     pub is_worktree: bool,
     /// Set only on rows the leader synthesizes for remote claims; those are not loadable
-    /// sessions. `None` for rows a local agent owns.
+    /// sessions. `None` for rows a local agent owns. `Some("subagent")` marks a subagent
+    /// child session, listed for the dashboard's subagent lane.
     #[serde(default)]
     pub session_kind: Option<String>,
+    /// For `subagent` rows: the parent session's id. Prompts to the child stamp it as
+    /// `_meta.childOf` so a leader that lost the child continues it from the parent's record.
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
     #[serde(default)]
     pub model_id: Option<String>,
     #[serde(default)]
@@ -60,6 +65,10 @@ pub struct RosterEntry {
     #[serde(default)]
     pub origin: RosterOrigin,
 }
+
+/// `RosterEntry::session_kind` value marking a subagent child session (the dashboard's
+/// subagent lane lists exactly these rows).
+pub const SESSION_KIND_SUBAGENT: &str = "subagent";
 
 /// Response to `x.ai/sessions/list`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -99,6 +108,7 @@ mod tests {
             cwd: "/repo/worktree".to_string(),
             is_worktree: true,
             session_kind: None,
+            parent_session_id: None,
             model_id: Some("grok-4".to_string()),
             reasoning_effort: None,
             yolo: true,
@@ -179,6 +189,7 @@ mod tests {
             cwd: "/home/u/.grok/worktrees/proj/cursor-bc-1".to_string(),
             is_worktree: true,
             session_kind: Some("cursor-worker".to_string()),
+            parent_session_id: None,
             model_id: None,
             reasoning_effort: None,
             yolo: false,
@@ -216,6 +227,34 @@ mod tests {
             parsed.sessions.first().map(|s| s.session_id.as_str()),
             Some("s1")
         );
+    }
+
+    /// Subagent children ride the roster with their kind and parent link, so the dashboard's
+    /// subagent lane can list them and stamp `_meta.childOf` on replies to them.
+    #[test]
+    fn roster_list_response_carries_subagent_kind_and_parent_link() {
+        use xai_grok_shell::agent::roster as agent;
+        use xai_grok_shell::session::ExtMethodResult;
+
+        let child_row = agent::RosterEntry {
+            session_kind: Some(SESSION_KIND_SUBAGENT.to_string()),
+            parent_session_id: Some("parent-1".to_string()),
+            resident: true,
+            activity: agent::RosterActivity::Working,
+            ..agent_entry()
+        };
+        let ext_response = ExtMethodResult::success(agent::RosterListResponse {
+            sessions: vec![child_row],
+        })
+        .to_ext_response()
+        .expect("agent serializes the roster response");
+
+        let parsed = parse_roster_list_response(ext_response.0.get()).expect("parses");
+        let Some(row) = parsed.sessions.first() else {
+            panic!("expected the subagent row: {:?}", parsed.sessions);
+        };
+        assert_eq!(row.session_kind.as_deref(), Some("subagent"));
+        assert_eq!(row.parent_session_id.as_deref(), Some("parent-1"));
     }
 
     /// Round-trip for `x.ai/sessions/changed`: serialize the agent's `RosterChanged` as `emit_roster_changed` does (bare params, no envelope).

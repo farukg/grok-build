@@ -48,6 +48,7 @@ pub(super) fn kind_name(kind: MessageKind) -> Option<&'static str> {
         MessageKind::Btw => Some("btw"),
         MessageKind::ContextInfo => Some("context_info"),
         MessageKind::MemoryCapture => Some("memory_capture"),
+        MessageKind::Injected => Some("injected"),
         MessageKind::Stub => None,
     }
 }
@@ -98,6 +99,12 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
         problems: Vec::new(),
     };
     decode_version(doc, &mut decoded);
+    for (name, item) in entries(doc, &["dock"], &mut decoded.problems) {
+        match (name, item.as_str().and_then(|value| value.parse::<crate::views::dock::DockPlacement>().ok()), layer) {
+            ("placement", Some(placement), Layer::Global) => { decoded.settings.apply(&Edit::Set(Setting::DockPlacement(placement))); }
+            _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("dock.{name}") }),
+        }
+    }
     for (name, item) in entries(doc, &[MESSAGE_DISPLAY], &mut decoded.problems) {
         let key = format!("{MESSAGE_DISPLAY}.{name}");
         match (kind_from_name(name), item.as_str().and_then(form_from_name)) {
@@ -204,6 +211,8 @@ fn entries<'a>(
 pub(super) fn encode(doc: &mut DocumentMut, edit: &Edit) {
     let root: &mut dyn TableLike = doc.as_table_mut();
     match edit {
+        Edit::Set(Setting::DockPlacement(placement)) => put(root, &["dock"], "placement", (*placement).into()),
+        Edit::Clear(SettingKey::DockPlacement) => remove(root, &["dock"], "placement"),
         Edit::Set(Setting::KindForm { kind, form }) => {
             if let Some(name) = kind_name(*kind) {
                 put(root, &[MESSAGE_DISPLAY], name, form_name(*form));

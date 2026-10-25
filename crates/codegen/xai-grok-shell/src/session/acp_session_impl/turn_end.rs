@@ -4,6 +4,10 @@ use super::turn_end_hooks::{cancel_details, cancel_reason_for_completion};
 use super::*;
 use prod_mc_cli_chat_proxy_types::feedback_types;
 
+#[cfg(test)]
+#[path = "turn_end_durability_tests.rs"]
+mod durability_tests;
+
 impl SessionActor {
     /// Emit a cosmetic `Plan` update at turn end to clear stale spinners.
     /// When the model ends the turn without a cleanup `todo_write` call, remaining `in_progress` items keep spinning in the UI.
@@ -196,7 +200,7 @@ impl SessionActor {
             return false;
         };
 
-        let result = result.map(|mut ok| {
+        let mut result = result.map(|mut ok| {
             ok.tool_overrides = self.effective_tool_overrides();
             ok
         });
@@ -221,6 +225,7 @@ impl SessionActor {
         // True only when this completion matched the front prompt and dequeued it
         // The unknown-prompt branch below must NOT emit a terminal: a turn the Cancel path already finalized can leave a stale completion here
         let mut owned_completion = false;
+        let mut caller_response = None;
         let mut broadcast_queue = false;
         if state
             .pending_inputs
@@ -231,7 +236,7 @@ impl SessionActor {
                 return false;
             };
             owned_completion = true;
-            let _ = input.respond_to.send(result.clone()).ok();
+            caller_response = Some(input.respond_to);
             // The completed prompt left the queue, so re-broadcast the authoritative queue
             // That happens below, after `running_task` clears, so the wire's `running_prompt_id` does not advertise the finished turn
             broadcast_queue = input.queue_meta.is_some();
@@ -317,8 +322,6 @@ impl SessionActor {
         }
         // Drop the state guard before sends and async emits.
         drop(state);
-        Self::settle_parent_message_completions(message_completions, &result);
-
         if let Some(held) = held_rows_notice {
             self.send_hook_annotation(&format!(
                 "\u{26a0} {held} queued prompt(s) on hold after the block. Edit or remove them, or send a prompt to resume."
@@ -353,7 +356,7 @@ impl SessionActor {
                 .as_ref()
                 .ok()
                 .and_then(|ok| ok.completion_kind.cancellation_context_meta());
-            self.emit_turn_completed(
+            let terminal_result = self.emit_turn_completed(
                 prompt_id.clone(),
                 &mapped,
                 usage,
@@ -371,13 +374,20 @@ impl SessionActor {
                 self.input_turn_binding(&prompt_id).await,
             )
             .await;
+            if let Err(error) = terminal_result {
+                result = Err(error);
+            }
         }
+        Self::settle_parent_message_completions(message_completions, &result);
         if !self.finish_finalization_lease(&mut lease).await {
             tracing::error!(
                 prompt_id,
                 "claimed completion failed exact finalization release"
             );
             return false;
+        }
+        if let Some(respond_to) = caller_response {
+            let _ = respond_to.send(result);
         }
         owned_completion
     }
@@ -396,7 +406,7 @@ impl SessionActor {
         elapsed_ms: Option<u64>,
         snapshot: Option<&TurnDeltaSnapshot>,
         binding: InputTurnBinding,
-    ) {
+    ) -> Result<(), acp::Error> {
         let (stop_reason, agent_result, error_kind) =
             crate::sampling::error::prompt_complete_fields(mapped);
         let delivery_progress = crate::session::delivery_receiver::terminal_progress(
@@ -434,14 +444,14 @@ impl SessionActor {
             extra_meta,
             crate::session::storage::jsonl::AppendDurability::Durable,
         )
-        .await;
+        .await?;
 
         self.settle_durable_delivery_turn(
             &prompt_id,
             parent_task,
             receiver_origin,
             delivery_progress,
-        );
+        ).await?;
 
         // Behind the finalization lease, so a turn posts exactly one delta whichever path settles it.
         let turn_outcome = match mapped {
@@ -469,6 +479,7 @@ impl SessionActor {
 
         // Cost, context occupancy and the turn timer all moved during the turn.
         self.emit_status_snapshot_detached();
+        Ok(())
     }
 
     /// Telemetry error category; delegates to `stop_failure_error_type` so the two classifications cannot drift.

@@ -192,31 +192,43 @@ async fn a_synthetic_turn_inherits_plan_mode_instead_of_ending_it() {
             actor.reconcile_plan_mode_with_prompt(PromptMode::Plan);
             actor.plan_mode.lock().activate();
             let _ = mode_updates(&mut event_rx);
-            for prompt_id in [
-                "task-completed-abc",
-                "subagent-completed-abc",
-                "workflow-completed-abc",
-                "notifications-1",
-                "goal-summary-1",
-                "goal-classifier-nudge-1",
-                "scheduler-fired-1",
-                "plan-resume-1",
+            let child = subagent_summary("abc");
+            for origin in [
+                crate::session::PromptOrigin::TaskCompleted {
+                    task_id: "abc".into(),
+                },
+                crate::session::PromptOrigin::SubagentCompleted {
+                    completion: crate::session::CompletionWake {
+                        id: xai_chat_state::SubagentCompletionId {
+                            subagent_id: child.subagent_id().to_owned(),
+                            attempt_id: child.attempt_id,
+                        },
+                        kind: crate::session::CompletionWakeKind::Fresh,
+                    },
+                },
+                crate::session::PromptOrigin::WorkflowCompleted {
+                    completion_id: "abc".into(),
+                },
+                crate::session::PromptOrigin::NotificationDrain,
+                crate::session::PromptOrigin::GoalSummary,
+                crate::session::PromptOrigin::GoalClassifierNudge,
+                crate::session::PromptOrigin::SchedulerFired,
+                crate::session::PromptOrigin::PlanResume,
             ] {
-                let origin = crate::session::PromptOrigin::from_prompt_id(prompt_id);
                 let resolved = actor.resolve_turn_prompt_mode(&origin, PromptMode::Agent);
                 assert_eq!(
                     actor.plan_mode.lock().state(),
                     PlanModeState::Active,
-                    "{prompt_id} must not end plan mode"
+                    "{origin:?} must not end plan mode"
                 );
                 assert_eq!(
                     resolved,
                     PromptMode::Plan,
-                    "{prompt_id} runs under the session's mode, so it is recorded under it too"
+                    "{origin:?} runs under the session's mode, so it is recorded under it too"
                 );
                 assert!(
                     mode_updates(&mut event_rx).is_empty(),
-                    "{prompt_id} changed no mode, so it must announce none"
+                    "{origin:?} changed no mode, so it must announce none"
                 );
             }
         })

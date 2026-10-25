@@ -4623,11 +4623,6 @@ fn user_message_with_chunk_meta(text: &str, chunk_meta: acp::Meta) -> acp::Sessi
         .meta(Some(chunk_meta)),
     )
 }
-fn meta_with_prompt_id(prompt_id: &str) -> NotificationMeta {
-    let mut m = meta();
-    m.prompt_id = Some(prompt_id.to_string());
-    m
-}
 #[test]
 fn hidden_user_message_keeps_the_pending_echo_skip() {
     let mut sb = ScrollbackState::new();
@@ -4646,87 +4641,76 @@ fn hidden_user_message_keeps_the_pending_echo_skip() {
     assert!(!tracker.handle_update(user_message("Reply with SECOND"), &meta(), &mut sb));
     assert!(!tracker.expects_user_echo());
 }
-/// Scrollback hide is type-driven.
-/// Chunk meta `hideFromScrollback` or notification `promptId` routes to [`PromptOrigin::hide_user_echo_from_scrollback`].
+/// Scrollback routing is type-driven: `syntheticReason` chunk meta renders a collapsed injected
+/// entry; the legacy `hideFromScrollback` flag still drops records persisted by older shells;
+/// untyped text renders as a plain user prompt (the old text sniffing is gone).
 #[test]
-fn replay_hides_user_echo_by_origin_type() {
+fn replay_routes_injected_user_echo_by_synthetic_reason() {
     let mut sb = ScrollbackState::new();
     let mut tracker = AcpUpdateTracker::new();
-    let monitor_xml = "\
-<monitor-event task_id=\"019e0000-0000-7000-8000-000000000001\">\n\
-[CI] IN_PROGRESS=5 SUCCESS=38\n\
-</monitor-event>";
+    let mut reason_meta = acp::Meta::new();
+    reason_meta.insert("syntheticReason".into(), serde_json::json!("task_completed"));
+    reason_meta.insert("promptIndex".into(), serde_json::json!(3));
+    assert!(
+        tracker.handle_update(
+            user_message_with_chunk_meta("<background task finished>", reason_meta),
+            &meta(),
+            &mut sb,
+        ),
+        "a synthetic-reason chunk must materialize an entry, not hide"
+    );
+    assert_eq!(sb.len(), 1);
+    let entry_id = sb.get(0).unwrap().id;
+    match &sb.get(0).unwrap().block {
+        RenderBlock::Injected(block) => {
+            assert_eq!(block.label, "Task completed");
+            assert_eq!(block.text, "<background task finished>");
+            assert!(block.starts_turn, "a numbered auto-wake echo splits the turn outline");
+        }
+        other => panic!("expected Injected, got {:?}", other),
+    }
+    assert_eq!(
+        sb.get(0).unwrap().display_mode,
+        crate::scrollback::DisplayMode::Collapsed,
+        "injected entries start collapsed via the kind default"
+    );
+    sb.get_by_id_mut(entry_id)
+        .expect("injected entry present")
+        .toggle_fold();
+    assert_eq!(
+        sb.get(0).unwrap().display_mode,
+        crate::scrollback::DisplayMode::Expanded,
+        "an injected entry expands Read-style"
+    );
+    assert_eq!(sb.turn_count(), 1, "the injected echo opens its own outline turn");
+
+    // Legacy flag from pre-meta shells still hides (the record was persisted as hidden).
     let mut hide_meta = acp::Meta::new();
     hide_meta.insert("hideFromScrollback".into(), serde_json::json!(true));
     assert!(
         !tracker.handle_update(
-            user_message_with_chunk_meta(monitor_xml, hide_meta),
+            user_message_with_chunk_meta("<monitor-event>legacy</monitor-event>", hide_meta),
             &meta(),
             &mut sb,
         ),
-        "hideFromScrollback meta must suppress regardless of text shape"
+        "legacy hideFromScrollback records stay out of scrollback"
     );
-    assert!(
-        !tracker.handle_update(
-            user_message("arbitrary model-only body"),
-            &meta_with_prompt_id("task-completed-bg-1"),
-            &mut sb,
-        ),
-        "task-completed origin must suppress via promptId"
-    );
-    assert!(
-        !tracker.handle_update(
-            user_message("drain body"),
-            &meta_with_prompt_id("notifications-019e0000"),
-            &mut sb,
-        ),
-        "notification-drain origin must suppress via promptId"
-    );
+    assert_eq!(sb.len(), 1);
+
+    // Untyped synthetic-looking text now renders (no text sniffing): typed routing only.
     assert!(
         tracker.handle_update(
-            user_message("please check the CI status"),
-            &meta_with_prompt_id("scheduler-fired-abc"),
-            &mut sb,
-        ),
-        "scheduler-fired must still render (cron path is separate)"
-    );
-    assert!(
-        tracker.handle_update(user_message("please check the CI status"), &meta(), &mut sb),
-        "real user text must still render"
-    );
-    assert_eq!(sb.len(), 2);
-    assert!(
-        !tracker.handle_update(user_message(monitor_xml), &meta(), &mut sb),
-        "legacy untyped monitor XML still suppressed"
-    );
-    assert!(
-        !tracker.handle_update(
             user_message("<system-reminder>\nBackground task done.\n</system-reminder>"),
             &meta(),
             &mut sb,
         ),
-        "legacy system-reminder still suppressed"
+        "untyped text renders as a plain prompt"
     );
-    let batched = "2 monitor events from 1 monitor (use get_command_or_subagent_output \
-                   to identify each monitor):\n\n<monitor description=\"ticks\" \
-                   task_id=\"t-1\">\n[1] tick-1\n[2] tick-2\n</monitor>";
-    assert!(
-        !tracker.handle_update(user_message(batched), &meta(), &mut sb),
-        "legacy batched drain preamble still suppressed"
-    );
-    assert!(
-        !tracker.handle_update(user_message("---"), &meta(), &mut sb),
-        "legacy drain section separator still suppressed"
-    );
-    assert!(
-        tracker.handle_update(
-            user_message("what do these monitor events from my run mean (use plain words)?"),
-            &meta(),
-            &mut sb,
-        ),
-        "digit anchor: user text with both phrases but no leading count still renders"
-    );
-    assert_eq!(sb.len(), 3);
+    assert!(matches!(
+        &sb.get(1).unwrap().block,
+        RenderBlock::UserPrompt(_)
+    ));
+    assert_eq!(sb.len(), 2);
 }
 /// Helper: UserMessageChunk with `skillTokenRanges` in content-block meta.
 fn user_message_with_token_ranges(text: &str, ranges: serde_json::Value) -> acp::SessionUpdate {

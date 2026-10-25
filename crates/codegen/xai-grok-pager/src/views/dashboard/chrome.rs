@@ -87,6 +87,17 @@ pub(super) fn render_header(
         ),
     ];
     let mut status = AgentStatusBar::new(theme);
+    // The lane indicator rides the status chips only while the subagent lane is on, so the
+    // default header stays byte-identical.
+    if state.session_lane() == super::row::SessionLane::Subagents {
+        status.push(
+            "subagents",
+            Line::from(Span::styled(
+                format!(" {} subagents", crate::glyphs::diamond_filled()),
+                bg.fg(theme.accent_running),
+            )),
+        );
+    }
     for (label, glyph, color, count) in chip_specs.into_iter().filter(|(_, _, _, count)| *count > 0)
     {
         status.push(

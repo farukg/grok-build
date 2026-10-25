@@ -1550,9 +1550,8 @@ pub enum Effect {
     /// Fetch the leader session roster (FleetView dashboard) via `x.ai/sessions/list`.
     /// Only issued in leader mode while the dashboard is open.
     FetchRoster,
-    /// Fetch the local on-disk session list (dormant/idle sessions) for the dashboard via `x.ai/session/list`.
-    /// This is the non-leader fallback for the FleetView roster.
-    /// Issued while the dashboard is open and NOT in leader mode so the dashboard shows idle sessions instead of being empty.
+    /// Fetch the shell roster via `x.ai/sessions/list` when not connected through a leader.
+    /// Uses roster visibility, not the history picker's hidden-session filter.
     FetchDashboardSessions,
     /// Lazily open dashboard v2's process-owned SQLite store and read its initial snapshot off the event-loop thread.
     LoadWorkspaceSnapshot { db_path: std::path::PathBuf },
@@ -1633,6 +1632,7 @@ pub enum Effect {
     Compact {
         agent_id: AgentId,
         session_id: acp::SessionId,
+        invocation_id: crate::app::agent::CompactInvocationId,
     },
     /// Kill a background task.
     KillBgTask {
@@ -1707,9 +1707,10 @@ pub enum Effect {
     /// Persist memory modal fullscreen preference to `[hints]` in config.toml.
     PersistMemoryFullscreen { fullscreen: bool },
     /// Persist the dashboard's `[dashboard]` configuration to `~/.grok/config.toml`.
-    /// Multi-pager safe via `config_toml_edit::read_config_document_for_edit`, which loads, modifies, then writes the whole document.
-    /// Concurrent pagers may produce last-writer-wins behaviour but never corrupt the file.
+    /// Dashboard writes share a process-local FIFO and atomically replace the file.
+    /// Other pagers and unrelated config writers can still overwrite concurrent changes.
     PersistDashboard(crate::views::dashboard::PersistedDashboard),
+    PersistDashboardChildLayout(crate::views::dashboard::child_layout::ChildLayoutUpdate),
     /// Persist a per-command worktree mode preference to `[hints]` in config.toml.
     /// `config_key` is the TOML key under `[hints]` (`"new_session_worktree_mode"` or `"fork_worktree_mode"`).
     PersistWorktreeMode {
@@ -2739,6 +2740,7 @@ pub enum TaskResult {
     /// Manual `/compact` command completed.
     CompactComplete {
         agent_id: AgentId,
+        invocation_id: crate::app::agent::CompactInvocationId,
         result: Result<(), crate::app::effects::CompactError>,
     },
     /// Background task kill result.
@@ -2746,7 +2748,7 @@ pub enum TaskResult {
     BgTaskKilled {
         session_id: String,
         task_id: String,
-        outcome: Option<xai_grok_tools::types::KillOutcome>,
+        outcome: Option<xai_tool_types::KillOutcome>,
     },
     /// Background task kill failed.
     BgTaskKillFailed {

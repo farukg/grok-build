@@ -224,6 +224,8 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
     enum XaiUpdate {
         AutoCompactStarted {
             percentage: u8,
+            #[serde(default)]
+            phase: xai_grok_shell::extensions::notification::CompactPhase,
         },
         AutoCompactCompleted {
             #[serde(default)]
@@ -329,9 +331,12 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
         .and_then(crate::acp::meta::event_id_counter);
 
     match xai_notif.update {
-        XaiUpdate::AutoCompactStarted { percentage } => {
-            ExtEvent::Lifecycle(Lifecycle::CompactStarted { percentage })
-        }
+        XaiUpdate::AutoCompactStarted { percentage, phase } => match phase {
+            xai_grok_shell::extensions::notification::CompactPhase::Queued => ExtEvent::None,
+            xai_grok_shell::extensions::notification::CompactPhase::Executing => {
+                ExtEvent::Lifecycle(Lifecycle::CompactStarted { percentage })
+            }
+        },
         XaiUpdate::AutoCompactCompleted { tokens_before } => {
             ExtEvent::Lifecycle(Lifecycle::CompactCompleted {
                 pre_tokens: tokens_before.unwrap_or(0),

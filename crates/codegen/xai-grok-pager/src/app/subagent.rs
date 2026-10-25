@@ -506,7 +506,10 @@ fn replay_inherited_updates(
                     .session
                     .handle_update(update, &meta, &mut child_view.scrollback);
             }
-            ReplayedUpdate::Xai(update) => {
+            ReplayedUpdate::Xai(update, meta) => {
+                if !crate::app::acp_handler::admit_compact_lifecycle(child_view, &update, meta.as_ref()) {
+                    return;
+                }
                 // Same window as `session/load`: historical xAI events must not start live commands
                 // (family-switch compact) or defer compact outcomes to a turn that never comes.
                 let was_loading = child_view.session.loading_replay;

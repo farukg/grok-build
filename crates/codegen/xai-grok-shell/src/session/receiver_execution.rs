@@ -2,8 +2,14 @@ use std::fs::File;
 use std::io;
 
 pub struct ReceiverExecutionLease {
-    pub(crate) _file: File,
+    pub(crate) _file: std::sync::Arc<File>,
     pub(crate) session_id: String,
+}
+
+impl ReceiverExecutionLease {
+    pub(crate) fn retain(&self) -> Self {
+        Self { _file: self._file.clone(), session_id: self.session_id.clone() }
+    }
 }
 
 pub enum ReceiverAccess<'a> {

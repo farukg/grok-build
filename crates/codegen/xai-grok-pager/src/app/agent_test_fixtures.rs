@@ -8,6 +8,7 @@ pub(crate) fn roster_entry(session_id: &str, activity: RosterActivity) -> Roster
         cwd: "/tmp".to_owned(),
         is_worktree: false,
         session_kind: None,
+        parent_session_id: None,
         model_id: None,
         yolo: false,
         activity,

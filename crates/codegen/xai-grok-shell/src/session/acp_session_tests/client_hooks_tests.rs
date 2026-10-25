@@ -1063,7 +1063,7 @@ async fn run_stop_gate_keep_working_and_cap() {
             let (actor, gateway_rx, _persistence_rx) = test_actor().await;
 
             let decision = actor.run_stop_gate("prompt-1", 0).await;
-            assert!(matches!(decision, StopGateDecision::AllowStop));
+            assert!(matches!(decision, StopGateDecision::AllowStop { .. }));
 
             install_client_hook(
                 &actor,
@@ -1096,7 +1096,7 @@ async fn run_stop_gate_keep_working_and_cap() {
             )
             .await
             .expect("the capped gate must not hang");
-            assert!(matches!(decision, StopGateDecision::AllowStop));
+            assert!(matches!(decision, StopGateDecision::AllowStop { .. }));
         })
         .await;
 }
@@ -1187,7 +1187,7 @@ async fn file_force_stop_skips_client_gate_but_notifies() {
             .await
             .expect("the stop gate must not hang");
             assert!(
-                matches!(decision, StopGateDecision::AllowStop),
+                matches!(decision, StopGateDecision::AllowStop { .. }),
                 "a file force-stop must end the turn"
             );
             tokio::task::yield_now().await;
@@ -1381,7 +1381,7 @@ async fn client_force_stop_reports_the_turn() {
             )
             .await
             .expect("the stop gate must not hang");
-            assert!(matches!(decision, StopGateDecision::AllowStop));
+            assert!(matches!(decision, StopGateDecision::AllowStop { .. }));
             assert!(actor.turn_report.claim_for_gate().is_none());
         })
         .await;
@@ -1414,7 +1414,7 @@ async fn an_unanswered_client_gate_leaves_the_report_unspent() {
             .await
             .expect("the stop gate must not hang");
 
-            assert!(matches!(decision, StopGateDecision::AllowStop));
+            assert!(matches!(decision, StopGateDecision::AllowStop { .. }));
             assert!(
                 actor.turn_report.claim_for_gate().is_some(),
                 "a gate whose only hook never answered must leave the turn reportable"
@@ -1447,7 +1447,7 @@ async fn a_reported_turn_skips_the_gate_entirely() {
 
             let decision = actor.run_stop_gate("prompt-1", 0).await;
             assert!(
-                matches!(decision, StopGateDecision::AllowStop),
+                matches!(decision, StopGateDecision::AllowStop { .. }),
                 "a hook that ran would have blocked the stop"
             );
         })
@@ -1496,7 +1496,10 @@ async fn only_a_completed_stop_hook_is_the_turns_report() {
                 )));
 
                 let decision = actor.run_stop_gate(case, 0).await;
-                assert!(matches!(decision, StopGateDecision::AllowStop), "{case}");
+                assert!(
+                    matches!(decision, StopGateDecision::AllowStop { .. }),
+                    "{case}"
+                );
                 let reported = actor.claim_and_queue(
                     case,
                     actor.turn_report.epoch(),

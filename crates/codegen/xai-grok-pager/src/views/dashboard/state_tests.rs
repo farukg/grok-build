@@ -244,6 +244,31 @@ fn grouping_toggles() {
     assert_eq!(state.grouping, Grouping::State);
 }
 
+/// The subagent lane defaults off (today's dashboard) and `Ctrl+A` flips it, mirroring the
+/// `Ctrl+/` search-mode chord.
+#[test]
+fn subagents_lane_defaults_off_and_toggles_via_ctrl_a() {
+    let reg = crate::actions::ActionRegistry::defaults();
+    let mut state = DashboardState::new();
+    assert_eq!(state.session_lane(), SessionLane::Main);
+    state.focus_row(DashboardRowId::TopLevel(AgentId(0)));
+
+    let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert!(
+        matches!(state.handle_key(&ctrl_a, &reg), InputOutcome::Changed),
+        "Ctrl+A must toggle the lane"
+    );
+    assert_eq!(state.session_lane(), SessionLane::Subagents);
+    assert!(state.selected.is_none(), "old-lane rows must not remain actionable");
+
+    state.handle_key(&ctrl_a, &reg);
+    assert_eq!(
+        state.session_lane(),
+        SessionLane::Main,
+        "a second Ctrl+A returns to the main lane"
+    );
+}
+
 /// `Ctrl+G` (the rebound grouping chord) emits `DashboardToggleGrouping`,
 /// and `Ctrl+S` no longer toggles grouping — it's now "send + open".
 #[test]

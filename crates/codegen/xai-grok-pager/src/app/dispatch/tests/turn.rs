@@ -20,6 +20,62 @@ fn nth<T>(xs: &[T], i: usize) -> &T {
 }
 
 #[test]
+fn negative_background_kill_keeps_row_clears_pending_and_shows_diagnostic() {
+    use crate::app::agent::BgTaskStatus;
+    use crate::app::agent_test_fixtures::running_bg_task;
+    use xai_tool_types::{KillFailureReason, KillOutcome, KillProcessEffect, KillStage};
+    for outcome in [
+        KillOutcome::Indeterminate {
+            stage: KillStage::ProcessTermination,
+            process_effect: KillProcessEffect::Unknown,
+        },
+        KillOutcome::Indeterminate {
+            stage: KillStage::ProcessTermination,
+            process_effect: KillProcessEffect::StopRequested,
+        },
+        KillOutcome::Indeterminate {
+            stage: KillStage::DurableEnrollment,
+            process_effect: KillProcessEffect::TerminalObserved,
+        },
+        KillOutcome::Failed {
+            stage: KillStage::ProcessTermination,
+            reason: KillFailureReason::PermissionDenied,
+        },
+        KillOutcome::Failed {
+            stage: KillStage::ProcessTermination,
+            reason: KillFailureReason::Unsupported,
+        },
+        KillOutcome::Failed {
+            stage: KillStage::ProcessTermination,
+            reason: KillFailureReason::DispatchUnavailable,
+        },
+    ] {
+        let mut app = test_app_with_agent();
+        let id = AgentId(0);
+        let mut task = running_bg_task("t-1", false);
+        task.stdout = "partial output".into();
+        task.pending_kill = true;
+        task.kill_requested_at = Some(std::time::Instant::now());
+        app.agents.get_mut(&id).unwrap().session.bg_tasks.insert("t-1".into(), task);
+        let effects = dispatch(Action::TaskComplete(TaskResult::BgTaskKilled {
+            session_id: "test-session".into(),
+            task_id: "t-1".into(),
+            outcome: Some(outcome),
+        }), &mut app);
+        assert!(effects.is_empty());
+        let agent = get_agent(&app, id);
+        let task = agent.session.bg_tasks.get("t-1").expect("uncertain task must remain");
+        assert!(!task.pending_kill);
+        assert!(task.kill_requested_at.is_none());
+        assert!(matches!(task.status, BgTaskStatus::Running));
+        assert_eq!(task.stdout, "partial output");
+        let message = &agent.toast.as_ref().expect("truthful diagnostic").0;
+        assert!(message.contains(&outcome.to_string()));
+        assert!(message.contains("Check task output"));
+    }
+}
+
+#[test]
 fn demote_dispatch_keeps_turn_session_and_execute_guards() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);

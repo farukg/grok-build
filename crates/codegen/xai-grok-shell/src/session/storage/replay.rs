@@ -90,7 +90,7 @@ pub enum ReplayedUpdate {
     /// That is how rebuilt entries keep their run-time timestamps.
     /// For a collapsed ToolCall it is the completing line's meta; `None` for start-only tools flushed at EOF.
     Acp(acp::SessionUpdate, Option<acp::Meta>),
-    Xai(XaiUpdate),
+    Xai(XaiUpdate, Option<serde_json::Value>),
 }
 
 /// Collapses a ToolCall and its ToolCallUpdates into one ToolCall during replay.
@@ -324,7 +324,7 @@ pub fn stream_replay_updates_at_hinted<F: FnMut(ReplayedUpdate)>(
                     f(ReplayedUpdate::Acp(update, notif.meta));
                 }
             }
-            Ok(SessionUpdate::Xai(notif)) => f(ReplayedUpdate::Xai(notif.update)),
+            Ok(SessionUpdate::Xai(notif)) => f(ReplayedUpdate::Xai(notif.update, notif.meta)),
             Err(e) => tracing::debug!(error = %e, "skipping unparseable replay line"),
         }
     }

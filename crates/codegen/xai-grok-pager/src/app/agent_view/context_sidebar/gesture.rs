@@ -115,6 +115,7 @@ pub(super) fn activation(modifiers: KeyModifiers) -> SidebarCommand {
 pub(super) fn hint_for(target: Option<CursorTarget>) -> &'static str {
     match target {
         Some(CursorTarget::Title(_)) => "Space folds · +/- all · * everything",
+        Some(CursorTarget::Row(RowTarget::DockPlacement)) => "Space Off/Top/Bottom · ←/→ fold",
         Some(CursorTarget::Row(RowTarget::Context(_))) => "Space ON/OFF · ←/→ fold · +/- all",
         Some(CursorTarget::Row(RowTarget::Display(_))) => "Space flips · +/- all · * everything",
         None => "Esc closes",

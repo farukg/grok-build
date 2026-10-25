@@ -250,6 +250,8 @@ pub enum ChatStateCommand {
 
     /// Build a ConversationRequest ready to send to the API.
     /// Clones, prunes old tool results, repairs dangling calls, injects the memory reminder.
+    /// The reply also carries the bounded records of request-only content (memory-reminder
+    /// splice, request-view transforms) so the CLI can render what the model sees.
     BuildConversationRequest {
         tool_definitions: Vec<ToolSpec>,
         memory_reminder: Option<String>,
@@ -257,7 +259,7 @@ pub enum ChatStateCommand {
         trace: Option<Box<dyn TraceContext>>,
         conv_id: String,
         req_id: String,
-        reply: oneshot::Sender<ConversationRequest>,
+        reply: oneshot::Sender<crate::types::BuiltConversationRequest>,
     },
 
     /// Get a clone of the full conversation.

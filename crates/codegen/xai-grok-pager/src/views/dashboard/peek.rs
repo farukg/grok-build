@@ -761,6 +761,7 @@ pub fn extract_last_response_type(agent: &AgentView) -> String {
             RenderBlock::System(_)
             | RenderBlock::SessionEvent(_)
             | RenderBlock::MemoryCapture(_)
+            | RenderBlock::Injected(_)
             | RenderBlock::Stub(_) => {}
         }
     }
@@ -851,6 +852,7 @@ fn block_short_text(block: &crate::scrollback::block::RenderBlock) -> Option<Str
         RenderBlock::Btw(_) => Some("(btw)".to_string()),
         RenderBlock::ContextInfo(_) => Some("(context info)".to_string()),
         RenderBlock::MemoryCapture(_) => Some("(memory capture)".to_string()),
+        RenderBlock::Injected(b) => Some(format!("({}) {}", b.label, first_line_of(&b.text))),
         RenderBlock::Stub(_) => None,
     }
 }

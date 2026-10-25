@@ -203,13 +203,11 @@ async fn control_ack(
     let mut manager = manager.lock().await;
     match manager.control_run(key, control) {
         Ok(run) => {
-            // The model gets the outcome from this tool result; a `/workflow stop`
-            // relies on the completion wake to learn about it, so only the tool path opts out.
             if control == WorkflowControl::Stop {
-                manager
-                    .tracker()
-                    .lock()
-                    .mark_completion_reported(&run.run_id);
+                return match manager.persist_control_result(&run.run_id).await {
+                    Ok(state) => WorkflowLaunchAck::Stopped { run_id: state.run_id, name: state.name, revision: state.revision },
+                    Err(error) => WorkflowLaunchAck::Rejected { code: "workflow_control_persistence", detail: error.to_string() },
+                };
             }
             WorkflowLaunchAck::Controlled {
                 run_id: run.run_id,

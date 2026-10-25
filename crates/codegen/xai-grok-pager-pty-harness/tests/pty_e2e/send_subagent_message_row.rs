@@ -8,8 +8,11 @@
 #[allow(unused_imports)]
 use super::common::*;
 use xai_grok_test_support::{Conversation, MockToolCall, Tool};
+#[path = "child_session_navigation.rs"]
+mod child_navigation;
 #[path = "send_subagent_message_selection.rs"]
 mod selection;
+pub(crate) use child_navigation::PARENT_NAVIGATION;
 
 /// Spawn rejects an injected id that is not a UUIDv7; the bogus one shares its shape and ends in a readable tail.
 pub(crate) const CHILD_ID: &str = "01a06b44-0000-7000-8000-00000000c41d";

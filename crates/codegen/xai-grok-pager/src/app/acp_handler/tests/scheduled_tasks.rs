@@ -608,3 +608,122 @@
         );
     }
 
+    // --- Re-arm reconciliation by stable task identity ---
+
+    fn created_notif(
+        session_id: &str,
+        task_id: &str,
+        prompt: &str,
+        human_schedule: &str,
+        next_fire_at: Option<&str>,
+        event_id: Option<&str>,
+    ) -> acp::ExtNotification {
+        subagent_notification_with_event_id(
+            session_id,
+            XaiSessionUpdate::ScheduledTaskCreated {
+                task_id: task_id.into(),
+                prompt: prompt.into(),
+                human_schedule: human_schedule.into(),
+                next_fire_at: next_fire_at.map(str::to_owned),
+            },
+            event_id,
+        )
+    }
+
+    /// A scheduler restart re-announces persisted loops; reconciliation is keyed by the stable
+    /// task id, so the re-announce merges into the existing row instead of stacking a second one
+    /// (and preserves the row's original created_at ordering).
+    #[test]
+    fn created_reannounce_merges_by_task_id() {
+        let mut app = make_app_with_agent("sess-1");
+        let original_created_at = Instant::now() - std::time::Duration::from_secs(600);
+
+        assert!(handle_ext_notification(
+            &created_notif("sess-1", "loop-1", "check deploy", "every 5 minutes", Some("2026-01-01T00:00:00Z"), Some("sess-1-1")),
+            &mut app
+        ));
+        {
+            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+            agent
+                .session
+                .scheduled_tasks
+                .get_mut("loop-1")
+                .unwrap()
+                .created_at = original_created_at;
+        }
+
+        // Actor restart: fresh event id, same stable task id, updated schedule.
+        assert!(handle_ext_notification(
+            &created_notif("sess-1", "loop-1", "check deploy", "every 10 minutes", Some("2026-01-01T00:10:00Z"), Some("sess-1-2")),
+            &mut app
+        ));
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert_eq!(agent.session.scheduled_tasks.len(), 1, "re-announce must merge, not duplicate");
+        let info = agent.session.scheduled_tasks.get("loop-1").unwrap();
+        assert_eq!(info.human_schedule, "every 10 minutes");
+        assert_eq!(info.next_fire_at.as_deref(), Some("2026-01-01T00:10:00Z"));
+        assert_eq!(info.created_at, original_created_at, "stable identity keeps stable ordering");
+    }
+
+    /// The provisional row a `/loop` inserts for instant feedback is replaced by the confirmed
+    /// task keyed by loop identity (prompt + schedule); a sibling `/loop`'s provisional row must
+    /// survive until its own confirmation arrives.
+    #[test]
+    fn created_replaces_only_the_matching_provisional_row() {
+        let mut app = make_app_with_agent("sess-1");
+        {
+            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+            for (provisional_id, prompt) in [
+                ("provisional-1", "watch builds"),
+                ("provisional-2", "watch tests"),
+            ] {
+                agent.session.scheduled_tasks.insert(
+                    provisional_id.into(),
+                    crate::app::agent::ScheduledTaskInfo {
+                        task_id: provisional_id.into(),
+                        prompt: prompt.into(),
+                        human_schedule: "every 5 minutes".into(),
+                        created_at: Instant::now(),
+                        next_fire_at: None,
+                        tag: "loop".into(),
+                        last_subagent_id: None,
+                    },
+                );
+            }
+        }
+
+        assert!(handle_ext_notification(
+            &created_notif("sess-1", "loop-1", "watch builds", "every 5 minutes", Some("2026-01-01T00:00:00Z"), Some("sess-1-3")),
+            &mut app
+        ));
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        assert!(!agent.session.scheduled_tasks.contains_key("provisional-1"));
+        assert!(
+            agent.session.scheduled_tasks.contains_key("provisional-2"),
+            "unrelated provisional row must survive the sibling's confirmation"
+        );
+        assert!(agent.session.scheduled_tasks.contains_key("loop-1"));
+    }
+
+    /// An exact-id re-delivered creation (replay + live overlap of the same persisted event) is
+    /// dropped; its payload must not overwrite the row a newer event already established.
+    #[test]
+    fn created_duplicate_event_id_does_not_overwrite() {
+        let mut app = make_app_with_agent("sess-1");
+        assert!(handle_ext_notification(
+            &created_notif("sess-1", "loop-2", "first prompt", "every 5 minutes", None, Some("sess-1-4")),
+            &mut app
+        ));
+        assert!(!handle_ext_notification(
+            &created_notif("sess-1", "loop-2", "stale prompt", "every 9 minutes", None, Some("sess-1-4")),
+            &mut app
+        ));
+
+        let agent = app.agents.get(&AgentId(0)).unwrap();
+        let info = agent.session.scheduled_tasks.get("loop-2").unwrap();
+        assert_eq!(info.prompt, "first prompt", "duplicate re-delivery must be dropped");
+        assert_eq!(info.human_schedule, "every 5 minutes");
+    }
+

@@ -156,6 +156,12 @@ impl MarkdownContent {
         self.state.borrow().renderer.source().to_string()
     }
 
+    /// Borrow the source markdown without cloning the whole body (unlike [`Self::text()`),
+    /// for hot callers such as foldability checks in the layout passes.
+    pub fn with_source<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        f(self.state.borrow().renderer.source())
+    }
+
     /// Capped first non-empty source line, without cloning the whole source like `text()`.
     pub fn preview(&self) -> String {
         crate::scrollback::state::prompt_preview(self.state.borrow().renderer.source())

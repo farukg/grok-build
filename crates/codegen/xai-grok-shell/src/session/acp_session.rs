@@ -203,7 +203,7 @@ mod completion_digest;
 #[path = "acp_session_impl/delivery_receiver.rs"]
 mod delivery_receiver;
 #[path = "acp_session_impl/reminders.rs"]
-mod reminders;
+pub(crate) mod reminders;
 #[path = "acp_session_impl/subagent_handoff.rs"]
 mod subagent_handoff;
 use reminders::*;
@@ -961,6 +961,10 @@ pub(crate) struct SessionActor {
     /// In-memory only; session restart is itself a reset.
     pub(crate) goal_continuation_streak: std::sync::atomic::AtomicU32,
     pub(crate) goal_blocked_streak: std::sync::atomic::AtomicU32,
+    /// The wait set the finished turn's stop gate declared over live background work (gb-wake-2).
+    /// Recorded on every AllowStop; read by the goal continuation gate; cleared by new user input.
+    pub(crate) turn_wait_declaration:
+        std::cell::RefCell<stop_gate::TurnWaitState>,
     pub(crate) goal_update_rx: std::cell::RefCell<
         Option<
             tokio::sync::mpsc::UnboundedReceiver<
@@ -1504,6 +1508,9 @@ fn load_prompt_context_from_dir(
 #[cfg(test)]
 #[path = "acp_session_tests/client_hooks_tests.rs"]
 mod client_hooks_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/completion_receiver_fixture.rs"]
+pub(crate) mod completion_receiver_fixture;
 #[cfg(test)]
 #[path = "acp_session_tests/completion_receiver_fixture.rs"]
 pub(crate) mod completion_receiver_fixture;

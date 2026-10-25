@@ -45,9 +45,9 @@ mod workflow_ingest;
 #[allow(unused_imports)]
 use background::*;
 use background::{
-    derive_child_cwd, handle_git_head_changed, handle_monitor_event, handle_scheduled_task_created,
-    handle_scheduled_task_deleted, handle_scheduled_task_fired, handle_task_backgrounded,
-    handle_task_completed, route_bg_task_stdout,
+    apply_background_tasks_snapshot, derive_child_cwd, handle_git_head_changed, handle_monitor_event,
+    handle_scheduled_task_created, handle_scheduled_task_deleted, handle_scheduled_task_fired,
+    handle_task_backgrounded, handle_task_completed, route_bg_task_stdout,
 };
 use child_observation::{
     ChildObservation, apply_child_acp_update, apply_child_xai_update, complete_child_prompt,
@@ -100,7 +100,7 @@ use routing::{
     SessionMatch, find_session_match, interaction_target_agent, is_matched_agent_active,
     mcp_target_agent, resolve_notif_agent, setup_phase_target_agent,
 };
-pub(crate) use session_notification::apply_child_view_session_event;
+pub(crate) use session_notification::{admit_compact_lifecycle, apply_child_view_session_event};
 #[cfg(test)]
 pub(crate) use session_notification::apply_session_event_for_test;
 pub(crate) use session_notification::detect_plan_mode_change_replayed;

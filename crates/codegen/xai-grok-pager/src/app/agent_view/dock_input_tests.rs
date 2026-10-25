@@ -2073,7 +2073,7 @@ fn a_frame_spends_the_pending_reveal() {
     );
 }
 
-fn workflow_run(
+pub(super) fn workflow_run(
     run_id: &str,
     name: &str,
     status: &str,

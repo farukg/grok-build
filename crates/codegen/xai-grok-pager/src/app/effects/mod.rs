@@ -26,7 +26,7 @@ use helpers::*;
 use session_list::{
     LocalPresence, parse_session_list_partial, parse_session_list_scope,
     parse_session_picker_entries_blocking, read_session_list_response,
-    session_picker_entry_to_roster,
+    parse_dashboard_roster_response,
 };
 use std::path::Path;
 use agent_client_protocol as acp;
@@ -60,6 +60,25 @@ struct UploadTraceRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     trace_upload_token: Option<String>,
 }
+fn persist_dashboard_write(
+    tasks: &mut JoinSet<TaskResult>,
+    write: crate::views::dashboard::persistence::DashboardWrite,
+) {
+    // Enqueue before spawning receipt waiters so dispatch order is also write order.
+    let queued = crate::views::dashboard::persistence::enqueue(write);
+    tasks.spawn(async move {
+        match queued {
+            Ok(receipt) => match receipt.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::warn!(%error, "failed to persist dashboard config"),
+                Err(error) => tracing::warn!(%error, "dashboard writer receipt dropped"),
+            },
+            Err(error) => tracing::warn!(%error, "failed to enqueue dashboard config"),
+        }
+        TaskResult::CancelComplete
+    });
+}
+
 const SESSION_LIST_LIMIT: u64 = 30;
 const DASHBOARD_SESSION_LIST_LIMIT: u64 = 100;
 /// MCP discovery reads and parses several config sources (global and project, from `cwd` up to the repository root),
@@ -854,57 +873,20 @@ pub(crate) fn execute(
         }
         Effect::FetchDashboardSessions => {
             let tx = acp_tx.clone();
-            let cwd = cwd.to_path_buf();
-            tasks
-                .spawn(async move {
-                    let params = serde_json::json!({
-                    "cwd": cwd.to_string_lossy(),
-                    "limit": 30,
-                    "headless": xai_grok_shell::session::unified_list::HeadlessPolicy::Exclude
-                        .as_wire_str(),
-                });
-                    let request = acp::ExtRequest::new(
-                        "x.ai/session/list",
-                        serde_json::value::to_raw_value(&params)
-                            .expect("serialize session list params")
-                            .into(),
-                    );
-                    match acp_send(request, &tx).await {
-                        Ok(resp) => {
-                            let Ok(payload) = read_session_list_response(resp.0.get())
-                            else {
-                                return TaskResult::DashboardSessionsLoaded {
-                                    sessions: vec![],
-                                };
-                            };
-                            let sessions = match parse_session_picker_entries_blocking(
-                                    payload,
-                                    LocalPresence::Relabel,
-                                )
-                                .await
-                            {
-                                Ok(entries) => {
-                                    entries
-                                        .into_iter()
-                                        .map(session_picker_entry_to_roster)
-                                        .collect()
-                                }
-                                Err(error) => {
-                                    tracing::warn!(%error, "dashboard session list parse failed");
-                                    Vec::new()
-                                }
-                            };
-                            TaskResult::DashboardSessionsLoaded {
-                                sessions,
-                            }
-                        }
-                        Err(_) => {
-                            TaskResult::DashboardSessionsLoaded {
-                                sessions: vec![],
-                            }
-                        }
+            tasks.spawn(async move {
+                let Ok(params) = serde_json::value::to_raw_value(&serde_json::json!({})) else {
+                    return TaskResult::DashboardSessionsLoaded { sessions: Vec::new() };
+                };
+                let request = acp::ExtRequest::new("x.ai/sessions/list", params.into());
+                let sessions = match acp_send(request, &tx).await {
+                    Ok(response) => parse_dashboard_roster_response(response.0.get()),
+                    Err(error) => {
+                        tracing::warn!(%error, "dashboard roster fetch failed");
+                        Vec::new()
                     }
-                });
+                };
+                TaskResult::DashboardSessionsLoaded { sessions }
+            });
         }
         Effect::LoadWorkspaceSnapshot { db_path } => {
             tasks
@@ -1757,11 +1739,14 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::Compact { agent_id, session_id } => {
+        Effect::Compact { agent_id, session_id, invocation_id } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let params = serde_json::json!({ "sessionId": session_id.0.to_string() });
+                    let params = serde_json::json!({
+                        "sessionId": session_id.0.to_string(),
+                        "invocationId": invocation_id,
+                    });
                     let req = acp::ExtRequest::new(
                         "x.ai/compact_conversation",
                         serde_json::value::to_raw_value(&params)
@@ -1771,6 +1756,7 @@ pub(crate) fn execute(
                     let result = acp_send(req, &tx).await;
                     TaskResult::CompactComplete {
                         agent_id,
+                        invocation_id,
                         result: result.map(|_| ()).map_err(|e| compact_error(&e)),
                     }
                 });
@@ -2310,22 +2296,17 @@ pub(crate) fn execute(
                 "memory fullscreen",
             );
         }
+        Effect::PersistDashboardChildLayout(update) => {
+            persist_dashboard_write(
+                tasks,
+                crate::views::dashboard::persistence::DashboardWrite::Child(update),
+            );
+        }
         Effect::PersistDashboard(persisted) => {
-            tasks
-                .spawn(async move {
-                    let result = tokio::task::spawn_blocking(move || {
-                            if let Err(e) = crate::views::dashboard::state::write_persisted(
-                                &persisted,
-                            ) {
-                                tracing::warn!(error = %e, "failed to persist dashboard config");
-                            }
-                        })
-                        .await;
-                    if let Err(e) = result {
-                        tracing::warn!(error = %e, "failed to persist dashboard: join error");
-                    }
-                    TaskResult::CancelComplete
-                });
+            persist_dashboard_write(
+                tasks,
+                crate::views::dashboard::persistence::DashboardWrite::Full(persisted),
+            );
         }
         Effect::PersistWorktreeMode { mode, config_key } => {
             debug_assert!(

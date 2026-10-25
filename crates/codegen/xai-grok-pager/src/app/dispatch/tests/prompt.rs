@@ -6803,7 +6803,7 @@ fn bash_command_from_a_child_view_names_its_parent() {
         ScrollbackState::new(),
     );
     child.role = AgentRole::Child(ChildLink {
-        parent: parent_id,
+        parent: Some(parent_id),
         parent_session_id: parent_session_id.clone(),
         subagent_id: "child-bash".to_owned(),
         started_at: std::time::Instant::now(),

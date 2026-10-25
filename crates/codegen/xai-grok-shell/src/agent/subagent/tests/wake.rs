@@ -351,10 +351,28 @@ async fn live_steers_through_shell_runtime(with_active_tool: bool) {
             meta_dir.path().to_path_buf(), InitialAttemptBehavior::Normal,
         ));
         ctx.yolo_mode = true;
+        ctx.parent_terminal_backend = Some(Arc::new(
+            xai_grok_tools::computer::local::LocalTerminalBackend::new_local(
+                xai_grok_tools::computer::local::SearchShadowConfig::default(),
+            ),
+        ));
         let (parent_cmd_tx, parent_cmd_rx) = mpsc::unbounded_channel();
         ctx.parent_cmd_tx = Some(parent_cmd_tx);
         let usage_ack = tokio::task::spawn_local(acknowledge_parent_usage(parent_cmd_rx));
         let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+        let (visible_tx, mut visible_rx) = mpsc::unbounded_channel();
+        let child_gateway = tokio::task::spawn_local(async move {
+            while let Some(message) = gateway_rx.recv().await {
+                if let xai_acp_lib::AcpClientMessage::SessionNotification(args) = message {
+                    let notification = serde_json::to_value(&args.request).expect("child update");
+                    if notification.to_string().contains("live-order-") {
+                        assert!(matches!(&args.request.update, acp::SessionUpdate::UserMessageChunk(_)));
+                        visible_tx.send((args.request.session_id.clone(), notification)).expect("visible capture open");
+                    }
+                    let _ = args.response_tx.send(Ok(()));
+                }
+            }
+        });
         let child_info = SessionInfo {
             id: acp::SessionId::new(id.clone()),
             cwd: ctx.parent_cwd.to_string_lossy().into_owned(),
@@ -380,26 +398,37 @@ async fn live_steers_through_shell_runtime(with_active_tool: bool) {
         };
         tokio::select! {
             result = &mut spawning => panic!("child finished before live ingress: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => panic!("live-steer readiness timed out: active_tool={with_active_tool}; requests={:?}", server.request_bodies()),
             _ = ready => {}
         }
         let sends = async {
             for text in ["live-order-first", "live-order-second"] {
-                assert!(matches!(backend.send_active_message(
-                    ActiveAgentMessageRequest::try_new_with_operation(&id, text, ActiveAgentMessageOperation::Steer).expect("request")
-                ).await, ActiveAgentMessageOutcome::Accepted { .. }));
+                let admission = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    backend.send_active_message(
+                        ActiveAgentMessageRequest::try_new_with_operation(&id, text, ActiveAgentMessageOperation::Steer).expect("request"),
+                    ),
+                ).await.unwrap_or_else(|_| panic!("live-steer queued admission acknowledgement timed out: {text}; active_tool={with_active_tool}"));
+                assert!(matches!(admission, ActiveAgentMessageOutcome::Accepted { .. }), "queued admission for {text}: {admission:?}");
             }
         };
         tokio::select! {
             result = &mut spawning => panic!("parent settled before admission: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => panic!("live-steer admission timed out: active_tool={with_active_tool}"),
             _ = sends => {}
         }
         assert!(server.request_bodies().iter().all(|body| !body.to_string().contains("live-order-first")), "no sampling can bypass the in-flight operation");
+        assert!(matches!(visible_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)), "queued admission is not safe-point visibility");
         match tool_socket {
-            Some(mut socket) => socket.write_all(b"tool-finished-marker\n").await.expect("release tool without cancelling"),
+            Some(mut socket) => tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                socket.write_all(b"tool-finished-marker\n"),
+            ).await.expect("live-steer TCP release timed out").expect("release tool without cancelling"),
             None => server.release_parked_replies(),
         }
         tokio::select! {
             result = &mut spawning => panic!("parent completed before next sample terminal: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => panic!("live-steer next sample timed out: active_tool={with_active_tool}; requests={:?}", server.request_bodies()),
             _ = next_sample.wait_blocked() => {}
         }
         let requests = server.request_bodies();
@@ -412,17 +441,14 @@ async fn live_steers_through_shell_runtime(with_active_tool: bool) {
             assert!(body.find("tool-finished-marker") < body.find("live-order-first"));
         }
         let mut visible = Vec::new();
-        while let Ok(message) = gateway_rx.try_recv() {
-            if let xai_acp_lib::AcpClientMessage::SessionNotification(args) = message {
-                let notification = serde_json::to_value(&args.request).expect("child update");
-                if notification.to_string().contains("live-order-") {
-                    assert_eq!(args.request.session_id, child_info.id);
-                    assert!(matches!(&args.request.update, acp::SessionUpdate::UserMessageChunk(_)));
-                    visible.push(notification);
-                }
-                let _ = args.response_tx.send(Ok(()));
-            }
+        for _ in 0..2 {
+            let (session_id, notification) = tokio::time::timeout(
+                std::time::Duration::from_secs(10), visible_rx.recv(),
+            ).await.expect("live-steer child projection timed out").expect("child gateway capture closed");
+            assert_eq!(session_id, child_info.id);
+            visible.push(notification);
         }
+        assert!(matches!(visible_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)), "no duplicate live projection");
         assert_eq!(visible.len(), 2, "both accepted Steers must be visible in the child, not just caller tool output");
         let first_event = visible[0]["_meta"]["eventId"].as_str().expect("first event identity");
         let second_event = visible[1]["_meta"]["eventId"].as_str().expect("second event identity");
@@ -430,7 +456,8 @@ async fn live_steers_through_shell_runtime(with_active_tool: bool) {
         assert_eq!(visible[0]["_meta"]["promptId"], visible[1]["_meta"]["promptId"]);
         assert!(!visible[0]["_meta"]["promptId"].as_str().expect("running prompt identity").starts_with("parent-message-"), "Steer is part of the existing child turn, not its receipt's future turn");
         next_sample.release();
-        let result = spawning.await.expect("parent result");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), spawning)
+            .await.expect("live-steer parent completion timed out").expect("parent result");
         assert!(result.success(), "{result:?}");
         assert_eq!(result.turns, 1, "steering must not create a second turn");
         assert_eq!(result.tool_calls, u32::from(with_active_tool));
@@ -443,6 +470,7 @@ async fn live_steers_through_shell_runtime(with_active_tool: bool) {
         assert!(matches!(snapshot.status, SubagentSnapshotStatus::Completed { .. }));
         coordinator.abort();
         usage_ack.abort();
+        child_gateway.abort();
     }).await;
 }
 

@@ -370,7 +370,7 @@ pub(super) fn format_workflow_elapsed(ms: u64) -> String {
         format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
     }
 }
-fn format_workflow_completion_reminder(
+pub(crate) fn format_workflow_completion_reminder(
     runs: &[crate::session::workflow::tracker::WorkflowRunState],
     session_dir: &std::path::Path,
     read_tool_name: Option<&str>,
@@ -622,7 +622,13 @@ impl SessionActor {
                     task_ids = ?ids,
                     "dropping between-turn bash task completions (goal loop active)"
                 );
-                self.mark_completions_reported(&ids).await;
+                let identities = bash_completions.iter().map(|task| xai_chat_state::completion::TerminalCompletionId::Task {
+                    owner_session_id: self.session_id_string(), task_id: task.task_id.clone(),
+                    task_kind: xai_chat_state::completion::CompletionTaskKind::Bash,
+                }.into()).collect();
+                if let Err(error) = self.suppress_terminal_notifications(identities).await {
+                    tracing::error!(%error, "between-turn goal suppression remains unacknowledged");
+                }
             } else {
                 tracing::info!(
                     count = bash_completions.len(),
@@ -642,7 +648,16 @@ impl SessionActor {
                     task_output_name.as_deref(),
                     read_tool_name.as_deref(),
                 );
-                self.push_system_reminder(&reminder);
+                let ids = bash_completions.iter().map(|task| xai_chat_state::completion::TerminalCompletionId::Task {
+                    owner_session_id: self.session_id_string(), task_id: task.task_id.clone(),
+                    task_kind: xai_chat_state::completion::CompletionTaskKind::Bash,
+                }.into()).collect();
+                let prompt_id = self.state.lock().await.running_prompt_id().map(str::to_owned);
+                if let Some(prompt_id) = prompt_id {
+                    if let Err(error) = self.project_terminal_batch(ids, &prompt_id, reminder).await {
+                        tracing::error!(%error, "between-turn task completions remain unreported");
+                    }
+                }
             }
         }
     }
@@ -688,13 +703,6 @@ impl SessionActor {
             fresh = ?names(&fresh),
             "draining between-turn workflow completions"
         );
-        let restored: Vec<_> = restored
-            .into_iter()
-            .filter(|r| {
-                r.status.is_terminal()
-                    && r.status != crate::session::workflow::tracker::WorkflowRunStatus::Interrupted
-            })
-            .collect();
         if restored.is_empty() && fresh.is_empty() {
             return;
         }
@@ -706,11 +714,16 @@ impl SessionActor {
             if runs.is_empty() {
                 continue;
             }
-            self.push_system_reminder(&format_workflow_completion_reminder(
-                runs,
-                &session_dir,
-                read_tool_name.as_deref(),
-            ));
+            let text = format_workflow_completion_reminder(runs, &session_dir, read_tool_name.as_deref());
+            let ids = runs.iter().map(|run| xai_chat_state::completion::TerminalCompletionId::Workflow {
+                run_id: run.run_id.clone(), revision: run.revision,
+            }.into()).collect();
+            let prompt_id = self.state.lock().await.running_prompt_id().map(str::to_owned);
+            if let Some(prompt_id) = prompt_id {
+                if let Err(error) = self.project_terminal_batch(ids, &prompt_id, text).await {
+                    tracing::error!(%error, "between-turn workflow revisions remain unreported");
+                }
+            }
         }
     }
     pub(super) async fn persist_resume_status(&self) {

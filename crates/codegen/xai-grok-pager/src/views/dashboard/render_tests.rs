@@ -187,6 +187,51 @@ fn slash_dropdown_never_paints_outside_a_short_dashboard() {
 }
 
 #[test]
+fn workspace_dashboard_subagent_lane_renders_roster_with_shared_filter_and_pins() {
+    use crate::app::roster::{RosterActivity, RosterEntry, RosterOrigin};
+    use crate::views::dashboard::{SessionLane, WorkspaceRowInputs};
+    let area = Rect::new(0, 0, 100, 28);
+    let mut agents = SessionViews::new();
+    let registry = crate::actions::ActionRegistry::defaults();
+    let roster = ["Alpha child", "Beta child"].map(|title| RosterEntry {
+        session_id: title.into(),
+        title: Some(title.into()),
+        cwd: "/repo".into(),
+        is_worktree: false,
+        session_kind: Some(crate::app::roster::SESSION_KIND_SUBAGENT.into()),
+        parent_session_id: Some("detached-parent".into()),
+        model_id: None,
+        yolo: false,
+        activity: RosterActivity::Working,
+        last_turn_summary: None,
+        resident: true,
+        last_change_unix_ms: 1,
+        origin: RosterOrigin::default(),
+    });
+    let mut state = DashboardState::new();
+    state.lane = SessionLane::Subagents;
+    state.filter = Filter::Substring("Alpha".into());
+    state.pinned.insert(DashboardRowId::Roster { session_id: "Alpha child".into() });
+    state.focus_row(DashboardRowId::Roster { session_id: "Alpha child".into() });
+    let mut buf = Buffer::empty(area);
+    let _ = render_dashboard(
+        &mut buf, area, &mut state, &mut agents, &registry, None, &roster,
+        true, WorkspaceRowInputs::default(), None, false, None, None,
+    );
+    let content = buf_to_text(&buf);
+    assert!(content.contains("Alpha child"), "{content}");
+    assert!(!content.contains("Beta child"), "{content}");
+    assert_eq!(state.selected, Some(DashboardRowId::Roster { session_id: "Alpha child".into() }));
+    state.lane = SessionLane::Main;
+    let mut buf = Buffer::empty(area);
+    let _ = render_dashboard(
+        &mut buf, area, &mut state, &mut agents, &registry, None, &roster,
+        true, WorkspaceRowInputs::default(), None, false, None, None,
+    );
+    assert!(!buf_to_text(&buf).contains("Alpha child"));
+}
+
+#[test]
 fn workspace_dashboard_renders_snapshot_member_with_archive_control() {
     let area = Rect::new(0, 0, 100, 28);
     let mut buf = Buffer::empty(area);
@@ -756,6 +801,7 @@ fn render_dashboard_shows_roster_when_local_agents_empty() {
         cwd: "/repo/work".into(),
         is_worktree: false,
         session_kind: None,
+        parent_session_id: None,
         model_id: None,
         yolo: false,
         activity: RosterActivity::Working,
@@ -810,6 +856,7 @@ fn render_dashboard_hover_shows_delete_x_only_for_settled_rows() {
             cwd: "/repo/work".into(),
             is_worktree: false,
             session_kind: None,
+            parent_session_id: None,
             model_id: None,
             yolo: false,
             activity,

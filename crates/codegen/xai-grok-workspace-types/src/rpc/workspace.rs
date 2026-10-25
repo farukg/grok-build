@@ -219,20 +219,13 @@ impl WorkspaceRpc for TasksSnapshotReq {
     type Response = TasksSnapshotResponse;
 }
 
-/// Outcome of `workspace.kill_task`, mirroring `xai_grok_tools::KillOutcome` wire tags (`killed` / `already_exited` / `not_found`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum KillTaskOutcome {
-    Killed,
-    AlreadyExited,
-    NotFound,
-}
+pub use xai_tool_types::KillOutcome;
 
 /// Response of `workspace.kill_task`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KillTaskResponse {
     pub task_id: String,
-    pub outcome: KillTaskOutcome,
+    pub outcome: KillOutcome,
 }
 
 /// `workspace.kill_task` terminates a background terminal task by id.

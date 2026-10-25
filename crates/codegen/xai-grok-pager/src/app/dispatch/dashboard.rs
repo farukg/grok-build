@@ -26,6 +26,13 @@ use crate::app::app_view::{ActiveView, AppView, DashboardReturn, TrustState};
 use crate::app::cancel_latency::CancelOrigin;
 use agent_client_protocol as acp;
 use xai_grok_telemetry::events::CancellationScope;
+#[path = "dashboard_child_layout.rs"]
+mod child_layout;
+
+pub(crate) fn refresh_dashboard_child_layout(app: &mut AppView) {
+    child_layout::refresh(app);
+}
+
 /// Keeps v1 config layout separate from v2 workspace layout.
 fn dashboard_state_for_mode(app: &mut AppView) -> crate::views::dashboard::DashboardState {
     use crate::views::dashboard::DashboardState;
@@ -87,7 +94,11 @@ pub(super) fn ensure_dashboard_state(app: &mut AppView) {
     let mut state = dashboard_state_for_mode(app);
     state.set_preview_enabled(app.current_ui.dashboard_preview_enabled(), &mut app.agents);
     let workspace = app.workspace_membership.view();
-    state.gc_stale_refs(&dashboard_alive_fn(&app.agents, workspace.as_ref()));
+    state.gc_stale_refs(&dashboard_alive_fn(
+        &app.agents,
+        workspace.as_ref(),
+        app.dashboard_roster(),
+    ));
     state.adopt_slash_mru(app.slash_mru.clone());
     state.adopt_command_tags(app.command_tags.clone());
     state.set_screen_mode(app.screen_mode);
@@ -113,6 +124,7 @@ pub(super) fn ensure_dashboard_state(app: &mut AppView) {
         .slash_controller
         .set_usage_command_visible(usage_cmd);
     app.dashboard = Some(state);
+    child_layout::refresh(app);
 }
 /// Configure the dashboard for display: snapshot app-wide state (cwd, models, plugins, permission mode) and clear the staged dispatch settings.
 /// Shared by `dispatch_open_dashboard` and the overlay-cycle path; a no-op when the dashboard is unallocated.
@@ -193,7 +205,12 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
         ensure_dashboard_state(app);
     } else if let Some(d) = app.dashboard.as_mut() {
         let workspace = app.workspace_membership.view();
-        d.gc_stale_refs(&dashboard_alive_fn(&app.agents, workspace.as_ref()));
+        let roster = if app.leader_mode {
+            &app.leader_roster
+        } else {
+            &app.dashboard_local_sessions
+        };
+        d.gc_stale_refs(&dashboard_alive_fn(&app.agents, workspace.as_ref(), roster));
         d.set_recap_visible(app.session_recap_available);
         d.set_voice_visible(app.voice_mode_enabled);
         d.set_restricted_commands(&app.tier_restricted_commands);
@@ -230,6 +247,7 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
 fn dashboard_alive_fn<'a>(
     agents: &'a crate::app::session_views::SessionViews,
     workspace: Option<&'a crate::app::workspace_layout::WorkspaceView>,
+    roster: &'a [crate::app::roster::RosterEntry],
 ) -> impl Fn(&crate::views::dashboard::DashboardRowId) -> bool + 'a {
     move |id| match id {
         crate::views::dashboard::DashboardRowId::TopLevel(a) => agents.contains_key(a),
@@ -241,7 +259,9 @@ fn dashboard_alive_fn<'a>(
                 })
             })
         }
-        crate::views::dashboard::DashboardRowId::Roster { .. } => false,
+        crate::views::dashboard::DashboardRowId::Roster { session_id } => {
+            roster.iter().any(|entry| entry.session_id == *session_id)
+        }
     }
 }
 pub(super) fn dispatch_exit_dashboard(app: &mut AppView) -> Vec<Effect> {
@@ -503,7 +523,7 @@ pub(super) fn dispatch_dashboard_overlay_stop(app: &mut AppView) -> Vec<Effect> 
     let Some(id) = app.dashboard.as_ref().and_then(|d| d.attached_agent) else {
         return vec![];
     };
-    if app.workspace_dashboard_enabled {
+    if workspace_lane_enabled(app) {
         let Some(readiness) = app.agents.get(&id).map(dashboard_stop_readiness) else {
             return vec![];
         };
@@ -968,7 +988,9 @@ pub(crate) fn cycle_scope(app: &AppView, current: AgentId) -> Option<CycleScope>
     match app.agents.get(&current).map(|view| &view.role) {
         Some(crate::app::agent_view::AgentRole::Root) => Some(CycleScope::Roots),
         Some(crate::app::agent_view::AgentRole::Child(link)) => {
-            Some(CycleScope::Siblings(app.agents.children_of(link.parent)))
+            Some(CycleScope::Siblings(
+                app.agents.children_of_session(&link.parent_session_id),
+            ))
         }
         None => None,
     }
@@ -976,6 +998,15 @@ pub(crate) fn cycle_scope(app: &AppView, current: AgentId) -> Option<CycleScope>
 
 /// Applies the session-cycle action to its classified scope.
 pub(super) fn dispatch_session_cycle(app: &mut AppView, direction: Direction) -> Vec<Effect> {
+    if matches!(app.active_view, ActiveView::AgentDashboard) {
+        if let Some(dashboard) = app.dashboard.as_mut() {
+            dashboard.set_session_lane(match direction {
+                Direction::Prev => crate::views::dashboard::SessionLane::Main,
+                Direction::Next => crate::views::dashboard::SessionLane::Subagents,
+            });
+        }
+        return vec![];
+    }
     let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
@@ -1020,16 +1051,19 @@ pub(super) fn dispatch_navigate_tree(
     app: &mut AppView,
     step: crate::app::actions::TreeStep,
 ) -> Vec<Effect> {
+    if matches!(app.active_view, ActiveView::AgentDashboard) {
+        return match step {
+            crate::app::actions::TreeStep::LatestChild => dispatch_exit_dashboard(app),
+            crate::app::actions::TreeStep::Parent => vec![],
+        };
+    }
     let ActiveView::Agent(current) = app.active_view else {
         return vec![];
     };
     let target = match step {
         crate::app::actions::TreeStep::Parent => match app.agents.parent_of(current) {
             Some(parent) => Some(parent),
-            None => {
-                app.show_toast("No parent session");
-                None
-            }
+            None => return dispatch_open_dashboard(app),
         },
         crate::app::actions::TreeStep::LatestChild => {
             match app.agents.children_of(current).last() {
@@ -1125,7 +1159,9 @@ fn session_cycle(app: &mut AppView) -> crate::views::dashboard::SessionCycle {
     }
     let order: Vec<AgentId> = if app.workspace_dashboard_enabled {
         let filter = app.dashboard.as_ref().map_or(&Filter::None, |d| &d.filter);
-        crate::views::dashboard::top_level_ids(&workspace_rows(app, filter).0)
+        crate::views::dashboard::top_level_ids(
+            &workspace_rows_in_lane(app, filter, crate::views::dashboard::SessionLane::Main).0,
+        )
     } else if let Some(d) = app.dashboard.as_ref() {
         crate::views::dashboard::overlay_cycle_order(d, &app.agents)
     } else {
@@ -1732,8 +1768,15 @@ fn refuse_workspace_layout(app: &mut AppView, refusal: impl Into<LayoutRefusal>)
     };
     app.show_toast(message);
 }
+fn workspace_lane_enabled(app: &AppView) -> bool {
+    app.workspace_dashboard_enabled
+        && app.dashboard.as_ref().is_none_or(|d| {
+            d.session_lane() == crate::views::dashboard::SessionLane::Main
+        })
+}
+
 pub(super) fn dispatch_dashboard_toggle_pin(app: &mut AppView) -> Vec<Effect> {
-    if app.workspace_dashboard_enabled {
+    if workspace_lane_enabled(app) {
         let Some(row) = app.dashboard.as_ref().and_then(|d| d.selected.clone()) else {
             return vec![];
         };
@@ -1825,6 +1868,20 @@ pub(super) fn workspace_rows(
     Vec<crate::views::dashboard::DashboardRow>,
     crate::views::dashboard::Grouping,
 ) {
+    let lane = app.dashboard
+        .as_ref()
+        .map_or(crate::views::dashboard::SessionLane::Main, |d| d.session_lane());
+    workspace_rows_in_lane(app, filter, lane)
+}
+
+fn workspace_rows_in_lane(
+    app: &AppView,
+    filter: &crate::views::dashboard::Filter,
+    lane: crate::views::dashboard::SessionLane,
+) -> (
+    Vec<crate::views::dashboard::DashboardRow>,
+    crate::views::dashboard::Grouping,
+) {
     let source = crate::app::workspace_sync::WorkspaceRowSource::capture(
         &app.agents,
         &app.workspace_membership,
@@ -1832,11 +1889,29 @@ pub(super) fn workspace_rows(
         app.workspace_dashboard_enabled,
     );
     let inputs = source.inputs();
+    let unpinned = Default::default();
+    let children;
+    let child_rows = match app.dashboard.as_ref() {
+        Some(dashboard) => &dashboard.child_rows,
+        None => {
+            children = child_layout::child_rows(app);
+            &children
+        }
+    };
     let rows = crate::views::dashboard::build_rows_with_workspace(
         &app.agents,
         inputs,
         filter,
         crate::views::dashboard::render::cached_home(),
+        if app.leader_mode {
+            &app.leader_roster
+        } else {
+            &app.dashboard_local_sessions
+        },
+        lane,
+        app.dashboard.as_ref().map_or(&unpinned, |d| &d.pinned),
+        app.dashboard.as_ref().map_or(&[], |d| d.reorder.as_slice()),
+        child_rows,
     );
     (rows, inputs.grouping())
 }
@@ -1862,6 +1937,7 @@ pub(super) fn dashboard_focusables(app: &AppView) -> Vec<crate::views::dashboard
                 &d.filter,
                 home,
                 roster,
+                d.session_lane(),
             ),
             d.grouping,
         )
@@ -1911,7 +1987,7 @@ pub(super) fn dispatch_dashboard_stop(app: &mut AppView) -> Vec<Effect> {
     match &sel {
         DashboardRowId::TopLevel(id) => {
             let id = *id;
-            if app.workspace_dashboard_enabled {
+            if workspace_lane_enabled(app) {
                 let Some(readiness) = app.agents.get(&id).map(dashboard_stop_readiness) else {
                     return vec![];
                 };
@@ -2155,7 +2231,7 @@ fn delete_dashboard_row(
     if let Some(d) = app.dashboard.as_mut() {
         d.delete_confirm = None;
     }
-    if app.workspace_dashboard_enabled {
+    if workspace_lane_enabled(app) {
         return archive_dashboard_row(app, row);
     }
     match row {
@@ -2384,7 +2460,7 @@ pub(super) fn dispatch_dashboard_select(app: &mut AppView, next: bool) {
     d.clear_manual_scroll();
 }
 pub(super) fn dispatch_dashboard_reorder(app: &mut AppView, up: bool) -> Vec<Effect> {
-    if app.workspace_dashboard_enabled {
+    if workspace_lane_enabled(app) {
         let Some(selected) = app.dashboard.as_ref().and_then(|d| d.selected.clone()) else {
             return vec![];
         };
@@ -2451,19 +2527,43 @@ pub(super) fn dispatch_dashboard_reorder(app: &mut AppView, up: bool) -> Vec<Eff
     dispatch_dashboard_persist(app)
 }
 fn dispatch_dashboard_persist(app: &mut AppView) -> Vec<Effect> {
+    if app.dashboard.as_ref().is_some_and(|d| {
+        d.session_lane() == crate::views::dashboard::SessionLane::Subagents
+    }) {
+        let Some(update) = child_layout::snapshot(app) else {
+            return vec![];
+        };
+        persisted_dashboard(&mut app.dashboard_persisted);
+        if let Some(saved) = app.dashboard_persisted.as_mut() {
+            update.apply(saved);
+        }
+        return vec![Effect::PersistDashboardChildLayout(update)];
+    }
     if app.workspace_dashboard_enabled {
         return vec![];
     }
+    let mut persisted = persisted_dashboard(&mut app.dashboard_persisted).clone();
     let Some(d) = app.dashboard.as_ref() else {
         return vec![];
     };
-    let enabled = app
-        .dashboard_persisted
-        .as_ref()
-        .map(|p| p.enabled)
-        .unwrap_or(true);
     let resolver = crate::views::dashboard::SessionIdResolver::from_agents(&app.agents);
-    let persisted = d.to_persisted(enabled, &resolver);
+    let current = d.to_persisted(persisted.enabled, &resolver);
+    let scope = app.agents.roots().filter_map(|(id, agent)| {
+        let session_id = agent.session.session_id.as_ref()?;
+        if d.child_rows.contains_key(session_id.0.as_ref()) {
+            return None;
+        }
+        resolver.to_persisted(&crate::views::dashboard::DashboardRowId::TopLevel(id))
+    }).collect();
+    crate::views::dashboard::child_layout::ChildLayoutUpdate {
+        scope,
+        pinned: current.pinned,
+        reorder: current.reorder,
+    }.apply(&mut persisted);
+    persisted.grouping = current.grouping;
+    if let Some(update) = child_layout::snapshot(app) {
+        update.apply(&mut persisted);
+    }
     app.dashboard_persisted = Some(persisted.clone());
     vec![Effect::PersistDashboard(persisted)]
 }

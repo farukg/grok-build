@@ -37,7 +37,7 @@ use super::coordinator_state::{
     ActiveChild, BlockingWaiter, BufferedCompletion, ChildRecord, CompletedChild,
     DisplacedCompletedChild, ForegroundChild, InternalEvent, ListRequest, PendingChild,
     ProgressFuture, ProgressTarget, ReplyFuture, TaggedFuture, active_summary,
-    background_at_deadline, background_if_caller_gone, completed_snapshot, hand_off_to_background,
+    background_at_deadline, background_if_caller_gone, hand_off_to_background,
     sleep_until, workflow_outstanding,
 };
 use super::types::{
@@ -456,7 +456,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 }
                 SubagentCancelTarget::WorkflowRunId(run_id) => {
                     self.cancel_workflow_children(&run_id, request.parent_session_id.as_deref());
-                    if workflow_outstanding(&self.pending, &self.active, &run_id) == 0 {
+                    if workflow_outstanding(&self.pending, &self.active, &run_id) == 0
+                        && !self.workflow_has_terminal_obligations(&run_id)
+                    {
                         let _ = request.respond_to.send(SubagentCancelOutcome::Cancelled {
                             cause: InterruptionCause::WorkflowCancelled { run_id },
                         });
@@ -677,12 +679,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             let Some(id) = self.completed_order.pop_front() else {
                 break;
             };
-            if self
-                .completed
-                .get(&id)
-                .is_some_and(|child| !child.publication.is_settled())
-                || self.pending_wakes.contains_key(&id)
-            {
+            // Committing records still own producer replies; visibility lives in terminal_outputs.
+            if self.completed.get(&id).is_some_and(|child| {
+                matches!(
+                    child.publication,
+                    super::coordinator_state::TerminalPublicationState::Committing
+                )
+            }) {
                 self.completed_order.push_back(id);
                 continue;
             }
@@ -726,8 +729,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         {
             return;
         }
-        let mut completion = match self.terminal_outputs.remove(&subagent_id) {
-            Some(TerminalOutput::Committing(completion)) => completion,
+        let (mut completion, recipient) = match self.terminal_outputs.remove(&subagent_id) {
+            Some(TerminalOutput::Committing { completion, recipient }) => (completion, recipient),
             Some(output @ (TerminalOutput::Finishing(_) | TerminalOutput::Publishing { .. })) => {
                 self.terminal_outputs.insert(subagent_id, output);
                 return;
@@ -800,6 +803,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         completion.disposition.foreground_delivered = foreground_delivered;
         completion.disposition.waiter_delivered = delivered;
+        if committed && delivered && completion.request.surface_completion
+            && !matches!(&recipient, super::coordinator_state::CompletionRecipient::Retired(_))
+        {
+            completion.disposition.reporting = CompletionReporting::Reportable;
+        }
 
         let parent_session_id = completion.request.parent_session_id.clone();
         let workflow_run_id = completion
@@ -807,6 +815,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             .owner
             .workflow_run_id()
             .map(str::to_owned);
+        let recipient_session = recipient.session_id().map(str::to_owned);
         match result {
             TerminalCommitResult::Committed => {
                 let buffered = if !completion.disposition.explicitly_killed
@@ -817,6 +826,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         &completion.result,
                         &completion.snapshot,
                         &completion.attempt_id,
+                        &recipient,
                     )
                 } else {
                     super::coordinator_state::CompletionBufferPublication::Silent
@@ -830,6 +840,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         attempt_id: published_attempt.clone(),
                         parent_session_id: parent_session_id.clone(),
                         buffered,
+                        owner: completion.request.owner.clone(),
+                        recipient,
                     },
                 );
                 let callback = super::coordinator_state::TerminalPublicationGuard::new(published_tx,
@@ -855,6 +867,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             self.resolve_workflow_cancel_waiters(&run_id);
         }
         self.resolve_teardown_drain_waiters(&parent_session_id);
+        if let Some(session) = recipient_session {
+            self.resolve_teardown_drain_waiters(&session);
+        }
         self.start_queued_within_capacity();
     }
 
@@ -872,12 +887,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         {
             return;
         }
-        let (parent_session_id, buffered) = match self.terminal_outputs.remove(&subagent_id) {
+        let recipient_session;
+        let (parent_session_id, owner, buffered) = match self.terminal_outputs.remove(&subagent_id) {
             Some(TerminalOutput::Publishing {
                 attempt_id: pending_attempt,
                 parent_session_id,
+                owner,
+                recipient,
                 buffered,
-            }) if pending_attempt == attempt_id => (parent_session_id, buffered),
+            }) if pending_attempt == attempt_id => {
+                recipient_session = recipient.session_id().map(str::to_owned);
+                (parent_session_id, owner, buffered)
+            }
             Some(output) => {
                 self.terminal_outputs.insert(subagent_id, output);
                 return;
@@ -888,7 +909,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             TerminalVisibilityResult::Published => self.publish_buffered_completion(buffered),
             TerminalVisibilityResult::Deferred { .. } => {}
         }
-        if let Some(child) = self.completed.get_mut(&subagent_id) {
+        if let Some(child) = self.completed.get_mut(&subagent_id)
+            && child.attempt_id == attempt_id
+        {
             child.publication = match result {
                 TerminalVisibilityResult::Published => TerminalPublicationState::Published,
                 TerminalVisibilityResult::Deferred { error } => {
@@ -897,19 +920,17 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             };
         }
         self.resolve_teardown_drain_waiters(&parent_session_id);
-        if let Some(run_id) = self
-            .completed
-            .get(&subagent_id)
-            .and_then(|child| child.request.owner.workflow_run_id())
-            .map(str::to_owned)
-        {
-            self.resolve_workflow_cancel_waiters(&run_id);
+        if let Some(session) = recipient_session {
+            self.resolve_teardown_drain_waiters(&session);
+        }
+        if let Some(run_id) = owner.workflow_run_id() {
+            self.resolve_workflow_cancel_waiters(run_id);
         }
         self.evict_completed_overflow();
-        if self
+        if !self
             .completed
             .get(&subagent_id)
-            .is_some_and(|child| !child.publication.is_published())
+            .is_some_and(|child| child.attempt_id == attempt_id && child.publication.is_published())
         {
             self.reject_pending_wakes_for_id(&subagent_id);
             return;
@@ -1252,7 +1273,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .values()
                     .filter_map(|output| match output {
                         super::coordinator_state::TerminalOutput::Finishing(_) => None,
-                        super::coordinator_state::TerminalOutput::Committing(completion) => {
+                        super::coordinator_state::TerminalOutput::Committing { completion, .. } => {
                             Some(&completion.request)
                         }
                         super::coordinator_state::TerminalOutput::Publishing { .. } => None,
@@ -1606,18 +1627,22 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let published_tx = self.terminal_published_tx.clone();
         let published_id = id.to_owned();
         let published_attempt = completion_attempt_id.clone();
+        let recipient = self.completion_recipient(&request);
         self.terminal_outputs.insert(
             id.to_owned(),
-            super::coordinator_state::TerminalOutput::Committing(ChildCompletion {
-                attempt_id: completion_attempt_id,
-                request,
-                result: output.result,
-                snapshot,
-                completion_data: output.completion_data,
-                disposition,
-            }),
+            super::coordinator_state::TerminalOutput::Committing {
+                completion: ChildCompletion {
+                    attempt_id: completion_attempt_id,
+                    request,
+                    result: output.result,
+                    snapshot,
+                    completion_data: output.completion_data,
+                    disposition,
+                },
+                recipient,
+            },
         );
-        if let Some(super::coordinator_state::TerminalOutput::Committing(completion)) =
+        if let Some(super::coordinator_state::TerminalOutput::Committing { completion, .. }) =
             self.terminal_outputs.get_mut(id)
         {
             let callback = super::coordinator_state::TerminalPublicationGuard::new(
@@ -1657,6 +1682,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             child.disposition.interrupt(cause.clone());
             child.cancellation.cancel();
             child.control.cancel();
+            self.reject_spawn_ready_ids(&[id.to_owned()]);
             return SubagentCancelOutcome::Cancelled { cause };
         }
         if let Some(child) = self.pending.get_mut(id) {
@@ -1696,6 +1722,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         parent_session_id: Option<&str>,
         cause: &InterruptionCause,
     ) {
+        let mut doomed = Vec::new();
         for child in self.active.values_mut() {
             if child.request.parent_prompt_id.as_deref() == Some(parent_prompt_id)
                 && belongs_to_session(&child.request, parent_session_id)
@@ -1703,9 +1730,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
+                doomed.push(child.request.id.clone());
             }
         }
-        let mut doomed = Vec::new();
         for child in self.pending.values_mut() {
             if child.request.parent_prompt_id.as_deref() == Some(parent_prompt_id)
                 && belongs_to_session(&child.request, parent_session_id)
@@ -1780,6 +1807,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             session_id: parent_session_id.to_owned(),
         };
         let mut cancelled = self.reject_pending_wakes_for_session(parent_session_id);
+        let mut doomed = Vec::new();
         for child in self.active.values_mut() {
             if child.request.parent_session_id == parent_session_id {
                 // Parent is gone: do not rebuffer this completion for a later
@@ -1788,10 +1816,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
+                doomed.push(child.request.id.clone());
                 cancelled += 1;
             }
         }
-        let mut doomed = Vec::new();
         for child in self.pending.values_mut() {
             if child.request.parent_session_id == parent_session_id {
                 child.request.surface_completion = false;
@@ -1834,6 +1862,16 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             || self.completed.values().any(|child| {
                 child.request.parent_session_id == parent_session_id
                     && !child.publication.is_settled()
+            })
+            || self.terminal_outputs.values().any(|output| match output {
+                super::coordinator_state::TerminalOutput::Publishing {
+                    parent_session_id: owner, recipient, ..
+                } => owner == parent_session_id || recipient.session_id() == Some(parent_session_id),
+                super::coordinator_state::TerminalOutput::Committing { completion, recipient } => {
+                    completion.request.parent_session_id == parent_session_id
+                        || recipient.session_id() == Some(parent_session_id)
+                }
+                super::coordinator_state::TerminalOutput::Finishing(_) => false,
             })
             || self.pending_wakes.keys().any(|subagent_id| {
                 self.completed.get(subagent_id).is_some_and(|completed| {
@@ -1893,6 +1931,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let cause = InterruptionCause::SessionStopped {
             session_id: parent_session_id.to_owned(),
         };
+        let mut doomed = Vec::new();
         for child in self.active.values_mut() {
             if child.request.parent_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
@@ -1900,9 +1939,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
+                doomed.push(child.request.id.clone());
             }
         }
-        let mut doomed = Vec::new();
         for child in self.pending.values_mut() {
             if child.request.parent_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
@@ -1924,6 +1963,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let cause = InterruptionCause::WorkflowCancelled {
             run_id: run_id.to_owned(),
         };
+        let mut doomed = Vec::new();
         for child in self.active.values_mut() {
             if child.request.owner.workflow_run_id() == Some(run_id)
                 && belongs_to_session(&child.request, parent_session_id)
@@ -1931,9 +1971,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
                 child.control.cancel();
+                doomed.push(child.request.id.clone());
             }
         }
-        let mut doomed = Vec::new();
         for child in self.pending.values_mut() {
             if child.request.owner.workflow_run_id() == Some(run_id)
                 && belongs_to_session(&child.request, parent_session_id)
@@ -1946,12 +1986,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         self.reject_spawn_ready_ids(&doomed);
     }
 
+    fn workflow_has_terminal_obligations(&self, run_id: &str) -> bool {
+        self.terminal_outputs.values().any(|output| match output {
+            super::coordinator_state::TerminalOutput::Committing { completion, .. } => {
+                completion.request.owner.workflow_run_id() == Some(run_id)
+            }
+            super::coordinator_state::TerminalOutput::Publishing { owner, .. } => {
+                owner.workflow_run_id() == Some(run_id)
+            }
+            super::coordinator_state::TerminalOutput::Finishing(_) => false,
+        })
+    }
+
     fn resolve_workflow_cancel_waiters(&mut self, run_id: &str) {
         if workflow_outstanding(&self.pending, &self.active, run_id) != 0
-            || self.completed.values().any(|child| {
-                child.request.owner.workflow_run_id() == Some(run_id)
-                    && !child.publication.is_settled()
-            })
+            || self.workflow_has_terminal_obligations(run_id)
         {
             return;
         }

@@ -118,7 +118,7 @@ fn persisted_finishes(
         .collect()
 }
 
-fn test_persistence_sampling_client() -> crate::sampling::Client {
+pub(super) fn test_persistence_sampling_client() -> crate::sampling::Client {
     crate::sampling::Client::new(xai_grok_sampler::SamplerConfig {
         api_key: Some("test-key".to_owned()),
         base_url: "http://localhost".to_owned(),
@@ -168,6 +168,7 @@ async fn orphan_finish_without_token_record_persists_once_and_stops_reheal() {
                 crate::session::persistence::ExplicitSessionOpen::New {
                     identity: None,
                     next_trace_turn: None,
+                    parent_session_id: None,
                 },
             )
             .await
@@ -266,6 +267,7 @@ async fn duplicate_spawn_after_finish_is_not_persisted_or_rehealed() {
                 crate::session::persistence::ExplicitSessionOpen::New {
                     identity: None,
                     next_trace_turn: None,
+                    parent_session_id: None,
                 },
             )
             .await

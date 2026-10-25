@@ -1,0 +1,42 @@
+name: Pinned workspace format guard
+description: Reject formatting changes before compiling the checked-out commit
+runs:
+  using: composite
+  steps:
+    - name: Format tracked workspace source
+      shell: bash
+      run: |
+        set -o pipefail
+        mkdir -p "$RUNNER_TEMP/rustfmt-diagnostics"
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        git diff --quiet HEAD --
+        cargo fmt --version
+        format_status=0
+        cargo fmt \
+          -p xai-grok-sampler \
+          -p xai-grok-shell \
+          -p xai-grok-tools \
+          -p xai-grok-pager \
+          -p xai-grok-pager-pty-harness \
+          -p xai-chat-state \
+          -p xai-grok-sampling-types \
+          -p xai-grok-shell-terminal \
+          -p xai-grok-config \
+          -p xai-message-delivery-core \
+          > "$RUNNER_TEMP/rustfmt-diagnostics/rustfmt.log" 2>&1 || format_status=$?
+        cat "$RUNNER_TEMP/rustfmt-diagnostics/rustfmt.log"
+        git diff --binary HEAD -- > "$RUNNER_TEMP/rustfmt-diagnostics/rustfmt.patch"
+        if [ "$format_status" -ne 0 ]; then
+          exit "$format_status"
+        fi
+        if [ -s "$RUNNER_TEMP/rustfmt-diagnostics/rustfmt.patch" ]; then
+          echo "::error::Formatting changed tracked source; apply the diagnostic patch and rerun on the resulting commit."
+          exit 1
+        fi
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: rustfmt-diagnostics-${{ github.workflow }}
+        path: ${{ runner.temp }}/rustfmt-diagnostics/
+        retention-days: 14

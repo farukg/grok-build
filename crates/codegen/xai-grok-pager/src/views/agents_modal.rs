@@ -761,7 +761,8 @@ pub fn set_default_agent(name: Option<&str>) -> Result<(), String> {
     if let Some(parent) = config_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let Some(mut doc) = crate::config_toml_edit::read_config_document_for_edit(&config_path) else {
+    let Some(mut doc) = crate::config_toml_edit::read_config_document_for_edit(&config_path)
+        .map_err(|error| format!("Failed to read config.toml: {error}"))? else {
         return Err("Could not read or parse config.toml".to_string());
     };
     if let Some(agent_name) = name {
@@ -781,7 +782,8 @@ pub fn toggle_agent(name: &str, enabled: bool) -> Result<(), String> {
     if let Some(parent) = config_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let Some(mut doc) = crate::config_toml_edit::read_config_document_for_edit(&config_path) else {
+    let Some(mut doc) = crate::config_toml_edit::read_config_document_for_edit(&config_path)
+        .map_err(|error| format!("Failed to read config.toml: {error}"))? else {
         return Err("Could not read or parse config.toml".to_string());
     };
     let subagents_item = doc.entry("subagents").or_insert(toml_edit::table());

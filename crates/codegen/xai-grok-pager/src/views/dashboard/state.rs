@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 
 use super::animation::PaintedAnimations;
 use super::peek::PeekPanelState;
-use super::row::DashboardRow;
+use super::row::{DashboardRow, SessionLane};
 use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
 use crate::app::agent::AgentId;
@@ -398,6 +398,8 @@ pub struct DashboardState {
     /// inside the freshness window, folding the rest behind the overflow row.
     /// In-memory only (resets on pager restart), like section collapse.
     pub idle_show_all: bool,
+    /// In-memory lane selection; both lanes share sorting, view, and actions.
+    pub lane: SessionLane,
     /// V1-only config layout; dashboard v2 derives these fields from `WorkspaceView`.
     pub pinned: BTreeSet<DashboardRowId>,
     pub reorder: Vec<DashboardRowId>,
@@ -463,6 +465,8 @@ pub struct DashboardState {
     /// Roster session ids whose origin is a chat `conversation`; those can't be deleted from the dashboard yet, so they get no `[✗]` and don't arm.
     /// Rebuilt each render from the roster.
     pub conversation_row_ids: std::collections::HashSet<String>,
+    /// Authoritative child membership prepared on roster/load reconciliation.
+    pub(crate) child_rows: std::collections::BTreeMap<String, DashboardRowId>,
     /// Last frame's section-header hit areas keyed by [`SectionKey`].
     /// Used by mouse handling to map (col, row) to a section for click-to-toggle and hover.
     /// Rebuilt every render.
@@ -1146,6 +1150,7 @@ impl DashboardState {
             selected_idle_overflow: false,
             hovered_idle_overflow: false,
             idle_show_all: false,
+            lane: SessionLane::Main,
             pinned: BTreeSet::new(),
             reorder: Vec::new(),
             grouping: Grouping::default(),
@@ -1175,6 +1180,7 @@ impl DashboardState {
             row_delete_rects: Vec::new(),
             hovered_delete: None,
             conversation_row_ids: std::collections::HashSet::new(),
+            child_rows: Default::default(),
             section_rects: Vec::new(),
             idle_overflow_rect: None,
             last_area: Rect::default(),
@@ -1466,6 +1472,34 @@ impl DashboardState {
     /// Mirrors the in-memory lifetime of section collapse.
     pub fn toggle_idle_show_all(&mut self) {
         self.idle_show_all = !self.idle_show_all;
+    }
+
+    /// Toggle the row lane between top-level sessions (default) and the other running sessions
+    /// (subagent children). In-memory only, like section collapse.
+    pub fn toggle_subagents_lane(&mut self) {
+        self.set_session_lane(match self.lane {
+            SessionLane::Main => SessionLane::Subagents,
+            SessionLane::Subagents => SessionLane::Main,
+        });
+    }
+
+    pub fn set_session_lane(&mut self, lane: SessionLane) {
+        if self.lane == lane {
+            return;
+        }
+        self.lane = lane;
+        self.selected = None;
+        self.selected_section = None;
+        self.selected_idle_overflow = false;
+        self.actions_focus = None;
+        self.delete_confirm = None;
+        self.close_peek();
+        self.clear_manual_scroll();
+    }
+
+    /// The lane the row builders list for the current toggle state.
+    pub fn session_lane(&self) -> SessionLane {
+        self.lane
     }
 
     /// Whether `key`'s section is currently collapsed (its rows hidden).
@@ -2983,6 +3017,26 @@ impl DashboardState {
     }
 
     fn handle_key(&mut self, key: &KeyEvent, registry: &ActionRegistry) -> InputOutcome {
+        if key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::ALT) {
+            match key.code {
+                KeyCode::Left => {
+                    return InputOutcome::Action(Action::CycleSessions(
+                        crate::app::actions::Direction::Prev,
+                    ));
+                }
+                KeyCode::Right => {
+                    return InputOutcome::Action(Action::CycleSessions(
+                        crate::app::actions::Direction::Next,
+                    ));
+                }
+                KeyCode::Down => {
+                    return InputOutcome::Action(Action::NavigateTree(
+                        crate::app::actions::TreeStep::LatestChild,
+                    ));
+                }
+                _ => {}
+            }
+        }
         // Resolve the registry binding up-front; the toast / delete-confirm clear below needs to know
         // whether this key IS the stop key, and it must run before the peek intercept (the lookup itself
         // is a pure read; the action is honoured further down). Arrows / Ctrl combos always resolve.
@@ -3190,6 +3244,13 @@ impl DashboardState {
             } else {
                 self.enter_search_mode();
             }
+            return InputOutcome::Changed;
+        }
+
+        // `Ctrl+A` toggles the subagent lane: the dashboard lists the other running sessions
+        // (subagent children) instead of the main sessions, with the same row surface.
+        if key!('a', CONTROL).matches(key) {
+            self.toggle_subagents_lane();
             return InputOutcome::Changed;
         }
 
@@ -4386,7 +4447,7 @@ pub fn write_persisted_to_path(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut doc = match crate::config_toml_edit::read_config_document_for_edit(path) {
+    let mut doc = match crate::config_toml_edit::read_config_document_for_edit(path)? {
         Some(d) => d,
         None => {
             // File exists but is unparseable
@@ -4428,7 +4489,7 @@ pub fn write_persisted_to_path(
 /// Atomic write through a symlinked `config.toml`. Concurrent readers see either the old file or
 /// the new file, never a partial truncated copy that would parse as `None` and trigger the
 /// catastrophic clobber on the next writer.
-fn atomic_write(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+pub(super) fn atomic_write(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
     xai_grok_config::fs_atomic::write_user_file_atomically(path, contents, None)?;
     // Parent directory fsync (defense in depth on unusual filesystems / network mounts)
     if let Some(parent) = path.parent()
@@ -4441,7 +4502,7 @@ fn atomic_write(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn config_path() -> Option<PathBuf> {
+pub(super) fn config_path() -> Option<PathBuf> {
     let home = xai_grok_shell::util::grok_home::grok_home();
     Some(home.join(xai_grok_config::USER_CONFIG_FILENAME))
 }

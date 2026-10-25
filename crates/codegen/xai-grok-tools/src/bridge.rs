@@ -687,8 +687,8 @@ impl ToolBridge {
         }
     }
 
-    /// Drain newly-completed bash background tasks not yet reported. Marks returned tasks in
-    /// [`ReportedTaskCompletions`] to prevent duplicate reminders from [`TaskCompletionReminder`].
+    /// Observe newly-completed bash tasks without advancing the reporting cache.
+    /// The caller marks them after durable model-history projection.
     /// Reserved IDs stay unreported for a later genuine user turn.
     pub async fn drain_between_turn_bash_completions(
         &self,
@@ -718,7 +718,7 @@ impl ToolBridge {
             .into_iter()
             .filter(|t| task_owned_by_session(t, my_owner.as_deref()))
             .filter(|t| !suppress_ids.contains(&t.task_id))
-            .filter(|t| state.mark_reported(&t.task_id))
+            .filter(|t| !state.is_reported(&t.task_id))
             .collect()
     }
 

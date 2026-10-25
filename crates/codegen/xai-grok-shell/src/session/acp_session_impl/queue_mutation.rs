@@ -4,16 +4,41 @@ use super::*;
 use xai_agent_lifecycle::{InputPolicy, QueuePolicy, ShutdownPolicy};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct InputOrigin(PromptOrigin);
+pub(crate) struct InputOrigin(PromptOrigin, Vec<xai_chat_state::completion::CompletionIdentity>, crate::session::completion_delivery::CompletionOffer, super::notification_drain::NotificationBatchPayload);
 
 impl InputOrigin {
     pub(crate) fn from_prompt_id(prompt_id: &str) -> Self {
-        Self(PromptOrigin::from_prompt_id(prompt_id))
+        Self::new(PromptOrigin::from_prompt_id(prompt_id))
     }
 
     pub(crate) const fn new(origin: PromptOrigin) -> Self {
-        Self(origin)
+        Self(origin, Vec::new(), crate::session::completion_delivery::CompletionOffer::None, super::notification_drain::NotificationBatchPayload::TerminalOnly)
     }
+
+    pub(crate) fn with_completions(mut self, ids: Vec<xai_chat_state::completion::CompletionIdentity>) -> Self {
+        self.1 = ids;
+        self.2 = crate::session::completion_delivery::CompletionOffer::Automatic;
+        self
+    }
+
+    pub(crate) fn with_notification_batch(mut self, payload: super::notification_drain::NotificationBatchPayload) -> Self {
+        self.3 = payload;
+        self
+    }
+
+    pub(crate) fn notification_batch(&self) -> &super::notification_drain::NotificationBatchPayload { &self.3 }
+
+    pub(crate) fn with_completion_offer(mut self, offer: crate::session::completion_delivery::CompletionOffer) -> Self {
+        self.2 = offer;
+        self
+    }
+
+    pub(crate) fn is_boundary_completion(&self) -> bool {
+        self.2 == crate::session::completion_delivery::CompletionOffer::Boundary
+            || matches!(&self.0, PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery))
+    }
+
+    pub(crate) fn completions(&self) -> &[xai_chat_state::completion::CompletionIdentity] { &self.1 }
 
     pub(crate) fn policy(&self) -> InputPolicy {
         self.0.policy()

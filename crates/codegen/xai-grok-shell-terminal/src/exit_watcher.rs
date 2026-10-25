@@ -7,7 +7,7 @@ use agent_client_protocol as acp;
 use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
 use xai_grok_tools::notification::types::ToolNotificationHandle;
 
-use super::adapter::{SnapshotOutput, TaskMap, parse_exit};
+use super::adapter::{EnrollmentAttempt, EnrollmentSettlement, SnapshotOutput, TaskMap, TerminalEnrollment, parse_exit};
 use super::output_recorder::OutputRecorder;
 
 const RECORDER_POLL: Duration = Duration::from_millis(250);
@@ -36,23 +36,23 @@ async fn poll_terminal_output(
     consecutive_errors: &mut u32,
     max_errors: u32,
 ) -> PollStep {
-    match gateway
+    match tokio::time::timeout(super::adapter::TERMINAL_OUTPUT_RPC_BUDGET, gateway
         .send(acp::TerminalOutputRequest::new(
             session_id.clone(),
             terminal_id.clone(),
-        ))
+        )))
         .await
     {
-        Ok(output) => {
+        Ok(Ok(output)) => {
             *consecutive_errors = 0;
             PollStep::Output(Box::new(output))
         }
-        Err(e) => {
+        result @ (Ok(Err(_)) | Err(_)) => {
             *consecutive_errors += 1;
             if *consecutive_errors >= max_errors {
                 tracing::error!(
                     terminal_id = %terminal_id.0,
-                    error = %e,
+                    error = ?result,
                     "gateway unreachable after consecutive poll failures"
                 );
                 PollStep::GaveUp
@@ -65,13 +65,10 @@ async fn poll_terminal_output(
 
 enum Exit {
     WithOutput(Box<acp::TerminalOutputResponse>),
-    NeedFetch,
-    Lost,
-    MaxRuntime,
+    NeedFetch(acp::TerminalExitStatus),
 }
 
-/// `terminal_id` can differ from `task_id`.
-/// A foreground command moved to the background is tracked under its tool call id.
+/// `terminal_id` addresses the client resource; `task_id` identifies the execution.
 pub(super) async fn watch_for_exit(
     gateway: GatewaySender,
     session_id: acp::SessionId,
@@ -91,9 +88,10 @@ pub(super) async fn watch_for_exit(
     let poll_error_budget = max_poll_errors(RECORDER_POLL);
     let cap = tokio::time::sleep(BACKGROUND_MAX_RUNTIME);
     tokio::pin!(cap);
+    let mut stop_requested = false;
     let exit = loop {
         tokio::select! {
-            _ = &mut cap => {
+            _ = &mut cap, if !stop_requested => {
                 tracing::warn!(task_id, "background task exceeded max runtime, killing");
                 let _ = tokio::time::timeout(
                     GATEWAY_LOST_AFTER,
@@ -103,10 +101,10 @@ pub(super) async fn watch_for_exit(
                     )),
                 )
                 .await;
-                break Exit::MaxRuntime;
+                stop_requested = true;
             }
             res = &mut wait, if wait_pending => match res {
-                Ok(_) => break Exit::NeedFetch,
+                Ok(response) => break Exit::NeedFetch(response.exit_status),
                 Err(e) => {
                     tracing::warn!(
                         task_id,
@@ -135,47 +133,30 @@ pub(super) async fn watch_for_exit(
                         }
                     }
                     PollStep::Retry => {}
-                    PollStep::GaveUp => break Exit::Lost,
+                    PollStep::GaveUp => {
+                        consecutive_errors = 0;
+                    }
                 }
             }
         }
     };
 
     let output = match exit {
-        Exit::Lost | Exit::MaxRuntime => {
-            let signal = if matches!(exit, Exit::Lost) {
-                "gateway-lost"
-            } else {
-                "max_runtime"
-            };
-            complete_and_release(
-                &gateway,
-                &session_id,
-                &terminal_id,
-                &tasks,
-                &notification_handle,
-                &task_id,
-                SnapshotOutput {
-                    output: recorder.mirrored().to_string(),
-                    truncated: false,
-                    exit_code: None,
-                    signal: Some(signal.into()),
-                },
-            )
-            .await;
-            return;
-        }
         Exit::WithOutput(output) => *output,
-        Exit::NeedFetch => match gateway
+        Exit::NeedFetch(status) => match tokio::time::timeout(super::adapter::TERMINAL_OUTPUT_RPC_BUDGET, gateway
             .send(acp::TerminalOutputRequest::new(
                 session_id.clone(),
                 terminal_id.clone(),
-            ))
+            )))
             .await
         {
-            Ok(output) => output,
-            // The fetch failed; fall back to what we already mirrored to disk so the completion snapshot is not empty while the log file has data
-            Err(_) => acp::TerminalOutputResponse::new(recorder.mirrored().to_string(), false),
+            Ok(Ok(mut output)) => {
+                if output.exit_status.is_none() { output.exit_status = Some(status); }
+                output
+            }
+            // The wait supplied terminal evidence even when the final output fetch failed.
+            Ok(Err(_)) | Err(_) => acp::TerminalOutputResponse::new(recorder.mirrored().to_string(), false)
+                .exit_status(Some(status)),
         },
     };
 
@@ -201,7 +182,7 @@ pub(super) async fn watch_for_exit(
 }
 
 /// Releases even when the task is gone, so the client terminal is not leaked.
-async fn complete_and_release(
+pub(super) async fn complete_and_release(
     gateway: &GatewaySender,
     session_id: &acp::SessionId,
     terminal_id: &acp::TerminalId,
@@ -210,17 +191,120 @@ async fn complete_and_release(
     task_id: &str,
     out: SnapshotOutput,
 ) {
-    let snapshot = {
-        let mut guard = tasks.lock().unwrap();
-        guard.get_mut(task_id).map(|task| {
-            task.mark_completed(out.clone());
-            task.to_snapshot(task_id, out)
+    let pending = {
+        let mut guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.get_mut(task_id).and_then(|task| {
+            match &task.enrollment {
+                TerminalEnrollment::Running => {
+                    let mut snapshot = task.to_snapshot(task_id, out.clone());
+                    snapshot.completed = true;
+                    snapshot.end_time = Some(std::time::SystemTime::now());
+                    task.enrollment = TerminalEnrollment::Pending {
+                        snapshot: snapshot.clone(),
+                        attempt: EnrollmentAttempt::RetryAt(tokio::time::Instant::now()),
+                    };
+                    Some(task.enrollment_changed.clone())
+                }
+                // The existing watcher alone owns the frozen fact and its retries.
+                TerminalEnrollment::Pending { .. } | TerminalEnrollment::Enrolled => None,
+            }
         })
     };
-    if let Some(snapshot) = snapshot {
-        notification_handle.send_task_complete(snapshot);
+    let Some(changed) = pending else {
+        let missing = !tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(task_id);
+        if missing { release_terminal(gateway, session_id, terminal_id).await; }
+        return;
+    };
+    enum EnrollmentCommand {
+        Finished(Result<(), xai_grok_tools::notification::NotificationAcknowledgementError>),
     }
+    let (commands, mut completions) = tokio::sync::mpsc::channel(1);
+    loop {
+        let retry_at = {
+            let guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.get(task_id).map(|task| &task.enrollment) {
+                Some(TerminalEnrollment::Pending { attempt: EnrollmentAttempt::RetryAt(at), .. }) => Some(*at),
+                Some(TerminalEnrollment::Pending { attempt: EnrollmentAttempt::InFlight, .. }) => None,
+                Some(TerminalEnrollment::Running | TerminalEnrollment::Enrolled) | None => return,
+            }
+        };
+        tokio::select! {
+            command = completions.recv() => {
+                let Some(EnrollmentCommand::Finished(result)) = command else { return; };
+                match result {
+                    Ok(()) => break,
+                    Err(error) => {
+                        tracing::error!(task_id, %error, "terminal retained until durable completion enrollment");
+                        let mut guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if let Some(task) = guard.get_mut(task_id) {
+                            task.settle_kills(EnrollmentSettlement::Uncertain);
+                            if let TerminalEnrollment::Pending { attempt, .. } = &mut task.enrollment {
+                                *attempt = EnrollmentAttempt::RetryAt(tokio::time::Instant::now() + Duration::from_secs(1));
+                            }
+                        }
+                        changed.notify_waiters();
+                    }
+                }
+            }
+            _ = async {
+                match retry_at {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                let frozen = {
+                    let mut guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    guard.get_mut(task_id).and_then(|task| match &mut task.enrollment {
+                        TerminalEnrollment::Pending { snapshot, attempt } => {
+                            *attempt = EnrollmentAttempt::InFlight;
+                            Some(snapshot.clone())
+                        }
+                        TerminalEnrollment::Running | TerminalEnrollment::Enrolled => None,
+                    })
+                };
+                let Some(frozen) = frozen else { return; };
+                let deadline = tokio::time::Instant::now()
+                    + xai_grok_tools::notification::handle::TERMINAL_ACK_BUDGET;
+                let acknowledgement = notification_handle.enroll_task_completion(frozen);
+                let commands = commands.clone();
+                tokio::spawn(async move {
+                    let result = acknowledgement.wait_until(deadline).await;
+                    let _ = commands.send(EnrollmentCommand::Finished(result)).await;
+                });
+            }
+        }
+    }
+    {
+        let mut guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(task) = guard.get_mut(task_id) {
+            task.mark_completed(out);
+            task.settle_kills(EnrollmentSettlement::Acknowledged);
+        }
+    }
+    changed.notify_waiters();
+    let waiter_deadline = tokio::time::Instant::now()
+        + xai_grok_tools::notification::handle::TERMINAL_ACK_BUDGET;
+    loop {
+        let waiter_change = {
+            let guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.get(task_id).map(|task| task.waiters_changed.clone())
+        };
+        let Some(waiter_change) = waiter_change else { break; };
+        let notified = waiter_change.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let pending = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(task_id).is_some_and(|task| task.live_waiters > 0);
+        if !pending || tokio::time::timeout_at(waiter_deadline, notified).await.is_err() {
+            break;
+        }
+    }
+    let publication = {
+        let guard = tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.get(task_id).map(|task| task.terminal_snapshot(task_id))
+    };
     release_terminal(gateway, session_id, terminal_id).await;
+    if let Some(publication) = publication { notification_handle.send_task_complete(publication); }
 }
 
 pub(super) async fn release_terminal(
@@ -228,14 +312,17 @@ pub(super) async fn release_terminal(
     session_id: &acp::SessionId,
     terminal_id: &acp::TerminalId,
 ) {
-    if let Err(e) = gateway
+    match tokio::time::timeout(super::adapter::TERMINAL_OUTPUT_RPC_BUDGET, gateway
         .send(acp::ReleaseTerminalRequest::new(
             session_id.clone(),
             terminal_id.clone(),
-        ))
+        )))
         .await
     {
-        tracing::debug!(terminal_id = %terminal_id.0, error = %e, "release_terminal failed");
+        Ok(Ok(_)) => {}
+        result @ (Ok(Err(_)) | Err(_)) => {
+            tracing::debug!(terminal_id = %terminal_id.0, error = ?result, "release_terminal failed");
+        }
     }
 }
 

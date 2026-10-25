@@ -163,7 +163,7 @@ pub(crate) enum TreeStepOutcome { Opened(AgentId), AtRoot, NoChild }
 **Chrome.**
 - The child renders through the normal `AgentView::draw`: header, composer, status line, dock, F6 timeline.
 - The header shows `SessionKindLabel::Subagent{kind}` before the title (the title is the description). M11's display projection supplies the state and cause chip.
-- Enter in the block viewer quotes into the view's **own** composer (viewer.rs L1078-1082, already SSI).
+- Enter in the block viewer never inserts into the composer. `y` copies; Esc unwinds the viewer/menu layers and restores composer focus after the last layer.
 
 **Navigation.**
 - `CycleSessions`: `Roots` (M1's `session_cycle`) in a root view, `Siblings` in a child view.

@@ -1723,7 +1723,7 @@ fn fork_from_a_child_view_forks_the_child_session_in_its_cwd() {
     child_session.cwd = PathBuf::from("/tmp/child-cwd");
     let mut child = AgentView::new(child_session, ScrollbackState::new());
     child.role = AgentRole::Child(ChildLink {
-        parent: parent_id,
+        parent: Some(parent_id),
         parent_session_id,
         subagent_id: "child-sess".to_owned(),
         started_at: std::time::Instant::now(),

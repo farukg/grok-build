@@ -243,6 +243,54 @@ fn by_id_handlers_reach_a_running_child_but_root_enumerations_do_not() {
 }
 
 #[test]
+fn compact_extension_returns_its_actor_receipt_without_a_turn_flush() {
+    run_local_for_bridge_test(|| async {
+        let agent = build_minimal_agent_for_tests();
+        let child = acp::SessionId::new(CHILD);
+        let (handle, _cmd_tx, mut commands) = make_live_session_handle(&child, None);
+        let (turns, _receipts) = tokio::sync::mpsc::channel(4);
+        let (delivery, _delivery_rx) = tokio::sync::watch::channel(SubagentDelivery::OnTurnEnd);
+        agent.register_child_session(
+            &child,
+            child_host(ChildReach::Addressed {
+                address: AgentAddress::mint(1),
+                residence: ChildResidence::Running(Box::new(RunningChild {
+                    handle,
+                    turns,
+                    parent_prompt_index: Default::default(),
+                    delivery,
+                })),
+            }),
+        );
+        let (compact_seen, receipt) = tokio::sync::oneshot::channel();
+        let actor = tokio::task::spawn_local(async move {
+            match commands.recv().await.unwrap() {
+                SessionCommand::CompactSession { respond_to, .. } => {
+                    compact_seen.send(()).unwrap();
+                    respond_to.send(Ok(())).unwrap();
+                }
+                _ => panic!("expected compact management command"),
+            }
+            commands
+        });
+        let request = acp::ExtRequest::new(
+            "x.ai/compact_conversation",
+            std::sync::Arc::from(
+                serde_json::value::to_raw_value(&json!({ "sessionId": CHILD })).unwrap(),
+            ),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), agent.ext_method(request))
+            .await
+            .expect("the compact receipt must not wait for unrelated running child work")
+            .expect("the actor acknowledged durable compaction");
+        receipt.await.unwrap();
+        let mut commands = actor.await.unwrap();
+        assert!(matches!(commands.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)),
+            "the extension must not append a broad FlushComplete after the compact receipt");
+    });
+}
+
+#[test]
 fn compact_unknown_or_finished_without_saved_state_answers_instead_of_hanging() {
     run_local_for_bridge_test(|| async {
         let agent = build_minimal_agent_for_tests();
@@ -730,20 +778,25 @@ fn compact_running_child_cancel_finishes_while_actor_reply_is_pending() {
                 })),
             }),
         );
+        let expected_invocation = crate::session::acp_types::CompactInvocationId(uuid::Uuid::new_v4());
         let request = acp::ExtRequest::new(
             "x.ai/compact_conversation",
             std::sync::Arc::from(
-                serde_json::value::to_raw_value(&json!({ "sessionId": CHILD })).unwrap(),
+                serde_json::value::to_raw_value(&json!({
+                    "sessionId": CHILD, "invocationId": expected_invocation,
+                })).unwrap(),
             ),
         );
         let actor = async {
             let SessionCommand::CompactSession {
+                invocation_id,
                 cancellation,
                 mut respond_to,
             } = commands.recv().await.unwrap()
             else {
                 panic!("compact must reach the child's actor");
             };
+            assert_eq!(invocation_id, Some(expected_invocation));
             let overlap = agent
                 .ext_method(acp::ExtRequest::new(
                     "x.ai/compact_conversation",
@@ -1002,4 +1055,130 @@ fn finished_child_is_released_with_its_parent() {
             .expect_err("the child left with its parent");
         assert_eq!(error.code, acp::ErrorCode::InvalidParams);
     });
+}
+
+/// The typed refusal for prompts to ids this shell no longer hosts (gb-subid-6): a reaped
+/// subagent child must be named with its parent and a recovery path, a plain unknown id keeps
+/// the bare wire string, and the durable record decides which is which.
+mod unknown_target_tests {
+    use acp::Agent as _;
+    use agent_client_protocol as acp;
+    use serial_test::serial;
+
+    use super::super::{build_minimal_agent_for_tests, run_local_for_bridge_test};
+    use crate::agent::mvp_agent::child_prompt::{
+        UnknownPromptTarget, unknown_prompt_target_error,
+    };
+
+    #[test]
+    fn reaped_child_payload_names_child_parent_and_recovery() {
+        let payload = UnknownPromptTarget::ReapedChild {
+            child: "child-9".to_owned(),
+            parent_session_id: Some("parent-1".to_owned()),
+        }
+        .wire_payload();
+        assert_eq!(payload["kind"], "reapedChild");
+        assert_eq!(payload["sessionId"], "child-9");
+        assert_eq!(payload["parentSessionId"], "parent-1");
+        let message = payload["message"].as_str().unwrap();
+        assert!(
+            message.contains("child-9") && message.contains("parent-1"),
+            "message names the child and its parent: {message}"
+        );
+        assert!(
+            message.contains("parent session") && message.contains("resume"),
+            "message states the recovery path: {message}"
+        );
+    }
+
+    #[test]
+    fn reaped_child_without_a_known_parent_still_names_the_recovery_path() {
+        let payload = UnknownPromptTarget::ReapedChild {
+            child: "child-9".to_owned(),
+            parent_session_id: None,
+        }
+        .wire_payload();
+        assert_eq!(payload["parentSessionId"], serde_json::Value::Null);
+        assert!(
+            payload["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("child-9")),
+            "the child is named even without a parent link"
+        );
+    }
+
+    #[test]
+    fn unknown_payload_stays_the_bare_wire_string() {
+        assert_eq!(
+            UnknownPromptTarget::Unknown {
+                session_id: "nope".to_owned()
+            }
+            .wire_payload(),
+            serde_json::json!("unknown session id")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn the_durable_child_record_decides_reaped_child_over_unknown() {
+        let home = tempfile::TempDir::new().unwrap();
+        let _env = xai_grok_test_support::EnvGuard::set("GROK_HOME", home.path());
+        let cwd = home.path().join("repo");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let cwd = cwd.to_string_lossy().into_owned();
+
+        let child_id = "durable-child";
+        let mut summary = crate::session::persistence::Summary::new(
+            &crate::session::info::Info {
+                id: acp::SessionId::new(child_id),
+                cwd: cwd.clone(),
+            },
+            crate::session::persistence::default_model_id(),
+        )
+        .unwrap();
+        summary.session_kind = Some("subagent".to_owned());
+        summary.parent_session_id = Some("parent-1".to_owned());
+        let encoded = crate::util::grok_home::encode_cwd_dirname(cwd.as_str());
+        let session_dir = home.path().join("sessions").join(encoded).join(child_id);
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("summary.json"),
+            serde_json::to_vec(&summary).unwrap(),
+        )
+        .unwrap();
+
+        let reaped = unknown_prompt_target_error(child_id).await;
+        assert_eq!(reaped.code, acp::ErrorCode::InvalidParams);
+        assert!(
+            reaped.data.as_ref().is_some_and(|data| data.get("kind")
+                == Some(&serde_json::json!("reapedChild"))),
+            "a durable subagent record yields the reaped-child error: {:?}",
+            reaped.data
+        );
+
+        let unknown = unknown_prompt_target_error("never-existed").await;
+        assert_eq!(unknown.code, acp::ErrorCode::InvalidParams);
+        assert!(
+            unknown.data.as_ref().is_some_and(|data| data.get("kind").is_none()),
+            "an id with no record stays the plain unknown error: {:?}",
+            unknown.data
+        );
+    }
+
+    /// Through the real `prompt` entry point: an unknown non-child id still fails with
+    /// `InvalidParams`, now shaped by the typed refusal.
+    #[test]
+    fn prompt_to_an_unknown_id_keeps_invalid_params() {
+        run_local_for_bridge_test(|| async {
+            let agent = build_minimal_agent_for_tests();
+            let error = agent
+                .prompt(acp::PromptRequest::new(
+                    acp::SessionId::new("no-such-session"),
+                    vec![acp::ContentBlock::from("hello")],
+                ))
+                .await
+                .expect_err("unknown id is refused");
+            assert_eq!(error.code, acp::ErrorCode::InvalidParams);
+        });
+    }
 }

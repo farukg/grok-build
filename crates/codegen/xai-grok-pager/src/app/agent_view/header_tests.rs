@@ -20,7 +20,7 @@ fn child_header_shows_kind_before_title() {
     let mut child = agent_at(120);
     child.session.session_id = Some("child-session".into());
     child.role = AgentRole::Child(ChildLink {
-        parent: AgentId(0),
+        parent: Some(AgentId(0)),
         parent_session_id: "parent".into(),
         subagent_id: "explorer".into(),
         started_at: std::time::Instant::now(),

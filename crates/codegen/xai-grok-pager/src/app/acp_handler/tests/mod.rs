@@ -395,6 +395,38 @@ pub(super) fn subagent_notification_with_seq(
         Some(&format!("{session_id}-{event_seq}")),
     )
 }
+/// Dedicated xAI ext method (e.g. `x.ai/task_backgrounded`) carrying an optional `eventId`
+/// meta, mirroring the notification bridge's stamped fire-and-forget forwards.
+pub(super) fn ext_with_event_id(
+    method: &str,
+    session_id: &str,
+    update: XaiSessionUpdate,
+    event_id: Option<&str>,
+) -> acp::ExtNotification {
+    let payload = SessionNotification {
+        session_id: acp_fixtures::session_id(session_id),
+        update,
+        meta: event_id.map(|event_id| serde_json::json!({ "eventId": event_id })),
+    };
+    acp_fixtures::ext_notification(method, &payload)
+}
+/// Reusable `TaskBackgrounded` wire payload for live (`ext_with_event_id`) and replay
+/// (`subagent_ext_replay`) deliveries of the same logical event.
+pub(super) fn task_backgrounded_update(
+    tool_call_id: &str,
+    task_id: &str,
+    command: &str,
+) -> XaiSessionUpdate {
+    XaiSessionUpdate::TaskBackgrounded {
+        tool_call_id: tool_call_id.into(),
+        task_id: task_id.into(),
+        command: command.into(),
+        cwd: "/tmp".into(),
+        output_file: "/tmp/output.log".into(),
+        monitor_description: None,
+        description: None,
+    }
+}
 pub(super) fn subagent_ext_replay(
     session_id: &str,
     update: serde_json::Value,
@@ -2359,11 +2391,13 @@ mod plan_mode;
 mod reconnect;
 mod turn_completion;
 mod hooks;
+mod injected_context;
 mod interjection;
 mod session_routing;
 mod plugins;
 mod subagents;
 mod completion_replay;
+mod appview_child_replay;
 mod subagent_attempt_lifecycle;
 mod subagent_delivery;
 mod goals;

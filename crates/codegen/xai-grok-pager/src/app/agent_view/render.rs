@@ -593,7 +593,6 @@ impl AgentView {
         );
         self.draw_timeline_sidebar(columns.left, buf);
         self.draw_context_sidebar(columns.right, buf);
-        self.draw_pending_dock(buf);
         drawn
     }
 
@@ -1000,12 +999,8 @@ impl AgentView {
         }
         let dock_on = crate::views::dock::enabled() && area.height > agent::SHORT_TERMINAL_ROWS;
         self.dock_on = dock_on;
-        let tasks_height = 0;
-        let todo_height = if dock_on {
-            self.todo.desired_height(area.height)
-        } else {
-            0
-        };
+        let tasks_height = if dock_on { 0 } else { self.tasks.desired_height(area.height) };
+        let todo_height = self.todo.desired_height(area.height);
         self.sync_queue_pane();
         self.queue.overlay.visible = !self.visible_queue_is_empty();
         if self.active_pane == ActivePane::Queue && !self.queue.is_visible() {
@@ -1075,7 +1070,11 @@ impl AgentView {
             _ => 1,
         };
         let follow_ups_height = u16::from(self.follow_ups.is_some());
-        let mut dock_data = (dock_slot.width > 0).then(|| self.dock_snapshot());
+        let hosted_dock = dock_slot.area() > 0 && self.context_dock_expanded();
+        if hosted_dock || (dock_on && self.tasks.overlay.visible) {
+            self.clamp_dock_overflow();
+        }
+        let mut dock_data = hosted_dock.then(|| self.dock_snapshot());
         let upper_dock = (dock_on && self.tasks.overlay.visible).then(|| self.dock_snapshot());
         let upper_dock_rows = upper_dock
             .as_ref()
@@ -1125,6 +1124,7 @@ impl AgentView {
                 prompt_height.min(AgentViewLayout::rows_available_for_prompt(layout_params));
         }
         let mut layout = AgentViewLayout::compute(layout_params);
+        layout.apply_dock_placement(crate::views::dock::placement());
         if layout.todo.height == 0 && self.active_pane == ActivePane::Todo {
             self.set_active_pane(AgentPane::Scrollback, false);
         }
@@ -1191,6 +1191,7 @@ impl AgentView {
                         timeline_width: 0,
                         ..layout_params
                     });
+                    layout.apply_dock_placement(crate::views::dock::placement());
                     if upper_dock_rows == 0 {
                         layout.dock = dock_rect;
                     }
@@ -1225,11 +1226,6 @@ impl AgentView {
                 data.max_rows =
                     crate::views::dock::MaxRows::new(data.max_rows.get().min(dock_rect.height));
             }
-            self.sync_dock_hover_from_pointer(dock_rect);
-            data.hovered = self.dock_hovered;
-            let (col, row) = self.last_mouse_pos;
-            data.stop_hovered = crate::views::dock::hovered_stop_button_rect(dock_rect, data)
-                .is_some_and(|hit| hit.rect.contains((col, row).into()));
         }
         self.dock_shown = layout.dock.height > 0 || dock_rect.height > 0;
         if !self.dock_shown && self.active_pane == ActivePane::Dock {
@@ -1941,6 +1937,8 @@ impl AgentView {
             data.focused = self.active_pane == ActivePane::Dock && !self.dock_focus_in_sidebar;
             self.sync_dock_hover_from_pointer(upper_dock_rect);
             data.hovered = self.dock_hovered;
+            data.stop_hovered = crate::views::dock::hovered_stop_button_rect(upper_dock_rect, &data)
+                .is_some_and(|hit| hit.rect.contains(self.last_mouse_pos.into()));
             crate::views::dock::render(buf, upper_dock_rect, &theme, &data);
             self.cache_dock_stop_at(upper_dock_rect, &data);
         }
@@ -1957,7 +1955,11 @@ impl AgentView {
             });
         self.last_btw_selection_model = ResolvedSelectionModel::default();
         self.last_btw_area = Rect::default();
+        if !crate::minimal_api::minimal_btw_geometry_is_paintable(layout.btw) {
+            self.btw_focused = false;
+        }
         if btw_height > 0
+            && crate::minimal_api::minimal_btw_geometry_is_paintable(layout.btw)
             && let Some(ref btw) = self.btw_state
         {
             let tick = self.scrollback.animation_tick();
@@ -3435,12 +3437,12 @@ impl AgentView {
                 h.push(HintItem::new(key!(Esc), "close"));
                 h
             } else {
-                let mut h = vec![HintItem::new(key!(Enter), "confirm")];
+                let mut h = Vec::new();
                 if self.vim_mode {
                     h.push(HintItem::paired(key!('j'), key!('k'), "nav"));
                 }
                 h.push(HintItem::new(key!('v'), "select"));
-                h.push(HintItem::new(key!('x'), "clear"));
+                h.push(HintItem::new(key!('x'), "use path"));
                 if self.vim_mode {
                     h.push(HintItem::new(key!('y'), "copy"));
                     h.push(HintItem::new(key!('Y'), "filename"));

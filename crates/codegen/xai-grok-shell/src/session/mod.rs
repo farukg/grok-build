@@ -259,23 +259,41 @@ impl PromptOrigin {
                 | Self::NotificationDrain
         )
     }
-    /// Whether a `UserMessageChunk` echo for this origin must stay out of client scrollback (live and on resume).
-    /// The hidden origins carry model-only, side-channel content the UI already shows elsewhere (task pane, monitor gutter, etc.).
-    pub fn hide_user_echo_from_scrollback(&self) -> bool {
+    /// The synthetic-reason wire name for this origin's persisted user item, when the turn's
+    /// `UserMessageChunk` echo must render as a collapsed injected entry instead of a plain
+    /// user prompt. These are the model-facing auto-wake turns whose content the scrollback
+    /// shows collapsed (not hidden): the CLI displays exactly what woke the model.
+    /// `None` for origins whose echo stays a regular user prompt (typed, relayed, scheduled).
+    pub fn injected_reason_wire(&self) -> Option<&'static str> {
+        use crate::sampling::SyntheticReason;
         match self {
             Self::User
             | Self::Delivery { .. }
             | Self::ParentAgentMessage { .. }
             | Self::ParentHumanMessage { .. }
             | Self::SchedulerFired
-            | Self::PlanResume => false,
-            Self::TaskCompleted { .. }
-            | Self::SubagentCompleted { .. }
-            | Self::WorkflowCompleted { .. }
-            | Self::NotificationDrain
-            | Self::GoalSummary
-            | Self::GoalClassifierNudge => true,
+            | Self::PlanResume => None,
+            Self::TaskCompleted { .. } => Some(SyntheticReason::TaskCompleted.wire_name()),
+            Self::SubagentCompleted { .. } => Some(SyntheticReason::SubagentCompleted.wire_name()),
+            Self::WorkflowCompleted { .. } | Self::NotificationDrain => {
+                Some(SyntheticReason::NotificationDrain.wire_name())
+            }
+            Self::GoalSummary => Some(SyntheticReason::GoalSummary.wire_name()),
+            Self::GoalClassifierNudge => Some(SyntheticReason::GoalClassifierNudge.wire_name()),
         }
+    }
+    /// Resolve the injected-entry reason for a turn's echo by `prompt_id`, covering both the
+    /// `PromptOrigin` prefixes and the subagent-completion delivery ids that bypass them.
+    pub fn injected_reason_for_prompt_id(prompt_id: &str) -> Option<&'static str> {
+        if let Some(reason) = Self::from_prompt_id(prompt_id).injected_reason_wire() {
+            return Some(reason);
+        }
+        crate::session::completion_delivery::completion_from_prompt_id(prompt_id).is_some().then(
+            || {
+                use crate::sampling::SyntheticReason;
+                SyntheticReason::SubagentCompleted.wire_name()
+            },
+        )
     }
     pub fn completion_id(&self) -> Option<&str> {
         match self {
@@ -471,51 +489,70 @@ mod tests {
         }
     }
     #[test]
-    fn hide_user_echo_from_scrollback_by_origin() {
-        assert!(!PromptOrigin::User.hide_user_echo_from_scrollback());
-        assert!(
-            !PromptOrigin::ParentAgentMessage {
+    fn injected_reason_wire_by_origin() {
+        use crate::sampling::SyntheticReason;
+        let hidden_origin_yields_reason = |origin: &PromptOrigin| {
+            let expected = match origin {
+                PromptOrigin::TaskCompleted { .. } => SyntheticReason::TaskCompleted.wire_name(),
+                PromptOrigin::SubagentCompleted { .. } => {
+                    SyntheticReason::SubagentCompleted.wire_name()
+                }
+                PromptOrigin::WorkflowCompleted { .. } | PromptOrigin::NotificationDrain => {
+                    SyntheticReason::NotificationDrain.wire_name()
+                }
+                PromptOrigin::GoalSummary => SyntheticReason::GoalSummary.wire_name(),
+                PromptOrigin::GoalClassifierNudge => {
+                    SyntheticReason::GoalClassifierNudge.wire_name()
+                }
+                _ => panic!("unexpected injected origin {origin:?}"),
+            };
+            assert_eq!(origin.injected_reason_wire(), Some(expected), "{origin:?}");
+        };
+
+        assert_eq!(PromptOrigin::User.injected_reason_wire(), None);
+        assert_eq!(
+            PromptOrigin::ParentAgentMessage {
                 message_id: "m".into(),
                 sender_session_id: "root".into(),
             }
-            .hide_user_echo_from_scrollback()
+            .injected_reason_wire(),
+            None
         );
-        assert!(
-            !PromptOrigin::ParentHumanMessage {
+        assert_eq!(
+            PromptOrigin::ParentHumanMessage {
                 message_id: "h".into(),
                 sender_session_id: "root".into(),
             }
-            .hide_user_echo_from_scrollback()
+            .injected_reason_wire(),
+            None
         );
-        assert!(
-            !PromptOrigin::from_prompt_id("scheduler-fired-abc").hide_user_echo_from_scrollback()
+        assert_eq!(PromptOrigin::from_prompt_id("scheduler-fired-abc").injected_reason_wire(), None);
+        assert_eq!(PromptOrigin::from_prompt_id("plan-resume-1").injected_reason_wire(), None);
+
+        hidden_origin_yields_reason(&PromptOrigin::from_prompt_id("task-completed-t1"));
+        hidden_origin_yields_reason(&PromptOrigin::SubagentCompleted {
+            completion: CompletionWake {
+                id: xai_chat_state::SubagentCompletionId {
+                    subagent_id: "s1".into(),
+                    attempt_id: xai_message_delivery_core::AttemptId::mint(1),
+                },
+                kind: CompletionWakeKind::Fresh,
+            },
+        });
+        hidden_origin_yields_reason(&PromptOrigin::from_prompt_id("notifications-uuid"));
+        hidden_origin_yields_reason(&PromptOrigin::from_prompt_id("workflow-completed-wf-1-9"));
+        hidden_origin_yields_reason(&PromptOrigin::from_prompt_id("goal-summary-1"));
+        hidden_origin_yields_reason(&PromptOrigin::from_prompt_id("goal-classifier-nudge-1"));
+
+        // The completion-delivery ids bypass the PromptOrigin prefixes but are subagent wakes.
+        assert_eq!(
+            PromptOrigin::injected_reason_for_prompt_id(&format!(
+                "subagent-boundary-fresh-s1/{}",
+                xai_message_delivery_core::AttemptId::mint(1)
+            )),
+            Some(SyntheticReason::SubagentCompleted.wire_name())
         );
-        assert!(!PromptOrigin::from_prompt_id("plan-resume-1").hide_user_echo_from_scrollback());
-        assert!(PromptOrigin::from_prompt_id("task-completed-t1").hide_user_echo_from_scrollback());
-        assert!(
-            PromptOrigin::SubagentCompleted {
-                completion: CompletionWake {
-                    id: xai_chat_state::SubagentCompletionId {
-                        subagent_id: "s1".into(),
-                        attempt_id: xai_message_delivery_core::AttemptId::mint(1),
-                    },
-                    kind: CompletionWakeKind::Fresh
-                }
-            }
-            .hide_user_echo_from_scrollback()
-        );
-        assert!(
-            PromptOrigin::from_prompt_id("notifications-uuid").hide_user_echo_from_scrollback()
-        );
-        assert!(
-            PromptOrigin::from_prompt_id("workflow-completed-wf-1-9")
-                .hide_user_echo_from_scrollback()
-        );
-        assert!(PromptOrigin::from_prompt_id("goal-summary-1").hide_user_echo_from_scrollback());
-        assert!(
-            PromptOrigin::from_prompt_id("goal-classifier-nudge-1")
-                .hide_user_echo_from_scrollback()
-        );
+        assert_eq!(PromptOrigin::injected_reason_for_prompt_id("my-prompt"), None);
     }
 }
 /// Determines whether the session sends an initial file index to the client or just streams raw file events.

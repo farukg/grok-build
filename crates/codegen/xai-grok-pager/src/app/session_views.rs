@@ -51,12 +51,23 @@ impl SessionViews {
     }
 
     pub(crate) fn children_of(&self, parent: AgentId) -> Vec<AgentId> {
+        let Some(session_id) = self
+            .views
+            .get(&parent)
+            .and_then(|view| view.session.session_id.as_ref())
+        else {
+            return Vec::new();
+        };
+        self.children_of_session(session_id)
+    }
+
+    pub(crate) fn children_of_session(&self, parent: &agent_client_protocol::SessionId) -> Vec<AgentId> {
         let mut children: Vec<_> = self
             .views
             .iter()
             .filter_map(|(id, view)| match &view.role {
                 AgentRole::Root => None,
-                AgentRole::Child(link) if link.parent == parent => {
+                AgentRole::Child(link) if &link.parent_session_id == parent => {
                     Some((*id, link.started_at, link.subagent_id.as_str()))
                 }
                 AgentRole::Child(_) => None,
@@ -67,9 +78,7 @@ impl SessionViews {
     }
 
     pub(crate) fn has_children(&self, parent: AgentId) -> bool {
-        self.views
-            .values()
-            .any(|view| matches!(&view.role, AgentRole::Child(link) if link.parent == parent))
+        self.views.keys().any(|id| self.parent_of(*id) == Some(parent))
     }
 
     /// Removes `id` together with every session below it: a child view never outlives its parent's.
@@ -89,7 +98,7 @@ impl SessionViews {
         };
         match &view.role {
             AgentRole::Root => id,
-            AgentRole::Child(link) => self.root_of(link.parent),
+            AgentRole::Child(_) => self.parent_of(id).map_or(id, |parent| self.root_of(parent)),
         }
     }
 
@@ -107,7 +116,14 @@ impl SessionViews {
     pub(crate) fn parent_of(&self, id: AgentId) -> Option<AgentId> {
         match &self.views.get(&id)?.role {
             AgentRole::Root => None,
-            AgentRole::Child(link) => Some(link.parent),
+            AgentRole::Child(link) => link
+                .parent
+                .filter(|parent| {
+                    self.views.get(parent).is_some_and(|view| {
+                        view.session.session_id.as_ref() == Some(&link.parent_session_id)
+                    })
+                })
+                .or_else(|| self.find_by_session_id(&link.parent_session_id.0)),
         }
     }
 
@@ -117,7 +133,7 @@ impl SessionViews {
             AgentRole::Root => return None,
             AgentRole::Child(link) => link,
         };
-        Some((link, self.views.get(&link.parent)?))
+        Some((link, self.views.get(&self.parent_of(child)?)?))
     }
 
     /// The parent's record of the subagent `child` shows.
@@ -196,7 +212,7 @@ pub(crate) mod test_support {
             .unwrap_or_else(|| agent_client_protocol::SessionId::new("parent"));
         view.session.id = child;
         view.role = AgentRole::Child(ChildLink {
-            parent,
+            parent: Some(parent),
             parent_session_id,
             subagent_id,
             started_at,

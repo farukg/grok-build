@@ -2513,7 +2513,11 @@ pub(crate) async fn run(
                 dashboard_poll_at = None;
                 let dashboard_open = matches!(app.active_view, ActiveView::AgentDashboard);
                 if dashboard_open {
-                    let effects = if app.workspace_dashboard_enabled {
+                    let effects = if app.workspace_dashboard_enabled
+                        && app.dashboard.as_ref().is_none_or(|dashboard| {
+                            dashboard.session_lane() == crate::views::dashboard::SessionLane::Main
+                        })
+                    {
                         super::workspace_sync::refresh(&mut app)
                     } else if leader_status_rx.is_some() {
                         vec![Effect::FetchRoster]

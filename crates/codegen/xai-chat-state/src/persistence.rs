@@ -226,7 +226,15 @@ impl ChatPersistence for MockChatPersistence {
         admission: &crate::InputAdmission,
     ) -> oneshot::Receiver<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>> {
         let (tx, rx) = oneshot::channel();
-        let result = self.tx.send(PersistenceRecord::Input(projection.clone()))
+        if admission.cancellation.is_cancelled() {
+            let _ = tx.send(Err(StrictAppendError::NotCommitted(io::Error::new(
+                io::ErrorKind::Interrupted, "input admission cancelled",
+            ))));
+            return rx;
+        }
+        let mut projection = projection.clone();
+        projection.bind_parent(&admission.parent_task);
+        let result = self.tx.send(PersistenceRecord::Input(projection))
             .map(|_| crate::completion::CompletionProjectionAck::Appended)
             .map_err(|_| StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::BrokenPipe, "mock persistence closed")));
         let _ = tx.send(result);

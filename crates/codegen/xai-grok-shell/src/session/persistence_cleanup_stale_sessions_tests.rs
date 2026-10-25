@@ -25,7 +25,18 @@ fn write(path: &Path, age: FileTime) {
 /// `sessions/<cwd>/<id>/` with `summary.json` and `updates.jsonl` at `age`.
 fn write_session(root: &Path, cwd: &str, id: &str, age: FileTime) -> PathBuf {
     let dir = root.join(cwd).join(id);
-    write(&dir.join("summary.json"), age);
+    std::fs::create_dir_all(&dir).unwrap();
+    let summary = super::Summary::new(
+        &super::Info {
+            id: agent_client_protocol::SessionId::new(id),
+            cwd: root.join(cwd).to_string_lossy().into_owned(),
+        },
+        agent_client_protocol::ModelId::new("test"),
+    )
+    .unwrap();
+    let path = dir.join("summary.json");
+    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    filetime::set_file_mtime(&path, age).unwrap();
     write(&dir.join("updates.jsonl"), age);
     dir
 }
@@ -116,7 +127,7 @@ fn idle_session_is_removed_whole() {
     write(&idle.join("compaction_checkpoints/a.json"), days_ago(40));
     let fresh = write_session(tmp.path(), "cwd", "fresh", days_ago(0));
     let summary_rewritten = write_session(tmp.path(), "cwd", "summary-rewritten", days_ago(40));
-    write(&summary_rewritten.join("summary.json"), days_ago(1));
+    filetime::set_file_mtime(summary_rewritten.join("summary.json"), days_ago(1)).unwrap();
 
     let stats = sweep(tmp.path(), &no_live());
 
@@ -285,4 +296,27 @@ fn symlinked_session_dir_is_skipped() {
     assert_eq!(CleanupStats::default(), stats);
     assert!(target.join("summary.json").is_file());
     assert!(cwd.join("link").symlink_metadata().is_ok());
+}
+
+#[test]
+fn malformed_summary_keeps_stale_session_for_admission_recovery() {
+    let tmp = TempDir::new().unwrap();
+    let session = write_session(tmp.path(), "cwd", "invalid", days_ago(40));
+    write(&session.join("summary.json"), days_ago(40));
+    let before = std::fs::read(session.join("updates.jsonl")).unwrap();
+
+    let stats = sweep(tmp.path(), &no_live());
+
+    assert_eq!(
+        CleanupStats {
+            errors: 1,
+            ..CleanupStats::default()
+        },
+        stats
+    );
+    assert_eq!(std::fs::read(session.join("summary.json")).unwrap(), b"x");
+    assert_eq!(
+        std::fs::read(session.join("updates.jsonl")).unwrap(),
+        before
+    );
 }

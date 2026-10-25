@@ -1,5 +1,7 @@
 use crate::scrollback::block::BlockContent;
-use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput};
+use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput, DisplayMode};
+
+use ratatui::text::{Line, Span};
 
 use super::markdown_content::MarkdownContent;
 use super::mermaid_content::{self, MermaidContent};
@@ -145,6 +147,20 @@ impl AgentMessageBlock {
 
 impl BlockContent for AgentMessageBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
+        // Collapsed: one summary line (capped first source line), Btw-header style.
+        // Raw mode stays orthogonal: the fold decides how much renders, raw only how the body is styled.
+        if ctx.mode == DisplayMode::Collapsed {
+            let theme = crate::theme::Theme::current();
+            let summary = self
+                .content
+                .with_source(crate::scrollback::state::prompt_preview);
+            return BlockOutput {
+                lines: vec![crate::scrollback::types::BlockLine::styled(Line::from(
+                    Span::styled(summary, theme.muted()),
+                ))
+                .with_selection_range(Some(0))],
+            };
+        }
         // Common path: no diagrams (or raw mode) renders plain markdown, with no affordance machinery and no extra output rebuild
         if ctx.raw || self.mermaid.is_empty() {
             return self.content.output(ctx.width as usize);
@@ -155,7 +171,8 @@ impl BlockContent for AgentMessageBlock {
     fn diagram_affordances(&self, ctx: &BlockContext) -> Vec<mermaid_content::DiagramAffordance> {
         // Affordance rows exist only under the affordance display with diagrams
         // For every other (much more common) case, return without building output()
-        if ctx.raw
+        if ctx.mode == DisplayMode::Collapsed
+            || ctx.raw
             || self.mermaid.is_empty()
             || self.mermaid_display_mode() != mermaid_content::MermaidDisplay::Affordances
         {
@@ -190,7 +207,24 @@ impl BlockContent for AgentMessageBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        false
+        // Content-driven, mirroring `UserPromptBlock`'s conservative visual-line estimate:
+        // a body that fits one visual line is not foldable; anything longer is.
+        const MIN_CONTENT_WIDTH: usize = 60;
+        self.content.with_source(|source| {
+            let mut visual_lines = 0usize;
+            for line in source.lines() {
+                let width = unicode_width::UnicodeWidthStr::width(line);
+                visual_lines += if width == 0 {
+                    1
+                } else {
+                    width.div_ceil(MIN_CONTENT_WIDTH)
+                };
+                if visual_lines > 1 {
+                    return true;
+                }
+            }
+            false
+        })
     }
 
     fn image_references(&self) -> &[crate::prompt_images::ScrollbackImageRef] {
@@ -231,6 +265,42 @@ mod tests {
             out.lines
                 .iter()
                 .all(|line| !matches!(line.selectable, Selectable::None))
+        );
+    }
+
+    /// Foldability is content-driven: a one-line answer is not foldable; a multi-line or
+    /// line-wrapping answer is (mirrors `UserPromptBlock`'s visual-line estimate).
+    #[test]
+    fn agent_message_foldability_follows_content() {
+        assert!(!AgentMessageBlock::new("done").is_foldable());
+        assert!(AgentMessageBlock::new("line one\nline two").is_foldable());
+        assert!(AgentMessageBlock::new("x".repeat(120)).is_foldable());
+    }
+
+    /// A collapsed assistant message renders exactly one muted summary line (first source line,
+    /// capped); expanded keeps the full rendered markdown.
+    #[test]
+    fn collapsed_agent_message_renders_one_summary_line() {
+        let block = AgentMessageBlock::new("# Plan\n\nbody paragraph\nmore body");
+        let mut collapsed = ctx(60, false);
+        collapsed.mode = DisplayMode::Collapsed;
+        let out = block.output(&collapsed);
+        assert_eq!(out.lines.len(), 1, "collapsed renders a single line");
+        let text: String = out
+            .lines
+            .first()
+            .unwrap_or_else(|| panic!("collapsed output must have a line"))
+            .content
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(text, "# Plan");
+
+        let expanded = block.output(&ctx(60, false));
+        assert!(
+            expanded.lines.len() > 1,
+            "expanded keeps the full rendered body"
         );
     }
 

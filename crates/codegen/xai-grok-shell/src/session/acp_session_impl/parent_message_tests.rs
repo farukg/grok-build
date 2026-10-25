@@ -755,7 +755,8 @@ async fn unresolved_persistence_barrier_does_not_block_hard_teardown() {
             actor
                 .settle_all_parent_messages(xai_message_delivery_core::TerminalCause::HardTeardown),
         )
-        .await;
+        .await
+        .expect("durable parent teardown");
         let state = actor.state.lock().await;
         assert!(state.message_delivery.is_empty());
         assert!(
@@ -849,7 +850,8 @@ async fn teardown_settlement_during_barrier_skips_persist_and_push() {
         await_with_timeout(
             actor.settle_all_parent_messages(xai_message_delivery_core::TerminalCause::ActorDrop),
         )
-        .await;
+        .await
+        .expect("durable parent teardown");
         let settled = await_with_timeout(receipt.result)
             .await
             .expect("teardown settles the steer receipt");
@@ -906,6 +908,7 @@ async fn delivered_message_is_durable_in_updates_and_chat_history_before_shutdow
             crate::session::persistence::ExplicitSessionOpen::New {
                 identity: None,
                 next_trace_turn: None,
+                parent_session_id: None,
             },
         )
         .await

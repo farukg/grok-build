@@ -400,40 +400,36 @@ fn relabel_presence_keeps_shell_labels_when_resolution_fails() {
     assert_eq!(entries.first().map(|e| e.source.as_str()), Some("remote"));
 }
 #[test]
-fn session_picker_entry_maps_to_dormant_roster_row() {
-    let updated = chrono::Utc::now();
-    let entry = SessionPickerEntry {
-        id: "sess-1".to_string(),
-        summary: "Wire up dashboard".to_string(),
-        updated_at: updated,
-        created_at: updated,
-        cwd: "/repo/app".to_string(),
-        hostname: Some("box".to_string()),
-        source: "local".to_string(),
-        model_id: Some("grok-4".to_string()),
-        num_messages: 3,
-        last_active_at: Some(updated),
-        branch: None,
-        repo_name: "repo-app".to_string(),
-        worktree_label: Some("wt".to_string()),
-        last_turn_summary: Some("Fixed the parser".to_string()),
-        last_recap: None,
-        session_kind: None,
-        card_detail: None,
-    };
-    let roster = session_picker_entry_to_roster(entry);
+fn nonleader_roster_response_preserves_root_fields_and_child_parentage() {
+    use crate::app::roster::RosterActivity;
+    let updated = chrono::Utc::now().timestamp_millis();
+    let row = serde_json::json!({
+        "sessionId": "sess-1", "title": "Wire up dashboard", "cwd": "/repo/app",
+        "isWorktree": true, "modelId": "grok-4", "yolo": false,
+        "activity": "dormant", "lastTurnSummary": "Fixed the parser",
+        "resident": false, "lastChangeUnixMs": updated,
+        "origin": { "kind": "local", "host": "box" }
+    });
+    let mut child = row.clone();
+    child["sessionId"] = serde_json::json!("reaped-child");
+    child["sessionKind"] = serde_json::json!("subagent");
+    child["parentSessionId"] = serde_json::json!("parent");
+    let raw = serde_json::json!({ "result": { "sessions": [row, child] } }).to_string();
+    let rows = parse_dashboard_roster_response(&raw);
+    assert_eq!(rows.len(), 2);
+    let roster = &rows[0];
     assert_eq!(roster.session_id, "sess-1");
     assert_eq!(roster.title.as_deref(), Some("Wire up dashboard"));
     assert_eq!(roster.cwd, "/repo/app");
-    assert!(roster.is_worktree, "worktree_label present → is_worktree");
+    assert!(roster.is_worktree);
     assert_eq!(roster.model_id.as_deref(), Some("grok-4"));
     assert_eq!(roster.activity, RosterActivity::Dormant);
-    assert_eq!(
-        roster.last_turn_summary.as_deref(),
-        Some("Fixed the parser")
-    );
+    assert_eq!(roster.last_turn_summary.as_deref(), Some("Fixed the parser"));
     assert!(!roster.resident);
-    assert_eq!(roster.last_change_unix_ms, updated.timestamp_millis());
+    assert_eq!(roster.last_change_unix_ms, updated);
     assert_eq!(roster.origin.kind, "local");
     assert_eq!(roster.origin.host.as_deref(), Some("box"));
+    assert_eq!(rows[1].session_id, "reaped-child");
+    assert_eq!(rows[1].session_kind.as_deref(), Some("subagent"));
+    assert_eq!(rows[1].parent_session_id.as_deref(), Some("parent"));
 }

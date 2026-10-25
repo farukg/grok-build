@@ -824,9 +824,9 @@ pub(super) fn handle_bg_task_killed(
     app: &mut AppView,
     session_id: String,
     task_id: String,
-    outcome: Option<xai_grok_tools::types::KillOutcome>,
+    outcome: Option<xai_tool_types::KillOutcome>,
 ) -> Vec<Effect> {
-    use xai_grok_tools::types::KillOutcome;
+    use xai_tool_types::KillOutcome;
     if let Some((session, scrollback)) = task_view_by_session_id(app, &session_id) {
         match outcome {
             Some(KillOutcome::Killed) => {
@@ -835,6 +835,10 @@ pub(super) fn handle_bg_task_killed(
             }
             Some(KillOutcome::AlreadyExited) => {
                 clear_pending_kill(session, &task_id);
+            }
+            Some(outcome @ (KillOutcome::Indeterminate { .. } | KillOutcome::Failed { .. })) => {
+                clear_pending_kill(session, &task_id);
+                app.show_toast(&format!("{task_id}: {outcome}. Check task output before retrying."));
             }
             Some(KillOutcome::NotFound) => {
                 tracing::info!(task_id = %task_id, "Task not found, removing");

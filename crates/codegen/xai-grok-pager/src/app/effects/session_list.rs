@@ -1,10 +1,8 @@
-//! One parser serves the resume picker ([`super::Effect::FetchSessionList`]) and the dashboard's
-//! non-leader idle-session fallback ([`super::Effect::FetchDashboardSessions`]), so both surfaces
-//! label rows identically.
+//! Session picker decoding and dashboard roster response forwarding.
 use super::helpers::extract_first_user_prompt;
 use crate::app::app_view::SessionPickerEntry;
 use crate::app::foreign_sessions::is_foreign_picker_source;
-use crate::app::roster::{RosterActivity, RosterEntry, RosterOrigin};
+use crate::app::roster::RosterEntry;
 use crate::views::session_picker::repo_name_from_cwd;
 use crate::views::session_picker_surface::SessionPickerHost;
 use agent_client_protocol as acp;
@@ -314,26 +312,10 @@ fn parse_session_picker_entries_with(
         }
     }
 }
-/// Local on-disk sessions have no live activity signal, so they map to [`RosterActivity::Dormant`] and render in the dashboard's **Inactive** group.
-pub(super) fn session_picker_entry_to_roster(e: SessionPickerEntry) -> RosterEntry {
-    let last_change = e.last_active_at.unwrap_or(e.updated_at);
-    RosterEntry {
-        session_id: e.id,
-        title: Some(e.summary).filter(|s| !s.trim().is_empty()),
-        cwd: e.cwd,
-        is_worktree: e.worktree_label.is_some(),
-        session_kind: None,
-        model_id: e.model_id,
-        yolo: false,
-        activity: RosterActivity::Dormant,
-        last_turn_summary: e.last_turn_summary,
-        resident: false,
-        last_change_unix_ms: last_change.timestamp_millis(),
-        origin: RosterOrigin {
-            kind: e.source,
-            host: e.hostname,
-        },
-    }
+pub(super) fn parse_dashboard_roster_response(raw: &str) -> Vec<RosterEntry> {
+    crate::app::roster::parse_roster_list_response(raw)
+        .map(|response| response.sessions)
+        .unwrap_or_default()
 }
 #[cfg(test)]
 #[path = "session_list_tests.rs"]

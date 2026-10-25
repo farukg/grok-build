@@ -52,11 +52,16 @@ pub struct RosterEntry {
     pub title: Option<String>,
     pub cwd: String,
     pub is_worktree: bool,
-    /// Set only on rows the leader synthesizes outside the agent; rows a local agent owns
-    /// leave it `None`. Its value set is disjoint from the persisted `Summary.session_kind`
-    /// (`worktree`, `subagent`, ...), which `merge_roster` only folds into `is_worktree`.
+    /// Non-`None` when the row is not a plain loadable session: `subagent` for subagent child
+    /// sessions listed for the dashboard's subagent lane, or a leader-synthesized external kind
+    /// (`cursor-worker`, …) for rows a local agent does not own. Plain local rows stay `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_kind: Option<String>,
+    /// For `subagent` rows: the parent session's id, from the live child host or the child's
+    /// persisted summary. Lets clients stamp `_meta.childOf` and the leader recover the child
+    /// after losing its in-memory registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
     #[serde(default)]
     pub model_id: Option<String>,
     /// Per-session reasoning effort for `model_id`.
@@ -98,14 +103,15 @@ pub const SESSIONS_CHANGED_METHOD: &str = "x.ai/sessions/changed";
 
 /// Merge live `resident` rows with on-disk `summaries` into the sorted roster. Pure, so it is unit-testable without disk or a live actor.
 /// Resident rows own the live state but carry no title or last-active time, so each adopts those from its summary. A `Working` row keeps its "now" timestamp instead.
-/// Summaries with no resident row become `Dormant`; keying by id dedups them. Hidden and headless summaries are excluded, including resident rows whose persisted summary is headless.
+/// Summaries with no resident row become `Dormant`; keying by id dedups them. Headless and explicitly-hidden summaries are excluded, including resident rows whose persisted summary is headless.
+/// Subagent children are kept as `session_kind: "subagent"` rows with their persisted parent link — the dashboard's subagent lane lists them while its default lane filters them out.
 pub(crate) fn merge_roster(
     mut entries: Vec<RosterEntry>,
     summaries: Vec<Summary>,
 ) -> Vec<RosterEntry> {
     let excluded_ids: std::collections::HashSet<String> = summaries
         .iter()
-        .filter(|summary| summary.is_hidden() || summary.is_headless())
+        .filter(|summary| excluded_from_roster(summary))
         .map(|summary| summary.info.id.0.to_string())
         .collect();
     entries.retain(|entry| !excluded_ids.contains(&entry.session_id));
@@ -129,29 +135,46 @@ pub(crate) fn merge_roster(
         if entry.activity != RosterActivity::Working {
             entry.last_change_unix_ms = summary.last_change_unix_ms();
         }
+        if summary.is_subagent_kind() {
+            entry.session_kind = Some(crate::session::persistence::SUBAGENT_SESSION_KIND.to_string());
+            entry.parent_session_id = summary.parent_session_id.clone();
+        }
     }
 
     // Remaining summaries have no resident row: emit them as dormant.
-    entries.extend(by_id.into_values().map(|summary| RosterEntry {
-        session_id: summary.info.id.0.to_string(),
-        title: summary.display_title_opt(),
-        cwd: summary.info.cwd.clone(),
-        is_worktree: summary.session_kind.as_deref() == Some("worktree")
-            || summary.source_workspace_dir.is_some(),
-        session_kind: None,
-        model_id: Some(summary.current_model_id.0.to_string()),
-        reasoning_effort: summary.reasoning_effort,
-        yolo: false,
-        activity: RosterActivity::Dormant,
-        last_turn_summary: summary.last_turn_summary.clone(),
-        resident: false,
-        last_change_unix_ms: summary.last_change_unix_ms(),
-        origin: RosterOrigin::Local,
+    entries.extend(by_id.into_values().map(|summary| {
+        let subagent = summary.is_subagent_kind();
+        RosterEntry {
+            session_id: summary.info.id.0.to_string(),
+            title: summary.display_title_opt(),
+            cwd: summary.info.cwd.clone(),
+            is_worktree: summary.session_kind.as_deref() == Some("worktree")
+                || summary.source_workspace_dir.is_some(),
+            session_kind: subagent
+                .then(|| crate::session::persistence::SUBAGENT_SESSION_KIND.to_string()),
+            parent_session_id: subagent
+                .then(|| summary.parent_session_id.clone())
+                .flatten(),
+            model_id: Some(summary.current_model_id.0.to_string()),
+            reasoning_effort: summary.reasoning_effort,
+            yolo: false,
+            activity: RosterActivity::Dormant,
+            last_turn_summary: summary.last_turn_summary.clone(),
+            resident: false,
+            last_change_unix_ms: summary.last_change_unix_ms(),
+            origin: RosterOrigin::Local,
+        }
     }));
 
     // Most-recently-changed first.
     entries.sort_by(|a, b| b.last_change_unix_ms.cmp(&a.last_change_unix_ms));
     entries
+}
+
+/// Headless one-shots never list. A hidden summary is excluded unless it is hidden only by
+/// subagent kind — subagent children are roster rows (for the subagent lane), not history noise.
+fn excluded_from_roster(summary: &Summary) -> bool {
+    !crate::session::storage::SessionListVisibility::Roster.admits(summary)
 }
 
 #[cfg(test)]
@@ -182,6 +205,7 @@ mod merge_roster_tests {
             cwd: format!("/live/{id}"),
             is_worktree: false,
             session_kind: None,
+            parent_session_id: None,
             model_id: Some("grok-4".into()),
             reasoning_effort: None,
             yolo: false,
@@ -283,11 +307,53 @@ mod merge_roster_tests {
     }
 
     #[test]
-    fn hidden_summaries_are_excluded() {
-        let mut hidden = summary("sub", Some("Subagent"), 5_000);
-        hidden.session_kind = Some("subagent".into());
+    fn subagent_summaries_become_subagent_rows_with_parent_link() {
+        let mut sub = summary("sub", Some("Child worker"), 5_000);
+        sub.session_kind = Some("subagent".into());
+        sub.parent_session_id = Some("parent-1".into());
+        let out = merge_roster(vec![], vec![sub]);
+        let Some(row) = out.first() else {
+            panic!("expected one roster row: {out:?}");
+        };
+        assert_eq!(row.session_kind.as_deref(), Some("subagent"));
+        assert_eq!(row.parent_session_id.as_deref(), Some("parent-1"));
+        assert!(!row.resident, "disk-only child is dormant until reconciled");
+    }
+
+    #[test]
+    fn resident_subagent_row_adopts_kind_and_parent_from_its_summary() {
+        let mut sub = summary("sub", Some("Child worker"), 1_234);
+        sub.session_kind = Some("subagent".into());
+        sub.parent_session_id = Some("parent-1".into());
+        let out = merge_roster(
+            vec![resident("sub", RosterActivity::Idle, 9_000)],
+            vec![sub],
+        );
+        assert_eq!(out.len(), 1, "resident child must not be duplicated as dormant");
+        let Some(row) = out.first() else {
+            panic!("expected one roster row: {out:?}");
+        };
+        assert_eq!(row.session_kind.as_deref(), Some("subagent"));
+        assert_eq!(row.parent_session_id.as_deref(), Some("parent-1"));
+        assert!(row.resident);
+    }
+
+    #[test]
+    fn explicitly_hidden_summaries_stay_excluded() {
+        let mut hidden = summary("hidden", Some("User-hidden"), 5_000);
+        hidden.hidden = Some(true);
         let out = merge_roster(vec![], vec![hidden]);
-        assert!(out.is_empty(), "hidden/subagent summaries are dropped");
+        assert!(out.is_empty(), "explicitly-hidden summaries are dropped");
+    }
+
+    #[test]
+    fn explicitly_hidden_children_exclude_dormant_and_resident_rows() {
+        for resident_rows in [vec![], vec![resident("child", RosterActivity::Working, 9_000)]] {
+            let mut child = summary("child", Some("Hidden child"), 5_000);
+            child.session_kind = Some("subagent".into());
+            child.hidden = Some(true);
+            assert!(merge_roster(resident_rows, vec![child]).is_empty());
+        }
     }
 
     #[test]
@@ -381,6 +447,25 @@ mod merge_roster_tests {
         assert!(
             !json.contains("reasoningEffort"),
             "a None effort must not be serialized: {json}"
+        );
+    }
+
+    #[test]
+    fn parent_session_id_serializes_as_camel_case_and_skips_when_none() {
+        let mut child = resident("child", RosterActivity::Idle, 1);
+        child.session_kind = Some("subagent".into());
+        child.parent_session_id = Some("parent-1".into());
+        let json = serde_json::to_string(&child).unwrap();
+        assert!(
+            json.contains("\"parentSessionId\":\"parent-1\""),
+            "parent link must be camelCase on the wire: {json}"
+        );
+
+        let root = resident("root", RosterActivity::Idle, 1);
+        let json = serde_json::to_string(&root).unwrap();
+        assert!(
+            !json.contains("parentSessionId"),
+            "a top-level row must not carry a parent link: {json}"
         );
     }
 }

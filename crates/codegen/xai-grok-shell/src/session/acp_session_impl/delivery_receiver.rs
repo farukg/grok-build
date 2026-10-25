@@ -122,12 +122,21 @@ impl SessionActor {
             let DeliveryExecution::Queued { payload, prompt_id } = &record.execution else {
                 continue;
             };
-            let exists = self.state.lock().await.pending_inputs.iter().any(|item| {
-                matches!(item.input_origin.as_prompt_origin(),
-                PromptOrigin::Delivery { delivery_id: queued, .. } if queued == delivery_id)
-            });
+            let origin = match &record.provenance {
+                crate::session::delivery_receiver::DeliveryProvenance::External => PromptOrigin::Delivery {
+                    delivery_id: delivery_id.clone(), payload_digest: record.digest.clone(),
+                },
+                crate::session::delivery_receiver::DeliveryProvenance::ParentMessage { admission } => match admission.source {
+                    crate::session::delivery_receiver::ParentMessageSource::Agent => PromptOrigin::ParentAgentMessage { message_id: admission.message_id.clone(), sender_session_id: admission.sender_session_id.clone() },
+                    crate::session::delivery_receiver::ParentMessageSource::Human => PromptOrigin::ParentHumanMessage { message_id: admission.message_id.clone(), sender_session_id: admission.sender_session_id.clone() },
+                },
+            };
+            let exists = self.state.lock().await.pending_inputs.iter().any(|item| item.prompt_id == *prompt_id);
             if exists {
                 continue;
+            }
+            if matches!(&origin, PromptOrigin::ParentAgentMessage { .. } | PromptOrigin::ParentHumanMessage { .. }) {
+                self.state.lock().await.message_delivery.teardown = super::parent_message::ParentTeardownStatus::Open;
             }
             let (respond_to, receive) = oneshot::channel();
             drop(receive);
@@ -136,10 +145,7 @@ impl SessionActor {
                     payload.clone(),
                 ))],
                 prompt_id.clone(),
-                InputOrigin::new(PromptOrigin::Delivery {
-                    delivery_id: delivery_id.clone(),
-                    payload_digest: record.digest.clone(),
-                }),
+                InputOrigin::new(origin),
                 PromptMode::Agent,
                 respond_to,
             );
@@ -264,16 +270,15 @@ impl SessionActor {
         }
     }
 
-    pub(super) fn settle_durable_delivery_turn(
+    pub(super) async fn settle_durable_delivery_turn(
         &self,
         turn_id: &str,
         parent_task: xai_chat_state::ParentTask,
         origin: crate::session::delivery_receiver::ReceiverTurnOrigin,
         progress: DeliveryProgress,
-    ) {
+    ) -> Result<(), acp::Error> {
         let (respond_to, receive) = oneshot::channel();
-        drop(receive);
-        let _ = self
+        self
             .notifications
             .persistence_tx
             .send(PersistenceMsg::FinishDeliveryTurn {
@@ -282,6 +287,9 @@ impl SessionActor {
                 origin,
                 progress,
                 respond_to,
-            });
+            }).map_err(|_| acp::Error::internal_error().data("terminal settlement owner closed"))?;
+        receive.await.map_err(|_| acp::Error::internal_error().data("terminal settlement acknowledgement lost"))?
+            .map_err(|error| crate::session::persistence::io_error_to_acp(&error))?;
+        Ok(())
     }
 }

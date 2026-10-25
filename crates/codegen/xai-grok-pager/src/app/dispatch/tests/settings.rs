@@ -117,7 +117,7 @@ fn toggle_vim_mode_propagates_to_resident_child_sessions() {
     );
     child.vim_mode = false;
     child.role = AgentRole::Child(ChildLink {
-        parent: parent_id,
+        parent: Some(parent_id),
         parent_session_id: app
             .agents
             .get(&parent_id)

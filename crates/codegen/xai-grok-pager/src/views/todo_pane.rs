@@ -8,13 +8,13 @@ use xai_grok_shell::tools::{TodoItem, TodoStatus};
 
 use super::list_pane::ListItem;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TodoStatusStyle {
     pub icon_fg: Color,
     pub text_style: Style,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TodoPaneStyle {
     pub pending: TodoStatusStyle,
     pub in_progress: TodoStatusStyle,
@@ -81,6 +81,13 @@ impl TodoListEntry {
         }
     }
 
+    fn prefix_line(&self) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(self.icon(), Style::default().fg(self.status_style.icon_fg)),
+            Span::raw(" "),
+        ])
+    }
+
     fn icon(&self) -> &'static str {
         match self.item.status {
             TodoStatus::Pending => "□",
@@ -97,11 +104,7 @@ impl ListItem for TodoListEntry {
     }
 
     fn prefix(&self) -> Option<Line<'_>> {
-        let icon = self.icon();
-        Some(Line::from(vec![
-            Span::styled(icon, Style::default().fg(self.status_style.icon_fg)),
-            Span::raw(" "),
-        ]))
+        Some(self.prefix_line())
     }
 
     fn stable_id(&self) -> u64 {
@@ -163,8 +166,13 @@ pub struct TodoPane {
     /// Raw todo items from ACP Plan updates.
     todos: Vec<TodoItem>,
     /// Filtered and styled entries for `ListPane` rendering.
-    /// Rebuilt from `todos` at the start of each `render()` call.
+    /// Rebuilt only when data, filtering or status styles change.
     entries: Vec<TodoListEntry>,
+    counts: TodoCounts,
+    #[cfg(test)]
+    preparation_rebuilds: usize,
+    #[cfg(test)]
+    sidebar_materializations: std::cell::Cell<usize>,
     /// List pane state (scroll, selection, search, layout cache).
     pub list_state: ListPaneState,
     /// Per-status visual style for icons and text.
@@ -202,6 +210,11 @@ impl TodoPane {
         Self {
             todos: Vec::new(),
             entries: Vec::new(),
+            counts: TodoCounts::default(),
+            #[cfg(test)]
+            preparation_rebuilds: 0,
+            #[cfg(test)]
+            sidebar_materializations: std::cell::Cell::new(0),
             list_state,
             style: TodoPaneStyle::default(),
             list_style: ListPaneStyle::default(),
@@ -219,7 +232,9 @@ impl TodoPane {
     ///
     /// Does NOT auto-show the todo pane. Users toggle it with Ctrl-T.
     pub fn update_todos(&mut self, items: Vec<TodoItem>) {
+        self.counts = Self::compute_counts(&items);
         self.todos = items;
+        self.rebuild_entries();
     }
 
     fn compute_counts(items: &[TodoItem]) -> TodoCounts {
@@ -237,7 +252,7 @@ impl TodoPane {
 
     /// Current status counts (across ALL items, ignoring `show_done`).
     pub fn counts(&self) -> TodoCounts {
-        Self::compute_counts(&self.todos)
+        self.counts
     }
 
     /// Visible when the overlay is shown.
@@ -262,6 +277,7 @@ impl TodoPane {
     /// Toggle visibility of completed and cancelled items.
     pub fn toggle_show_done(&mut self) {
         self.show_done = !self.show_done;
+        self.rebuild_entries();
     }
 
     /// Desired height in lines for layout computation. Returns 0 when hidden (overlay not visible or no
@@ -282,20 +298,17 @@ impl TodoPane {
 
     /// Number of items that pass the `show_done` filter.
     fn visible_count(&self) -> usize {
-        if self.show_done {
-            self.todos.len()
-        } else {
-            self.todos
-                .iter()
-                .filter(|t| !matches!(t.status, TodoStatus::Completed | TodoStatus::Cancelled))
-                .count()
-        }
+        self.entries.len()
     }
 
     /// Rebuild `entries` from `todos`, filtered by `show_done`. Items preserve their original order
     /// from the agent (no reordering by status). IDs are based on the original index in `todos` so that
     /// `ListPaneState` can maintain selection across rebuilds.
     fn rebuild_entries(&mut self) {
+        #[cfg(test)]
+        {
+            self.preparation_rebuilds += 1;
+        }
         self.entries.clear();
         for (idx, item) in self.todos.iter().enumerate() {
             if !self.show_done
@@ -306,6 +319,29 @@ impl TodoPane {
             self.entries
                 .push(TodoListEntry::new(idx as u64, item.clone(), &self.style));
         }
+        self.list_state.invalidate_layout();
+        let matcher = self.list_state.matcher().cloned();
+        self.list_state.set_matcher(matcher);
+    }
+
+    pub(crate) fn sidebar_row_count(&self) -> usize {
+        self.entries.len().max(1)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn preparation_counts(&self) -> (usize, usize) {
+        (self.preparation_rebuilds, self.sidebar_materializations.get())
+    }
+
+    pub(crate) fn refresh_entries(&mut self) {
+        let current_theme = crate::theme::Theme::current_kind();
+        let style = TodoPaneStyle::default();
+        self.list_style = ListPaneStyle::default();
+        if current_theme != self.last_theme || style != self.style {
+            self.last_theme = current_theme;
+            self.style = style;
+            self.rebuild_entries();
+        }
     }
 
     /// Handle a key event when the todo pane is focused.
@@ -315,7 +351,6 @@ impl TodoPane {
         // 'h' toggles show_done (only when not typing in the search or filter bar)
         if key.code == KeyCode::Char('h') && self.list_state.input_mode().is_none() {
             self.toggle_show_done();
-            self.rebuild_entries();
             return true;
         }
         // Don't route to ListPaneState when empty.
@@ -365,9 +400,7 @@ impl TodoPane {
         }
     }
 
-    /// Render the todo pane into the given area. Rebuilds entries from `todos` each call, which is
-    /// cheap at the typical count of under 20 items. Runs layout, then renders the `ListPane` widget in
-    /// a padded inner area matching the scrollback's horizontal layout.
+    /// Render the cached entries in a padded area matching the scrollback's horizontal layout.
     pub fn render(
         &mut self,
         area: Rect,
@@ -375,15 +408,7 @@ impl TodoPane {
         focused: bool,
         layout_cfg: &LayoutConfig,
     ) {
-        // Detect a theme switch and refresh styles before rebuilding entries
-        let current_theme = crate::theme::Theme::current_kind();
-        if current_theme != self.last_theme {
-            self.last_theme = current_theme;
-            self.style = TodoPaneStyle::default();
-            self.list_style = ListPaneStyle::default();
-        }
-
-        self.rebuild_entries();
+        self.refresh_entries();
         let inner = Self::content_area(area, layout_cfg);
         if self.entries.is_empty() {
             if inner.height > 0 && inner.width > 0 {
@@ -403,6 +428,25 @@ impl TodoPane {
             .focused(focused)
             .style(self.list_style)
             .render(inner, buf, &mut self.list_state);
+    }
+}
+
+impl super::sidebar::SidebarRowSource for TodoPane {
+    fn row(&self, index: usize) -> Option<super::sidebar::SidebarRow<'static>> {
+        let left = if self.entries.is_empty() {
+            if index != 0 {
+                return None;
+            }
+            Line::from(empty_placeholder_message(self.todos.is_empty(), self.counts()))
+        } else {
+            let entry = self.entries.get(index)?;
+            let mut line = entry.prefix_line();
+            line.spans.extend(entry.styled.spans.clone());
+            line
+        };
+        #[cfg(test)]
+        self.sidebar_materializations.set(self.sidebar_materializations.get() + 1);
+        Some(super::sidebar::SidebarRow { left, right: None, detail: &[] })
     }
 }
 

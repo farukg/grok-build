@@ -35,10 +35,45 @@ pub mod attempt_serde {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionTaskKind { Bash, Monitor }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "origin", rename_all = "snake_case")]
+pub enum TerminalCompletionId {
+    Task { owner_session_id: String, task_id: String, task_kind: CompletionTaskKind },
+    Workflow { run_id: String, revision: u64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompletionVersion { #[serde(rename = "2")] V2 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CompletionIdentity {
+    Subagent(#[serde(with = "completion_id_serde")] SubagentCompletionId),
+    V2 { version: CompletionVersion, #[serde(flatten)] terminal: TerminalCompletionId },
+}
+
+impl From<SubagentCompletionId> for CompletionIdentity {
+    fn from(id: SubagentCompletionId) -> Self { Self::Subagent(id) }
+}
+impl From<TerminalCompletionId> for CompletionIdentity {
+    fn from(terminal: TerminalCompletionId) -> Self { Self::V2 { version: CompletionVersion::V2, terminal } }
+}
+impl PartialEq<SubagentCompletionId> for CompletionIdentity {
+    fn eq(&self, other: &SubagentCompletionId) -> bool { matches!(self, Self::Subagent(id) if id == other) }
+}
+impl CompletionIdentity {
+    pub fn subagent(&self) -> Option<&SubagentCompletionId> {
+        match self { Self::Subagent(id) => Some(id), Self::V2 { .. } => None }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompletionReceipt {
-    #[serde(with = "completion_id_serde")]
-    pub completion: SubagentCompletionId,
+    pub completion: CompletionIdentity,
     pub prompt_id: String,
     #[serde(default)]
     pub parent_task: crate::ParentTask,
@@ -71,10 +106,10 @@ impl CompletionProjection {
         std::iter::once(&self.receipt).chain(&self.additional_receipts)
     }
 
-    pub fn new(completion: SubagentCompletionId, prompt_id: String, text: String) -> Self {
+    pub fn new(completion: impl Into<CompletionIdentity>, prompt_id: String, text: String) -> Self {
         Self {
             item: ConversationItem::subagent_completed(text),
-            receipt: CompletionReceipt { completion, prompt_id, parent_task: crate::ParentTask::Unknown },
+            receipt: CompletionReceipt { completion: completion.into(), prompt_id, parent_task: crate::ParentTask::Unknown },
             additional_receipts: Vec::new(),
         }
     }

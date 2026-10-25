@@ -62,7 +62,10 @@ impl ChildControl for TestControl {
             let operation = delivery.operation();
             let text = delivery.message().text.to_string();
             let admission = delivery
-                .commit_admission(|| admitted_messages.send((operation, text)))
+                .claim_admission()
+                .map(|claim| {
+                    claim.commit().try_handoff(|| admitted_messages.send((operation, text)))
+                })
                 .is_some_and(|result| result.is_ok());
             return Box::pin(std::future::ready(if admission {
                 ActiveMessageAdmission::Admitted
@@ -88,6 +91,64 @@ impl ChildControl for TestControl {
     }
 }
 
+#[tokio::test]
+async fn recording_handoff_requires_a_live_transfer_before_positive_settlement() {
+    use super::active_message::tests::{begin_send, fixture, insert_child, recv_with_timeout};
+    use futures::StreamExt;
+
+    for closed in [false, true] {
+        let (mut coordinator, command_tx, admission_tx, mut admissions) = fixture();
+        insert_child(&mut coordinator, admission_tx, "child", "parent");
+        let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
+        let held = recv_with_timeout(&mut admissions).await;
+        let (admitted_messages, mut received) = mpsc::unbounded_channel();
+        if closed {
+            received.close();
+        }
+        let (caller, _caller) = tokio::sync::watch::channel(SubagentCaller::NotWaiting);
+        let control = TestControl {
+            caller,
+            cancellation: CancellationToken::new(),
+            admission_gate: None,
+            admitted_messages: Some(admitted_messages),
+        };
+        let admission = control.send_active_message(held.late_delivery).await;
+        assert_eq!(
+            if closed {
+                ActiveMessageAdmission::Rejected
+            } else {
+                ActiveMessageAdmission::Admitted
+            },
+            admission,
+        );
+        if closed {
+            assert!(received.try_recv().is_err());
+        } else {
+            assert_eq!(
+                (ActiveAgentMessageOperation::Queue, "follow up".to_owned()),
+                received.try_recv().unwrap(),
+            );
+        }
+        let (finalize_tx, finalize_rx) = oneshot::channel();
+        coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
+        // Probe lease proof independently of the consumer's rejection response.
+        held.report.send(ActiveMessageAdmission::Admitted).unwrap();
+        let completion = coordinator.active_messages.next().await.unwrap();
+        coordinator.finish_active_message(completion);
+        assert_eq!(
+            if closed {
+                ActiveAgentMessageOutcome::AdmissionUncertain
+            } else {
+                ActiveAgentMessageOutcome::Accepted {
+                    message_id: held.message_id,
+                }
+            },
+            response.await.unwrap(),
+        );
+        assert_eq!(!closed, finalize_rx.await.unwrap());
+    }
+}
+
 #[derive(Default)]
 struct TestCompletionData;
 
@@ -109,6 +170,7 @@ pub(in crate::implementations::grok_build::task::coordinator) enum ProducerCommi
         reason: &'static str,
     },
     DropAcknowledgement,
+    HoldAcknowledgement,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -396,6 +458,11 @@ impl ChildRunner for TestRunner {
             // Dropping the callback is the producer dying between finishing and its durable
             // acknowledgement; the coordinator's publication guard must resolve it as rejected.
             ProducerCommitBehavior::DropAcknowledgement => drop(terminal_published),
+            ProducerCommitBehavior::HoldAcknowledgement => {
+                let _ = self.terminal_publications.send(Box::new(move || {
+                    terminal_published(TerminalCommitResult::Committed);
+                }));
+            }
         }
     }
     fn on_published(
@@ -1158,10 +1225,10 @@ async fn finishing_parent_turn_drain_keeps_independent_background_child_running(
     let mut h = harness(false, std::time::Duration::from_secs(600));
     let mut child = request("survives-turn-end", true);
     child.parent_prompt_id = Some("finished-parent-turn".into());
-    h.backend
-        .spawn(child, None, None)
-        .await
-        .expect("background admission");
+    let spawn = tokio::spawn({
+        let backend = h.backend.clone();
+        async move { backend.spawn(child, None, None).await }
+    });
     h.started.recv().await.expect("child active");
     let drained = wait_prompt_drained(&h.backend, "finished-parent-turn");
     assert!(
@@ -1190,6 +1257,7 @@ async fn finishing_parent_turn_drain_keeps_independent_background_child_running(
         final_state.status,
         SubagentSnapshotStatus::Completed { .. }
     ));
+    assert!(spawn.await.expect("spawn task").expect("child result").success());
     h.actor.abort();
 }
 
@@ -1263,10 +1331,14 @@ async fn caller_observation_tracks_foreground_abandonment_without_a_command_or_d
 #[tokio::test(start_paused = true)]
 async fn caller_observation_keeps_surviving_query_and_clears_on_last_receiver_drop() {
     let mut h = harness(false, std::time::Duration::from_secs(600));
-    h.backend
-        .spawn(request("query-observation", true), None, None)
-        .await
-        .expect("background child");
+    let spawn = tokio::spawn({
+        let backend = h.backend.clone();
+        async move {
+            backend
+                .spawn(request("query-observation", true), None, None)
+                .await
+        }
+    });
     h.started.recv().await.expect("child active");
     assert_eq!(*h.caller.borrow(), SubagentCaller::NotWaiting);
     let first = tokio::spawn({
@@ -1305,6 +1377,8 @@ async fn caller_observation_keeps_surviving_query_and_clears_on_last_receiver_dr
         .await
         .expect("last query abandonment wakes actor");
     assert_eq!(tokio::time::Instant::now(), before);
+    h.finish.send(()).expect("finish observed child");
+    assert!(spawn.await.expect("spawn task").expect("child result").success());
     h.actor.abort();
 }
 

@@ -3,6 +3,8 @@
 mod tests;
 
 use super::*;
+#[path = "notification_projection.rs"]
+mod notification_projection;
 use crate::session::completion_delivery::{CompletionMutation, SubagentCompletionEvent};
 use crate::session::storage::summary_write::{SummaryPatch, apply_patch_locked};
 use xai_chat_state::{
@@ -11,6 +13,71 @@ use xai_chat_state::{
 };
 
 impl JsonlStorageAdapter {
+    pub(super) async fn suppress_terminal_completions_inner(
+        &self,
+        info: &Info,
+        ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        reason: crate::session::completion_delivery::CompletionSuppression,
+    ) -> io::Result<()> {
+        use xai_chat_state::completion::{CompletionIdentity, TerminalCompletionId};
+        if ids.iter().any(|id| !matches!(id, CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { owner_session_id, .. }, .. } if owner_session_id == &info.id.to_string())) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "goal suppression requires owned task identities"));
+        }
+        let storage = self.clone();
+        let info = info.clone();
+        tokio::task::spawn_blocking(move || {
+            let path = storage.chat_file(&info);
+            let _lock = Self::lock_append(&path)?;
+            let receipts = Self::completion_receipts(&path)?;
+            if !receipts.is_empty() {
+                Self::sync_file_durable(&OpenOptions::new().read(true).open(&path)?)?;
+                Self::sync_parent_directory(&path)?;
+                apply_patch_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), &SummaryPatch {
+                    completion_mutation: Some(CompletionMutation::RetainReceipts(receipts)), ..Default::default()
+                })?;
+            }
+            apply_patch_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), &SummaryPatch {
+                completion_mutation: Some(CompletionMutation::Suppress { ids, reason }), ..Default::default()
+            })
+        }).await.map_err(io::Error::other)?
+    }
+
+    pub(super) async fn enroll_terminal_completion_inner(
+        &self,
+        info: &Info,
+        source: crate::session::completion_delivery::CompletionPayloadSource,
+        text: String,
+        policy: crate::session::completion_delivery::CompletionEventPolicy,
+    ) -> io::Result<()> {
+        use crate::session::completion_delivery::{CompletionPayload, CompletionPayloadSource};
+        use xai_chat_state::completion::{CompletionTaskKind, TerminalCompletionId};
+        let id = match &source {
+            CompletionPayloadSource::Legacy => return Err(io::Error::new(io::ErrorKind::InvalidInput, "terminal enrollment requires source identity")),
+            CompletionPayloadSource::Task(snapshot) => {
+                if !snapshot.completed || snapshot.owner_session_id.as_deref() != Some(info.id.to_string().as_str()) {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "terminal snapshot is not owned and complete"));
+                }
+                TerminalCompletionId::Task {
+                    owner_session_id: info.id.to_string(), task_id: snapshot.task_id.clone(),
+                    task_kind: match snapshot.kind {
+                        xai_grok_tools::computer::types::TaskKind::Bash => CompletionTaskKind::Bash,
+                        xai_grok_tools::computer::types::TaskKind::Monitor => CompletionTaskKind::Monitor,
+                    },
+                }
+            }
+            CompletionPayloadSource::Workflow(run) => {
+                if !run.status.is_completion_reportable() {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "workflow revision is not reportable"));
+                }
+                TerminalCompletionId::Workflow { run_id: run.run_id.clone(), revision: run.revision }
+            }
+        }.into();
+        self.apply_summary_patch(info, SummaryPatch {
+            completion_mutation: Some(CompletionMutation::Enrolled { id, payload: CompletionPayload { source, text, policy, reference: None } }),
+            ..Default::default()
+        }).await
+    }
+
     pub(super) async fn prepare_completion(
         &self,
         info: &Info,
@@ -38,7 +105,7 @@ impl JsonlStorageAdapter {
                 .completion_delivery
                 .obligations
                 .iter()
-                .find(|o| o.id() == &event.id)
+                .find(|o| o.id() == event.id)
             {
                 event = existing.clone();
             }
@@ -54,6 +121,11 @@ impl JsonlStorageAdapter {
                     completion_mutation: Some(CompletionMutation::Ready(event.clone())),
                     ..Default::default()
                 },
+            )?;
+            crate::agent::subagent::materialize_completion_artifacts(
+                &storage.session_dir(&info),
+                &info.id.to_string(),
+                &event,
             )?;
             Ok(crate::session::ProducerCommitAck {
                 event,
@@ -74,11 +146,6 @@ impl JsonlStorageAdapter {
         let info = info.clone();
         let event = event.clone();
         tokio::task::spawn_blocking(move || {
-            crate::agent::subagent::materialize_completion_artifacts(
-                &storage.session_dir(&info),
-                &info.id.to_string(),
-                &event,
-            )?;
             let path = storage.updates_file(&info);
             let _lock = Self::lock_append(&path)?;
             let summary = storage.read_summary_sync(&info)?;
@@ -191,6 +258,18 @@ impl JsonlStorageAdapter {
     }
 
     pub(super) async fn recover_completions(&self, info: &Info) -> io::Result<Summary> {
+        for restored in self.load_workflow_runs_sync(info)? {
+            let run = restored.manifest.state;
+            if run.status.is_completion_reportable() {
+                let text = crate::session::acp_session::reminders::format_workflow_completion_reminder(
+                    std::slice::from_ref(&run), &self.session_dir(info), None,
+                );
+                self.enroll_terminal_completion_inner(info,
+                    crate::session::completion_delivery::CompletionPayloadSource::Workflow(Box::new(run)),
+                    text, crate::session::completion_delivery::CompletionEventPolicy::Automatic,
+                ).await?;
+            }
+        }
         let summary = self.read_summary_sync(info)?;
         for obligation in &summary.completion_delivery.obligations {
             if let crate::session::completion_delivery::CompletionObligation::Preparing {
@@ -198,6 +277,18 @@ impl JsonlStorageAdapter {
                 ..
             } = obligation
             {
+                let parent = self.session_dir(info);
+                let parent_session = info.id.to_string();
+                let artifacts = event.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::agent::subagent::materialize_completion_artifacts(
+                        &parent,
+                        &parent_session,
+                        &artifacts,
+                    )
+                })
+                .await
+                .map_err(io::Error::other)??;
                 self.publish_completion(info, event, false).await?;
             }
         }
@@ -233,7 +324,11 @@ impl JsonlStorageAdapter {
             }
             let value: serde_json::Value =
                 serde_json::from_slice(line).map_err(io::Error::other)?;
-            if value.get("_subagent_completion").is_some() {
+            if value.get("_notification_batch").is_some() {
+                let projection: xai_chat_state::input_projection::NotificationProjection = serde_json::from_value(value)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                receipts.extend(projection.receipts);
+            } else if value.get("_subagent_completion").is_some() {
                 let projection: CompletionProjection = serde_json::from_value(value)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 receipts.extend(projection.receipts().cloned());
@@ -311,6 +406,12 @@ impl JsonlStorageAdapter {
             .read_summary_sync(info)
             .map_err(StrictAppendError::NotCommitted)?;
         let receipts = Self::completion_receipts(&path).map_err(StrictAppendError::NotCommitted)?;
+        if matches!(projection.item, ConversationItem::User(_)) && projection.receipts().any(|receipt| {
+            summary.completion_delivery.obligations.iter().any(|obligation| matches!(obligation,
+                crate::session::completion_delivery::CompletionObligation::Suppressed { id, .. } if id == &receipt.completion))
+        }) {
+            return Err(StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::PermissionDenied, "completion notification has a durable suppression disposition")));
+        }
         let unindexed: Vec<_> = receipts
             .iter()
             .filter(|receipt| {
@@ -347,6 +448,12 @@ impl JsonlStorageAdapter {
             .iter()
             .chain(&summary.completion_delivery.receipts)
             .find(|receipt| receipt.completion == projection.receipt.completion);
+        let indexed = |expected: &CompletionReceipt| receipts.iter().chain(&summary.completion_delivery.receipts)
+            .any(|actual| actual.completion == expected.completion);
+        if projection.receipts().any(indexed) && !projection.receipts().all(indexed) {
+            return Err(StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::AlreadyExists,
+                "completion batch partially overlaps committed receipts")));
+        }
         let tool_history = if let ConversationItem::ToolResult(candidate) = &projection.item {
             let history = self
                 .read_chat_history_sync(path.clone(), CHAT_FORMAT_VERSION)

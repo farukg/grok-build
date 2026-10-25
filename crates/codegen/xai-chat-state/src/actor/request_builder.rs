@@ -9,7 +9,7 @@ use crate::events::ChatStateEvent;
 use crate::image_budget::{
     ImageBudgetOutcome, apply_image_budget_with_limits, image_budget_limits,
 };
-use crate::types::PruningConfig;
+use crate::types::{InjectedRequestKind, InjectedRequestRecord, PruningConfig};
 
 /// Placeholder inserted when a tool result is hard-cleared.
 /// `pub(super)` so `mutations.rs` can use the same string on the retained conversation.
@@ -30,8 +30,10 @@ impl ChatStateActor {
         trace: Option<Box<dyn TraceContext>>,
         conv_id: String,
         req_id: String,
-    ) -> ConversationRequest {
+    ) -> crate::types::BuiltConversationRequest {
+        let mut injected_records = Vec::new();
         let mut memory_reminder = memory_reminder;
+        let mut memory_record = None;
         if let Some(reminder) = memory_reminder.as_deref()
             && persist_memory_reminder
         {
@@ -41,7 +43,7 @@ impl ChatStateActor {
             let injected = inject_memory_reminder(&mut self.state.conversation, reminder);
             if injected {
                 self.persistence.replace_history(&self.state.conversation);
-                memory_reminder = None;
+                memory_record = memory_reminder.take();
             }
             self.rebase_turn_capture_offset();
         }
@@ -72,13 +74,62 @@ impl ChatStateActor {
             });
         }
         items = self.prune_items_for_turn_request(items);
-        if let Some(reminder) = memory_reminder {
-            inject_memory_reminder(&mut items, &reminder);
+        let pruned = tool_result_prune_delta(&self.state.conversation, &items);
+        let mut replacement_bodies = String::new();
+        if !pruned.is_empty() {
+            for (stored, projected) in std::iter::zip(&self.state.conversation, &items) {
+                if let (ConversationItem::ToolResult(stored), ConversationItem::ToolResult(projected)) =
+                    (stored, projected)
+                    && stored.content != projected.content
+                {
+                    replacement_bodies.push_str(&format!(
+                        "\n\nTool result {}:\n{}", projected.tool_call_id, projected.content
+                    ));
+                }
+            }
         }
-        if !self.state.context_policy.includes(ContextCategory::Memory) {
+        if let Some(reminder) = memory_reminder.as_deref()
+            && inject_memory_reminder(&mut items, reminder)
+        {
+            memory_record = memory_reminder.take();
+        }
+        let memory_withheld = if !self.state.context_policy.includes(ContextCategory::Memory) {
+            let had_manifest = matches!(items.first(), Some(ConversationItem::System(system))
+                if split_memory_context(&system.content).1.is_some());
             super::context_sections::withhold_memory_context(&mut items);
-        }
+            had_manifest
+        } else {
+            false
+        };
+        let projected_out = projected_out_categories(&self.state.context_policy);
         items = self.state.context_policy.project(items);
+        let labeled_agent_messages = items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    ConversationItem::User(user)
+                        if user.synthetic_reason
+                            == xai_grok_sampling_types::SyntheticReason::AgentMessage
+                )
+            })
+            .count();
+        if let Some(mut summary) = context_view_summary(
+            pruned,
+            memory_withheld,
+            &projected_out,
+            labeled_agent_messages,
+        ) {
+            summary.push_str(&replacement_bodies);
+            if labeled_agent_messages > 0 {
+                summary.push_str("\n\nAgent-message prefix:\n");
+                summary.push_str(crate::compaction_utils::AGENT_MESSAGE_MODEL_LABEL);
+            }
+            injected_records.push(InjectedRequestRecord::new(
+                InjectedRequestKind::ContextView,
+                &summary,
+            ));
+        }
         let tool_definitions = if self
             .state
             .context_policy
@@ -89,9 +140,29 @@ impl ChatStateActor {
             Vec::new()
         };
         items = crate::compaction_utils::ModelRequestHistory::from_raw(items).into_items();
+        if let Some(reminder) = memory_record.as_deref().map(str::trim)
+            && matches!(items.first(), Some(ConversationItem::System(system))
+                if system.content.contains(reminder))
+        {
+            injected_records.insert(0, InjectedRequestRecord::new(
+                InjectedRequestKind::MemoryReminder,
+                reminder,
+            ));
+        }
+        for item in &items {
+            if let Some(reason) = item.synthetic_reason()
+                && !reason.is_human()
+                && !reason.is_primary()
+            {
+                injected_records.push(InjectedRequestRecord::Synthetic {
+                    reason: reason.clone(),
+                    text: item.text_content(),
+                });
+            }
+        }
 
         // Step 4: Assemble request
-        ConversationRequest {
+        let request = ConversationRequest {
             items,
             tools: tool_definitions,
             hosted_tools: vec![],
@@ -116,6 +187,10 @@ impl ChatStateActor {
             // Execute completed tool calls on a Length-truncated turn instead
             // of failing it; text-only salvage stays behind `CompletePartial`.
             length_policy: xai_grok_sampling_types::LengthPolicy::CompleteToolCalls,
+        };
+        crate::types::BuiltConversationRequest {
+            request,
+            injected_records,
         }
     }
 
@@ -190,6 +265,99 @@ pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: 
                 std::sync::Arc::<str>::from(format!("{head}{SOFT_TRIM_SEPARATOR}{tail}"));
         }
     }
+}
+
+// ============================================================================
+// Request-view records (pure functions, no actor state needed)
+// ============================================================================
+
+/// How many tool results the request-view prune pass replaced, split by kind.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PruneDelta {
+    /// Results replaced wholesale with [`HARD_CLEAR_PLACEHOLDER`].
+    pub hard_cleared: usize,
+    /// Results trimmed to head+tail around the soft-trim separator.
+    pub soft_trimmed: usize,
+}
+
+impl PruneDelta {
+    pub fn is_empty(&self) -> bool {
+        self.hard_cleared == 0 && self.soft_trimmed == 0
+    }
+}
+
+/// Compare the stored conversation against the pruned request view and count content replacements.
+/// Only position-aligned pairs are compared: prune mutates in place, so any length mismatch caps
+/// the count at the shorter side rather than misattributing deltas.
+fn tool_result_prune_delta(
+    stored: &[ConversationItem],
+    pruned: &[ConversationItem],
+) -> PruneDelta {
+    let mut delta = PruneDelta::default();
+    for (stored, pruned) in std::iter::zip(stored, pruned) {
+        let (ConversationItem::ToolResult(stored), ConversationItem::ToolResult(pruned)) =
+            (stored, pruned)
+        else {
+            continue;
+        };
+        if stored.content == pruned.content {
+            continue;
+        }
+        if pruned.content.as_ref() == HARD_CLEAR_PLACEHOLDER {
+            delta.hard_cleared += 1;
+        } else {
+            delta.soft_trimmed += 1;
+        }
+    }
+    delta
+}
+
+/// Categories `ContextPolicy::project` actually rewrites, with the label the context-view record shows.
+/// A category listed here as excluded means stored content in it did not reach the request verbatim.
+fn projected_out_categories(policy: &xai_grok_sampling_types::ContextPolicy) -> Vec<&'static str> {
+    use xai_grok_sampling_types::ContextCategory;
+    let mut out = Vec::new();
+    if !policy.includes(ContextCategory::Reasoning) {
+        out.push("reasoning");
+    }
+    if !policy.includes(ContextCategory::AssistantTurns) {
+        out.push("assistant turns");
+    }
+    if !policy.includes(ContextCategory::ToolExchanges) {
+        out.push("tool exchanges");
+    }
+    out
+}
+
+/// One bounded line naming every request-view transform that changed content this turn.
+/// `None` when the view matched the stored history — nothing entered the request invisibly.
+fn context_view_summary(
+    pruned: PruneDelta,
+    memory_withheld: bool,
+    projected_out: &[&str],
+    labeled_agent_messages: usize,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if !pruned.is_empty() {
+        parts.push(format!(
+            "{} tool result(s) pruned ({} cleared, {} trimmed)",
+            pruned.hard_cleared + pruned.soft_trimmed,
+            pruned.hard_cleared,
+            pruned.soft_trimmed
+        ));
+    }
+    if memory_withheld {
+        parts.push("memory context withheld".to_string());
+    }
+    if !projected_out.is_empty() {
+        parts.push(format!("projected out: {}", projected_out.join(", ")));
+    }
+    if labeled_agent_messages > 0 {
+        parts.push(format!(
+            "{labeled_agent_messages} agent message(s) labeled as agent-authored"
+        ));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
 }
 
 // ============================================================================
@@ -313,4 +481,48 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(matches!(items.first(), Some(ConversationItem::System(_))));
     }
+
+    #[test]
+    fn prune_delta_classifies_hard_clears_and_soft_trims() {
+        let stored = vec![
+            ConversationItem::tool_result("c1", "unchanged"),
+            ConversationItem::tool_result("c2", "very old original body"),
+            ConversationItem::tool_result("c3", "large original body"),
+            ConversationItem::user("turn"),
+        ];
+        let pruned = vec![
+            ConversationItem::tool_result("c1", "unchanged"),
+            ConversationItem::tool_result("c2", HARD_CLEAR_PLACEHOLDER),
+            ConversationItem::tool_result("c3", "head\n\n[…trimmed…]\n\ntail"),
+            ConversationItem::user("turn"),
+        ];
+        let delta = tool_result_prune_delta(&stored, &pruned);
+        assert_eq!(delta.hard_cleared, 1);
+        assert_eq!(delta.soft_trimmed, 1);
+        assert_eq!(tool_result_prune_delta(&stored, &stored), PruneDelta::default());
+    }
+
+    #[test]
+    fn context_view_summary_omits_empty_transforms() {
+        assert_eq!(
+            context_view_summary(PruneDelta::default(), false, &[], 0),
+            None,
+            "a view identical to the stored history produces no record"
+        );
+        let summary = context_view_summary(
+            PruneDelta {
+                hard_cleared: 2,
+                soft_trimmed: 1,
+            },
+            true,
+            &["reasoning"],
+            3,
+        )
+        .unwrap();
+        assert!(summary.contains("3 tool result(s) pruned (2 cleared, 1 trimmed)"));
+        assert!(summary.contains("memory context withheld"));
+        assert!(summary.contains("projected out: reasoning"));
+        assert!(summary.contains("3 agent message(s) labeled"));
+    }
+
 }

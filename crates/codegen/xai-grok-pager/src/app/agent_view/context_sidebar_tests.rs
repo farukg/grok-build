@@ -13,7 +13,7 @@ use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
 use xai_grok_shell::sampling::{CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch};
 
 fn draw(agent: &mut AgentView) -> Buffer {
-    let area = Rect::new(0, 0, 160, 40);
+    let area = Rect::new(0, 0, 160, 45);
     let mut buf = Buffer::empty(area);
     agent.draw(
         area,
@@ -363,17 +363,19 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
     let _ = press(&mut agent, KeyCode::End);
     assert_eq!(cursor(&agent), Some(display.row_line(last)));
     let _ = press(&mut agent, KeyCode::Home);
-    assert_eq!(cursor(&agent), Some(context.title_line()));
+    assert_eq!(cursor(&agent), Some(SectionId::Dock.title_line()));
     let _ = press(&mut agent, KeyCode::PageDown);
-    assert_ne!(cursor(&agent), Some(context.title_line()));
+    assert_ne!(cursor(&agent), Some(SectionId::Dock.title_line()));
     let _ = press(&mut agent, KeyCode::PageUp);
+    assert_eq!(cursor(&agent), Some(SectionId::Dock.title_line()));
+    for _ in 0..4 { let _ = press(&mut agent, KeyCode::Down); }
     assert_eq!(cursor(&agent), Some(context.title_line()));
 
     let _ = press(&mut agent, KeyCode::Enter);
     assert!(!disclosure(&agent).is_expanded(context));
     let _ = press(&mut agent, KeyCode::Down);
     assert_eq!(cursor(&agent), Some(display.title_line()));
-    let _ = press(&mut agent, KeyCode::Home);
+    let _ = press(&mut agent, KeyCode::Up);
     let _ = press(&mut agent, KeyCode::Char('j'));
     assert_eq!(
         cursor(&agent),
@@ -386,7 +388,7 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
 fn f7_enter_and_space_fold_a_title_and_a_click_unfolds_it() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::Home);
+    let _ = press(&mut agent, KeyCode::Left);
     assert!(sidebar_row(&draw(&mut agent), "Core instructions").contains("Core instructions"));
 
     assert!(matches!(
@@ -482,6 +484,7 @@ fn f7_shift_enter_on_a_message_row_sets_the_other_bulk_kinds_and_reverts() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::End);
+    let _ = press(&mut agent, KeyCode::Up);
     // The cursor sits on the last display row (MemoryCapture): the gesture leaves it,
     // and the user and assistant rows, exactly as they were.
     let before = never_bulk_toggled_snapshot(&agent);
@@ -595,7 +598,7 @@ fn f7_plus_and_minus_open_and_close_all_bulk_kinds_and_say_when_nothing_changes(
 fn f7_shift_enter_on_a_title_folds_the_other_sections_and_reverts() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::Home);
+    let _ = press(&mut agent, KeyCode::Left);
     let kinds_before: Vec<_> = MessageKind::settings_kinds()
         .iter()
         .map(|&kind| agent.scrollback.display_defaults().shown(kind))
@@ -626,6 +629,7 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::End);
+    let _ = press(&mut agent, KeyCode::Up);
     let before = never_bulk_toggled_snapshot(&agent);
 
     let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::CONTROL);
@@ -668,7 +672,7 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
     assert_eq!(
         cursor(&agent),
-        Some(SectionId::Display.row_line(MessageKind::settings_kinds().len() - 1)),
+        Some(SectionId::Display.row_line(MessageKind::settings_kinds().iter().position(|&kind| kind == MessageKind::MemoryCapture).unwrap())),
         "the cursor row stayed visible"
     );
 
@@ -964,7 +968,7 @@ fn f7_titles_summarise_their_section_while_folded() {
         sidebar_row(&buf, "\u{25BE} Context").contains(&format!("{categories}/{categories} ON"))
     );
 
-    let _ = press(&mut agent, KeyCode::Home);
+    let _ = press(&mut agent, KeyCode::Left);
     let _ = press(&mut agent, KeyCode::Enter);
     let buf = draw(&mut agent);
     assert!(
@@ -978,5 +982,104 @@ fn f7_titles_summarise_their_section_while_folded() {
     assert!(sidebar_row(&buf, "Message display").contains(&format!("{full}/{kinds} full")));
 }
 
+#[test]
+fn f7_todos_are_permanent_independent_and_use_the_existing_pane_owner() {
+    use xai_grok_shell::tools::{TodoItem, TodoStatus};
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.open_panel_settings_in(root.path());
+    agent.todo.update_todos(vec![TodoItem {
+        content: "Shared todo body".into(), status: TodoStatus::Pending,
+        priority: Default::default(), meta: None,
+    }]);
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    let buf = draw(&mut agent);
+    let rendered = screen(&buf);
+    assert!(rendered.find("Dock").unwrap() < rendered.find("Todos").unwrap());
+    assert!(rendered.find("Todos").unwrap() < rendered.find("Context").unwrap());
+    assert!(rendered.contains("□ Shared todo body"));
+    let _ = agent.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)), &ActionRegistry::defaults());
+    assert!(screen(&draw(&mut agent)).contains("\u{25BE} Todos"));
+    let _ = agent.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)), &ActionRegistry::defaults());
+    assert!(screen(&draw(&mut agent)).contains("Shared todo body"));
+    let buf = draw(&mut agent);
+    let _ = click_row(&mut agent, &buf, "\u{25BE} Todos");
+    assert!(!screen(&draw(&mut agent)).contains("Shared todo body"));
+    assert!(screen(&draw(&mut agent)).contains("\u{25B8} Todos"));
+    let buf = draw(&mut agent);
+    let _ = click_row(&mut agent, &buf, "\u{25B8} Todos");
+    assert!(screen(&draw(&mut agent)).contains("□ Shared todo body"));
+    agent.todo.update_todos(vec![]);
+    let rendered = screen(&draw(&mut agent));
+    assert!(rendered.contains("Todos"));
+    assert!(rendered.contains("No todo items."));
+}
+
+#[test]
+fn dock_placement_render_input_matrix_keeps_f7_sections_disjoint() {
+    use crate::views::dock::{self, DockPlacement};
+    let _theme = crate::theme::cache::pin_theme();
+    dock::set_enabled_for_test(false);
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.open_panel_settings_in(root.path());
+    agent.tasks.overlay.visible = true;
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    for placement in [DockPlacement::Off, DockPlacement::Top, DockPlacement::Bottom] {
+        agent.set_dock_placement(placement);
+        let buf = draw(&mut agent);
+        let rendered = screen(&buf);
+        assert!(rendered.contains("Dock") && rendered.contains("Todos"));
+        assert!(sidebar_row(&buf, "Placement").contains(placement.label()));
+        match placement {
+            DockPlacement::Off => {
+                assert!(agent.context_dock_geometry().is_none());
+                assert_eq!(agent.pane_areas.dock.height, 0);
+            }
+            DockPlacement::Top => assert!(agent.pane_areas.dock.bottom() <= agent.pane_areas.scrollback.y),
+            DockPlacement::Bottom => assert!(agent.pane_areas.dock.y >= agent.pane_areas.scrollback.bottom()),
+        }
+        if let Some((rect, offset)) = agent.context_dock_geometry() {
+            assert_eq!(offset, 0);
+            assert!(rect.y > row_of(&buf, "Placement").0);
+            assert!(rect.bottom() <= row_of(&buf, "Todos").0);
+        }
+        agent.restore_visible_focus(super::VisibleFocus::Pane(super::AgentPane::Scrollback));
+        let _ = press(&mut agent, KeyCode::Tab);
+        assert_eq!(agent.visible_focus(), super::VisibleFocus::Context);
+        let _ = press(&mut agent, KeyCode::Home);
+        let ContextSidebar::Open(open) = &agent.context_sidebar else { panic!("F7 stays open"); };
+        assert_eq!(open.cursor(), Some(SectionId::Dock.title_line()));
+        assert!(sidebar_row(&draw(&mut agent), "Dock").contains("Dock"));
+        let _ = press(&mut agent, KeyCode::Down);
+        let ContextSidebar::Open(open) = &agent.context_sidebar else { panic!("F7 stays open"); };
+        assert_eq!(open.cursor(), Some(SectionId::Dock.row_line(0)));
+        let _ = click_row(&mut agent, &buf, "Placement");
+        assert_eq!(dock::placement(), placement.next());
+    }
+}
+
+#[test]
+fn focused_off_context_row_preserves_its_neighbor_rows() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = open_sidebar();
+    let buf = draw(&mut agent);
+    let _ = click_row(&mut agent, &buf, "Core instructions");
+    let mut report = ready_report();
+    report.policy.set(ContextCategory::CoreInstructions, ContextSwitch::Excluded);
+    agent.context_policy_answered(Ok(report));
+    let rendered = screen(&draw(&mut agent));
+    assert!(sidebar_row(&draw(&mut agent), "Core instructions").contains("OFF"));
+    assert!(rendered.contains("Project rules"));
+    assert!(rendered.contains("Environment"));
+    assert!(!rendered.contains("The agent loses its base behavior"));
+}
+
 #[path = "context_sidebar_persistence_tests.rs"]
 mod persistence;
+
+#[path = "todo_preparation_tests.rs"]
+mod todo_preparation;

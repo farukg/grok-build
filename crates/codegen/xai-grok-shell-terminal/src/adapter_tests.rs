@@ -3,6 +3,13 @@
 use super::*;
 use xai_grok_tools::notification::types::ToolNotificationHandle;
 
+#[path = "adapter_resource_fixture.rs"]
+mod resources;
+#[path = "adapter_runtime_tests.rs"]
+mod runtime;
+#[path = "adapter_owned_runtime_tests.rs"]
+mod owned;
+
 fn make_tracked_task(command: &str) -> TrackedTask {
     TrackedTask {
         command: command.to_string(),
@@ -19,6 +26,41 @@ fn out(output: &str, exit_code: Option<i32>, signal: Option<String>) -> Snapshot
         exit_code,
         signal,
     }
+}
+
+#[tokio::test]
+async fn exit_watcher_withholds_publication_completion_and_release_until_enrollment_ack() {
+    use xai_grok_tools::notification::types::ToolNotification;
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let gateway = scripted_gateway(Vec::new(), sent.clone());
+    let tasks: TaskMap = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let (notifications, mut deliveries) = ToolNotificationHandle::acknowledged_channel();
+    let mut task = make_tracked_task("already exited");
+    task.owner_session_id = Some("owner".into());
+    task.notification_handle = notifications.clone();
+    tasks.lock().unwrap().insert("stable-execution".into(), task);
+    let producer = tokio::spawn({
+        let tasks = tasks.clone();
+        async move {
+            crate::exit_watcher::complete_and_release(
+                &gateway, &acp::SessionId::new("owner"), &acp::TerminalId::new("terminal"),
+                &tasks, &notifications, "stable-execution", out("final output", Some(0), None),
+            ).await;
+        }
+    });
+    let delivery = tokio::time::timeout(Duration::from_secs(5), deliveries.recv()).await.unwrap().unwrap();
+    assert!(matches!(delivery.notification, ToolNotification::TaskCompleted(ref snapshot) if snapshot.completed && snapshot.task_id == "stable-execution"));
+    let ack = delivery.acknowledgement.unwrap();
+    assert!(!producer.is_finished());
+    assert!(!tasks.lock().unwrap()["stable-execution"].completed);
+    assert!(sent.lock().unwrap().is_empty(), "client terminal cannot be released before the durable enrollment ACK");
+    assert!(deliveries.try_recv().is_err(), "terminal publication must not overtake enrollment");
+    ack.send(Ok(())).unwrap();
+    let publication = tokio::time::timeout(Duration::from_secs(5), deliveries.recv()).await.unwrap().unwrap();
+    assert!(publication.acknowledgement.is_none());
+    assert!(matches!(publication.notification, ToolNotification::TaskCompleted(ref snapshot) if snapshot.completed && snapshot.output == "final output"));
+    tokio::time::timeout(Duration::from_secs(5), producer).await.unwrap().unwrap();
+    assert!(tasks.lock().unwrap()["stable-execution"].completed);
 }
 
 #[test]
@@ -157,8 +199,7 @@ fn foreground_request(
     }
 }
 
-/// A foreground command that outlives the block keeps running and returns `signal = "auto_backgrounded"` with the output so far.
-/// The adapter tracks the terminal under the tool call id for `get_task` and the completion notification.
+/// The returned execution handle addresses the still-running command and its completion.
 #[tokio::test(start_paused = true)]
 async fn run_auto_backgrounds_when_the_block_expires() {
     use xai_grok_tools::notification::types::ToolNotification;
@@ -180,13 +221,16 @@ async fn run_auto_backgrounds_when_the_block_expires() {
     request.notification_handle = handle;
 
     let result = adapter.run(request).await.unwrap();
-    assert_eq!(result.signal.as_deref(), Some("auto_backgrounded"));
+    let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected execution handle"); };
+    assert_eq!(*reason, BackgroundReason::ForegroundBudget);
+    assert_ne!(handle.task_id, "call-1");
+    assert!(uuid::Uuid::parse_str(&handle.task_id).is_ok());
     assert!(!result.timed_out);
     assert_eq!(result.exit_code, None);
     assert_eq!(result.combined_output, "Compiling foo\n");
 
-    // BashTool reports the tool call id as the task id
-    let snapshot = adapter.get_task("call-1").await.expect("tracked task");
+    let snapshot = adapter.get_task(&handle.task_id).await.expect("tracked task");
+    assert_eq!(snapshot.task_id, handle.task_id);
     assert_eq!(snapshot.command, "cargo build");
     assert_eq!(snapshot.description.as_deref(), Some("build the crate"));
     assert_eq!(snapshot.owner_session_id.as_deref(), Some("owner-1"));
@@ -202,7 +246,7 @@ async fn run_auto_backgrounds_when_the_block_expires() {
             _ => continue,
         }
     };
-    assert_eq!(completed.task_id, "call-1");
+    assert_eq!(completed.task_id, handle.task_id);
     assert_eq!(completed.exit_code, Some(0));
     assert_eq!(
         std::fs::read_to_string(&output_file).unwrap(),
@@ -312,7 +356,10 @@ async fn run_auto_background_output_fetch_is_bounded() {
         .run(foreground_request(output_file, true))
         .await
         .unwrap();
-    assert_eq!(result.signal.as_deref(), Some("auto_backgrounded"));
+    let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected execution handle"); };
+    assert_eq!(*reason, BackgroundReason::ForegroundBudget);
+    assert_ne!(handle.task_id, "call-1");
+    assert!(uuid::Uuid::parse_str(&handle.task_id).is_ok());
     assert_eq!(result.combined_output, "");
     assert!(
         started.elapsed()
@@ -321,7 +368,7 @@ async fn run_auto_background_output_fetch_is_bounded() {
         started.elapsed()
     );
     assert!(
-        adapter.tasks.lock().unwrap().contains_key("call-1"),
+        adapter.tasks.lock().unwrap().contains_key(&handle.task_id),
         "still tracked"
     );
 }
@@ -417,7 +464,8 @@ async fn run_background_records_snapshots_and_threads_task_kind() {
     request.notification_handle = handle;
 
     let bg = adapter.run_background(request).await.unwrap();
-    assert_eq!(bg.task_id, "term-1");
+    assert_ne!(bg.task_id, "term-1");
+    assert!(uuid::Uuid::parse_str(&bg.task_id).is_ok());
     assert!(output_file.exists());
 
     let snapshot = adapter.get_task(&bg.task_id).await.unwrap();
@@ -456,7 +504,8 @@ fn output_unavailable_gateway() -> GatewaySender {
     GatewaySender::new(tx)
 }
 
-fn insert_task(adapter: &AcpTerminalAdapter, task_id: &str, task: TrackedTask) {
+fn insert_task(adapter: &AcpTerminalAdapter, task_id: &str, mut task: TrackedTask) {
+    task.terminal_id = acp::TerminalId::new(task_id);
     adapter
         .tasks
         .lock()
@@ -500,7 +549,7 @@ fn kill_wait_gateway(
                 AcpClientMessage::TerminalOutput(args) => {
                     sent.lock().unwrap().push("output");
                     let reply = match output_reply {
-                        None => Err(xai_acp_lib::acp_internal_error("unknown terminal")),
+                        None => Err(acp::Error::resource_not_found(Some("unknown terminal".to_string()))),
                         Some(exit_code) => {
                             let mut response =
                                 acp::TerminalOutputResponse::new(String::new(), false);
@@ -576,24 +625,26 @@ async fn kill_task_unknown_id_probe_transport_failure_still_kills() {
 
     let outcome = adapter.kill_task("probe-disconnected").await;
 
-    assert!(matches!(outcome, KillOutcome::Killed));
+    assert_eq!(outcome, KillOutcome::Indeterminate {
+        stage: KillStage::ProcessTermination, process_effect: KillProcessEffect::StopRequested,
+    });
     assert_eq!(*sent.lock().unwrap(), vec!["output", "kill"]);
 }
 
 #[tokio::test]
 async fn kill_task_tracked_running_kills_and_marks_explicitly_killed() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    insert_task(&adapter, "t-run", make_tracked_task("sleep 999"));
-
-    let outcome = adapter.kill_task("t-run").await;
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
+    fixture.until(0, |resource| resource.wait_requests == 1).await;
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::ModelTool).await;
 
     assert!(matches!(outcome, KillOutcome::Killed));
-    assert_eq!(*sent.lock().unwrap(), vec!["kill"]);
-    let snap = adapter.get_task("t-run").await.expect("tracked task");
+    fixture.until(0, |resource| resource.releases == 1).await;
+    assert_eq!(fixture.stats(0).unwrap().kill_requests, 1);
+    assert_eq!(fixture.stats(0).unwrap().wait_requests, 1);
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
+    assert_eq!(snap.signal.as_deref(), Some("SIGTERM"));
     assert!(snap.explicitly_killed);
     assert!(
         snap.kill_result_delivered,
@@ -603,19 +654,14 @@ async fn kill_task_tracked_running_kills_and_marks_explicitly_killed() {
 
 #[tokio::test]
 async fn kill_task_with_source_client_ui_does_not_mark_delivered() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    insert_task(&adapter, "t-ui", make_tracked_task("sleep 999"));
-
-    let outcome = adapter
-        .kill_task_with_source("t-ui", KillSource::ClientUi)
-        .await;
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::ClientUi).await;
 
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-ui").await.expect("tracked task");
+    fixture.until(0, |resource| resource.releases == 1).await;
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(snap.explicitly_killed);
     assert!(
         !snap.kill_result_delivered,
@@ -625,41 +671,39 @@ async fn kill_task_with_source_client_ui_does_not_mark_delivered() {
 
 #[tokio::test]
 async fn kill_task_with_source_teardown_marks_delivered() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    insert_task(&adapter, "t-td", make_tracked_task("sleep 999"));
-
-    let outcome = adapter
-        .kill_task_with_source("t-td", KillSource::Teardown)
-        .await;
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::Teardown).await;
 
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-td").await.expect("tracked task");
+    fixture.until(0, |resource| resource.releases == 1).await;
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(snap.explicitly_killed);
     assert!(snap.kill_result_delivered);
 }
 
 #[tokio::test]
 async fn kill_task_with_source_client_ui_live_waiter_marks_delivered() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    let mut tracked = make_tracked_task("sleep 999");
-    tracked.block_waited = true;
-    tracked.live_waiters = 1;
-    insert_task(&adapter, "t-wait", tracked);
-
-    let outcome = adapter
-        .kill_task_with_source("t-wait", KillSource::ClientUi)
-        .await;
-
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = fixture.adapter.clone();
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
+    let waiter = tokio::spawn({
+        let adapter = adapter.clone();
+        let id = handle.task_id.clone();
+        async move { adapter.wait_for_completion(&id, Some(Duration::from_secs(30))).await }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while adapter.tasks.lock().unwrap()[&handle.task_id].live_waiters != 1 {
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::ClientUi).await;
+    let observed = waiter.await.unwrap().unwrap();
+    assert!(observed.completed);
+    assert!(observed.block_waited);
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-wait").await.expect("tracked task");
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(
         snap.kill_result_delivered,
         "UI kill with a live waiter must mark delivered"
@@ -668,22 +712,19 @@ async fn kill_task_with_source_client_ui_live_waiter_marks_delivered() {
 
 #[tokio::test]
 async fn kill_task_with_source_client_ui_stale_block_waited_does_not_mark_delivered() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    let mut tracked = make_tracked_task("sleep 999");
-    tracked.block_waited = true;
-    tracked.live_waiters = 0;
-    insert_task(&adapter, "t-stale", tracked);
-
-    let outcome = adapter
-        .kill_task_with_source("t-stale", KillSource::ClientUi)
-        .await;
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
+    {
+        let wait = adapter.wait_for_completion(&handle.task_id, Some(Duration::from_secs(30)));
+        tokio::pin!(wait);
+        assert!(tokio::time::timeout(Duration::from_millis(50), &mut wait).await.is_err());
+    }
+    assert_eq!(adapter.tasks.lock().unwrap()[&handle.task_id].live_waiters, 0);
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::ClientUi).await;
 
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-stale").await.expect("tracked task");
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(
         !snap.kill_result_delivered,
         "cancelled ACP wait must not count as delivered"
@@ -693,15 +734,12 @@ async fn kill_task_with_source_client_ui_stale_block_waited_does_not_mark_delive
 
 #[tokio::test]
 async fn wait_for_completion_increments_live_waiters_and_drop_decrements() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    insert_task(&adapter, "t-inc", make_tracked_task("sleep 999"));
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
 
     {
-        let wait = adapter.wait_for_completion("t-inc", Some(Duration::from_secs(30)));
+        let wait = adapter.wait_for_completion(&handle.task_id, Some(Duration::from_secs(30)));
         tokio::pin!(wait);
         assert!(
             tokio::time::timeout(Duration::from_millis(50), &mut wait)
@@ -714,7 +752,7 @@ async fn wait_for_completion_increments_live_waiters_and_drop_decrements() {
                 .tasks
                 .lock()
                 .unwrap()
-                .get("t-inc")
+                .get(&handle.task_id)
                 .map(|t| t.live_waiters),
             Some(1),
             "wait_for_completion must increment live_waiters"
@@ -725,17 +763,15 @@ async fn wait_for_completion_increments_live_waiters_and_drop_decrements() {
             .tasks
             .lock()
             .unwrap()
-            .get("t-inc")
+            .get(&handle.task_id)
             .map(|t| t.live_waiters),
         Some(0),
         "dropping the wait must decrement live_waiters"
     );
 
-    let outcome = adapter
-        .kill_task_with_source("t-inc", KillSource::ClientUi)
-        .await;
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::ClientUi).await;
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-inc").await.expect("tracked task");
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(
         !snap.kill_result_delivered,
         "ClientUi kill after the waiter dropped must not count as delivered"
@@ -744,14 +780,11 @@ async fn wait_for_completion_increments_live_waiters_and_drop_decrements() {
 
 #[tokio::test]
 async fn wait_for_completion_live_waiter_makes_client_ui_kill_delivered() {
-    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let adapter = AcpTerminalAdapter::new(
-        kill_wait_gateway(Some(None), true, Arc::clone(&sent)),
-        acp::SessionId::new("s"),
-    );
-    insert_task(&adapter, "t-live", make_tracked_task("sleep 999"));
+    let fixture = resources::Fixture::new(Vec::new());
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
 
-    let wait = adapter.wait_for_completion("t-live", Some(Duration::from_secs(30)));
+    let wait = adapter.wait_for_completion(&handle.task_id, Some(Duration::from_secs(30)));
     tokio::pin!(wait);
     assert!(
         tokio::time::timeout(Duration::from_millis(50), &mut wait)
@@ -764,16 +797,17 @@ async fn wait_for_completion_live_waiter_makes_client_ui_kill_delivered() {
             .tasks
             .lock()
             .unwrap()
-            .get("t-live")
+            .get(&handle.task_id)
             .map(|t| t.live_waiters),
         Some(1)
     );
 
-    let outcome = adapter
-        .kill_task_with_source("t-live", KillSource::ClientUi)
-        .await;
+    let outcome = adapter.kill_task_with_source(&handle.task_id, KillSource::ClientUi).await;
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-live").await.expect("tracked task");
+    let observed = wait.await.unwrap();
+    assert!(observed.completed);
+    assert!(observed.block_waited);
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(
         snap.kill_result_delivered,
         "ClientUi kill while wait_for_completion is live must mark delivered"
@@ -781,31 +815,13 @@ async fn wait_for_completion_live_waiter_makes_client_ui_kill_delivered() {
 }
 
 /// A waiter dropped while the kill RPC is in flight must not count as delivered.
-/// ACP has no oneshot, so we re-sample `live_waiters` after the await (local backend uses `reply.send().is_ok()`).
 #[tokio::test]
 async fn client_ui_kill_does_not_mark_delivered_if_waiter_drops_during_kill() {
-    use xai_acp_lib::AcpClientMessage;
+    let fixture = resources::Fixture::new(vec![resources::Plan::HoldKill]);
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
 
-    let (release_kill, hold_kill) = tokio::sync::oneshot::channel::<()>();
-    let kill_seen = std::sync::Arc::new(tokio::sync::Notify::new());
-    let kill_seen_gateway = Arc::clone(&kill_seen);
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        let mut hold_kill = Some(hold_kill);
-        while let Some(msg) = rx.recv().await {
-            if let AcpClientMessage::KillTerminalCommand(args) = msg {
-                kill_seen_gateway.notify_one();
-                if let Some(hold) = hold_kill.take() {
-                    let _ = hold.await;
-                }
-                let _ = args.response_tx.send(Ok(acp::KillTerminalResponse::new()));
-            }
-        }
-    });
-    let adapter = AcpTerminalAdapter::new(GatewaySender::new(tx), acp::SessionId::new("s"));
-    insert_task(&adapter, "t-race", make_tracked_task("sleep 999"));
-
-    let mut wait = Box::pin(adapter.wait_for_completion("t-race", Some(Duration::from_secs(30))));
+    let mut wait = Box::pin(adapter.wait_for_completion(&handle.task_id, Some(Duration::from_secs(30))));
     assert!(
         tokio::time::timeout(Duration::from_millis(50), wait.as_mut())
             .await
@@ -817,22 +833,22 @@ async fn client_ui_kill_does_not_mark_delivered_if_waiter_drops_during_kill() {
             .tasks
             .lock()
             .unwrap()
-            .get("t-race")
+            .get(&handle.task_id)
             .map(|t| t.live_waiters),
         Some(1)
     );
 
-    let kill = adapter.kill_task_with_source("t-race", KillSource::ClientUi);
+    let kill = adapter.kill_task_with_source(&handle.task_id, KillSource::ClientUi);
     tokio::pin!(kill);
     tokio::select! {
         biased;
-        () = kill_seen.notified() => {}
+        () = fixture.until(0, |resource| resource.held_kills == 1) => {}
         _ = &mut kill => panic!("kill finished before the waiter was dropped"),
     }
     drop(wait);
     {
         let tasks = adapter.tasks.lock().unwrap();
-        let Some(task) = tasks.get("t-race") else {
+        let Some(task) = tasks.get(&handle.task_id) else {
             panic!("missing task t-race");
         };
         assert_eq!(task.live_waiters, 0);
@@ -845,10 +861,10 @@ async fn client_ui_kill_does_not_mark_delivered_if_waiter_drops_during_kill() {
             "ClientUi has not finished the RPC yet"
         );
     }
-    let _ = release_kill.send(());
+    fixture.open_kill(0);
     let outcome = kill.await;
     assert!(matches!(outcome, KillOutcome::Killed));
-    let snap = adapter.get_task("t-race").await.expect("tracked task");
+    let snap = adapter.get_task(&handle.task_id).await.expect("tracked task");
     assert!(
         !snap.kill_result_delivered,
         "ClientUi kill must not count a waiter that dropped during the RPC"
@@ -859,52 +875,36 @@ async fn client_ui_kill_does_not_mark_delivered_if_waiter_drops_during_kill() {
     );
 }
 
-/// ModelTool must mark delivered *before* the kill RPC returns, so an exit-watcher TaskCompleted in that window still suppresses auto-wake.
+/// Dispatch alone cannot prove that terminal output reached the model.
 #[tokio::test]
-async fn model_tool_kill_marks_delivered_before_kill_rpc_returns() {
-    use xai_acp_lib::AcpClientMessage;
+async fn model_tool_kill_marks_delivered_only_after_terminal_enrollment() {
+    let fixture = resources::Fixture::new(vec![resources::Plan::HoldKill]);
+    let adapter = &fixture.adapter;
+    let handle = adapter.run_background(fixture.request("owner", ToolNotificationHandle::noop())).await.unwrap();
 
-    let (release_kill, hold_kill) = tokio::sync::oneshot::channel::<()>();
-    let kill_seen = std::sync::Arc::new(tokio::sync::Notify::new());
-    let kill_seen_gateway = Arc::clone(&kill_seen);
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        let mut hold_kill = Some(hold_kill);
-        while let Some(msg) = rx.recv().await {
-            if let AcpClientMessage::KillTerminalCommand(args) = msg {
-                kill_seen_gateway.notify_one();
-                if let Some(hold) = hold_kill.take() {
-                    let _ = hold.await;
-                }
-                let _ = args.response_tx.send(Ok(acp::KillTerminalResponse::new()));
-            }
-        }
-    });
-    let adapter = AcpTerminalAdapter::new(GatewaySender::new(tx), acp::SessionId::new("s"));
-    insert_task(&adapter, "t-model", make_tracked_task("sleep 999"));
-
-    let kill = adapter.kill_task_with_source("t-model", KillSource::ModelTool);
+    let kill = adapter.kill_task_with_source(&handle.task_id, KillSource::ModelTool);
     tokio::pin!(kill);
     tokio::select! {
         biased;
-        () = kill_seen.notified() => {}
+        () = fixture.until(0, |resource| resource.held_kills == 1) => {}
         _ = &mut kill => panic!("kill finished before mid-RPC snapshot"),
     }
     {
         let tasks = adapter.tasks.lock().unwrap();
-        let Some(task) = tasks.get("t-model") else {
+        let Some(task) = tasks.get(&handle.task_id) else {
             panic!("missing task t-model");
         };
         assert!(task.explicitly_killed);
-        assert!(
-            task.kill_result_delivered,
-            "ModelTool must suppress auto-wake while the kill RPC is in flight"
-        );
-        let snap = task.to_snapshot("t-model", out("", None, None));
-        assert!(snap.is_auto_wake_suppressed());
+        assert!(!task.kill_result_delivered, "an unresolved kill is not terminal observation");
+        let snap = task.to_snapshot(&handle.task_id, out("", None, None));
+        assert!(!snap.is_auto_wake_suppressed());
     }
-    let _ = release_kill.send(());
-    assert!(matches!(kill.await, KillOutcome::Killed));
+    fixture.open_kill(0);
+    let outcome = kill.await;
+    assert!(matches!(outcome, KillOutcome::Killed));
+    assert!(adapter.tasks.lock().unwrap()[&handle.task_id].kill_result_delivered);
+    fixture.until(0, |resource| resource.releases == 1).await;
+    assert!(fixture.stats(0).unwrap().exited);
 }
 
 #[tokio::test]
@@ -944,7 +944,9 @@ async fn kill_task_untracked_live_terminal_still_kills() {
 
     let outcome = adapter.kill_task("resumed-live").await;
 
-    assert!(matches!(outcome, KillOutcome::Killed));
+    assert_eq!(outcome, KillOutcome::Indeterminate {
+        stage: KillStage::ProcessTermination, process_effect: KillProcessEffect::StopRequested,
+    });
     assert_eq!(*sent.lock().unwrap(), vec!["output", "kill"]);
 }
 

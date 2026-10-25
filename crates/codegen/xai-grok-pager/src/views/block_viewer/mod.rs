@@ -32,7 +32,6 @@ use crate::views::shortcuts_bar::HintItem;
 
 mod selection;
 
-pub(crate) use selection::format_blockquote;
 pub use selection::{TextDrag, TextEndpoint};
 
 /// A single line of content displayed in the block viewer's ListPane.
@@ -1062,7 +1061,6 @@ impl BlockViewerPane {
     pub fn shortcuts_hints(&self) -> Vec<HintItem> {
         let mut hints = vec![
             HintItem::new(crate::key!(Esc), "close"),
-            HintItem::new(crate::key!(Enter), "quote"),
             HintItem::new(crate::key!('/'), "search"),
             HintItem::new(crate::key!('f'), "filter"),
             HintItem::new(crate::key!('v'), "select"),
@@ -1170,6 +1168,9 @@ impl BlockViewerPane {
     /// Handle a key event while the viewer is focused. Returns `true` if the key was consumed, `false`
     /// if it should bubble up. Close keys should be checked via `is_close_key` before calling this.
     pub fn handle_key(&mut self, key: &KeyEvent) -> bool {
+        if key.code == KeyCode::Enter && self.list_state.input_mode().is_none() {
+            return true;
+        }
         if matches!(key.code, KeyCode::Esc)
             && self.list_state.input_mode().is_none()
             && !self.list_state.visual_mode

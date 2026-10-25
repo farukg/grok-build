@@ -183,6 +183,39 @@ impl SyntheticReason {
         Self::Primary
     }
 
+    /// The serde wire string for this variant (`snake_case`), so display-side consumers (shell chunk meta,
+    /// pager kind routing) stamp and read one canonical spelling instead of hand-written literals.
+    /// Must stay byte-identical to serde's serialization; pinned by tests.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Primary => "primary",
+            Self::CompactionMeta => "compaction_meta",
+            Self::SystemReminder => "system_reminder",
+            Self::LengthContinue => "length_continue",
+            Self::ProjectInstructions => "project_instructions",
+            Self::AutoContinue => "auto_continue",
+            Self::AutoRecovery => "auto_recovery",
+            Self::Interjection => "interjection",
+            Self::AgentMessage => "agent_message",
+            Self::ParentHumanMessage => "parent_human_message",
+            Self::TaskCompleted => "task_completed",
+            Self::SubagentCompleted => "subagent_completed",
+            Self::NotificationDrain => "notification_drain",
+            Self::GoalSummary => "goal_summary",
+            Self::GoalClassifierNudge => "goal_classifier_nudge",
+            Self::SchedulerFired => "scheduler_fired",
+            Self::StopHookFeedback => "stop_hook_feedback",
+            Self::WorkingDirectorySwitch => "working_directory_switch",
+            Self::SessionPrefix => "session_prefix",
+            Self::DirectBash => "direct_bash",
+            Self::GoalSetup => "goal_setup",
+            Self::SkillCatalog => "skill_catalog",
+            Self::McpCatalog => "mcp_catalog",
+            Self::Unknown => "unknown",
+        }
+    }
+
     pub fn is_human(&self) -> bool {
         *self == Self::Human
     }
@@ -1215,6 +1248,22 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: SyntheticReason::AgentMessage,
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+            sections: Sections::Whole,
+        })
+    }
+
+    /// Human-authored text relayed from a parent session.
+    /// Distinct from [`Self::agent_message`] so model-facing prep (agent-authorship labels, compaction anchors)
+    /// never treats human input as model-authored.
+    pub fn parent_human_message(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: SyntheticReason::ParentHumanMessage,
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -2511,6 +2560,58 @@ mod tests {
         let mut sys = ConversationItem::system("sp");
         sys.set_prior_turn_interrupt(PriorTurnInterrupt::MidTurnAbort);
         assert_matches!(sys, ConversationItem::System(_));
+    }
+
+    /// `wire_name()` is the display-side spelling of the serde value; the two must never drift.
+    #[test]
+    fn synthetic_reason_wire_name_matches_serde_serialization() {
+        for variant in [
+            SyntheticReason::Human,
+            SyntheticReason::Primary,
+            SyntheticReason::CompactionMeta,
+            SyntheticReason::SystemReminder,
+            SyntheticReason::LengthContinue,
+            SyntheticReason::ProjectInstructions,
+            SyntheticReason::AutoContinue,
+            SyntheticReason::AutoRecovery,
+            SyntheticReason::Interjection,
+            SyntheticReason::AgentMessage,
+            SyntheticReason::ParentHumanMessage,
+            SyntheticReason::TaskCompleted,
+            SyntheticReason::SubagentCompleted,
+            SyntheticReason::NotificationDrain,
+            SyntheticReason::GoalSummary,
+            SyntheticReason::GoalClassifierNudge,
+            SyntheticReason::SchedulerFired,
+            SyntheticReason::StopHookFeedback,
+            SyntheticReason::WorkingDirectorySwitch,
+            SyntheticReason::SessionPrefix,
+            SyntheticReason::DirectBash,
+            SyntheticReason::GoalSetup,
+            SyntheticReason::SkillCatalog,
+            SyntheticReason::McpCatalog,
+        ] {
+            let serde_wire = serde_json::to_string(&variant).expect("synthetic reason serializes");
+            let expected = format!("\"{}\"", variant.wire_name());
+            assert_eq!(serde_wire, expected, "{} must match its wire_name", variant.wire_name());
+            let back: SyntheticReason = serde_json::from_str(&expected).expect("wire name parses");
+            assert_eq!(back, variant);
+        }
+    }
+
+    /// The reserved kind is now produced distinctly: parent-human text must not carry the
+    /// agent-authorship classification it shared before.
+    #[test]
+    fn parent_human_message_item_carries_distinct_reason() {
+        let item = ConversationItem::parent_human_message("relay this");
+        assert_matches!(
+            item,
+            ConversationItem::User(UserItem {
+                synthetic_reason: SyntheticReason::ParentHumanMessage,
+                ..
+            })
+        );
+        assert!(item.synthetic_reason().is_some_and(|r| r.starts_prompt_turn()));
     }
 
     #[test]

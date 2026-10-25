@@ -1,5 +1,8 @@
 use super::*;
 use crate::scrollback::blocks::KILLED_SIGNAL;
+use xai_grok_shell::extensions::background_task::{
+    BackgroundTaskRow, BackgroundTaskStatus as WireBackgroundTaskStatus,
+};
 use xai_grok_tools::computer::types::SESSION_RESTART_SIGNAL;
 
 /// Route a `ToolCallUpdate` stdout chunk to the central bg task store.
@@ -96,6 +99,17 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
         Some(t) => t,
         None => return false,
     };
+
+    // Replay/live re-delivery of the same persisted event carries the same eventId; applying it
+    // twice would overwrite a recorded terminal state or re-push a duplicate "Task started" block.
+    if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+        tracing::debug!(
+            task_id = %task_id,
+            event_id = meta.event_id.as_deref(),
+            "duplicate TaskBackgrounded re-delivery dropped"
+        );
+        return false;
+    }
 
     tracing::info!(
         tool_call_id = %tool_call_id,
@@ -246,6 +260,17 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
         None => return false,
     };
 
+    // Monitor events append stdout; an exact-id re-delivery must not append the line twice.
+    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+        tracing::debug!(
+            task_id = %task_id,
+            event_id = meta.event_id.as_deref(),
+            "duplicate MonitorEvent re-delivery dropped"
+        );
+        return false;
+    }
+
     let session = &mut agent.session;
 
     // Append the event text to the bg task's stdout buffer so the block viewer shows it (same as bash output chunks for bg tasks)
@@ -284,11 +309,26 @@ pub(super) fn handle_scheduled_task_created(
         .get_mut(&agent_id)
         .expect("find_session_match returned an existing AgentId");
 
-    // Remove provisional entries (created by /loop for instant UI feedback).
-    agent
-        .session
-        .scheduled_tasks
-        .retain(|k, _| !k.starts_with("provisional-"));
+    // Scheduler re-announces (actor restart) re-deliver rows this client may already hold; the
+    // task_id merge below is idempotent, but an exact-id duplicate is still not new activity.
+    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+        tracing::debug!(
+            task_id = %task_id,
+            event_id = meta.event_id.as_deref(),
+            "duplicate ScheduledTaskCreated re-delivery dropped"
+        );
+        return false;
+    }
+
+    // Replace only the provisional rows this confirmed loop owns (same prompt + schedule). The
+    // stable task identity keys the reconciliation; a blanket provisional purge would also drop a
+    // sibling `/loop`'s instant-feedback row until its own confirmation arrives.
+    agent.session.scheduled_tasks.retain(|_, info| {
+        !(info.task_id.starts_with("provisional-")
+            && info.prompt == prompt
+            && info.human_schedule == human_schedule)
+    });
 
     match agent.session.scheduled_tasks.entry(task_id.clone()) {
         Entry::Occupied(mut e) => {
@@ -337,6 +377,16 @@ pub(super) fn handle_scheduled_task_fired(notif: &acp::ExtNotification, app: &mu
         .agents
         .get_mut(&agent_id)
         .expect("find_session_match returned an existing AgentId");
+
+    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+        tracing::debug!(
+            task_id = %task_id,
+            event_id = meta.event_id.as_deref(),
+            "duplicate ScheduledTaskFired re-delivery dropped"
+        );
+        return false;
+    }
 
     // An unknown task here is likely a regression of the shell-side re-announce on session restore
     // Insert a fresh entry from the fire payload so the tasks pane still shows the loop
@@ -389,12 +439,23 @@ pub(super) fn handle_scheduled_task_deleted(
         .get_mut(&agent_id)
         .expect("find_session_match returned an existing AgentId");
 
+    // The removal below mutates pane state and may push an expiry notice; check admission first so
+    // an exact-id re-delivery cannot re-remove (or re-notice) an already-processed deletion.
+    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+        tracing::debug!(
+            task_id = %task_id,
+            event_id = meta.event_id.as_deref(),
+            "duplicate ScheduledTaskDeleted re-delivery dropped"
+        );
+        return false;
+    }
+
     let info = agent.session.scheduled_tasks.remove(&task_id);
 
     // Expiry is the only removal nobody asked for, so it alone leaves a transcript record (the tombstone replays on resume)
     // The notice only fires when the task entry was actually removed, so a re-delivered tombstone is a no-op
     // The replay gate keeps a misrouted replay from duplicating history on a live transcript
-    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
     if reason == ScheduledTaskRemovedReason::Expired
         && (!meta.is_replay || agent.accepts_replayed_update())
         && let Some(info) = info
@@ -488,6 +549,17 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
         Some(t) => t,
         None => return false,
     };
+
+    // A re-delivered completion would push a second "Task completed/failed" block and re-finalize
+    // the pane row; the eventId proves it is the same persisted event, not a new terminal.
+    if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
+        tracing::debug!(
+            task_id = %task_snapshot.task_id,
+            event_id = meta.event_id.as_deref(),
+            "duplicate TaskCompleted re-delivery dropped"
+        );
+        return false;
+    }
 
     let task_id = &task_snapshot.task_id;
     let exit_code = task_snapshot.exit_code;
@@ -639,4 +711,132 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     }
 
     is_active
+}
+
+/// Parse an rfc3339 wire timestamp into `SystemTime`; `None` when malformed
+/// (the caller then keeps whatever local value it already holds).
+fn snapshot_system_time(timestamp: &str) -> Option<std::time::SystemTime> {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|parsed| std::time::SystemTime::from(parsed.with_timezone(&chrono::Utc)))
+}
+
+fn snapshot_status(status: WireBackgroundTaskStatus) -> BgTaskStatus {
+    match status {
+        WireBackgroundTaskStatus::Running => BgTaskStatus::Running,
+        WireBackgroundTaskStatus::Completed => BgTaskStatus::Done,
+        WireBackgroundTaskStatus::Failed => BgTaskStatus::Failed,
+    }
+}
+
+/// Apply an authoritative `SessionUpdate::BackgroundTasks` snapshot to the central bg-task
+/// store: replace-merge by `task_id` and, on a complete (`!truncated`) snapshot, drop rows the
+/// leader registry no longer holds. This is the reconciliation source for a freshly attached CLI:
+/// replay rebuilds history incrementals, the snapshot makes the pane equal the leader's registry
+/// truth — surfacing still-running tasks the replay never showed and clearing ghost rows whose
+/// registry entries died with an earlier session.
+///
+/// Pane/state only: terminal "Task completed/failed" blocks still come from the incremental
+/// `x.ai/task_completed` path (live or replayed), so this never pushes scrollback entries — it
+/// only finishes a still-animated "Task started" entry the snapshot says has ended.
+pub(super) fn apply_background_tasks_snapshot(
+    agent: &mut AgentView,
+    tasks: &[BackgroundTaskRow],
+    truncated: bool,
+    is_replay: bool,
+) -> bool {
+    let mut changed = false;
+    let snapshot_ids: std::collections::HashSet<String> =
+        tasks.iter().map(|row| row.task_id.clone()).collect();
+    let mut entries_to_finish: Vec<crate::scrollback::entry::EntryId> = Vec::new();
+
+    for row in tasks {
+        let status = snapshot_status(row.status);
+        let start_time =
+            snapshot_system_time(&row.started_at).unwrap_or_else(std::time::SystemTime::now);
+        let end_time = row.ended_at.as_deref().and_then(snapshot_system_time);
+        let non_blank = |value: &Option<String>| {
+            value.as_deref().filter(|value| !value.trim().is_empty())
+        };
+        match agent.session.bg_tasks.entry(row.task_id.clone()) {
+            std::collections::btree_map::Entry::Occupied(mut occupied) => {
+                let task = occupied.get_mut();
+                if task.status != status {
+                    task.status = status;
+                    changed = true;
+                    if status != BgTaskStatus::Running {
+                        if let Some(entry_id) = task.scrollback_entry_id {
+                            entries_to_finish.push(entry_id);
+                        }
+                    }
+                }
+                task.start_time = start_time;
+                task.end_time = end_time.or(task.end_time);
+                task.exit_code = row.exit_code;
+                task.signal = row.signal.clone();
+                if task.output_file.is_empty()
+                    && let Some(output_file) = row.output_file.as_deref()
+                {
+                    task.output_file = output_file.to_owned();
+                }
+                if task.description.is_none()
+                    && let Some(description) = non_blank(&row.description)
+                {
+                    task.description = Some(description.to_owned());
+                    changed = true;
+                }
+                if !task.is_monitor
+                    && row.kind == xai_grok_tools::computer::types::TaskKind::Monitor
+                {
+                    task.is_monitor = true;
+                    changed = true;
+                }
+            }
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                vacant.insert(BgTaskState {
+                    task_id: row.task_id.clone(),
+                    tool_call_id: String::new(),
+                    command: row.command.clone(),
+                    description: non_blank(&row.description).map(str::to_owned),
+                    cwd: row.cwd.clone(),
+                    output_file: row.output_file.clone().unwrap_or_default(),
+                    status,
+                    start_time,
+                    end_time,
+                    exit_code: row.exit_code,
+                    signal: row.signal.clone(),
+                    stdout: String::new(),
+                    stdout_line_count: 0,
+                    truncated: false,
+                    pending_kill: false,
+                    kill_requested_at: None,
+                    scrollback_entry_id: None,
+                    is_monitor: row.kind == xai_grok_tools::computer::types::TaskKind::Monitor,
+                    restored_from_replay: is_replay,
+                });
+                changed = true;
+            }
+        }
+    }
+
+    if !truncated {
+        let before = agent.session.bg_tasks.len();
+        agent
+            .session
+            .bg_tasks
+            .retain(|task_id, _| snapshot_ids.contains(task_id.as_str()));
+        if agent.session.bg_tasks.len() != before {
+            changed = true;
+        }
+        agent
+            .session
+            .bg_tool_call_to_task
+            .retain(|_, task_id| agent.session.bg_tasks.contains_key(task_id));
+    }
+
+    for entry_id in entries_to_finish {
+        agent.scrollback.finish_running(entry_id);
+    }
+
+    changed
 }

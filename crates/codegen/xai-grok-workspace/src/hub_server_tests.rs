@@ -1,4 +1,6 @@
 use super::*;
+#[path = "hub_server_kill_tests.rs"]
+mod kill_transport;
 use crate::capability::CapabilityMode;
 use crate::handle::tests::{
     background_capable_cfg, make_confining_handle, make_handle, start_background_sleep,
@@ -475,7 +477,7 @@ async fn seed_scheduled_task(toolset: &FinalizedToolset, id: &str) {
 }
 #[tokio::test]
 async fn kill_task_rpc_terminates_outstanding_background_task() {
-    use xai_grok_workspace_types::rpc::workspace::{KillTaskOutcome, KillTaskResponse};
+    use xai_grok_workspace_types::rpc::workspace::{KillOutcome, KillTaskResponse};
     let handle = make_handle();
     let cfg = background_capable_cfg();
     let session = handle
@@ -505,9 +507,9 @@ async fn kill_task_rpc_terminates_outstanding_background_task() {
     }
     let killed = kill(&handler, &bg.task_id).await;
     assert_eq!(killed.task_id, bg.task_id);
-    assert_eq!(killed.outcome, KillTaskOutcome::Killed);
+    assert_eq!(killed.outcome, KillOutcome::Killed);
     let missing = kill(&handler, "no-such-task").await;
-    assert_eq!(missing.outcome, KillTaskOutcome::NotFound);
+    assert_eq!(missing.outcome, KillOutcome::NotFound);
     let snap_value = handler
         .dispatch(
             "workspace.tasks_snapshot",
@@ -581,11 +583,16 @@ async fn tasks_snapshot_excludes_foreground_and_completed_processes() {
             .await,
         "expected FG process snap-fg-task to background"
     );
+    let foreground = fg_join.await.expect("foreground caller").expect("background disposition");
+    let xai_grok_tools::computer::types::RunDisposition::Backgrounded { handle: foreground, .. } = foreground.disposition else {
+        panic!("foreground must return its registered background handle");
+    };
+    assert_ne!(foreground.task_id, "snap-fg-task");
     let snap = snapshot(&handler).await;
     assert!(
         snap.background_tasks
             .iter()
-            .any(|t| t.task_id == "snap-fg-task"),
+            .any(|t| t.task_id == foreground.task_id),
         "backgrounded former FG must appear: {:?}",
         snap.background_tasks
     );
@@ -656,13 +663,12 @@ async fn tasks_snapshot_excludes_foreground_and_completed_processes() {
     assert!(
         snap.background_tasks
             .iter()
-            .any(|t| t.task_id == "snap-fg-task"),
+            .any(|t| t.task_id == foreground.task_id),
         "transitioned FG should still be present: {:?}",
         snap.background_tasks
     );
     session.terminal_backend().kill_task(&bg.task_id).await;
-    session.terminal_backend().kill_task("snap-fg-task").await;
-    let _ = fg_join.await;
+    session.terminal_backend().kill_task(&foreground.task_id).await;
 }
 #[tokio::test]
 async fn handle_evict_keeps_queue_when_other_sessions_live() {
