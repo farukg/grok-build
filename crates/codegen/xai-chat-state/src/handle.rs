@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use tokio::sync::{mpsc, oneshot};
 use xai_grok_sampling_types::{
-    ConversationItem, ConversationRequest, DanglingToolCallReason, SamplingConfig, TokenUsage,
+    ConversationItem, DanglingToolCallReason, SamplingConfig, TokenUsage,
     ToolSpec, TraceContext,
 };
 

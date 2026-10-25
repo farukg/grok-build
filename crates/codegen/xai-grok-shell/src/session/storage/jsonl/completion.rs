@@ -38,7 +38,7 @@ impl JsonlStorageAdapter {
             }
             apply_patch_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), &SummaryPatch {
                 completion_mutation: Some(CompletionMutation::Suppress { ids, reason }), ..Default::default()
-            })
+            }).map(|_| ())
         }).await.map_err(io::Error::other)?
     }
 

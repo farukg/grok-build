@@ -1,10 +1,12 @@
 # Owner-takeover execution plan (Krillin, updated 2026-10-25)
 
-Status: source integration of preserved owner and already-started work is complete
-on `main` at `7ec4c932653b9a777db24e32b3200935d777b5e3` (parents `875ff73c` and
-`e7ceeb50`). Its release build and staging remain pending. Record artifact proof only
-from the actual GitHub release Run/Commit delivery record. No new feature or review
-project is authorized; no runtime acceptance is established.
+Status: started work was integrated at `7ec4c932653b9a777db24e32b3200935d777b5e3`;
+release build [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
+failed at `5f50af26` with four shell compiler errors. Scoped S/D integration corrections
+and removal of two obsolete chat-state imports are underway on `main`. No checks or
+tests were launched. Release success, staging and runtime acceptance remain pending;
+record artifact proof only from a successful actual GitHub release Run/Commit record.
+No new feature or review project is authorized.
 
 **Verification boundary: no checks, tests, formatters, local builds, or `sig build`;
 no sig-orch communications.** This also forbids compiler/formatter verification
@@ -17,9 +19,12 @@ integration. Historical local-guard instructions are superseded.
 - Preserved canonical `main` commit: `875ff73c`.
 - Preserved owner commit: `e7ceeb50` in
   `/home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover`.
-  Integrated `main` commit is `7ec4c932653b9a777db24e32b3200935d777b5e3` with
-  parents `875ff73c` and `e7ceeb50`. Its release build is pending; neither
-  preservation commit is presented as the final integrated SHA.
+  Source integration began with `7ec4c932653b9a777db24e32b3200935d777b5e3`;
+  release run `40242190071` failed at `5f50af26`. Four shell compile errors were
+  reported: missing `fs` import, obsolete `observation.text`, sibling visibility for
+  `project_notification_batch`, and receipt unit/bool return mismatch. Scoped S/D
+  corrections and two obsolete chat-state import removals are underway on `main`.
+  No checks or tests were launched; preservation commits are not the final source tip.
 - Historical Wave A baseline: `5abbd3c5599c18133ea271049d8c3da3510cc736`.
   Its checkpoint merge completed before preservation; historical acceptance facts
   are retained below and do not describe current source acceptance.
@@ -115,8 +120,9 @@ projects are in scope.
 
 ### Wave B interaction and pane requirements
 
-Status: requirements authored; implementation and acceptance pending/unverified.
-The dashboard lane owns dashboard navigation; the carried-over remainder lane owns
+Status: begun implementation is integrated on `main`; runtime and interaction
+acceptance remain pending/unverified. The dashboard lane owns dashboard navigation;
+the carried-over remainder lane owns
 modal routing, focus continuity, Dock, Context and Todos integration. Reuse existing
 owners and components; Lead integrates cross-lane behavior and acceptance evidence.
 
@@ -146,8 +152,8 @@ outside this scope.
 ## Historical Wave C — final acceptance and staging
 
 The following is prior delivery planning, not authorization for new review or tests
-in the current preservation/integration unit. Current main has no final integrated SHA;
-no build or staging success is claimed.
+in the current delivery unit. Current integrated `main` is `5f50af26`; release build
+run `40242190071` is in progress, with no success or staging claimed.
 
 1. Confirm review closure, the full source review by reading, and same-SHA green
    GitHub Actions build + relevant tests; record exact run IDs and conclusions.

@@ -3,12 +3,16 @@
 Current delivery status: 2026-10-25. The fork is `farukg/grok-build` (`origin`);
 `xai-org/grok-build` is upstream, not the push destination.
 
-The preserved owner and started-work source is integrated on `main` at
-`7ec4c932653b9a777db24e32b3200935d777b5e3` (merge parents `875ff73c` and
-`e7ceeb50`). Its release build and staging are pending; no current-wave build result,
-activation, or verified installed/running artifact is established. Record artifact
-proof only from the actual GitHub release run and exact commit delivery record.
-Preserved references `875ff73c` and `e7ceeb50` are not the integrated commit.
+Started-work source was first integrated at `7ec4c932653b9a777db24e32b3200935d777b5e3`.
+Release build [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
+failed at `5f50af26` with four shell compiler errors (missing `fs` import, obsolete
+`observation.text`, sibling visibility for `project_notification_batch`, and receipt
+unit/bool return mismatch). Scoped S/D corrections and removal of two obsolete
+chat-state imports are in progress on `main`; no checks or
+tests have been launched. A successful release build, staging, activation, and verified
+installed/running artifact are not established. Record artifact proof only from a
+successful actual GitHub release Run/Commit delivery record. Preserved refs `875ff73c`
+and `e7ceeb50` remain available.
 
 Historical published `main` at `ba47d59ffc2538a6f4138ce61fd186376776fe21` was an
 independently source-reviewed Root/Child intermediate. GitHub Actions
@@ -29,27 +33,31 @@ details; its existing [handoff](handoff/2026-10-24/owner-handoff/handoff.md) and
 [Wave B references](handoff/2026-10-24/wave-b/) retain requirements and history.
 Current evidence supersedes their older local-verification and gateway-owner text.
 
-## Current source join and open gates
+## Current source disposition and open gates
 
-- R: stable terminal execution identity and finite enrollment/kill settlement remain
-  under correction and review; no runtime acceptance is established.
-- D: producer claim → successful durable write → fallible local handoff is narrowly
-  source-reviewed. Detached blocking-write execution lease lifetime, authoritative
-  durable teardown and independent recovery/receipt oracles remain open.
-- S: the original durable goal-suppression route is source-reviewed. Existing terminal
-  receipts must not consume newly owned unrelated transient MonitorEvents; that
-  ownership repair and retry oracles remain open.
-- Compaction: bounded invocation-correlation production is source-reviewed; added
-  replay, original persistence-ACK and decoder oracles are authored but unexecuted
-  and still require independent oracle review and integrated acceptance. Historical
-  tagged manual lifecycle does not restore RPC-only local markers after restart.
-- Legacy untagged compaction producer ambiguity and capability compatibility remain
-  deferred external gates. Maomao is the current sigma-crates owner. Schema/pass-through,
-  correlated producer availability and consumer-first rollout acceptance are unverified.
-  SIG delivery-outage diagnosis is separate; no shared restart is authorized.
-- Source-only closures are not compilation, test discovery, execution or UI acceptance.
-  Final integrated review and same-final-SHA GitHub Actions build/tests remain required,
-  followed by explicit staging, selected/running artifact evidence and interaction acceptance.
+- R: local terminal execution identity, shutdown enrollment/kill settlement and
+  collection-error escalation repairs are source-closed. ACP detached-owner execution,
+  registered-resource teardown and consumption semantics are also source-closed.
+  Runtime behavior and tests remain unverified.
+- D: durable receiver teardown, cancellation ownership, lease lifetime, ACK settlement
+  and recovery/fault-scope repair are source-closed in the begun work. Runtime behavior
+  and tests remain unverified.
+- S: the goal-active suppression route remains intact; mixed notification-batch
+  ownership, unrelated transient MonitorEvent preservation and batch retry behavior are
+  source-closed. Runtime behavior and tests remain unverified. Broader S/R/D integration
+  windows and restart-policy provenance limitations remain open as documented by the
+  source reports.
+- Compaction: bounded invocation-correlation source work is present; replay/persistence
+  oracles remain unexecuted. Legacy untagged producer ambiguity and capability/schema
+  compatibility remain external gates. Maomao is the current sigma-crates owner;
+  schema/pass-through, correlated producer availability and consumer-first rollout
+  acceptance are unverified. SIG delivery-outage diagnosis is separate; no shared
+  restart is authorized.
+- Source closure is not compilation, test discovery, runtime, or UI acceptance. Run
+  `40242190071` failed at `5f50af26` with four shell compiler errors; scoped source
+  corrections are underway. No tests or additional checks are authorized. Staging
+  and selected/running artifact evidence remain pending until a successful release
+  Run/Commit record and subsequent delivery evidence exist.
 
 ## Historical fold baseline
 

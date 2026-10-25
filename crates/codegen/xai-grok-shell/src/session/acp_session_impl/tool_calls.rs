@@ -2846,8 +2846,9 @@ impl SessionActor {
         let observations = xai_grok_tools::types::completion_observation::SubagentCompletionObservations::take_error(&mut err);
         let mut message = build_tool_parse_error_message(function_name, &err, raw_arguments);
         for observation in &observations {
+            let Some(referenced_text) = observation.referenced_text() else { continue; };
             let text = xai_grok_tools::reminders::task_completion::neutralize_reminder_tags(
-                &observation.text,
+                referenced_text,
             );
             message.push_str("\n\n");
             message.push_str(&xai_grok_tools::reminders::wrap_reminder(&text));

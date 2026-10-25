@@ -26,6 +26,14 @@ pub enum ObservedCompletion {
 }
 
 impl ObservedCompletion {
+    pub fn referenced_text(&self) -> Option<&str> {
+        match self {
+            Self::Subagent(observed) => Some(&observed.text),
+            Self::Terminal(ObservedTerminalCompletion::Task { snapshot }) => Some(&snapshot.output),
+            Self::Terminal(ObservedTerminalCompletion::Workflow { .. }) => None,
+        }
+    }
+
     fn same_identity(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Subagent(a), Self::Subagent(b)) => a.subagent_id == b.subagent_id && a.attempt_id == b.attempt_id,

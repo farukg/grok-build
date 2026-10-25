@@ -72,7 +72,7 @@ impl SessionActor {
         self.project_notification_batch(ids, prompt_id, text, &super::notification_drain::NotificationBatchPayload::TerminalOnly).await
     }
 
-    pub(super) async fn project_notification_batch(
+    pub(in crate::session::acp_session_impl) async fn project_notification_batch(
         &self,
         ids: Vec<CompletionIdentity>,
         prompt_id: &str,
