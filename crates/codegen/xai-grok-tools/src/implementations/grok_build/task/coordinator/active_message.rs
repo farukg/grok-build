@@ -943,12 +943,26 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             let _ = respond_to.send(ActiveAgentMessageOutcome::NotFoundOrNotOwned);
             return;
         }
-        if child.request.owner.is_workflow() || child.cancellation.is_cancelled() {
+        if child.request.owner.is_workflow() || child.cancellation.is_cancelled()
+            || child.active_messages.is_finalizing()
+        {
             let _ = respond_to.send(refused_active_outcome(source));
             return;
         }
         if source == ActiveAgentMessageSource::Human && child.explicitly_killed() {
             let _ = respond_to.send(ActiveAgentMessageOutcome::NotFoundOrNotOwned);
+            return;
+        }
+        if child.deferred_wake.is_some() {
+            self.park_until_spawn_ready(
+                canonical_subagent_id,
+                route,
+                quota_admission,
+                ActiveMessageIngress {
+                    request: SubagentActiveMessageRequest { request, sender_context, respond_to },
+                    permit,
+                },
+            );
             return;
         }
         match child.active_messages.begin_admission() {
@@ -1026,13 +1040,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         super::super::coordinator_state::TerminalOutput::Finishing(output) => {
                             self.finish_terminalized_child(subagent_id, output, is_clean)
                         }
-                        super::super::coordinator_state::TerminalOutput::Committing(completion) => {
-                            self.terminal_outputs.insert(
-                                subagent_id.to_owned(),
-                                super::super::coordinator_state::TerminalOutput::Committing(
-                                    completion,
-                                ),
-                            );
+                        output @ super::super::coordinator_state::TerminalOutput::Committing { .. } => {
+                            self.terminal_outputs.insert(subagent_id.to_owned(), output);
                         }
                         output @ super::super::coordinator_state::TerminalOutput::Publishing {
                             ..

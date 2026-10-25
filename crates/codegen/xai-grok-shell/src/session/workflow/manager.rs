@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "manager_durability_tests.rs"]
+mod durability_tests;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -710,6 +714,12 @@ impl WorkflowManager {
             }
             None => false,
         }
+    }
+
+    pub(crate) async fn persist_control_result(&self, run_id: &str) -> std::io::Result<WorkflowRunState> {
+        let state = self.tracker.lock().get(run_id).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "controlled workflow disappeared"))?;
+        self.store.persist_ack(&state).await?;
+        Ok(state)
     }
 
     /// Pause or stop the run whose id or display name is `key`, returning its

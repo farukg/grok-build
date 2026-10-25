@@ -126,6 +126,11 @@ mod two_pass_prefire_helper_tests;
 #[cfg(test)]
 #[path = "compaction_verbatim_input_tests.rs"]
 mod verbatim_input_tests;
+#[cfg(test)]
+#[path = "compaction_admission_tests.rs"]
+mod admission_tests;
+#[path = "compaction_admission.rs"]
+mod admission;
 impl SessionActor {
     /// Two-pass is active for this session when the flag resolved on at build and the agent is not one that keeps its single short self-summary.
     pub(crate) fn two_pass_active(&self) -> bool {
@@ -603,8 +608,15 @@ impl SessionActor {
         )
     )]
     pub(crate) async fn run_compact(self: &Arc<Self>) -> Result<(), acp::Error> {
+        self.run_compact_with_invocation(None).await
+    }
+
+    pub(crate) async fn run_compact_with_invocation(
+        self: &Arc<Self>,
+        invocation_id: Option<crate::session::acp_types::CompactInvocationId>,
+    ) -> Result<(), acp::Error> {
         let (cancel, _cancel_scope) = self.compaction.cancel.enter();
-        let compact = self.run_manual_compact();
+        let compact = self.run_manual_compact(invocation_id);
         tokio::pin!(compact);
         tokio::select! {
             biased;
@@ -618,7 +630,59 @@ impl SessionActor {
             result = &mut compact => result,
         }
     }
-    async fn run_manual_compact(self: &Arc<Self>) -> Result<(), acp::Error> {
+    pub(crate) async fn send_manual_compact_notification(
+        &self,
+        invocation_id: Option<crate::session::acp_types::CompactInvocationId>,
+        update: crate::extensions::notification::SessionUpdate,
+    ) {
+        let extra_meta = invocation_id.map(|id| {
+            let mut meta = serde_json::Map::new();
+            meta.insert(crate::session::acp_types::COMPACT_INVOCATION_META_KEY.into(), serde_json::json!(id));
+            meta
+        });
+        if let Err(error) = self.send_xai_notification_with_extra_meta(
+            update,
+            extra_meta,
+            crate::session::storage::jsonl::AppendDurability::Buffered,
+        ).await {
+            tracing::warn!(%error, "manual compaction notification failed");
+        }
+    }
+
+    pub(crate) async fn emit_manual_compact_failure(
+        &self,
+        invocation_id: Option<crate::session::acp_types::CompactInvocationId>,
+        error: &acp::Error,
+    ) {
+        use crate::extensions::notification::{AutoCompactCancelReason, SessionUpdate};
+        use crate::session::helpers::session_compact::{CompactErrorKind, compact_error_kind};
+        let update = match compact_error_kind(error) {
+            Some(CompactErrorKind::Cancelled) => SessionUpdate::AutoCompactCancelled {
+                reason: AutoCompactCancelReason::UserCancelled,
+            },
+            Some(CompactErrorKind::Failed) | None => SessionUpdate::AutoCompactFailed {
+                error: Self::user_facing_compact_error(&crate::sampling::error::acp_error_message(error)),
+            },
+        };
+        self.send_manual_compact_notification(invocation_id, update).await;
+    }
+
+    pub(crate) async fn acknowledge_compaction_persistence(&self) -> Result<(), acp::Error> {
+        let (respond_to, persisted) = tokio::sync::oneshot::channel();
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::FlushAndAck { respond_to })
+            .map_err(|_| acp::Error::internal_error().data("compaction persistence channel closed"))?;
+        persisted
+            .await
+            .map_err(|_| acp::Error::internal_error().data("compaction persistence did not respond"))?
+            .map_err(|error| acp::Error::internal_error().data(error.to_string()))
+    }
+
+    async fn run_manual_compact(
+        self: &Arc<Self>,
+        invocation_id: Option<crate::session::acp_types::CompactInvocationId>,
+    ) -> Result<(), acp::Error> {
         self.record_compaction_variant();
         let total_tokens = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("pre_tokens", total_tokens as i64);
@@ -653,7 +717,7 @@ impl SessionActor {
         let span = tracing::Span::current();
         span.record("post_tokens", tokens_after as i64);
         span.record("success", true);
-        self.send_xai_notification(XaiSessionUpdate::AutoCompactCompleted {
+        self.send_manual_compact_notification(invocation_id, XaiSessionUpdate::AutoCompactCompleted {
             tokens_before: Some(total_tokens),
             tokens_after,
             elapsed_ms: None,
@@ -2386,6 +2450,7 @@ impl SessionActor {
             format!("Context window {}% full", trigger_info.percentage)
         };
         self.send_xai_notification(XaiSessionUpdate::AutoCompactStarted {
+            phase: crate::extensions::notification::CompactPhase::Executing,
             tokens_used: trigger_info.tokens_used,
             context_window: trigger_info.context_window,
             percentage: trigger_info.percentage,

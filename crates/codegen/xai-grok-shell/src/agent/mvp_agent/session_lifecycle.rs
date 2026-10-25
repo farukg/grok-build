@@ -471,6 +471,9 @@ impl MvpAgent {
             cwd,
             is_worktree,
             session_kind: None,
+            // Subagent residents are not enumerated here; `build_roster` reconciles their
+            // rows from the live child hosts after the merge.
+            parent_session_id: None,
             model_id,
             reasoning_effort,
             yolo,
@@ -488,14 +491,68 @@ impl MvpAgent {
             .collect()
     }
     /// Full roster: resident actors plus recent on-disk sessions; resident wins an id collision.
+    /// Subagent rows start as their disk summary; `reconcile_child_roster_rows` then re-stamps
+    /// the ones with a live child host so the dashboard's subagent lane sees them as live.
     pub(crate) async fn build_roster(&self) -> Vec<crate::agent::roster::RosterEntry> {
-        let resident = self.resident_roster_entries();
-        let summaries = crate::session::persistence::list_recent_summaries(200)
-            .await
-            .unwrap_or_default();
-        let entries = crate::agent::roster::merge_roster(resident, summaries);
+        let mut resident = self.resident_roster_entries();
+        let storage = crate::session::storage::JsonlStorageAdapter::with_root(
+            crate::util::grok_home::grok_home(),
+        );
+        let children = self.session_registry.child_hosts();
+        let required = children
+            .iter()
+            .map(|(id, _)| id.clone())
+            .chain(resident.iter().map(|entry| acp::SessionId::new(entry.session_id.clone())))
+            .collect();
+        let summaries = storage.roster_summaries(200, required).await.unwrap_or_default();
+        for (id, child) in children {
+            if let Some(mut entry) = self.resident_roster_entry(&id) {
+                entry.session_kind = Some(crate::session::persistence::SUBAGENT_SESSION_KIND.into());
+                entry.parent_session_id = Some(child.parent_session_id.0.to_string());
+                resident.push(entry);
+            }
+        }
+        let mut entries = crate::agent::roster::merge_roster(resident, summaries);
+        self.reconcile_child_roster_rows(&mut entries);
         self.cache_resident_titles(&entries);
         entries
+    }
+    /// Re-stamp `subagent` roster rows from the live child registry: parent link, activity, and
+    /// residence. A row whose child host is gone (reaped actor, leader restart) keeps its
+    /// dormant summary row — resumable through the parent, not listed as running.
+    pub(super) fn reconcile_child_roster_rows(
+        &self,
+        entries: &mut [crate::agent::roster::RosterEntry],
+    ) {
+        use crate::agent::roster::RosterActivity;
+        use crate::session::persistence::SUBAGENT_SESSION_KIND;
+        for entry in entries
+            .iter_mut()
+            .filter(|entry| entry.session_kind.as_deref() == Some(SUBAGENT_SESSION_KIND))
+        {
+            let id = acp::SessionId::new(entry.session_id.clone());
+            let Some(SessionHost::Child(child)) = self.session_host(&id) else {
+                continue;
+            };
+            entry.parent_session_id = Some(child.parent_session_id.0.to_string());
+            match child.reach {
+                ChildReach::Addressed {
+                    residence: ChildResidence::Finished,
+                    ..
+                } => {
+                    entry.activity = RosterActivity::Completed;
+                    entry.resident = false;
+                }
+                ChildReach::Unaddressed
+                | ChildReach::Addressed {
+                    residence: ChildResidence::Running(_),
+                    ..
+                } => {
+                    entry.activity = self.resident_activity(&id);
+                    entry.resident = true;
+                }
+            }
+        }
     }
     /// Refresh `resident_roster_titles` from the freshly-built roster.
     pub(super) fn cache_resident_titles(&self, entries: &[crate::agent::roster::RosterEntry]) {

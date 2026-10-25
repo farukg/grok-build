@@ -656,6 +656,29 @@ impl ScrollbackState {
         id
     }
 
+    /// The display mode a block of its kind resolves to: the user's F7 kind default, else the
+    /// block's own built-in policy (Edit's untrusted/error rules included). One owner for
+    /// insert (`apply_kind_default`), tool-refinement reset (`replace_tool_block`), and the
+    /// finish-transition gate, so the kind default cannot be silently undone later in the
+    /// lifecycle.
+    fn resolve_kind_mode(&self, block: &RenderBlock) -> DisplayMode {
+        let setting = self.display_defaults.get(MessageKind::from(block));
+        match (block, setting) {
+            (RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), setting) => {
+                let expanded_by_default = match setting {
+                    Some(DisplayForm::Expanded) => true,
+                    Some(DisplayForm::Collapsed) => false,
+                    None => self.appearance.scrollback.blocks.edit.effective_expanded(
+                        crate::appearance::cache::load_collapsed_edit_blocks(),
+                    ),
+                };
+                edit_default_display_mode(expanded_by_default, edit)
+            }
+            (_, Some(form)) => DisplayMode::from(form),
+            (block, None) => block.default_display_mode(),
+        }
+    }
+
     /// A fresh entry still at its block's built-in default takes the kind setting, else the state-owned policy.
     /// An explicit mode chosen by the producer survives both; a successful untrusted edit summary always expands,
     /// because its one-liner cannot truthfully compress the change.
@@ -663,22 +686,7 @@ impl ScrollbackState {
         if entry.display_mode != entry.block.default_display_mode() {
             return;
         }
-        let setting = self.display_defaults.get(MessageKind::from(&entry.block));
-        entry.display_mode = match (&entry.block, setting) {
-            (RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), setting) => {
-                let expanded_by_default =
-                    match setting {
-                        Some(DisplayForm::Expanded) => true,
-                        Some(DisplayForm::Collapsed) => false,
-                        None => self.appearance.scrollback.blocks.edit.effective_expanded(
-                            crate::appearance::cache::load_collapsed_edit_blocks(),
-                        ),
-                    };
-                edit_default_display_mode(expanded_by_default, edit)
-            }
-            (_, Some(form)) => DisplayMode::from(form),
-            (block, None) => block.default_display_mode(),
-        };
+        entry.display_mode = self.resolve_kind_mode(&entry.block);
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -1024,12 +1032,8 @@ impl ScrollbackState {
         started_at: Option<Instant>,
     ) -> bool {
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
-        let expanded_by_default = self
-            .appearance
-            .scrollback
-            .blocks
-            .edit
-            .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks());
+        // Resolved before the mutable borrow: the mode the NEW block's kind resolves to.
+        let resolved_mode = self.resolve_kind_mode(&block);
         let Some(entry) = self.entries.get_mut(&entry_id) else {
             return false;
         };
@@ -1061,16 +1065,14 @@ impl ScrollbackState {
         } else if respect_manual_folds && entry.display_mode_pinned {
             tracing::debug!(
                 entry_id = entry_id.value(),
-                would_be_mode = ?entry.block.default_display_mode(),
+                would_be_mode = ?resolved_mode,
                 "scrollback.finish.pin_suppressed_override"
             );
         } else {
-            entry.display_mode = match &entry.block {
-                RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) => {
-                    edit_default_display_mode(expanded_by_default, edit)
-                }
-                block => block.default_display_mode(),
-            };
+            // The kind changed (eager placeholder → concrete tool): resolve through the same
+            // kind-default path as insert so an F7 form for the new kind wins over the block's
+            // built-in policy.
+            entry.display_mode = resolved_mode;
         }
         let pending = entry.is_pending_user_input;
         entry.invalidate_cache();
@@ -1153,6 +1155,12 @@ impl ScrollbackState {
         }
         let thinking_mode = self.thinking_display_mode;
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
+        // The user's F7 form for this entry's kind, when spoken: the finish transition must not
+        // snap the entry to the block's own preferred form and silently undo the setting.
+        let kind_form = self
+            .entries
+            .get(&id)
+            .and_then(|entry| self.display_defaults.get(MessageKind::from(&entry.block)));
         if let Some(entry) = self.get_by_id_mut(id) {
             entry.is_running = false;
             entry.finished_at = Some(Instant::now());
@@ -1194,10 +1202,12 @@ impl ScrollbackState {
                     );
                 }
             } else if matches!(entry.block, RenderBlock::Thinking(_)) {
-                if entry.display_mode != DisplayMode::Expanded {
+                if entry.display_mode != DisplayMode::Expanded && kind_form.is_none() {
                     entry.display_mode = thinking_mode;
                 }
-            } else if let Some(mode) = entry.block.finished_display_mode() {
+            } else if kind_form.is_none()
+                && let Some(mode) = entry.block.finished_display_mode()
+            {
                 if entry.display_mode != DisplayMode::Collapsed {
                     entry.display_mode = mode;
                 }
@@ -2310,6 +2320,78 @@ mod tests {
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Expanded,
             "bash finish must still expand from preserved Truncated"
+        );
+    }
+
+    /// F7 "Read → full" must survive the finish transition: without a kind default the Read block
+    /// snaps Collapsed on finish; with one, the user's form wins (gb-msgdisplay-11).
+    #[test]
+    fn f7_kind_default_survives_finish_running() {
+        let mut state = ScrollbackState::new();
+        state.set_kind_default(MessageKind::Read, DisplayForm::Expanded);
+        let id = state.push_block(RenderBlock::read("src/main.rs", None));
+        state.set_last_running(true);
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded
+        );
+        state.finish_running(id);
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "an F7 Read→Expanded form must not be collapsed away by the finish snap"
+        );
+
+        let mut state = ScrollbackState::new();
+        state.set_kind_default(MessageKind::Read, DisplayForm::Collapsed);
+        let id = state.push_block(RenderBlock::read("src/main.rs", None));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed
+        );
+        state.finish_running(id);
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed
+        );
+    }
+
+    /// Without a kind default the finish snap keeps its block-local behavior (Read collapses).
+    #[test]
+    fn finish_snap_still_applies_without_kind_default() {
+        let mut state = ScrollbackState::new();
+        let id = state.push_block(RenderBlock::read("src/main.rs", None));
+        state.set_last_running(true);
+        // Simulate the entry having been opened: without a kind default the finish snap owns it.
+        state
+            .get_by_id_mut(id)
+            .unwrap()
+            .set_display_mode(DisplayMode::Expanded);
+        state.finish_running(id);
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "no kind default: Read still auto-collapses on finish"
+        );
+    }
+
+    /// A tool refinement (eager Other placeholder → concrete Read) must resolve through the kind
+    /// default, not the new block's built-in Collapsed.
+    #[test]
+    fn refinement_adopts_f7_form_for_the_new_kind() {
+        let mut state = ScrollbackState::new();
+        state.set_kind_default(MessageKind::Read, DisplayForm::Expanded);
+        let id = state.push_block(RenderBlock::tool_call("Other", "pending", true));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "Other placeholder starts collapsed"
+        );
+        assert!(state.replace_tool_block(id, RenderBlock::read("src/main.rs", None), None));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "Other→Read refinement must adopt the F7 Read form"
         );
     }
 

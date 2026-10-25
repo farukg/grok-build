@@ -251,9 +251,12 @@ pub(crate) enum GoalRoundDecision {
 }
 
 /// Decision from the turn-end stop gate: allow the turn to end, or keep the agent working by injecting `feedback` as a synthetic user message.
+/// `AllowStop.wait` is the wait set the finished turn declared over live background work: while any target is live the goal loop suppresses continuation re-wakes (see `stop_gate`).
 #[derive(Debug)]
 pub(crate) enum StopGateDecision {
-    AllowStop,
+    AllowStop {
+        wait: super::stop_gate::TurnWaitDeclaration,
+    },
     KeepWorking { feedback: String },
 }
 

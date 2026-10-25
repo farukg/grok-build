@@ -191,6 +191,63 @@ async fn handle_scheduled_task_removed(
         }
     }
 }
+fn terminal_completion_text(config: &NotificationBridgeConfig, snapshot: &xai_grok_tools::computer::types::TaskSnapshot) -> String {
+    match snapshot.kind {
+        xai_grok_tools::computer::types::TaskKind::Bash => xai_grok_tools::reminders::task_completion::format_bash_completion(
+            snapshot, resolved_tool_name(&config.task_output_tool_name), resolved_tool_name(&config.read_tool_name),
+        ),
+        xai_grok_tools::computer::types::TaskKind::Monitor => xai_grok_tools::reminders::task_completion::format_monitor_completion(
+            snapshot, resolved_tool_name(&config.task_output_tool_name),
+        ),
+    }
+}
+
+async fn classify_terminal_goal_policy(
+    config: &NotificationBridgeConfig,
+    notification: crate::session::commands::TaskWakeFallback,
+) -> Result<crate::session::commands::TerminalNotificationDecision, String> {
+    let (respond_to, response) = tokio::sync::oneshot::channel();
+    config.session_cmd_tx.send(SessionCommand::ClassifyTerminalNotification { notification, respond_to })
+        .map_err(|_| "terminal goal policy owner closed".to_string())?;
+    response.await.map_err(|_| "terminal goal policy acknowledgement lost".to_string())?
+        .map_err(|error| format!("terminal goal policy failed: {error}"))
+}
+
+async fn enroll_task_completion(
+    config: &NotificationBridgeConfig,
+    snapshot: xai_grok_tools::computer::types::TaskSnapshot,
+) -> Result<(), String> {
+    use crate::session::completion_delivery::{CompletionEventPolicy, CompletionPayloadSource};
+    let text = terminal_completion_text(config, &snapshot);
+    let policy = if snapshot.is_auto_wake_suppressed() {
+        CompletionEventPolicy::Silent
+    } else if config.auto_wake_enabled {
+        CompletionEventPolicy::Automatic
+    } else {
+        CompletionEventPolicy::BoundaryOnly
+    };
+    let policy_notification = if !snapshot.is_auto_wake_suppressed() {
+        Some(crate::session::commands::TaskWakeFallback {
+            prompt_id: format!("task-completed-{}", snapshot.task_id),
+            prompt_blocks: vec![acp::ContentBlock::from(text.clone())],
+            source: match snapshot.kind {
+                xai_grok_tools::computer::types::TaskKind::Bash => NotificationSource::BashTaskCompleted { task_id: snapshot.task_id.clone() },
+                xai_grok_tools::computer::types::TaskKind::Monitor => NotificationSource::MonitorCompleted { task_id: snapshot.task_id.clone() },
+            },
+        })
+    } else { None };
+    let (respond_to, response) = tokio::sync::oneshot::channel();
+    config.persistence.tx.send(PersistenceMsg::EnrollTerminalCompletion {
+        source: CompletionPayloadSource::Task(Box::new(snapshot)), text, policy, respond_to,
+    }).map_err(|_| "terminal enrollment owner closed".to_string())?;
+    response.await.map_err(|_| "terminal enrollment acknowledgement lost".to_string())?
+        .map_err(|error| format!("terminal enrollment failed: {error}"))?;
+    if let Some(notification) = policy_notification {
+        classify_terminal_goal_policy(config, notification).await?;
+    }
+    Ok(())
+}
+
 pub(crate) fn spawn_notification_bridge(
     config: NotificationBridgeConfig,
 ) -> ToolNotificationHandle {
@@ -200,6 +257,12 @@ pub(crate) fn spawn_notification_bridge(
         while let Some(delivery) = rx.recv().await {
             let acknowledgement = delivery.acknowledgement;
             match delivery.notification {
+                ToolNotification::TaskCompleted(snapshot) if acknowledgement.is_some() => {
+                    let result = enroll_task_completion(&config, snapshot).await;
+                    if let Some(acknowledgement) = acknowledgement {
+                        let _ = acknowledgement.send(result);
+                    }
+                }
                 ToolNotification::ScheduledTaskRemoved(removed) => {
                     if let Err(error) =
                         handle_scheduled_task_removed(&config, removed, acknowledgement).await
@@ -385,6 +448,19 @@ async fn handle_notification(
             let goal_loop_active = config
                 .goal_loop_active
                 .load(std::sync::atomic::Ordering::Relaxed);
+            let goal_suppressed = if goal_loop_active && !task_snapshot.is_auto_wake_suppressed() {
+                let notification = crate::session::commands::TaskWakeFallback {
+                    prompt_id: format!("task-completed-{task_id}"),
+                    prompt_blocks: vec![acp::ContentBlock::from(terminal_completion_text(config, &task_snapshot))],
+                    source: if is_monitor { NotificationSource::MonitorCompleted { task_id: task_id.clone() } }
+                        else { NotificationSource::BashTaskCompleted { task_id: task_id.clone() } },
+                };
+                match classify_terminal_goal_policy(config, notification).await {
+                    Ok(crate::session::commands::TerminalNotificationDecision::Suppressed) => true,
+                    Ok(crate::session::commands::TerminalNotificationDecision::Surface) => false,
+                    Err(error) => { tracing::error!(%error, %task_id, "terminal publication retained until goal policy is durable"); return; }
+                }
+            } else { false };
             let mut will_wake = false;
             if task_snapshot.is_auto_wake_suppressed() {
                 xai_grok_telemetry::unified_log::info(
@@ -397,13 +473,9 @@ async fn handle_notification(
                         "kill_result_delivered": task_snapshot.kill_result_delivered,
                     })),
                 );
-            } else if goal_loop_active {
-                tracing::info!(
-                    task_id = %task_id,
-                    is_monitor,
-                    "auto-wake: suppressed completion (goal loop active)"
-                );
-            } else if config.auto_wake_enabled {
+            } else if goal_suppressed {
+                tracing::info!(task_id = %task_id, is_monitor, "auto-wake: durably suppressed completion (goal policy)");
+            } else if config.auto_wake_enabled || goal_loop_active {
                 config.task_completion_reservations.reserve(task_id.clone());
                 let tool_name = resolved_tool_name(&config.task_output_tool_name);
                 let read_name = resolved_tool_name(&config.read_tool_name);
@@ -480,7 +552,9 @@ async fn handle_notification(
                 if !enqueued {
                     config.task_completion_reservations.release(&task_id);
                 }
-                let admitted = if enqueued {
+                let admitted = if enqueued && goal_loop_active {
+                    admission_rx.await.unwrap_or(false)
+                } else if enqueued {
                     tokio::time::timeout(TASK_WAKE_ADMISSION_TIMEOUT, admission_rx)
                         .await
                         .ok()
@@ -819,4 +893,4 @@ async fn handle_notification(
 }
 #[cfg(test)]
 #[path = "notification_bridge_tests.rs"]
-mod tests;
+pub(crate) mod tests;

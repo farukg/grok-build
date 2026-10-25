@@ -1,77 +1,35 @@
-//! `/dock`: the runtime gate flips at once and an explicit `[features].dock`
-//! override is persisted; a requirements pin outranks the command.
-
+//! `/dock` cycles durable placement while preserving the legacy feature gate.
 use super::*;
+use crate::views::dock::DockPlacement;
 
-/// Precedence of the pure planner: a pin refuses, an env override only widens
-/// the report, otherwise the runtime gate flips.
 #[test]
-fn plan_refuses_a_pin_and_flips_otherwise() {
+fn plan_refuses_a_pin_and_cycles_placements_otherwise() {
     use crate::app::dispatch::settings::ui::{DockTogglePlan, plan_dock_toggle};
-    assert_eq!(
-        plan_dock_toggle(Some(true), None, false),
-        DockTogglePlan::Pinned(true)
-    );
-    assert_eq!(
-        plan_dock_toggle(Some(false), Some(true), true),
-        DockTogglePlan::Pinned(false)
-    );
-    assert_eq!(
-        plan_dock_toggle(None, None, false),
-        DockTogglePlan::Flip {
-            next: true,
-            env_wins: false
-        }
-    );
-    assert_eq!(
-        plan_dock_toggle(None, Some(false), true),
-        DockTogglePlan::Flip {
-            next: false,
-            env_wins: true
-        }
-    );
+    assert_eq!(plan_dock_toggle(Some(true), None, DockPlacement::Off), DockTogglePlan::Pinned(true));
+    assert_eq!(plan_dock_toggle(Some(false), Some(true), DockPlacement::Top), DockTogglePlan::Pinned(false));
+    for (current, next) in [
+        (DockPlacement::Off, DockPlacement::Top),
+        (DockPlacement::Top, DockPlacement::Bottom),
+        (DockPlacement::Bottom, DockPlacement::Off),
+    ] {
+        assert_eq!(plan_dock_toggle(None, None, current), DockTogglePlan::Flip { next, env_wins: false });
+    }
 }
 
-/// Dispatch flips the process gate immediately and persists exactly one
-/// explicit dock override per toggle, in both directions.
 #[test]
-fn dock_toggle_round_trips_the_runtime_gate_and_the_override() {
-    assert!(
-        crate::app::dock_requirement_pin().is_none(),
-        "this test needs no dock pin in the merged requirements.toml"
-    );
-    crate::views::dock::set_enabled(false);
+fn dock_toggle_round_trips_placement_and_legacy_override() {
+    assert!(crate::app::dock_requirement_pin().is_none());
+    crate::views::dock::set_enabled_for_test(false);
+    let root = tempfile::tempdir().unwrap();
     let mut app = test_app_with_agent();
-
-    let effects = dispatch(Action::ToggleDock, &mut app);
-    assert!(
-        crate::views::dock::enabled(),
-        "runtime gate must flip on immediately"
-    );
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::PersistFeatureOverride {
-                feature: xai_grok_shell::agent::config::Feature::Dock,
-                saved: Some(true),
-            }]
-        ),
-        "toggle must persist exactly one explicit dock override, got {effects:?}"
-    );
-
-    let effects = dispatch(Action::ToggleDock, &mut app);
-    assert!(
-        !crate::views::dock::enabled(),
-        "second toggle flips back off"
-    );
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::PersistFeatureOverride {
-                feature: xai_grok_shell::agent::config::Feature::Dock,
-                saved: Some(false),
-            }]
-        ),
-        "second toggle must persist the off override, got {effects:?}"
-    );
+    app.agents.get_mut(&crate::app::agent::AgentId(0)).unwrap().open_panel_settings_in(root.path());
+    for next in [DockPlacement::Top, DockPlacement::Bottom, DockPlacement::Off] {
+        let effects = dispatch(Action::ToggleDock, &mut app);
+        assert_eq!(crate::views::dock::placement(), next);
+        assert!(matches!(effects.as_slice(), [Effect::PersistFeatureOverride {
+            feature: xai_grok_shell::agent::config::Feature::Dock, saved: Some(value),
+        }] if *value == next.is_visible()));
+        let reopened = crate::app::panel_settings::PanelSettingsStore::open(root.path(), None).store;
+        assert_eq!(reopened.global().dock_placement(), Some(next));
+    }
 }

@@ -330,7 +330,7 @@ enum UserInputKind {
     GoalSetup,
 }
 /// How the turn's per-block user-message echo is published to clients / `updates.jsonl`.
-/// Turns whose content must not render as a user prompt (notification drain) are hidden by the *pager* via the `hideFromScrollback` chunk meta.
+/// Turns whose content renders as a collapsed injected entry (notification drain) carry the `syntheticReason` chunk meta so the *pager* routes them to the injected block kind.
 /// The persisted line is never omitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UserEchoMode {
@@ -433,10 +433,11 @@ impl SessionActor {
             crate::session::storage::HOST_TURN_META_KEY.into(),
             serde_json::json!(true),
         );
-        if super::super::PromptOrigin::from_prompt_id(prompt_id).hide_user_echo_from_scrollback()
-            || crate::session::completion_delivery::completion_from_prompt_id(prompt_id).is_some()
-        {
-            chunk_meta.insert("hideFromScrollback".into(), serde_json::json!(true));
+        if let Some(reason) = super::super::PromptOrigin::injected_reason_for_prompt_id(prompt_id) {
+            chunk_meta.insert(
+                crate::session::storage::SYNTHETIC_REASON_META_KEY.into(),
+                serde_json::json!(reason),
+            );
         }
         let update = acp::SessionUpdate::UserMessageChunk(
             acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
@@ -573,6 +574,18 @@ impl SessionActor {
                     false => return ok_end_turn(0, None),
                 }
             }
+            super::super::PromptOrigin::ParentAgentMessage { message_id, .. } => {
+                if !self.project_parent_message(message_id, xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageSource::Agent, prompt_id, Self::durable_delivery_payload(&prompt_blocks)?).await? {
+                    return ok_end_turn(0, None);
+                }
+                true
+            }
+            super::super::PromptOrigin::ParentHumanMessage { message_id, .. } => {
+                if !self.project_parent_message(message_id, xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageSource::Human, prompt_id, Self::durable_delivery_payload(&prompt_blocks)?).await? {
+                    return ok_end_turn(0, None);
+                }
+                true
+            }
             super::super::PromptOrigin::SubagentCompleted { completion } => {
                 let text = Self::queue_text_from_blocks(&prompt_blocks);
                 match self
@@ -587,7 +600,12 @@ impl SessionActor {
                     }
                 }
             }
-            _ => false,
+            _ => match self.project_terminal_input(&input_origin, prompt_id, Self::queue_text_from_blocks(&prompt_blocks)).await {
+                Ok(Some(true)) => true,
+                Ok(Some(false)) => return ok_end_turn(0, None),
+                Ok(None) => false,
+                Err(error) => return Err(acp::Error::internal_error().data(format!("terminal completion persistence: {error}"))),
+            },
         };
         let commit_ids: Vec<String> = input_origin
             .completion_id()
@@ -751,6 +769,8 @@ impl SessionActor {
                         match self.resume_goal().await {
                             GoalResumeOutcome::Inference { reminder, user_msg } => {
                                 self.send_slash_command_output(&user_msg).await;
+                                // The resumed rules are goal tracking policy, same surface as `/goal set`.
+                                user_input_kind = UserInputKind::GoalSetup;
                                 vec![text_block(reminder)]
                             }
                             GoalResumeOutcome::Message(msg) => {
@@ -917,11 +937,14 @@ impl SessionActor {
             "promptIndex".into(),
             serde_json::json!(current_prompt_index),
         );
-        if input_origin
+        if let Some(reason) = input_origin
             .as_prompt_origin()
-            .hide_user_echo_from_scrollback()
+            .injected_reason_wire()
         {
-            chunk_meta.insert("hideFromScrollback".into(), serde_json::json!(true));
+            chunk_meta.insert(
+                crate::session::storage::SYNTHETIC_REASON_META_KEY.into(),
+                serde_json::json!(reason),
+            );
         }
         let user_chunk_meta = Some(chunk_meta);
         let text = prompt_blocks.iter().fold(String::new(), |mut acc, b| {
@@ -1163,6 +1186,9 @@ impl SessionActor {
             }
             self.drain_between_turn_completions(&commit_ids).await;
             self.inject_workflow_status_reminder().await;
+            if !self.startup_hints.is_subagent {
+                self.push_system_reminder(super::stop_gate::TURN_WAIT_CONTRACT);
+            }
             let user_message = if user_images.is_empty() {
                 user_message
             } else if self.is_cursor_harness() {
@@ -1216,9 +1242,11 @@ impl SessionActor {
                 super::super::PromptOrigin::SubagentCompleted { .. } => {
                     ConversationItem::subagent_completed(user_message)
                 }
-                super::super::PromptOrigin::ParentAgentMessage { .. }
-                | super::super::PromptOrigin::ParentHumanMessage { .. } => {
+                super::super::PromptOrigin::ParentAgentMessage { .. } => {
                     ConversationItem::agent_message(user_message)
+                }
+                super::super::PromptOrigin::ParentHumanMessage { .. } => {
+                    ConversationItem::parent_human_message(user_message)
                 }
                 super::super::PromptOrigin::WorkflowCompleted { .. } => {
                     ConversationItem::notification_drain(user_message)
@@ -1378,7 +1406,7 @@ impl SessionActor {
                     self.goal_harness_enabled(),
                     self.goal_tracker.lock().status(),
                 );
-                if goal_active {
+                if goal_active && !self.declared_wait_blocks_continuation().await {
                     if self.has_runnable_queued_user_row().await {
                         xai_grok_telemetry::unified_log::info(
                             "shell.goal.yielded_to_queued_input",
@@ -1413,7 +1441,7 @@ impl SessionActor {
                     .run_stop_gate(prompt_id, stop_continuations_this_turn)
                     .await
                 {
-                    StopGateDecision::AllowStop => break round,
+                    StopGateDecision::AllowStop { .. } => break round,
                     StopGateDecision::KeepWorking { feedback } => {
                         stop_continuations_this_turn += 1;
                         salvage.round_boundary();
@@ -2781,6 +2809,7 @@ impl SessionActor {
         } else {
             false
         };
+        let mut published_request_records = Vec::new();
         let structured_output_native = schema_ok && native_backend;
         let structured_output_tool = schema_ok && !native_backend;
         if structured_output_tool {
@@ -2954,6 +2983,9 @@ impl SessionActor {
                 "backend_search: turn tool resolution"
             );
             let mut effective_tools = self.effective_function_tools(&tool_definitions).await;
+            if !self.startup_hints.is_subagent {
+                effective_tools.push(super::stop_gate::wait_tool_spec());
+            }
             if structured_output_tool && let Some(schema) = json_schema.clone() {
                 effective_tools.push(ToolSpec {
                     name: STRUCTURED_OUTPUT_TOOL.to_string(),
@@ -3009,7 +3041,7 @@ impl SessionActor {
                     "loop_index": loop_index,
                 })),
             );
-            let mut request = request;
+            let mut request = self.prepare_request_for_sampling(request, &mut published_request_records).await?;
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());
@@ -3640,8 +3672,27 @@ impl SessionActor {
                     super::length_salvage::SalvageStep::None => {}
                 }
             }
+            match self.handle_wait_tool_call(&mut tool_calls).await {
+                super::stop_gate::WaitToolStep::Declared => {
+                    turn_tools_called.push(super::stop_gate::DECLARE_WAIT_TOOL.to_string());
+                    self.finalize_turn_bookkeeping(
+                        req_id,
+                        std::mem::take(&mut turn_span_totals),
+                        turn_sampling,
+                    ).await;
+                    return Ok(TurnOutcome::Completed {
+                        tools_called: turn_tools_called,
+                        structured_output: None,
+                        stop: CompletedStop::EndTurn,
+                    });
+                }
+                super::stop_gate::WaitToolStep::Retry => continue,
+                super::stop_gate::WaitToolStep::Proceed => {}
+            }
             if tool_calls.is_empty() {
-                if !schema_ok
+                let waiting = self.declared_wait_blocks_continuation().await;
+                if !waiting
+                    && !schema_ok
                     && !turn_refused
                     && !salvage.is_truncated()
                     && let Some(gate_cfg) = self.todo_gate_policy()
@@ -4386,7 +4437,7 @@ mod user_echo_broadcast_tests {
         InputOrigin::new(PromptOrigin::from_prompt_id(prompt_id))
     }
     /// Notification-drain: persisted (rewind/fork count user-chunk runs as turn boundaries) but never broadcast live.
-    /// The pager hides it via the `hideFromScrollback` chunk meta.
+    /// The pager renders it collapsed via the `syntheticReason` chunk meta.
     #[test]
     fn notification_drain_turn_is_persist_only() {
         assert_eq!(

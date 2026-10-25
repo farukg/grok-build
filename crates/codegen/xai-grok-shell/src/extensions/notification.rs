@@ -507,6 +507,14 @@ pub enum AutoCompactCancelReason {
     UserCancelled,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompactPhase {
+    Queued,
+    #[default]
+    Executing,
+}
+
 /// User-visible auto-compact start banner for a cross-`model_family` switch.
 /// The pager also matches this `AutoCompactStarted.reason` to show the idle
 /// `Switching model…` loader (family-switch compact runs with no turn in flight).
@@ -542,6 +550,8 @@ pub enum SessionUpdate {
     RetryState(RetryState),
     /// Auto-compact is starting due to context window threshold
     AutoCompactStarted {
+        #[serde(default)]
+        phase: CompactPhase,
         /// Current token usage
         tokens_used: u64,
         /// Total context window size
@@ -996,6 +1006,17 @@ pub enum SessionUpdate {
     /// Prompt images dropped before send (integrity failure or the upscale cap).
     /// The model is told via a system-reminder; this notification shows the drops to the UI.
     ImageDropped { notes: Vec<String> },
+    /// Bounded record of content that entered a model request without being persisted as
+    /// conversation history (memory-reminder splice, request-view transforms). The pager renders
+    /// it as a collapsed injected entry so nothing reaches the model invisibly.
+    /// `kind` is the record's wire kind (`"memory_reminder"` / `"context_view"`); `text` is the
+    /// bounded body.
+    InjectedContextRecord {
+        /// Which request-only surface the record describes.
+        kind: String,
+        /// Bounded record body.
+        text: String,
+    },
     /// Memory file listing for the pager's /memory modal.
     MemoryFiles {
         files: Vec<MemoryFileInfo>,

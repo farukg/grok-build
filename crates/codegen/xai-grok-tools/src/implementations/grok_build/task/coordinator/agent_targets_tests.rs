@@ -12,7 +12,7 @@ use crate::implementations::grok_build::task::backend::SubagentCoordinatorSender
 use crate::implementations::grok_build::task::coordinator::active_message::tests::{
     AdmissionCall, TestControl, TestCoordinator, begin_send, finish_child,
     finish_child_before_visibility, finish_child_with_result,
-    finish_child_with_result_before_visibility, fixture, insert_child_with, insert_pending,
+    finish_child_with_result_before_commit, fixture, insert_child_with, insert_pending,
     promote_pending, recv_with_timeout, release_admission, response_outcome,
 };
 use crate::implementations::grok_build::task::coordinator::agent_quotas::MAX_SENDER_TARGET_IN_FLIGHT;
@@ -566,7 +566,7 @@ async fn root_wake_replay_keeps_the_incarnation_granted_senders_hold() {
     // A spawn that failed before start leaves an eligible record that never had an incarnation.
     insert_pending(&mut c, IDS[3], "other");
     let failed = SubagentResult::failed(IDS[3].to_owned(), IDS[3].to_owned(), "");
-    finish_child_with_result_before_visibility(&mut c, IDS[3], failed);
+    finish_child_with_result_before_commit(&mut c, IDS[3], failed);
     let publication = c
         .terminal_published_rx
         .try_recv()
@@ -621,6 +621,10 @@ async fn abandoned_incarnations_release_their_pair_permits() {
             held.extend((0..2).map(|_| begin(&mut c, &tx, &sender, agent(3))));
             assert_eq!(vec![3], quota(&c), "{exit}");
             if exit == "deferred_rejected" {
+                assert!(c.active_messages.is_empty(), "uncommitted starts cannot admit messages");
+                for response in &mut held {
+                    assert!(matches!(response.try_recv(), Err(oneshot::error::TryRecvError::Empty)), "all sends wait for the wake commit");
+                }
                 reject_deferred(&mut c, IDS[3]);
             } else {
                 c.cancel_one(
@@ -672,6 +676,59 @@ async fn abandoned_incarnations_release_their_pair_permits() {
             response_outcome(begin(&mut c, &tx, &sender, agent(3))).await,
             "{exit}"
         );
+    }
+}
+
+#[tokio::test]
+async fn cancelled_or_finalizing_deferred_targets_refuse_fresh_ingress_before_runner_exit() {
+    enum Exit { Rejected, OwnerCancelled, Finalizing }
+    for exit in [Exit::Rejected, Exit::OwnerCancelled, Exit::Finalizing] {
+        let (mut c, tx, admissions, mut calls) = fixture();
+        let sender = holder(&mut c, admissions.clone(), None);
+        add(&mut c, admissions.clone(), IDS[3], "other", None);
+        finish_child(&mut c, IDS[3]);
+        let initial = begin_send(&mut c, &tx, IDS[3], "other");
+        promote_deferred(&mut c, admissions, IDS[3]);
+        let mut pending = vec![initial];
+        pending.extend((0..2).map(|_| begin(&mut c, &tx, &sender, agent(3))));
+        assert!(c.active_messages.is_empty());
+        for reply in &mut pending {
+            assert!(matches!(reply.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        }
+        match exit {
+            Exit::Rejected => reject_deferred(&mut c, IDS[3]),
+            Exit::OwnerCancelled => {
+                c.cancel_parent_session(Some("other"));
+            }
+            Exit::Finalizing => {
+                let (respond_to, _response) = oneshot::channel();
+                c.handle_active_message_finalizing(IDS[3].into(), respond_to);
+            }
+        }
+        assert!(c.active.contains_key(IDS[3]), "runner teardown is still held");
+        for _ in 0..2 {
+            let mut owned = begin_send(&mut c, &tx, IDS[3], "other");
+            assert_eq!(owned.try_recv(), Ok(ActiveAgentMessageOutcome::NotActiveOrFinalizing));
+            let mut peer = begin(&mut c, &tx, &sender, agent(3));
+            assert_eq!(peer.try_recv(), Ok(ActiveAgentMessageOutcome::NotActiveOrFinalizing));
+        }
+        assert!(c.active_messages.is_empty(), "fresh sends must not reach host admission");
+        assert!(calls.try_recv().is_err());
+        match exit {
+            Exit::Rejected | Exit::OwnerCancelled => {
+                for reply in &mut pending {
+                    assert_eq!(reply.try_recv(), Ok(ActiveAgentMessageOutcome::NotActiveOrFinalizing));
+                }
+                assert!(c.spawn_ready.is_empty(), "cancelled targets cannot acquire a new parked send");
+                assert!(c.agent_message_quotas.pair_in_flight_counts().is_empty());
+                assert_eq!(MAX_ACTIVE_MESSAGE_ADMISSIONS, sender.available_permits());
+            }
+            Exit::Finalizing => {
+                // Existing pre-commit sends still own their permits until settlement.
+                assert_eq!(vec![2], c.agent_message_quotas.pair_in_flight_counts());
+                assert_eq!(MAX_ACTIVE_MESSAGE_ADMISSIONS - 3, sender.available_permits());
+            }
+        }
     }
 }
 
@@ -754,6 +811,13 @@ async fn target_transitions_and_drop_preserve_pair_quota() {
     ));
     drop(held);
     c.active_messages.clear();
+    for response in responses {
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), response)
+            .await.expect("replaced target admission must settle on future drop")
+            .expect("replacement response channel");
+        assert_eq!(outcome, ActiveAgentMessageOutcome::ChannelClosed);
+    }
+    assert!(c.agent_message_quotas.pair_in_flight_counts().iter().all(|count| *count == 0));
     c.graph.remove(IDS[3]);
     add(&mut c, admissions.clone(), IDS[3], "other", None);
     finish_child_before_visibility(&mut c, IDS[3]);
@@ -765,12 +829,22 @@ async fn target_transitions_and_drop_preserve_pair_quota() {
         .expect("host visibility callback");
     c.handle_terminal_publication(publication);
     promote_pending(&mut c, admissions.clone(), IDS[3]);
-    for _ in 0..3 {
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), wake)
+        .await.expect("wake admission acknowledgement after promotion")
+        .expect("wake response channel");
+    assert!(matches!(outcome, ActiveAgentMessageOutcome::Accepted { .. }));
+    let mut live_responses = Vec::new();
+    for _ in 0..MAX_SENDER_TARGET_IN_FLIGHT {
         let mut response = begin(&mut c, &tx, &sender, agent(3));
-        assert!(response.try_recv().is_err());
+        assert!(matches!(response.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        live_responses.push(response);
     }
+    assert_eq!(c.agent_message_quotas.pair_in_flight_counts(), vec![MAX_SENDER_TARGET_IN_FLIGHT]);
     assert!(matches!(
-        response_outcome(begin(&mut c, &tx, &sender, agent(3))).await,
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            response_outcome(begin(&mut c, &tx, &sender, agent(3))),
+        ).await.expect("full live incarnation must refuse the next send"),
         ActiveAgentMessageOutcome::QuotaExceeded {
             kind: crate::implementations::grok_build::task::types::ActiveAgentMessageQuotaKind::SenderTargetInFlight,
             ..

@@ -5,14 +5,37 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{TerminalOptions, Viewport};
 use std::path::{Path, PathBuf};
+#[derive(Debug, Clone, Default)]
+pub struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+
+impl RecordingClipboard {
+    pub fn writes(&self) -> Vec<String> {
+        self.0.borrow().clone()
+    }
+}
+
+impl xai_ratatui_textarea::ClipboardProvider for RecordingClipboard {
+    fn get(&mut self) -> Option<String> {
+        self.0.borrow().last().cloned()
+    }
+
+    fn set(&mut self, text: &str) {
+        self.0.borrow_mut().push(text.to_owned());
+    }
+}
+
 /// Keep the receiver alive for as long as frames are drawn, or the writer's sends fail.
 pub fn test_terminal() -> (PagerTerminal, std::sync::mpsc::Receiver<WriterPayload>) {
+    test_terminal_in(Rect::new(0, 0, 80, 24))
+}
+
+pub fn test_terminal_in(area: Rect) -> (PagerTerminal, std::sync::mpsc::Receiver<WriterPayload>) {
     let (frame_tx, frame_rx) = std::sync::mpsc::channel();
     let writer = TermWriter::new(frame_tx, WriterSync::new()).expect("single test writer");
     let terminal = xai_ratatui_inline::Terminal::with_options(
         CrosstermBackend::new(writer),
         TerminalOptions {
-            viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+            viewport: Viewport::Fixed(area),
         },
     )
     .expect("channel-backed terminal requires no tty");

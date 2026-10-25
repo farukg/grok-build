@@ -25,7 +25,104 @@ pub(crate) enum ExternalPromptEditorAccess {
     PastePending,
     OwnedElsewhere,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VisibleFocus {
+    Pane(AgentPane),
+    Timeline,
+    Context,
+    SidebarDock,
+    Btw,
+}
+
+impl Default for VisibleFocus {
+    fn default() -> Self {
+        Self::Pane(AgentPane::Prompt)
+    }
+}
+
 impl AgentView {
+    pub(crate) fn visible_focus(&self) -> VisibleFocus {
+        if self.f7_sidebar_focused() {
+            VisibleFocus::Context
+        } else if self.f6_panel_focused() {
+            VisibleFocus::Timeline
+        } else if self.active_pane == AgentPane::Dock && self.dock_focus_in_sidebar {
+            VisibleFocus::SidebarDock
+        } else if self.active_pane == AgentPane::Prompt && self.btw_focused {
+            VisibleFocus::Btw
+        } else {
+            VisibleFocus::Pane(self.active_pane)
+        }
+    }
+
+    pub(crate) fn restore_visible_focus(&mut self, focus: VisibleFocus) {
+        self.btw_focused = false;
+        self.clear_context_sidebar_focus();
+        if let Some(panel) = self.timeline_mode.panel_mut() {
+            panel.focus = crate::views::timeline_panel::PanelFocus::Chat;
+        }
+        match focus {
+            VisibleFocus::Btw => {
+                if self.set_active_pane(AgentPane::Prompt, false) {
+                    self.btw_focused = self.btw_state.is_some();
+                }
+            }
+            VisibleFocus::Context => self.focus_context_sidebar(),
+            VisibleFocus::Timeline => {
+                if let Some(panel) = self.timeline_mode.panel_mut() {
+                    panel.focus = crate::views::timeline_panel::PanelFocus::Panel;
+                }
+            }
+            VisibleFocus::SidebarDock => {
+                self.dock_focus_in_sidebar = true;
+                self.set_active_pane(AgentPane::Dock, false);
+            }
+            VisibleFocus::Pane(pane) => {
+                if self.set_active_pane(pane, false) {
+                    if pane == AgentPane::Dock {
+                        self.dock_focus_in_sidebar = false;
+                    }
+                    self.todo.overlay.focused = pane == AgentPane::Todo;
+                    self.tasks.overlay.focused = pane == AgentPane::Tasks;
+                    self.queue.overlay.focused = pane == AgentPane::Queue;
+                }
+            }
+        }
+    }
+
+    fn cycle_visible_focus(&mut self, current: VisibleFocus) {
+        use crate::views::sidebar::SidebarsOpen;
+        let (timeline, context) = match self.sidebars_open(self.last_terminal_size.0) {
+            SidebarsOpen::None => (false, false),
+            SidebarsOpen::Left => (true, false),
+            SidebarsOpen::Right => (false, true),
+            SidebarsOpen::Both => (true, true),
+        };
+        let regions = [
+            (VisibleFocus::Pane(AgentPane::Prompt), true),
+            (VisibleFocus::Pane(AgentPane::Scrollback), true),
+            (VisibleFocus::Timeline, timeline),
+            (VisibleFocus::Context, context),
+            (VisibleFocus::SidebarDock, self.context_dock_geometry().is_some() && !self.dock_items().is_empty()),
+            (VisibleFocus::Pane(AgentPane::Todo), self.pane_areas.todo.area() > 0),
+            (VisibleFocus::Pane(AgentPane::Queue), self.pane_areas.queue.area() > 0),
+            (VisibleFocus::Pane(AgentPane::Tasks), self.pane_areas.tasks.area() > 0),
+            (VisibleFocus::Pane(AgentPane::Dock), self.dock_shown && self.pane_areas.dock.area() > 0
+                && self.context_dock_geometry().is_none_or(|(rect, _)| rect != self.pane_areas.dock)
+                && !self.dock_items().is_empty()),
+            (VisibleFocus::Btw, self.btw_state.is_some()
+                && crate::minimal_api::minimal_btw_geometry_is_paintable(self.last_btw_area)),
+        ];
+        let at = regions.iter().position(|(region, _)| *region == current).unwrap_or(0);
+        for step in 1..=regions.len() {
+            let (next, visible) = regions[(at + step) % regions.len()];
+            if visible {
+                self.restore_visible_focus(next);
+                break;
+            }
+        }
+    }
+
     /// The composer is the editing target regardless of pane focus (like the other global chords); overlays and dropdowns still own input.
     pub(crate) fn external_prompt_editor_access(&self) -> ExternalPromptEditorAccess {
         let owned_elsewhere = !matches!(self.prompt_mode, super::PromptMode::Normal)
@@ -106,6 +203,7 @@ impl AgentView {
             || self.agents_modal.is_some()
             || self.persona_detail.is_some()
             || self.block_viewer.is_some()
+            || (self.line_viewer.is_some() && self.plan_approval_view.is_none())
     }
     /// The dropdown is only open while the draft holds an `@` token, so `text().is_empty()` already covers it.
     /// An open modal or media view ([`Self::modal_owns_input`]) also fails the guard, so those own Esc/Left instead of the overlay back-out stealing them.
@@ -325,6 +423,36 @@ impl AgentView {
         Handled(Box::new(InputOutcome::Changed))
     }
     pub(super) fn handle_input_inner(
+        &mut self,
+        ev: &Event,
+        registry: &ActionRegistry,
+        prompt_paging: bool,
+    ) -> InputOutcome {
+        let dismissing_modal = self.modal_owns_input()
+            && matches!(ev, Event::Key(key) if key!(Esc).matches(key)
+                && key.kind != KeyEventKind::Release);
+        let focus = self.visible_focus();
+        let outcome = self.route_input(ev, registry, prompt_paging);
+        if self.active_pane != AgentPane::Prompt || self.f6_panel_focused() || self.f7_sidebar_focused() {
+            self.btw_focused = false;
+        }
+        if matches!(ev, Event::Key(key) if key!(Tab).matches(key))
+            && matches!(outcome, InputOutcome::Action(Action::FocusScrollback))
+        {
+            self.cycle_visible_focus(focus);
+            return InputOutcome::Changed;
+        }
+        if dismissing_modal && !self.modal_owns_input() {
+            self.clear_context_sidebar_focus();
+            if let Some(panel) = self.timeline_mode.panel_mut() {
+                panel.focus = crate::views::timeline_panel::PanelFocus::Chat;
+            }
+            self.set_active_pane(AgentPane::Prompt, true);
+        }
+        outcome
+    }
+
+    fn route_input(
         &mut self,
         ev: &Event,
         registry: &ActionRegistry,
@@ -925,6 +1053,18 @@ impl AgentView {
                 _ => InputOutcome::Unchanged,
             };
         }
+        if matches!(ev, Event::Key(key) if key!(Tab).matches(key)
+            && key.kind != KeyEventKind::Release)
+            && self.no_input_overlay_pending()
+            && (self.active_pane != AgentPane::Prompt
+                || self.f6_panel_focused()
+                || self.f7_sidebar_focused())
+            && self.scrollback_search.is_none()
+            && self.tasks.list_state.input_mode().is_none()
+        {
+            self.cycle_visible_focus(self.visible_focus());
+            return InputOutcome::Changed;
+        }
         if let Some(outcome) = self.route_context_sidebar_input(ev) {
             return outcome;
         }
@@ -1025,9 +1165,9 @@ impl AgentView {
             && key!('t', CONTROL).matches(key)
         {
             self.todo.overlay.visible = !self.todo.overlay.visible;
-            self.todo.overlay.focused = self.todo.overlay.visible && self.dock_on;
+            self.todo.overlay.focused = self.todo.overlay.visible;
             self.todo.on_state_change();
-            if self.todo.overlay.focused && self.dock_on {
+            if self.todo.overlay.focused {
                 self.set_active_pane(AgentPane::Todo, false);
             } else if self.active_pane == AgentPane::Todo {
                 self.set_active_pane(AgentPane::Scrollback, false);
@@ -1331,6 +1471,7 @@ impl AgentView {
             if target != AgentPane::Queue {
                 self.queue.overlay.focused = false;
             }
+            self.btw_focused = false;
             self.active_pane = target;
             return true;
         }
@@ -1346,6 +1487,7 @@ impl AgentView {
         if target != AgentPane::Queue {
             self.queue.overlay.focused = false;
         }
+        self.btw_focused = false;
         self.active_pane = target;
         true
     }

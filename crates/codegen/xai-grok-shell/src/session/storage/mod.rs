@@ -16,6 +16,25 @@ use agent_client_protocol as acp;
 use xai_grok_sampling_types::ReasoningEffort;
 use xai_grok_workspace::session::file_state::RewindPoint;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionListVisibility {
+    History,
+    Roster,
+}
+
+impl SessionListVisibility {
+    pub(crate) fn admits(self, summary: &Summary) -> bool {
+        match self {
+            Self::History => !summary.is_hidden(),
+            Self::Roster => {
+                !summary.is_headless()
+                    && summary.hidden != Some(true)
+                    && (!summary.is_hidden() || summary.is_subagent_kind())
+            }
+        }
+    }
+}
+
 pub mod jsonl;
 pub(crate) mod relocation;
 mod replay;
@@ -48,6 +67,68 @@ pub(crate) fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     })
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtomicWriteFault { Write, Sync, ParentSync }
+
+#[cfg(test)]
+pub(crate) struct AtomicWriteFaultScope {
+    prior: Option<AtomicWriteFault>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl AtomicWriteFaultScope {
+    pub(crate) fn enter() -> Self {
+        Self { prior: ATOMIC_WRITE_FAULT.take(), _thread: std::marker::PhantomData }
+    }
+}
+
+#[cfg(test)]
+impl Drop for AtomicWriteFaultScope {
+    fn drop(&mut self) { ATOMIC_WRITE_FAULT.set(self.prior); }
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct AtomicWriteFailure {
+    pub(crate) fault: AtomicWriteFault,
+    source: io::Error,
+}
+
+#[cfg(test)]
+impl std::fmt::Display for AtomicWriteFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "atomic {:?} fault: {}", self.fault, self.source)
+    }
+}
+
+#[cfg(test)]
+impl std::error::Error for AtomicWriteFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.source) }
+}
+
+#[cfg(test)]
+impl AtomicWriteFailure {
+    fn error(fault: AtomicWriteFault, source: io::Error) -> io::Error {
+        io::Error::new(source.kind(), Self { fault, source })
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static ATOMIC_WRITE_FAULT: std::cell::Cell<Option<AtomicWriteFault>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+#[path = "atomic_fault_scope_tests.rs"]
+mod atomic_fault_scope_tests;
+
+#[cfg(test)]
+pub(crate) fn fail_next_atomic_write(fault: AtomicWriteFault) {
+    ATOMIC_WRITE_FAULT.set(Some(fault));
+}
+
 fn write_bytes_atomic_with(
     path: &Path,
     bytes: &[u8],
@@ -55,9 +136,25 @@ fn write_bytes_atomic_with(
     sync_parent: impl Fn() -> io::Result<()>,
 ) -> io::Result<()> {
     let tmp = temp_sibling(path);
+    #[cfg(test)]
+    let fault = ATOMIC_WRITE_FAULT.take();
     let write_synced = || -> io::Result<()> {
         let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
+        #[cfg(test)]
+        if matches!(fault, Some(AtomicWriteFault::Write)) {
+            file = std::fs::File::open(&tmp)?;
+        }
+        if let Err(source) = file.write_all(bytes) {
+            #[cfg(test)]
+            if matches!(fault, Some(AtomicWriteFault::Write)) {
+                return Err(AtomicWriteFailure::error(AtomicWriteFault::Write, source));
+            }
+            return Err(source);
+        }
+        #[cfg(test)]
+        if matches!(fault, Some(AtomicWriteFault::Sync)) {
+            return Err(AtomicWriteFailure::error(AtomicWriteFault::Sync, io::Error::other("injected atomic file sync failure")));
+        }
         // NTFS/ext4 journal a rename as old-file-or-new-file only when the new file's data is already flushed
         // Without this fsync a power loss can leave the committed rename in place with zero-length content
         sync_file(&file)
@@ -66,7 +163,13 @@ fn write_bytes_atomic_with(
     // Its new entry can vanish on power loss until the parent directory is synced A retry after a rename whose parent sync failed sees the file present and cannot tell create from replace.
     // So every successful rename pays the parent sync.
     match write_synced().and_then(|()| std::fs::rename(&tmp, path)) {
-        Ok(()) => sync_parent(),
+        Ok(()) => {
+            #[cfg(test)]
+            if matches!(fault, Some(AtomicWriteFault::ParentSync)) {
+                return Err(AtomicWriteFailure::error(AtomicWriteFault::ParentSync, io::Error::other("injected atomic parent sync failure")));
+            }
+            sync_parent()
+        }
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
             Err(e)
@@ -986,6 +1089,11 @@ pub fn is_interjection_chunk(chunk: &acp::ContentChunk) -> bool {
     chunk_meta_flag(chunk, INTERJECTION_META_KEY)
 }
 
+/// `ContentChunk._meta` string naming the `SyntheticReason` wire value of the persisted item the
+/// chunk echoes. The pager renders such a chunk as a collapsed injected entry (never a plain user
+/// prompt, never hidden) so everything that reached the model stays visible in the scrollback.
+pub const SYNTHETIC_REASON_META_KEY: &str = "syntheticReason";
+
 /// Boolean `ContentChunk._meta` flag; anything but a literal `true` reads as `false`.
 pub fn chunk_meta_flag(chunk: &acp::ContentChunk, key: &str) -> bool {
     chunk
@@ -1282,6 +1390,25 @@ pub trait StorageAdapter: Send + Sync {
         )))
     }
 
+    async fn admit_parent_message(
+        &self,
+        _info: &Info,
+        _admission: &crate::session::delivery_receiver::ParentMessageAdmission,
+        _authority: crate::session::delivery_receiver::ParentAdmissionAuthority,
+        _access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<crate::session::delivery_receiver::ParentAdmissionAck> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable parent-message admission unsupported"))
+    }
+
+    async fn cancel_parent_messages(
+        &self,
+        _info: &Info,
+        _message_ids: &[String],
+        _access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable parent-message settlement unsupported"))
+    }
+
     async fn receive_delivery(
         &self,
         _info: &Info,
@@ -1353,6 +1480,25 @@ pub trait StorageAdapter: Send + Sync {
         ))
     }
 
+    async fn suppress_terminal_completions(
+        &self,
+        _info: &Info,
+        _ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        _reason: crate::session::completion_delivery::CompletionSuppression,
+    ) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable completion suppression is unsupported"))
+    }
+
+    async fn enroll_terminal_completion(
+        &self,
+        _info: &Info,
+        _source: crate::session::completion_delivery::CompletionPayloadSource,
+        _text: String,
+        _policy: crate::session::completion_delivery::CompletionEventPolicy,
+    ) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "durable terminal enrollment is unsupported"))
+    }
+
     async fn prepare_subagent_completion(
         &self,
         _info: &Info,
@@ -1393,6 +1539,17 @@ pub trait StorageAdapter: Send + Sync {
             "completion wake policy persistence is unsupported",
         ))
     }
+    async fn append_notification_commit_aware(
+        &self,
+        _info: &Info,
+        _projection: &xai_chat_state::input_projection::NotificationProjection,
+        _admission: &xai_chat_state::InputAdmission,
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError> {
+        Err(xai_chat_state::StrictAppendError::NotCommitted(io::Error::new(
+            io::ErrorKind::Unsupported, "strict notification projection is unsupported",
+        )))
+    }
+
     async fn append_completion_commit_aware(
         &self,
         _info: &Info,

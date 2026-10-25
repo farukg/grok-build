@@ -150,7 +150,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         wake_request.fork_context = false;
         wake_request.parent_prompt_id = None;
         wake_request.run_in_background = true;
-        wake_request.surface_completion = false;
         wake_request.await_to_completion = false;
         wake_request.cancel_token = tokio_util::sync::CancellationToken::new();
         let message_id = match wake_message_source {

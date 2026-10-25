@@ -2,6 +2,10 @@
 //! Also xAI-notification handling and the gateway-bridge dispatch shims.
 use super::*;
 
+#[cfg(test)]
+#[path = "injected_request_tests.rs"]
+mod injected_request_tests;
+
 enum NotificationPersistence {
     Append,
     Committed,
@@ -15,6 +19,7 @@ pub(super) fn closes_cancel_rewind_window(update: &XaiSessionUpdate) -> bool {
             | XaiSessionUpdate::HookExecution { .. }
             | XaiSessionUpdate::ImageCompressed { .. }
             | XaiSessionUpdate::ImageDropped { .. }
+            | XaiSessionUpdate::InjectedContextRecord { .. }
             | XaiSessionUpdate::BackgroundTasks { .. }
     )
 }
@@ -1009,14 +1014,74 @@ impl SessionActor {
             }
         });
     }
+    pub(super) async fn prepare_request_for_sampling(
+        &self,
+        built: xai_chat_state::BuiltConversationRequest,
+        published: &mut Vec<xai_chat_state::InjectedRequestRecord>,
+    ) -> Result<crate::sampling::ConversationRequest, acp::Error> {
+        let mut previous: Vec<_> = published.iter().map(|record| (record, false)).collect();
+        let mut changed = Vec::new();
+        for record in &built.injected_records {
+            if let Some((_, consumed)) = previous.iter_mut()
+                .find(|(prior, consumed)| !*consumed && *prior == record)
+            {
+                *consumed = true;
+            } else {
+                changed.push(record);
+            }
+        }
+        self.send_injected_request_records(&changed).await?;
+        if *published != built.injected_records { published.clone_from(&built.injected_records); }
+        Ok(built.request)
+    }
+
+    pub(super) async fn send_injected_request_records(
+        &self,
+        records: &[&xai_chat_state::InjectedRequestRecord],
+    ) -> Result<(), acp::Error> {
+        if records.is_empty() { return Ok(()); }
+        let mut updates = Vec::with_capacity(records.len());
+        let mut notifications = Vec::with_capacity(records.len());
+        for record in records {
+            let notification = XaiSessionNotification {
+                session_id: self.session_info.id.clone(),
+                update: XaiSessionUpdate::InjectedContextRecord {
+                    kind: record.kind_wire().to_string(),
+                    text: record.text().to_string(),
+                },
+                meta: Some(self.build_notification_meta()),
+            };
+            notifications.push(serde_json::value::to_raw_value(&notification)
+                .map_err(|_| acp::Error::internal_error().data("request record serialization failed"))?);
+            updates.push(crate::session::storage::SessionUpdate::Xai(Box::new(notification)));
+        }
+        let (respond_to, response) = tokio::sync::oneshot::channel();
+        self.notifications.persistence_tx.send(PersistenceMsg::AppendUpdatesAndAck {
+            updates, respond_to,
+        }).map_err(|_| acp::Error::internal_error().data("request record persistence unavailable"))?;
+        match response.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(crate::session::persistence::io_error_to_acp(&error)),
+            Err(_) => return Err(acp::Error::internal_error().data("request record persistence acknowledgement lost")),
+        }
+        for params in notifications {
+            self.notifications.gateway.forward_fire_and_forget(acp::ExtNotification::new(
+                "x.ai/session_notification", params.into(),
+            ));
+        }
+        Ok(())
+    }
+
     #[tracing::instrument(skip_all)]
     pub(super) async fn send_xai_notification(&self, update: XaiSessionUpdate) {
-        self.send_xai_notification_with_extra_meta(
+        if let Err(error) = self.send_xai_notification_with_extra_meta(
             update,
             None,
             crate::session::storage::jsonl::AppendDurability::Buffered,
         )
-        .await;
+        .await {
+            tracing::error!(?error, "session notification persistence unavailable");
+        }
     }
     /// Build the per-response boundary update, projecting the response's usage
     /// into the Messages API `message.usage` shape (uncached `input_tokens`).
@@ -1049,7 +1114,7 @@ impl SessionActor {
         update: XaiSessionUpdate,
         extra_meta: Option<serde_json::Map<String, serde_json::Value>>,
         durability: crate::session::storage::jsonl::AppendDurability,
-    ) {
+    ) -> Result<(), acp::Error> {
         if closes_cancel_rewind_window(&update) {
             self.close_rewind_window().await;
         }
@@ -1075,13 +1140,21 @@ impl SessionActor {
                     .send(PersistenceMsg::Update(persisted_update));
             }
             crate::session::storage::jsonl::AppendDurability::Durable => {
-                let (respond_to, _) = tokio::sync::oneshot::channel();
-                let _ = self.notifications.persistence_tx.send(
+                let (respond_to, response) = tokio::sync::oneshot::channel();
+                self.notifications.persistence_tx.send(
                     PersistenceMsg::AppendUpdateDurablyAndAck {
                         update: persisted_update,
                         respond_to,
                     },
-                );
+                ).map_err(|_| acp::Error::internal_error().data("terminal persistence unavailable"))?;
+                match response.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(crate::session::storage::AppendUpdateError::NotCommitted(error)
+                        | crate::session::storage::AppendUpdateError::Committed(error))) => {
+                        return Err(crate::session::persistence::io_error_to_acp(&error));
+                    }
+                    Err(_) => return Err(acp::Error::internal_error().data("terminal persistence acknowledgement lost")),
+                }
             }
         }
         let params = serde_json::to_value(&notification)
@@ -1100,6 +1173,7 @@ impl SessionActor {
             self.dispatch_notification_hook(&notification_type, message, title, level)
                 .await;
         }
+        Ok(())
     }
 }
 #[cfg(test)]

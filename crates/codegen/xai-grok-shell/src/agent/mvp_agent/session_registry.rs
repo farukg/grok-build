@@ -572,6 +572,16 @@ impl SessionRegistry {
     pub(super) fn host(&self, id: &acp::SessionId) -> Option<SessionHost> {
         self.with(id, |entry| entry.host.clone()).flatten()
     }
+    pub(super) fn child_hosts(&self) -> Vec<(acp::SessionId, ChildHost)> {
+        self.sessions
+            .borrow()
+            .iter()
+            .filter_map(|(id, entry)| match &entry.host {
+                Some(SessionHost::Child(child)) => Some((id.clone(), child.clone())),
+                Some(SessionHost::Root) | None => None,
+            })
+            .collect()
+    }
     pub(super) fn set_host(&self, id: &acp::SessionId, host: SessionHost) {
         self.edit(id, |entry| entry.host = Some(host));
     }

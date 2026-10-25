@@ -228,6 +228,11 @@ pub struct TaskWakeFallback {
     pub prompt_blocks: Vec<acp::ContentBlock>,
     pub source: NotificationSource,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalNotificationDecision {
+    Surface,
+    Suppressed,
+}
 #[derive(Debug)]
 pub struct TaskWakeAdmission {
     pub respond_to: oneshot::Sender<bool>,
@@ -511,6 +516,7 @@ pub enum SessionCommand {
         responds_to: oneshot::Sender<SessionInfoData>,
     },
     CompactSession {
+        invocation_id: Option<crate::session::acp_types::CompactInvocationId>,
         cancellation: tokio_util::sync::CancellationToken,
         respond_to: oneshot::Sender<acp::Result<()>>,
     },
@@ -835,6 +841,11 @@ pub enum SessionCommand {
         priority: NotificationPriority,
         source: NotificationSource,
     },
+    /// Resolve goal policy at the actor before acknowledging terminal enrollment.
+    ClassifyTerminalNotification {
+        notification: TaskWakeFallback,
+        respond_to: oneshot::Sender<std::io::Result<TerminalNotificationDecision>>,
+    },
     /// Drop queued or mid-turn-buffered `MonitorEvent` notifications for a task.
     /// Used when a natural monitor exit already auto-woke via `TaskCompleted`.
     /// Stdout and terminal pipeline events then do not start a second `NotificationDrain` turn for the same completion.
@@ -1005,6 +1016,11 @@ pub enum SessionCommand {
     WorkflowCompletionTurn {
         run_id: String,
         revision: u64,
+    },
+    ResumeTerminalCompletion {
+        id: xai_chat_state::completion::CompletionIdentity,
+        text: String,
+        policy: super::completion_delivery::CompletionEventPolicy,
     },
     /// Take turn messages from the chat state actor (proxied from mvp_agent).
     TakeTurnMessages {

@@ -1,5 +1,7 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
+#[path = "dashboard_persistence_tests.rs"]
+mod dashboard_persistence_tests;
 fn nth<T>(xs: &[T], i: usize) -> &T {
     let Some(x) = xs.get(i) else {
         panic!("expected index {i}, len {}", xs.len());
@@ -222,6 +224,26 @@ fn parse_kill_outcome_round_trips_agent_serialization() {
         .unwrap();
     assert_eq!(parse_kill_outcome(&wire), Some(KillOutcome::NotFound));
 }
+#[test]
+fn parse_kill_outcome_preserves_negative_public_payloads() {
+    use xai_grok_shell::extensions::task::KillTaskResponse;
+    use xai_grok_shell::session::result::ExtMethodResult;
+    use xai_tool_types::{KillFailureReason, KillOutcome, KillProcessEffect, KillStage};
+    for outcome in [
+        KillOutcome::Indeterminate { stage: KillStage::ProcessTermination, process_effect: KillProcessEffect::Unknown },
+        KillOutcome::Indeterminate { stage: KillStage::ProcessTermination, process_effect: KillProcessEffect::StopRequested },
+        KillOutcome::Indeterminate { stage: KillStage::DurableEnrollment, process_effect: KillProcessEffect::TerminalObserved },
+        KillOutcome::Failed { stage: KillStage::ProcessTermination, reason: KillFailureReason::Unsupported },
+        KillOutcome::Failed { stage: KillStage::ProcessTermination, reason: KillFailureReason::PermissionDenied },
+        KillOutcome::Failed { stage: KillStage::ProcessTermination, reason: KillFailureReason::DispatchUnavailable },
+    ] {
+        let wire = serde_json::to_string(&ExtMethodResult::success(KillTaskResponse {
+            task_id: "t-1".into(), outcome,
+        })).unwrap();
+        assert_eq!(parse_kill_outcome(&wire), Some(outcome));
+    }
+}
+
 /// Error envelopes and malformed payloads yield `None` (clear pending state, keep the row).
 #[test]
 fn parse_kill_outcome_none_for_error_or_malformed() {
@@ -1935,46 +1957,63 @@ async fn fetch_session_list_pushes_query_and_echoes_seq() {
     assert_eq!(j(nth(&captured, 3), "query"), "fail-me");
 }
 #[tokio::test]
-async fn fetch_dashboard_sessions_explicitly_excludes_headless() {
-    use std::sync::{Arc, Mutex};
+async fn fetch_dashboard_sessions_uses_roster_owner_and_preserves_child_metadata() {
+    use std::sync::Arc;
     use xai_acp_lib::AcpAgentMessage;
-    let captured: Arc<Mutex<Option<serde_json::Value>>> = Arc::default();
-    let captured_for_task = captured.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
+        let mut served = 0;
         while let Some(msg) = rx.recv().await {
             if let AcpAgentMessage::ExtMethod(args) = msg {
-                assert_eq!(args.request.method.as_ref(), "x.ai/session/list");
-                let params = serde_json::from_str(args.request.params.get())
+                assert_eq!(args.request.method.as_ref(), "x.ai/sessions/list");
+                let params: serde_json::Value = serde_json::from_str(args.request.params.get())
                     .expect("params JSON");
-                *captured_for_task.lock().unwrap() = Some(params);
-                let body = serde_json::json!({ "result": { "sessions": [] } });
+                assert_eq!(params, serde_json::json!({}));
+                let sessions = if served == 0 {
+                    serde_json::json!([])
+                } else {
+                    serde_json::json!([{
+                        "sessionId": "reaped-child", "title": "Child", "cwd": "/repo",
+                        "sessionKind": "subagent", "parentSessionId": "parent",
+                        "activity": "dormant", "resident": false,
+                        "origin": { "kind": "local" }
+                    }])
+                };
+                let body = serde_json::json!({ "result": { "sessions": sessions } });
                 let raw = serde_json::value::RawValue::from_string(body.to_string())
-                    .expect("serialize list response");
+                    .expect("serialize roster response");
                 let _ = args.response_tx.send(Ok(acp::ExtResponse::new(Arc::from(raw))));
-                break;
+                served += 1;
+                if served == 2 { break; }
             }
         }
     });
     let (progress_tx, _progress_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut tasks = JoinSet::new();
-    execute(
-        Effect::FetchDashboardSessions,
-        &mut tasks,
-        &tx,
-        Path::new("."),
-        &SessionFlags::default(),
-        &progress_tx,
-    );
-    match tasks.join_next().await.expect("task").expect("no panic") {
-        TaskResult::DashboardSessionsLoaded { sessions } => assert!(sessions.is_empty()),
-        other => panic!("expected DashboardSessionsLoaded, got {other:?}"),
+    for expected in 0..2 {
+        execute(
+            Effect::FetchDashboardSessions,
+            &mut tasks,
+            &tx,
+            Path::new("."),
+            &SessionFlags::default(),
+            &progress_tx,
+        );
+        match tasks.join_next().await.expect("task").expect("no panic") {
+            TaskResult::DashboardSessionsLoaded { sessions } => {
+                if expected == 0 {
+                    assert!(sessions.is_empty());
+                } else {
+                    assert_eq!(sessions.len(), 1);
+                    assert_eq!(sessions[0].session_id, "reaped-child");
+                    assert_eq!(sessions[0].session_kind.as_deref(), Some("subagent"));
+                    assert_eq!(sessions[0].parent_session_id.as_deref(), Some("parent"));
+                    assert!(!sessions[0].resident);
+                }
+            }
+            other => panic!("expected DashboardSessionsLoaded, got {other:?}"),
+        }
     }
-    let captured = captured.lock().unwrap();
-    let Some(params) = captured.as_ref() else {
-        panic!("captured params");
-    };
-    assert_eq!(j(params, "headless"), "exclude");
 }
 #[tokio::test]
 async fn fetch_session_list_sends_kind_facet_filter() {

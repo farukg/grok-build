@@ -196,7 +196,7 @@ fn now_rfc3339() -> String {
 #[derive(Debug, Default)]
 pub(crate) struct WorkflowTracker {
     runs: Vec<TrackedRun>,
-    reported_terminal_run_ids: std::collections::HashSet<String>,
+    reported_terminal_run_ids: std::collections::HashSet<(String, u64)>,
     terminal_at_restore_run_ids: std::collections::HashSet<String>,
     status_reported_revisions: std::collections::HashMap<String, u64>,
 }
@@ -295,7 +295,7 @@ impl WorkflowTracker {
         run.active_since = Some(Instant::now());
         run.execution_epoch = run.execution_epoch.wrapping_add(1);
         let state = run.state.clone();
-        self.reported_terminal_run_ids.remove(run_id);
+        self.reported_terminal_run_ids.retain(|(id, _)| id != run_id);
         self.terminal_at_restore_run_ids.remove(run_id);
         Some(state)
     }
@@ -646,7 +646,13 @@ impl WorkflowTracker {
     /// Skip the completion wake and reminder for a run whose outcome the model
     /// already received directly (it stopped the run itself).
     pub(crate) fn mark_completion_reported(&mut self, run_id: &str) {
-        self.reported_terminal_run_ids.insert(run_id.to_owned());
+        if let Some(run) = self.get(run_id) {
+            self.mark_revision_reported(run_id, run.revision);
+        }
+    }
+
+    pub(crate) fn mark_revision_reported(&mut self, run_id: &str, revision: u64) {
+        self.reported_terminal_run_ids.insert((run_id.to_owned(), revision));
     }
 
     pub(crate) fn is_unreported_completion(&self, run_id: &str, revision: u64) -> bool {
@@ -654,7 +660,7 @@ impl WorkflowTracker {
             run.state.run_id == run_id
                 && run.state.revision == revision
                 && run.state.status.is_completion_reportable()
-                && !self.reported_terminal_run_ids.contains(run_id)
+                && !self.reported_terminal_run_ids.contains(&(run_id.to_owned(), revision))
         })
     }
 
@@ -665,7 +671,7 @@ impl WorkflowTracker {
         let mut fresh = Vec::new();
         for run in &self.runs {
             if !run.state.status.is_completion_reportable()
-                || self.reported_terminal_run_ids.contains(&run.state.run_id)
+                || self.reported_terminal_run_ids.contains(&(run.state.run_id.clone(), run.state.revision))
             {
                 continue;
             }
@@ -674,9 +680,6 @@ impl WorkflowTracker {
             } else {
                 fresh.push(run.state.clone());
             }
-        }
-        for state in restored.iter().chain(fresh.iter()) {
-            self.reported_terminal_run_ids.insert(state.run_id.clone());
         }
         (restored, fresh)
     }
@@ -1139,6 +1142,8 @@ mod tests {
         );
         let (_, fresh) = t.take_unreported_terminal_runs();
         assert_eq!(fresh.len(), 1);
+        assert_eq!(t.take_unreported_terminal_runs().1.len(), 1);
+        t.mark_revision_reported(&id, fresh[0].revision);
         assert!(t.take_unreported_terminal_runs().1.is_empty());
         assert!(t.take_status_report().is_empty());
         assert!(t.resume_run(&id, Some(500)).is_none());

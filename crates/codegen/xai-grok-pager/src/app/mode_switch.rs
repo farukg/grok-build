@@ -254,7 +254,7 @@ mod tests {
         let mut child =
             crate::app::agent_view::test_agent_view(Some("sess-1"), std::path::PathBuf::from("."));
         child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
-            parent: agent_id,
+            parent: Some(agent_id),
             parent_session_id: "parent".into(),
             subagent_id: "sub-1".into(),
             started_at: std::time::Instant::now(),

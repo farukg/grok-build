@@ -11,10 +11,10 @@ use xai_grok_pager_diff::DiffHunk;
 use super::blocks::mermaid_content::DiagramAffordance;
 use super::blocks::{
     AgentMessageBlock, BgTaskBlock, BtwBlock, ContextInfoBlock, EditToolCallBlock,
-    ExecuteToolCallBlock, LineRange, ListDirToolCallBlock, MemoryCaptureBlock, OtherToolCallBlock,
-    ReadToolCallBlock, SearchFileMatch, SearchToolCallBlock, SessionEvent, SessionEventBlock,
-    SubagentBlock, SubagentBlockKind, SystemMessageBlock, ThinkingBlock, ToolCallBlock,
-    UserPromptBlock, WorkflowBlock,
+    ExecuteToolCallBlock, InjectedBlock, LineRange, ListDirToolCallBlock, MemoryCaptureBlock,
+    OtherToolCallBlock, ReadToolCallBlock, SearchFileMatch, SearchToolCallBlock, SessionEvent,
+    SessionEventBlock, SubagentBlock, SubagentBlockKind, SystemMessageBlock, ThinkingBlock,
+    ToolCallBlock, UserPromptBlock, WorkflowBlock,
 };
 use super::types::{
     AccentStyle, BlockBackground, BlockContext, BlockOutput, DisplayMode, RenderedBlockOutput,
@@ -47,6 +47,8 @@ pub enum MessageKind {
     Btw,
     ContextInfo,
     MemoryCapture,
+    /// Runtime-injected context (auto-wake echoes, request-only records): collapsed by default.
+    Injected,
     Stub,
 }
 
@@ -80,6 +82,7 @@ impl From<&RenderBlock> for MessageKind {
             RenderBlock::Btw(_) => Self::Btw,
             RenderBlock::ContextInfo(_) => Self::ContextInfo,
             RenderBlock::MemoryCapture(_) => Self::MemoryCapture,
+            RenderBlock::Injected(_) => Self::Injected,
         }
     }
 }
@@ -111,6 +114,7 @@ impl MessageKind {
             Self::Btw,
             Self::ContextInfo,
             Self::MemoryCapture,
+            Self::Injected,
         ]
     }
 
@@ -140,6 +144,7 @@ impl MessageKind {
             Self::Btw,
             Self::ContextInfo,
             Self::MemoryCapture,
+            Self::Injected,
         ]
     }
 
@@ -171,7 +176,8 @@ impl MessageKind {
             | Self::BgTask
             | Self::Subagent
             | Self::Workflow
-            | Self::Btw => DisplayForm::Collapsed,
+            | Self::Btw
+            | Self::Injected => DisplayForm::Collapsed,
         }
     }
 }
@@ -516,6 +522,9 @@ pub enum RenderBlock {
     ContextInfo(ContextInfoBlock),
     /// Debug-only generated memory details.
     MemoryCapture(MemoryCaptureBlock),
+    /// Runtime-injected context the model saw (auto-wake echoes, request-only records).
+    /// Collapsed by default; expands to the full injected body.
+    Injected(InjectedBlock),
 }
 
 /// Delegate a method call to the inner block variant.
@@ -535,6 +544,7 @@ macro_rules! delegate_block {
             RenderBlock::Btw(b) => b.$method($($arg),*),
             RenderBlock::ContextInfo(b) => b.$method($($arg),*),
             RenderBlock::MemoryCapture(b) => b.$method($($arg),*),
+            RenderBlock::Injected(b) => b.$method($($arg),*),
         }
     };
 }
@@ -885,6 +895,16 @@ impl RenderBlock {
         RenderBlock::ContextInfo(ContextInfoBlock::new(snapshot, model))
     }
 
+    /// Create a runtime-injected context entry (collapsed by default).
+    /// `starts_turn` marks an auto-wake echo that opened a numbered prompt turn.
+    pub fn injected(
+        label: impl Into<String>,
+        text: impl Into<String>,
+        starts_turn: bool,
+    ) -> Self {
+        RenderBlock::Injected(InjectedBlock::new(label, text).with_starts_turn(starts_turn))
+    }
+
     pub fn session_event(event: SessionEvent) -> Self {
         RenderBlock::SessionEvent(SessionEventBlock::new(event))
     }
@@ -1091,7 +1111,8 @@ impl RenderBlock {
             RenderBlock::System(_)
             | RenderBlock::SessionEvent(_)
             | RenderBlock::ContextInfo(_)
-            | RenderBlock::MemoryCapture(_) => None,
+            | RenderBlock::MemoryCapture(_)
+            | RenderBlock::Injected(_) => None,
             RenderBlock::Btw(_) => Some(theme.accent_plan),
             RenderBlock::Stub(block) => Some(block.accent_color),
         }
@@ -1233,6 +1254,9 @@ impl RenderBlock {
             ]),
             RenderBlock::ContextInfo(b) => join_searchable([Some(b.model.clone())]),
             RenderBlock::MemoryCapture(b) => join_searchable([Some(b.searchable_text())]),
+            RenderBlock::Injected(b) => {
+                join_searchable([Some(b.label.clone()), Some(b.text.clone())])
+            }
             RenderBlock::ToolCall(tc) => tc.searchable_text(),
         }
     }
@@ -1316,6 +1340,20 @@ mod tests {
     use crate::scrollback::types::BlockLine;
     use pretty_assertions::assert_eq;
     use ratatui::text::{Line, Span};
+
+    /// The injected kind is a first-class settings kind that starts collapsed: F7 owns its fold,
+    /// and the block routes through the same kind-default machinery as every other kind.
+    #[test]
+    fn injected_kind_maps_and_starts_collapsed() {
+        let block = RenderBlock::injected("Task completed", "body", true);
+        assert_eq!(MessageKind::from(&block), MessageKind::Injected);
+        assert_eq!(
+            MessageKind::Injected.starting_form(),
+            super::super::types::DisplayForm::Collapsed
+        );
+        assert!(MessageKind::settings_kinds().contains(&MessageKind::Injected));
+        assert!(MessageKind::bulk_kinds().contains(&MessageKind::Injected));
+    }
 
     fn ctx(mode: DisplayMode, is_running: bool) -> BlockContext {
         BlockContext {

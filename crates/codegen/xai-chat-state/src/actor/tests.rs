@@ -1,5 +1,8 @@
 //! Tests for ChatStateActor.
 
+#[path = "request_visibility_tests.rs"]
+mod request_visibility_tests;
+
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -1788,6 +1791,186 @@ async fn build_request_injects_memory_when_no_system() {
         request.items.first(),
         Some(ConversationItem::System(_))
     ));
+}
+
+#[tokio::test]
+async fn build_request_records_persisted_synthetic_bodies_from_the_final_view() {
+    use xai_grok_sampling_types::SyntheticReason;
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("Base"),
+        ConversationItem::system_reminder("Hidden reminder body"),
+        ConversationItem::direct_bash("!printf hello\nhello"),
+        ConversationItem::parent_human_message("Parent human body"),
+        ConversationItem::agent_message("Agent-authored body"),
+        ConversationItem::user("Human control"),
+    ]);
+    let built = h.handle.build_request(vec![], None, false, None, "c".into(), "r".into()).await.unwrap();
+    for (reason, expected) in [
+        (SyntheticReason::SystemReminder, "Hidden reminder body"),
+        (SyntheticReason::DirectBash, "!printf hello\nhello"),
+        (SyntheticReason::ParentHumanMessage, "Parent human body"),
+    ] {
+        assert!(built.injected_records.iter().any(|record| matches!(record,
+            crate::types::InjectedRequestRecord::Synthetic { reason: actual, text }
+                if *actual == reason && text == expected)));
+    }
+    assert!(built.injected_records.iter().any(|record| matches!(record,
+        crate::types::InjectedRequestRecord::Synthetic { reason: SyntheticReason::AgentMessage, text }
+            if text.contains(crate::compaction_utils::AGENT_MESSAGE_MODEL_LABEL)
+                && text.contains("Agent-authored body"))));
+    assert!(!built.injected_records.iter().any(|record| record.text() == "Human control"));
+}
+
+#[tokio::test]
+async fn build_request_long_memory_record_preserves_the_actual_splice_across_iterations() {
+    let h = TestHarness::with_conversation(vec![ConversationItem::system("Base prompt")]);
+    let reminder = format!("<memory-context>\n{}\nEND_OF_REMINDER\n</memory-context>", "ä".repeat(5000));
+    for req_id in ["first", "second"] {
+        let built = h.handle.build_request(
+            vec![], Some(reminder.clone()), false, None, "c".into(), req_id.into(),
+        ).await.unwrap();
+        assert_eq!(built.injected_records.len(), 1);
+        assert_eq!(built.injected_records[0].text(), reminder);
+        assert_eq!(built.items[0].text_content(), format!("Base prompt\n\n{reminder}"));
+    }
+    assert_eq!(h.handle.get_conversation().await[0].text_content(), "Base prompt");
+}
+
+/// The non-persist memory splice is request-only: chat history stays untouched and the reply
+/// carries a lossless record so the CLI can show what entered the request.
+#[tokio::test]
+async fn build_request_non_persist_memory_reminder_yields_injected_record() {
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("You are helpful."),
+        ConversationItem::user("hi"),
+    ]);
+    let built = h
+        .handle
+        .build_request(
+            vec![],
+            Some("Remember: user prefers Rust".to_string()),
+            false,
+            None,
+            "c".into(),
+            "r".into(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        built.injected_records,
+        vec![crate::types::InjectedRequestRecord::MemoryReminder {
+            text: "Remember: user prefers Rust".to_string()
+        }],
+        "the request-only splice must be recorded"
+    );
+
+    // The record is display-only: the stored history never sees the reminder.
+    let persisted = h.handle.get_conversation().await;
+    assert!(
+        persisted
+            .iter()
+            .all(|item| !item.text_content().contains("user prefers Rust")),
+        "non-persist reminder must not leak into chat history: {persisted:?}"
+    );
+}
+
+#[tokio::test]
+async fn build_request_persisted_memory_reminder_yields_visible_record() {
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("You are helpful."),
+        ConversationItem::user("hi"),
+    ]);
+    let built = h
+        .handle
+        .build_request(
+            vec![],
+            Some("<memory-context>\nRemember this\n</memory-context>".to_string()),
+            true,
+            None,
+            "c".into(),
+            "r".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        built.injected_records,
+        vec![crate::types::InjectedRequestRecord::MemoryReminder {
+            text: "<memory-context>\nRemember this\n</memory-context>".to_string(),
+        }],
+        "a system-head mutation also needs a visible scrollback record"
+    );
+    assert!(h.handle.get_conversation().await[0].text_content().contains("Remember this"));
+}
+
+/// A pruning pass that replaces stored tool results must surface as a context-view record.
+#[tokio::test]
+async fn build_request_pruned_view_yields_context_view_record() {
+    use crate::types::PruningConfig;
+
+    let (mock, _rx) = MockChatPersistence::new();
+    let (event_tx, _) = mpsc::unbounded_channel();
+    let token = tokio_util::sync::CancellationToken::new();
+    // Tiny window forces `should_prune` true; every old tool result is hard-cleared at age 1.
+    let handle = ChatStateActor::spawn_with_pruning(
+        vec![],
+        test_config_with_window(64),
+        PruningConfig {
+            enabled: true,
+            keep_last_n_turns: 0,
+            hard_clear_age_turns: 1,
+            ..Default::default()
+        },
+        Box::new(mock),
+        event_tx,
+        token,
+    );
+
+    handle.push_user_message(ConversationItem::user("q0"));
+    handle.increment_prompt_index();
+    handle
+        .push_assistant_response(ConversationItem::assistant("a0"));
+    handle.push_tool_result(ConversationItem::tool_result("c0", "payload"));
+    handle.push_user_message(ConversationItem::user("q1"));
+    handle.increment_prompt_index();
+    let _ = handle.get_conversation().await;
+
+    let built = handle
+        .build_request(vec![], None, false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    let context_views: Vec<&crate::types::InjectedRequestRecord> = built
+        .injected_records
+        .iter()
+        .filter(|record| matches!(record, crate::types::InjectedRequestRecord::ContextView { .. }))
+        .collect();
+    assert_eq!(context_views.len(), 1, "records: {:?}", built.injected_records);
+    let crate::types::InjectedRequestRecord::ContextView { text } = context_views[0] else {
+        panic!("expected context view record");
+    };
+    assert!(
+        text.contains("pruned") && text.contains("cleared"),
+        "prune delta must be described, got {text:?}"
+    );
+}
+
+/// An untouched view (no pruning, no projection, no reminder) produces no records at all.
+#[tokio::test]
+async fn build_request_clean_view_yields_no_records() {
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("sys"),
+        ConversationItem::user("hi"),
+    ]);
+    let built = h
+        .handle
+        .build_request(vec![], None, false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    assert!(
+        built.injected_records.is_empty(),
+        "nothing entered the request invisibly: {:?}",
+        built.injected_records
+    );
 }
 
 #[tokio::test]

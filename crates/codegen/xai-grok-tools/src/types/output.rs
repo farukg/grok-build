@@ -133,7 +133,7 @@ use crate::util::truncate::{DEFAULT_SOFT_WRAP_WIDTH, soft_wrap_lines};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolRunResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub completed_subagents: Vec<crate::types::completion_observation::ObservedSubagentCompletion>,
+    pub completed_subagents: Vec<crate::types::completion_observation::ObservedCompletion>,
     /// Clean tool output — never mutated by layers.
     /// Consumers use this for: JSON serialization, protocol translation, hunk tracking.
     pub output: ToolOutput,
@@ -636,6 +636,12 @@ impl ToolOutput {
             ToolOutput::ReadFile(_) => true,
             ToolOutput::TaskOutput(TaskOutputOutput::TaskNotFound(_)) => true,
             ToolOutput::KillTask(KillTaskOutput::TaskNotFound(_)) => true,
+            ToolOutput::KillTask(KillTaskOutput::Result(r)) => match r.outcome {
+                xai_tool_types::KillOutcome::Killed | xai_tool_types::KillOutcome::AlreadyExited => false,
+                xai_tool_types::KillOutcome::NotFound
+                | xai_tool_types::KillOutcome::Indeterminate { .. }
+                | xai_tool_types::KillOutcome::Failed { .. } => true,
+            },
             ToolOutput::Skill(s) => !s.success,
             ToolOutput::WebFetch(WebFetchOutput::Content(_)) => false,
             ToolOutput::WebFetch(_) => true,
@@ -1873,7 +1879,7 @@ mod tests {
         let json = to_json(
             KillTaskOutput::Result(KillTaskResult {
                 task_id: "task-1".into(),
-                outcome: "killed".into(),
+                outcome: xai_tool_types::KillOutcome::Killed,
                 message: "Task was terminated successfully".into(),
             })
             .into(),

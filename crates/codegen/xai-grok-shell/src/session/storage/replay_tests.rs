@@ -1016,11 +1016,48 @@ fn stream_replay_forwards_xai_updates_in_file_order() {
     let mut kinds = Vec::new();
     let emission =
         stream_replay_updates_at_hinted(sid, home.path(), ReplayPathHint::default(), |u| {
-            kinds.push(matches!(u, ReplayedUpdate::Xai(_)));
+            kinds.push(matches!(u, ReplayedUpdate::Xai(_, _)));
         })
         .unwrap();
     assert_eq!(emission, ReplayEmission::Emitted);
     assert_eq!(kinds, vec![true, false], "xai then acp, in file order");
+}
+
+#[test]
+fn stream_replay_preserves_compact_invocation_metadata() {
+    use crate::session::acp_types::CompactInvocationId;
+    let home = tempfile::tempdir().unwrap();
+    let sid = "child-compact-invocation";
+    let dir = home.path().join("sessions").join("cwd").join(sid);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(SUMMARY_FILE), "{}").unwrap();
+    let id = CompactInvocationId(uuid::Uuid::new_v4());
+    let metadata = serde_json::json!({
+        "compactInvocationId": id, "eventId": "compact-17", "futureExtension": { "retained": true },
+    });
+    let notification = crate::extensions::notification::SessionNotification {
+        session_id: acp::SessionId::new(sid),
+        update: crate::extensions::notification::SessionUpdate::AutoCompactCompleted {
+            tokens_before: Some(1000), tokens_after: 100, elapsed_ms: None, summary_preview: None,
+        },
+        meta: Some(metadata.clone()),
+    };
+    let envelope = SessionUpdateEnvelope::from_update(&SessionUpdate::Xai(Box::new(notification))).unwrap();
+    let line = serde_json::to_string(&envelope).unwrap();
+    let SessionUpdate::Xai(decoded) = SessionUpdateEnvelope::from_str(&line).unwrap() else {
+        panic!("expected persisted xAI notification");
+    };
+    assert_eq!(decoded.meta, Some(metadata.clone()));
+    std::fs::write(dir.join(UPDATES_FILE), format!("{line}\n")).unwrap();
+    let mut replayed = Vec::new();
+    let emission = stream_replay_updates_at_hinted(sid, home.path(), ReplayPathHint::default(), |update| {
+        if let ReplayedUpdate::Xai(update, meta) = update {
+            assert!(matches!(update, crate::extensions::notification::SessionUpdate::AutoCompactCompleted { .. }));
+            replayed.push(meta);
+        }
+    }).unwrap();
+    assert_eq!(replayed, vec![Some(metadata)]);
+    assert_eq!(emission, ReplayEmission::Empty, "metadata cannot change replay emission authority");
 }
 
 /// The stream forwards each persisted line's `_meta` alongside the ACP update.
@@ -1080,7 +1117,7 @@ fn xai_only_transcript_forwards_but_stays_empty() {
     let mut xai = 0usize;
     let emission =
         stream_replay_updates_at_hinted(sid, home.path(), ReplayPathHint::default(), |u| {
-            if matches!(u, ReplayedUpdate::Xai(_)) {
+            if matches!(u, ReplayedUpdate::Xai(_, _)) {
                 xai += 1;
             }
         })

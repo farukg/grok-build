@@ -40,9 +40,16 @@ impl ChildControl for ToolTestControl {
     ) -> SendBoxFuture<ActiveMessageAdmission> {
         let route = delivery.route();
         let routes = self.routes.clone();
-        let admitted =
-            delivery.commit_admission(|| routes.is_none_or(|routes| routes.send(route).is_ok()));
-        Box::pin(std::future::ready(if admitted == Some(true) {
+        let admitted = delivery
+            .claim_admission()
+            .map(|claim| {
+                claim.commit().try_handoff(|| match routes {
+                    Some(routes) => routes.send(route),
+                    None => Ok(()),
+                })
+            })
+            .is_some_and(|result| result.is_ok());
+        Box::pin(std::future::ready(if admitted {
             ActiveMessageAdmission::Admitted
         } else {
             ActiveMessageAdmission::Rejected
@@ -527,6 +534,74 @@ async fn depth_zero_child_sender_uses_granted_path_not_backend() {
 
     coordinator_task.abort();
     spawn.abort();
+}
+
+#[tokio::test]
+async fn tool_handoff_preserves_closed_live_and_absent_route_semantics() {
+    #[derive(Clone, Copy, Debug)]
+    enum Sink {
+        Live,
+        Closed,
+        Absent,
+    }
+
+    for sink in [Sink::Live, Sink::Closed, Sink::Absent] {
+        let (coordinator_sender, receiver) = SubagentCoordinator::<ToolTestRunner>::channel();
+        let (senders, mut sender_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (routes, mut route_rx) = tokio::sync::mpsc::unbounded_channel();
+        let routes = match sink {
+            Sink::Live => Some(routes),
+            Sink::Closed => {
+                route_rx.close();
+                Some(routes)
+            }
+            Sink::Absent => None,
+        };
+        let coordinator = SubagentCoordinator::from_channel(
+            receiver,
+            ToolTestRunner { senders, routes },
+            Default::default(),
+        );
+        let coordinator_task = tokio::spawn(coordinator.run());
+        let backend = ChannelBackend::for_coordinator_session(coordinator_sender, "trusted-parent");
+        let child_id = uuid::Uuid::now_v7().to_string();
+        let spawn = tokio::spawn({
+            let backend = backend.clone();
+            let child_id = child_id.clone();
+            async move {
+                backend
+                    .spawn(request(&child_id, "trusted-parent", SubagentOwner::Task), None, None)
+                    .await
+            }
+        });
+        let _ = completes(sender_rx.recv()).await.expect("child active");
+        let output = run(
+            resources_with_backend(backend).into_shared(),
+            &child_id,
+            "follow up".to_owned(),
+        )
+        .await;
+        match sink {
+            Sink::Closed => {
+                assert_eq!(SendSubagentMessageOutput::AdmissionUncertain, output);
+                assert!(route_rx.try_recv().is_err());
+            }
+            Sink::Live => {
+                assert!(matches!(output, SendSubagentMessageOutput::Accepted { .. }));
+                assert_eq!(
+                    ActiveMessageRoute::ParentToOwnedDescendant,
+                    route_rx.try_recv().unwrap(),
+                );
+                assert!(route_rx.try_recv().is_err());
+            }
+            Sink::Absent => {
+                assert!(matches!(output, SendSubagentMessageOutput::Accepted { .. }));
+                assert!(route_rx.try_recv().is_err());
+            }
+        }
+        coordinator_task.abort();
+        spawn.abort();
+    }
 }
 
 #[tokio::test]

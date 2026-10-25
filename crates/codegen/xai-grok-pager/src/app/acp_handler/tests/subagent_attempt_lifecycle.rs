@@ -576,3 +576,59 @@
         }).collect();
         assert_eq!(messages, ["first attempt", "second attempt"]);
     }
+
+    // --- Exact-eventId dedup across replay + live ---
+
+    fn subagent_blocks(app: &crate::app::app_view::AppView, child: &str) -> usize {
+        (0..app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).scrollback.len())
+            .filter(|&index| {
+                matches!(
+                    app.agents.get(&AgentId(0)).unwrap_or_else(|| panic!("missing map entry")).scrollback.get(index).map(|entry| &entry.block),
+                    Some(RenderBlock::Subagent(block)) if block.child_session_id == child
+                )
+            })
+            .count()
+    }
+
+    /// The same persisted lifecycle event delivered live and then by replay shares its eventId;
+    /// the replay copy must not render a second strip row for the child. A genuinely new event
+    /// (fresh id) still applies.
+    #[test]
+    fn lifecycle_live_then_replay_same_event_id_renders_once() {
+        let mut app = make_app_with_agent("sess-parent");
+        let spawned = test_subagent_spawned_for_attempt("sess-parent", "child", Some("at1.one"));
+        assert!(handle_ext_notification(
+            &subagent_notification_with_event_id("sess-parent", spawned.clone(), Some("sess-parent-7")),
+            &mut app
+        ));
+        assert_eq!(subagent_blocks(&app, "child"), 1);
+
+        let replayed = subagent_ext_replay(
+            "sess-parent",
+            serde_json::to_value(spawned).unwrap(),
+            "sess-parent-7",
+        );
+        assert!(
+            !handle_ext_notification(&replayed, &mut app),
+            "exact-id replay re-delivery must be dropped"
+        );
+        assert_eq!(
+            subagent_blocks(&app, "child"),
+            1,
+            "replayed duplicate must not render a second row"
+        );
+
+        let finished = test_subagent_finished_for_attempt("child", Some("at1.one"));
+        assert!(handle_ext_notification(
+            &subagent_notification_with_event_id("sess-parent", finished, Some("sess-parent-8")),
+            &mut app
+        ));
+        assert!(
+            app.agents
+                .get(&AgentId(0))
+                .unwrap()
+                .subagent_sessions["child"]
+                .is_finished(),
+            "a fresh-id event must still apply"
+        );
+    }

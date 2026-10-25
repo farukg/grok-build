@@ -19,7 +19,7 @@ use xai_grok_tools::implementations::grok_build::scheduler::types::{
 use xai_grok_tools::registry::types::FinalizedToolset;
 use xai_grok_tools::types::resources::Terminal;
 use xai_grok_workspace_types::rpc::workspace::{
-    BackgroundTaskSnapshotWire, KillTaskOutcome, ScheduledTaskSnapshotWire, TasksSnapshotResponse,
+    BackgroundTaskSnapshotWire, ScheduledTaskSnapshotWire, TasksSnapshotResponse,
 };
 use xai_tool_protocol::{HookEvent, HookFrame, SessionId, ToolId, ToolServerEvictParams};
 use xai_tool_runtime::{
@@ -244,19 +244,15 @@ async fn list_outstanding_background_tasks(
 }
 /// Kill a background terminal task via the session toolset's `TerminalBackend`.
 /// Returns `NotFound` when the session has no terminal backend.
-async fn kill_background_task(toolset: &FinalizedToolset, task_id: &str) -> KillTaskOutcome {
+async fn kill_background_task(toolset: &FinalizedToolset, task_id: &str) -> KillOutcome {
     let terminal = {
         let res = toolset.resources.lock().await;
         res.get::<Terminal>().map(|t| t.0.clone())
     };
     let Some(terminal) = terminal else {
-        return KillTaskOutcome::NotFound;
+        return KillOutcome::NotFound;
     };
-    match terminal.kill_task(task_id).await {
-        KillOutcome::Killed => KillTaskOutcome::Killed,
-        KillOutcome::AlreadyExited => KillTaskOutcome::AlreadyExited,
-        KillOutcome::NotFound => KillTaskOutcome::NotFound,
-    }
+    terminal.kill_task(task_id).await
 }
 /// Delete a scheduled (loop) task via the session toolset's scheduler actor.
 /// `Ok(false)` strictly means no such task; scheduler refusals propagate as errors so a client never treats a still-firing task as gone.

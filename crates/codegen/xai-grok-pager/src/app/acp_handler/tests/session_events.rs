@@ -16,6 +16,7 @@
             chip_elements: Vec::new(),
         });
         let update = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 90000,
             context_window: 131072,
             percentage: 85,
@@ -51,6 +52,7 @@
             cancel_sent: false,
         });
         let update = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 12_000,
             context_window: 200_000,
             percentage: 6,
@@ -121,6 +123,7 @@
 
         let mut agent = make_agent(Some("s1"));
         let started = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 12_000,
             context_window: 200_000,
             percentage: 6,
@@ -153,6 +156,7 @@
         let mut agent = make_agent(Some("s1"));
         agent.session.loading_replay = true;
         let update = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 12_000,
             context_window: 200_000,
             percentage: 6,
@@ -195,6 +199,7 @@
     fn threshold_compact_while_idle_does_not_start_switch_model_command() {
         let mut agent = make_agent(Some("s1"));
         let update = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 90_000,
             context_window: 131_072,
             percentage: 85,
@@ -1005,6 +1010,7 @@
         // Completed refreshes with the post-compact count
         // Failed/Cancelled carry no count; the next meta.totalTokens restamps
         let started = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 460_231,
             context_window: 500_000,
             percentage: 92,
@@ -1146,6 +1152,7 @@
             90_000, 131_072,
         ));
         let update = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 95_000,
             context_window: 131_072,
             percentage: 72,
@@ -1168,6 +1175,7 @@
         let mut app = make_app_with_agent("root-sess");
         // No child view is registered
         let update = XaiSessionUpdate::AutoCompactStarted {
+            phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
             tokens_used: 90000,
             context_window: 131072,
             percentage: 85,

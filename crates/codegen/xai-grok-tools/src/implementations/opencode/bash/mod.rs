@@ -418,6 +418,29 @@ impl xai_tool_runtime::Tool for BashTool {
             }
         };
 
+        if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } = &result.disposition {
+            notification_handle.send_backgrounded(crate::notification::BashExecutionBackgrounded {
+                base: BashNotificationBase {
+                    tool_call_id: tool_call_id.clone(), command: input.command.clone(),
+                    output: result.combined_output.as_bytes().to_vec(), total_bytes: result.total_bytes,
+                    truncated: result.truncated, cwd: cwd.clone(),
+                },
+                output_file: handle.output_file.clone(), task_id: handle.task_id.clone(),
+                monitor_description: None, description: Some(input.description.clone()),
+            });
+            let summary = match reason {
+                crate::computer::types::BackgroundReason::UserRedirect => "User moved the command to the background. The process is still running.",
+                crate::computer::types::BackgroundReason::ForegroundBudget => "The foreground budget expired. The process is still running in the background.",
+            };
+            return Ok(BashToolOutput::BackgroundTaskStarted(crate::types::output::BackgroundTaskStarted {
+                task_id: handle.task_id.clone(), task_type: "bash".into(),
+                output_file: handle.output_file.to_string_lossy().into_owned(), status: "running".into(),
+                command: input.command, summary: summary.into(),
+                retrieval_hint: format!("Read output from {}", handle.output_file.display()),
+                pre_formatted: None, pid: handle.pid,
+            }));
+        }
+
         // --- Send completion notification ---
         let base = BashNotificationBase {
             tool_call_id: tool_call_id.clone(),
@@ -493,6 +516,7 @@ mod tests {
         fn success(output: &str, exit_code: i32) -> Self {
             Self {
                 foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                     combined_output: output.to_string(),
                     exit_code: Some(exit_code),
                     truncated: false,
@@ -508,6 +532,7 @@ mod tests {
         fn timed_out(output: &str) -> Self {
             Self {
                 foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                     combined_output: output.to_string(),
                     exit_code: None,
                     truncated: false,
@@ -759,6 +784,7 @@ mod tests {
     async fn truncated_output() {
         let mock = MockTerminal {
             foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                 combined_output: "partial…".to_string(),
                 exit_code: Some(0),
                 truncated: true,
@@ -793,6 +819,7 @@ mod tests {
     async fn signal_field() {
         let mock = MockTerminal {
             foreground_result: Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                 combined_output: String::new(),
                 exit_code: None,
                 truncated: false,
@@ -1036,6 +1063,7 @@ mod tests {
             ) -> Result<TerminalRunResult, ComputerError> {
                 *self.captured_request.lock().unwrap() = Some(request);
                 Ok(TerminalRunResult {
+                    disposition: crate::computer::types::RunDisposition::Foreground,
                     combined_output: "ok".to_string(),
                     exit_code: Some(0),
                     truncated: false,

@@ -14,6 +14,9 @@ use crate::scrollback::render::ScratchBuffer;
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+
+#[path = "task_icon_scroll_tests.rs"]
+mod scroll_tests;
 /// The dock is hosted in the F7 sidebar: open it and let the shell "answer" so the frame paints.
 fn open_dock_sidebar(agent: &mut AgentView) {
     let _ = agent.handle_input(
@@ -24,6 +27,13 @@ fn open_dock_sidebar(agent: &mut AgentView) {
         &ActionRegistry::defaults(),
     );
 }
+fn reveal_f7_todo(agent: &mut AgentView) {
+    agent.adopt_global_sidebars(false, true, false, true);
+    for code in [crossterm::event::KeyCode::Home, crossterm::event::KeyCode::Down, crossterm::event::KeyCode::Down, crossterm::event::KeyCode::Down] {
+        let _ = agent.handle_input(&Event::Key(crossterm::event::KeyEvent::new(code, KeyModifiers::NONE)), &ActionRegistry::defaults());
+    }
+}
+
 fn cell_symbol(buf: &Buffer, x: u16, y: u16) -> String {
     buf.cell((x, y))
         .map(|c| c.symbol().to_string())
@@ -114,7 +124,7 @@ fn f7_task_icons_work_when_upper_dock_is_disabled() {
 /// task state carries the stdout, and the dock path already opens it.
 #[test]
 fn f7_view_click_opens_viewer_without_scrollback_entry() {
-    crate::views::dock::set_enabled_for_test(false);
+    crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
     open_dock_sidebar(&mut agent);
     insert_running_task_with_entry(&mut agent, "bg-1", None);
@@ -235,13 +245,14 @@ fn dock_icons_hover_and_click_where_painted() {
 }
 
 fn check_work_icons(upper_enabled: bool) {
-    crate::views::dock::set_enabled_for_test(upper_enabled);
+    crate::views::dock::set_enabled_for_test(true);
     let mut agent = make_agent();
+    agent.tasks.overlay.visible = upper_enabled;
     open_dock_sidebar(&mut agent);
     insert_running_task(&mut agent, "bg-1");
     let area = Rect::new(0, 0, 80, 30);
     let buf = draw_frame(&mut agent, area);
-    assert_eq!(agent.dock_on, upper_enabled);
+    assert_eq!(agent.pane_areas.dock.x < agent.f7_body.x, upper_enabled);
     let dock = agent.pane_areas.dock;
     let row_y = (dock.y..dock.bottom())
         .find(|y| {
@@ -327,12 +338,7 @@ fn task_preference_only_changes_the_additional_upper_projection() {
     assert!(agent.tasks.overlay.visible);
     assert!(agent.pane_areas.dock.x < agent.f7_body.x);
     assert!(dock_row_has_tasks(&buf, agent.pane_areas.dock));
-    let sidebar = Rect::new(
-        agent.f7_body.x,
-        agent.f7_body.y,
-        agent.f7_body.width,
-        agent.dock_rows_in_sidebar,
-    );
+    let sidebar = agent.context_dock_geometry().expect("painted F7 dock").0;
     assert!(dock_row_has_tasks(&buf, sidebar));
     let _ = agent.handle_input(&ctrl_g, &registry);
     let buf = draw_frame(&mut agent, area);
@@ -354,12 +360,7 @@ fn both_work_projections_open_the_same_child_with_surface_local_indices() {
         let area = Rect::new(0, 0, size.0, size.1);
         let _ = draw_frame(&mut agent, area);
         let upper = agent.pane_areas.dock;
-        let sidebar = Rect::new(
-            agent.f7_body.x,
-            agent.f7_body.y,
-            agent.f7_body.width,
-            agent.dock_rows_in_sidebar,
-        );
+        let sidebar = agent.context_dock_geometry().expect("painted F7 dock").0;
         assert!(upper.width > 0 && sidebar.width > 0);
         assert!(!upper.intersects(sidebar));
         for (rect, in_sidebar) in [(upper, false), (sidebar, true)] {
@@ -454,15 +455,17 @@ fn suppressed_todo_releases_keyboard_focus_on_short_and_narrow_terminals() {
 }
 
 #[test]
-fn upper_todo_render_obeys_dock_and_visibility_without_hiding_f7_or_queue() {
+fn upper_todo_render_obeys_visibility_in_every_dock_placement_without_hiding_f7_or_queue() {
     let _theme = crate::theme::cache::pin_theme();
     let registry = ActionRegistry::defaults();
     let toggle_todo = Event::Key(crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Char('t'),
         KeyModifiers::CONTROL,
     ));
-    for dock in [false, true] {
-        crate::views::dock::set_enabled_for_test(dock);
+    for placement in [crate::views::dock::DockPlacement::Off, crate::views::dock::DockPlacement::Top, crate::views::dock::DockPlacement::Bottom] {
+        crate::views::dock::set_enabled_for_test(false);
+        crate::views::dock::set_placement(placement);
+        let dock = placement.is_visible();
         for f7 in [false, true] {
             for tasks in [false, true] {
                 for empty in [false, true] {
@@ -491,7 +494,7 @@ fn upper_todo_render_obeys_dock_and_visibility_without_hiding_f7_or_queue() {
                             let area = Rect::new(0, 0, 160, height);
                             let buf = draw_frame(&mut agent, area);
                             let todo = agent.pane_areas.todo;
-                            assert_eq!(todo.height > 0, dock && visible);
+                            assert_eq!(todo.height > 0, visible);
                             let upper_width = if f7 { agent.f7_body.x } else { area.width };
                             let upper: String = (0..height)
                                 .flat_map(|y| (0..upper_width).map(move |x| (x, y)))
@@ -502,28 +505,20 @@ fn upper_todo_render_obeys_dock_and_visibility_without_hiding_f7_or_queue() {
                             } else {
                                 "upper-todo-marker"
                             };
-                            assert_eq!(upper.contains(marker), dock && visible);
+                            assert_eq!(upper.contains(marker), visible);
                             assert!(agent.pane_areas.queue.height > 0);
                             assert_eq!(agent.pane_areas.queue.bottom(), agent.pane_areas.prompt.y);
                             assert_eq!(agent.dock_counts().queued, 0);
                             assert!(agent.hit_queue_close.rect.is_none());
                             if f7 {
-                                let sidebar = Rect::new(
-                                    agent.f7_body.x,
-                                    agent.f7_body.y,
-                                    agent.f7_body.width,
-                                    agent.dock_rows_in_sidebar,
-                                );
-                                assert!(dock_row_has_tasks(&buf, sidebar));
+                                if dock {
+                                    let sidebar = agent.context_dock_geometry().expect("painted F7 dock").0;
+                                    assert!(dock_row_has_tasks(&buf, sidebar));
+                                } else {
+                                    assert!(agent.context_dock_geometry().is_none());
+                                }
                                 if !empty {
-                                    agent.adopt_global_sidebars(false, true, false, true);
-                                    let _ = agent.handle_input(
-                                        &Event::Key(crossterm::event::KeyEvent::new(
-                                            crossterm::event::KeyCode::End,
-                                            KeyModifiers::NONE,
-                                        )),
-                                        &registry,
-                                    );
+                                    reveal_f7_todo(&mut agent);
                                     let buf = draw_frame(&mut agent, area);
                                     let sidebar = agent.f7_body;
                                     let text: String = (sidebar.y..sidebar.bottom())
@@ -545,8 +540,10 @@ fn upper_todo_render_obeys_dock_and_visibility_without_hiding_f7_or_queue() {
 
 #[test]
 fn f7_keeps_work_and_todos_when_upper_dock_and_preferences_are_off() {
-    for dock in [false, true] {
-        crate::views::dock::set_enabled_for_test(dock);
+    for placement in [crate::views::dock::DockPlacement::Off, crate::views::dock::DockPlacement::Top, crate::views::dock::DockPlacement::Bottom] {
+        crate::views::dock::set_enabled_for_test(false);
+        crate::views::dock::set_placement(placement);
+        let dock = placement.is_visible();
         for visible in [false, true] {
             let mut agent = make_agent();
             insert_running_task(&mut agent, "bg-1");
@@ -570,26 +567,24 @@ fn f7_keeps_work_and_todos_when_upper_dock_and_preferences_are_off() {
             open_dock_sidebar(&mut agent);
             let area = Rect::new(0, 0, 160, 40);
             let buf = draw_frame(&mut agent, area);
-            let sidebar = Rect::new(
-                agent.f7_body.x,
-                agent.f7_body.y,
-                agent.f7_body.width,
-                agent.dock_rows_in_sidebar,
-            );
-            assert!(dock_row_has_tasks(&buf, sidebar));
-            let warning: String = (sidebar.y..sidebar.bottom())
-                .flat_map(|y| (sidebar.x..sidebar.right()).map(move |x| (x, y)))
-                .map(|(x, y)| cell_symbol(&buf, x, y))
-                .collect();
-            assert!(warning.contains("MANUAL"));
-            assert!(warning.contains("CALLER BLOCKED"));
-            let _ = agent.handle_input(
-                &Event::Key(crossterm::event::KeyEvent::new(
-                    crossterm::event::KeyCode::End,
-                    KeyModifiers::NONE,
-                )),
-                &ActionRegistry::defaults(),
-            );
+            if dock {
+                let sidebar = agent.context_dock_geometry().expect("painted F7 dock").0;
+                assert!(dock_row_has_tasks(&buf, sidebar));
+                let warning: String = (sidebar.y..sidebar.bottom())
+                    .flat_map(|y| (sidebar.x..sidebar.right()).map(move |x| (x, y)))
+                    .map(|(x, y)| cell_symbol(&buf, x, y))
+                    .collect();
+                assert!(warning.contains("MANUAL"));
+                assert!(warning.contains("CALLER BLOCKED"));
+            } else {
+                assert!(agent.context_dock_geometry().is_none());
+                let sidebar = agent.f7_body;
+                let text: String = (sidebar.y..sidebar.bottom())
+                    .flat_map(|y| (sidebar.x..sidebar.right()).map(move |x| (x, y)))
+                    .map(|(x, y)| cell_symbol(&buf, x, y)).collect();
+                assert!(text.contains("Dock") && text.contains("Off"));
+            }
+            reveal_f7_todo(&mut agent);
             let buf = draw_frame(&mut agent, area);
             let text: String = (agent.f7_body.y..agent.f7_body.bottom())
                 .flat_map(|y| (agent.f7_body.x..agent.f7_body.right()).map(move |x| (x, y)))

@@ -158,7 +158,7 @@ pub struct ActiveAgentMessage {
     pub text: Arc<str>,
 }
 
-/// Coordinator-authorized delivery with synchronous insertion authority.
+/// Coordinator-authorized delivery with revocable admission authority.
 #[derive(Debug, Clone)]
 pub struct ActiveAgentMessageDelivery {
     message: ActiveAgentMessage,
@@ -201,17 +201,64 @@ impl ActiveAgentMessageDelivery {
         self.route
     }
 
-    /// Run synchronous protected-row insertion only while admission is open.
-    pub fn commit_admission<T>(&self, insert: impl FnOnce() -> T) -> Option<T> {
-        self.admission_lease.commit_admission(insert)
+    /// Claim before dispatching durable admission. A lost race authorizes no write.
+    pub fn claim_admission(self) -> Option<ActiveAgentMessageClaim> {
+        self.admission_lease.claim()?;
+        Some(ActiveAgentMessageClaim { delivery: self })
+    }
+}
+
+/// Irrevocable, single-use authority for this server-authored admission.
+/// Dropping the proof never reopens or revokes the lease.
+#[derive(Debug)]
+#[must_use]
+pub struct ActiveAgentMessageClaim {
+    delivery: ActiveAgentMessageDelivery,
+}
+
+impl ActiveAgentMessageClaim {
+    pub fn delivery(&self) -> &ActiveAgentMessageDelivery {
+        &self.delivery
     }
 
-    #[cfg(test)]
-    pub(crate) fn mark_admission_uncertain(&self) {
-        self.admission_lease.state.store(
-            ActiveMessageLeaseState::Claimed as u8,
+    /// Consume only after the receiver's durable admission has succeeded.
+    /// The lease remains Claimed until the reserved local handoff succeeds.
+    pub fn commit(self) -> ActiveAgentMessageCommittedAdmission {
+        ActiveAgentMessageCommittedAdmission {
+            delivery: self.delivery,
+        }
+    }
+}
+
+/// Durable admission acknowledgement; model visibility remains receiver-owned.
+#[derive(Debug)]
+#[must_use]
+pub struct ActiveAgentMessageCommittedAdmission {
+    delivery: ActiveAgentMessageDelivery,
+}
+
+impl ActiveAgentMessageCommittedAdmission {
+    pub fn delivery(&self) -> &ActiveAgentMessageDelivery {
+        &self.delivery
+    }
+
+    /// Complete an infallible reserved local receipt handoff before positive settlement.
+    /// Fallible handoffs must use `Self::try_handoff` instead.
+    pub fn handoff<T>(self, insert: impl FnOnce() -> T) -> T {
+        match self.try_handoff(|| Ok::<T, std::convert::Infallible>(insert())) {
+            Ok(value) => value,
+            Err(never) => match never {},
+        }
+    }
+
+    /// A failed or panicking handoff leaves admission irrevocable but unresolved.
+    pub fn try_handoff<T, E>(self, insert: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        let value = insert()?;
+        self.delivery.admission_lease.state.store(
+            ActiveMessageLeaseState::Committed as u8,
             std::sync::atomic::Ordering::Release,
         );
+        Ok(value)
     }
 }
 
@@ -255,10 +302,7 @@ impl ActiveMessageAdmissionLease {
         })
     }
 
-    /// Run synchronous protected-row insertion only while this lease is open.
-    ///
-    /// The closure cannot be async, so the claim cannot cross an await point.
-    pub fn commit_admission<T>(&self, insert: impl FnOnce() -> T) -> Option<T> {
+    fn claim(&self) -> Option<()> {
         self.state
             .compare_exchange(
                 ActiveMessageLeaseState::Open as u8,
@@ -267,12 +311,7 @@ impl ActiveMessageAdmissionLease {
                 std::sync::atomic::Ordering::Acquire,
             )
             .ok()?;
-        let inserted = insert();
-        self.state.store(
-            ActiveMessageLeaseState::Committed as u8,
-            std::sync::atomic::Ordering::Release,
-        );
-        Some(inserted)
+        Some(())
     }
 
     pub(crate) fn settle(&self, admission: ActiveMessageAdmission) -> bool {

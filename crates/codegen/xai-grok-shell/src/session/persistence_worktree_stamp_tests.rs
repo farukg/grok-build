@@ -82,6 +82,7 @@ async fn new_with_explicit_dir_overrides_worktree_stamp_so_subagent_stays_hidden
         crate::session::persistence::ExplicitSessionOpen::New {
             identity: None,
             next_trace_turn: None,
+            parent_session_id: None,
         },
     )
     .await
@@ -119,6 +120,7 @@ async fn new_with_explicit_dir_stores_requested_identity() {
                 attempt_id: attempt_id.clone(),
             }),
             next_trace_turn: Some(3),
+            parent_session_id: None,
         },
     )
     .await
@@ -130,4 +132,38 @@ async fn new_with_explicit_dir_stores_requested_identity() {
     assert_eq!(summary.agent_id.as_deref(), Some(agent_id.as_str()));
     assert_eq!(summary.attempt_id.as_deref(), Some(attempt_id.as_str()));
     assert_eq!(summary.next_trace_turn, 3);
+}
+
+/// Durable subagent parentage (gb-subid-6): the parent named at spawn lands in the child's
+/// `summary.json` next to the `subagent` kind, so the roster and prompt recovery can name the
+/// parent after the leader loses its in-memory child registry.
+#[tokio::test]
+#[serial]
+async fn new_with_explicit_dir_stamps_the_named_parent_into_the_child_summary() {
+    let home = tempfile::TempDir::new().unwrap();
+    let _env = EnvGuard::set("GROK_HOME", home.path());
+    let target_dir = home.path().join("child-session");
+
+    let _persistence = new_with_explicit_dir(
+        &Info {
+            id: acp::SessionId::new("parented-child"),
+            cwd: home.path().to_string_lossy().into_owned(),
+        },
+        target_dir.clone(),
+        default_model_id(),
+        OaiCompatClient::new(xai_grok_sampler::SamplerConfig::default()).unwrap(),
+        "test-model".to_owned(),
+        crate::session::persistence::ExplicitSessionOpen::New {
+            identity: None,
+            next_trace_turn: None,
+            parent_session_id: Some("the-parent".to_owned()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let summary: Summary =
+        serde_json::from_slice(&std::fs::read(target_dir.join("summary.json")).unwrap()).unwrap();
+    assert_eq!(summary.session_kind.as_deref(), Some("subagent"));
+    assert_eq!(summary.parent_session_id.as_deref(), Some("the-parent"));
 }

@@ -174,6 +174,26 @@ pub struct AgentViewLayout {
     pub timeline_width: u16,
 }
 impl AgentViewLayout {
+    pub fn apply_dock_placement(&mut self, placement: crate::views::dock::DockPlacement) {
+        match placement {
+            crate::views::dock::DockPlacement::Off | crate::views::dock::DockPlacement::Bottom => {}
+            crate::views::dock::DockPlacement::Top => {
+                let top = self.scrollback.y;
+                let old_y = self.dock.y;
+                let height = self.dock.height;
+                if height == 0 { return; }
+                for rect in [
+                    &mut self.tasks, &mut self.scrollback, &mut self.scrollback_content,
+                    &mut self.todo, &mut self.queue, &mut self.btw, &mut self.turn_status,
+                    &mut self.banner, &mut self.plugin_cta, &mut self.follow_ups,
+                ] {
+                    if rect.y >= top && rect.y < old_y { rect.y = rect.y.saturating_add(height); }
+                }
+                self.dock.y = top;
+            }
+        }
+    }
+
     /// Stack the rows described by `params` into the screen area.
     ///
     /// Each row's rules are documented on [`AgentViewLayoutParams`].

@@ -68,6 +68,16 @@ directory (`Ctrl+G` toggles). **Inactive** is roster-only sessions owned by
 other pager processes that this process has not loaded — background noise, so
 the section **starts collapsed** (expand with `→` / click).
 
+**`Ctrl+A` toggles the subagent lane**: instead of your main sessions, the
+list shows the *other* running sessions — subagent children spawned by any
+session the leader hosts — with the same sorting, view, and row actions
+(peek, reply after attach, pin, rename, stop, open). A child you open from
+the lane keeps its parent link, so sending to it still works after the
+leader restarts or reaps the child actor; a send to a reaped child without
+that link is refused with a message naming the child, its parent, and how to
+resume it. The header shows a `◆ subagents` chip while the lane is on;
+`Ctrl+A` again returns to the main sessions.
+
 Pinned rows keep their manual order in both grouping modes. Agent activity
 and recent updates do not move them; `Shift+↑` / `Shift+↓` changes their order.
 
@@ -120,6 +130,7 @@ The dispatch input uses the same prompt chrome as the agent view. Press
 | `Enter` (typed reply) | Send / queue the reply to the selected agent |
 | `/` | Literal `/` into the prompt |
 | `Ctrl+/` | Toggle search mode (live-filter rows) |
+| `Ctrl+A` | Toggle the subagent lane (other running sessions ↔ main sessions) |
 | `Ctrl+R` | Rename selected row |
 | `Ctrl+T` | Pin / unpin |
 | `Ctrl+G` | Toggle grouping (state ↔ directory) |

@@ -40,18 +40,23 @@ jobs:
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
 
       - name: Install pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt
+
+      - name: Guard pinned workspace formatting
+        id: format
+        timeout-minutes: 10
+        uses: ./.github/actions/format-guard
 
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-test
           cache-on-failure: "true"
 
-      - name: Check sampler, shell, tools and pager formatting
-        run: cargo +nightly-2026-08-13 fmt -p xai-grok-sampler -p xai-grok-shell -p xai-grok-tools -p xai-grok-pager -p xai-grok-pager-pty-harness -- --check
-
       - name: Test gateway-compatible sampler events and request shape
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: |
           cargo test -p xai-grok-sampler --lib --locked deserialize_response_event
           cargo test -p xai-grok-sampler --lib --locked responses_stream_skips_unknown_events_without_ending_the_stream
@@ -63,38 +68,167 @@ jobs:
           cargo test -p xai-grok-sampler --lib --locked config_without_doom_loop_recovery_deserializes_to_none
 
       - name: Test gateway-compatible shell routing
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: |
           cargo test -p xai-grok-shell --lib --locked gateway_capabilities_follow_backend_and_route
           cargo test -p xai-grok-shell --lib --locked session_resolver_is_not_stamped_onto_third_party_samplers
           cargo test -p xai-grok-shell --lib --locked read_parent_sampling_config
 
       - name: Test child management lifecycle
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: cargo test -p xai-grok-shell --lib --locked child_prompt_tests
 
       - name: Test saved child capability recipe
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: cargo test -p xai-grok-shell --lib --locked management_recipe
 
       - name: Test shell compaction
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: cargo test -p xai-grok-shell --lib --locked compact
 
       - name: Test pager compaction
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: cargo test -p xai-grok-pager --lib --locked compact
 
       - name: Test subagent delivery and live steering
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 20
+        shell: bash
         run: |
-          cargo test -p xai-grok-tools --lib --locked implementations::grok_build::task::
-          cargo test -p xai-grok-shell --lib --locked parent_message
-          cargo test -p xai-grok-shell --lib --locked prompt_turn_receipt
-          cargo test -p xai-grok-shell --lib --locked live_steers_
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked implementations::grok_build::task:: 2>&1 | tee subagent-task-test.log
+          cargo test -p xai-grok-shell --lib --locked parent_message 2>&1 | tee parent-message-test.log
+          cargo test -p xai-grok-shell --lib --locked prompt_turn_receipt 2>&1 | tee prompt-turn-receipt-test.log
+          cargo test -p xai-grok-shell --lib --locked live_steers_ 2>&1 | tee live-steers-test.log
+
+      - name: Test kill task tools and delegation
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked implementations::grok_build::kill_task:: 2>&1 | tee kill-task-test.log
+
+      - name: Test task completion reminders
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked reminders::task_completion::tests:: 2>&1 | tee task-completion-reminder-test.log
+
+      - name: Test kill task model wire format
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked types::output::tests::kill_task 2>&1 | tee kill-task-wire-test.log
+
+      - name: Test subagent message tool routes
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked implementations::grok_build::send_subagent_message::tests:: 2>&1 | tee send-subagent-message-test.log
+
+      - name: Test workspace hub snapshots and kill transport
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-workspace --lib --locked hub_server::tests:: 2>&1 | tee workspace-kill-transport-test.log
+
+      - name: Test local terminal producers and kill contracts
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked computer::local::terminal::tests:: 2>&1 | tee terminal-producer-test.log
+
+      - name: Test local terminal runtime identity and kill settlement
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked computer::local::terminal::runtime_tests:: 2>&1 | tee terminal-runtime-test.log
+
+      - name: Test local terminal lifecycle collection evidence
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked computer::local::terminal::lifecycle::tests:: 2>&1 | tee terminal-lifecycle-test.log
+
+      - name: Test common message delivery library
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-message-delivery-core --lib --locked 2>&1 | tee message-delivery-core-test.log
+
+      - name: Test notification handle acknowledgement deadlines
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked notification::handle::tests:: 2>&1 | tee notification-handle-test.log
+
+      - name: Test Grok Build Bash
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked implementations::grok_build::bash:: 2>&1 | tee grok-build-bash-test.log
+
+      - name: Test OpenCode Bash
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked implementations::opencode::bash:: 2>&1 | tee opencode-bash-test.log
+
+      - name: Test shell terminal adapters
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-shell-terminal --lib --locked adapter::tests:: 2>&1 | tee shell-terminal-adapter-test.log
+
+      - name: Test completion admission integration
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-shell --test test_completion_admission --features test-support --locked 2>&1 | tee completion-admission-test.log
+
+      - name: Test terminal orphan registry
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p xai-grok-tools --lib --locked computer::local::terminal::orphan_registry::tests:: 2>&1 | tee orphan-registry-test.log
 
       - name: Test finished child compaction through the terminal
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         run: |
           cargo build -p xai-grok-pager-bin --bin xai-grok-pager --locked
           cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked send_subagent_message_row
@@ -102,16 +236,19 @@ jobs:
           PAGER_BINARY="$PWD/target/debug/xai-grok-pager" cargo test -p xai-grok-pager-pty-harness --test pty_e2e_shell_tools --locked finished_child_manual_compact_cancel -- --ignored
 
       - name: Test pager
+        timeout-minutes: 60
         shell: bash
         run: cargo test -p xai-grok-pager --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee pager-test.log; exit "${PIPESTATUS[0]}"
 
       - name: Test shell
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         shell: bash
         run: cargo test -p xai-grok-shell --lib --locked --no-fail-fast -- "$TEST_FILTER" 2>&1 | tee shell-test.log; exit "${PIPESTATUS[0]}"
 
       - name: Test chat state and sampling types
-        if: always()
+        if: ${{ always() && !cancelled() && steps.format.outcome == 'success' }}
+        timeout-minutes: 60
         shell: bash
         run: cargo test -p xai-chat-state -p xai-grok-sampling-types --lib --locked --no-fail-fast -- $TEST_FILTER 2>&1 | tee types-test.log; exit "${PIPESTATUS[0]}"
 
@@ -123,4 +260,23 @@ jobs:
             pager-test.log
             shell-test.log
             types-test.log
+            subagent-task-test.log
+            parent-message-test.log
+            prompt-turn-receipt-test.log
+            live-steers-test.log
+            orphan-registry-test.log
+            terminal-producer-test.log
+            terminal-runtime-test.log
+            terminal-lifecycle-test.log
+            message-delivery-core-test.log
+            notification-handle-test.log
+            grok-build-bash-test.log
+            opencode-bash-test.log
+            shell-terminal-adapter-test.log
+            completion-admission-test.log
+            kill-task-test.log
+            task-completion-reminder-test.log
+            kill-task-wire-test.log
+            send-subagent-message-test.log
+            workspace-kill-transport-test.log
           retention-days: 14

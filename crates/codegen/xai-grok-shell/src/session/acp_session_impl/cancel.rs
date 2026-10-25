@@ -1,6 +1,7 @@
 //! Cancellation, send-now, rewind, reporting, and terminal cleanup for `SessionActor`.
 
 use super::*;
+use super::parent_message::{ParentTeardownRequest, ParentTeardownStatus, parent_teardown_uncertain};
 
 /// Whether the post-cancel notification drain stays suppressed: rewind and non-stop cancels clear it, a stop gesture arms it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +128,43 @@ impl SessionActor {
         self.emit_long_reasoning_turn_event();
     }
 
+    /// Re-admission step for human re-engagement (fresh user input, `/goal resume`,
+    /// restart restore): clears the StopGesture wake barrier (live gate + persisted
+    /// policy) and the notification suppression so parked completion wakes promote.
+    /// The persisted policy is only rewritten when a barrier was actually armed, so
+    /// the per-prompt intake call stays off the persistence hot path.
+    pub(super) async fn clear_wake_suppression(&self, reason: &'static str) {
+        let gate_armed = self
+            .tool_context
+            .task_wake_suppressed
+            .as_ref()
+            .is_some_and(|gate| gate.get());
+        let was_suppressed = {
+            let mut state = self.state.lock().await;
+            let was_suppressed = state.notifications_suppressed;
+            state.notifications_suppressed = false;
+            if state.take_hook_block_hold() {
+                xai_grok_telemetry::unified_log::info(
+                    "shell.prompt.hook_block_hold_released",
+                    Some(self.session_info.id.0.as_ref()),
+                    Some(serde_json::json!({ "reason": reason })),
+                );
+            }
+            was_suppressed
+        };
+        if !gate_armed && !was_suppressed {
+            return;
+        }
+        self.set_completion_wake_policy(
+            crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+        );
+        xai_grok_telemetry::unified_log::info(
+            "shell.task_wake.gate_cleared",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({ "reason": reason })),
+        );
+    }
+
     /// The Ctrl+C teardown, except the running command moves to the background instead of being killed.
     /// Background tasks, subagents, and the queue are untouched.
     pub(super) async fn cancel_turn_for_send_now(
@@ -247,15 +285,91 @@ impl SessionActor {
         }
     }
 
+    pub(super) async fn abort_compaction_for_manual_stop(&self) {
+        self.compaction.cancel.request_cancel();
+        self.cancel_pending_compactions().await;
+    }
+
     #[tracing::instrument(name = "session.cancel", skip_all, fields(trigger = ?options.trigger.as_ref().map(crate::session::CancelTrigger::kind)))]
     pub(super) async fn cancel_running_task(
         &self,
         options: crate::session::CancelOptions,
     ) -> CancelOutcome {
+        let parent_request = if options.kill_background_tasks { ParentTeardownRequest::HardTeardown } else { ParentTeardownRequest::Ordinary };
+        self.cancel_running_task_with_parent_teardown(options, parent_request).await
+    }
+
+    pub(super) async fn cancel_running_task_with_parent_teardown(
+        &self,
+        options: crate::session::CancelOptions,
+        parent_request: ParentTeardownRequest,
+    ) -> CancelOutcome {
         let kind = options
             .trigger
             .as_ref()
             .map(crate::session::CancelTrigger::kind);
+        let owns_maintenance = matches!(
+            &*self.compaction.cancel.manual_worker.borrow(),
+            crate::session::compaction_config::ManualCompactWorker::Running(_)
+                | crate::session::compaction_config::ManualCompactWorker::SealedRunning(_)
+        );
+        if let crate::session::CancelHistoryDisposition::RewindIfNoOutput {
+            prompt_id: Some(requested),
+        } = &options.history
+        {
+            let mut state = self.state.lock().await;
+            let front_prompt_id = state.pending_inputs.front().map(|f| f.prompt_id.clone());
+            if owns_maintenance || front_prompt_id.as_deref() != Some(requested.as_str()) {
+                let queued = if Self::is_running_prompt(&state, requested) {
+                    None
+                } else {
+                    state.pending_inputs.iter().position(|item| item.prompt_id == *requested)
+                };
+                let disposition = match queued {
+                    Some(pos) => {
+                        Self::remove_pending_row(&mut state, pos);
+                        self.broadcast_queue_changed(&state);
+                        "queued_row_removed"
+                    }
+                    None => "stale_prompt_id",
+                };
+                drop(state);
+                self.log_rewind_decision(Some(requested), front_prompt_id.as_deref(), disposition);
+                return CancelOutcome::noop();
+            }
+        }
+        if options.trigger.as_ref().is_some_and(crate::session::CancelTrigger::is_user_gesture)
+            || (options.user_initiated
+                && (options.trigger.is_none() || kind == Some(crate::session::CancelKind::StopGesture)))
+        {
+            if owns_maintenance
+                && matches!(options.history, crate::session::CancelHistoryDisposition::Keep)
+            {
+                self.arm_wake_barrier(options.trigger.as_ref());
+                self.abort_compaction_for_manual_stop().await;
+                return CancelOutcome {
+                    barrier: WakeBarrier::Armed,
+                    turn_stopped: false,
+                    settled: true,
+                };
+            }
+            match &options.history {
+                crate::session::CancelHistoryDisposition::RewindIfNoOutput { prompt_id: Some(_) } => {
+                    self.compaction.cancel.request_cancel();
+                }
+                crate::session::CancelHistoryDisposition::Keep
+                | crate::session::CancelHistoryDisposition::RewindIfNoOutput { prompt_id: None } => {
+                    self.abort_compaction_for_manual_stop().await;
+                }
+            }
+        }
+        // An inline compact is owned by the turn future; aborting that future also drops the compact.
+        if self.compaction.cancel.is_active()
+            && (self.compaction.cancel.is_committing() || !self.compaction.cancel.is_cancelled())
+            && kind != Some(crate::session::CancelKind::Teardown)
+        {
+            return CancelOutcome::noop();
+        }
         let cancel_reason = super::turn_end_hooks::cancel_reason_for_options(&options);
         let crate::session::CancelOptions {
             cancel_subagents,
@@ -407,10 +521,30 @@ impl SessionActor {
             CancelFinalization::Rewind => None,
             CancelFinalization::Keep(lease) => lease.binding.epoch(),
         };
+        let parent_cause = match parent_request {
+            ParentTeardownRequest::Ordinary => None,
+            ParentTeardownRequest::HardTeardown => Some(xai_message_delivery_core::TerminalCause::HardTeardown),
+            ParentTeardownRequest::ActorDrop => Some(xai_message_delivery_core::TerminalCause::ActorDrop),
+        };
+        let teardown_elapsed_ms = if parent_cause.is_some() {
+            self.state.lock().await.running_task.as_ref().map(|task| elapsed_ms_saturating(task.started_at, std::time::Instant::now()))
+        } else { None };
+        if let Some(cause) = parent_cause {
+            {
+                let state = self.state.lock().await;
+                if let Some(epoch) = claimed_turn_epoch
+                    && let Some(task) = state.running_task.as_ref()
+                {
+                    self.abort_turn_task(task, epoch);
+                    self.cancel_active_sampling_requests();
+                }
+            }
+            if self.state.lock().await.message_delivery.teardown == ParentTeardownStatus::Open {
+                let _ = self.settle_all_parent_messages(cause).await;
+            }
+        }
+        let parent_teardown = self.state.lock().await.message_delivery.teardown;
         let suppress_task_wakes = kind == Some(crate::session::CancelKind::StopGesture);
-        // Abort in-flight `/compact` or auto-compact generation (via the stream select and the pre-replace guard)
-        // Safe when no compact is running
-        self.compaction.cancel.request_cancel();
         if suppress_task_wakes {
             self.arm_wake_barrier(trigger.as_ref());
         }
@@ -454,11 +588,12 @@ impl SessionActor {
         // `None` when no running task supplies a start time (do not persist `Some(0)`)
         let cancel_elapsed_ms = {
             let state = self.state.lock().await;
-            let cancel_elapsed_ms = state
+            let cancel_elapsed_ms = teardown_elapsed_ms.or_else(|| state
                 .running_task
                 .as_ref()
-                .map(|t| elapsed_ms_saturating(t.started_at, std::time::Instant::now()));
+                .map(|t| elapsed_ms_saturating(t.started_at, std::time::Instant::now())));
             if cancel_subagents
+                && parent_request == ParentTeardownRequest::Ordinary
                 && let Some(epoch) = claimed_turn_epoch
                 && let Some(task) = state.running_task.as_ref()
             {
@@ -656,10 +791,12 @@ impl SessionActor {
                     .as_deref()
                     .is_some_and(|prompt_id| Self::is_capturable_front(&state, prompt_id));
 
-            // Only an interactive stop (Ctrl+C / Esc / [stop]) also removes queued task/workflow completion wakes.
+            // Interactive stops move task wakes to their fallback; workflow and child wakes stay parked.
             // Preserve real user prompts and unrelated synthetic entries so `maybe_start_running_task` can promote the next genuine user turn.
             // The cancelling client does not pull any prompt back into its input; the server queue is the single source of truth for what runs next.
-            let message_cause = if kill_background_tasks {
+            let message_cause = if parent_teardown == ParentTeardownStatus::Unsettled {
+                xai_message_delivery_core::TerminalCause::ActorDrop
+            } else if kill_background_tasks {
                 xai_message_delivery_core::TerminalCause::HardTeardown
             } else if rewound_input.is_some() {
                 xai_message_delivery_core::TerminalCause::Rewind
@@ -667,7 +804,7 @@ impl SessionActor {
                 xai_message_delivery_core::TerminalCause::SoftCancel
             };
             let message_target =
-                if message_cause == xai_message_delivery_core::TerminalCause::HardTeardown {
+                if matches!(message_cause, xai_message_delivery_core::TerminalCause::HardTeardown | xai_message_delivery_core::TerminalCause::ActorDrop) {
                     xai_message_delivery_core::TerminalTarget::All
                 } else {
                     binding.as_ref().map_or(
@@ -684,18 +821,16 @@ impl SessionActor {
             } else {
                 let mut kept = VecDeque::with_capacity(state.pending_inputs.len());
                 let mut cancelled = VecDeque::new();
-                for (idx, item) in std::mem::take(&mut state.pending_inputs)
-                    .into_iter()
-                    .enumerate()
-                {
-                    let is_running_turn = idx == 0;
-                    if is_running_turn {
+                for item in std::mem::take(&mut state.pending_inputs) {
+                    let is_running_turn = cancelled_prompt_id.as_deref() == Some(item.prompt_id.as_str());
+                    if is_running_turn || (parent_teardown == ParentTeardownStatus::Unsettled
+                        && matches!(item.input_origin.as_prompt_origin(), super::PromptOrigin::ParentAgentMessage { .. } | super::PromptOrigin::ParentHumanMessage { .. })) {
                         cancelled.push_back(item);
                     } else if suppress_task_wakes
+                        && item.task_wake_fallback.is_some()
                         && matches!(
                             item.input_origin.as_prompt_origin(),
                             super::PromptOrigin::TaskCompleted { .. }
-                                | super::PromptOrigin::WorkflowCompleted { .. }
                         )
                     {
                         if let Some(fallback) = item.task_wake_fallback {
@@ -731,6 +866,14 @@ impl SessionActor {
                 captures_cancelled_turn,
             )
         };
+        if suppress_task_wakes {
+            self.auto_pause_goal_if_active_with_message(
+                crate::session::goal_tracker::GoalPauseReason::User,
+                "Session stopped by the user. Run /goal resume to continue the goal."
+                    .to_string(),
+            )
+            .await;
+        }
         // True iff this cancel aborted a live task: the Keep-with-task rail and
         // every rewind rail that tore one down. A Keep lease that bound no task
         // sheds all task authority, so this stays false there.
@@ -874,7 +1017,11 @@ impl SessionActor {
             },
             CancelFinalization::Rewind => None,
         };
+        let parent_turn_unsettled = parent_teardown == ParentTeardownStatus::Unsettled
+            && matches!(&cancelled_input_binding.receiver_origin, crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { .. });
+        let mut terminal_result = if parent_turn_unsettled { Err(parent_teardown_uncertain()) } else { Ok(()) };
         if rewound_input.is_none()
+            && !parent_turn_unsettled
             && let Some(prompt_id) = cancelled_prompt_id.or(no_task_pinned_prompt_id)
         {
             // Only a cancel that ends a turn counts, and before the terminal's snapshot so it lands
@@ -884,7 +1031,7 @@ impl SessionActor {
             }
             // `cancelTrigger` lets clients tell a send-now cancel from a Ctrl+C/Esc one
             // `MidTurnAbort` matches what the prompt's RPC resolves with below, so the event and the RPC agree
-            self.emit_turn_completed(
+            terminal_result = self.emit_turn_completed(
                 prompt_id,
                 &Ok(acp::StopReason::Cancelled),
                 cancelled_usage.clone(),
@@ -922,7 +1069,9 @@ impl SessionActor {
                 .await;
         }
 
-        let message_result = Ok(PromptTurnOk {
+        let message_result = if parent_teardown == ParentTeardownStatus::Unsettled {
+            Err(parent_teardown_uncertain())
+        } else { terminal_result.clone().map(|()| PromptTurnOk {
             stop_reason: acp::StopReason::Cancelled,
             total_tokens,
             turn_snapshot: None,
@@ -930,9 +1079,15 @@ impl SessionActor {
             structured_output: None,
             usage: cancelled_usage.clone(),
             tool_overrides: self.effective_tool_overrides(),
-        });
+        }) };
         Self::settle_parent_message_completions(message_completions, &message_result);
         for (idx, input) in pending_inputs.into_iter().enumerate() {
+            if parent_teardown == ParentTeardownStatus::Unsettled
+                && matches!(input.input_origin.as_prompt_origin(), super::PromptOrigin::ParentAgentMessage { .. } | super::PromptOrigin::ParentHumanMessage { .. })
+            {
+                let _ = input.respond_to.send(Err(parent_teardown_uncertain()));
+                continue;
+            }
             // idx 0 gets running-turn attribution only when this cancel tore
             // down a live task; a no-task cancel attests nothing about it.
             let is_running_turn = tore_down_task && idx == 0;
@@ -943,7 +1098,7 @@ impl SessionActor {
             }
             let _ = input
                 .respond_to
-                .send(Ok(PromptTurnOk {
+                .send((if is_running_turn { terminal_result.clone() } else { Ok(()) }).map(|()| PromptTurnOk {
                     stop_reason: acp::StopReason::Cancelled,
                     total_tokens,
                     turn_snapshot: None,
@@ -992,7 +1147,7 @@ impl SessionActor {
                 WakeBarrier::Clear
             },
             turn_stopped,
-            settled,
+            settled: settled && terminal_result.is_ok() && parent_teardown != ParentTeardownStatus::Unsettled,
         }
     }
 
@@ -1022,7 +1177,7 @@ impl SessionActor {
                 "Command was moved to the background because the user sent a new message. \
                  The process is still running, not cancelled. Retrieve its output later \
                  with {} (task_id: {}).",
-                self.tool_context.task_output_tool_name, bg.tool_call_id
+                self.tool_context.task_output_tool_name, bg.task_id
             );
             self.chat_state_handle
                 .push_tool_result(ConversationItem::tool_result(bg.tool_call_id, message));
@@ -1047,3 +1202,7 @@ impl SessionActor {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "cancel_tests.rs"]
+mod tests;

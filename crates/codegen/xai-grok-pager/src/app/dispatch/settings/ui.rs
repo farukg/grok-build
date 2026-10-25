@@ -488,18 +488,18 @@ pub(in crate::app::dispatch) enum DockTogglePlan {
     Pinned(bool),
     /// Flip the runtime gate to `next`. `env_wins` marks a `GROK_DOCK`/`GROK_DOCK_V2`
     /// override that outranks the persisted `[features].dock` on restart.
-    Flip { next: bool, env_wins: bool },
+    Flip { next: crate::views::dock::DockPlacement, env_wins: bool },
 }
 
 pub(in crate::app::dispatch) fn plan_dock_toggle(
     pin: Option<bool>,
     env: Option<bool>,
-    runtime_on: bool,
+    runtime: crate::views::dock::DockPlacement,
 ) -> DockTogglePlan {
     match pin {
         Some(pinned) => DockTogglePlan::Pinned(pinned),
         None => DockTogglePlan::Flip {
-            next: !runtime_on,
+            next: runtime.next(),
             env_wins: env.is_some(),
         },
     }
@@ -514,7 +514,7 @@ pub(in crate::app::dispatch) fn dispatch_toggle_dock(app: &mut AppView) -> Vec<E
     let plan = plan_dock_toggle(
         crate::app::dock_requirement_pin(),
         crate::app::dock_env_override(),
-        crate::views::dock::enabled(),
+        crate::views::dock::placement(),
     );
     let (msg, effect) = match plan {
         DockTogglePlan::Pinned(pinned) => (
@@ -525,18 +525,22 @@ pub(in crate::app::dispatch) fn dispatch_toggle_dock(app: &mut AppView) -> Vec<E
             None,
         ),
         DockTogglePlan::Flip { next, env_wins } => {
-            crate::views::dock::set_enabled(next);
-            tracing::info!(target: "settings", dock = next, "dock toggled");
+            if let Some(agent) = app.active_view.agent_id().and_then(|id| app.agents.get_mut(&id)) {
+                if !agent.set_dock_placement(next) { return Vec::new(); }
+            } else {
+                crate::views::dock::set_placement(next);
+            }
+            tracing::info!(target: "settings", dock = ?next, "dock placement changed");
             let note = if env_wins {
                 " (GROK_DOCK wins on restart)"
             } else {
                 ""
             };
             (
-                format!("Dock: {}{note}", if next { "on" } else { "off" }),
+                format!("Dock: {}{note}", next.label()),
                 Some(Effect::PersistFeatureOverride {
                     feature: xai_grok_shell::agent::config::Feature::Dock,
-                    saved: Some(next),
+                    saved: Some(next.is_visible()),
                 }),
             )
         }

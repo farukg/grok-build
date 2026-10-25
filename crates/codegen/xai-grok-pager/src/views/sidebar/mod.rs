@@ -59,8 +59,17 @@ pub trait HostedSection {
     fn render(&self, buf: &mut Buffer, visible_area: Rect, row_offset: u16, theme: &Theme);
 }
 
+pub trait SidebarRowSource {
+    fn row(&self, index: usize) -> Option<SidebarRow<'static>>;
+}
+
 pub enum SidebarSection<'a> {
     Hosted(&'a dyn HostedSection),
+    LazyRows {
+        title: Line<'a>,
+        count: usize,
+        source: &'a dyn SidebarRowSource,
+    },
     Rows {
         title: Line<'a>,
         rows: &'a [SidebarRow<'a>],
@@ -113,7 +122,12 @@ impl SidebarState {
                     });
                     y = y.saturating_add(height);
                 }
-                SidebarSection::Rows { rows, .. } => {
+                SidebarSection::Rows { .. } | SidebarSection::LazyRows { .. } => {
+                    let count = match section {
+                        SidebarSection::Rows { rows, .. } => rows.len(),
+                        SidebarSection::LazyRows { count, .. } => *count,
+                        SidebarSection::Hosted(_) => 0,
+                    };
                     let title = y;
                     y = y.saturating_add(1);
                     let rows_start = y;
@@ -121,9 +135,9 @@ impl SidebarState {
                         index,
                         title,
                         rows_start,
-                        rows: rows.len(),
+                        rows: count,
                     });
-                    y = y.saturating_add(rows.len());
+                    y = y.saturating_add(count);
                 }
             }
         }
@@ -303,6 +317,22 @@ impl SidebarLayout {
         state.line_at(position).map(SidebarHit::Line)
     }
 
+    pub fn hosted_rect(&self, index: SectionIdx, state: &SidebarState) -> Option<(Rect, u16)> {
+        state.layout.iter().find_map(|section| {
+            let SectionLayout::Hosted { index: candidate, start, height } = *section else {
+                return None;
+            };
+            if candidate != index { return None; }
+            let first = start.max(state.scroll);
+            let end = start.saturating_add(height).min(state.scroll.saturating_add(self.body.height as usize));
+            (first < end).then(|| (
+                Rect::new(self.body.x, self.body.y + (first - state.scroll) as u16,
+                    self.body.width.saturating_sub(1), (end - first) as u16),
+                (first - start) as u16,
+            ))
+        })
+    }
+
     pub fn line_rect(&self, line: SidebarLine, state: &SidebarState) -> Option<Rect> {
         let position = state.line_position(line)?;
         let row = position.checked_sub(state.scroll)?;
@@ -360,26 +390,11 @@ impl Sidebar {
         let visible_end = state.scroll.saturating_add(layout.body.height as usize);
         for section in &state.layout {
             match *section {
-                SectionLayout::Hosted {
-                    index,
-                    start,
-                    height,
-                } => {
-                    let visible_start = start.max(state.scroll);
-                    let visible_end = start
-                        .saturating_add(height)
-                        .min(state.scroll.saturating_add(layout.body.height as usize));
-                    if visible_start < visible_end {
-                        if let Some(SidebarSection::Hosted(widget)) = content.sections.get(index.0)
-                        {
-                            let visible_area = Rect::new(
-                                layout.body.x,
-                                layout.body.y + (visible_start - state.scroll) as u16,
-                                layout.body.width,
-                                (visible_end - visible_start) as u16,
-                            );
-                            widget.render(buf, visible_area, (visible_start - start) as u16, theme);
-                        }
+                SectionLayout::Hosted { index, .. } => {
+                    if let Some((visible_area, row_offset)) = layout.hosted_rect(index, state)
+                        && let Some(SidebarSection::Hosted(widget)) = content.sections.get(index.0)
+                    {
+                        widget.render(buf, visible_area, row_offset, theme);
                     }
                 }
                 SectionLayout::Rows {
@@ -426,7 +441,7 @@ impl Sidebar {
                 .fg(theme.scrollbar_fg)
                 .bg(theme.scrollbar_bg),
         );
-        if let Some((line, detail)) = detail_for(content.sections, hovered.or(state.cursor)) {
+        if let Some((line, detail)) = detail_for(content.sections, hovered) {
             render_detail(buf, layout.body, edge, line, state, detail, theme);
         }
         layout
@@ -463,9 +478,12 @@ fn render_row_line(
         SidebarLine::SectionTitle(section) | SidebarLine::Row(section, _) => section.0,
         SidebarLine::Hosted(_) => return,
     };
-    let Some(SidebarSection::Rows { title, rows }) = params.content.sections.get(section_index)
-    else {
+    let Some(section) = params.content.sections.get(section_index) else {
         return;
+    };
+    let title = match section {
+        SidebarSection::Rows { title, .. } | SidebarSection::LazyRows { title, .. } => title,
+        SidebarSection::Hosted(_) => return,
     };
     let y = params.body.y + y_offset as u16;
     let overlay = if params.state.cursor == Some(line_id) {
@@ -480,8 +498,18 @@ fn render_row_line(
             buf.set_line(params.body.x, y, title, params.body.width.saturating_sub(1));
         }
         SidebarLine::Row(_, row) => {
-            if let Some(item) = rows.get(row.0) {
-                render_row(buf, params.body, y, item);
+            match section {
+                SidebarSection::Rows { rows, .. } => {
+                    if let Some(item) = rows.get(row.0) {
+                        render_row(buf, params.body, y, item);
+                    }
+                }
+                SidebarSection::LazyRows { count, source, .. } => {
+                    if row.0 < *count && let Some(item) = source.row(row.0) {
+                        render_row(buf, params.body, y, &item);
+                    }
+                }
+                SidebarSection::Hosted(_) => {}
             }
         }
         SidebarLine::Hosted(_) => {}

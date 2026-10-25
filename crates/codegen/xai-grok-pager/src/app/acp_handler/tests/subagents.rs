@@ -128,7 +128,7 @@
         assert!(matches!(
             &test_subagent(&app, "child-1").role,
             crate::app::agent_view::AgentRole::Child(link)
-                if link.parent == AgentId(0) && &*link.parent_session_id.0 == "sess-1"
+                if link.parent == Some(AgentId(0)) && &*link.parent_session_id.0 == "sess-1"
         ));
     }
 
@@ -446,7 +446,7 @@
         assert!(matches!(
             &test_subagent(&app, child_sid).role,
             crate::app::agent_view::AgentRole::Child(link)
-                if link.parent == AgentId(0)
+                if link.parent == Some(AgentId(0))
                     && link.parent_session_id == acp::SessionId::new("sess-parent")
                     && link.subagent_id == child_sid
         ));

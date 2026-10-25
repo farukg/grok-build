@@ -188,7 +188,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
                 state.running_task = Some(running_task_stub("working"));
             }
             let (respond_to, mut receipt) = oneshot::channel();
-            actor.queue_input(wake_request(vec![acp::ContentBlock::from(wake_text)], "safe-child", respond_to)).await;
+            assert!(!actor.queue_input(wake_request(vec![acp::ContentBlock::from(wake_text)], "safe-child", respond_to)).await);
             assert!(matches!(receipt.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
             assert!(actor.drain_admitted_messages_at_safe_point().await);
             assert!(!actor.drain_admitted_messages_at_safe_point().await);
@@ -203,7 +203,7 @@ async fn active_caller_projects_success_and_error_wakes_at_safe_point_once() {
             assert_eq!(fake.acknowledged().await, ["safe-child"], "only the durably projected attempt is acknowledged");
             assert_eq!(actor.state.lock().await.running_prompt_id(), Some("working"));
             let (retry_tx, retry_rx) = oneshot::channel();
-            actor.queue_input(wake_request(vec![], "safe-child", retry_tx)).await;
+            assert!(!actor.queue_input(wake_request(vec![], "safe-child", retry_tx)).await);
             assert!(!actor.drain_admitted_messages_at_safe_point().await);
             assert!(retry_rx.await.expect("duplicate receipt").is_ok());
             assert_eq!(actor.chat_state_handle.get_conversation().await.len(), conversation.len());
@@ -1019,7 +1019,7 @@ async fn kill_task_drops_matching_pending_input() {
             }
             let output = ToolOutput::KillTask(KillTaskOutput::Result(KillTaskResult {
                 task_id: "bg-killed".into(),
-                outcome: "killed".into(),
+                outcome: xai_grok_tools::computer::types::KillOutcome::Killed,
                 message: "Task was terminated successfully".into(),
             }));
             let consumed = consumed_completion_ids(&output);

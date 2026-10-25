@@ -69,6 +69,21 @@ fn make_raw_ext_notif(
 }
 
 #[test]
+fn compact_queued_phase_is_not_execution_and_legacy_started_still_executes() {
+    let queued = make_ext_notif("x.ai/session_notification", serde_json::json!({
+        "sessionUpdate": "auto_compact_started", "percentage": 68, "phase": "queued",
+    }));
+    assert!(matches!(handle_ext_notification(&queued), ExtEvent::None));
+    for phase in [None, Some("executing")] {
+        let mut update = serde_json::json!({"sessionUpdate": "auto_compact_started", "percentage": 68});
+        if let Some(phase) = phase { update["phase"] = phase.into(); }
+        let notification = make_ext_notif("x.ai/session_notification", update);
+        assert!(matches!(handle_ext_notification(&notification),
+            ExtEvent::Lifecycle(Lifecycle::CompactStarted { percentage: 68 })));
+    }
+}
+
+#[test]
 fn headless_task_backgrounded_parses_task_id() {
     let notif = make_ext_notif(
         "x.ai/task_backgrounded",

@@ -91,6 +91,7 @@ impl PanelSettingsStore {
     /// Stores `setting` in `layer`. Selecting the session layer stores nothing; only this call creates an override.
     pub fn set(&mut self, layer: Layer, setting: Setting) -> Result<SaveOutcome, SaveError> {
         let layer = match setting {
+            Setting::DockPlacement(_) => Layer::Global,
             Setting::Section { section, .. } => section.storage_layer(layer),
             Setting::KindForm { .. } | Setting::OutlineTurns(_) => layer,
         };
@@ -100,6 +101,7 @@ impl PanelSettingsStore {
     /// Removes `key` from `layer`; in the session layer the global value shows through again.
     pub fn clear(&mut self, layer: Layer, key: SettingKey) -> Result<SaveOutcome, SaveError> {
         let layer = match key {
+            SettingKey::DockPlacement => Layer::Global,
             SettingKey::Section(section) => section.storage_layer(layer),
             SettingKey::KindForm(_) | SettingKey::OutlineTurns => layer,
         };

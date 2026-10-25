@@ -3434,18 +3434,23 @@ fn session_list_nonempty_partial_modal_toasts_in_chat_mode_only() {
     );
 }
 
+fn submit_compact_command(app: &mut AppView) -> crate::app::agent::CompactInvocationId {
+    let effects = dispatch(Action::SendPrompt("/compact".into()), app);
+    match effects.as_slice() {
+        [Effect::Compact { invocation_id, .. }] => *invocation_id,
+        other => panic!("expected compact RPC, got {other:?}"),
+    }
+}
+
 /// Drive `CompactComplete` with a wire error mapped exactly as the `Effect::Compact` arm maps it, and return the resulting session events.
 fn compact_complete_events_for(wire_error: acp::Error) -> Vec<SessionEvent> {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .session
-        .start_command(crate::app::agent::AgentCommand::Compact);
+    let invocation_id = submit_compact_command(&mut app);
     dispatch_task_result(
         TaskResult::CompactComplete {
             agent_id: id,
+            invocation_id,
             result: Err(crate::app::effects::compact_error(&wire_error)),
         },
         &mut app,
@@ -3497,14 +3502,11 @@ fn cancel_acknowledgement_keeps_compaction_command_cancelling_until_terminal_res
 fn compact_complete_success_finishes_running_command() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .session
-        .start_command(crate::app::agent::AgentCommand::Compact);
+    let invocation_id = submit_compact_command(&mut app);
     dispatch_task_result(
         TaskResult::CompactComplete {
             agent_id: id,
+            invocation_id,
             result: Ok(()),
         },
         &mut app,
@@ -3539,12 +3541,12 @@ fn compact_complete_terminal_result_finishes_cancelling_command() {
     ] {
         let mut app = test_app_with_agent();
         let id = AgentId(0);
-        let session = &mut app.agents.get_mut(&id).unwrap().session;
-        session.start_command(crate::app::agent::AgentCommand::Compact);
-        session.cancel_compact_command();
+        let invocation_id = submit_compact_command(&mut app);
+        app.agents.get_mut(&id).unwrap().session.cancel_compact_command();
         dispatch_task_result(
             TaskResult::CompactComplete {
                 agent_id: id,
+                invocation_id,
                 result,
             },
             &mut app,
@@ -3645,14 +3647,10 @@ fn compact_complete_typed_failure_echoing_cancel_phrase_stays_a_failure() {
 fn compact_complete_renders_one_failure_line_per_completion() {
     use xai_grok_shell::session::helpers::session_compact::{CompactErrorKind, compact_error_data};
     // One /compact failure must paint exactly one line: `finish_command()` exits the compact state on the first completion
-    // A stray duplicate completion is dropped by the state guard instead of double-rendering
+    // A duplicate completion reuses the original invocation and must not render twice.
     let mut app = test_app_with_agent();
     let id = AgentId(0);
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .session
-        .start_command(crate::app::agent::AgentCommand::Compact);
+    let invocation_id = submit_compact_command(&mut app);
     let wire_error = acp::Error::internal_error().data(compact_error_data(
         CompactErrorKind::Failed,
         "API error (status 500 Internal Server Error): should never be seen",
@@ -3661,6 +3659,7 @@ fn compact_complete_renders_one_failure_line_per_completion() {
         dispatch_task_result(
             TaskResult::CompactComplete {
                 agent_id: id,
+                invocation_id,
                 result: Err(crate::app::effects::compact_error(&wire_error)),
             },
             &mut app,

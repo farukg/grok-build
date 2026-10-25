@@ -1553,7 +1553,7 @@ impl AcpUpdateTracker {
         scrollback: &mut ScrollbackState,
     ) -> bool {
         let text = extract_text_from_content(&chunk.content);
-        if self.skip_next_skill_body {
+        if self.skip_next_skill_body && chunk_synthetic_reason(&chunk).is_none() {
             self.skip_next_skill_body = false;
             return false;
         }
@@ -1569,6 +1569,23 @@ impl AcpUpdateTracker {
                 scrollback.finish_running(entry_id);
             }
         }
+        // Typed routing: a chunk stamped with the persisted item's synthetic reason is a runtime
+        // injection the model saw. It renders as a collapsed-by-default injected entry (kind
+        // defaults own the fold), never as a plain user prompt and never hidden.
+        if let Some(reason) = chunk_synthetic_reason(&chunk) {
+            let prompt_index = chunk_prompt_index(&chunk);
+            let block = crate::scrollback::blocks::InjectedBlock::new(
+                crate::scrollback::blocks::injected_label(reason),
+                text,
+            )
+            .with_starts_turn(prompt_index.is_some());
+            let entry_id = scrollback.push_block(RenderBlock::Injected(block));
+            let ts_ms = meta.turn_start_ms.or(meta.agent_timestamp_ms);
+            if let Some(entry) = scrollback.get_by_id_mut(entry_id) {
+                entry.created_at = ts_ms.map(utc_ms_to_local);
+            }
+            return true;
+        }
         if self.skip_next_user_echo
             && chunk_meta_flag(&chunk, user_message_chunk_meta::HIDE_FROM_SCROLLBACK)
         {
@@ -1580,12 +1597,7 @@ impl AcpUpdateTracker {
             if text.contains("<command-name>") {
                 self.skip_next_skill_body = true;
             }
-            let prompt_index = chunk
-                .meta
-                .as_ref()
-                .and_then(|m| m.get(user_message_chunk_meta::PROMPT_INDEX))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize);
+            let prompt_index = chunk_prompt_index(&chunk);
             let replay_ts = meta
                 .is_replay
                 .then(|| meta.turn_start_ms.or(meta.agent_timestamp_ms))
@@ -1695,7 +1707,7 @@ impl AcpUpdateTracker {
                 crate::scrollback::blocks::UserPromptBlock::new(cmd)
             } else if let Some(prompt) = extract_cron_prompt_body(&text) {
                 crate::scrollback::blocks::UserPromptBlock::cron(prompt)
-            } else if user_message_hidden_from_scrollback(&chunk, meta, &text) {
+            } else if user_message_hidden_from_scrollback(&chunk) {
                 self.turn_ledger.note_hidden_user_chunk(&chunk, scrollback);
                 return false;
             } else {
@@ -1763,31 +1775,31 @@ fn extract_skill_header_command(text: &str) -> Option<String> {
     }
     Some(cmd_name.to_string())
 }
-/// Whether a `UserMessageChunk` must stay out of scrollback. Legacy fallback (pre-meta sessions only): bare
-/// auto-wake text that used to be gated by the system-reminder prefix.
-fn user_message_hidden_from_scrollback(
-    chunk: &acp::ContentChunk,
-    meta: &NotificationMeta,
-    text: &str,
-) -> bool {
-    if chunk_meta_flag(chunk, user_message_chunk_meta::HIDE_FROM_SCROLLBACK) {
-        return true;
-    }
-    if let Some(pid) = meta.prompt_id.as_deref()
-        && xai_grok_shell::session::PromptOrigin::from_prompt_id(pid)
-            .hide_user_echo_from_scrollback()
-    {
-        return true;
-    }
-    let t = text.trim_start();
-    t.starts_with("<system-reminder>")
-        || t.starts_with("<monitor-event")
-        || t.trim() == "---"
-        || t.lines().next().is_some_and(|first| {
-            first.starts_with(|c: char| c.is_ascii_digit())
-                && first.contains(" monitor events from ")
-                && first.contains(" (use ")
-        })
+/// Whether a `UserMessageChunk` must stay out of scrollback. Legacy records only: chunks
+/// persisted by older shells carry the `hideFromScrollback` flag. The current shell stamps
+/// `syntheticReason` instead, and such chunks render as collapsed injected entries
+/// (see [`chunk_synthetic_reason`]) rather than being dropped.
+fn user_message_hidden_from_scrollback(chunk: &acp::ContentChunk) -> bool {
+    chunk_meta_flag(chunk, user_message_chunk_meta::HIDE_FROM_SCROLLBACK)
+}
+/// The `SyntheticReason` wire name stamped on a chunk by the shell, when the chunk echoes a
+/// runtime-injected item rather than real user input.
+fn chunk_synthetic_reason(chunk: &acp::ContentChunk) -> Option<&str> {
+    chunk
+        .meta
+        .as_ref()
+        .and_then(|m| m.get(user_message_chunk_meta::SYNTHETIC_REASON))
+        .and_then(|v| v.as_str())
+        .filter(|reason| !reason.is_empty())
+}
+/// Chunk `_meta.promptIndex` on a `UserMessageChunk`, if present.
+fn chunk_prompt_index(chunk: &acp::ContentChunk) -> Option<usize> {
+    chunk
+        .meta
+        .as_ref()
+        .and_then(|m| m.get(user_message_chunk_meta::PROMPT_INDEX))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
 }
 /// Extract the user's prompt from `<system-reminder>` cron framing. Returns the prompt text after the closing tag,
 /// or `None` if the text doesn't match the cron framing pattern.

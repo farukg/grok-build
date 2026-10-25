@@ -35,7 +35,14 @@ jobs:
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
 
       - name: Install pinned toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt
+
+      - name: Guard pinned workspace formatting
+        id: format
+        timeout-minutes: 10
+        uses: ./.github/actions/format-guard
 
       - uses: Swatinem/rust-cache@v2
         with:

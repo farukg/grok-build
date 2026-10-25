@@ -1,8 +1,4 @@
-//! `/dock`: toggle the experimental dock at runtime.
-//!
-//! Flips the process gate immediately and persists an explicit `[features].dock`
-//! override so the choice survives a restart. A `requirements.toml` pin outranks
-//! the command; dispatch reports that instead of changing anything.
+//! `/dock`: cycle the durable Off / Top / Bottom placement.
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
@@ -12,7 +8,7 @@ pub struct DockCommand;
 impl SlashCommand for DockCommand {
     slash_meta! {
         name: "dock",
-        description: "Toggle the dock (experimental; tasks consolidate above the prompt and in the F7 column)",
+        description: "Cycle dock placement: Off / Top / Bottom (also in F7)",
         usage: "/dock",
     }
 

@@ -13,6 +13,7 @@ mod billing;
 mod cta;
 mod ctx;
 mod dashboard;
+pub(crate) use dashboard::refresh_dashboard_child_layout;
 mod dashboard_telemetry;
 pub(crate) mod external_editor;
 mod import_claude;

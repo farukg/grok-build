@@ -73,7 +73,7 @@ pub trait ChildControl: 'static {
     fn observe_caller(&self, _caller: SubagentCaller) {}
 
     /// Admit a coordinator-authorized message to this child. `Admitted` is valid only when
-    /// protected-row insertion succeeds inside [`ActiveAgentMessageDelivery::commit_admission`].
+    /// irrevocably claimed durable admission succeeds and its local receipt is handed off.
     /// The returned future must be `Send` so multithreaded hosts can spawn the coordinator.
     fn send_active_message(
         &self,
@@ -204,10 +204,15 @@ impl<D: Clone> CompletionPreparation<'_, D> {
 
 pub(super) enum TerminalOutput<D> {
     Finishing(ChildRunOutput<D>),
-    Committing(ChildCompletion<D>),
+    Committing {
+        completion: ChildCompletion<D>,
+        recipient: CompletionRecipient,
+    },
     Publishing {
         attempt_id: xai_message_delivery_core::AttemptId,
         parent_session_id: String,
+        owner: super::types::SubagentOwner,
+        recipient: CompletionRecipient,
         buffered: CompletionBufferPublication,
     },
 }
@@ -780,6 +785,27 @@ pub(super) struct BlockingWaiter {
         Option<crate::types::completion_observation::SubagentCompletionObservations>,
     pub(super) deadline: tokio::time::Instant,
     pub(super) respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
+}
+
+pub(super) enum CompletionRecipient {
+    Live(String),
+    Retired(String),
+    Silent,
+}
+
+impl CompletionRecipient {
+    pub(super) fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Live(session) | Self::Retired(session) => Some(session),
+            Self::Silent => None,
+        }
+    }
+
+    pub(super) fn retire_parent(&mut self, parent_session_id: &str) {
+        if self.session_id() == Some(parent_session_id) {
+            *self = Self::Retired(parent_session_id.to_owned());
+        }
+    }
 }
 
 pub(super) enum CompletionBufferPublication {
@@ -1376,10 +1402,9 @@ pub(super) fn completed_snapshot(
         TerminalPublicationState::Committing => SubagentSnapshotStatus::Finalizing {
             publication: super::types::SubagentFinalization::Writing,
         },
-        TerminalPublicationState::Publishing
-        | TerminalPublicationState::Published
-        | TerminalPublicationState::HistoryBlocked { .. } => snapshot.status,
-        TerminalPublicationState::Rejected { error } => SubagentSnapshotStatus::Finalizing {
+        TerminalPublicationState::Publishing | TerminalPublicationState::Published => snapshot.status,
+        TerminalPublicationState::Rejected { error }
+        | TerminalPublicationState::HistoryBlocked { error } => SubagentSnapshotStatus::Finalizing {
             publication: super::types::SubagentFinalization::Blocked {
                 error: error.clone(),
             },

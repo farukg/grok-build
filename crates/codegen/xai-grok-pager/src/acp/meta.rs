@@ -82,13 +82,17 @@ pub mod user_prompt_meta {
 pub mod user_message_chunk_meta {
     /// Prompt index for rewind / attribution.
     pub const PROMPT_INDEX: &str = "promptIndex";
-    /// When true, the chunk must not become a scrollback user prompt.
-    /// See [`xai_grok_shell::session::PromptOrigin::hide_user_echo_from_scrollback`].
+    /// When true, the chunk must stay out of scrollback user prompts. Legacy records only:
+    /// the shell now stamps [`SYNTHETIC_REASON`] instead, so such chunks render as collapsed
+    /// injected entries rather than being dropped.
     pub const HIDE_FROM_SCROLLBACK: &str = "hideFromScrollback";
     /// When true, the chunk is a persisted mid-turn interjection; replay renders its `displayText` as an interjection block.
     pub const INTERJECTION: &str = xai_grok_shell::session::storage::INTERJECTION_META_KEY;
     /// Daemon `UserMessage.message_id`. An interjection stamps this with its injection id.
     pub const MESSAGE_ID: &str = "messageId";
+    /// `SyntheticReason` wire name of the persisted item this chunk echoes; the tracker routes
+    /// the chunk to a collapsed-by-default injected entry. Shared const with the shell stamper.
+    pub const SYNTHETIC_REASON: &str = xai_grok_shell::session::storage::SYNTHETIC_REASON_META_KEY;
 }
 
 /// Extract the numeric counter from an `eventId` (`"{sessionId}-{counter}"`).

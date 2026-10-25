@@ -18,12 +18,14 @@
 //!
 //! ## Lifetime
 //!
-//! Rows are rebuilt every render frame off `app.agents`; nothing is cached.
-//! The per-row sort key (state and last_change_at) is recomputed each frame; with single-digit agent counts in one pager process this is free.
+//! Rows, activity and sort keys are rebuilt each render frame.
+//! Authoritative child membership and layout inputs are prepared at existing reconciliation boundaries.
 
 mod actions_focus;
 pub(crate) mod animation;
 mod chrome;
+pub mod child_layout;
+pub(crate) mod persistence;
 pub mod layout;
 pub mod peek;
 pub mod peek_tail;
@@ -42,8 +44,8 @@ pub use chrome::HeaderUpgradeCta;
 pub(crate) use render::render_dashboard;
 pub use render::{popup_rect, render_popup_overlay};
 pub use row::{
-    DashboardRow, RowBadge, build_rows_with_roster, classify_top_level, roster_activity_to_state,
-    sort_rows,
+    DashboardRow, RowBadge, SessionLane, build_rows_with_roster, classify_top_level,
+    roster_activity_to_state, sort_rows,
 };
 pub(crate) use row::{WorkspaceRowInputs, build_rows_with_workspace};
 pub(crate) use state::DashboardStopAction;
@@ -79,7 +81,17 @@ pub(crate) fn cycle_order(
     filter: &Filter,
 ) -> Vec<crate::app::agent::AgentId> {
     let home = render::cached_home();
-    let rows = build_rows_with_roster(agents, pinned, reorder, grouping, filter, home, &[]);
+    // Cycling walks root sessions only; the subagent lane never feeds it.
+    let rows = build_rows_with_roster(
+        agents,
+        pinned,
+        reorder,
+        grouping,
+        filter,
+        home,
+        &[],
+        row::SessionLane::Main,
+    );
     top_level_ids(&rows)
 }
 

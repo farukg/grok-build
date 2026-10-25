@@ -260,6 +260,7 @@ pub async fn spawn_isolated_subagent_for_e2e(
             crate::session::persistence::ExplicitSessionOpen::New {
                 identity: None,
                 next_trace_turn: None,
+                parent_session_id: None,
             },
         )
         .await

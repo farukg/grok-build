@@ -384,6 +384,7 @@ fn entry_label(entry: &ScrollbackEntry) -> String {
         RenderBlock::Btw(b) => format!("btw {}", prompt_preview(&b.question)),
         RenderBlock::ContextInfo(b) => format!("Context {}", b.model),
         RenderBlock::MemoryCapture(_) => "Memory capture".to_string(),
+        RenderBlock::Injected(b) => format!("{} {}", b.label, prompt_preview(&b.text)),
     }
 }
 

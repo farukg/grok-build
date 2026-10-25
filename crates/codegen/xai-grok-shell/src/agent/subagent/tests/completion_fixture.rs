@@ -48,6 +48,7 @@ impl DurableCompletionFixture {
             ExplicitSessionOpen::New {
                 identity: None,
                 next_trace_turn: None,
+                parent_session_id: None,
             },
         )
         .await

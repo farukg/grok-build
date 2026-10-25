@@ -13,9 +13,9 @@ use crate::implementations::grok_build::task::coordinator_state::{
     ACTIVE_MESSAGE_SPAWN_READY_TIMEOUT, InternalEvent, PendingChild,
 };
 use crate::implementations::grok_build::task::types::{
-    ActiveAgentMessageOperation, ActiveAgentMessageRequest, ActiveAgentMessageSource,
-    ActiveMessageRoute, ActiveMessageSenderContext, AgentMessageSender, SubagentOwner,
-    SubagentResult,
+    ActiveAgentMessageCommittedAdmission, ActiveAgentMessageOperation, ActiveAgentMessageRequest,
+    ActiveAgentMessageSource, ActiveMessageRoute, ActiveMessageSenderContext, AgentMessageSender,
+    SubagentOwner, SubagentResult,
 };
 
 const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -23,8 +23,49 @@ const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 pub(in super::super) struct AdmissionCall {
     pub(in super::super) message_id: String,
     pub(in super::super) late_delivery: ActiveAgentMessageDelivery,
+    pub(in super::super) report: oneshot::Sender<ActiveMessageAdmission>,
     pub(in crate::implementations::grok_build::task::coordinator) release:
         oneshot::Sender<ActiveMessageAdmission>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in super::super) enum HandoffCut {
+    Withheld,
+    Dropped,
+    Failed,
+    Panicked,
+    Completed,
+}
+
+impl HandoffCut {
+    pub(in super::super) fn apply(
+        self,
+        proof: ActiveAgentMessageCommittedAdmission,
+    ) -> Option<ActiveAgentMessageCommittedAdmission> {
+        match self {
+            Self::Withheld => return Some(proof),
+            Self::Dropped => drop(proof),
+            Self::Failed => {
+                assert_eq!(
+                    Err("handoff failed"),
+                    proof.try_handoff(|| Err::<(), _>("handoff failed")),
+                );
+            }
+            Self::Panicked => {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    proof.handoff(|| panic!("handoff interrupted"));
+                }));
+                assert!(result.is_err());
+            }
+            Self::Completed => {
+                let message = proof.delivery().message().clone();
+                let (receipt, mut received) = mpsc::unbounded_channel();
+                proof.handoff(|| receipt.send(message.clone()).unwrap());
+                assert_eq!(message, received.try_recv().unwrap());
+            }
+        }
+        None
+    }
 }
 
 pub(in crate::implementations::grok_build::task::coordinator) struct TestControl {
@@ -43,21 +84,27 @@ impl ChildControl for TestControl {
         delivery: ActiveAgentMessageDelivery,
     ) -> SendBoxFuture<ActiveMessageAdmission> {
         let (release, released) = oneshot::channel();
+        let (report, reported) = oneshot::channel();
         let _ = self.admissions.send(AdmissionCall {
             message_id: delivery.message().message_id.clone(),
             late_delivery: delivery.clone(),
+            report,
             release,
         });
         Box::pin(async move {
-            let admission = released
-                .await
-                .unwrap_or(ActiveMessageAdmission::ChannelClosed);
-            if admission == ActiveMessageAdmission::Admitted
-                && delivery.commit_admission(|| ()).is_none()
-            {
-                return ActiveMessageAdmission::Rejected;
+            let admission = tokio::select! {
+                Ok(admission) = reported => return admission,
+                admission = released => admission.unwrap_or(ActiveMessageAdmission::ChannelClosed),
+            };
+            match admission {
+                ActiveMessageAdmission::Admitted => match delivery.claim_admission() {
+                    Some(claim) => claim.commit().handoff(|| ActiveMessageAdmission::Admitted),
+                    None => ActiveMessageAdmission::Rejected,
+                },
+                ActiveMessageAdmission::Unsupported
+                | ActiveMessageAdmission::ChannelClosed
+                | ActiveMessageAdmission::Rejected => admission,
             }
-            admission
         })
     }
 
@@ -420,6 +467,9 @@ async fn finish_next_active_message(coordinator: &mut TestCoordinator) {
         .await
         .expect("active-message completion stream ended");
     coordinator.finish_active_message(completion);
+    while let Ok(publication) = coordinator.terminal_published_rx.try_recv() {
+        coordinator.handle_terminal_publication(publication);
+    }
 }
 
 pub(in super::super) async fn release_admission(
@@ -467,16 +517,17 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_be
     finish_child_at(coordinator, id, PublicationCheckpoint::Prepared);
 }
 
-pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_with_result_before_visibility(
+pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_with_result_before_commit(
     coordinator: &mut TestCoordinator,
     id: &str,
     result: SubagentResult,
 ) {
-    finish_child_with_result_at(coordinator, id, result, PublicationCheckpoint::Prepared);
+    finish_child_with_result_at(coordinator, id, result, PublicationCheckpoint::Committing);
 }
 
 #[derive(Clone, Copy)]
 enum PublicationCheckpoint {
+    Committing,
     Prepared,
     Visible,
 }
@@ -517,12 +568,27 @@ fn finish_child_with_result_at(
             snapshot_ref: None,
         },
     );
+    if matches!(checkpoint, PublicationCheckpoint::Committing) {
+        return;
+    }
+    let mut unrelated = Vec::new();
     while let Ok(publication) = coordinator.terminal_published_rx.try_recv() {
+        let published_id = match &publication {
+            crate::implementations::grok_build::task::coordinator_state::TerminalPublication::Prepared { subagent_id, .. }
+            | crate::implementations::grok_build::task::coordinator_state::TerminalPublication::Visible { subagent_id, .. } => subagent_id,
+        };
+        if published_id != id {
+            unrelated.push(publication);
+            continue;
+        }
         coordinator.handle_terminal_publication(publication);
         match checkpoint {
-            PublicationCheckpoint::Prepared => break,
+            PublicationCheckpoint::Committing | PublicationCheckpoint::Prepared => break,
             PublicationCheckpoint::Visible => {}
         }
+    }
+    for publication in unrelated {
+        coordinator.terminal_published_tx.send(publication).expect("publication queue open");
     }
 }
 
@@ -805,7 +871,7 @@ async fn admission_deadline_revocation_is_definite_and_unblocks_finalization() {
     );
     assert!(finalization_outcome(finalize_rx).await);
     assert!(held.release.send(ActiveMessageAdmission::Admitted).is_err());
-    assert!(held.late_delivery.commit_admission(|| ()).is_none());
+    assert!(held.late_delivery.claim_admission().is_none());
     assert_eq!(coordinator.active_messages.len(), 0);
 }
 
@@ -831,7 +897,7 @@ async fn cancellation_revocation_is_definite_and_settles_finalization() {
     );
     assert!(finalization_outcome(finalize_rx).await);
     assert!(held.release.send(ActiveMessageAdmission::Admitted).is_err());
-    assert!(held.late_delivery.commit_admission(|| ()).is_none());
+    assert!(held.late_delivery.claim_admission().is_none());
     assert_eq!(coordinator.active_messages.len(), 0);
 }
 
@@ -841,7 +907,7 @@ async fn claimed_deadline_race_remains_uncertain_and_finalization_unclean() {
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
-    held.late_delivery.mark_admission_uncertain();
+    let claim = held.late_delivery.clone().claim_admission().expect("claim wins");
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
 
@@ -853,6 +919,98 @@ async fn claimed_deadline_race_remains_uncertain_and_finalization_unclean() {
         response_outcome(response).await
     );
     assert!(!finalization_outcome(finalize_rx).await);
+    assert!(held.late_delivery.claim_admission().is_none());
+    let committed = claim.commit();
+    let message = committed.delivery().message().clone();
+    let (handoff, mut received) = mpsc::unbounded_channel();
+    committed.handoff(|| handoff.send(message).unwrap());
+    let message = received.recv().await.unwrap();
+    assert_eq!(held.message_id, message.message_id);
+    assert_eq!("parent", message.sender_session_id);
+    assert_eq!("follow up", message.text.as_ref());
+}
+
+#[tokio::test]
+async fn claimed_cancellation_keeps_owned_authority_after_observer_settlement() {
+    let (mut coordinator, command_tx, admission_tx, mut admissions) = fixture();
+    insert_child(&mut coordinator, admission_tx, "child", "parent");
+    let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
+    let held = recv_with_timeout(&mut admissions).await;
+    let claim = held.late_delivery.clone().claim_admission().expect("claim wins");
+    let (finalize_tx, finalize_rx) = oneshot::channel();
+    coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
+    coordinator.active.get("child").unwrap().cancellation.cancel();
+
+    finish_next_active_message(&mut coordinator).await;
+    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain, response_outcome(response).await);
+    assert!(!finalization_outcome(finalize_rx).await);
+    assert!(held.late_delivery.claim_admission().is_none());
+    assert!(held.release.send(ActiveMessageAdmission::Admitted).is_err());
+    let committed = claim.commit();
+    assert_eq!("parent", committed.delivery().message().sender_session_id);
+    let (receipt, mut receipts) = mpsc::unbounded_channel();
+    committed.handoff(|| receipt.send("follow up").unwrap());
+    assert_eq!(Some("follow up"), receipts.recv().await);
+}
+
+#[tokio::test]
+async fn child_admitted_requires_completed_durable_proof_handoff() {
+    for cut in [
+        HandoffCut::Withheld,
+        HandoffCut::Dropped,
+        HandoffCut::Failed,
+        HandoffCut::Panicked,
+        HandoffCut::Completed,
+    ] {
+        let (mut coordinator, command_tx, admission_tx, mut admissions) = fixture();
+        insert_child(&mut coordinator, admission_tx, "child", "parent");
+        let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
+        let held = recv_with_timeout(&mut admissions).await;
+        let proof = held.late_delivery.clone().claim_admission().unwrap().commit();
+        assert_eq!(held.message_id, proof.delivery().message().message_id);
+        assert_eq!("parent", proof.delivery().message().sender_session_id);
+        assert_eq!("follow up", proof.delivery().message().text.as_ref());
+        let retained = cut.apply(proof);
+        assert!(held.late_delivery.claim_admission().is_none());
+        let (finalize_tx, mut finalize_rx) = oneshot::channel();
+        coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
+        assert!(finalize_rx.try_recv().is_err());
+        held.report.send(ActiveMessageAdmission::Admitted).unwrap();
+        finish_next_active_message(&mut coordinator).await;
+        let completed = matches!(cut, HandoffCut::Completed);
+        let expected = if completed {
+            ActiveAgentMessageOutcome::Accepted {
+                message_id: held.message_id,
+            }
+        } else {
+            ActiveAgentMessageOutcome::AdmissionUncertain
+        };
+        assert_eq!(expected, response_outcome(response).await, "{cut:?}");
+        assert_eq!(completed, finalization_outcome(finalize_rx).await, "{cut:?}");
+        assert!(coordinator.active_messages.is_empty());
+        if let Some(proof) = retained {
+            proof.handoff(|| ());
+            let (finalize_tx, finalize_rx) = oneshot::channel();
+            coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
+            assert!(!finalization_outcome(finalize_rx).await);
+        }
+    }
+}
+
+#[tokio::test]
+async fn dropped_claim_cannot_restore_definite_cancellation() {
+    let (mut coordinator, command_tx, admission_tx, mut admissions) = fixture();
+    insert_child(&mut coordinator, admission_tx, "child", "parent");
+    let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
+    let held = recv_with_timeout(&mut admissions).await;
+    drop(held.late_delivery.clone().claim_admission().expect("claim wins"));
+    assert!(held.late_delivery.claim_admission().is_none());
+    let (finalize_tx, finalize_rx) = oneshot::channel();
+    coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
+    coordinator.active.get("child").unwrap().cancellation.cancel();
+    finish_next_active_message(&mut coordinator).await;
+    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain, response_outcome(response).await);
+    assert!(!finalization_outcome(finalize_rx).await);
 }
 
 #[tokio::test]
@@ -861,7 +1019,7 @@ async fn unsettled_completion_before_runner_output_marks_terminal_result_failed(
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let call = recv_with_timeout(&mut admissions).await;
-    call.late_delivery.mark_admission_uncertain();
+    drop(call.late_delivery.clone().claim_admission().expect("claim wins"));
     coordinator
         .active
         .get("child")
@@ -889,7 +1047,7 @@ async fn runner_output_parked_before_unsettled_completion_is_failed() {
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let call = recv_with_timeout(&mut admissions).await;
-    call.late_delivery.mark_admission_uncertain();
+    drop(call.late_delivery.clone().claim_admission().expect("claim wins"));
 
     finish_child(&mut coordinator, "child");
     assert!(coordinator.terminal_outputs.contains_key("child"));
@@ -966,7 +1124,7 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
         }
     });
     let call = recv_with_timeout(&mut admissions).await;
-    call.late_delivery.mark_admission_uncertain();
+    drop(call.late_delivery.clone().claim_admission().expect("claim wins"));
 
     panic.notify_one();
     let short_wait = std::time::Duration::from_millis(100);
@@ -1061,7 +1219,7 @@ async fn stale_admission_and_completed_lookup_preserve_identity_authority() {
         ActiveAgentMessageOutcome::AdmissionUncertain,
         response_outcome(response).await
     );
-    assert!(late_delivery.commit_admission(|| ()).is_none());
+    assert!(late_delivery.claim_admission().is_none());
 
     insert_child(&mut coordinator, admission_tx, "completed", "parent");
     finish_child(&mut coordinator, "completed");
@@ -1086,13 +1244,18 @@ async fn actor_drop_classifies_channel_closure_from_lease_proof() {
         insert_child(&mut coordinator, admission_tx, "child", "parent");
         let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
         let held = recv_with_timeout(&mut admissions).await;
-        if is_claimed {
-            held.late_delivery.mark_admission_uncertain();
-        }
+        let claim = is_claimed.then(|| {
+            held.late_delivery.clone().claim_admission().expect("claim wins")
+        });
 
         drop(coordinator);
         assert_eq!(expected, response_outcome(response).await);
-        assert!(held.late_delivery.commit_admission(|| ()).is_none());
+        assert!(held.late_delivery.claim_admission().is_none());
+        if let Some(claim) = claim {
+            let committed = claim.commit();
+            assert_eq!("follow up", committed.delivery().message().text.as_ref());
+            committed.handoff(|| ());
+        }
     }
 }
 
@@ -1237,6 +1400,9 @@ async fn parent_session_cancel_unblocks_parked_send() {
         ActiveAgentMessageOutcome::NotActiveOrFinalizing,
         response_outcome(response).await
     );
+    while let Ok(publication) = coordinator.terminal_published_rx.try_recv() {
+        coordinator.handle_terminal_publication(publication);
+    }
     let terminal = response_outcome_result(spawn_result).await;
     assert!(
         terminal.is_interrupted() && !terminal.success(),
@@ -1406,6 +1572,9 @@ async fn cancel_parent_prompt_rejects_parked_send() {
         ActiveAgentMessageOutcome::NotActiveOrFinalizing,
         response_outcome(response).await
     );
+    while let Ok(publication) = coordinator.terminal_published_rx.try_recv() {
+        coordinator.handle_terminal_publication(publication);
+    }
     let terminal = response_outcome_result(spawn_result).await;
     assert!(
         terminal.is_interrupted() && !terminal.success(),

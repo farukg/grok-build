@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
-use xai_grok_sampling_types::{ConversationItem, SamplingConfig};
+use xai_grok_sampling_types::{ConversationItem, ConversationRequest, SamplingConfig};
 
 /// Token count relative to the current sampling config / tokenizer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,90 @@ pub const MEMORY_CONTEXT_OPEN_TAG: &str = "<memory-context>";
 
 /// Closing tag paired with [`MEMORY_CONTEXT_OPEN_TAG`].
 pub const MEMORY_CONTEXT_CLOSE_TAG: &str = "</memory-context>";
+
+/// Lossless record of content that entered a model request view without being persisted as
+/// conversation history. The shell relays each record to the CLI, which renders it as a
+/// collapsed injected entry — nothing enters the request invisibly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum InjectedRequestRecord {
+    /// The memory reminder spliced into this request's system prompt (the non-persist branch of
+    /// request assembly: the model sees it, chat history does not).
+    MemoryReminder {
+        /// Complete reminder body as spliced.
+        text: String,
+    },
+    /// Per-turn transforms applied to the stored history while building the request view
+    /// (pruning, memory-context withholding, context-policy projection, agent-message labeling).
+    ContextView {
+        /// Transform summary followed by the resulting request view.
+        text: String,
+    },
+    Synthetic {
+        reason: xai_grok_sampling_types::SyntheticReason,
+        text: String,
+    },
+}
+
+impl InjectedRequestRecord {
+    /// Preserve the complete body; presentation folding must not discard request content.
+    pub fn new(kind: InjectedRequestKind, text: &str) -> Self {
+        let text = text.to_string();
+        match kind {
+            InjectedRequestKind::MemoryReminder => Self::MemoryReminder { text },
+            InjectedRequestKind::ContextView => Self::ContextView { text },
+        }
+    }
+
+    /// The complete body this record carries.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::MemoryReminder { text } | Self::ContextView { text } | Self::Synthetic { text, .. } => text,
+        }
+    }
+
+    /// Existing notification kind, resolved from the typed request surface or synthetic origin.
+    pub fn kind_wire(&self) -> &'static str {
+        match self {
+            Self::MemoryReminder { .. } => "memory_reminder",
+            Self::ContextView { .. } => "context_view",
+            Self::Synthetic { reason, .. } => reason.wire_name(),
+        }
+    }
+}
+
+/// Which request-only surface a record describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectedRequestKind {
+    MemoryReminder,
+    ContextView,
+}
+
+/// Reply of [`crate::ChatStateHandle::build_request`]: the wire-ready request plus the lossless
+/// records of request-only content the CLI renders as collapsed injected entries.
+#[derive(Debug, Clone)]
+pub struct BuiltConversationRequest {
+    pub request: ConversationRequest,
+    pub injected_records: Vec<InjectedRequestRecord>,
+}
+
+// The request is the reply's primary payload; Deref keeps existing field access
+// (`built.items`, `built.model`, …) working at the call sites and tests.
+impl std::ops::Deref for BuiltConversationRequest {
+    type Target = ConversationRequest;
+
+    fn deref(&self) -> &Self::Target {
+        &self.request
+    }
+}
+
+impl std::ops::DerefMut for BuiltConversationRequest {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.request
+    }
+}
+
+
 
 /// Configuration for the ChatStateActor at spawn time.
 #[derive(Debug, Clone)]

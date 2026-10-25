@@ -90,7 +90,8 @@ impl OutlineClass {
             | RenderBlock::System(_)
             | RenderBlock::SessionEvent(_)
             | RenderBlock::ContextInfo(_)
-            | RenderBlock::MemoryCapture(_) => Self::SystemNote,
+            | RenderBlock::MemoryCapture(_)
+            | RenderBlock::Injected(_) => Self::SystemNote,
         }
     }
 

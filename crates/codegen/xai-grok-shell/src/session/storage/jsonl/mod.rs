@@ -37,6 +37,10 @@ pub struct JsonlStorageAdapter {
     file_sync_probe: Option<std::sync::Arc<FileSyncProbe>>,
     #[cfg(test)]
     parent_sync_probe: Option<std::sync::Arc<ParentSyncProbe>>,
+    #[cfg(test)]
+    parent_admission_probe: Option<std::sync::Arc<FileSyncProbe>>,
+    #[cfg(test)]
+    parent_settlement_probe: Option<std::sync::Arc<FileSyncProbe>>,
 }
 #[cfg(test)]
 type AppendProbe = dyn Fn(AppendDurability) -> io::Result<()> + Send + Sync;
@@ -89,6 +93,10 @@ impl JsonlStorageAdapter {
             file_sync_probe: None,
             #[cfg(test)]
             parent_sync_probe: None,
+            #[cfg(test)]
+            parent_admission_probe: None,
+            #[cfg(test)]
+            parent_settlement_probe: None,
         }
     }
     pub fn with_root(root_dir: PathBuf) -> Self {
@@ -102,6 +110,10 @@ impl JsonlStorageAdapter {
             file_sync_probe: None,
             #[cfg(test)]
             parent_sync_probe: None,
+            #[cfg(test)]
+            parent_admission_probe: None,
+            #[cfg(test)]
+            parent_settlement_probe: None,
         }
     }
     /// Create an adapter that writes directly to `session_dir`, bypassing the `{root}/sessions/{cwd}/{id}/` path computation.
@@ -117,6 +129,10 @@ impl JsonlStorageAdapter {
             file_sync_probe: None,
             #[cfg(test)]
             parent_sync_probe: None,
+            #[cfg(test)]
+            parent_admission_probe: None,
+            #[cfg(test)]
+            parent_settlement_probe: None,
         }
     }
     #[cfg(test)]
@@ -130,6 +146,8 @@ impl JsonlStorageAdapter {
             session_sync_probe: None,
             file_sync_probe: None,
             parent_sync_probe: None,
+            parent_admission_probe: None,
+            parent_settlement_probe: None,
         }
     }
     /// [`Self::with_update_append_probe`] plus a probe observing (and able to fail) every [`StorageAdapter::sync_session_files_selected`] barrier.
@@ -146,6 +164,8 @@ impl JsonlStorageAdapter {
             session_sync_probe: Some(std::sync::Arc::new(session_sync_probe)),
             file_sync_probe: None,
             parent_sync_probe: None,
+            parent_admission_probe: None,
+            parent_settlement_probe: None,
         }
     }
     /// Fail (or observe) the per-append file barrier after `write_all`.
@@ -164,6 +184,22 @@ impl JsonlStorageAdapter {
         parent_sync_probe: impl Fn() -> io::Result<()> + Send + Sync + 'static,
     ) -> Self {
         self.parent_sync_probe = Some(std::sync::Arc::new(parent_sync_probe));
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn with_parent_admission_probe(
+        mut self,
+        probe: impl Fn() -> io::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.parent_admission_probe = Some(std::sync::Arc::new(probe));
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn with_parent_settlement_probe(
+        mut self,
+        probe: impl Fn() -> io::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.parent_settlement_probe = Some(std::sync::Arc::new(probe));
         self
     }
     /// Fork bootstrap uses this to load the copied parent conversation.
@@ -272,15 +308,49 @@ impl JsonlStorageAdapter {
     }
     /// Both `list_sessions` (full scan) and `list_sessions_recent` (mtime-based tail) share this.
     fn scan_session_dirs(&self, cwd: Option<&str>) -> io::Result<Vec<PathBuf>> {
+        self.session_dirs_with_required(cwd, &[]).map(|(dirs, _)| dirs)
+    }
+    fn session_dirs_with_required(
+        &self,
+        cwd: Option<&str>,
+        required: &[acp::SessionId],
+    ) -> io::Result<(Vec<PathBuf>, std::collections::HashSet<PathBuf>)> {
         let root_dir = match &self.dir_mode {
             SessionDirMode::FromRoot(root) => root,
-            SessionDirMode::Explicit(_) => return Ok(Vec::new()),
+            SessionDirMode::Explicit(_) => return Ok((Vec::new(), Default::default())),
         };
-        crate::session::storage::relocation::RelocationView::load(root_dir)
-            .and_then(|view| view.session_dirs(cwd))
-            .map_err(io::Error::other)
+        let view = crate::session::storage::relocation::RelocationView::load(root_dir)
+            .map_err(io::Error::other)?;
+        let dirs = view.session_dirs(cwd).map_err(io::Error::other)?;
+        let mut required_dirs = std::collections::HashSet::new();
+        for id in required {
+            if let Some(dir) = view.find_persisted_session_dir(&id.0).map_err(io::Error::other)? {
+                required_dirs.insert(dir);
+            }
+        }
+        Ok((dirs, required_dirs))
     }
     fn list_sessions_sync(&self, cwd: Option<&str>) -> io::Result<Vec<Summary>> {
+        self.list_sessions_visible_sync(cwd, super::SessionListVisibility::History)
+    }
+    pub async fn list_sessions_with_visibility(
+        &self,
+        cwd: Option<&str>,
+        visibility: super::SessionListVisibility,
+    ) -> io::Result<Vec<Summary>> {
+        let adapter = self.clone();
+        let cwd = cwd.map(str::to_owned);
+        tokio::task::spawn_blocking(move || {
+            adapter.list_sessions_visible_sync(cwd.as_deref(), visibility)
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
+    fn list_sessions_visible_sync(
+        &self,
+        cwd: Option<&str>,
+        visibility: super::SessionListVisibility,
+    ) -> io::Result<Vec<Summary>> {
         let session_dirs = self.scan_session_dirs(cwd)?;
         let mut summaries = Vec::new();
         for session_dir in session_dirs {
@@ -288,7 +358,7 @@ impl JsonlStorageAdapter {
             match std::fs::read(&summary_path) {
                 Ok(bytes) => {
                     if let Ok(mut summary) = serde_json::from_slice::<Summary>(&bytes)
-                        && !summary.is_hidden()
+                        && visibility.admits(&summary)
                     {
                         super::summary_write::repair_untagged_worktree_summary(
                             &mut summary,
@@ -316,13 +386,39 @@ impl JsonlStorageAdapter {
     /// On a machine with ~12K sessions this reduces cold-boot `workspace_list` from ~3s to ~200ms.
     /// Final order among candidates uses `last_active_at` else `updated_at`.
     pub async fn list_sessions_recent(&self, limit: usize) -> io::Result<Vec<Summary>> {
+        self.list_sessions_recent_with_visibility(limit, super::SessionListVisibility::History)
+            .await
+    }
+    pub async fn list_sessions_recent_with_visibility(
+        &self,
+        limit: usize,
+        visibility: super::SessionListVisibility,
+    ) -> io::Result<Vec<Summary>> {
         let adapter = self.clone();
-        tokio::task::spawn_blocking(move || adapter.list_sessions_recent_sync(limit))
+        tokio::task::spawn_blocking(move || adapter.list_sessions_recent_sync(limit, visibility, &[]))
             .await
             .map_err(io::Error::other)?
     }
-    fn list_sessions_recent_sync(&self, limit: usize) -> io::Result<Vec<Summary>> {
-        let session_dirs = self.scan_session_dirs(None)?;
+    /// Required resident summaries include exclusion evidence for the roster merge.
+    pub(crate) async fn roster_summaries(
+        &self,
+        limit: usize,
+        required: Vec<acp::SessionId>,
+    ) -> io::Result<Vec<Summary>> {
+        let adapter = self.clone();
+        tokio::task::spawn_blocking(move || {
+            adapter.list_sessions_recent_sync(limit, super::SessionListVisibility::Roster, &required)
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
+    fn list_sessions_recent_sync(
+        &self,
+        limit: usize,
+        visibility: super::SessionListVisibility,
+        required: &[acp::SessionId],
+    ) -> io::Result<Vec<Summary>> {
+        let (session_dirs, mut required_dirs) = self.session_dirs_with_required(None, required)?;
         let mut candidates: Vec<(PathBuf, std::time::SystemTime)> =
             Vec::with_capacity(session_dirs.len());
         for session_dir in session_dirs {
@@ -338,15 +434,20 @@ impl JsonlStorageAdapter {
             .saturating_mul(Self::RECENT_LIST_READ_SLACK)
             .max(limit);
         let mut summaries = Vec::with_capacity(limit.min(candidates.len()));
+        let mut recent_count = 0;
         for (reads, (summary_path, _)) in candidates.into_iter().enumerate() {
-            if summaries.len() == limit || reads >= max_reads {
-                break;
+            let is_required = summary_path.parent().is_some_and(|dir| required_dirs.remove(dir));
+            let within_recent = recent_count < limit && reads < max_reads;
+            if !is_required && !within_recent {
+                if required_dirs.is_empty() {
+                    break;
+                }
+                continue;
             }
             match std::fs::read(&summary_path) {
                 Ok(bytes) => {
                     if let Ok(mut summary) = serde_json::from_slice::<Summary>(&bytes)
-                        && !summary.is_hidden()
-                        && !summary.is_headless()
+                        && (is_required || (visibility.admits(&summary) && !summary.is_headless()))
                     {
                         let lock_path =
                             summary_path.with_file_name(format!("{}.lock", super::SUMMARY_FILE));
@@ -355,7 +456,10 @@ impl JsonlStorageAdapter {
                             &summary_path,
                             &lock_path,
                         );
-                        if !summary.is_unused_optimistic_husk() {
+                        if is_required || !summary.is_unused_optimistic_husk() {
+                            if within_recent && visibility.admits(&summary) && !summary.is_headless() {
+                                recent_count += 1;
+                            }
                             summaries.push(summary);
                         }
                     }
@@ -1380,6 +1484,23 @@ impl StorageAdapter for JsonlStorageAdapter {
     ) -> Result<StrictAppendAck, super::AppendCwdSwitchError> {
         self.append_cwd_switch_with_bookkeeping(info, message).await
     }
+    async fn admit_parent_message(
+        &self,
+        info: &Info,
+        admission: &crate::session::delivery_receiver::ParentMessageAdmission,
+        authority: crate::session::delivery_receiver::ParentAdmissionAuthority,
+        access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<crate::session::delivery_receiver::ParentAdmissionAck> {
+        self.admit_parent_message_owned(info, admission, authority, access).await
+    }
+    async fn cancel_parent_messages(
+        &self,
+        info: &Info,
+        message_ids: &[String],
+        access: crate::session::receiver_execution::ReceiverAccess<'_>,
+    ) -> io::Result<()> {
+        self.cancel_parent_messages_owned(info, message_ids, access).await
+    }
     async fn receive_delivery(
         &self,
         info: &Info,
@@ -1460,6 +1581,25 @@ impl StorageAdapter for JsonlStorageAdapter {
             .map_err(io::Error::other)?
     }
 
+    async fn suppress_terminal_completions(
+        &self,
+        info: &Info,
+        ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        reason: crate::session::completion_delivery::CompletionSuppression,
+    ) -> io::Result<()> {
+        self.suppress_terminal_completions_inner(info, ids, reason).await
+    }
+
+    async fn enroll_terminal_completion(
+        &self,
+        info: &Info,
+        source: crate::session::completion_delivery::CompletionPayloadSource,
+        text: String,
+        policy: crate::session::completion_delivery::CompletionEventPolicy,
+    ) -> io::Result<()> {
+        self.enroll_terminal_completion_inner(info, source, text, policy).await
+    }
+
     async fn prepare_subagent_completion(
         &self,
         info: &Info,
@@ -1494,6 +1634,15 @@ impl StorageAdapter for JsonlStorageAdapter {
         )
         .await
     }
+    async fn append_notification_commit_aware(
+        &self,
+        info: &Info,
+        projection: &xai_chat_state::input_projection::NotificationProjection,
+        admission: &xai_chat_state::InputAdmission,
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError> {
+        self.append_notification(info, projection, admission).await
+    }
+
     async fn append_completion_commit_aware(
         &self,
         info: &Info,
@@ -1703,26 +1852,8 @@ impl StorageAdapter for JsonlStorageAdapter {
             );
             return Ok(());
         }
-        let tmp = target.with_extension(format!(
-            "json.{}.{}.tmp",
-            std::process::id(),
-            uuid::Uuid::now_v7().simple()
-        ));
-        tokio::fs::write(&tmp, json).await?;
-        #[cfg(windows)]
-        match tokio::fs::remove_file(&target).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                let _ = tokio::fs::remove_file(&tmp).await;
-                return Err(error);
-            }
-        }
-        if let Err(error) = tokio::fs::rename(&tmp, &target).await {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(error);
-        }
-        Ok(())
+        tokio::task::spawn_blocking(move || super::write_bytes_atomic(&target, &json))
+            .await.map_err(io::Error::other)?
     }
     async fn delete_workflow_run_state(&self, info: &Info, run_id: &str) -> io::Result<()> {
         let target = self.workflow_run_state_file(info, run_id)?;
@@ -2217,3 +2348,5 @@ mod durable_tests;
 mod tests;
 #[cfg(test)]
 mod worktree_heal_tests;
+#[cfg(test)]
+mod roster_visibility_tests;

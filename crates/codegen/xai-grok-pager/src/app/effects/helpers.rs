@@ -1486,7 +1486,7 @@ pub(super) fn marketplace_outcome_succeeded(
 /// Probing the top level with untyped JSON here was why the tasks-pane ✗ never removed stale (`not_found`) rows after a session resume.
 pub(super) fn parse_kill_outcome(
     resp: &str,
-) -> Option<xai_grok_tools::types::KillOutcome> {
+) -> Option<xai_tool_types::KillOutcome> {
     use xai_grok_shell::extensions::task::KillTaskResponse;
     use xai_grok_shell::session::result::ExtMethodResult;
     serde_json::from_str::<ExtMethodResult<KillTaskResponse>>(resp)

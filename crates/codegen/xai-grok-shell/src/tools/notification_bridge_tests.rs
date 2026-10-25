@@ -1,4 +1,6 @@
 use super::*;
+#[path = "terminal_actor_restart_tests.rs"]
+mod actor_restart;
 use xai_grok_tools::computer::types::TaskKind;
 use xai_grok_tools::types::TaskSnapshot;
 
@@ -33,6 +35,25 @@ async fn handle_notification_with_admission(
     notification.await;
 }
 
+async fn handle_notification_with_goal_policy(
+    config: &NotificationBridgeConfig,
+    notification: ToolNotification,
+    offsets: &mut HashMap<String, usize>,
+    cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
+) {
+    let delivery = handle_notification(config, notification, offsets);
+    tokio::pin!(delivery);
+    let command = tokio::select! {
+        _ = &mut delivery => panic!("goal publication settled before its policy acknowledgement"),
+        command = cmd_rx.recv() => command.unwrap(),
+    };
+    let SessionCommand::ClassifyTerminalNotification { respond_to, .. } = command else {
+        panic!("goal publication must request the actor's durable policy decision");
+    };
+    respond_to.send(Ok(crate::session::commands::TerminalNotificationDecision::Suppressed)).unwrap();
+    delivery.await;
+}
+
 fn make_test_config() -> (
     NotificationBridgeConfig,
     mpsc::UnboundedReceiver<SessionCommand>,
@@ -62,7 +83,7 @@ fn make_test_config_full() -> (
 }
 
 #[allow(clippy::type_complexity)]
-fn make_test_config_full_raw() -> (
+pub(crate) fn make_test_config_full_raw() -> (
     NotificationBridgeConfig,
     mpsc::UnboundedReceiver<xai_acp_lib::AcpClientMessage>,
     mpsc::UnboundedReceiver<PersistenceMsg>,
@@ -131,6 +152,45 @@ fn make_task_snapshot(task_id: &str, kind: TaskKind) -> TaskSnapshot {
         is_backgrounded: false,
         output_total_bytes: 0,
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn acknowledged_terminal_transport_waits_for_the_completion_owner_before_publication() {
+    use crate::session::storage::StorageAdapter;
+    tokio::task::LocalSet::new().run_until(async {
+        let (config, mut gateway, mut persistence, mut commands) = make_test_config_full_raw();
+        let info = crate::session::SessionInfo { id: config.session_id.clone(), cwd: "/tmp".into() };
+        let mut snapshot = make_task_snapshot("durable-execution", TaskKind::Bash);
+        snapshot.owner_session_id = Some(info.id.to_string());
+        let handle = spawn_notification_bridge(config);
+        let enrollment = tokio::task::spawn_local(handle.enroll_task_completion(snapshot.clone()).wait());
+        let (source, text, policy, ack) = loop {
+            if let PersistenceMsg::EnrollTerminalCompletion { source, text, policy, respond_to } = tokio::time::timeout(std::time::Duration::from_secs(5), persistence.recv()).await.unwrap().unwrap() {
+                break (source, text, policy, respond_to);
+            }
+        };
+        assert!(!enrollment.is_finished());
+        assert!(commands.try_recv().is_err(), "enrollment cannot wake the actor");
+        assert!(gateway.try_recv().is_err(), "enrollment cannot publish a terminal");
+        let directory = tempfile::tempdir().unwrap();
+        let storage = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
+        storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
+        storage.enroll_terminal_completion(&info, source, text, policy).await.unwrap();
+        let reopened = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
+        assert_eq!(reopened.read_completion_state(&info).await.unwrap().obligations.len(), 1);
+        assert!(!enrollment.is_finished(), "durable commit without ACK cannot release the producer");
+        ack.send(Ok(())).unwrap();
+        let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv()).await.unwrap().unwrap();
+        let SessionCommand::ClassifyTerminalNotification { respond_to, .. } = command else { panic!("enrollment must resolve actor policy without publishing a wake") };
+        assert!(!enrollment.is_finished(), "producer acknowledgement must wait for the actor policy decision");
+        respond_to.send(Ok(crate::session::commands::TerminalNotificationDecision::Surface)).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), enrollment).await.unwrap().unwrap().unwrap();
+        assert!(commands.try_recv().is_err());
+        handle.send_task_complete(snapshot);
+        let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv()).await.unwrap().unwrap();
+        let SessionCommand::Prompt { admission: Some(admission), .. } = command else { panic!("terminal publication must use the maintained actor admission transport") };
+        admission.respond_to.send(true).unwrap();
+    }).await;
 }
 
 #[tokio::test]
@@ -206,10 +266,11 @@ async fn bash_task_completed_suppresses_auto_wake_during_goal_loop() {
     let snapshot = make_task_snapshot("bg-goal", TaskKind::Bash);
     let mut offsets = HashMap::new();
 
-    handle_notification(
+    handle_notification_with_goal_policy(
         &config,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
+        &mut cmd_rx,
     )
     .await;
 
@@ -537,10 +598,11 @@ async fn bash_task_completed_auto_wake_disabled_still_suppressed_during_goal_loo
     let snapshot = make_task_snapshot("bg-disabled-goal", TaskKind::Bash);
     let mut offsets = HashMap::new();
 
-    handle_notification(
+    handle_notification_with_goal_policy(
         &config,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
+        &mut cmd_rx,
     )
     .await;
 
@@ -806,10 +868,11 @@ async fn monitor_task_completed_suppressed_during_goal_loop() {
     let snapshot = make_task_snapshot("mon-goal", TaskKind::Monitor);
     let mut offsets = HashMap::new();
 
-    handle_notification(
+    handle_notification_with_goal_policy(
         &config,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
+        &mut cmd_rx,
     )
     .await;
 

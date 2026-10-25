@@ -7,6 +7,7 @@ mod dock_toggle;
 mod jump;
 mod mid_text_btw;
 mod mid_text_goal;
+mod modal_keyboard;
 mod modes;
 mod notes;
 mod permissions;

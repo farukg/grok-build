@@ -1012,18 +1012,109 @@ pub enum KillTaskOutput {
     TaskNotFound(String),
 }
 
-/// Successful result from the `kill_task` tool.
+/// Result of a background-task kill, not a terminal-resource kill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KillOutcome {
+    Killed,
+    AlreadyExited,
+    NotFound,
+    Indeterminate {
+        stage: KillStage,
+        process_effect: KillProcessEffect,
+    },
+    Failed {
+        stage: KillStage,
+        reason: KillFailureReason,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KillStage {
+    ProcessTermination,
+    DurableEnrollment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KillProcessEffect {
+    Unknown,
+    StopRequested,
+    TerminalObserved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KillFailureReason {
+    Unsupported,
+    PermissionDenied,
+    DispatchUnavailable,
+}
+
+impl std::fmt::Display for KillOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Killed => f.write_str("killed"),
+            Self::AlreadyExited => f.write_str("already_exited"),
+            Self::NotFound => f.write_str("not_found"),
+            Self::Indeterminate { stage, process_effect } => {
+                write!(f, "Kill uncertain at {stage}: {process_effect}; completion is not confirmed")
+            }
+            Self::Failed { stage, reason } => write!(f, "Kill failed at {stage}: {reason}"),
+        }
+    }
+}
+
+impl std::fmt::Display for KillStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ProcessTermination => "process termination",
+            Self::DurableEnrollment => "durable enrollment",
+        })
+    }
+}
+
+impl std::fmt::Display for KillProcessEffect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unknown => "process effect unknown",
+            Self::StopRequested => "stop requested",
+            Self::TerminalObserved => "terminal state observed",
+        })
+    }
+}
+
+impl std::fmt::Display for KillFailureReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unsupported => "operation unsupported",
+            Self::PermissionDenied => "permission denied",
+            Self::DispatchUnavailable => "request could not be dispatched",
+        })
+    }
+}
+
+/// Result from the `kill_task` tool, including nonterminal failures.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KillTaskResult {
     pub task_id: String,
-    /// `"killed"` or `"already_exited"`.
-    pub outcome: String,
+    pub outcome: KillOutcome,
     pub message: String,
 }
 
 impl KillTaskOutput {
     pub fn was_killed(&self) -> bool {
-        matches!(self, Self::Result(r) if r.outcome == "killed")
+        match self {
+            Self::Result(result) => match result.outcome {
+                KillOutcome::Killed => true,
+                KillOutcome::AlreadyExited
+                | KillOutcome::NotFound
+                | KillOutcome::Indeterminate { .. }
+                | KillOutcome::Failed { .. } => false,
+            },
+            Self::TaskNotFound(_) => false,
+        }
     }
 }
 

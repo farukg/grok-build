@@ -1,7 +1,7 @@
 //! Consolidated dock above the prompt: one header per non-empty section.
 //! Experimental, gated by remote `dock_enabled`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -31,33 +31,65 @@ const MORE_INDENT: &str = "   ";
 const QUEUE_BODY_INDENT: u16 = 1;
 const STOP_LABEL: &str = "[stop]";
 
-/// Seeded at startup and on `x.ai/settings/update` from Feature::Dock.
-static ENABLED: AtomicBool = AtomicBool::new(false);
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+#[repr(u8)]
+pub enum DockPlacement {
+    #[default]
+    Off,
+    Top,
+    Bottom,
+}
+
+impl DockPlacement {
+    pub const fn is_visible(self) -> bool { !matches!(self, Self::Off) }
+    pub const fn next(self) -> Self {
+        match self { Self::Off => Self::Top, Self::Top => Self::Bottom, Self::Bottom => Self::Off }
+    }
+    pub const fn label(self) -> &'static str {
+        match self { Self::Off => "Off", Self::Top => "Top", Self::Bottom => "Bottom" }
+    }
+}
+
+static PLACEMENT: AtomicU8 = AtomicU8::new(DockPlacement::Off as u8);
 
 #[cfg(test)]
 thread_local! {
     /// Per-thread override so a test can turn the dock on without racing
     /// parallel draw-based tests through the process-global flag.
-    static ENABLED_OVERRIDE: std::cell::Cell<Option<bool>> =
+    static ENABLED_OVERRIDE: std::cell::Cell<Option<DockPlacement>> =
         const { std::cell::Cell::new(None) };
 }
 
-pub fn enabled() -> bool {
+pub fn placement() -> DockPlacement {
     #[cfg(test)]
-    if let Some(on) = ENABLED_OVERRIDE.with(std::cell::Cell::get) {
-        return on;
+    if let Some(placement) = ENABLED_OVERRIDE.with(std::cell::Cell::get) { return placement; }
+    match PLACEMENT.load(Ordering::Acquire) {
+        1 => DockPlacement::Top,
+        2 => DockPlacement::Bottom,
+        _ => DockPlacement::Off,
     }
-    ENABLED.load(Ordering::Acquire)
+}
+
+pub fn enabled() -> bool { placement().is_visible() }
+
+pub fn set_placement(placement: DockPlacement) {
+    #[cfg(test)]
+    if ENABLED_OVERRIDE.with(std::cell::Cell::get).is_some() {
+        ENABLED_OVERRIDE.with(|cell| cell.set(Some(placement)));
+        return;
+    }
+    PLACEMENT.store(placement as u8, Ordering::Release);
 }
 
 /// Test-only, thread-scoped [`enabled`] override; the thread ends with the test.
 #[cfg(test)]
 pub fn set_enabled_for_test(on: bool) {
-    ENABLED_OVERRIDE.with(|cell| cell.set(Some(on)));
+    ENABLED_OVERRIDE.with(|cell| cell.set(Some(if on { DockPlacement::Bottom } else { DockPlacement::Off })));
 }
 
 pub fn set_enabled(on: bool) {
-    ENABLED.store(on, Ordering::Release);
+    set_placement(if on { DockPlacement::Bottom } else { DockPlacement::Off });
 }
 
 pub struct DockRow {
@@ -505,9 +537,16 @@ fn action_item(data: &DockData, items: &[DockItem]) -> Option<DockItem> {
 }
 
 pub fn hovered_stop_button_rect(area: Rect, data: &DockData) -> Option<DockStopHit> {
-    let layout = DockLayout::with_cap(&data.counts(), area.height as usize);
+    hovered_stop_button_rect_with_offset(area, 0, area.height, data)
+}
+
+pub fn hovered_stop_button_rect_with_offset(
+    area: Rect, row_offset: u16, full_height: u16, data: &DockData,
+) -> Option<DockStopHit> {
+    let layout = DockLayout::with_cap(&data.counts(), full_height as usize);
     let item = action_item(data, layout.rows())?;
-    let visible_row = layout.rows().iter().position(|it| *it == item)?;
+    let visible_row = layout.rows().iter().position(|it| *it == item)?
+        .checked_sub(row_offset as usize)?;
     if visible_row >= area.height as usize {
         return None;
     }

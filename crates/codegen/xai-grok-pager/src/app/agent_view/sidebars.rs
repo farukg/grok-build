@@ -57,30 +57,48 @@ pub(crate) struct PendingDock {
     pub(crate) rect: Rect,
 }
 
-/// Blank rows the dock is painted over.
-pub(super) struct DockSlot(pub(super) u16);
+pub(super) struct DockSlot<'a> {
+    pub(super) data: Option<&'a std::cell::RefCell<crate::views::dock::DockData>>,
+    pub(super) height: u16,
+    pub(super) pointer: (u16, u16),
+}
 
-impl HostedSection for DockSlot {
+impl HostedSection for DockSlot<'_> {
     fn desired_height(&self) -> u16 {
-        self.0
+        self.height
     }
 
-    fn render(&self, _buf: &mut Buffer, _visible_area: Rect, _row_offset: u16, _theme: &Theme) {}
+    fn render(&self, buf: &mut Buffer, visible_area: Rect, row_offset: u16, theme: &Theme) {
+        let Some(data) = self.data else { return; };
+        let mut data = data.borrow_mut();
+        data.hovered = visible_area.contains(self.pointer.into()).then(|| {
+            crate::views::dock::DockLayout::with_cap(&data.counts(), self.height as usize)
+                .item_at(self.pointer.1.saturating_sub(visible_area.y).saturating_add(row_offset))
+        }).flatten();
+        data.stop_hovered = crate::views::dock::hovered_stop_button_rect_with_offset(
+            visible_area, row_offset, self.height, &data,
+        ).is_some_and(|hit| hit.rect.contains(self.pointer.into()));
+        if row_offset == 0 && visible_area.height == self.height {
+            crate::views::dock::render(buf, visible_area, theme, &data);
+            return;
+        }
+        let full = Rect::new(0, 0, visible_area.width, self.height);
+        let mut rendered = Buffer::empty(full);
+        crate::views::dock::render(&mut rendered, full, theme, &data);
+        for y in 0..visible_area.height {
+            for x in 0..visible_area.width {
+                if let (Some(source), Some(target)) = (
+                    rendered.cell((x, y.saturating_add(row_offset))),
+                    buf.cell_mut((visible_area.x + x, visible_area.y + y)),
+                ) {
+                    *target = source.clone();
+                }
+            }
+        }
+    }
 }
 
 impl AgentView {
-    /// Paint the dock into the F7 column, after the sidebar chrome.
-    pub(super) fn draw_pending_dock(&mut self, buf: &mut Buffer) {
-        let Some(PendingDock { data, rect }) = self.pending_dock.take() else {
-            return;
-        };
-        let theme = Theme::current();
-        crate::views::dock::render(buf, rect, &theme, &data);
-        if rect.contains(self.last_mouse_pos.into()) {
-            self.cache_dock_stop_at(rect, &data);
-        }
-    }
-
     /// Which side columns take space this frame. The timeline needs a terminal wide enough for its rail.
     pub(crate) fn sidebars_open(&self, area_width: u16) -> SidebarsOpen {
         let timeline = self.timeline_mode.panel().is_some() && area_width >= MIN_TERMINAL_WIDTH;

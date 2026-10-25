@@ -18,6 +18,29 @@ use xai_grok_shell::sampling::types::ReasoningEffort;
 /// Unique local identifier for an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AgentId(pub usize);
+
+pub use xai_grok_shell::session::acp_types::CompactInvocationId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactInvocationSettlement {
+    AwaitingRpc,
+    LifecycleObserved,
+    RpcSettled,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CompactInvocationOwner {
+    Command,
+    Concurrent,
+}
+
+#[derive(Debug)]
+pub struct CompactInvocation {
+    pub settlement: CompactInvocationSettlement,
+    pub owner: CompactInvocationOwner,
+    pub started_at: std::time::Instant,
+    pub binding_epoch: u32,
+}
 /// Whether a queue entry is a regular prompt or a slash command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueEntryKind {

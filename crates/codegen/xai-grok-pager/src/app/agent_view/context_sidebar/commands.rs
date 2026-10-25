@@ -25,7 +25,7 @@ impl Reached {
         match (spread, target) {
             (Spread::Everything, _) => Self::Both,
             (Spread::Peers, CursorTarget::Row(RowTarget::Display(_))) => Self::Kinds,
-            (Spread::Peers, CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Context(_))) => {
+            (Spread::Peers, CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Context(_) | RowTarget::DockPlacement)) => {
                 Self::Sections
             }
         }
@@ -182,6 +182,10 @@ impl AgentView {
                 };
                 let step = toggle(outline.rows(), at);
                 open.apply_step(&outline, step)
+            }
+            Some(CursorTarget::Row(RowTarget::DockPlacement)) => {
+                self.set_dock_placement(crate::views::dock::placement().next());
+                InputOutcome::Changed
             }
             Some(CursorTarget::Row(RowTarget::Context(category))) => {
                 self.toggle_context_category(category)

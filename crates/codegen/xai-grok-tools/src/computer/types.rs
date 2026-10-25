@@ -166,8 +166,24 @@ pub enum TaskKind {
     Monitor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundReason {
+    UserRedirect,
+    ForegroundBudget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunDisposition {
+    Foreground,
+    Backgrounded {
+        handle: BackgroundHandle,
+        reason: BackgroundReason,
+    },
+}
+
 #[derive(Clone)]
 pub struct TerminalRunResult {
+    pub disposition: RunDisposition,
     pub combined_output: String,
     pub exit_code: Option<i32>,
     pub truncated: bool,
@@ -187,6 +203,7 @@ pub struct TerminalRunResult {
 
 /// Returned by `TerminalBackend::run_background` — gives the caller the task_id
 /// to use for subsequent queries via `get_task`, `kill_task`, `wait_for_completion`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundHandle {
     pub task_id: String,
     pub output_file: PathBuf,
@@ -297,16 +314,7 @@ impl TaskSnapshot {
     }
 }
 
-/// Result of killing a terminal task. Serialized over the wire in the `x.ai/task/kill` ext response
-/// (`xai-grok-shell::extensions::task::KillTaskResponse`) and deserialized by clients
-/// (xai-grok-pager), so it derives both serde directions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum KillOutcome {
-    Killed,
-    AlreadyExited,
-    NotFound,
-}
+pub use xai_tool_types::{KillFailureReason, KillOutcome, KillProcessEffect, KillStage};
 
 /// Who initiated a background-task kill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,10 +336,10 @@ impl KillSource {
 }
 
 /// One command moved to the background by [`TerminalBackend::background_foreground_commands`].
-/// `tool_call_id` doubles as the background task id the model uses to retrieve output later.
 #[derive(Debug, Clone)]
 pub struct BackgroundedForeground {
     pub tool_call_id: String,
+    pub task_id: String,
 }
 
 // ============================================================================

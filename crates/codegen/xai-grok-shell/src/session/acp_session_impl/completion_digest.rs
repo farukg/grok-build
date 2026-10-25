@@ -43,7 +43,7 @@ impl SessionActor {
                 parent_session_id: Some(self.session_id_string()),
                 suppress_ids: receipts
                     .iter()
-                    .map(|receipt| receipt.completion.clone())
+                    .filter_map(|receipt| receipt.completion.subagent().cloned())
                     .collect(),
                 respond_to,
             }))
@@ -107,7 +107,7 @@ impl SessionActor {
                 completion: xai_chat_state::SubagentCompletionId {
                     subagent_id: summary.subagent_id().to_owned(),
                     attempt_id: summary.attempt_id,
-                },
+                }.into(),
                 prompt_id: prompt_id.to_owned(),
                 parent_task: xai_chat_state::ParentTask::Unknown,
             })

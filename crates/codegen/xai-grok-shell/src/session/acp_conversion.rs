@@ -389,10 +389,14 @@ pub(crate) fn acp_tool_update(
                         Some(id) => id,
                         None => r.task_id.as_str(),
                     };
-                    (
-                        acp::ToolCallStatus::Completed,
-                        format!("kill {} ({})", short_id, r.outcome),
-                    )
+                    let status = match r.outcome {
+                        xai_tool_types::KillOutcome::Killed
+                        | xai_tool_types::KillOutcome::AlreadyExited => acp::ToolCallStatus::Completed,
+                        xai_tool_types::KillOutcome::NotFound
+                        | xai_tool_types::KillOutcome::Indeterminate { .. }
+                        | xai_tool_types::KillOutcome::Failed { .. } => acp::ToolCallStatus::Failed,
+                    };
+                    (status, format!("kill {} ({})", short_id, r.outcome))
                 }
                 KillTaskOutput::TaskNotFound(_) => {
                     (acp::ToolCallStatus::Failed, "task not found".to_string())
@@ -799,6 +803,31 @@ mod tests {
                 panic!("expected text content");
             };
             assert_eq!(text.text, expected_text);
+        }
+    }
+
+    #[test]
+    fn negative_kill_update_reports_failed_with_typed_evidence() {
+        use xai_tool_types::{KillFailureReason, KillOutcome, KillProcessEffect, KillStage, KillTaskResult};
+        for outcome in [
+            KillOutcome::Indeterminate {
+                stage: KillStage::DurableEnrollment,
+                process_effect: KillProcessEffect::TerminalObserved,
+            },
+            KillOutcome::Failed {
+                stage: KillStage::ProcessTermination,
+                reason: KillFailureReason::PermissionDenied,
+            },
+        ] {
+            let output = ToolOutput::KillTask(KillTaskOutput::Result(KillTaskResult {
+                task_id: "task-1".into(),
+                outcome,
+                message: "not a terminal observation".into(),
+            }));
+            let update = acp_tool_update(&output, "kill-call", None, None).expect("update");
+            assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+            assert_eq!(update.fields.raw_output, serde_json::to_value(&output).ok());
+            assert!(update.fields.title.expect("diagnostic title").contains(&outcome.to_string()));
         }
     }
 

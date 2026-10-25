@@ -24,6 +24,8 @@ pub struct AcknowledgedToolNotification {
 pub enum NotificationAcknowledgementError {
     #[error("{0} acknowledging notification target(s) closed during dispatch")]
     DispatchClosed(usize),
+    #[error("notification acknowledgement deadline elapsed")]
+    DeadlineElapsed,
     #[error("{0} notification acknowledgement(s) were dropped")]
     AcknowledgementDropped(usize),
     #[error("notification consumer rejected delivery: {0:?}")]
@@ -51,7 +53,19 @@ pub enum DurableNotificationTargets {
     Present,
 }
 
+/// Absolute budget shared by all durable terminal-result fan-out targets.
+pub const TERMINAL_ACK_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl NotificationAcknowledgementBatch {
+    pub async fn wait_until(
+        self,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), NotificationAcknowledgementError> {
+        tokio::time::timeout_at(deadline, self.wait())
+            .await
+            .map_err(|_| NotificationAcknowledgementError::DeadlineElapsed)?
+    }
+
     /// Wait for every live durable target and report all observed failure classes.
     pub async fn wait(self) -> Result<(), NotificationAcknowledgementError> {
         let mut acknowledgements_dropped = 0;
@@ -344,6 +358,24 @@ impl ToolNotificationHandle {
                     } else {
                         batch.dispatch_closed += 1;
                     }
+                }
+            }
+        }
+        batch
+    }
+
+    pub fn enroll_task_completion(&self, snapshot: TaskSnapshot) -> NotificationAcknowledgementBatch {
+        let mut batch = NotificationAcknowledgementBatch { receipts: Vec::new(), dispatch_closed: 0 };
+        for target in self.targets.iter() {
+            if let ToolNotificationTarget::Acknowledged(target) = target {
+                let (acknowledgement, receipt) = tokio::sync::oneshot::channel();
+                if target.send(AcknowledgedToolNotification {
+                    notification: ToolNotification::TaskCompleted(snapshot.clone()),
+                    acknowledgement: Some(acknowledgement),
+                }).is_ok() {
+                    batch.receipts.push(receipt);
+                } else {
+                    batch.dispatch_closed += 1;
                 }
             }
         }

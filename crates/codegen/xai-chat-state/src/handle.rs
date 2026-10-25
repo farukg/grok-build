@@ -119,6 +119,18 @@ impl ChatStateHandle {
         ))))
     }
 
+    pub async fn append_notification_and_ack(
+        &self,
+        projection: crate::input_projection::NotificationProjection,
+        admission: crate::InputAdmission,
+    ) -> Result<crate::CompletionProjectionAck, crate::CompletionProjectionError> {
+        self.query("AppendNotificationAndAck", |reply| {
+            ChatStateCommand::AppendInputAndAck { projection: crate::InputProjection::Notification(projection), admission, reply }
+        }).await.unwrap_or_else(|| Err(StrictAppendError::Indeterminate(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe, "notification projection acknowledgement unavailable; retry the same batch",
+        ))))
+    }
+
     pub async fn append_delivery_and_ack(
         &self,
         projection: crate::DeliveryProjection,
@@ -443,7 +455,8 @@ impl ChatStateHandle {
     }
 
     /// Build a ConversationRequest from the current state.
-    /// Prunes, repairs, injects memory, and returns a ready-to-send request.
+    /// Prunes, repairs, injects memory, and returns a ready-to-send request
+    /// alongside the bounded records of request-only content.
     pub async fn build_request(
         &self,
         tool_definitions: Vec<ToolSpec>,
@@ -452,7 +465,7 @@ impl ChatStateHandle {
         trace: Option<Box<dyn TraceContext>>,
         conv_id: String,
         req_id: String,
-    ) -> Option<ConversationRequest> {
+    ) -> Option<crate::types::BuiltConversationRequest> {
         self.query("BuildConversationRequest", |reply| {
             ChatStateCommand::BuildConversationRequest {
                 tool_definitions,

@@ -1186,6 +1186,7 @@ pub(crate) async fn run_shell_child(
                     attempt_id: attempt_identity.clone(),
                 }),
                 next_trace_turn: Some(turn_number.saturating_add(1)),
+                parent_session_id: Some(ctx.parent_session_id.clone()),
             }
         },
     )

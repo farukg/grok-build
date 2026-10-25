@@ -73,6 +73,8 @@ async fn dropping_coordinator_refuses_parked_wake() {
 async fn evicted_unpublished_completion_refuses_parked_wake() {
     let (mut coordinator, command_tx, admission_tx, _admissions) = fixture();
     insert_child(&mut coordinator, admission_tx.clone(), "evicted", "parent");
+    coordinator.config.buffer_completions = true;
+    coordinator.active.get_mut("evicted").expect("active child").request.surface_completion = true;
     finish_child_before_visibility(&mut coordinator, "evicted");
     let response = begin_send(&mut coordinator, &command_tx, "evicted", "parent");
     assert_eq!(
@@ -93,6 +95,24 @@ async fn evicted_unpublished_completion_refuses_parked_wake() {
     );
     assert!(!coordinator.completed.contains_key("evicted"));
     assert!(!coordinator.pending_wakes.contains_key("evicted"));
+    assert!(coordinator.terminal_outputs.contains_key("evicted"));
+    assert!(coordinator.pending_completions.is_empty(), "visibility still pending");
+    coordinator.handle_terminal_publication(
+        crate::implementations::grok_build::task::coordinator_state::TerminalPublication::Visible {
+            subagent_id: "evicted".into(),
+            attempt_id: xai_message_delivery_core::AttemptId::mint(99),
+            result: TerminalVisibilityResult::Published,
+        },
+    );
+    assert!(coordinator.terminal_outputs.contains_key("evicted"), "stale visibility cannot consume the retained obligation");
+    assert!(coordinator.pending_completions.is_empty());
+    let visibility = coordinator.terminal_published_rx.try_recv().expect("retained visibility callback");
+    coordinator.handle_terminal_publication(visibility);
+    assert!(!coordinator.terminal_outputs.contains_key("evicted"));
+    assert!(!coordinator.completed.contains_key("evicted"), "late visibility cannot resurrect lookup or wake authority");
+    assert!(!coordinator.pending_wakes.contains_key("evicted"));
+    assert_eq!(coordinator.pending_completions.len(), 1);
+    assert_eq!(coordinator.pending_completions[0].summary.subagent_id(), "evicted");
 }
 
 #[tokio::test]
@@ -260,11 +280,11 @@ async fn deleted_session_refuses_parked_wake_before_publication() {
             hold_terminal_publication: true,
             ..Default::default()
         },
-        CoordinatorConfig::default(),
+        CoordinatorConfig { buffer_completions: true, ..Default::default() },
     );
     let backend = parent_backend(&harness);
     let send = park_wake_until_terminal_publication(&mut harness, &backend).await;
-    let (respond_to, response) = oneshot::channel();
+    let (respond_to, mut response) = oneshot::channel();
     harness
         .backend
         .sender()
@@ -274,18 +294,24 @@ async fn deleted_session_refuses_parked_wake_before_publication() {
         })
         .expect("teardown queued");
 
-    response.await.expect("delete drain response");
     assert_eq!(
-        send.await.unwrap(),
+        tokio::time::timeout(std::time::Duration::from_secs(1), send)
+            .await.expect("parked wake rejected before visibility").unwrap(),
         ActiveAgentMessageOutcome::NotActiveOrFinalizing
     );
+    assert!(matches!(response.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+        "delete drain must retain the held publication");
     harness
         .terminal_publications
         .recv()
         .await
         .expect("publication callback")();
+    tokio::time::timeout(std::time::Duration::from_secs(1), response)
+        .await.expect("visible publication drains deletion").expect("delete drain response");
     tokio::task::yield_now().await;
     assert!(harness.wake_runs.try_recv().is_err());
+    assert!(peeked_completion_ids(&harness, Some("parent")).await.is_empty(),
+        "late visibility must not resurrect a deleted session completion");
     harness.actor.abort();
 }
 

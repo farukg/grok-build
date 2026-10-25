@@ -285,6 +285,13 @@ pub(super) fn prepare_tui_subagent_lifecycle(
         if let XaiSessionUpdate::SubagentFinished { output, .. } = &mut notification.update {
             *output = None;
         }
+        // The deferred copy replays through `handle_session_notification_with_origin` when its
+        // spawn arrives; strip the original eventId so that internal re-dispatch is not caught by
+        // the exact-id background-lifecycle dedup (the wire delivery of this event was already
+        // admitted when it was first deferred here).
+        if let Some(serde_json::Value::Object(meta)) = notification.meta.as_mut() {
+            meta.remove("eventId");
+        }
         notification
     });
 

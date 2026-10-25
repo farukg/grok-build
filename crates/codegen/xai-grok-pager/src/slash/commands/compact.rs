@@ -1,5 +1,5 @@
 //! `/compact` takes no arguments.
-//! `run` returns `CommandResult::QueueCommand` so the dispatch layer enqueues it as `QueueEntryKind::Command`.
+//! The local FIFO submits its front compact command even during a turn; the session actor owns admission.
 
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 

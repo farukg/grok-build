@@ -261,7 +261,7 @@ fn reconnect_success_hides_mismatch(current: Option<&str>, incoming: &str) -> bo
     current.is_some_and(crate::acp::is_version_mismatch_banner)
         && (incoming.starts_with("Reconnected.") || incoming.starts_with("Session restored."))
 }
-/// Entry from the session list wire: welcome/resume pickers and non-leader dashboard roster fallback (`session_picker_entry_to_roster`).
+/// Entry from the session list wire for welcome/resume pickers.
 #[derive(Debug, Clone)]
 pub struct SessionPickerEntry {
     pub id: String,
@@ -501,8 +501,7 @@ pub(crate) struct SidebarChrome {
     work_visibility: Option<(bool, bool)>,
     f6_open: bool,
     f7_open: bool,
-    f6_focused: bool,
-    f7_focused: bool,
+    focus: super::agent_view::VisibleFocus,
     applied_to: Option<AgentId>,
 }
 
@@ -631,9 +630,7 @@ pub struct AppView {
     /// Populated from `x.ai/sessions/list` polls and `x.ai/sessions/changed` broadcasts.
     /// Empty in non-leader mode, which gates roster rendering.
     pub leader_roster: Vec<crate::app::roster::RosterEntry>,
-    /// Local on-disk session list (dormant/idle sessions) shown on the dashboard when NOT in leader mode.
-    /// There is no live leader roster to poll outside leader mode.
-    /// We fetch the same `x.ai/session/list` the resume picker uses and render those as idle rows.
+    /// Roster from the directly connected shell when not connected through a leader.
     pub dashboard_local_sessions: Vec<crate::app::roster::RosterEntry>,
     /// Whether the dashboard is currently loading local sessions (non-leader mode).
     pub dashboard_sessions_loading: bool,
@@ -1930,9 +1927,7 @@ impl AppView {
     pub fn remove_roster_entry(&mut self, sid: &str) {
         self.leader_roster.retain(|e| e.session_id != sid);
     }
-    /// The roster source the dashboard renders alongside locally-hosted agents.
-    /// With no leader there is nothing to poll, so we fall back to the local on-disk session list ([`Self::dashboard_local_sessions`]).
-    /// The dashboard thus still shows idle/dormant sessions instead of being empty.
+    /// The roster source the dashboard renders alongside locally attached agents.
     pub fn dashboard_roster(&self) -> &[crate::app::roster::RosterEntry] {
         if self.leader_mode {
             &self.leader_roster
@@ -5736,8 +5731,7 @@ impl AppView {
         let (f6_open, f7_open) = agent.sidebar_open_flags();
         self.sidebar_chrome.f6_open = f6_open;
         self.sidebar_chrome.f7_open = f7_open;
-        self.sidebar_chrome.f6_focused = agent.f6_panel_focused();
-        self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
+        self.sidebar_chrome.focus = agent.visible_focus();
     }
 
     fn reconcile_work_visibility(&mut self) {
@@ -5772,8 +5766,7 @@ impl AppView {
                 let (f6_open, f7_open) = agent.sidebar_open_flags();
                 self.sidebar_chrome.f6_open = f6_open;
                 self.sidebar_chrome.f7_open = f7_open;
-                self.sidebar_chrome.f6_focused = agent.f6_panel_focused();
-                self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
+                self.sidebar_chrome.focus = agent.visible_focus();
             }
             return;
         }
@@ -5784,8 +5777,7 @@ impl AppView {
                 let (f6_open, f7_open) = agent.sidebar_open_flags();
                 self.sidebar_chrome.f6_open = f6_open;
                 self.sidebar_chrome.f7_open = f7_open;
-                self.sidebar_chrome.f6_focused = agent.f6_panel_focused();
-                self.sidebar_chrome.f7_focused = agent.f7_sidebar_focused();
+                self.sidebar_chrome.focus = agent.visible_focus();
             }
             return;
         }
@@ -5803,12 +5795,13 @@ impl AppView {
         let SidebarChrome {
             f6_open,
             f7_open,
-            f6_focused,
-            f7_focused,
+            focus,
             ..
         } = self.sidebar_chrome;
         let opened_f7 = self.agents.get_mut(&id).is_some_and(|agent| {
-            agent.adopt_global_sidebars(f6_open, f7_open, f6_focused, f7_focused)
+            let opened = agent.adopt_global_sidebars(f6_open, f7_open, false, false);
+            agent.restore_visible_focus(focus);
+            opened
         });
         if !opened_f7 {
             return;

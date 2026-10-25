@@ -2129,6 +2129,7 @@ fn idle_roster_entry(session_id: &str, title: &str) -> crate::app::roster::Roste
         cwd: "/repo".to_string(),
         is_worktree: false,
         session_kind: None,
+        parent_session_id: None,
         model_id: None,
         yolo: false,
         activity: crate::app::roster::RosterActivity::Dormant,
@@ -3962,6 +3963,7 @@ fn dashboard_dispatch_new_agent_is_working_with_prompt_title() {
         &Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     let row = rows
         .iter()
@@ -5390,6 +5392,228 @@ fn painted_switcher_row(app: &mut AppView) -> Option<String> {
         })
         .find(|row| row.contains(crate::glyphs::chevron_left()))
 }
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn dashboard_tree_chords_preserve_return_target_and_select_lanes() {
+    use crate::views::dashboard::SessionLane;
+    let mut app = test_app_with_agent();
+    let origin = AgentId(0);
+    mark_agent_nonempty(&mut app, origin);
+    app.active_view = ActiveView::Agent(origin);
+    let chord = KeyModifiers::CONTROL | KeyModifiers::ALT;
+
+    press(&mut app, KeyCode::Up, chord);
+    assert!(matches!(app.active_view, ActiveView::AgentDashboard));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().session_lane(),
+        SessionLane::Main
+    );
+    press(&mut app, KeyCode::Right, chord);
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().session_lane(),
+        SessionLane::Subagents
+    );
+    press(&mut app, KeyCode::Left, chord);
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().session_lane(),
+        SessionLane::Main
+    );
+    press(&mut app, KeyCode::Right, chord);
+    press(&mut app, KeyCode::Down, chord);
+    assert_eq!(app.active_view, ActiveView::Agent(origin));
+}
+
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn dashboard_generic_attach_of_reaped_child_keeps_parent_without_parent_view() {
+    assert_dashboard_generic_child_attach(true);
+}
+
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn nonleader_dashboard_generic_attach_preserves_durable_child_identity() {
+    assert_dashboard_generic_child_attach(false);
+}
+
+fn assert_dashboard_generic_child_attach(leader_mode: bool) {
+    use crate::app::agent_view::{AgentRole, PromptTarget};
+    use crate::views::dashboard::DashboardRowId;
+    let mut app = test_app();
+    app.leader_mode = leader_mode;
+    app.active_view = ActiveView::AgentDashboard;
+    ensure_dashboard_state(&mut app);
+    let mut child = idle_roster_entry("reaped-child", "Child");
+    child.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
+    child.parent_session_id = Some("detached-parent".into());
+    let loaded = if leader_mode {
+        TaskResult::RosterLoaded { sessions: vec![child] }
+    } else {
+        TaskResult::DashboardSessionsLoaded { sessions: vec![child] }
+    };
+    let _ = dispatch(Action::TaskComplete(loaded), &mut app);
+    let _ = dispatch(Action::DashboardAttach(DashboardRowId::Roster {
+        session_id: "reaped-child".into(),
+    }), &mut app);
+    let opened = app.agents.find_by_session_id("reaped-child").unwrap();
+    assert!(app.agents.find_by_session_id("detached-parent").is_none());
+    let _ = dispatch(Action::TaskComplete(TaskResult::SessionLoaded {
+        agent_id: opened,
+        session_id: acp::SessionId::new("reaped-child"),
+        models: None,
+        modes: None,
+        code_restored: false,
+        restore_summary: None,
+        restore_degree: None,
+        running_prompt_id: None,
+    }), &mut app);
+    let view = app.agents.get_mut(&opened).unwrap();
+    assert!(matches!(&view.role, AgentRole::Child(link)
+        if link.parent.is_none() && link.parent_session_id.0.as_ref() == "detached-parent"));
+    assert_eq!(view.session.session_id.as_ref().unwrap().0.as_ref(), "reaped-child");
+    view.session.enqueue_bash_command("pwd".into());
+    let effects = maybe_drain_queue(view, &mut Vec::new()).effects;
+    assert!(matches!(effects.as_slice(),
+        [Effect::SendBashCommand { session_id, target: PromptTarget::ChildOf(parent), .. }]
+            if session_id.0.as_ref() == "reaped-child" && parent.0.as_ref() == "detached-parent"));
+    let _ = dispatch(Action::LoadSession("detached-parent".into(), None, false), &mut app);
+    let parent = app.agents.find_by_session_id("detached-parent").unwrap();
+    assert_eq!(app.agents.parent_of(opened), Some(parent));
+    assert_eq!(app.agents.children_of(parent), vec![opened]);
+}
+
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn workspace_dashboard_keyboard_lane_uses_roster_focusables_and_pin_actions() {
+    use crate::views::dashboard::{DashboardRowId, Filter, SessionLane};
+    let mut app = test_app_with_agent();
+    app.workspace_dashboard_enabled = true;
+    app.leader_mode = true;
+    mark_agent_nonempty(&mut app, AgentId(0));
+    let mut child = idle_roster_entry("workspace-child", "Workspace child");
+    child.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
+    child.parent_session_id = Some("detached-parent".into());
+    child.activity = crate::app::roster::RosterActivity::Working;
+    child.resident = true;
+    app.leader_roster = vec![child];
+    let chord = KeyModifiers::CONTROL | KeyModifiers::ALT;
+    press(&mut app, KeyCode::Up, chord);
+    press(&mut app, KeyCode::Right, chord);
+    assert_eq!(app.dashboard.as_ref().unwrap().session_lane(), SessionLane::Subagents);
+    let rows = workspace_rows(&app, &Filter::None).0;
+    let selected = DashboardRowId::Roster { session_id: "workspace-child".into() };
+    assert_eq!(rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(), vec![selected.clone()]);
+    app.dashboard.as_mut().unwrap().focus_row(selected.clone());
+    let _ = dispatch(Action::DashboardTogglePin, &mut app);
+    assert!(workspace_rows(&app, &Filter::None).0[0].pinned);
+    assert!(!dashboard_focusables(&app).is_empty());
+    press(&mut app, KeyCode::Left, chord);
+    assert!(!workspace_rows(&app, &Filter::None).0.iter().any(|row| row.id == selected));
+    press(&mut app, KeyCode::Down, chord);
+    assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
+}
+
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn workspace_child_layout_actions_survive_restart_without_changing_root_membership() {
+    use crate::views::dashboard::{DashboardRowId, PersistedRowId, SessionLane};
+    use crate::views::dashboard::state::load_persisted_from_path;
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.toml");
+    std::fs::write(&config, "[dashboard]\nenabled = false\ngrouping = 'directory'\npinned = ['top:root-saved']\nreorder = ['top:root-two', 'top:root-saved']\n[preferences]\nkeep = 'unchanged'\n").unwrap();
+    let snapshot = workspace_snapshot(vec![member("root-saved", "Root saved")]);
+    let make_app = || {
+        let mut app = test_app_with_agent();
+        app.workspace_dashboard_enabled = true;
+        app.leader_mode = true;
+        app.workspace_membership.set_snapshot_for_test(snapshot.clone());
+        app.dashboard_persisted = load_persisted_from_path(&config);
+        app.leader_roster = ["child-a", "child-b"].map(|id| {
+            let mut row = idle_roster_entry(id, id);
+            row.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
+            row.parent_session_id = Some("parent".into());
+            row
+        }).into();
+        ensure_dashboard_state(&mut app);
+        app.dashboard.as_mut().unwrap().lane = SessionLane::Subagents;
+        app.active_view = ActiveView::AgentDashboard;
+        app
+    };
+    let mut app = make_app();
+    let membership_order = app.workspace_membership.effective_manual_order();
+    for (id, action) in [
+        ("child-a", Action::DashboardTogglePin),
+        ("child-a", Action::DashboardReorderDown),
+        ("child-b", Action::DashboardReorderUp),
+    ] {
+        app.dashboard.as_mut().unwrap().focus_row(DashboardRowId::Roster { session_id: id.into() });
+        let effects = dispatch(action, &mut app);
+        let [Effect::PersistDashboardChildLayout(update)] = effects.as_slice() else {
+            panic!("child layout must use scoped persistence: {effects:?}");
+        };
+        update.write_to_path(&config).unwrap();
+        assert_eq!(app.workspace_membership.effective_manual_order(), membership_order);
+        assert_eq!(app.workspace_membership.snapshot().unwrap().members.len(), 1);
+        assert_eq!(app.workspace_membership.snapshot(), Some(&snapshot));
+    }
+    drop(app);
+    let restarted = make_app();
+    let dashboard = restarted.dashboard.as_ref().unwrap();
+    assert!(dashboard.pinned.contains(&DashboardRowId::Roster { session_id: "child-a".into() }));
+    assert_eq!(dashboard.reorder, vec![
+        DashboardRowId::Roster { session_id: "child-b".into() },
+        DashboardRowId::Roster { session_id: "child-a".into() },
+    ]);
+    assert_eq!(restarted.workspace_membership.effective_manual_order(), membership_order);
+    assert_eq!(restarted.workspace_membership.snapshot().unwrap().members.len(), 1);
+    assert_eq!(restarted.workspace_membership.snapshot(), Some(&snapshot));
+    let saved = load_persisted_from_path(&config).unwrap();
+    assert!(!saved.enabled);
+    assert_eq!(saved.grouping, crate::views::dashboard::Grouping::Directory);
+    assert!(saved.pinned.contains(&PersistedRowId::TopLevel { session_id: "root-saved".into() }));
+    assert_eq!(saved.reorder.iter().filter_map(|key| match key {
+        PersistedRowId::TopLevel { session_id } if session_id.starts_with("root-") => Some(session_id.as_str()),
+        PersistedRowId::TopLevel { .. } => None,
+    }).collect::<Vec<_>>(), vec!["root-two", "root-saved"]);
+    let doc: toml_edit::DocumentMut = std::fs::read_to_string(config).unwrap().parse().unwrap();
+    assert_eq!(doc["preferences"]["keep"].as_str(), Some("unchanged"));
+}
+
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn late_roster_parentage_repairs_generic_child_role_without_reordering_it() {
+    use crate::app::agent_view::{AgentRole, PromptTarget};
+    let mut app = test_app();
+    app.leader_mode = true;
+    let _ = dispatch(Action::LoadSession("late-child".into(), None, false), &mut app);
+    let opened = app.agents.find_by_session_id("late-child").unwrap();
+    assert!(matches!(app.agents.get(&opened).unwrap().role, AgentRole::Root));
+    let mut row = idle_roster_entry("late-child", "Late child");
+    row.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
+    row.parent_session_id = Some("absent-parent".into());
+    let _ = dispatch(Action::TaskComplete(TaskResult::RosterLoaded { sessions: vec![row.clone()] }), &mut app);
+    let started = match &app.agents.get(&opened).unwrap().role {
+        AgentRole::Child(link) => link.started_at,
+        AgentRole::Root => panic!("late authoritative metadata must repair the child role"),
+    };
+    let _ = dispatch(Action::TaskComplete(TaskResult::RosterLoaded { sessions: vec![row] }), &mut app);
+    match &app.agents.get(&opened).unwrap().role {
+        AgentRole::Child(link) => {
+            assert!(link.parent.is_none());
+            assert_eq!(link.started_at, started);
+        }
+        AgentRole::Root => panic!("repeated roster refresh must retain the child role"),
+    }
+    assert_eq!(app.agents.get(&opened).unwrap().role.prompt_target(),
+        PromptTarget::ChildOf(acp::SessionId::new("absent-parent")));
+}
+
+#[path = "dashboard_membership_tests.rs"]
+mod membership_tests;
+#[path = "dashboard_persistence_tests.rs"]
+mod persistence_tests;
+#[path = "dashboard_reopen_tests.rs"]
+mod reopen_tests;
+
 fn press(app: &mut AppView, code: KeyCode, modifiers: KeyModifiers) {
     if let InputOutcome::Action(action) =
         app.handle_input(&Event::Key(KeyEvent::new(code, modifiers)))
@@ -8294,6 +8518,7 @@ fn build_rows_hides_empty_idle_local_session() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     assert!(rows.is_empty(), "an empty idle session must not render");
 }
@@ -8312,6 +8537,7 @@ fn build_rows_keeps_empty_working_local_session() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     assert_eq!(rows.len(), 1, "an actively-working session stays visible");
 }
@@ -8329,6 +8555,7 @@ fn build_rows_keeps_titled_local_session() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     assert_eq!(rows.len(), 1, "a titled session renders");
 }
@@ -8350,6 +8577,7 @@ fn build_rows_keeps_pinned_empty_local_session() {
         &crate::views::dashboard::Filter::None,
         None,
         &[],
+        crate::views::dashboard::SessionLane::Main,
     );
     assert_eq!(rows.len(), 1, "a pinned empty session is kept");
 }

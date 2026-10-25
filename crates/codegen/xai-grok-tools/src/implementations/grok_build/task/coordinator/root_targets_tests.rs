@@ -43,6 +43,7 @@ pub(in super::super) struct TestRootControl {
     generation: AgentMessageGeneration,
     is_receipt_closed: bool,
     routes: mpsc::UnboundedSender<ActiveMessageRoute>,
+    held_admissions: Option<mpsc::UnboundedSender<super::super::active_message::tests::AdmissionCall>>,
 }
 
 impl RootReceiptSink for bool {
@@ -79,10 +80,19 @@ impl RootControl for TestRootControl {
         &self,
         delivery: ActiveAgentMessageDelivery,
     ) -> SendBoxFuture<ActiveMessageAdmission> {
+        if let Some(admissions) = &self.held_admissions {
+            use crate::implementations::grok_build::task::coordinator_state::ChildControl;
+            return super::super::active_message::tests::TestControl {
+                admissions: admissions.clone(),
+            }
+            .send_active_message(delivery);
+        }
         let routes = self.routes.clone();
         Box::pin(async move {
+            let route = delivery.route();
             let admitted = delivery
-                .commit_admission(|| routes.send(delivery.route()))
+                .claim_admission()
+                .map(|claim| claim.commit().try_handoff(|| routes.send(route)))
                 .is_some_and(|result| result.is_ok());
             if admitted {
                 ActiveMessageAdmission::Admitted
@@ -120,6 +130,7 @@ fn install_roots(routes: mpsc::UnboundedSender<ActiveMessageRoute>) {
                         generation: AgentMessageGeneration::mint(1),
                         is_receipt_closed: false,
                         routes: routes.clone(),
+                        held_admissions: None,
                     },
                 )
             })
@@ -391,6 +402,172 @@ async fn peer_root_reaches_another_roots_child_in_every_state() {
             );
         }
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn root_deadline_arbitrates_real_claim_before_any_handoff() {
+    for claimed in [false, true] {
+        let (mut coordinator, tx, admission_tx, mut admissions) = fixture();
+        let (routes_tx, mut routes) = mpsc::unbounded_channel();
+        install_roots(routes_tx);
+        ROOTS.with_borrow_mut(|roots| {
+            roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
+                Some(admission_tx);
+        });
+        let response = begin(
+            &mut coordinator,
+            &tx,
+            agent(ROOT_A),
+            ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
+        );
+        let held = recv_with_timeout(&mut admissions).await;
+        let claim = claimed.then(|| held.late_delivery.clone().claim_admission().unwrap());
+        assert!(routes.try_recv().is_err());
+        tokio::time::advance(ACTIVE_MESSAGE_ADMISSION_TIMEOUT).await;
+        let completion = coordinator.active_messages.next().await.unwrap();
+        coordinator.finish_active_message(completion);
+        let expected = if claimed {
+            ActiveAgentMessageOutcome::AdmissionUncertain
+        } else {
+            ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline
+        };
+        assert_eq!(expected, response_outcome(response).await);
+        assert!(held.late_delivery.claim_admission().is_none());
+        assert!(held.release.send(ActiveMessageAdmission::Admitted).is_err());
+        assert!(coordinator.root_active_messages.is_empty());
+        assert!(routes.try_recv().is_err());
+        if let Some(claim) = claim {
+            assert_eq!("root-b", claim.delivery().message().sender_session_id);
+            assert_eq!("hello", claim.delivery().message().text.as_ref());
+            assert_eq!(ActiveAgentMessageOperation::Steer, claim.delivery().operation());
+            let (receipt, mut receipts) = mpsc::unbounded_channel();
+            claim.commit().handoff(|| receipt.send("hello").unwrap());
+            assert_eq!(Some("hello"), receipts.recv().await);
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn root_observer_drop_cannot_revoke_owned_claim() {
+    for claimed in [false, true] {
+        let (mut coordinator, tx, admission_tx, mut admissions) = fixture();
+        let (routes_tx, mut routes) = mpsc::unbounded_channel();
+        install_roots(routes_tx);
+        ROOTS.with_borrow_mut(|roots| {
+            roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
+                Some(admission_tx);
+        });
+        let response = begin(
+            &mut coordinator,
+            &tx,
+            agent(ROOT_A),
+            ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
+        );
+        let held = recv_with_timeout(&mut admissions).await;
+        let claim = claimed.then(|| held.late_delivery.clone().claim_admission().unwrap());
+        drop(coordinator);
+        let expected = if claimed {
+            ActiveAgentMessageOutcome::AdmissionUncertain
+        } else {
+            ActiveAgentMessageOutcome::ChannelClosed
+        };
+        assert_eq!(expected, response_outcome(response).await);
+        assert!(held.late_delivery.claim_admission().is_none());
+        assert!(routes.try_recv().is_err());
+        if let Some(claim) = claim {
+            claim.commit().handoff(|| ());
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn root_admitted_requires_completed_durable_proof_handoff() {
+    use super::super::active_message::tests::HandoffCut;
+
+    for cut in [
+        HandoffCut::Withheld,
+        HandoffCut::Dropped,
+        HandoffCut::Failed,
+        HandoffCut::Panicked,
+        HandoffCut::Completed,
+    ] {
+        let (mut coordinator, tx, admission_tx, mut admissions) = fixture();
+        let (routes_tx, mut routes) = mpsc::unbounded_channel();
+        install_roots(routes_tx);
+        ROOTS.with_borrow_mut(|roots| {
+            roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
+                Some(admission_tx);
+        });
+        let response = begin(
+            &mut coordinator,
+            &tx,
+            agent(ROOT_A),
+            ActiveMessageSenderContext::RootSession {
+                session_id: Arc::from("root-b"),
+            },
+        );
+        let held = recv_with_timeout(&mut admissions).await;
+        let proof = held.late_delivery.clone().claim_admission().unwrap().commit();
+        assert_eq!(held.message_id, proof.delivery().message().message_id);
+        assert_eq!("root-b", proof.delivery().message().sender_session_id);
+        assert_eq!("hello", proof.delivery().message().text.as_ref());
+        assert_eq!(ActiveAgentMessageOperation::Steer, proof.delivery().operation());
+        let retained = cut.apply(proof);
+        assert!(held.late_delivery.claim_admission().is_none());
+        let (finalize_tx, mut finalize_rx) = tokio::sync::oneshot::channel();
+        coordinator
+            .root_active_messages
+            .values_mut()
+            .next()
+            .unwrap()
+            .active_messages
+            .begin_finalizing(finalize_tx);
+        assert!(finalize_rx.try_recv().is_err());
+        held.report.send(ActiveMessageAdmission::Admitted).unwrap();
+        let completion = coordinator.active_messages.next().await.unwrap();
+        coordinator.finish_active_message(completion);
+        let completed = matches!(cut, HandoffCut::Completed);
+        let expected = if completed {
+            ActiveAgentMessageOutcome::Accepted {
+                message_id: held.message_id,
+            }
+        } else {
+            ActiveAgentMessageOutcome::AdmissionUncertain
+        };
+        assert_eq!(expected, response_outcome(response).await, "{cut:?}");
+        assert_eq!(completed, finalize_rx.await.unwrap(), "{cut:?}");
+        assert!(coordinator.active_messages.is_empty());
+        assert!(routes.try_recv().is_err());
+        if let Some(proof) = retained {
+            proof.handoff(|| ());
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn root_lost_claim_and_ack_remain_uncertain() {
+    let (mut coordinator, tx, admission_tx, mut admissions) = fixture();
+    let (routes_tx, mut routes) = mpsc::unbounded_channel();
+    install_roots(routes_tx);
+    ROOTS.with_borrow_mut(|roots| {
+        roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
+            Some(admission_tx);
+    });
+    let response = begin(
+        &mut coordinator,
+        &tx,
+        agent(ROOT_A),
+        ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
+    );
+    let held = recv_with_timeout(&mut admissions).await;
+    drop(held.late_delivery.clone().claim_admission().unwrap());
+    assert!(held.late_delivery.claim_admission().is_none());
+    drop(held.release);
+    let completion = coordinator.active_messages.next().await.unwrap();
+    coordinator.finish_active_message(completion);
+    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain, response_outcome(response).await);
+    assert!(routes.try_recv().is_err());
+    assert!(coordinator.root_active_messages.is_empty());
 }
 
 #[tokio::test(flavor = "current_thread")]

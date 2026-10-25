@@ -86,7 +86,7 @@ fn show_word_select_tip_targets_active_child_session() {
     );
     child.last_terminal_size = (80, 30);
     child.role = AgentRole::Child(ChildLink {
-        parent: root_id,
+        parent: Some(root_id),
         parent_session_id: app
             .agents
             .get(&root_id)

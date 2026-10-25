@@ -49,6 +49,23 @@ pub(crate) struct AsyncCompactionCache {
     pub pass1_latency_ms: u64,
 }
 
+pub(crate) struct PendingCompact {
+    pub(crate) id: uuid::Uuid,
+    pub(crate) invocation_id: Option<crate::session::acp_types::CompactInvocationId>,
+    pub(crate) predecessors: std::collections::HashSet<String>,
+    pub(crate) cancellation: tokio_util::sync::CancellationToken,
+    pub(crate) respond_to: tokio::sync::oneshot::Sender<agent_client_protocol::Result<()>>,
+}
+
+#[derive(Default)]
+pub(crate) enum ManualCompactWorker {
+    #[default]
+    Idle,
+    Running(tokio::task::JoinHandle<()>),
+    Sealed,
+    SealedRunning(tokio::task::JoinHandle<()>),
+}
+
 /// Holder count (not a bool): prefire and compact can overlap.
 /// The first `enter` installs a token; nested enters reuse it; `in_flight` stays true until the last scope drops.
 /// A normal turn stop is a no-op when idle.
@@ -58,6 +75,16 @@ pub(crate) struct CompactCancelGate {
     holders: AtomicUsize,
     phase: Cell<CompactPhase>,
     drained: tokio::sync::Notify,
+    pub(crate) pending_manual: RefCell<std::collections::VecDeque<PendingCompact>>,
+    pub(crate) manual_worker: RefCell<ManualCompactWorker>,
+    pub(crate) manual_finished: tokio::sync::Notify,
+    #[cfg(test)]
+    pub(crate) manual_reservation_pause: RefCell<Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>>,
+    #[cfg(test)]
+    pub(crate) manual_teardown_started: tokio::sync::Notify,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -77,6 +104,39 @@ impl Drop for CompactCancelScope<'_> {
 }
 
 impl CompactCancelGate {
+    pub(crate) fn manual_is_sealed(&self) -> bool {
+        match &*self.manual_worker.borrow() {
+            ManualCompactWorker::Idle | ManualCompactWorker::Running(_) => false,
+            ManualCompactWorker::Sealed | ManualCompactWorker::SealedRunning(_) => true,
+        }
+    }
+
+    pub(crate) fn manual_can_start(&self) -> bool {
+        match &*self.manual_worker.borrow() {
+            ManualCompactWorker::Idle => true,
+            ManualCompactWorker::Running(_) | ManualCompactWorker::Sealed | ManualCompactWorker::SealedRunning(_) => false,
+        }
+    }
+
+    pub(crate) fn seal_manual(&self) {
+        let current = self.manual_worker.take();
+        self.manual_worker.replace(match current {
+            ManualCompactWorker::Idle | ManualCompactWorker::Sealed => ManualCompactWorker::Sealed,
+            ManualCompactWorker::Running(worker) | ManualCompactWorker::SealedRunning(worker) => ManualCompactWorker::SealedRunning(worker),
+        });
+    }
+
+    pub(crate) fn take_manual_worker(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let (next, worker) = match self.manual_worker.take() {
+            ManualCompactWorker::Idle => (ManualCompactWorker::Idle, None),
+            ManualCompactWorker::Running(worker) => (ManualCompactWorker::Idle, Some(worker)),
+            ManualCompactWorker::Sealed => (ManualCompactWorker::Sealed, None),
+            ManualCompactWorker::SealedRunning(worker) => (ManualCompactWorker::Sealed, Some(worker)),
+        };
+        self.manual_worker.replace(next);
+        worker
+    }
+
     /// Start or join a compact/prefire scope.
     /// Nested callers share one token, including a token already cancelled by stop, so overlapping prefire and compact both observe the same abort.
     /// A later independent enter after holders drain installs a fresh token.
@@ -126,8 +186,12 @@ impl CompactCancelGate {
         }
     }
 
+    pub(crate) fn is_active(&self) -> bool {
+        self.holders.load(Ordering::Acquire) > 0
+    }
+
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.holders.load(Ordering::Acquire) > 0 && self.token.borrow().is_cancelled()
+        self.is_active() && self.token.borrow().is_cancelled()
     }
 }
 

@@ -902,10 +902,14 @@ impl SessionActor {
                 None => ResumeTransition::NoGoal,
             }
         };
+        self.clear_wake_suppression("goal_resume").await;
+        self.set_goal_loop_active_resource(false).await;
+        self.break_declared_wait();
         let was_resumed = matches!(transition, ResumeTransition::Resumed { .. });
         if was_resumed {
             let tracker = self.goal_tracker.lock();
             self.goal_notify_sender().persist_goal_state(&tracker);
+            drop(tracker);
         }
         let (user_msg, previous_status, previous_pause_message) = match transition {
             ResumeTransition::Resumed {
@@ -1226,6 +1230,16 @@ impl SessionActor {
             return None;
         }
 
+        // gb-wake-2: the finished turn declared a wait over live background work.
+        // The goal loop must not re-wake until a declared target completes (its own
+        // wake path) or new user input breaks the wait.
+        if self.declared_wait_blocks_continuation().await {
+            tracing::info!(
+                "goal continuation suppressed: the turn is waiting on live background work"
+            );
+            return None;
+        }
+
         let stop_pattern = if apply_turn_end {
             match self.assistant_text_signals_premature_stop().await {
                 Some(pattern) if self.has_pending_goal_todos().await => Some(pattern),
@@ -1405,6 +1419,10 @@ impl SessionActor {
         ) {
             return GoalRoundDecision::EndTurn;
         }
+        if self.declared_wait_blocks_continuation().await {
+            return GoalRoundDecision::EndTurn;
+        }
+        // Replacement runs in the next queued turn; cancellation aborts this owning turn's future.
         let verdict = match self.evaluate_goal_round().await {
             Ok(verdict) => verdict,
             Err(error) => {
@@ -1626,6 +1644,7 @@ impl SessionActor {
                 None => tracker.pause(reason),
             };
         }
+        self.set_goal_loop_active_resource(false).await;
         self.clear_pending_classifier_completions();
         let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
         let notify = self.goal_notify_sender();
@@ -2421,3 +2440,10 @@ mod role_tool_names_tests {
         assert_eq!(tn.read, "parent_read", "fail-open describe ⇒ inherit");
     }
 }
+
+#[cfg(test)]
+#[path = "goal_tests.rs"]
+mod tests;
+#[cfg(test)]
+#[path = "goal_live_consumer_tests.rs"]
+mod live_consumer_tests;

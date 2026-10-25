@@ -64,13 +64,15 @@ pub enum SidebarSection {
     MessageDisplay,
     Tasks,
     Todo,
+    Dock,
+    TodoSection,
 }
 
 impl SidebarSection {
     pub(super) const fn storage_layer(self, requested: Layer) -> Layer {
         match self {
             Self::Tasks | Self::Todo => Layer::Global,
-            Self::Context | Self::MessageDisplay => requested,
+            Self::Context | Self::MessageDisplay | Self::Dock | Self::TodoSection => requested,
         }
     }
 }
@@ -146,6 +148,7 @@ pub enum Setting {
     },
     /// Default state of F6 turn rows.
     OutlineTurns(DisclosureState),
+    DockPlacement(crate::views::dock::DockPlacement),
 }
 
 /// Names one layered value without its content, for clearing it.
@@ -154,6 +157,7 @@ pub enum SettingKey {
     KindForm(MessageKind),
     Section(SidebarSection),
     OutlineTurns,
+    DockPlacement,
 }
 
 /// Everything a layer file can change. Per-turn exceptions exist only in the session layer.
@@ -172,9 +176,12 @@ pub struct LayerSettings {
     sections: BTreeMap<SidebarSection, DisclosureState>,
     outline_turns: Option<DisclosureState>,
     turn_exceptions: BTreeMap<PromptOrdinal, DisclosureState>,
+    dock_placement: Option<crate::views::dock::DockPlacement>,
 }
 
 impl LayerSettings {
+    pub fn dock_placement(&self) -> Option<crate::views::dock::DockPlacement> { self.dock_placement }
+
     pub fn message_form(&self, kind: MessageKind) -> Option<DisplayForm> {
         self.message_forms.get(&kind).copied()
     }
@@ -209,6 +216,8 @@ impl LayerSettings {
             Edit::Set(Setting::Section { section, state }) => {
                 self.sections.insert(section, state) != Some(state)
             }
+            Edit::Set(Setting::DockPlacement(placement)) => self.dock_placement.replace(placement) != Some(placement),
+            Edit::Clear(SettingKey::DockPlacement) => self.dock_placement.take().is_some(),
             Edit::Set(Setting::OutlineTurns(state)) => {
                 self.outline_turns.replace(state) != Some(state)
             }
@@ -229,6 +238,7 @@ impl LayerSettings {
         merged.sections.extend(&top.sections);
         merged.outline_turns = top.outline_turns.or(self.outline_turns);
         merged.turn_exceptions.extend(&top.turn_exceptions);
+        merged.dock_placement = top.dock_placement.or(self.dock_placement);
         merged
     }
 }

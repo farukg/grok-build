@@ -113,6 +113,8 @@ pub(in crate::app::dispatch) fn focus_if_session_already_open(
         d.focus_row(DashboardRowId::TopLevel(existing_id));
         d.attached_agent = Some(existing_id);
     }
+    stamp_loaded_child_role(app, existing_id, session_id);
+    super::super::dashboard::refresh_dashboard_child_layout(app);
     switch_to_agent(app, existing_id, SwitchCause::Load);
     Some(existing_id)
 }
@@ -129,6 +131,20 @@ pub(in crate::app::dispatch) fn session_opens_as_chat(app: &AppView, chat_kind: 
     }
     app.chat_mode
 }
+fn stamp_loaded_child_role(app: &mut AppView, agent_id: AgentId, session_id: &str) {
+    let parent_session_id = app
+        .dashboard_roster()
+        .iter()
+        .find(|entry| {
+            entry.session_id == session_id
+                && entry.session_kind.as_deref() == Some(crate::app::roster::SESSION_KIND_SUBAGENT)
+        })
+        .and_then(|entry| entry.parent_session_id.clone());
+    crate::app::agent_view::stamp_child_role_for_session(
+        &mut app.agents, agent_id, session_id, parent_session_id.as_deref(),
+    );
+}
+
 fn dispatch_load_session_ungated(
     app: &mut AppView,
     session_id: String,
@@ -221,7 +237,11 @@ fn dispatch_load_session_ungated(
         scrollback,
     );
     app.agents.insert(agent_id, agent);
+    // A child session id opened through a generic path (dashboard attach, resume picker, `-r`)
+    // must carry its child role, or its sends lose `_meta.childOf` (gb-subid-6).
+    stamp_loaded_child_role(app, agent_id, &session_id);
     identity_rebind.apply(app);
+    super::super::dashboard::refresh_dashboard_child_layout(app);
     let conversation_entry = session_opens_as_chat(app, chat_kind);
     let agent_mut = app.agents.get_mut(&agent_id).unwrap();
     agent_mut.attached_as_viewer = true;

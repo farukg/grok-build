@@ -28,8 +28,9 @@ pub use serde_lenient::{
 pub use task::{
     BACKGROUND_SUBAGENT_CONTINUE_PARENT_WORK, BUILTIN_SUBAGENTS, BackgroundNoticeNaming,
     BuiltinSubagent, EXPLORE_PROMPT, EXPLORE_SUBAGENT, ForegroundSpawnInterrupt,
-    GENERAL_PURPOSE_PROMPT, GENERAL_PURPOSE_SUBAGENT, HandedOffSubagentState, KillTaskOutput,
-    KillTaskResult, KillTaskToolInput, KillTaskToolNaming, MAX_MULTI_WAIT_IDS,
+    GENERAL_PURPOSE_PROMPT, GENERAL_PURPOSE_SUBAGENT, HandedOffSubagentState, KillFailureReason,
+    KillOutcome, KillProcessEffect, KillStage, KillTaskOutput, KillTaskResult, KillTaskToolInput,
+    KillTaskToolNaming, MAX_MULTI_WAIT_IDS,
     MAX_WAIT_BLOCK_MS_DEFAULT, MAX_WAIT_MS_PLACEHOLDER, MultiTaskOutputResult, PLAN_PROMPT,
     PLAN_SUBAGENT, SubagentCapabilityMode, SubagentCompletedOutput, SubagentDescriptor,
     SubagentIsolationMode, SubagentResumeFallback, SubagentToolNaming, TaskOutputOutput,

@@ -1,7 +1,6 @@
-//! The F7 tree: context and message-display branches plus the read-only Todo list.
-//! The work slot (section 0) is hosted content and not part of the tree.
+//! The F7 tree: Dock, Todos, Context, Message display.
 
-use super::{CONTEXT_SECTION, DISPLAY_SECTION, RowTarget, row_target};
+use super::{CONTEXT_SECTION, DISPLAY_SECTION, DOCK_SECTION, TODO_SECTION, RowTarget, row_target};
 use crate::scrollback::block::MessageKind;
 use crate::views::sidebar::{RowIdx, SectionIdx, SidebarLine};
 use crate::views::tree_nav::{TreeRow, visible_anchor};
@@ -11,6 +10,8 @@ use xai_grok_shell::sampling::all_categories;
 /// A foldable section of the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub(crate) enum SectionId {
+    Dock,
+    Todo,
     Context,
     Display,
 }
@@ -18,6 +19,8 @@ pub(crate) enum SectionId {
 impl SectionId {
     pub(crate) const fn index(self) -> SectionIdx {
         match self {
+            Self::Dock => DOCK_SECTION,
+            Self::Todo => TODO_SECTION,
             Self::Context => CONTEXT_SECTION,
             Self::Display => DISPLAY_SECTION,
         }
@@ -29,13 +32,17 @@ impl SectionId {
 
     pub(super) const fn title(self) -> &'static str {
         match self {
+            Self::Dock => "Dock",
+            Self::Todo => "Todos",
             Self::Context => "Context",
             Self::Display => "Message display",
         }
     }
 
-    pub(super) fn row_count(self) -> usize {
+    pub(super) fn row_count(self, todo_count: usize) -> usize {
         match self {
+            Self::Dock => 1,
+            Self::Todo => todo_count,
             Self::Context => all_categories().len(),
             Self::Display => MessageKind::settings_kinds().len(),
         }
@@ -53,6 +60,8 @@ impl SectionId {
 /// Which sections are open; every section starts open. Small and copyable so it can be stored and restored.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SectionDisclosure {
+    dock: crate::app::panel_settings::DisclosureState,
+    todo: crate::app::panel_settings::DisclosureState,
     context_collapsed: bool,
     display_collapsed: bool,
 }
@@ -60,6 +69,8 @@ pub(crate) struct SectionDisclosure {
 impl SectionDisclosure {
     pub(crate) fn is_expanded(self, section: SectionId) -> bool {
         match section {
+            SectionId::Dock => self.dock.is_expanded(),
+            SectionId::Todo => self.todo.is_expanded(),
             SectionId::Context => !self.context_collapsed,
             SectionId::Display => !self.display_collapsed,
         }
@@ -67,6 +78,8 @@ impl SectionDisclosure {
 
     pub(crate) fn set_expanded(&mut self, section: SectionId, expanded: bool) {
         match section {
+            SectionId::Dock => self.dock = crate::app::panel_settings::DisclosureState::from_expanded(expanded),
+            SectionId::Todo => self.todo = crate::app::panel_settings::DisclosureState::from_expanded(expanded),
             SectionId::Context => self.context_collapsed = !expanded,
             SectionId::Display => self.display_collapsed = !expanded,
         }
@@ -109,17 +122,9 @@ impl Outline {
         for section in SectionId::iter() {
             rows.push(TreeRow::branch(0, disclosure.is_expanded(section)));
             lines.push(section.title_line());
-            for row in 0..section.row_count() {
+            for row in 0..section.row_count(todo_count) {
                 rows.push(TreeRow::leaf(1));
                 lines.push(section.row_line(row));
-            }
-        }
-        if todo_count > 0 {
-            rows.push(TreeRow::branch(0, true));
-            lines.push(SidebarLine::SectionTitle(super::TODO_SECTION));
-            for row in 0..todo_count {
-                rows.push(TreeRow::leaf(1));
-                lines.push(SidebarLine::Row(super::TODO_SECTION, RowIdx(row)));
             }
         }
         Self { rows, lines }

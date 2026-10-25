@@ -1,6 +1,5 @@
 //! Spawn admission: reparenting, duplicate checks, and the admit decision.
 
-use tokio::sync::oneshot;
 use xai_tool_types::InterruptionCause;
 
 use super::super::admission::{AdmissionDecision, AdmissionError};
@@ -57,6 +56,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         if self.pending.contains_key(&id)
             || self.active.contains_key(&id)
             || self.completed.contains_key(&id)
+            || self.terminal_outputs.contains_key(&id)
             || self.queued.contains_id(&id)
         {
             let _ = result_tx.send(SubagentResult::failed(

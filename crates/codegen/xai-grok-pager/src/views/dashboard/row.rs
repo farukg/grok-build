@@ -80,8 +80,20 @@ fn fallback_epoch() -> Instant {
     static FALLBACK: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     *FALLBACK.get_or_init(Instant::now)
 }
+/// Which sessions the dashboard lists. The default lane shows top-level sessions (today's
+/// dashboard); the subagent lane shows the other running sessions — subagent children —
+/// with the same sorting, view, and actions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SessionLane {
+    #[default]
+    Main,
+    Subagents,
+}
+
 /// It appends "roster-only" rows for leader sessions this client is not locally attached to (the
 /// FleetView dashboard). Only top-level agents and roster sessions appear (see [`build_local_rows`]).
+/// `Main` lists top-level rows and filters `subagent` roster entries out; `Subagents` lists
+/// locally-attached child views plus exactly the `subagent` roster entries.
 pub fn build_rows_with_roster(
     agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
@@ -90,9 +102,10 @@ pub fn build_rows_with_roster(
     filter: &Filter,
     home: Option<&str>,
     roster: &[RosterEntry],
+    lane: SessionLane,
 ) -> Vec<DashboardRow> {
-    let mut rows = build_local_rows(agents, pinned, home);
-    append_roster_rows(&mut rows, roster, agents, pinned, home);
+    let mut rows = build_local_rows(agents, pinned, home, lane);
+    append_roster_rows(&mut rows, roster, agents, pinned, home, lane);
     apply_filter(&mut rows, filter, home);
     sort_rows(&mut rows, grouping, reorder);
     rows
@@ -119,7 +132,17 @@ pub(crate) fn build_rows_with_workspace(
     inputs: WorkspaceRowInputs<'_>,
     filter: &Filter,
     home: Option<&str>,
+    roster: &[RosterEntry],
+    lane: SessionLane,
+    pinned: &std::collections::BTreeSet<DashboardRowId>,
+    lane_reorder: &[DashboardRowId],
+    child_rows: &std::collections::BTreeMap<String, DashboardRowId>,
 ) -> Vec<DashboardRow> {
+    if lane == SessionLane::Subagents {
+        return build_rows_with_roster(
+            agents, pinned, lane_reorder, inputs.grouping(), filter, home, roster, lane,
+        );
+    }
     let live_by_session: HashMap<&str, (AgentId, &AgentView)> = agents
         .roots()
         .filter_map(|(id, agent)| {
@@ -149,6 +172,7 @@ pub(crate) fn build_rows_with_workspace(
         .into_iter()
         .flat_map(|workspace| workspace.members.iter())
         .filter(|member| matches!(member.kind, xai_grok_dashboard_store::MemberKind::Build))
+        .filter(|member| !child_rows.contains_key(member.session_id.as_ref()))
         .filter_map(|member| {
             let live = live_by_session.get(member.session_id.as_ref()).copied();
             let is_pinned = workspace_member_is_pinned(member);
@@ -163,7 +187,11 @@ pub(crate) fn build_rows_with_workspace(
         .collect::<Vec<_>>();
     rows.extend(inputs.provisional.iter().filter_map(|id| {
         let agent = agents.get(id)?;
-        if is_empty_idle_top_level(agent) {
+        if is_empty_idle_top_level(agent)
+            || agent.session.session_id.as_ref().is_some_and(|id| {
+                child_rows.contains_key(id.0.as_ref())
+            })
+        {
             return None;
         }
         Some(top_level_row(*id, agent, false, home))
@@ -253,14 +281,22 @@ fn workspace_member_row(
     }
 }
 /// Build the local-agent rows WITHOUT applying filter or sort. [`build_rows_with_roster`] appends
-/// roster rows on top.
+/// roster rows on top. `Main` lists root views; `Subagents` lists child views — the same row
+/// builder, so the subagent lane keeps the main lane's sorting, view, and actions.
 fn build_local_rows(
     agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     home: Option<&str>,
+    lane: SessionLane,
 ) -> Vec<DashboardRow> {
     let mut rows = Vec::new();
-    for (id, agent) in agents.roots() {
+    let local = agents.all().filter(|(_, agent)| match lane {
+        SessionLane::Main => matches!(agent.role, crate::app::agent_view::AgentRole::Root),
+        SessionLane::Subagents => {
+            matches!(agent.role, crate::app::agent_view::AgentRole::Child(_))
+        }
+    });
+    for (id, agent) in local {
         let top_id = DashboardRowId::TopLevel(id);
         if is_empty_idle_top_level(agent) && !pinned.contains(&top_id) {
             continue;
@@ -282,12 +318,14 @@ pub fn roster_activity_to_state(activity: RosterActivity) -> RowState {
 }
 /// Append "roster-only" rows for leader sessions not represented by a local `AgentView`.
 /// Skips any roster entry whose `session_id` already matches a locally-attached agent (those carry richer data via [`build_local_rows`]).
+/// `Main` drops `subagent` entries (the leader sends them for the subagent lane only); `Subagents` keeps exactly those.
 fn append_roster_rows(
     rows: &mut Vec<DashboardRow>,
     roster: &[RosterEntry],
     agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     home: Option<&str>,
+    lane: SessionLane,
 ) {
     if roster.is_empty() {
         return;
@@ -297,6 +335,13 @@ fn append_roster_rows(
         .filter_map(|(_, a)| a.session.session_id.as_ref().map(|s| s.0.as_ref()))
         .collect();
     for entry in roster {
+        let is_subagent =
+            entry.session_kind.as_deref() == Some(crate::app::roster::SESSION_KIND_SUBAGENT);
+        match lane {
+            SessionLane::Main if is_subagent => continue,
+            SessionLane::Subagents if !is_subagent => continue,
+            SessionLane::Main | SessionLane::Subagents => {}
+        }
         if local_ids.contains(entry.session_id.as_str()) {
             continue;
         }
@@ -312,7 +357,9 @@ fn append_roster_rows(
             entry.activity,
             RosterActivity::Working | RosterActivity::NeedsInput
         );
-        if !has_title && !active && !pinned.contains(&id) {
+        // The "New session" husk rule is a main-lane concern; every subagent row is a real
+        // child by construction, so the subagent lane never folds them away.
+        if !has_title && !active && !pinned.contains(&id) && lane == SessionLane::Main {
             continue;
         }
         let cwd = PathBuf::from(&entry.cwd);
@@ -740,6 +787,11 @@ mod tests {
             },
             &Filter::None,
             None,
+            &[],
+            SessionLane::Main,
+            &Default::default(),
+            &[],
+            &Default::default(),
         )
     }
     #[test]
@@ -1243,6 +1295,7 @@ mod tests {
                     &Filter::None,
                     None,
                     std::slice::from_ref(&roster),
+                    SessionLane::Main,
                 );
                 assert_eq!(
                     vec![roster_id.clone(), local_id.clone()],
@@ -1320,6 +1373,7 @@ mod tests {
             cwd: "/repo".to_string(),
             is_worktree: false,
             session_kind: None,
+            parent_session_id: None,
             model_id: None,
             yolo: false,
             activity: RosterActivity::Dormant,
@@ -1344,6 +1398,7 @@ mod tests {
             &SessionViews::new(),
             &std::collections::BTreeSet::new(),
             None,
+            SessionLane::Main,
         );
         assert_eq!(rows.len(), 1);
         nth(&rows, 0).last_change_at.elapsed().unwrap_or_default()
@@ -1377,6 +1432,7 @@ mod tests {
             &agents,
             &pinned,
             None,
+            SessionLane::Main,
         );
         sort_rows(&mut rows, super::super::state::Grouping::State, &[]);
         assert_eq!(
@@ -1409,8 +1465,142 @@ mod tests {
         pinned: &std::collections::BTreeSet<DashboardRowId>,
     ) -> Vec<DashboardRow> {
         let mut rows = Vec::new();
-        append_roster_rows(&mut rows, entries, &SessionViews::new(), pinned, None);
+        append_roster_rows(
+            &mut rows,
+            entries,
+            &SessionViews::new(),
+            pinned,
+            None,
+            SessionLane::Main,
+        );
         rows
+    }
+    /// A subagent child entry on the wire (kind + parent link from the leader roster).
+    fn subagent_entry(session_id: &str, parent: &str) -> RosterEntry {
+        RosterEntry {
+            session_kind: Some(crate::app::roster::SESSION_KIND_SUBAGENT.to_string()),
+            parent_session_id: Some(parent.to_string()),
+            ..roster_entry(session_id, now_unix_ms())
+        }
+    }
+    /// The default lane keeps today's dashboard: subagent entries the leader now sends are
+    /// filtered out, so the toggle-off behavior is unchanged.
+    #[test]
+    fn main_lane_drops_subagent_roster_entries() {
+        let empty = std::collections::BTreeSet::new();
+        let rows = collect_roster(
+            &[
+                roster_entry_with("root", Some("Main session"), RosterActivity::Dormant),
+                subagent_entry("child-1", "root"),
+            ],
+            &empty,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
+            vec![DashboardRowId::Roster {
+                session_id: "root".to_string()
+            }],
+            "the main lane lists only top-level roster sessions"
+        );
+    }
+    /// The subagent lane inverts the filter: exactly the subagent entries list, through the
+    /// same row pipeline (same shape, same sort input) as the main lane — including untitled
+    /// ones, which fall back to their cwd label.
+    #[test]
+    fn subagents_lane_keeps_only_subagent_roster_entries() {
+        let empty = std::collections::BTreeSet::new();
+        let mut untitled_child = subagent_entry("child-2", "root");
+        untitled_child.title = None;
+        let mut rows = Vec::new();
+        append_roster_rows(
+            &mut rows,
+            &[
+                roster_entry_with("root", Some("Main session"), RosterActivity::Dormant),
+                subagent_entry("child-1", "root"),
+                untitled_child,
+            ],
+            &SessionViews::new(),
+            &empty,
+            None,
+            SessionLane::Subagents,
+        );
+        let ids = rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                DashboardRowId::Roster {
+                    session_id: "child-1".to_string()
+                },
+                DashboardRowId::Roster {
+                    session_id: "child-2".to_string()
+                },
+            ],
+            "the subagent lane lists the children, titled or not"
+        );
+        assert!(
+            rows[1].label == "repo" || rows[1].label.contains("child-2"),
+            "untitled child falls back to a cwd/id label: {:?}",
+            rows[1].label
+        );
+    }
+    /// A locally-attached child view shows as a rich local row in the subagent lane (its roster
+    /// twin is skipped), while the main lane never lists child views.
+    #[test]
+    fn subagents_lane_lists_locally_attached_children_not_roster_twins() {
+        use crate::app::agent::AgentId;
+        let root = AgentId(0);
+        let child = AgentId(1);
+        let mut root_agent = crate::app::agent_view::test_fixtures::make_agent();
+        root_agent.session.session_id = Some(acp::SessionId::new("root"));
+        root_agent.session.enqueue_prompt("main work".to_owned());
+        let mut child_agent = crate::app::agent_view::test_fixtures::make_agent();
+        child_agent.session.session_id = Some(acp::SessionId::new("child-1"));
+        child_agent.session.enqueue_prompt("child work".to_owned());
+        let mut agents = SessionViews::new();
+        agents.insert(root, root_agent);
+        crate::app::session_views::test_support::link_child(
+            &mut agents,
+            root,
+            child,
+            child_agent,
+            std::time::Instant::now(),
+        );
+
+        let empty = std::collections::BTreeSet::new();
+        let rows = build_rows_with_roster(
+            &agents,
+            &empty,
+            &[],
+            super::super::state::Grouping::State,
+            &Filter::None,
+            None,
+            &[subagent_entry("child-1", "root")],
+            SessionLane::Subagents,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
+            vec![DashboardRowId::TopLevel(child)],
+            "the attached child view wins over its roster twin"
+        );
+
+        let main_rows = build_rows_with_roster(
+            &agents,
+            &empty,
+            &[],
+            super::super::state::Grouping::State,
+            &Filter::None,
+            None,
+            &[subagent_entry("child-1", "root")],
+            SessionLane::Main,
+        );
+        assert_eq!(
+            main_rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
+            vec![DashboardRowId::TopLevel(root)],
+            "the main lane keeps listing only the root"
+        );
     }
     /// An untitled, inactive roster session is the "New session" noise the dashboard hides; every pager launch leaves one behind.
     #[test]
@@ -1808,6 +1998,37 @@ mod tests {
         );
     }
     #[test]
+    fn authoritative_child_membership_is_filtered_into_only_the_child_lane() {
+        let snapshot = workspace_snapshot(vec![
+            workspace_member("saved-root", "Root", None),
+            workspace_member("saved-child", "Child", None),
+        ]);
+        let workspace = crate::app::workspace_layout::WorkspaceView::from_snapshot(&snapshot);
+        let roster = [subagent_entry("saved-child", "parent")];
+        let agents = SessionViews::new();
+        let inputs = WorkspaceRowInputs { workspace: Some(&workspace), provisional: &[] };
+        let child_rows = std::collections::BTreeMap::from([(
+            "saved-child".to_owned(),
+            DashboardRowId::Roster { session_id: "saved-child".to_owned() },
+        )]);
+        let main = build_rows_with_workspace(
+            &agents, inputs, &Filter::None, None, &roster, SessionLane::Main,
+            &Default::default(), &[], &child_rows,
+        );
+        assert_eq!(main.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-root")]);
+        let reused = build_rows_with_workspace(
+            &agents, inputs, &Filter::None, None, &[], SessionLane::Main,
+            &Default::default(), &[], &child_rows,
+        );
+        assert_eq!(reused.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-root")]);
+        let children = build_rows_with_workspace(
+            &agents, inputs, &Filter::None, None, &roster, SessionLane::Subagents,
+            &Default::default(), &[], &child_rows,
+        );
+        assert_eq!(children.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-child")]);
+    }
+
+    #[test]
     fn workspace_manual_order_is_global_and_survives_filtering() {
         let mut a = workspace_member("a", "Alpha", None);
         a.order_rank = Some(2 * xai_grok_dashboard_store::RANK_GAP);
@@ -1831,6 +2052,11 @@ mod tests {
             },
             &Filter::Substring("l".into()),
             None,
+            &[],
+            SessionLane::Main,
+            &Default::default(),
+            &[],
+            &Default::default(),
         );
         assert_eq!(
             rows.iter()

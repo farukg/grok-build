@@ -1,7 +1,9 @@
 pub mod agent_runtime;
 pub mod auth;
 pub(crate) mod auth_gate;
-pub(crate) mod background_task;
+/// Wire row + mapper for durable `SessionUpdate::BackgroundTasks` snapshots.
+/// `pub` because the first-party pager consumes the row type in its snapshot handler.
+pub mod background_task;
 pub mod billing;
 pub mod btw;
 pub mod bundle;

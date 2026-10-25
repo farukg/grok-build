@@ -45,10 +45,28 @@ pub struct DeliveryBinding {
     pub parent_task: ParentTask,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationProjection {
+    #[serde(flatten)]
+    pub item: ConversationItem,
+    #[serde(rename = "_notification_batch")]
+    pub binding: NotificationBatchBinding,
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "_subagent_completion_additional")]
+    pub receipts: Vec<crate::CompletionReceipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationBatchBinding {
+    pub id: String,
+    pub prompt_id: String,
+    pub parent_task: ParentTask,
+}
+
 #[derive(Clone, Debug)]
 pub enum InputProjection {
     Subagent(crate::CompletionProjection),
     Delivery(DeliveryProjection),
+    Notification(NotificationProjection),
 }
 
 impl InputProjection {
@@ -61,6 +79,12 @@ impl InputProjection {
                 }
             }
             Self::Delivery(projection) => projection.binding.parent_task = parent.clone(),
+            Self::Notification(projection) => {
+                projection.binding.parent_task = parent.clone();
+                for receipt in &mut projection.receipts {
+                    receipt.parent_task = parent.clone();
+                }
+            }
         }
     }
 
@@ -68,6 +92,7 @@ impl InputProjection {
         match self {
             Self::Subagent(projection) => &projection.item,
             Self::Delivery(projection) => &projection.item,
+            Self::Notification(projection) => &projection.item,
         }
     }
 
@@ -75,6 +100,7 @@ impl InputProjection {
         match self {
             Self::Subagent(projection) => projection.item,
             Self::Delivery(projection) => projection.item,
+            Self::Notification(projection) => projection.item,
         }
     }
 }

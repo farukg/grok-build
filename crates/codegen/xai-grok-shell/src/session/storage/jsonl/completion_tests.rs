@@ -6,6 +6,8 @@ mod batch;
 mod metadata;
 #[path = "completion_recovery_tests.rs"]
 mod recovery;
+#[path = "terminal_restart_tests.rs"]
+mod terminal_restart;
 use crate::session::completion_delivery::{
     CompletionArtifacts, CompletionEventPolicy, CompletionObligation, CompletionWakePolicy,
 };

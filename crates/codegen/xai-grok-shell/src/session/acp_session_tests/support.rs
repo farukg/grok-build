@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 #[path = "completion_persistence.rs"]
 mod completion_persistence;
+#[path = "terminal_persistence_fixture.rs"]
+mod terminal_persistence_fixture;
 use super::*;
 pub(crate) use completion_persistence::{
     ChatFixtureEvent, create_completion_test_actor, create_completion_test_actor_ex,
@@ -221,15 +223,17 @@ pub(crate) async fn create_test_actor_ex(
     SessionActor,
     tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
 ) {
-    create_test_actor_with_chat_persistence(
+    let (mut actor, events) = create_test_actor_with_chat_persistence(
         total_tokens,
         context_window,
         threshold_percent,
         gateway_tx,
-        persistence_tx,
+        persistence_tx.clone(),
         Box::new(xai_chat_state::NullChatPersistence),
     )
-    .await
+    .await;
+    terminal_persistence_fixture::attach(&mut actor, persistence_tx);
+    (actor, events)
 }
 #[cfg(test)]
 pub(crate) async fn create_test_actor_with_chat_persistence(
@@ -243,7 +247,7 @@ pub(crate) async fn create_test_actor_with_chat_persistence(
     SessionActor,
     tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
 ) {
-    create_test_actor_inner(
+    let (mut actor, events) = create_test_actor_inner(
         total_tokens,
         context_window,
         threshold_percent,
@@ -252,7 +256,9 @@ pub(crate) async fn create_test_actor_with_chat_persistence(
         Arc::new(DummyTerminal {}),
         chat_persistence,
     )
-    .await
+    .await;
+    terminal_persistence_fixture::attach_parent_admissions(&mut actor);
+    (actor, events)
 }
 #[cfg(test)]
 pub(crate) async fn create_test_actor_with_terminal(
@@ -266,7 +272,8 @@ pub(crate) async fn create_test_actor_with_terminal(
     SessionActor,
     tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
 ) {
-    create_test_actor_inner(
+    let capture = persistence_tx.clone();
+    let (mut actor, events) = create_test_actor_inner(
         total_tokens,
         context_window,
         threshold_percent,
@@ -275,7 +282,9 @@ pub(crate) async fn create_test_actor_with_terminal(
         terminal,
         Box::new(xai_chat_state::NullChatPersistence),
     )
-    .await
+    .await;
+    terminal_persistence_fixture::attach(&mut actor, capture);
+    (actor, events)
 }
 #[cfg(test)]
 async fn create_test_actor_inner(
@@ -472,6 +481,7 @@ async fn create_test_actor_inner(
         goal_turn_task_ids: parking_lot::Mutex::new(std::collections::HashSet::new()),
         goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
         goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
+        turn_wait_declaration: Default::default(),
         goal_update_rx: std::cell::RefCell::new(None),
         goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
         workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle().0,
@@ -1022,6 +1032,21 @@ pub(crate) struct CompletionWakeReceiverFixture {
     pub(crate) writes: mpsc::UnboundedReceiver<ChatFixtureEvent>,
     pub(crate) task: tokio_util::task::AbortOnDropHandle<()>,
 }
+pub(crate) fn spawn_completion_receiver(
+    actor: Arc<SessionActor>,
+    events: mpsc::UnboundedReceiver<SessionEvent>,
+) -> (mpsc::UnboundedSender<SessionCommand>, tokio_util::task::AbortOnDropHandle<()>) {
+    let (sender, commands) = mpsc::unbounded_channel();
+    let (chat_sender, chat_events) = mpsc::unbounded_channel();
+    let task = tokio::task::spawn_local(async move {
+        let _chat_sender = chat_sender;
+        super::run_session(actor, commands, chat_events, events, None,
+            Arc::new(parking_lot::Mutex::new(xai_grok_workspace::file_system::CodebaseIndexManager::new())),
+            std::path::PathBuf::from("/tmp"), crate::session::fs_watch::FsWatchCapabilities::none()).await;
+    });
+    (sender, tokio_util::task::AbortOnDropHandle::new(task))
+}
+
 pub(crate) async fn completion_wake_receiver_fixture() -> CompletionWakeReceiverFixture {
     let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
     drain_gateway(gateway_rx);
@@ -1029,31 +1054,8 @@ pub(crate) async fn completion_wake_receiver_fixture() -> CompletionWakeReceiver
         create_observed_completion_test_actor(0, 256_000, 85, gateway_tx).await;
     actor.state.lock().await.running_task = Some(running_task_stub("caller-busy"));
     let actor = Arc::new(actor);
-    let (sender, commands) = mpsc::unbounded_channel();
-    let (chat_sender, chat_events) = mpsc::unbounded_channel();
-    let receiver_actor = actor.clone();
-    let task = tokio::task::spawn_local(async move {
-        let _chat_sender = chat_sender;
-        super::run_session(
-            receiver_actor,
-            commands,
-            chat_events,
-            event_rx,
-            None,
-            Arc::new(parking_lot::Mutex::new(
-                xai_grok_workspace::file_system::CodebaseIndexManager::new(),
-            )),
-            std::path::PathBuf::from("/tmp"),
-            crate::session::fs_watch::FsWatchCapabilities::none(),
-        )
-        .await;
-    });
-    CompletionWakeReceiverFixture {
-        actor,
-        sender,
-        writes,
-        task: tokio_util::task::AbortOnDropHandle::new(task),
-    }
+    let (sender, task) = spawn_completion_receiver(actor.clone(), event_rx);
+    CompletionWakeReceiverFixture { actor, sender, writes, task }
 }
 pub(crate) fn bash_completed_notification(task_id: &str) -> PendingNotification {
     PendingNotification {

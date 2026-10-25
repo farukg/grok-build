@@ -62,7 +62,8 @@ pub(crate) fn render_dashboard(
     // App-level billing mirror the `/usage` modal renders its allowance from
     credit_balance: Option<&crate::views::credit_bar::CreditBalance>,
 ) -> Option<(u16, u16)> {
-    state.workspace_membership_mode = workspace_dashboard_enabled;
+    state.workspace_membership_mode = workspace_dashboard_enabled
+        && state.session_lane() == super::row::SessionLane::Main;
     // Cache whether a pinned (non-dismissible) promo CTA is live so the key handler can steal Ctrl+O for it; the dispatch re-resolves the gate
     state.pinned_upgrade_cta_live = upgrade_cta.is_some_and(|cta| cta.pinned);
     state.clear_chrome_hit_areas();
@@ -85,7 +86,17 @@ pub(crate) fn render_dashboard(
         state.grouping
     };
     let rows = if workspace_dashboard_enabled {
-        build_rows_with_workspace(agents, row_inputs, &state.filter, home)
+        build_rows_with_workspace(
+            agents,
+            row_inputs,
+            &state.filter,
+            home,
+            roster,
+            state.session_lane(),
+            &state.pinned,
+            &state.reorder,
+            &state.child_rows,
+        )
     } else {
         build_rows_with_roster(
             agents,
@@ -95,6 +106,7 @@ pub(crate) fn render_dashboard(
             &state.filter,
             home,
             roster,
+            state.session_lane(),
         )
     };
     state.painted_animations = PaintedAnimations::default();
@@ -3102,7 +3114,7 @@ pub fn render_popup_overlay(
 
     let border_color = theme.selection_border;
 
-    // The canonical bordered-frame primitive, used by `AgentView::draw_subagent_fullscreen` in app/agent_view/subagent_takeover.rs
+    // The canonical bordered-frame primitive for the dashboard's popup overlay.
     // Paints the header (top border and title row), the divider (T-junctions), and the content frame with full borders
     // The divider sits ABOVE the returned `content` rect, so `draw_agent` cannot overwrite it
     let Some(frame) =

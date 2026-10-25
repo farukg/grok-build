@@ -24,6 +24,8 @@ struct StoredView {
 
 const fn stored_section(section: SectionId) -> SidebarSection {
     match section {
+        SectionId::Dock => SidebarSection::Dock,
+        SectionId::Todo => SidebarSection::TodoSection,
         SectionId::Context => SidebarSection::Context,
         SectionId::Display => SidebarSection::MessageDisplay,
     }

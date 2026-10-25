@@ -129,7 +129,7 @@ fn alt_click(agent: &mut AgentView, idx: usize) -> InputOutcome {
 fn f6_opens_timeline_in_child() {
     let mut child = conversation();
     child.role = crate::app::agent_view::AgentRole::Child(crate::app::agent_view::ChildLink {
-        parent: crate::app::agent::AgentId(0),
+        parent: Some(crate::app::agent::AgentId(0)),
         parent_session_id: "parent".into(),
         subagent_id: "child".into(),
         started_at: std::time::Instant::now(),

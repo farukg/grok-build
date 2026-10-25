@@ -31,6 +31,10 @@ impl WorkflowNotifySender {
     }
 
     pub(crate) fn emit(&self, state: &WorkflowRunState, elapsed_ms: u64, active_agents: u32) {
+        if state.status.is_completion_reportable() {
+            self.emit_terminal(state.clone(), elapsed_ms, active_agents, true);
+            return;
+        }
         if let Err(error) = self.store.persist(state) {
             tracing::warn!(run_id = %state.run_id, %error, "failed to queue workflow manifest");
         }
@@ -46,6 +50,10 @@ impl WorkflowNotifySender {
         elapsed_ms: u64,
         active_agents: u32,
     ) {
+        if state.status.is_completion_reportable() {
+            self.emit_terminal(state.clone(), elapsed_ms, active_agents, false);
+            return;
+        }
         if let Err(error) = self.store.persist(state) {
             tracing::warn!(run_id = %state.run_id, %error, "failed to queue workflow manifest");
         }
@@ -66,6 +74,16 @@ impl WorkflowNotifySender {
             build_workflow_updated(state, elapsed_ms, active_agents),
             persist_update,
         );
+    }
+
+    fn emit_terminal(&self, state: WorkflowRunState, elapsed_ms: u64, active_agents: u32, persist: bool) {
+        let notify = self.clone();
+        tokio::spawn(async move {
+            match notify.store.persist_ack(&state).await {
+                Ok(()) => notify.broadcast(&state, elapsed_ms, active_agents, persist),
+                Err(error) => tracing::error!(run_id = %state.run_id, %error, "workflow terminal publication withheld until enrollment"),
+            }
+        });
     }
 
     fn dispatch(&self, update: XaiSessionUpdate, persist: bool) {

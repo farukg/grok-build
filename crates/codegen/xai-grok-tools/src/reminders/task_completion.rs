@@ -647,9 +647,14 @@ pub fn consumed_completion_ids(output: &ToolOutput) -> Vec<&str> {
             }
         }
         ToolOutput::TaskOutput(TaskOutputOutput::TaskNotFound(_)) => {}
-        ToolOutput::KillTask(KillTaskOutput::Result(r)) => {
-            ids.push(r.task_id.as_str());
-        }
+        ToolOutput::KillTask(KillTaskOutput::Result(r)) => match r.outcome {
+            xai_tool_types::KillOutcome::Killed | xai_tool_types::KillOutcome::AlreadyExited => {
+                ids.push(r.task_id.as_str());
+            }
+            xai_tool_types::KillOutcome::NotFound
+            | xai_tool_types::KillOutcome::Indeterminate { .. }
+            | xai_tool_types::KillOutcome::Failed { .. } => {}
+        },
         ToolOutput::KillTask(KillTaskOutput::TaskNotFound(_)) => {}
         ToolOutput::ControlSubagent(output) => ids.extend(output.consumed_completion_id()),
         ToolOutput::SubagentCompleted(SubagentCompletedOutput { subagent_id, .. }) => {
@@ -702,6 +707,17 @@ impl Reminder for TaskCompletionReminder {
         resources: SharedResources,
         tool_output: &ToolOutput,
     ) -> Vec<String> {
+        let unconfirmed_kill_id = if let ToolOutput::KillTask(KillTaskOutput::Result(result)) = tool_output {
+            match result.outcome {
+                xai_tool_types::KillOutcome::Indeterminate { .. }
+                | xai_tool_types::KillOutcome::Failed { .. } => Some(result.task_id.as_str()),
+                xai_tool_types::KillOutcome::Killed
+                | xai_tool_types::KillOutcome::AlreadyExited
+                | xai_tool_types::KillOutcome::NotFound => None,
+            }
+        } else {
+            None
+        };
         let consumed_ids: Vec<String> = consumed_completion_ids(tool_output)
             .into_iter()
             .map(str::to_string)
@@ -734,6 +750,7 @@ impl Reminder for TaskCompletionReminder {
             let tasks: Vec<TaskSnapshot> = all_tasks
                 .into_iter()
                 .filter(|t| task_owned_by_session(t, my_owner.as_deref()))
+                .filter(|t| Some(t.task_id.as_str()) != unconfirmed_kill_id)
                 .collect();
             let goal_loop_active = res
                 .get::<crate::implementations::grok_build::task::types::GoalLoopActive>()
@@ -1578,12 +1595,45 @@ mod tests {
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::KillTask(KillTaskOutput::Result(KillTaskResult {
             task_id: "t1".into(),
-            outcome: "killed".into(),
+            outcome: KillOutcome::Killed,
             message: "Task was terminated successfully".into(),
         }));
         let r = reminder.collect_reminders(shared, &output).await;
         assert!(r.is_empty(), "kill_task result should suppress reminder");
     }
+    #[tokio::test]
+    async fn negative_kill_does_not_consume_or_report_completion() {
+        use xai_tool_types::{KillFailureReason, KillProcessEffect, KillStage};
+        for outcome in [
+            KillOutcome::Indeterminate {
+                stage: KillStage::DurableEnrollment,
+                process_effect: KillProcessEffect::TerminalObserved,
+            },
+            KillOutcome::Failed {
+                stage: KillStage::ProcessTermination,
+                reason: KillFailureReason::PermissionDenied,
+            },
+        ] {
+            let shared = shared_with(vec![make_completed("t1")]);
+            let output = ToolOutput::KillTask(KillTaskOutput::Result(KillTaskResult {
+                task_id: "t1".into(),
+                outcome,
+                message: "diagnostic only".into(),
+            }));
+            assert!(consumed_completion_ids(&output).is_empty());
+            assert!(output.is_error());
+            assert!(TaskCompletionReminder.collect_reminders(shared.clone(), &output).await.is_empty());
+            assert!(!shared.lock().await.get::<State<ReportedTaskCompletions>>()
+                .expect("reported state").reported.contains("t1"));
+            let later = ToolOutput::Text(TextOutput {
+                text: "next result".into(),
+                consumed_completion_task_id: None,
+            });
+            let reminders = TaskCompletionReminder.collect_reminders(shared, &later).await;
+            assert!(reminders.join("\n").contains("t1"), "later completion remains reportable");
+        }
+    }
+
     #[tokio::test]
     async fn suppressed_after_await_text_with_consumed_id() {
         let shared = shared_with(vec![make_completed("t1")]);

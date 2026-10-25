@@ -1,6 +1,7 @@
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
-use xai_grok_tools::types::{KillOutcome, KillSource, TaskSnapshot};
+use xai_grok_tools::types::{KillSource, TaskSnapshot};
+use xai_tool_types::KillOutcome;
 
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCancelOutcome, SubagentInspection, SubagentProvenance, SubagentSnapshot,
@@ -507,6 +508,41 @@ mod tests {
     use xai_grok_tools::implementations::grok_build::task::types::{
         InterruptionCause, SubagentActor, SubagentState,
     };
+
+    #[test]
+    fn kill_response_preserves_negative_payloads_in_public_envelope() {
+        use xai_tool_types::{KillFailureReason, KillProcessEffect, KillStage};
+        for (outcome, expected) in [
+            (
+                KillOutcome::Indeterminate {
+                    stage: KillStage::DurableEnrollment,
+                    process_effect: KillProcessEffect::TerminalObserved,
+                },
+                serde_json::json!({"indeterminate": {
+                    "stage": "durable_enrollment", "process_effect": "terminal_observed"
+                }}),
+            ),
+            (
+                KillOutcome::Failed {
+                    stage: KillStage::ProcessTermination,
+                    reason: KillFailureReason::PermissionDenied,
+                },
+                serde_json::json!({"failed": {
+                    "stage": "process_termination", "reason": "permission_denied"
+                }}),
+            ),
+        ] {
+            let response = respond(Ok::<_, String>(KillTaskResponse {
+                task_id: "task-1".into(),
+                outcome,
+            })).expect("public response");
+            let value: serde_json::Value = serde_json::from_str(response.0.get()).unwrap();
+            assert_eq!(value.pointer("/result/outcome"), Some(&expected));
+            assert_eq!(value.pointer("/result/taskId").and_then(|v| v.as_str()), Some("task-1"));
+            let envelope: ExtMethodResult<KillTaskResponse> = serde_json::from_str(response.0.get()).unwrap();
+            assert_eq!(envelope.result.expect("typed result, not an error envelope").outcome, outcome);
+        }
+    }
 
     #[test]
     fn delete_scheduled_task_request_deserializes_camel_case() {

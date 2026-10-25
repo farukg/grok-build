@@ -1090,7 +1090,8 @@ impl MvpAgent {
             workflow_runs: persisted_workflow_runs,
         } = persistence_info;
         let summary = if !self.is_resident(&session_id)
-            && !summary.completion_delivery.obligations.is_empty()
+            && (!summary.completion_delivery.obligations.is_empty()
+                || persisted_workflow_runs.iter().any(|run| run.manifest.state.status.is_completion_reportable()))
         {
             let (respond_to, receive) = tokio::sync::oneshot::channel();
             persistence
@@ -1512,7 +1513,7 @@ impl MvpAgent {
                     CompletionEventPolicy, CompletionObligation,
                 };
                 let (id, text, policy) = match obligation {
-                    CompletionObligation::Preparing { .. } => continue,
+                    CompletionObligation::Preparing { .. } | CompletionObligation::Suppressed { .. } => continue,
                     CompletionObligation::Pending { id, payload } => {
                         (id, payload.model_text(id), payload.policy)
                     }
@@ -1531,14 +1532,16 @@ impl MvpAgent {
                         crate::session::CompletionWakeKind::BoundaryRecovery
                     }
                 };
-                crate::agent::subagent::enqueue_completion_wake(
-                    &handle.cmd_tx,
-                    id,
-                    kind,
-                    text,
-                    session_id.0.as_ref(),
-                    &None,
-                );
+                match id {
+                    xai_chat_state::completion::CompletionIdentity::Subagent(id) => {
+                        crate::agent::subagent::enqueue_completion_wake(
+                            &handle.cmd_tx, id, kind, text, session_id.0.as_ref(), &None,
+                        );
+                    }
+                    xai_chat_state::completion::CompletionIdentity::V2 { .. } => {
+                        let _ = handle.cmd_tx.send(SessionCommand::ResumeTerminalCompletion { id: id.clone(), text, policy });
+                    }
+                }
             }
         }
         let (model_state, response_meta) = self

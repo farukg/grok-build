@@ -6,6 +6,10 @@ use crate::app::agent_view::{AgentView, McpInitProgress, PromptMode};
 use crate::app::bundle::BundleState;
 use crate::scrollback::state::ScrollbackState;
 use crate::test_util::test_terminal;
+#[path = "display_focus_tests.rs"]
+mod display_focus_tests;
+#[path = "dock_focus_review_tests.rs"]
+mod dock_focus_review_tests;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -7753,6 +7757,61 @@ fn overlay_ctrl_x_does_not_stop_or_close() {
     assert!(app.agents.contains_key(&id));
 }
 
+#[test]
+fn session_navigation_preserves_the_visible_focus_owner() {
+    use crate::app::agent_view::{AgentPane, VisibleFocus};
+    use crate::app::actions::{Action, TreeStep};
+    for focus in [
+        VisibleFocus::Pane(AgentPane::Prompt),
+        VisibleFocus::Pane(AgentPane::Todo),
+        VisibleFocus::Pane(AgentPane::Tasks),
+        VisibleFocus::Timeline,
+        VisibleFocus::Context,
+    ] {
+        let mut app = test_app_with_agent();
+        let root = super::super::agent::AgentId(0);
+        let child_id = super::super::agent::AgentId(1);
+        let child = idle_child_view(&app, 1, "focus-child");
+        crate::app::session_views::test_support::link_child(
+            &mut app.agents, root, child_id, *child, std::time::Instant::now(),
+        );
+        let agent = app.agents.get_mut(&root).unwrap();
+        agent.tasks.overlay.visible = true;
+        agent.todo.overlay.visible = true;
+        agent.adopt_global_sidebars(true, true, false, false);
+        agent.restore_visible_focus(focus);
+        app.reconcile_sidebar_chrome();
+        app.capture_sidebar_chrome();
+        let _ = crate::app::dispatch::dispatch(Action::NavigateTree(TreeStep::LatestChild), &mut app);
+        assert_eq!(app.active_view, ActiveView::Agent(child_id));
+        app.reconcile_sidebar_chrome();
+        assert_eq!(app.agents.get(&child_id).unwrap().visible_focus(), focus);
+        app.capture_sidebar_chrome();
+        let _ = crate::app::dispatch::dispatch(Action::NavigateTree(TreeStep::Parent), &mut app);
+        app.reconcile_sidebar_chrome();
+        assert_eq!(app.active_view, ActiveView::Agent(root));
+        assert_eq!(app.agents.get(&root).unwrap().visible_focus(), focus);
+
+        let second_root = super::super::agent::AgentId(2);
+        let second = idle_child_view(&app, 2, "focus-second-root");
+        app.agents.insert(second_root, *second);
+        app.agents.get_mut(&root).unwrap().generated_session_title = Some("first root".into());
+        app.agents.get_mut(&second_root).unwrap().generated_session_title = Some("second root".into());
+        app.capture_sidebar_chrome();
+        let _ = crate::app::dispatch::dispatch(Action::OpenSession("focus-second-root".into()), &mut app);
+        app.reconcile_sidebar_chrome();
+        assert_eq!(app.active_view, ActiveView::Agent(second_root));
+        assert_eq!(app.agents.get(&second_root).unwrap().visible_focus(), focus);
+        app.capture_sidebar_chrome();
+        let _ = crate::app::dispatch::dispatch(
+            Action::CycleSessions(crate::app::actions::Direction::Next), &mut app,
+        );
+        app.reconcile_sidebar_chrome();
+        assert_eq!(app.active_view, ActiveView::Agent(root));
+        assert_eq!(app.agents.get(&root).unwrap().visible_focus(), focus);
+    }
+}
+
 /// A minimal-mode session cannot adopt the pager-wide F6/F7 chrome. The chrome
 /// stays pending instead, so a capture from that session cannot overwrite the
 /// global flags, and its first non-minimal paint adopts them.
@@ -7773,7 +7832,7 @@ fn minimal_session_keeps_pending_sidebar_chrome_until_it_leaves_minimal() {
     // The root session adopts first; simulate a pager-wide F7 toggle.
     app.reconcile_sidebar_chrome();
     app.sidebar_chrome.f7_open = true;
-    app.sidebar_chrome.f7_focused = true;
+    app.sidebar_chrome.focus = crate::app::agent_view::VisibleFocus::Context;
 
     // Switch to a minimal child: no adoption, and no capture clobber.
     app.active_view = ActiveView::Agent(child_id);

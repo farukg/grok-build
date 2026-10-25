@@ -2023,37 +2023,43 @@ pub(super) fn handle_memory_command_complete(
 pub(super) fn handle_compact_complete(
     app: &mut AppView,
     agent_id: AgentId,
+    invocation_id: crate::app::agent::CompactInvocationId,
     result: Result<(), crate::app::effects::CompactError>,
 ) -> Vec<Effect> {
     if let Some(agent) = app.agents.get_mut(&agent_id) {
-        // Defensive: only process if we're still in a compact command state.
-        let was_cancelling = matches!(
+        use crate::app::agent::CompactInvocationSettlement;
+        let Some(invocation) = agent.compact_invocations.get_mut(&invocation_id) else {
+            return vec![];
+        };
+        if invocation.binding_epoch != agent.session_binding_epoch {
+            return vec![];
+        }
+        match invocation.settlement {
+            CompactInvocationSettlement::RpcSettled => return vec![],
+            CompactInvocationSettlement::AwaitingRpc | CompactInvocationSettlement::LifecycleObserved => {
+                invocation.settlement = CompactInvocationSettlement::RpcSettled;
+            }
+        }
+        let owns_command = matches!(invocation.owner, crate::app::agent::CompactInvocationOwner::Command)
+            && matches!(agent.session.state,
+                AgentState::CommandRunning { command: AgentCommand::Compact, .. }
+                | AgentState::CommandCancelling { command: AgentCommand::Compact });
+        let was_cancelling = owns_command && matches!(
             agent.session.state,
             AgentState::CommandCancelling {
                 command: AgentCommand::Compact,
             }
         );
-        if !matches!(
-            agent.session.state,
-            AgentState::CommandRunning {
-                command: AgentCommand::Compact,
-                ..
-            } | AgentState::CommandCancelling {
-                command: AgentCommand::Compact,
-            }
-        ) {
-            tracing::debug!("Ignoring CompactComplete (not in compact command state)");
-            return vec![];
+        let elapsed = invocation.started_at.elapsed();
+        if owns_command {
+            agent.session.finish_command();
         }
-
-        let elapsed = agent.turn_elapsed();
-        agent.session.finish_command();
 
         match &result {
             Ok(()) => {
                 agent.scrollback.push_block(RenderBlock::session_event(
                     SessionEvent::CompactCompleted {
-                        elapsed: elapsed.unwrap_or_default(),
+                        elapsed,
                     },
                 ));
             }
@@ -2074,6 +2080,9 @@ pub(super) fn handle_compact_complete(
             }
         }
 
+        if !owns_command {
+            return vec![];
+        }
         agent.mark_turn_finished(TurnEnd::Completed);
         agent.activity_started_at = None;
         agent.last_activity = None;

@@ -8,9 +8,10 @@ use std::time::Duration;
 use super::exit_watcher::{poll_for_terminal_exit, release_terminal, watch_for_exit};
 use super::output_recorder::{OutputRecorder, read_log_tail};
 use agent_client_protocol as acp;
-use xai_acp_lib::{AcpAgentGatewaySender as GatewaySender, acp_channel_failure};
+use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
 use xai_grok_tools::computer::types::{
-    BackgroundHandle, ComputerError, KillOutcome, KillSource, TaskKind, TaskSnapshot,
+    BackgroundHandle, BackgroundReason, ComputerError, KillOutcome, KillSource, TaskKind, TaskSnapshot,
+    KillStage, KillProcessEffect, KillFailureReason, RunDisposition,
     TerminalBackend, TerminalRunRequest, TerminalRunResult,
 };
 
@@ -23,13 +24,63 @@ pub(super) struct SnapshotOutput {
     pub(super) signal: Option<String>,
 }
 
+pub(super) enum EnrollmentAttempt {
+    InFlight,
+    RetryAt(tokio::time::Instant),
+}
+
+pub(super) enum TerminalEnrollment {
+    Running,
+    Pending { snapshot: TaskSnapshot, attempt: EnrollmentAttempt },
+    Enrolled,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum EnrollmentSettlement {
+    Acknowledged,
+    Uncertain,
+}
+
+#[derive(Clone, Copy)]
+enum BackgroundAnnouncement {
+    Caller,
+    SendNow,
+}
+
+#[derive(Clone, Copy)]
+enum StopSelection {
+    Foreground,
+    Background,
+}
+
+enum ExecutionMode {
+    Foreground {
+        tool_call_id: String,
+        demote: tokio::sync::oneshot::Sender<TerminalRunResult>,
+    },
+    ForegroundFinishing,
+    Background,
+}
+
+struct KillReply {
+    reply: tokio::sync::oneshot::Sender<KillOutcome>,
+    source: KillSource,
+    outcome: KillOutcome,
+    deadline: tokio::time::Instant,
+}
+
 pub(super) struct TrackedTask {
+    mode: ExecutionMode,
+    kill_replies: Vec<KillReply>,
+    pub(super) enrollment: TerminalEnrollment,
+    pub(super) enrollment_changed: Arc<tokio::sync::Notify>,
+    pub(super) waiters_changed: Arc<tokio::sync::Notify>,
+    notification_handle: xai_grok_tools::notification::types::ToolNotificationHandle,
     command: String,
     display_command: Option<String>,
     cwd: String,
-    /// The client's terminal id, set when a foreground command was moved to the background under its tool call id.
-    /// `None` means the task id is the terminal id.
-    terminal_id: Option<acp::TerminalId>,
+    /// ACP resource binding; task identities never address client resources directly.
+    terminal_id: acp::TerminalId,
     output_file: PathBuf,
     start_time: std::time::SystemTime,
     /// Stamped once when the task completes, so repeated snapshots agree.
@@ -42,9 +93,8 @@ pub(super) struct TrackedTask {
     block_waited: bool,
     explicitly_killed: bool,
     kill_result_delivered: bool,
-    /// In-flight `wait_for_completion` callers.
-    /// ACP has no oneshot list; this is the live-waiter count used for kill delivery.
-    live_waiters: usize,
+    /// In-flight observers, not evidence of result consumption.
+    pub(super) live_waiters: usize,
     kind: TaskKind,
     owner_session_id: Option<String>,
     description: Option<String>,
@@ -55,10 +105,16 @@ pub(super) struct TrackedTask {
 impl Default for TrackedTask {
     fn default() -> Self {
         Self {
+            mode: ExecutionMode::Background,
+            kill_replies: Vec::new(),
+            enrollment: TerminalEnrollment::Running,
+            enrollment_changed: Arc::new(tokio::sync::Notify::new()),
+            waiters_changed: Arc::new(tokio::sync::Notify::new()),
+            notification_handle: xai_grok_tools::notification::types::ToolNotificationHandle::noop(),
             command: String::new(),
             display_command: None,
             cwd: String::new(),
-            terminal_id: None,
+            terminal_id: acp::TerminalId::new(""),
             output_file: PathBuf::new(),
             start_time: std::time::SystemTime::now(),
             end_time: None,
@@ -80,13 +136,56 @@ impl Default for TrackedTask {
 }
 
 impl TrackedTask {
+    pub(super) fn settle_kills(&mut self, settlement: EnrollmentSettlement) {
+        for pending in self.kill_replies.drain(..) {
+            let acknowledged = matches!(settlement, EnrollmentSettlement::Acknowledged)
+                && tokio::time::Instant::now() < pending.deadline;
+            let outcome = if acknowledged {
+                pending.outcome
+            } else {
+                KillOutcome::Indeterminate {
+                    stage: KillStage::DurableEnrollment,
+                    process_effect: KillProcessEffect::TerminalObserved,
+                }
+            };
+            if pending.reply.send(outcome).is_ok() && acknowledged {
+                self.kill_result_delivered |= pending.source.marks_result_delivered(false);
+            }
+        }
+    }
+
     pub(super) fn mark_completed(&mut self, out: SnapshotOutput) {
+        self.end_time = match &self.enrollment {
+            TerminalEnrollment::Pending { snapshot, .. } => snapshot.end_time,
+            TerminalEnrollment::Running | TerminalEnrollment::Enrolled => Some(std::time::SystemTime::now()),
+        };
+        self.enrollment = TerminalEnrollment::Enrolled;
         self.completed = true;
-        self.end_time = Some(std::time::SystemTime::now());
         self.exit_code = out.exit_code;
         self.signal = out.signal;
         self.last_output = out.output;
         self.last_truncated = out.truncated;
+    }
+
+    pub(super) fn terminal_snapshot(&self, task_id: &str) -> TaskSnapshot {
+        self.to_snapshot(task_id, SnapshotOutput {
+            output: self.last_output.clone(), truncated: self.last_truncated,
+            exit_code: self.exit_code, signal: self.signal.clone(),
+        })
+    }
+
+    fn resource_snapshot(resource_id: &str, out: SnapshotOutput) -> TaskSnapshot {
+        let observed_at = std::time::SystemTime::now();
+        let completed = out.exit_code.is_some() || out.signal.is_some();
+        TaskSnapshot {
+            task_id: resource_id.to_string(), command: String::new(), display_command: None,
+            cwd: String::new(), start_time: observed_at, end_time: completed.then_some(observed_at),
+            output: out.output, output_file: PathBuf::new(), truncated: out.truncated,
+            output_total_bytes: 0, exit_code: out.exit_code, signal: out.signal, completed,
+            kind: TaskKind::Bash, block_waited: false, explicitly_killed: false,
+            kill_result_delivered: false, owner_session_id: None, description: None,
+            is_backgrounded: false,
+        }
     }
 
     pub(super) fn to_snapshot(&self, task_id: &str, out: SnapshotOutput) -> TaskSnapshot {
@@ -112,8 +211,7 @@ impl TrackedTask {
             kind: self.kind,
             owner_session_id: self.owner_session_id.clone(),
             description: self.description.clone(),
-            // ACP tracked tasks are only registered via run_background.
-            is_backgrounded: true,
+            is_backgrounded: matches!(self.mode, ExecutionMode::Background),
             output_total_bytes: 0,
         }
     }
@@ -125,10 +223,6 @@ pub(super) type TaskMap = Arc<Mutex<HashMap<String, TrackedTask>>>;
 struct LiveWaiter<'a> {
     tasks: TaskMap,
     task_id: &'a str,
-    /// Set on the normal return path so Drop does not treat this wait as cancelled.
-    /// A cancelled wait must clear `block_waited` immediately.
-    /// ClientUi kill only clears it after the kill RPC, and the exit watcher can emit `TaskCompleted` in that gap.
-    finished: bool,
 }
 
 impl Drop for LiveWaiter<'_> {
@@ -137,9 +231,7 @@ impl Drop for LiveWaiter<'_> {
             && let Some(task) = tasks.get_mut(self.task_id)
         {
             task.live_waiters = task.live_waiters.saturating_sub(1);
-            if task.live_waiters == 0 && !self.finished {
-                task.block_waited = false;
-            }
+            task.waiters_changed.notify_waiters();
         }
     }
 }
@@ -174,6 +266,7 @@ pub(super) fn parse_exit(
 }
 
 /// Wraps xai-grok-shell's ACP gateway to satisfy xai-grok-tools' TerminalBackend.
+#[derive(Clone)]
 pub struct AcpTerminalAdapter {
     gateway: GatewaySender,
     session_id: acp::SessionId,
@@ -212,7 +305,7 @@ impl AcpTerminalAdapter {
             .lock()
             .unwrap()
             .get(task_id)
-            .and_then(|task| task.terminal_id.clone())
+            .map(|task| task.terminal_id.clone())
             .unwrap_or_else(|| acp::TerminalId::new(task_id))
     }
 
@@ -225,15 +318,16 @@ impl AcpTerminalAdapter {
         request.timeout.min(budget)
     }
 
-    /// Moves a foreground terminal that is still running into the background under its tool call id.
-    /// The result carries `signal = "auto_backgrounded"`, the output so far, and no exit code.
+    /// Keeps the registered execution identity when the foreground budget expires.
     async fn auto_background(
         &self,
         request: TerminalRunRequest,
         terminal_id: acp::TerminalId,
-        started_at: std::time::SystemTime,
+        task_id: String,
     ) -> TerminalRunResult {
-        let task_id = request.tool_call_id.clone();
+        if let Some(task) = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(&task_id) {
+            task.mode = ExecutionMode::Background;
+        }
         // Bounded: the block has already elapsed, so a stalled client must not hold the turn.
         let partial = match tokio::time::timeout(
             TERMINAL_OUTPUT_RPC_BUDGET,
@@ -250,7 +344,6 @@ impl AcpTerminalAdapter {
 
         // The wait can lose the race with exit; report the completion instead of tracking a finished command.
         if partial.exit_status.is_some() {
-            release_terminal(&self.gateway, &self.session_id, &terminal_id).await;
             let (exit_code, signal) = parse_exit(&partial.exit_status);
             let mut recorder =
                 OutputRecorder::new(request.output_file.clone(), request.output_byte_limit);
@@ -258,8 +351,13 @@ impl AcpTerminalAdapter {
             if let Err(e) = recorder.append(&partial.output).await {
                 tracing::warn!(task_id, error = %e, "output recorder failed to write foreground output");
             }
+            self.finish_foreground(&task_id, &terminal_id, &request.notification_handle, SnapshotOutput {
+                output: partial.output.clone(), truncated: partial.truncated,
+                exit_code, signal: signal.clone(),
+            }).await;
             let total_bytes = partial.output.len();
             return TerminalRunResult {
+                disposition: RunDisposition::Foreground,
                 combined_output: partial.output,
                 exit_code,
                 truncated: partial.truncated,
@@ -271,26 +369,6 @@ impl AcpTerminalAdapter {
             };
         }
 
-        {
-            let mut tasks = self.tasks.lock().unwrap();
-            tasks.insert(
-                task_id.clone(),
-                TrackedTask {
-                    command: request.command.clone(),
-                    display_command: request.display_command.clone(),
-                    cwd: request.working_directory.to_string_lossy().to_string(),
-                    terminal_id: Some(terminal_id.clone()),
-                    output_file: request.output_file.clone(),
-                    start_time: started_at,
-                    kind: request.kind,
-                    owner_session_id: request.owner_session_id.clone(),
-                    description: request.description.clone(),
-                    output_byte_limit: request.output_byte_limit,
-                    ..Default::default()
-                },
-            );
-        }
-
         let mut recorder =
             OutputRecorder::new(request.output_file.clone(), request.output_byte_limit);
         recorder.initialize().await;
@@ -300,7 +378,7 @@ impl AcpTerminalAdapter {
         tokio::spawn(watch_for_exit(
             self.gateway.clone(),
             self.session_id.clone(),
-            task_id,
+            task_id.clone(),
             terminal_id,
             Arc::clone(&self.tasks),
             request.notification_handle.clone(),
@@ -309,10 +387,14 @@ impl AcpTerminalAdapter {
 
         let total_bytes = partial.output.len();
         TerminalRunResult {
+            disposition: RunDisposition::Backgrounded {
+                handle: BackgroundHandle { task_id, output_file: request.output_file.clone(), pid: None },
+                reason: BackgroundReason::ForegroundBudget,
+            },
             combined_output: partial.output,
             exit_code: None,
             truncated: partial.truncated,
-            signal: Some("auto_backgrounded".to_string()),
+            signal: None,
             timed_out: false,
             output_file: request.output_file,
             total_bytes,
@@ -320,8 +402,145 @@ impl AcpTerminalAdapter {
         }
     }
 
+    fn demote_foreground(&self, task_id: &str, announcement_owner: BackgroundAnnouncement) -> Option<xai_grok_tools::computer::types::BackgroundedForeground> {
+        let (demote, tool_call_id, terminal_id, notification, recorder, result, announcement) = {
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let task = tasks.get_mut(task_id)?;
+            let terminal_id = task.terminal_id.clone();
+            if !matches!(task.mode, ExecutionMode::Foreground { .. }) { return None; }
+            let ExecutionMode::Foreground { tool_call_id, demote } = std::mem::replace(&mut task.mode, ExecutionMode::Background) else { return None; };
+            let result = TerminalRunResult {
+                disposition: RunDisposition::Backgrounded {
+                    handle: BackgroundHandle { task_id: task_id.to_string(), output_file: task.output_file.clone(), pid: None },
+                    reason: BackgroundReason::UserRedirect,
+                },
+                combined_output: task.last_output.clone(), exit_code: None, truncated: task.last_truncated,
+                signal: None, timed_out: false, output_file: task.output_file.clone(),
+                total_bytes: task.last_output.len(), pid: None,
+            };
+            let announcement = xai_grok_tools::notification::BashExecutionBackgrounded {
+                base: xai_grok_tools::notification::BashNotificationBase {
+                    tool_call_id: tool_call_id.clone(),
+                    command: task.display_command.clone().unwrap_or_else(|| task.command.clone()),
+                    output: Vec::new(), total_bytes: 0, truncated: false, cwd: PathBuf::from(&task.cwd),
+                },
+                output_file: task.output_file.clone(), task_id: task_id.to_string(),
+                monitor_description: None, description: task.description.clone(),
+            };
+            (demote, tool_call_id, terminal_id, task.notification_handle.clone(),
+                OutputRecorder::new(task.output_file.clone(), task.output_byte_limit), result, announcement)
+        };
+        let gateway = self.gateway.clone();
+        let session_id = self.session_id.clone();
+        let tasks = self.tasks.clone();
+        let execution = task_id.to_string();
+        match announcement_owner {
+            BackgroundAnnouncement::Caller => {}
+            BackgroundAnnouncement::SendNow => notification.send_backgrounded(announcement),
+        }
+        tokio::spawn(async move {
+            recorder.initialize().await;
+            watch_for_exit(gateway, session_id, execution, terminal_id, tasks, notification, recorder).await;
+        });
+        let _ = demote.send(result);
+        Some(xai_grok_tools::computer::types::BackgroundedForeground { tool_call_id, task_id: task_id.to_string() })
+    }
+
+    async fn stop_executions(&self, selection: StopSelection, owner: Option<&str>) {
+        let ids: Vec<String> = {
+            let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            tasks.iter().filter(|(_, task)| {
+                let selected = match selection {
+                    StopSelection::Foreground => matches!(task.mode,
+                        ExecutionMode::Foreground { .. } | ExecutionMode::ForegroundFinishing),
+                    StopSelection::Background => matches!(task.mode, ExecutionMode::Background),
+                };
+                selected && !task.completed
+                    && owner.is_none_or(|owner| task.owner_session_id.as_deref() == Some(owner))
+            }).map(|(id, _)| id.clone()).collect()
+        };
+        let _ = futures::future::join_all(ids.iter().map(|id| {
+            self.kill_task_with_source(id, KillSource::Teardown)
+        })).await;
+    }
+
+    fn retain_execution(&self, task_id: &str, terminal_id: acp::TerminalId, request: &TerminalRunRequest) {
+        {
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(task) = tasks.get_mut(task_id) else { return; };
+            if !matches!(task.mode, ExecutionMode::ForegroundFinishing) { return; }
+            task.mode = ExecutionMode::Background;
+        }
+        let gateway = self.gateway.clone();
+        let session_id = self.session_id.clone();
+        let tasks = self.tasks.clone();
+        let task_id = task_id.to_string();
+        let notifications = request.notification_handle.clone();
+        let recorder = OutputRecorder::new(request.output_file.clone(), request.output_byte_limit);
+        tokio::spawn(async move {
+            recorder.initialize().await;
+            watch_for_exit(gateway, session_id, task_id, terminal_id, tasks, notifications, recorder).await;
+        });
+    }
+
+    async fn finish_foreground(
+        &self,
+        task_id: &str,
+        terminal_id: &acp::TerminalId,
+        notifications: &xai_grok_tools::notification::ToolNotificationHandle,
+        output: SnapshotOutput,
+    ) {
+        let enroll = {
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let enroll = tasks.get(task_id).is_some_and(|task| {
+                task.explicitly_killed || !task.kill_replies.is_empty()
+            });
+            if !enroll { tasks.remove(task_id); }
+            enroll
+        };
+        if enroll {
+            super::exit_watcher::complete_and_release(
+                &self.gateway, &self.session_id, terminal_id, &self.tasks,
+                notifications, task_id, output,
+            ).await;
+        } else {
+            release_terminal(&self.gateway, &self.session_id, terminal_id).await;
+        }
+    }
+
+    async fn await_enrollment(&self, task_id: &str, deadline: tokio::time::Instant) -> bool {
+        let changed = {
+            let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(task) = tasks.get(task_id) else { return false; };
+            task.enrollment_changed.clone()
+        };
+        let notified = changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(task_id).is_some_and(|task| task.completed) {
+            return true;
+        }
+        let _ = tokio::time::timeout_at(deadline, notified).await;
+        self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(task_id).is_some_and(|task| task.completed)
+    }
+
+    fn observe_wait_result(&self, snapshot: Option<TaskSnapshot>) -> Option<TaskSnapshot> {
+        snapshot.map(|mut snapshot| {
+            if snapshot.completed {
+                let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(task) = tasks.get_mut(&snapshot.task_id) {
+                    task.block_waited = true;
+                    task.kill_result_delivered |= snapshot.explicitly_killed;
+                    snapshot.block_waited = true;
+                    snapshot.kill_result_delivered = task.kill_result_delivered;
+                }
+            }
+            snapshot
+        })
+    }
+
     fn local_snapshot(&self, task_id: &str) -> Option<TaskSnapshot> {
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let tracked = tasks.get(task_id)?;
         Some(tracked.to_snapshot(
             task_id,
@@ -338,67 +557,84 @@ impl AcpTerminalAdapter {
 /// Per-task budget for live `terminal/output` during `list_tasks` (task/list).
 /// After this expires that id falls back to local metadata; remaining ids still
 /// get their own live attempt with a fresh budget.
-const TERMINAL_OUTPUT_RPC_BUDGET: Duration = Duration::from_secs(2);
+pub(super) const TERMINAL_OUTPUT_RPC_BUDGET: Duration = Duration::from_secs(2);
 
-#[async_trait::async_trait]
-impl TerminalBackend for AcpTerminalAdapter {
-    async fn run(&self, request: TerminalRunRequest) -> Result<TerminalRunResult, ComputerError> {
+impl AcpTerminalAdapter {
+    async fn run_owned(&self, request: TerminalRunRequest) -> Result<TerminalRunResult, ComputerError> {
         let command = wrap_command(&request.command)?;
         let started_at = std::time::SystemTime::now();
+        let task_id = uuid::Uuid::now_v7().to_string();
         let create_res = self.create_terminal(command, &request).await?;
+        let (demote, mut demoted) = tokio::sync::oneshot::channel();
+        self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(task_id.clone(), TrackedTask {
+            mode: ExecutionMode::Foreground { tool_call_id: request.tool_call_id.clone(), demote },
+            notification_handle: request.notification_handle.clone(), command: request.command.clone(),
+            display_command: request.display_command.clone(),
+            cwd: request.working_directory.to_string_lossy().into_owned(),
+            terminal_id: create_res.terminal_id.clone(), output_file: request.output_file.clone(),
+            start_time: started_at, kind: request.kind, owner_session_id: request.owner_session_id.clone(),
+            description: request.description.clone(), output_byte_limit: request.output_byte_limit,
+            ..Default::default()
+        });
 
         let wait = if request.auto_background_on_timeout {
             Self::auto_background_wait(&request)
         } else {
             request.timeout
         };
-        let timed_out = match tokio::time::timeout(
-            wait,
-            self.gateway.send(acp::WaitForTerminalExitRequest::new(
-                self.session_id.clone(),
-                create_res.terminal_id.clone(),
-            )),
-        )
-        .await
-        {
-            Ok(Ok(_)) => false,
-            Ok(Err(e)) => {
-                release_terminal(&self.gateway, &self.session_id, &create_res.terminal_id).await;
-                return Err(ComputerError::io(e.to_string()));
+        let waited = tokio::select! {
+            result = tokio::time::timeout(wait, self.gateway.send(acp::WaitForTerminalExitRequest::new(
+                self.session_id.clone(), create_res.terminal_id.clone(),
+            ))) => result,
+            result = &mut demoted => return result.map_err(|error| ComputerError::io(error.to_string())),
+        };
+        let demoted_meanwhile = {
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match tasks.get_mut(&task_id) {
+                Some(task) => match task.mode {
+                    ExecutionMode::Foreground { .. } => {
+                        task.mode = ExecutionMode::ForegroundFinishing;
+                        false
+                    }
+                    ExecutionMode::Background => true,
+                    ExecutionMode::ForegroundFinishing => false,
+                },
+                None => false,
+            }
+        };
+        if demoted_meanwhile {
+            return demoted.await.map_err(|error| ComputerError::io(error.to_string()));
+        }
+        let (timed_out, observed_status) = match waited {
+            Ok(Ok(response)) => (false, Some(response.exit_status)),
+            Ok(Err(error)) => {
+                self.retain_execution(&task_id, create_res.terminal_id, &request);
+                return Err(ComputerError::io(error.to_string()));
             }
             Err(_) if request.auto_background_on_timeout => {
-                return Ok(self
-                    .auto_background(request, create_res.terminal_id, started_at)
-                    .await);
+                return Ok(self.auto_background(request, create_res.terminal_id, task_id).await);
             }
             Err(_) => {
-                let _ = self
-                    .gateway
-                    .send(acp::KillTerminalRequest::new(
-                        self.session_id.clone(),
-                        create_res.terminal_id.clone(),
-                    ))
-                    .await;
-                true
+                let _ = tokio::time::timeout(TERMINAL_OUTPUT_RPC_BUDGET, self.gateway.send(
+                    acp::KillTerminalRequest::new(self.session_id.clone(), create_res.terminal_id.clone()),
+                )).await;
+                (true, None)
             }
         };
 
-        let output = match self
-            .gateway
-            .send(acp::TerminalOutputRequest::new(
-                self.session_id.clone(),
-                create_res.terminal_id.clone(),
-            ))
-            .await
-        {
-            Ok(output) => output,
-            Err(e) => {
-                release_terminal(&self.gateway, &self.session_id, &create_res.terminal_id).await;
-                return Err(ComputerError::io(e.to_string()));
-            }
+        let mut output = match tokio::time::timeout(TERMINAL_OUTPUT_RPC_BUDGET, self.gateway.send(
+            acp::TerminalOutputRequest::new(self.session_id.clone(), create_res.terminal_id.clone()),
+        )).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(_)) | Err(_) => acp::TerminalOutputResponse::new(String::new(), false),
         };
-
-        release_terminal(&self.gateway, &self.session_id, &create_res.terminal_id).await;
+        if output.exit_status.is_none() {
+            output.exit_status = observed_status;
+        }
+        if output.exit_status.is_none() {
+            self.retain_execution(&task_id, create_res.terminal_id, &request);
+            return Err(ComputerError::io("terminal exit has not been observed"));
+        }
 
         let (exit_code, signal) = parse_exit(&output.exit_status);
         let total_bytes = output.output.len();
@@ -410,7 +646,13 @@ impl TerminalBackend for AcpTerminalAdapter {
             tracing::warn!(error = %e, "output recorder failed to write foreground output");
         }
 
+        self.finish_foreground(&task_id, &create_res.terminal_id, &request.notification_handle, SnapshotOutput {
+            output: output.output.clone(), truncated: output.truncated,
+            exit_code, signal: signal.clone(),
+        }).await;
+
         Ok(TerminalRunResult {
+            disposition: RunDisposition::Foreground,
             combined_output: output.output,
             exit_code,
             truncated: output.truncated,
@@ -422,7 +664,7 @@ impl TerminalBackend for AcpTerminalAdapter {
         })
     }
 
-    async fn run_background(
+    async fn run_background_owned(
         &self,
         request: TerminalRunRequest,
     ) -> Result<BackgroundHandle, ComputerError> {
@@ -433,14 +675,16 @@ impl TerminalBackend for AcpTerminalAdapter {
         let output_file = request.output_file.clone();
 
         let create_res = self.create_terminal(command.clone(), &request).await?;
-        let task_id = create_res.terminal_id.0.to_string();
+        let task_id = uuid::Uuid::now_v7().to_string();
         let description = request.description;
 
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             tasks.insert(
                 task_id.clone(),
                 TrackedTask {
+                    notification_handle: notification_handle.clone(),
+                    terminal_id: create_res.terminal_id.clone(),
                     command,
                     display_command,
                     cwd,
@@ -473,15 +717,39 @@ impl TerminalBackend for AcpTerminalAdapter {
         })
     }
 
+}
+
+#[async_trait::async_trait]
+impl TerminalBackend for AcpTerminalAdapter {
+    async fn run(&self, request: TerminalRunRequest) -> Result<TerminalRunResult, ComputerError> {
+        let owner = self.clone();
+        let (reply, response) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let result = owner.run_owned(request).await;
+            let _ = reply.send(result);
+        });
+        response.await.map_err(|error| ComputerError::io(error.to_string()))?
+    }
+
+    async fn run_background(&self, request: TerminalRunRequest) -> Result<BackgroundHandle, ComputerError> {
+        let owner = self.clone();
+        let (reply, response) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let result = owner.run_background_owned(request).await;
+            let _ = reply.send(result);
+        });
+        response.await.map_err(|error| ComputerError::io(error.to_string()))?
+    }
+
     async fn get_task(&self, task_id: &str) -> Option<TaskSnapshot> {
-        let live = self
-            .gateway
+        let live = tokio::time::timeout(TERMINAL_OUTPUT_RPC_BUDGET, self.gateway
             .send(acp::TerminalOutputRequest::new(
                 self.session_id.clone(),
                 self.terminal_id(task_id),
-            ))
+            )))
             .await
-            .ok();
+            .ok()
+            .and_then(Result::ok);
 
         // The std Mutex guard cannot be held across the await below, so resolve under the lock and read the log file after releasing it
         enum Resolved {
@@ -494,7 +762,7 @@ impl TerminalBackend for AcpTerminalAdapter {
             Missing,
         }
         let resolved = {
-            let tasks = self.tasks.lock().unwrap();
+            let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match (live, tasks.get(task_id)) {
                 (Some(output), Some(tracked)) => {
                     let (exit_code, signal) = parse_exit(&output.exit_status);
@@ -510,7 +778,7 @@ impl TerminalBackend for AcpTerminalAdapter {
                 }
                 (Some(output), None) => {
                     let (exit_code, signal) = parse_exit(&output.exit_status);
-                    Resolved::Ready(TrackedTask::default().to_snapshot(
+                    Resolved::Ready(TrackedTask::resource_snapshot(
                         task_id,
                         SnapshotOutput {
                             output: output.output,
@@ -546,7 +814,18 @@ impl TerminalBackend for AcpTerminalAdapter {
         };
 
         match resolved {
-            Resolved::Ready(snapshot) => Some(snapshot),
+            Resolved::Ready(snapshot) => {
+                if snapshot.completed {
+                    let owned = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(task_id);
+                    if owned {
+                        let deadline = tokio::time::Instant::now()
+                            + xai_grok_tools::notification::handle::TERMINAL_ACK_BUDGET;
+                        if !self.await_enrollment(task_id, deadline).await { return None; }
+                        return self.local_snapshot(task_id);
+                    }
+                }
+                Some(snapshot)
+            },
             Resolved::Missing => None,
             Resolved::FromLog {
                 mut snapshot,
@@ -568,83 +847,79 @@ impl TerminalBackend for AcpTerminalAdapter {
     }
 
     async fn kill_task_with_source(&self, task_id: &str, source: KillSource) -> KillOutcome {
-        #[derive(Copy, Clone)]
-        enum Tracked {
-            Running,
-            Completed,
-            Unknown,
-        }
+        let deadline = tokio::time::Instant::now()
+            + xai_grok_tools::notification::handle::TERMINAL_ACK_BUDGET;
+        self.demote_foreground(task_id, BackgroundAnnouncement::Caller);
         let tracked = {
-            let mut tasks = self.tasks.lock().unwrap();
-            match tasks.get_mut(task_id) {
-                Some(task) if task.completed => Tracked::Completed,
-                Some(task) => {
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            tasks.get_mut(task_id).map(|task| {
+                if matches!(task.enrollment, TerminalEnrollment::Running) && !task.completed {
                     task.explicitly_killed = true;
-                    // ModelTool/Teardown suppress auto-wake immediately (`marks_result_delivered(false)` is true)
-                    // ClientUi waits until after the kill RPC so a cancelled waiter is visible
-                    // Setting only `explicitly_killed` here would let the exit watcher emit TaskCompleted with `kill_result_delivered` still false
-                    if source.marks_result_delivered(false) {
-                        task.kill_result_delivered = true;
-                    }
-                    if task.live_waiters == 0 {
-                        task.block_waited = false;
-                    }
-                    Tracked::Running
                 }
-                None => Tracked::Unknown,
-            }
+                (task.completed, matches!(task.enrollment, TerminalEnrollment::Pending { .. }))
+            })
         };
-
-        match tracked {
-            Tracked::Completed => return KillOutcome::AlreadyExited,
-            Tracked::Running => {}
-            Tracked::Unknown => {
-                let probe = self
-                    .gateway
-                    .send(acp::TerminalOutputRequest::new(
-                        self.session_id.clone(),
-                        self.terminal_id(task_id),
-                    ))
-                    .await;
-                match probe {
-                    Err(err) if acp_channel_failure(&err).is_none() => {
-                        return KillOutcome::NotFound;
-                    }
-                    Err(_) => {}
-                    Ok(output) if output.exit_status.is_some() => {
-                        return KillOutcome::AlreadyExited;
-                    }
-                    Ok(_) => {}
+        let already_exited = tracked.is_some_and(|(completed, pending)| completed || pending);
+        if tracked.is_none() {
+            let probe = tokio::time::timeout_at(deadline, self.gateway.send(
+                acp::TerminalOutputRequest::new(self.session_id.clone(), self.terminal_id(task_id)),
+            )).await;
+            match probe {
+                Ok(Err(error)) if error.code == acp::Error::resource_not_found(None::<String>).code => return KillOutcome::NotFound,
+                Ok(Err(error)) if error.code == acp::Error::method_not_found().code => return KillOutcome::Failed {
+                    stage: KillStage::ProcessTermination, reason: KillFailureReason::Unsupported,
+                },
+                Ok(Err(_)) | Err(_) => {},
+                Ok(Ok(output)) if output.exit_status.is_some() => return KillOutcome::AlreadyExited,
+                Ok(Ok(_)) => {}
+            }
+        }
+        if !already_exited {
+            match tokio::time::timeout_at(deadline, self.gateway.send(
+                acp::KillTerminalRequest::new(self.session_id.clone(), self.terminal_id(task_id)),
+            )).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) if error.code == acp::Error::resource_not_found(None::<String>).code && tracked.is_none() => return KillOutcome::NotFound,
+                Ok(Err(error)) if error.code == acp::Error::method_not_found().code => return KillOutcome::Failed {
+                    stage: KillStage::ProcessTermination, reason: KillFailureReason::Unsupported,
+                },
+                Ok(Err(_)) | Err(_) => return KillOutcome::Indeterminate {
+                    stage: KillStage::ProcessTermination, process_effect: KillProcessEffect::Unknown,
+                },
+            }
+        }
+        if tracked.is_none() {
+            // A resource probe has no execution ownership or durable enrollment authority.
+            return KillOutcome::Indeterminate {
+                stage: KillStage::ProcessTermination, process_effect: KillProcessEffect::StopRequested,
+            };
+        }
+        let outcome = if already_exited { KillOutcome::AlreadyExited } else { KillOutcome::Killed };
+        let (reply, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(task) = tasks.get_mut(task_id) {
+                if task.completed {
+                    task.kill_result_delivered |= source.marks_result_delivered(false);
+                    return outcome;
+                }
+                task.kill_replies.retain(|pending| !pending.reply.is_closed());
+                task.kill_replies.push(KillReply { reply, source, outcome, deadline });
+            }
+        }
+        match tokio::time::timeout_at(deadline, receiver).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) | Err(_) => {
+                let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let terminal_observed = tasks.get(task_id).is_some_and(|task| {
+                    matches!(task.enrollment, TerminalEnrollment::Pending { .. } | TerminalEnrollment::Enrolled)
+                });
+                KillOutcome::Indeterminate {
+                    stage: if terminal_observed { KillStage::DurableEnrollment } else { KillStage::ProcessTermination },
+                    process_effect: if terminal_observed { KillProcessEffect::TerminalObserved } else { KillProcessEffect::StopRequested },
                 }
             }
         }
-
-        let outcome = match self
-            .gateway
-            .send(acp::KillTerminalRequest::new(
-                self.session_id.clone(),
-                self.terminal_id(task_id),
-            ))
-            .await
-        {
-            Ok(_) => KillOutcome::Killed,
-            Err(_) => KillOutcome::NotFound,
-        };
-        // ClientUi: sample waiters after the RPC so a wait cancelled at its own `.await` (Drop of `LiveWaiter`) is not still counted as delivered
-        // ACP has no oneshot list; this is the closest we get to local's `reply.send(...).is_ok()`
-        // ModelTool/Teardown already marked delivered under the first lock
-        if matches!(tracked, Tracked::Running)
-            && !source.marks_result_delivered(false)
-            && let Ok(mut tasks) = self.tasks.lock()
-            && let Some(task) = tasks.get_mut(task_id)
-        {
-            let any_delivered = task.live_waiters > 0;
-            task.kill_result_delivered = any_delivered;
-            if !any_delivered {
-                task.block_waited = false;
-            }
-        }
-        outcome
     }
 
     async fn wait_for_completion(
@@ -660,10 +935,9 @@ impl TerminalBackend for AcpTerminalAdapter {
             ProbeThenMaybeBlock,
         }
         let start = {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match tasks.get_mut(task_id) {
                 Some(task) => {
-                    task.block_waited = true;
                     if task.completed {
                         WaitStart::Immediate
                     } else {
@@ -675,7 +949,7 @@ impl TerminalBackend for AcpTerminalAdapter {
             }
         };
         match start {
-            WaitStart::Immediate => return self.get_task(task_id).await,
+            WaitStart::Immediate => return self.observe_wait_result(self.get_task(task_id).await),
             WaitStart::ProbeThenMaybeBlock => {
                 // Not tracked as running: one output probe A dead or unknown terminal must not burn the wait budget on WaitForTerminalExit Match kill's untracked probe: `get_task` maps every TerminalOutput error to None
                 // So a transport/channel blip on a still-live resumed terminal must not look like not-found Only a client that answered and disowned the id is a definitive miss
@@ -687,11 +961,11 @@ impl TerminalBackend for AcpTerminalAdapter {
                     ))
                     .await;
                 match probe {
-                    Err(err) if acp_channel_failure(&err).is_none() => return None,
+                    Err(err) if err.code == acp::Error::resource_not_found(None::<String>).code => return None,
                     Err(_) => {}
                     Ok(output) if output.exit_status.is_some() => {
                         let (exit_code, signal) = parse_exit(&output.exit_status);
-                        return Some(TrackedTask::default().to_snapshot(
+                        return Some(TrackedTask::resource_snapshot(
                             task_id,
                             SnapshotOutput {
                                 output: output.output,
@@ -704,13 +978,15 @@ impl TerminalBackend for AcpTerminalAdapter {
                     Ok(_) => {}
                 }
             }
-            WaitStart::Block => {}
+            WaitStart::Block => {
+                let _waiter = LiveWaiter { tasks: self.tasks.clone(), task_id };
+                let deadline = tokio::time::Instant::now() + timeout;
+                if !self.await_enrollment(task_id, deadline).await {
+                    return None;
+                }
+                return self.observe_wait_result(self.local_snapshot(task_id));
+            }
         }
-        let mut live_waiter = LiveWaiter {
-            tasks: self.tasks.clone(),
-            task_id,
-            finished: false,
-        };
 
         let gateway_result = tokio::time::timeout(
             timeout,
@@ -725,7 +1001,7 @@ impl TerminalBackend for AcpTerminalAdapter {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => {
                 let completed_meanwhile = {
-                    let tasks = self.tasks.lock().unwrap();
+                    let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     tasks.get(task_id).is_some_and(|task| task.completed)
                 };
                 if !completed_meanwhile {
@@ -742,16 +1018,10 @@ impl TerminalBackend for AcpTerminalAdapter {
             }
             Err(_) => {
                 tracing::debug!(task_id, "timeout waiting for terminal exit");
-                let mut tasks = self.tasks.lock().unwrap();
-                if let Some(task) = tasks.get_mut(task_id) {
-                    task.block_waited = false;
-                }
             }
         }
 
-        let snapshot = self.get_task(task_id).await;
-        live_waiter.finished = true;
-        snapshot
+        self.observe_wait_result(self.get_task(task_id).await)
     }
 
     async fn list_tasks(&self) -> Vec<TaskSnapshot> {
@@ -759,7 +1029,7 @@ impl TerminalBackend for AcpTerminalAdapter {
         // Bound each RPC so a hung client cannot stall enumeration indefinitely; only the timed-out id
         // falls back, and the remaining ids still get a live attempt with their own budget.
         let task_ids: Vec<String> = {
-            let tasks = self.tasks.lock().unwrap();
+            let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             tasks.keys().cloned().collect()
         };
         let mut snapshots = Vec::new();
@@ -784,7 +1054,7 @@ impl TerminalBackend for AcpTerminalAdapter {
 
     async fn list_tasks_metadata(&self) -> Vec<TaskSnapshot> {
         // Snapshot path: one lock, no terminal/output RPCs, no log reads.
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         tasks
             .iter()
             .map(|(task_id, tracked)| {
@@ -802,26 +1072,47 @@ impl TerminalBackend for AcpTerminalAdapter {
     }
 
     async fn kill_all_background_tasks(&self) {
-        let task_ids: Vec<String> = {
-            let tasks = self.tasks.lock().unwrap();
-            tasks
-                .iter()
-                .filter(|(_, t)| !t.completed)
-                .map(|(id, _)| id.clone())
-                .collect()
+        self.stop_executions(StopSelection::Background, None).await;
+    }
+
+    async fn kill_all_background_tasks_by_owner(&self, owner_session_id: &str) {
+        self.stop_executions(StopSelection::Background, Some(owner_session_id)).await;
+    }
+
+    async fn kill_foreground_commands_by_owner(&self, owner_session_id: &str) {
+        self.stop_executions(StopSelection::Foreground, Some(owner_session_id)).await;
+    }
+
+    async fn background_foreground_command(&self, tool_call_id: &str) -> bool {
+        let task_id = {
+            let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            tasks.iter().find_map(|(id, task)| match &task.mode {
+                ExecutionMode::Foreground { tool_call_id: call, .. } if call == tool_call_id => Some(id.clone()),
+                ExecutionMode::Foreground { .. }
+                | ExecutionMode::ForegroundFinishing
+                | ExecutionMode::Background => None,
+            })
         };
-        for task_id in task_ids {
-            self.kill_task_with_source(&task_id, KillSource::Teardown)
-                .await;
-        }
+        task_id.is_some_and(|id| self.demote_foreground(&id, BackgroundAnnouncement::Caller).is_some())
+    }
+
+    async fn background_foreground_commands(&self, owner_session_id: Option<&str>) -> Vec<xai_grok_tools::computer::types::BackgroundedForeground> {
+        let ids: Vec<String> = {
+            let tasks = self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            tasks.iter().filter(|(_, task)| {
+                matches!(task.mode, ExecutionMode::Foreground { .. })
+                    && owner_session_id.is_none_or(|owner| task.owner_session_id.as_deref() == Some(owner))
+            }).map(|(id, _)| id.clone()).collect()
+        };
+        ids.into_iter().filter_map(|id| self.demote_foreground(&id, BackgroundAnnouncement::SendNow)).collect()
     }
 
     async fn kill_foreground_commands(&self) {
-        let session_id = self.session_id.0.to_string();
-        crate::kill_and_release_all_for_session(&session_id).await;
+        self.stop_executions(StopSelection::Foreground, None).await;
     }
 }
 
 #[cfg(test)]
 #[path = "adapter_tests.rs"]
 mod tests;
+

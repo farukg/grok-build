@@ -36,7 +36,7 @@ async fn multi_result_commit_loss_recovers_one_input_and_one_continuation_for_th
     projection
         .additional_receipts
         .push(xai_chat_state::CompletionReceipt {
-            completion: second.id.clone(),
+            completion: second.id.clone().into(),
             prompt_id: "original-prompt".into(),
             parent_task: old.parent_task.clone(),
         });

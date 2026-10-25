@@ -183,6 +183,7 @@ fn entry_ref(entry: &EntryFacts) -> Result<ContextItemRef, EntryRefusal> {
         | MessageKind::Btw
         | MessageKind::ContextInfo
         | MessageKind::MemoryCapture
+        | MessageKind::Injected
         | MessageKind::Stub => Err(EntryRefusal::UiOnly),
     }
 }
@@ -315,7 +316,8 @@ impl AgentView {
             | RenderBlock::Workflow(_)
             | RenderBlock::Btw(_)
             | RenderBlock::ContextInfo(_)
-            | RenderBlock::MemoryCapture(_) => {}
+            | RenderBlock::MemoryCapture(_)
+            | RenderBlock::Injected(_) => {}
         }
         facts
     }

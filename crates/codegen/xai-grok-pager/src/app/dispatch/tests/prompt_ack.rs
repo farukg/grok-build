@@ -121,7 +121,7 @@ fn expired_watch_on_child_session_restores_its_prompt() {
         ScrollbackState::new(),
     );
     child.role = AgentRole::Child(ChildLink {
-        parent: parent_id,
+        parent: Some(parent_id),
         parent_session_id: app
             .agents
             .get(&parent_id)

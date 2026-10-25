@@ -241,6 +241,10 @@ pub struct SessionStateCopy {
 #[allow(clippy::large_enum_variant)]
 pub enum PersistenceMsg {
     Update(SessionUpdate),
+    AppendUpdatesAndAck {
+        updates: Vec<SessionUpdate>,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
+    },
     AppendUpdateDurablyAndAck {
         update: SessionUpdate,
         respond_to:
@@ -266,6 +270,11 @@ pub enum PersistenceMsg {
             io::Result<super::completion_delivery::PublishedCompletion>,
         >,
     },
+    AdmitParentMessage {
+        admission: super::delivery_receiver::ParentMessageAdmission,
+        authority: super::delivery_receiver::ParentAdmissionAuthority,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<super::delivery_receiver::ParentAdmissionAck>>,
+    },
     ReceiveDelivery {
         request: super::delivery_receiver::DeliveryRequest,
         respond_to:
@@ -277,6 +286,10 @@ pub enum PersistenceMsg {
     RecoverDeliveries {
         respond_to: tokio::sync::oneshot::Sender<io::Result<Summary>>,
     },
+    CancelParentMessages {
+        message_ids: Vec<String>,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
+    },
     FinishDeliveryTurn {
         turn_id: String,
         parent_task: xai_chat_state::ParentTask,
@@ -285,6 +298,17 @@ pub enum PersistenceMsg {
         respond_to: tokio::sync::oneshot::Sender<
             io::Result<Vec<super::delivery_receiver::DeliveryReceipt>>,
         >,
+    },
+    SuppressTerminalCompletions {
+        ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+        reason: super::completion_delivery::CompletionSuppression,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
+    },
+    EnrollTerminalCompletion {
+        source: super::completion_delivery::CompletionPayloadSource,
+        text: String,
+        policy: super::completion_delivery::CompletionEventPolicy,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
     },
     GetCompletionState {
         respond_to: tokio::sync::oneshot::Sender<
@@ -1349,6 +1373,11 @@ pub struct Summary {
 /// `source_workspace_dir` is only ever set alongside this kind.
 pub(crate) const WORKTREE_SESSION_KIND: &str = "worktree";
 
+/// `Summary::session_kind` for subagent child sessions (stamped by `new_with_explicit_dir`;
+/// prefixed variants such as hypothetical future `subagent-*` kinds count too — see
+/// [`Summary::is_subagent_kind`]).
+pub(crate) const SUBAGENT_SESSION_KIND: &str = "subagent";
+
 /// Current `grok_home` as a UTF-8 string, or `None` if the path isn't valid UTF-8.
 pub(crate) fn grok_home_string() -> Option<String> {
     crate::util::grok_home::grok_home()
@@ -1453,13 +1482,18 @@ impl Summary {
         self.source_workspace_dir = identity.source_workspace_dir.clone();
     }
 
+    /// Whether this summary belongs to a subagent child session. The single owner of the
+    /// `subagent` kind-prefix rule; history listings hide these sessions, while the leader
+    /// roster lists them as rows of the dashboard's subagent lane.
+    pub fn is_subagent_kind(&self) -> bool {
+        self.session_kind
+            .as_deref()
+            .is_some_and(|k| k.starts_with(SUBAGENT_SESSION_KIND))
+    }
+
     /// Whether this session should be excluded from history listings.
     pub fn is_hidden(&self) -> bool {
-        self.hidden.unwrap_or(
-            self.session_kind
-                .as_deref()
-                .is_some_and(|k| k.starts_with("subagent")),
-        )
+        self.hidden.unwrap_or(self.is_subagent_kind())
     }
 
     /// Unused TUI-open husk: untitled, 0 messages, and no fork provenance.
@@ -2085,6 +2119,17 @@ impl SessionPersistence {
         Ok(())
     }
 
+    async fn append_updates_and_sync(&mut self, updates: Vec<SessionUpdate>) -> io::Result<()> {
+        self.drain_pending().await.map_err(crate::session::storage::AppendUpdateError::into_io_error)?;
+        for update in updates {
+            self.write_update(&update).await.map_err(crate::session::storage::AppendUpdateError::into_io_error)?;
+            if let SessionUpdate::Acp(notification) = update {
+                self.queue_acp_sync(*notification);
+            }
+        }
+        self.flush_and_sync().await
+    }
+
     async fn handle_durable_append(
         &mut self,
         update: SessionUpdate,
@@ -2274,6 +2319,10 @@ impl SessionPersistence {
                         }
                     }
                 }
+                PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } => {
+                    let result = self.append_updates_and_sync(updates).await;
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::AppendUpdateDurablyAndAck { update, respond_to } => {
                     let result = self.handle_durable_append(update).await;
                     // A dropped receiver is a fire-and-forget durable append (e.g. the TurnCompleted terminal).
@@ -2334,6 +2383,17 @@ impl SessionPersistence {
                     };
                     let _ = respond_to.send(result);
                 }
+                PersistenceMsg::AdmitParentMessage { admission, authority, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => match self.claim_receiver().await {
+                            Ok(_) => self.storage.admit_parent_message(&self.info, &admission, authority, self.receiver_owner.access()).await,
+                            Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    };
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::ReceiveDelivery {
                     request,
                     respond_to,
@@ -2354,6 +2414,17 @@ impl SessionPersistence {
                 }
                 PersistenceMsg::RecoverDeliveries { respond_to } => {
                     let result = self.claim_receiver().await;
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::CancelParentMessages { message_ids, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => match self.claim_receiver().await {
+                            Ok(_) => self.storage.cancel_parent_messages(&self.info, &message_ids, self.receiver_owner.access()).await,
+                            Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    };
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
@@ -2426,6 +2497,22 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
+                PersistenceMsg::SuppressTerminalCompletions { ids, reason, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => self.storage.suppress_terminal_completions(&self.info, ids, reason).await,
+                        Err(error) => Err(error),
+                    };
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::EnrollTerminalCompletion { source, text, policy, respond_to } => {
+                    let result = match self.flush_and_sync().await {
+                        Ok(()) => self.storage.enroll_terminal_completion(&self.info, source, text, policy).await,
+                        Err(error) => Err(error),
+                    };
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::GetCompletionState { respond_to } => {
                     let result = self.storage.read_completion_state(&self.info).await;
                     let _ = respond_to.send(result);
@@ -2464,6 +2551,9 @@ impl SessionPersistence {
                                             &self.info, completion, &admission,
                                         )
                                         .await
+                                }
+                                xai_chat_state::InputProjection::Notification(notification) => {
+                                    self.storage.append_notification_commit_aware(&self.info, notification, &admission).await
                                 }
                                 xai_chat_state::InputProjection::Delivery(delivery) => {
                                     match self.receiver_owner.bind_turn(
@@ -2618,10 +2708,20 @@ impl SessionPersistence {
                     manifest,
                     respond_to,
                 } => {
-                    let result = self
-                        .storage
-                        .write_workflow_run_state(&self.info, &manifest)
-                        .await;
+                    let result = async {
+                        self.storage.write_workflow_run_state(&self.info, &manifest).await?;
+                        if manifest.state.status.is_completion_reportable() {
+                            let text = crate::session::acp_session::reminders::format_workflow_completion_reminder(
+                                std::slice::from_ref(&manifest.state), &session_dir(&self.info), None,
+                            );
+                            self.storage.enroll_terminal_completion(
+                                &self.info,
+                                super::completion_delivery::CompletionPayloadSource::Workflow(Box::new(manifest.state.clone())),
+                                text, super::completion_delivery::CompletionEventPolicy::Automatic,
+                            ).await?;
+                        }
+                        Ok(())
+                    }.await;
                     if let Err(error) = &result {
                         tracing::warn!(run_id = %manifest.state.run_id, ?error, "failed to write acknowledged workflow run state");
                     }
@@ -3292,6 +3392,10 @@ pub(crate) enum ExplicitSessionOpen {
     New {
         identity: Option<ExplicitSessionIdentity>,
         next_trace_turn: Option<u64>,
+        /// Durable subagent parentage: stamped into the child's `summary.json` so the roster
+        /// and prompt recovery can name the parent even after the leader loses its in-memory
+        /// child registry. `None` for parent-less explicit opens (e2e harnesses, tests).
+        parent_session_id: Option<String>,
     },
     Wake,
 }
@@ -3309,12 +3413,13 @@ pub(crate) async fn new_with_explicit_dir(
     let storage = JsonlStorageAdapter::with_explicit_session_dir(target_dir);
 
     let is_wake = matches!(open, ExplicitSessionOpen::Wake);
-    let (identity, next_trace_turn) = match open {
+    let (identity, next_trace_turn, parent_session_id) = match open {
         ExplicitSessionOpen::New {
             identity,
             next_trace_turn,
-        } => (identity, next_trace_turn),
-        ExplicitSessionOpen::Wake => (None, None),
+            parent_session_id,
+        } => (identity, next_trace_turn, parent_session_id),
+        ExplicitSessionOpen::Wake => (None, None, None),
     };
     let mut summary = if is_wake {
         storage.load_summary(info).await?
@@ -3328,8 +3433,14 @@ pub(crate) async fn new_with_explicit_dir(
             .as_deref()
             .is_none_or(|kind| kind == WORKTREE_SESSION_KIND)
         {
-            summary.session_kind = Some("subagent".to_string());
+            summary.session_kind = Some(SUBAGENT_SESSION_KIND.to_string());
             summary.source_workspace_dir = None;
+        }
+        // `parent_session_id` also serves forks and remote-restored children; the subagent
+        // parent is stamped only when the open carries one, so those meanings never overwrite
+        // each other on a re-open.
+        if summary.parent_session_id.is_none() {
+            summary.parent_session_id = parent_session_id;
         }
         storage.write_summary_sync(info, &summary)?;
     }

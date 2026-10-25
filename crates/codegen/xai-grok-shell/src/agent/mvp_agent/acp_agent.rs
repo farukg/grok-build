@@ -1094,7 +1094,12 @@ impl acp::Agent for MvpAgent {
                                 )
                                 .await
                             }
-                            None => Err(acp::Error::invalid_params().data("unknown session id")),
+                            None => {
+                                Err(super::child_prompt::unknown_prompt_target_error(
+                                    arguments.session_id.0.as_ref(),
+                                )
+                                .await)
+                            }
                         };
                     }
                 }

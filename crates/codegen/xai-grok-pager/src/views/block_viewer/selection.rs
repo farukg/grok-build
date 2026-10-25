@@ -49,23 +49,6 @@ impl TextDrag {
 
 const MULTI_CLICK_TIMEOUT_MS: u128 = 300;
 
-pub(crate) fn format_blockquote(text: &str) -> String {
-    let text = text.trim_end_matches('\n');
-    if text.is_empty() {
-        return String::new();
-    }
-    text.lines()
-        .map(|line| {
-            if line.is_empty() {
-                ">".to_string()
-            } else {
-                format!("> {line}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 impl BlockViewerPane {
     pub(super) fn has_sticky_selection(&self) -> bool {
         self.text_drag.is_some_and(|d| !d.active && d.covers_text())
