@@ -3,6 +3,11 @@
 Status: implementation is authorized and in progress. No additional GO is required for
 this scope. Acceptance, staging and final same-SHA CI success are not yet established.
 
+**Verification boundary: locally no check, no build, no test.** This also forbids
+compiler/formatter verification commands, indirect test scripts and hooks. Local
+work is source reading/editing only; executing verification belongs exclusively
+to GitHub Actions. Every older local-guard instruction is superseded.
+
 ## Current execution baseline
 
 - Author tree: `/home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover`.
@@ -24,7 +29,7 @@ this scope. Acceptance, staging and final same-SHA CI success are not yet establ
   pinning and no workflow-based dispatch.
 - All local Grok builds and test runs are forbidden, including `sig build` and
   local cargo compilation/tests. Compilation and Rust tests run exclusively in
-  GitHub Actions, after a full static/source-format pass and review.
+  GitHub Actions, after a full source review by reading and review.
 - This restriction is forward-looking: preserve correct source work and the
   verification worktree. Last local test `bld-1792890778976-5daa03f867344a02bf49e33bfa54b8e2`
   was cancelled; worker `3682143` is confirmed absent.
@@ -74,7 +79,7 @@ not restart conflict-resolution dispatch from the old five-file manifest.
    no assertion stdout. Do not classify an old failure as fixed without evidence.
 4. Verify disposition of checkpoint ADRs 001/002: their owner is `docs/fork/`, not
    `context-modules.d/` (sigma-repo-only), with stream references kept accurate.
-5. Complete refuter + lead review and the full static/source-format pass, including
+5. Complete refuter + lead review and the full source review by reading, including
    typo/API self-check. Integrate coherent commits and push normally to the fork.
    Do not run local compilation or tests.
 6. Use one consolidated `linux-build` + `linux-test` pair for the wave. Observe the
@@ -82,7 +87,7 @@ not restart conflict-resolution dispatch from the old five-file manifest.
    launch replacements merely because this plan was refreshed. Extra CI is allowed
    only after capture-based root-cause analysis and only at the minimum needed scope.
 7. Gate: verified green build + relevant tests on the same final SHA, with review
-   findings and the full static/source-format pass recorded. The baseline build succeeded;
+   findings and the full source review by reading recorded. The baseline build succeeded;
    its test run was cancelled, so final combined acceptance remains pending.
 
 ## Wave B — Faruk's issue list + carried-over orders
@@ -133,7 +138,7 @@ change and rollout boundary — never unilateral gateway edits (outside grok-bui
 
 ## Wave C — final acceptance and staging
 
-1. Confirm review closure, the full static/source-format pass, and same-SHA green
+1. Confirm review closure, the full source review by reading, and same-SHA green
    GitHub Actions build + relevant tests; record exact run IDs and conclusions.
 2. Stage via `org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --run-id <id> --commit <sha>`.
 3. Report to Faruk explicitly whether grok-CLI restart suffices or the grok-leader service
@@ -152,12 +157,12 @@ change and rollout boundary — never unilateral gateway edits (outside grok-bui
 
 - **GitHub Actions quota is scarce and binding**: one consolidated `linux-build` +
   `linux-test` pair per wave, only after refuter + lead review and a full
-  static/source-format pass, including typo/API self-check. No local Grok builds
+  source review by reading, including typo/API self-check. No local Grok builds
   or test runs are permitted; compilation and Rust tests are CI-only. Analyze run captures before fixes;
   additional CI requires capture-root-caused justification and minimum necessary scope.
 - Native subagents only; no model pinning and no workflows for dispatch.
 - Pushes only to `farukg/grok-build` (`origin`); never to `xai-org/grok-build`.
 - Normal pushes only. No force push is authorized on any branch.
 - Stream file updates per lane; `docs/fork/STATUS.md` only when something lands on `main`.
-- Implementation authorization does not waive review, the static/source-format pass, same-SHA CI,
+- Implementation authorization does not waive review, the source review by reading, same-SHA CI,
   runtime acceptance, or evidence requirements.
