@@ -1,9 +1,10 @@
 # Owner-takeover execution plan (Krillin, updated 2026-10-25)
 
 Status: source integration of preserved owner and already-started work is complete
-in the current `main` source tree; its final integration commit is pending. The
-release build for that final commit remains unverified. No new feature or review
-project is authorized; no staging or runtime acceptance is established.
+on `main` at `7ec4c932653b9a777db24e32b3200935d777b5e3` (parents `875ff73c` and
+`e7ceeb50`). Its release build and staging remain pending. Record artifact proof only
+from the actual GitHub release Run/Commit delivery record. No new feature or review
+project is authorized; no runtime acceptance is established.
 
 **Verification boundary: no checks, tests, formatters, local builds, or `sig build`;
 no sig-orch communications.** This also forbids compiler/formatter verification
@@ -16,9 +17,8 @@ integration. Historical local-guard instructions are superseded.
 - Preserved canonical `main` commit: `875ff73c`.
 - Preserved owner commit: `e7ceeb50` in
   `/home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover`.
-  Source integration of preserved owner and already-started work is complete in the
-  current main source tree, with its final integration commit pending. The preservation
-  commits and source integration have no release-build verification; neither
+  Integrated `main` commit is `7ec4c932653b9a777db24e32b3200935d777b5e3` with
+  parents `875ff73c` and `e7ceeb50`. Its release build is pending; neither
   preservation commit is presented as the final integrated SHA.
 - Historical Wave A baseline: `5abbd3c5599c18133ea271049d8c3da3510cc736`.
   Its checkpoint merge completed before preservation; historical acceptance facts

@@ -3,12 +3,12 @@
 Current delivery status: 2026-10-25. The fork is `farukg/grok-build` (`origin`);
 `xai-org/grok-build` is upstream, not the push destination.
 
-The preserved owner and started-work source has been integrated into the current
-`main` source tree; its final integration commit is pending. Release-build acceptance
-is pending for that final commit. No current-wave build result, staging, activation,
-or verified installed/running artifact is established. Preserved references include
-canonical `875ff73c` and owner `e7ceeb50`; these are preservation commits, not the
-final integrated SHA.
+The preserved owner and started-work source is integrated on `main` at
+`7ec4c932653b9a777db24e32b3200935d777b5e3` (merge parents `875ff73c` and
+`e7ceeb50`). Its release build and staging are pending; no current-wave build result,
+activation, or verified installed/running artifact is established. Record artifact
+proof only from the actual GitHub release run and exact commit delivery record.
+Preserved references `875ff73c` and `e7ceeb50` are not the integrated commit.
 
 Historical published `main` at `ba47d59ffc2538a6f4138ce61fd186376776fe21` was an
 independently source-reviewed Root/Child intermediate. GitHub Actions
