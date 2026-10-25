@@ -119,6 +119,30 @@ fn running_child_prompt_runs_on_child_and_settles_the_parent_receipt() {
                 json!({ "kind": "held" })
             );
             assert_eq!(*delivery_rx.borrow(), SubagentDelivery::Held);
+            for action in ["admit", "observe"] {
+                let response = agent
+                    .ext_method(acp::ExtRequest::new(
+                        "x.ai/session/delivery",
+                        std::sync::Arc::from(
+                            serde_json::value::to_raw_value(&json!({
+                                "sessionId": CHILD,
+                                "deliveryId": "held-child-delivery",
+                                "payload": "exact Held child payload",
+                                "action": action,
+                            }))
+                            .unwrap(),
+                        ),
+                    ))
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    serde_json::from_str::<crate::session::delivery_receiver::DeliveryResult>(response.0.get()).unwrap(),
+                    crate::session::delivery_receiver::DeliveryResult::Rejected { reason }
+                        if reason == "receiver requires a root session; child ingress retains its own receipt and Held policy"
+                ));
+                assert_eq!(*delivery_rx.borrow(), SubagentDelivery::Held);
+                assert!(matches!(receipts.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)));
+            }
         }
         assert_eq!(deliver(&agent).await, json!({ "kind": "delivered" }));
         assert_eq!(*delivery_rx.borrow(), SubagentDelivery::OnTurnEnd);

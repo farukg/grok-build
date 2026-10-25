@@ -13,6 +13,57 @@ const PARENT: &str = "019e0000-0000-7000-8000-0000000000a0";
 const PAYLOAD: &str = "  SIG exact receiver envelope\n/trusted-looking-command\n  ";
 
 #[test]
+fn native_receiver_accepts_a_live_new_root_with_an_actor_thread() {
+    run_agent_test(|cwd, server| async move {
+        let recorder = Recorder::default();
+        let (conn, _) = connect_and_auth(recorder.clone(), "receiver-root-host-test").await;
+        let sid = acp_harness::new_session(&conn, &cwd).await;
+        assert!(matches!(
+            delivery(&conn, &sid, "live-root", PAYLOAD, "observe").await,
+            DeliveryResult::Absent
+        ));
+        assert!(main_requests(&server, sid.0.as_ref()).is_empty());
+        let mut sampled = server.expect_response_blocked(
+            "witnessed root receives delivery",
+            InferenceRequestMatcher::foreground(InferenceEndpoint::ChatCompletions)
+                .for_session(sid.0.as_ref()),
+            text_reply("witnessed root finished"),
+        );
+        admitted(delivery(&conn, &sid, "live-root", PAYLOAD, "admit").await);
+        sampled.wait_blocked().await;
+        admitted(delivery(&conn, &sid, "live-root", PAYLOAD, "admit").await);
+        sampled.release();
+        assert_succeeded(&recorder.terminal("live-root").await);
+        assert_eq!(
+            history(&cwd, &sid)
+                .await
+                .iter()
+                .filter(|item| item.text_content() == PAYLOAD)
+                .count(),
+            1
+        );
+        assert_eq!(main_requests(&server, sid.0.as_ref()).len(), 1);
+        sampled.assert_satisfied();
+    });
+}
+
+#[test]
+fn native_receiver_does_not_admit_an_absent_target() {
+    run_agent_test(|_cwd, server| async move {
+        let (conn, _) = connect_and_auth(Recorder::default(), "receiver-absent-host-test").await;
+        let sid = acp::SessionId::new(PARENT);
+        assert!(matches!(
+            delivery(&conn, &sid, "absent-target", PAYLOAD, "observe").await,
+            DeliveryResult::Absent
+        ));
+        assert!(
+            matches!(delivery(&conn, &sid, "absent-target", PAYLOAD, "admit").await, DeliveryResult::Rejected { reason } if reason == "target session is absent")
+        );
+        assert!(main_requests(&server, PARENT).is_empty());
+    });
+}
+
+#[test]
 fn native_admission_is_durable_before_terminal_and_exact_retries_have_one_input() {
     run_agent_test(|cwd, server| async move {
         let recorder = Recorder::default();
@@ -425,6 +476,14 @@ fn child_completion(boundary: CallerBoundary) {
             );
             tokio::pin!(human);
             tokio::select! { _ = async { child.wait_blocked().await; parent.wait_blocked().await; } => {}, _ = &mut human => panic!("caller unexpectedly ended before scripted boundary") }
+            if matches!(boundary, CallerBoundary::Idle) {
+                let child_sid = acp::SessionId::new(CHILD);
+                for action in ["observe", "admit"] {
+                    assert!(matches!(delivery(&conn, &child_sid, "child-ingress", PAYLOAD, action).await,
+                        DeliveryResult::Rejected { reason } if reason == "receiver requires a root session; child ingress retains its own receipt and Held policy"));
+                }
+                assert_eq!(main_requests(&server, CHILD).len(), 1);
+            }
             let mut socket = None;
             match boundary {
                 CallerBoundary::Idle => {
