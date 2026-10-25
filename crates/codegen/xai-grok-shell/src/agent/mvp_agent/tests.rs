@@ -3319,6 +3319,7 @@ mod child_prompt_tests;
 mod list_running_heal_tests;
 #[cfg(unix)]
 mod process_scope_reclaim;
+mod session_delivery_tests;
 mod session_rename_tests;
 mod session_resume_close_tests;
 mod subagent_spawn_context_tests;
@@ -5547,6 +5548,7 @@ fn assert_withdrawn(agent: &MvpAgent, sid: &acp::SessionId) {
         "no unstamped actor may stay resident"
     );
     assert_eq!(0, agent.resident_count());
+    assert!(agent.session_host(sid).is_none());
     assert_root_views(agent, sid, None);
     assert_eq!(0, workspace_session_count(agent));
 }
@@ -5767,6 +5769,7 @@ fn a_cancelled_installer_withdraws_its_unstamped_actor() {
         agent.remove_session(&sid);
     });
 }
+
 /// A cancelled installer re-parks its still-running actor thread on the entry; settlement then
 /// restores the displaced presence, which carries a running thread of its own. Neither thread may
 /// be dropped: a dropped `JoinHandle` detaches the thread from the sweep.
@@ -5796,6 +5799,7 @@ fn a_cancelled_installers_thread_stays_tracked_beside_the_displaced_one() {
         ) else {
             panic!("the install is accepted");
         };
+        assert!(agent.session_host(&sid).is_none());
         let StampResolution::Withdrawn(withdrawn) =
             agent
                 .session_registry
