@@ -184,7 +184,7 @@ mod role;
 pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
 #[cfg(test)]
 mod role_tests;
-mod context_removal;
+pub(crate) mod context_removal;
 mod context_sidebar;
 #[cfg(test)]
 mod context_sidebar_tests;

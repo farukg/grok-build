@@ -108,6 +108,7 @@ impl AgentView {
 
     fn handle_timeline_panel_input(&mut self, input: TimelinePanelInput) -> Option<InputOutcome> {
         let panel = self.timeline_mode.panel_mut()?;
+        panel.refresh(&self.scrollback);
         let outcome = match input {
             TimelinePanelInput::Nav(nav) => {
                 let step = panel.navigate(nav);
@@ -155,7 +156,16 @@ impl AgentView {
     fn timeline_cursor(&self) -> Option<(TimelineRow, usize)> {
         let row = *self.timeline_mode.panel()?.cursor_row()?;
         let idx = self.scrollback.index_of_id(row.entry_id())?;
-        Some((row, idx))
+        let valid = match row.kind {
+            TimelineRowKind::Group { .. } => self
+                .scrollback
+                .span_at(idx)
+                .is_some_and(|span| span.range.start == idx),
+            TimelineRowKind::Turn { .. } | TimelineRowKind::Entry { .. } => {
+                self.scrollback.timeline_row_key(idx) == Some(row.key())
+            }
+        };
+        valid.then_some((row, idx))
     }
 
     /// Panel → chat: select the cursor's entry (or the fold row showing it) and bring it to the viewport top.
@@ -212,7 +222,8 @@ impl AgentView {
     /// Apply `action` to the cursor row; a group row acts on the group as a whole.
     fn run_timeline_item_action(&mut self, action: TimelineItemAction) -> InputOutcome {
         let Some((row, idx)) = self.timeline_cursor() else {
-            return InputOutcome::Unchanged;
+            self.show_toast("Selection no longer exists; select an item first");
+            return InputOutcome::Changed;
         };
         let target = match row.kind {
             TimelineRowKind::Group { .. } => ActionTarget::Group,
@@ -274,8 +285,7 @@ impl AgentView {
                 InputOutcome::Action(Action::OpenBlockViewer)
             }
             (TimelineItemAction::Rewind, ActionTarget::Entry | ActionTarget::Group) => {
-                self.scrollback.set_selected(Some(idx));
-                InputOutcome::Action(Action::Rewind)
+                InputOutcome::Action(Action::RewindTimeline(row))
             }
             (TimelineItemAction::Remove, ActionTarget::Entry | ActionTarget::Group) => self
                 .run_timeline_item_remove(

@@ -16,15 +16,38 @@ use xai_grok_shell::session::{
 /// One removal per session may be in flight: the answer carries no request id, so it is paired with the request by session.
 pub(super) fn dispatch_remove_context_items(
     app: &mut AppView,
-    items: Vec<ContextItemRef>,
+    target: crate::app::agent_view::context_removal::ContextRemovalTarget,
 ) -> Vec<Effect> {
+    let crate::app::agent_view::context_removal::ContextRemovalTarget {
+        agent_id,
+        session_id,
+        row,
+        items,
+    } = target;
     let Some(agent) = get_active_agent_mut(app) else {
         return vec![];
     };
-    let Some(session_id) = agent.session.session_id.clone() else {
+    if agent.session.session_id.is_none() {
         agent.show_toast("Session is not connected");
         return vec![];
-    };
+    }
+    let current_row = agent
+        .timeline_mode
+        .panel()
+        .and_then(|panel| panel.cursor_row());
+    let same_items = matches!(
+        agent.verdict_for_row(row),
+        crate::app::agent_view::removal_verdict::RemovalVerdict::Removable { refs, .. }
+            if refs == items
+    );
+    if agent.session.id != agent_id
+        || agent.session.session_id.as_ref() != Some(&session_id)
+        || current_row.map(|current| current.key()) != Some(row.key())
+        || !same_items
+    {
+        agent.show_toast("Removal selection changed; select the item and confirm again");
+        return vec![];
+    }
     if agent.pending_removed_context_items.contains(&session_id) {
         agent.show_toast("A removal is already in progress");
         return vec![];

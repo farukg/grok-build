@@ -55,6 +55,10 @@ impl AgentView {
         let Some(panel) = self.timeline_mode.panel() else {
             return InputOutcome::Changed;
         };
+        if panel.cursor_row().is_none() {
+            self.show_toast("Selection no longer exists; select an item first");
+            return InputOutcome::Changed;
+        }
         let change = panel.plan_bulk(request);
         if change.indices.is_empty() {
             self.show_toast(request.goal.nothing_to_do());

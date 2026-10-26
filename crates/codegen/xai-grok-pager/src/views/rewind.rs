@@ -77,8 +77,16 @@ pub enum RewindPhase {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct TimelineRewindTarget {
+    pub session_id: agent_client_protocol::SessionId,
+    pub prompt_id: crate::scrollback::entry::EntryId,
+    pub prompt_index: usize,
+}
+
 #[derive(Debug)]
 pub struct RewindState {
+    pub timeline_target: Option<TimelineRewindTarget>,
     pub phase: RewindPhase,
     pub anchor_entry_idx: usize,
     pub stashed_draft: Option<StashedPrompt>,
@@ -92,6 +100,7 @@ impl RewindState {
         selected_prompt_index: Option<usize>,
     ) -> Self {
         Self {
+            timeline_target: None,
             phase: RewindPhase::CancelOffer { active_idx: 0 },
             anchor_entry_idx: anchor,
             stashed_draft: draft,
@@ -233,7 +242,7 @@ pub fn rewind_row_at(phase: &RewindPhase, area: Rect, col: u16, row: u16) -> Opt
             Some(1) => Some(1),
             _ => None,
         },
-        RewindPhase::Confirm { .. } => match row.checked_sub(area.y + 2) {
+        RewindPhase::Confirm { .. } => match row.checked_sub(area.y + 3) {
             Some(0) => Some(0),
             Some(1) => Some(1),
             Some(2) => Some(2),
@@ -471,6 +480,16 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 content_w,
             );
             y += 1;
+            buf.set_line(
+                content_x,
+                y,
+                &Line::from(Span::styled(
+                    "Removes this turn and all later turns.",
+                    Style::default().fg(theme.gray),
+                )),
+                content_w,
+            );
+            y += 1;
             render_radio_row(
                 buf,
                 content_x,
@@ -489,7 +508,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 y,
                 content_w,
                 'a',
-                "Yes, and don't ask again",
+                "Yes; optional prompts off (F6 always asks)",
                 *active_idx == 1,
                 focused,
                 &theme,
@@ -643,6 +662,7 @@ mod tests {
 
     fn confirm_state() -> RewindState {
         RewindState {
+            timeline_target: None,
             phase: RewindPhase::Confirm {
                 target_prompt_index: 3,
                 active_idx: 0,
@@ -685,10 +705,10 @@ mod tests {
             active_idx: 0,
             prompt_preview: None,
         };
-        assert_eq!(rewind_row_at(&phase, area(), 5, 2), Some(0));
-        assert_eq!(rewind_row_at(&phase, area(), 5, 3), Some(1));
-        assert_eq!(rewind_row_at(&phase, area(), 5, 4), Some(2));
-        assert_eq!(rewind_row_at(&phase, area(), 5, 5), None);
+        assert_eq!(rewind_row_at(&phase, area(), 5, 2), None);
+        assert_eq!(rewind_row_at(&phase, area(), 5, 3), Some(0));
+        assert_eq!(rewind_row_at(&phase, area(), 5, 4), Some(1));
+        assert_eq!(rewind_row_at(&phase, area(), 5, 5), Some(2));
     }
 
     #[test]
@@ -834,6 +854,7 @@ mod tests {
     #[test]
     fn esc_dismisses_from_picker_and_other_phases() {
         let s = RewindState {
+            timeline_target: None,
             phase: RewindPhase::Picker {
                 points: vec![],
                 selected: 0,
@@ -854,6 +875,7 @@ mod tests {
         ));
 
         let s = RewindState {
+            timeline_target: None,
             phase: RewindPhase::Loading,
             anchor_entry_idx: 0,
             stashed_draft: None,

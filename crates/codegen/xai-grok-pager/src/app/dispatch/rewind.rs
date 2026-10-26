@@ -78,6 +78,80 @@ pub(in crate::app) fn find_user_prompt_entry_for_shell_index(
     None
 }
 
+pub(super) fn dispatch_rewind_timeline(
+    app: &mut AppView,
+    row: crate::scrollback::state::TimelineRow,
+) -> Vec<Effect> {
+    use crate::scrollback::state::TimelineRowKind;
+    use crate::views::rewind::TimelineRewindTarget;
+
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    let Some(session_id) = agent.session.session_id.clone() else {
+        agent.show_toast(NO_SESSION_NOTICE);
+        return vec![];
+    };
+    let current = agent
+        .timeline_mode
+        .panel()
+        .and_then(|panel| panel.cursor_row());
+    if current.map(|current| current.key()) != Some(row.key()) {
+        agent.show_toast("Rewind selection changed; select the turn again");
+        return vec![];
+    }
+    let TimelineRowKind::Turn { prompt_id, .. } = row.kind else {
+        agent.show_toast(
+            "Rewind affects a whole turn and all later turns; select a turn explicitly",
+        );
+        return vec![];
+    };
+    let Some(entry) = agent.scrollback.get_by_id(prompt_id) else {
+        agent.show_toast("The selected turn no longer exists");
+        return vec![];
+    };
+    let RenderBlock::UserPrompt(prompt) = &entry.block else {
+        agent.show_toast("The selected item is not a turn");
+        return vec![];
+    };
+    let Some(prompt_index) = prompt
+        .prompt_index
+        .filter(|_| !prompt.is_interjection && !prompt.is_bash)
+    else {
+        agent.show_toast("The selected turn has no rewind id");
+        return vec![];
+    };
+    if agent.session.state.is_busy() || !agent.pending_removed_context_items.is_empty() {
+        agent.show_toast("Wait until the current operation finishes, then select the turn again");
+        return vec![];
+    }
+    let Some(anchor_entry_idx) = agent.scrollback.index_of_id(prompt_id) else {
+        return vec![];
+    };
+    let prompt_preview = prompt.text.clone();
+    agent.dismiss_jump_picker();
+    let stashed_draft = stash_prompt(&mut agent.prompt);
+    agent.rewind_state = Some(RewindState {
+        timeline_target: Some(TimelineRewindTarget {
+            session_id,
+            prompt_id,
+            prompt_index,
+        }),
+        phase: RewindPhase::Confirm {
+            target_prompt_index: prompt_index,
+            active_idx: 2,
+            prompt_preview: Some(prompt_preview),
+        },
+        anchor_entry_idx,
+        stashed_draft,
+        selected_prompt_index: Some(prompt_index),
+    });
+    vec![]
+}
+
 pub(super) fn dispatch_rewind(app: &mut AppView) -> Vec<Effect> {
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
@@ -110,6 +184,7 @@ pub(super) fn dispatch_rewind(app: &mut AppView) -> Vec<Effect> {
 
     let draft = stash_prompt(&mut agent.prompt);
     agent.rewind_state = Some(RewindState {
+        timeline_target: None,
         phase: RewindPhase::Loading,
         anchor_entry_idx: selected_idx.unwrap_or(0),
         stashed_draft: draft,
@@ -146,6 +221,7 @@ pub(super) fn dispatch_rewind_show_picker(app: &mut AppView) -> Vec<Effect> {
 
     let draft = stash_prompt(&mut agent.prompt);
     agent.rewind_state = Some(RewindState {
+        timeline_target: None,
         phase: RewindPhase::Loading,
         anchor_entry_idx: 0,
         stashed_draft: draft,
@@ -172,6 +248,15 @@ pub(super) fn dispatch_rewind_picker_select(app: &mut AppView, prompt_index: usi
             pts.iter().find(|p| p.prompt_index == prompt_index)
         },
     );
+    if point.is_none()
+        || !matches!(
+            agent.rewind_state.as_ref().map(|state| &state.phase),
+            Some(RewindPhase::Picker { .. })
+        )
+    {
+        agent.show_toast("The selected rewind point no longer exists");
+        return vec![];
+    }
     let preview = point.and_then(|p| p.prompt_preview.clone());
 
     let anchor = find_user_prompt_entry_for_shell_index(&agent.scrollback, prompt_index);
@@ -213,6 +298,7 @@ pub(super) fn dispatch_rewind_cancel_offer(app: &mut AppView) -> Vec<Effect> {
         .and_then(|s| s.selected_prompt_index);
     let draft = agent.rewind_state.take().and_then(|s| s.stashed_draft);
     agent.rewind_state = Some(RewindState {
+        timeline_target: None,
         phase: RewindPhase::Loading,
         anchor_entry_idx: anchor,
         stashed_draft: draft,
@@ -231,11 +317,39 @@ pub(super) fn dispatch_rewind_confirm(app: &mut AppView, target: usize) -> Vec<E
     let Some(agent) = app.agents.get_mut(&id) else {
         return vec![];
     };
-    let anchor = agent
-        .rewind_state
-        .as_ref()
-        .map(|s| s.anchor_entry_idx)
-        .unwrap_or(0);
+    let Some(state) = agent.rewind_state.as_ref() else {
+        agent.show_toast("No rewind is awaiting confirmation");
+        return vec![];
+    };
+    if !matches!(state.phase, RewindPhase::Confirm { target_prompt_index, .. } if target_prompt_index == target)
+    {
+        agent.show_toast("Rewind confirmation no longer matches its target");
+        return vec![];
+    }
+    if let Some(selection) = &state.timeline_target {
+        let selected = agent
+            .timeline_mode
+            .panel()
+            .and_then(|panel| panel.cursor_row());
+        let same_prompt = agent.scrollback.get_by_id(selection.prompt_id).is_some_and(|entry| {
+            matches!(&entry.block, RenderBlock::UserPrompt(prompt)
+                if prompt.prompt_index == Some(target) && !prompt.is_interjection && !prompt.is_bash)
+        });
+        if agent.session.session_id.as_ref() != Some(&selection.session_id)
+            || selection.prompt_index != target
+            || selected.map(|row| row.key())
+                != Some(crate::scrollback::state::TimelineRowKey::Turn(
+                    selection.prompt_id,
+                ))
+            || !same_prompt
+            || agent.session.state.is_busy()
+            || !agent.pending_removed_context_items.is_empty()
+        {
+            agent.show_toast("Rewind selection changed; select the turn and confirm again");
+            return vec![];
+        }
+    }
+    let anchor = state.anchor_entry_idx;
     let draft = agent.rewind_state.take().and_then(|s| s.stashed_draft);
     enter_executing(agent, id, target, anchor, draft)
 }
@@ -243,7 +357,10 @@ pub(super) fn dispatch_rewind_confirm(app: &mut AppView, target: usize) -> Vec<E
 /// "Yes, and don't ask again": quiet-persist confirm-before-rewind off, then execute.
 /// No settings checkmark toast; success/toast comes from the rewind itself.
 pub(super) fn dispatch_rewind_confirm_never_ask(app: &mut AppView, target: usize) -> Vec<Effect> {
-    let mut effects = Vec::new();
+    let mut effects = dispatch_rewind_confirm(app, target);
+    if effects.is_empty() {
+        return effects;
+    }
     let prev = app.current_ui.confirm_before_rewind_enabled();
     if prev {
         super::settings::setters::set_confirm_before_rewind_inner(app, false);
@@ -254,7 +371,6 @@ pub(super) fn dispatch_rewind_confirm_never_ask(app: &mut AppView, target: usize
             rollback_value: crate::settings::SettingValue::Bool(true),
         });
     }
-    effects.extend(dispatch_rewind_confirm(app, target));
     effects
 }
 
@@ -294,6 +410,7 @@ fn enter_executing(
         return vec![];
     };
     agent.rewind_state = Some(RewindState {
+        timeline_target: None,
         phase: RewindPhase::Executing {
             target_prompt_index: target,
         },
@@ -320,6 +437,7 @@ fn begin_rewind(
 ) -> Vec<Effect> {
     if confirm {
         agent.rewind_state = Some(RewindState {
+            timeline_target: None,
             phase: RewindPhase::Confirm {
                 target_prompt_index: target,
                 active_idx: 0,
@@ -352,6 +470,7 @@ pub(super) fn dispatch_rewind_success(
             .unwrap_or(0);
         let draft = agent.rewind_state.take().and_then(|s| s.stashed_draft);
         agent.rewind_state = Some(RewindState {
+            timeline_target: None,
             phase: RewindPhase::Error { message: err },
             anchor_entry_idx: anchor,
             stashed_draft: draft,
@@ -411,6 +530,12 @@ pub(super) fn handle_rewind_points_loaded(
     let Some(agent) = app.agents.get_mut(&agent_id) else {
         return vec![];
     };
+    if !matches!(
+        agent.rewind_state.as_ref().map(|state| &state.phase),
+        Some(RewindPhase::Loading)
+    ) {
+        return vec![];
+    }
     agent.rewind_points = Some(points.clone());
 
     let desired_target = agent
@@ -428,11 +553,7 @@ pub(super) fn handle_rewind_points_loaded(
     }
 
     if let Some(dt) = desired_target {
-        let resolved = points
-            .iter()
-            .find(|p| p.prompt_index == dt)
-            .or_else(|| points.iter().max_by_key(|p| p.prompt_index))
-            .cloned();
+        let resolved = points.iter().find(|p| p.prompt_index == dt).cloned();
 
         if let Some(point) = resolved {
             let target = point.prompt_index;
@@ -452,6 +573,11 @@ pub(super) fn handle_rewind_points_loaded(
                 confirm,
             );
         }
+        if let Some(stashed) = stashed {
+            agent.prompt.restore(stashed);
+        }
+        agent.show_toast("The selected rewind point no longer exists");
+        return vec![];
     }
 
     let mut sorted = points;
@@ -464,6 +590,7 @@ pub(super) fn handle_rewind_points_loaded(
         })
         .unwrap_or(0);
     agent.rewind_state = Some(RewindState {
+        timeline_target: None,
         phase: RewindPhase::Picker {
             points: sorted,
             selected: 0,
@@ -491,6 +618,7 @@ pub(super) fn handle_rewind_execute_failed(
         .unwrap_or(0);
     let draft = agent.rewind_state.take().and_then(|s| s.stashed_draft);
     agent.rewind_state = Some(RewindState {
+        timeline_target: None,
         phase: RewindPhase::Error { message: error },
         anchor_entry_idx: anchor,
         stashed_draft: draft,

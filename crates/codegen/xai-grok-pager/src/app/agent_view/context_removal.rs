@@ -6,6 +6,14 @@ use crate::scrollback::state::{TimelineRow, TimelineRowKind};
 use crossterm::event::{KeyCode, KeyEvent};
 use xai_grok_shell::session::ContextItemRef;
 
+#[derive(Debug, Clone)]
+pub(crate) struct ContextRemovalTarget {
+    pub agent_id: crate::app::agent::AgentId,
+    pub session_id: agent_client_protocol::SessionId,
+    pub row: TimelineRow,
+    pub items: Vec<ContextItemRef>,
+}
+
 impl AgentView {
     pub(super) fn run_timeline_item_remove(
         &mut self,
@@ -29,8 +37,17 @@ impl AgentView {
             RemovalVerdict::Removable { refs, skipped } => {
                 self.show_toast(&confirm_hint(row, &refs, skipped));
                 let label = confirm_label(&refs);
+                let Some(session_id) = self.session.session_id.clone() else {
+                    self.show_toast("Session is not connected");
+                    return InputOutcome::Changed;
+                };
                 InputOutcome::ArmPending {
-                    action: Action::RemoveContextItems(refs),
+                    action: Action::RemoveContextItems(ContextRemovalTarget {
+                        agent_id: self.session.id,
+                        session_id,
+                        row,
+                        items: refs,
+                    }),
                     shortcut: crate::input::key::KeyShortcut::from(*key),
                     label: Some(label),
                     ttl: crate::app::app_view::esc_double_press_ttl(),

@@ -447,7 +447,7 @@ pub enum Action {
     FetchContextPolicy,
     /// Replace the active session's context policy.
     SetContextPolicy(xai_grok_shell::sampling::ContextPolicy),
-    RemoveContextItems(Vec<xai_grok_shell::session::ContextItemRef>),
+    RemoveContextItems(crate::app::agent_view::context_removal::ContextRemovalTarget),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
     DemoteToBackground,
@@ -982,6 +982,7 @@ pub enum Action {
     ToggleGoalDetail,
     ToggleWorkflows,
     Rewind,
+    RewindTimeline(crate::scrollback::state::TimelineRow),
     RewindShowPicker,
     RewindPickerSelect(usize),
     RewindConfirm(usize),

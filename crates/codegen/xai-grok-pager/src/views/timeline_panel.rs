@@ -69,7 +69,7 @@ pub enum PanelFocus {
 }
 
 /// An action on the cursor row, dispatched through the existing scrollback action for the row's entry.
-/// On a group row it applies to the group as a whole (fold, rewind to its first member).
+/// Group-capable actions address the whole group; rewind requires an explicit Turn row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineItemAction {
     Jump,
@@ -137,7 +137,7 @@ impl TimelinePanelState {
         let key = self.cursor_row().map(TimelineRow::key);
         self.rows = scrollback.timeline_outline();
         self.generation = generation;
-        self.cursor = self.cursor.min(self.rows.len().saturating_sub(1));
+        self.cursor = self.rows.len();
         if let Some(key) = key {
             self.set_cursor_key(key);
         }

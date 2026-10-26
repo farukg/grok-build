@@ -1,7 +1,7 @@
 //! Context removal through the real input, router and completion paths.
 use super::*;
 use crate::actions::ActionRegistry;
-use crate::app::actions::{Action, Effect};
+use crate::app::actions::{Action, Effect, TaskResult};
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::app::agent_view::removal_test_support::{
@@ -106,6 +106,22 @@ fn app_with_two_reads() -> (AppView, [EntryId; 4]) {
     (app, [prompt, read_a, read_b, reply])
 }
 
+fn removal_action(app: &mut AppView, prompt_index: usize) -> Action {
+    let agent = test_agent_mut(app, ID);
+    let idx = agent.scrollback.iter_entries().position(|(_, entry)| {
+        matches!(&entry.block, RenderBlock::UserPrompt(prompt) if prompt.prompt_index == Some(prompt_index))
+    }).unwrap();
+    agent.open_timeline_panel_at(Some(idx));
+    Action::RemoveContextItems(
+        crate::app::agent_view::context_removal::ContextRemovalTarget {
+            agent_id: ID,
+            session_id: session(),
+            row: *agent.timeline_mode.panel().unwrap().cursor_row().unwrap(),
+            items: vec![turn(prompt_index)],
+        },
+    )
+}
+
 fn open_panel_press_remove(agent: &mut AgentView) -> InputOutcome {
     let registry = ActionRegistry::defaults();
     agent.handle_input(&key(KeyCode::F(6)), &registry);
@@ -122,7 +138,7 @@ fn first_press_arms_removal_of_the_prompts_turn() {
             label,
             ..
         } => {
-            assert_eq!(refs, vec![turn(7)]);
+            assert_eq!(refs.items, vec![turn(7)]);
             assert_eq!(label, Some("remove this turn from context"));
         }
         other => panic!("expected an armed removal, got {other:?}"),
@@ -154,14 +170,16 @@ fn second_press_through_the_app_yields_the_action() {
         .as_ref()
         .expect("the first press arms a pending action");
     assert_eq!(armed.label, Some("remove this turn from context"));
-    assert!(matches!(&armed.action, Action::RemoveContextItems(refs) if *refs == vec![turn(7)]));
+    assert!(
+        matches!(&armed.action, Action::RemoveContextItems(refs) if refs.items == vec![turn(7)])
+    );
 
     let InputOutcome::Action(Action::RemoveContextItems(refs)) =
         app.handle_input(&key(KeyCode::Char('d')))
     else {
         panic!("the second press must yield the removal action");
     };
-    assert_eq!(refs, vec![turn(7)]);
+    assert_eq!(refs.items, vec![turn(7)]);
     assert!(app.pending_action.is_none());
 }
 
@@ -198,7 +216,7 @@ fn a_second_request_while_one_is_pending_is_refused_at_arming() {
 #[test]
 fn dispatching_the_action_returns_the_effect_and_records_the_request() {
     let (mut app, _) = app_with_two_turns();
-    let effects = dispatch(Action::RemoveContextItems(vec![turn(7)]), &mut app);
+    let effects = dispatch(removal_action(&mut app, 7), &mut app);
     let [Effect::RemoveContextItems { session_id, items }] = effects.as_slice() else {
         panic!("expected exactly the remove effect, got {effects:?}");
     };
@@ -215,8 +233,8 @@ fn dispatching_the_action_returns_the_effect_and_records_the_request() {
 #[test]
 fn dispatching_a_second_request_while_pending_is_refused() {
     let (mut app, _) = app_with_two_turns();
-    dispatch(Action::RemoveContextItems(vec![turn(7)]), &mut app);
-    let effects = dispatch(Action::RemoveContextItems(vec![turn(8)]), &mut app);
+    dispatch(removal_action(&mut app, 7), &mut app);
+    let effects = dispatch(removal_action(&mut app, 8), &mut app);
     assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(
         test_agent(&app, ID).pending_removed_context_items,
@@ -232,7 +250,7 @@ fn dispatching_a_second_request_while_pending_is_refused() {
 fn dispatching_without_a_session_toasts_and_sends_nothing() {
     let (mut app, _) = app_with_two_turns();
     test_agent_mut(&mut app, ID).session.session_id = None;
-    let effects = dispatch(Action::RemoveContextItems(vec![turn(7)]), &mut app);
+    let effects = dispatch(removal_action(&mut app, 7), &mut app);
     assert!(effects.is_empty(), "{effects:?}");
     assert!(
         test_agent(&app, ID)
@@ -486,4 +504,118 @@ fn boundary_survives_when_the_entry_before_a_wake_turn_is_removed_with_its_turn(
     assert_eq!(entry_ids(&app).len(), 2);
     assert_eq!(entry_ids(&app).last().copied(), Some(wake_reply));
     assert!(q6.is_some_and(|id| agent.session.tracker.turn_ledger.turn_ends_after(id)));
+}
+
+#[test]
+fn removal_rejects_a_changed_cursor_session_or_missing_row() {
+    for change in 0..3 {
+        let (mut app, turns) = app_with_two_turns();
+        let action = removal_action(&mut app, 7);
+        let before = entry_ids(&app);
+        let agent = test_agent_mut(&mut app, ID);
+        match change {
+            0 => {
+                agent.open_timeline_panel_at(agent.scrollback.index_of_id(turns.prompt_8));
+            }
+            1 => agent.session.session_id = Some(acp::SessionId::new("another-session")),
+            2 => {
+                agent.scrollback.remove_entry(turns.prompt_7);
+            }
+            _ => unreachable!(),
+        }
+        let after_change = entry_ids(&app);
+        assert!(dispatch(action, &mut app).is_empty());
+        assert_eq!(entry_ids(&app), after_change);
+        assert!(
+            test_agent(&app, ID)
+                .pending_removed_context_items
+                .is_empty()
+        );
+        if change != 2 {
+            assert_eq!(entry_ids(&app), before);
+        }
+    }
+}
+
+#[test]
+fn f6_rewind_requires_an_explicit_turn_and_confirmation_even_when_disabled() {
+    let (mut app, turns) = app_with_two_turns();
+    app.current_ui.confirm_before_rewind = Some(false);
+    let agent = test_agent_mut(&mut app, ID);
+    agent.open_timeline_panel_at(agent.scrollback.index_of_id(turns.read_7));
+    let row = *agent.timeline_mode.panel().unwrap().cursor_row().unwrap();
+    assert!(dispatch(Action::RewindTimeline(row), &mut app).is_empty());
+    assert!(test_agent(&app, ID).rewind_state.is_none());
+
+    let agent = test_agent_mut(&mut app, ID);
+    agent.open_timeline_panel_at(agent.scrollback.index_of_id(turns.prompt_7));
+    let row = *agent.timeline_mode.panel().unwrap().cursor_row().unwrap();
+    assert!(dispatch(Action::RewindTimeline(row), &mut app).is_empty());
+    assert!(matches!(
+        test_agent(&app, ID).rewind_state.as_ref().unwrap().phase,
+        crate::views::rewind::RewindPhase::Confirm {
+            target_prompt_index: 7,
+            active_idx: 2,
+            ..
+        }
+    ));
+    let effects = dispatch(Action::RewindConfirm(7), &mut app);
+    assert!(
+        matches!(effects.as_slice(), [Effect::RewindExecute { session_id, target_prompt_index: 7, .. }] if session_id == &session())
+    );
+}
+
+#[test]
+fn f6_rewind_rejects_changed_selection_before_confirmation() {
+    let (mut app, turns) = app_with_two_turns();
+    let agent = test_agent_mut(&mut app, ID);
+    agent.open_timeline_panel_at(agent.scrollback.index_of_id(turns.prompt_7));
+    let row = *agent.timeline_mode.panel().unwrap().cursor_row().unwrap();
+    dispatch(Action::RewindTimeline(row), &mut app);
+    let agent = test_agent_mut(&mut app, ID);
+    agent.open_timeline_panel_at(agent.scrollback.index_of_id(turns.prompt_8));
+    assert!(dispatch(Action::RewindConfirm(7), &mut app).is_empty());
+    assert!(dispatch(Action::RewindConfirm(8), &mut app).is_empty());
+}
+
+#[test]
+fn missing_rewind_point_never_falls_back_to_another_turn() {
+    let (mut app, turns) = app_with_two_turns();
+    app.current_ui.confirm_before_rewind = Some(false);
+    let agent = test_agent_mut(&mut app, ID);
+    agent
+        .scrollback
+        .set_selected(agent.scrollback.index_of_id(turns.prompt_7));
+    dispatch(Action::Rewind, &mut app);
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::RewindPointsLoaded {
+            agent_id: ID,
+            points: vec![crate::views::rewind::RewindPointInfo {
+                prompt_index: 8,
+                created_at: String::new(),
+                num_file_snapshots: 0,
+                prompt_preview: Some("Q8".to_owned()),
+                has_file_changes: false,
+            }],
+        }),
+        &mut app,
+    );
+    assert!(effects.is_empty());
+    assert!(test_agent(&app, ID).rewind_state.is_none());
+    assert_eq!(
+        toast(&app).as_deref(),
+        Some("The selected rewind point no longer exists")
+    );
+}
+
+#[test]
+fn removing_the_selected_row_leaves_no_implicit_replacement_target() {
+    let (mut app, turns) = app_with_two_turns();
+    let agent = test_agent_mut(&mut app, ID);
+    agent.open_timeline_panel_at(agent.scrollback.index_of_id(turns.prompt_7));
+    agent.scrollback.remove_entry(turns.prompt_7);
+    let registry = ActionRegistry::defaults();
+    let outcome = agent.handle_input(&key(KeyCode::Char('d')), &registry);
+    assert!(matches!(outcome, InputOutcome::Changed));
+    assert!(agent.timeline_mode.panel().unwrap().cursor_row().is_none());
 }

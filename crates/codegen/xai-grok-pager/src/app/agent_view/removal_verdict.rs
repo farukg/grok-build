@@ -264,7 +264,11 @@ impl AgentView {
             )),
             TimelineRowKind::Group { first_id } => {
                 let first = self.scrollback.index_of_id(first_id)?;
-                let range = self.scrollback.span_at(first)?.range.clone();
+                let span = self.scrollback.span_at(first)?;
+                if span.range.start != first {
+                    return None;
+                }
+                let range = span.range.clone();
                 let mut facts = range
                     .filter_map(|idx| self.scrollback.get(idx))
                     .map(|entry| self.removal_entry_facts(entry));

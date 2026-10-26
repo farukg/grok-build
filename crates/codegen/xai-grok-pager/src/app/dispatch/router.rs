@@ -52,7 +52,7 @@ use super::queue::dispatch_drain_queue;
 use super::rewind::{
     dispatch_rewind, dispatch_rewind_cancel_offer, dispatch_rewind_confirm,
     dispatch_rewind_confirm_never_ask, dispatch_rewind_dismiss, dispatch_rewind_dismiss_error,
-    dispatch_rewind_picker_select, dispatch_rewind_show_picker,
+    dispatch_rewind_picker_select, dispatch_rewind_show_picker, dispatch_rewind_timeline,
 };
 use super::rewind_remove::dispatch_remove_context_items;
 use super::session::foreign::dispatch_fetch_session_list;
@@ -1095,7 +1095,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             app,
             crate::app::actions::ContextPolicyChange::Replace(policy),
         ),
-        Action::RemoveContextItems(items) => dispatch_remove_context_items(app, items),
+        Action::RemoveContextItems(target) => dispatch_remove_context_items(app, target),
         Action::CancelScheduledTask(task_id) => dispatch_cancel_scheduled_task(app, task_id),
         Action::DemoteToBackground => dispatch_demote_to_background(app),
         Action::RequestBundleStatus => vec![Effect::FetchBundleStatus],
@@ -1643,6 +1643,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::Rewind => dispatch_rewind(app),
+        Action::RewindTimeline(row) => dispatch_rewind_timeline(app, row),
         Action::RewindShowPicker => dispatch_rewind_show_picker(app),
         Action::RewindPickerSelect(prompt_index) => {
             dispatch_rewind_picker_select(app, prompt_index)

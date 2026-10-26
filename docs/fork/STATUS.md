@@ -36,6 +36,16 @@ details; its existing [handoff](handoff/2026-10-24/owner-handoff/handoff.md) and
 [Wave B references](handoff/2026-10-24/wave-b/) retain requirements and history.
 Current evidence supersedes their older local-verification and gateway-owner text.
 
+## Local follow-up source work (2026-10-26)
+
+F6 selection safety now binds removal confirmations to the original agent, session,
+stable row and exact context refs. F6 rewind requires an explicitly selected numbered
+Turn, always confirms its whole-tail scope with No selected initially, and rejects
+stale targets. Missing rewind points and disappearing outline rows have no replacement
+default. Contract: [F6 actions and context removal](design/f6-f7.md).
+Regression cases are authored and unexecuted; these local changes have no build or
+runtime/PTY acceptance evidence. Current instruction: local thematic commits only.
+
 ## Current source disposition and open gates
 
 - R: local terminal execution identity, shutdown enrollment/kill settlement and

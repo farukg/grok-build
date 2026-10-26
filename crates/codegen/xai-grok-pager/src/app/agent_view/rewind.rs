@@ -264,6 +264,7 @@ mod sync_rewind_anchor_to_picker_tests {
         };
         let points = vec![pt(2, "charlie"), pt(1, "bravo"), pt(0, "alpha")];
         agent.rewind_state = Some(RewindState {
+            timeline_target: None,
             phase: RewindPhase::Picker {
                 points,
                 selected: 0,

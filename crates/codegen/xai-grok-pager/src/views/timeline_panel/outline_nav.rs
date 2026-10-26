@@ -34,6 +34,14 @@ impl TimelinePanelState {
 
     /// The step `nav` takes from the cursor.
     pub fn navigate(&self, nav: PanelNav) -> TreeStep {
+        if self.cursor_row().is_none() {
+            let row = match nav {
+                PanelNav::Up | PanelNav::End | PanelNav::PageUp => self.view.visible().last(),
+                PanelNav::Down | PanelNav::Home | PanelNav::PageDown => self.view.visible().first(),
+                PanelNav::Left | PanelNav::Right => None,
+            };
+            return row.copied().map(TreeStep::MoveTo).unwrap_or(TreeStep::Stay);
+        }
         navigate(
             self.view.tree(),
             self.cursor,
