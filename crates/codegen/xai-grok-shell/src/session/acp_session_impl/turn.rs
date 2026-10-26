@@ -1186,9 +1186,6 @@ impl SessionActor {
             }
             self.drain_between_turn_completions(&commit_ids).await;
             self.inject_workflow_status_reminder().await;
-            if !self.startup_hints.is_subagent {
-                self.push_system_reminder(super::stop_gate::TURN_WAIT_CONTRACT);
-            }
             let user_message = if user_images.is_empty() {
                 user_message
             } else if self.is_cursor_harness() {

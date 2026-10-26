@@ -60,6 +60,13 @@ unexecuted. The independent Context/Display scopes, warning flow, grouped contro
 renderer completion and request-inspection work remain active and incomplete. User
 scope/presentation preferences are recorded in [F6/F7 design](design/f6-f7.md).
 
+The repeated wait-contract reminder is now owned by the DeclareWait tool description.
+The turn-start path no longer appends the same contract to conversation history on
+every prompt. Historical copies are preserved. The separate per-turn re-publication
+of all synthetic request records remains open; see the current
+[completion/wait map](handoff/2026-10-24/wave-b/completion-delivery-map.md). This local
+change is unbuilt and has no runtime model-request acceptance yet.
+
 ## Current source disposition and open gates
 
 - R: local terminal execution identity, shutdown enrollment/kill settlement and

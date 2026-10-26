@@ -11,7 +11,7 @@ pub const MAX_STOP_HOOK_CONTINUATIONS_PER_TURN: u32 = 8;
 const SESSION_END_STOP_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(super) const DECLARE_WAIT_TOOL: &str = "DeclareWait";
-pub(super) const TURN_WAIT_CONTRACT: &str = "When you need to wait, call DeclareWait alone \
+const TURN_WAIT_CONTRACT: &str = "When you need to wait, call DeclareWait alone \
 with the chosen live owned task, monitor, subagent, or workflow ids. This ends your turn \
 and suppresses goal continuation until any selected target completes or new input \
 arrives. Unselected registry changes alone do not satisfy the wait; any admitted input breaks it. Ending a turn without declaring \
@@ -170,7 +170,7 @@ pub(super) enum WaitToolStep {
 pub(super) fn wait_tool_spec() -> ToolSpec {
     ToolSpec {
         name: DECLARE_WAIT_TOOL.to_string(),
-        description: Some("End this turn waiting on a nonempty chosen subset of live background work owned by this session. Call alone. Any selected completion or admitted input releases the wait; unselected registry changes alone do not.".to_string()),
+        description: Some(TURN_WAIT_CONTRACT.to_string()),
         parameters: serde_json::json!({
             "type": "object", "additionalProperties": false, "required": ["targets"],
             "properties": { "targets": { "type": "array", "minItems": 1, "items": {
