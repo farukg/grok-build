@@ -23,6 +23,9 @@ use crate::events::{SamplingChannel, SamplingErrorInfo, SamplingEvent};
 use crate::metrics::InferenceLatencyStats;
 use crate::types::RequestId;
 
+mod reasoning;
+use reasoning::ReasoningSections;
+
 /// Wire values of `incomplete_details.reason` on an `Incomplete` response.
 /// The xAI server emits the three `max_*` values; `content_filter` is OpenAI vocabulary, kept for spec compatibility.
 const INCOMPLETE_REASON_CONTENT_FILTER: &str = "content_filter";
@@ -247,6 +250,7 @@ pub(crate) fn stream_responses_tracked<'a>(
         let mut message_chunk_count: u64 = 0;
         let mut first_token_emitted = false;
         let mut reasoning_acc = String::new();
+        let mut reasoning_sections = ReasoningSections::default();
         let mut last_content_chunk_at = Instant::now();
 
         // Maps Responses API `output_index` to our tool-only `tool_index`.
@@ -332,6 +336,17 @@ pub(crate) fn stream_responses_tracked<'a>(
             // Track whether ResponseIncomplete should break the loop after the content-aware idle check below
             let mut should_break = false;
 
+            let separates_reasoning = reasoning_sections.observe(&event);
+            if separates_reasoning {
+                chunk_index += 1;
+                yield SamplingEvent::ChannelToken {
+                    request_id: request_id.clone(),
+                    channel: SamplingChannel::Reasoning,
+                    text: "\n\n".to_owned(),
+                    chunk_index,
+                };
+            }
+
             match event {
                 ResponseStreamEvent::ResponseOutputTextDelta(text_delta_event) => {
                     let delta = text_delta_event.delta;
@@ -383,6 +398,9 @@ pub(crate) fn stream_responses_tracked<'a>(
                             };
                         }
                         chunk_index += 1;
+                        if separates_reasoning && !reasoning_acc.is_empty() {
+                            reasoning_acc.push_str("\n\n");
+                        }
                         reasoning_acc.push_str(&delta);
                         yield SamplingEvent::ChannelToken {
                             request_id: request_id.clone(),
@@ -775,6 +793,9 @@ pub(crate) fn stream_responses_tracked<'a>(
 }
 
 #[cfg(test)]
+mod reasoning_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use async_openai::types::responses as rs_types;
@@ -845,14 +866,14 @@ mod tests {
         })
     }
 
-    fn completed_event() -> rs::ResponseStreamEvent {
+    pub(super) fn completed_event() -> rs::ResponseStreamEvent {
         rs::ResponseStreamEvent::ResponseCompleted(rs_types::ResponseCompletedEvent {
             response: empty_completed_response(),
             sequence_number: 0,
         })
     }
 
-    async fn collect(s: impl Stream<Item = SamplingEvent>) -> Vec<SamplingEvent> {
+    pub(super) async fn collect(s: impl Stream<Item = SamplingEvent>) -> Vec<SamplingEvent> {
         let mut out = Vec::new();
         let mut s = pin!(s);
         while let Some(ev) = s.next().await {

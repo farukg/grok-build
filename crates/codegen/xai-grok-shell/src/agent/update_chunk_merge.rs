@@ -359,6 +359,11 @@ fn merge_acp_chunks(
     acp::SessionNotification,
     Option<acp::SessionNotification>,
 ) {
+    let previous_stream = prev.meta.as_ref().and_then(|meta| meta.get("streamStartMs"));
+    let incoming_stream = new.meta.as_ref().and_then(|meta| meta.get("streamStartMs"));
+    if previous_stream != incoming_stream {
+        return (true, prev, Some(new));
+    }
     let (new_session_id, new_update, new_meta) = (new.session_id, new.update, new.meta);
     let (prev_session_id, prev_update, prev_meta) = (prev.session_id, prev.update, prev.meta);
     match (prev_update, new_update) {
@@ -562,6 +567,37 @@ mod tests {
                 _ => None,
             },
             SessionNotification::Xai(_) => None,
+        }
+    }
+
+    #[test]
+    fn thought_buffer_preserves_whitespace_and_flushes_at_stream_boundaries() {
+        let thought = |stream_start, text: &str| {
+            acp::SessionNotification::new(
+                acp::SessionId::new("s"),
+                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                    acp::ContentBlock::Text(acp::TextContent::new(text)),
+                )),
+            ).meta(json!({ "streamStartMs": stream_start }).as_object().cloned())
+        };
+        let mut buffer = ReplayBuffer::new(Some(settings(100, 1_000_000)));
+        assert!(buffer.consume_chunk(thought(1000, "first")).is_none());
+        assert!(buffer.consume_chunk(thought(1000, "\n\n")).is_none());
+        assert_eq!(pending_text(&buffer).as_deref(), Some("first\n\n"));
+        let (first, second) = buffer.consume_chunk(thought(2000, "second")).unwrap();
+        for (notification, expected_text, expected_start) in [
+            (first, "first\n\n", 1000),
+            (second.unwrap(), "second", 2000),
+        ] {
+            let notification = notification.expect_acp();
+            let acp::SessionUpdate::AgentThoughtChunk(chunk) = &notification.update else {
+                panic!("expected thought chunk");
+            };
+            let acp::ContentBlock::Text(text) = &chunk.content else {
+                panic!("expected text");
+            };
+            assert_eq!(text.text, expected_text);
+            assert_eq!(notification.meta.as_ref().unwrap().get("streamStartMs"), Some(&json!(expected_start)));
         }
     }
 

@@ -211,7 +211,7 @@ impl SessionActor {
                     .await;
                 }
                 SamplingChannel::Reasoning => {
-                    if text.trim().is_empty() {
+                    if text.is_empty() {
                         return;
                     }
                     self.bump_stream_apply_span(&request_id, text.len());

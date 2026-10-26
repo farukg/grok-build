@@ -178,11 +178,13 @@ fn thought_chunk_dropped_when_flag_off() {
     assert!(tracker.current_thinking.is_some());
 }
 #[test]
-fn whitespace_thought_chunk_does_not_create_visible_entry() {
+fn whitespace_thought_chunk_is_preserved_until_a_blank_block_is_finished() {
     crate::appearance::cache::set_show_thinking_blocks(true);
     let mut sb = ScrollbackState::new();
     let mut tracker = AcpUpdateTracker::new();
-    assert!(!tracker.handle_update(thought_chunk(" \t\n"), &meta(), &mut sb));
+    assert!(tracker.handle_update(thought_chunk(" \t\n"), &meta(), &mut sb));
+    assert!(matches!(&sb.get(0).unwrap().block, RenderBlock::Thinking(thinking) if thinking.text() == " \t\n"));
+    tracker.finish_turn(&mut sb);
     assert_eq!(sb.len(), 0);
     assert!(tracker.current_thinking.is_none());
 }
@@ -2102,9 +2104,8 @@ fn same_stream_start_appends_normally() {
     tracker.handle_update(agent_chunk("world!"), &stream, &mut sb);
     assert_eq!(sb.len(), 1, "Same stream should append to one entry");
 }
-/// Provider stream restarts are transport boundaries, not visible thought boundaries.
 #[test]
-fn stream_start_keeps_thinking_in_one_logical_turn() {
+fn thinking_after_a_tool_and_stream_restart_keeps_its_chronological_position() {
     crate::appearance::cache::set_show_thinking_blocks(true);
     let mut sb = ScrollbackState::new();
     let mut tracker = AcpUpdateTracker::new();
@@ -2127,26 +2128,77 @@ fn stream_start_keeps_thinking_in_one_logical_turn() {
         .filter(|entry| matches!(entry.block, RenderBlock::Thinking(_)))
         .map(|entry| entry.id)
         .collect();
-    assert_eq!(
-        thinking_ids.len(),
-        1,
-        "one logical turn owns one thought history"
-    );
-    let RenderBlock::Thinking(thinking) = &sb.get_by_id(thinking_ids[0]).unwrap().block else {
-        panic!("filtered entry must be thinking");
-    };
-    assert_eq!(thinking.text(), "thinking A thinking B");
+    assert_eq!(thinking_ids.len(), 2);
+    assert_eq!(sb.len(), 3);
+    assert!(matches!(&sb.get(0).unwrap().block, RenderBlock::Thinking(thinking) if thinking.text() == "thinking A"));
+    assert!(matches!(&sb.get(1).unwrap().block, RenderBlock::ToolCall(_)));
+    assert!(matches!(&sb.get(2).unwrap().block, RenderBlock::Thinking(thinking) if thinking.text() == " thinking B"));
+    assert!(!sb.get_by_id(thinking_ids[0]).unwrap().is_running);
+    assert!(sb.get_by_id(thinking_ids[1]).unwrap().is_running);
     tracker.finish_turn(&mut sb);
-    let RenderBlock::Thinking(thinking) = &sb.get_by_id(thinking_ids[0]).unwrap().block else {
+    let RenderBlock::Thinking(thinking) = &sb.get_by_id(thinking_ids[1]).unwrap().block else {
         panic!("thinking entry must survive turn completion");
     };
-    assert_eq!(thinking.elapsed_time_ms(), Some(131));
-    assert!(
-        !sb.get_by_id(thinking_ids[0]).unwrap().is_running,
-        "turn completion, not stream B, finishes the thought history"
-    );
-    assert_ne!(thinking.elapsed_time_ms(), Some(31));
+    assert_eq!(thinking.elapsed_time_ms(), Some(31));
+    assert!(!sb.get_by_id(thinking_ids[1]).unwrap().is_running);
 }
+#[test]
+fn thinking_after_a_tool_in_the_same_stream_starts_after_the_tool_live_and_replay() {
+    crate::appearance::cache::set_show_thinking_blocks(true);
+    for is_replay in [false, true] {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        let metadata = NotificationMeta { is_replay, ..meta_stream(1000) };
+        for update in [
+            thought_chunk("before"),
+            tool_call("tc1", acp::ToolKind::Read, "src/main.rs"),
+            thought_chunk("after"),
+        ] {
+            tracker.handle_update(update, &metadata, &mut sb);
+        }
+        assert_eq!(sb.len(), 3);
+        assert!(matches!(&sb.get(0).unwrap().block, RenderBlock::Thinking(thinking) if thinking.text() == "before"));
+        assert!(matches!(&sb.get(1).unwrap().block, RenderBlock::ToolCall(_)));
+        assert!(matches!(&sb.get(2).unwrap().block, RenderBlock::Thinking(thinking) if thinking.text() == "after"));
+    }
+}
+
+#[test]
+fn a_live_thinking_block_stays_collapsed_after_more_chunks_and_finish() {
+    crate::appearance::cache::set_show_thinking_blocks(true);
+    let mut sb = ScrollbackState::new();
+    let mut tracker = AcpUpdateTracker::new();
+    let metadata = meta_stream(1000);
+    tracker.handle_update(thought_chunk("one\ntwo\nthree\nfour"), &metadata, &mut sb);
+    sb.set_selected(Some(0));
+    sb.collapse_selected();
+    assert!(sb.get(0).unwrap().is_running);
+    assert_eq!(sb.get(0).unwrap().display_mode, DisplayMode::Collapsed);
+    tracker.handle_update(thought_chunk("\nfive\nsix"), &metadata, &mut sb);
+    assert_eq!(sb.get(0).unwrap().display_mode, DisplayMode::Collapsed);
+    tracker.finish_turn(&mut sb);
+    assert!(!sb.get(0).unwrap().is_running);
+    assert_eq!(sb.get(0).unwrap().display_mode, DisplayMode::Collapsed);
+    assert!(matches!(&sb.get(0).unwrap().block, RenderBlock::Thinking(thinking)
+        if thinking.text() == "one\ntwo\nthree\nfour\nfive\nsix"));
+}
+
+#[test]
+fn thought_whitespace_deltas_preserve_markdown_sections_live_and_replay() {
+    crate::appearance::cache::set_show_thinking_blocks(true);
+    for is_replay in [false, true] {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        let metadata = NotificationMeta { is_replay, ..meta_stream(1000) };
+        for delta in ["watcher script**", "\n\n", "**Evaluating helper", " ", "write**"] {
+            tracker.handle_update(thought_chunk(delta), &metadata, &mut sb);
+        }
+        assert_eq!(sb.len(), 1);
+        assert!(matches!(&sb.get(0).unwrap().block, RenderBlock::Thinking(thinking)
+            if thinking.text() == "watcher script**\n\n**Evaluating helper write**"));
+    }
+}
+
 /// Agent message in stream A, then agent message in stream B (no thinking between).
 #[test]
 fn stream_start_breaks_agent_msg_to_agent_msg() {

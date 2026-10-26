@@ -46,6 +46,12 @@ default. Contract: [F6 actions and context removal](design/f6-f7.md).
 Regression cases are authored and unexecuted; these local changes have no build or
 runtime/PTY acceptance evidence. Current instruction: local thematic commits only.
 
+Responses reasoning now preserves summary/content section boundaries and whitespace
+deltas. The pager starts a new chronological Thinking block after tool calls and
+transport-stream changes. Source scope and unexecuted regression cases are documented
+in [F1 display](streams/f1-display.md#thinking-section-boundaries-and-chronological-order-2026-10-26).
+Raw SSE evidence and runtime confirmation for the two reported sessions remain open.
+
 ## Current source disposition and open gates
 
 - R: local terminal execution identity, shutdown enrollment/kill settlement and

@@ -1001,9 +1001,7 @@ impl AcpUpdateTracker {
                 .last_stream_start_ms
                 .is_some_and(|prev| prev != new_start)
             {
-                // Transport streams can restart after every tool action, retry, or
-                // provider handoff within one logical turn. A stream boundary ends
-                // visible assistant text, but reasoning remains one turn-owned history.
+                self.finish_thinking(scrollback);
                 if let Some(agent_id) = self.current_agent_msg.take() {
                     scrollback.finish_running(agent_id);
                 }
@@ -1090,7 +1088,7 @@ impl AcpUpdateTracker {
     fn finish_thinking(&mut self, scrollback: &mut ScrollbackState) {
         if let Some(thinking_id) = self.current_thinking.take() {
             let is_empty = scrollback.get_by_id(thinking_id).is_some_and(
-                |e| matches!(&e.block, RenderBlock::Thinking(t) if t.text().is_empty()),
+                |e| matches!(&e.block, RenderBlock::Thinking(t) if t.text().trim().is_empty()),
             );
             if is_empty {
                 scrollback.remove_entry(thinking_id);
@@ -1184,7 +1182,7 @@ impl AcpUpdateTracker {
             acp::ContentBlock::Text(t) => &t.text,
             _ => return false,
         };
-        if text.trim().is_empty() {
+        if text.is_empty() {
             return false;
         }
         let is_replay = meta.is_replay;
@@ -1236,6 +1234,7 @@ impl AcpUpdateTracker {
         scrollback: &mut ScrollbackState,
         is_replay: bool,
     ) -> bool {
+        self.finish_thinking(scrollback);
         self.current_agent_msg = None;
         if is_todo_tool(&tc)
             || is_bg_plumbing_tool(&tc)

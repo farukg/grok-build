@@ -157,10 +157,8 @@ async fn narration_token_sends_message_chunk_and_skips_capture() {
         })
         .await;
 }
-/// Whitespace reasoning is transport noise: it must not enter the capture or
-/// produce an ACP thought update.
 #[tokio::test(flavor = "current_thread")]
-async fn whitespace_reasoning_token_is_dropped_before_session_updates() {
+async fn whitespace_reasoning_reaches_capture_and_session_updates_unchanged() {
     use xai_grok_sampler::{RequestId, SamplingChannel, SamplingEvent};
     let local = tokio::task::LocalSet::new();
     local
@@ -179,10 +177,19 @@ async fn whitespace_reasoning_token_is_dropped_before_session_updates() {
                 .await;
 
             let cap = actor.streaming_turn_capture.lock().clone();
-            assert!(cap.reasoning_text.is_empty());
-            assert_eq!(cap.reasoning_chunks, 0);
-            tokio::task::yield_now().await;
-            assert!(fixture.sent.lock().await.is_empty());
+            assert_eq!(cap.reasoning_text, " \t\n");
+            assert_eq!(cap.reasoning_chunks, 1);
+            let event = fixture.event_rx.try_recv().expect("thought chunk is queued");
+            let SessionEvent::Notification(SessionNotification::Acp(notification)) = event else {
+                panic!("expected ACP notification");
+            };
+            let acp::SessionUpdate::AgentThoughtChunk(chunk) = &notification.update else {
+                panic!("expected thought chunk");
+            };
+            let acp::ContentBlock::Text(text) = &chunk.content else {
+                panic!("expected text");
+            };
+            assert_eq!(text.text, " \t\n");
         })
         .await;
 }

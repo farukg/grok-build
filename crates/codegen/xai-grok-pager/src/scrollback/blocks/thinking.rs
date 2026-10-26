@@ -529,26 +529,15 @@ impl BlockContent for ThinkingBlock {
         true
     }
 
-    fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {
-        if is_running {
-            match current {
-                DisplayMode::Collapsed | DisplayMode::Truncated => DisplayMode::Expanded,
-                DisplayMode::Expanded => DisplayMode::Truncated,
-            }
-        } else {
-            match current {
-                DisplayMode::Collapsed => DisplayMode::Expanded,
-                DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
-            }
+    fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
+        match current {
+            DisplayMode::Collapsed => DisplayMode::Expanded,
+            DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
         }
     }
 
-    fn collapse_mode(&self, is_running: bool) -> DisplayMode {
-        if is_running {
-            DisplayMode::Truncated
-        } else {
-            DisplayMode::Collapsed
-        }
+    fn collapse_mode(&self, _is_running: bool) -> DisplayMode {
+        DisplayMode::Collapsed
     }
 
     fn default_display_mode(&self) -> DisplayMode {
