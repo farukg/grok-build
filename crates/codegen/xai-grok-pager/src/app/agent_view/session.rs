@@ -347,6 +347,7 @@ impl AgentView {
             hit_subagent_close: Default::default(),
             hit_bg_status: Default::default(),
             hit_goal_status: Default::default(),
+            hit_auto_scroll: Default::default(),
             hit_goal_close: Default::default(),
             hit_bg_button: Default::default(),
             last_bg_click: None,

@@ -679,7 +679,7 @@ impl TasksPane {
             collapsed_groups: std::collections::HashSet::new(),
             list_state,
             list_style,
-            show_done: false,
+            show_done: crate::app::panel_settings::CompletedItemsPane::Tasks.default_visibility(),
             overlay: OverlayState::hidden(),
             tick: 0,
             kill_button_rects: Vec::new(),
@@ -883,8 +883,11 @@ impl TasksPane {
     pub fn show_done(&self) -> bool {
         self.show_done
     }
+    pub fn set_show_done(&mut self, show: bool) {
+        self.show_done = show;
+    }
     pub fn toggle_show_done(&mut self) {
-        self.show_done = !self.show_done;
+        self.set_show_done(!self.show_done);
     }
     pub fn is_visible(&self) -> bool {
         self.overlay.visible

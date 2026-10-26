@@ -44,15 +44,17 @@ integration. Historical local-guard instructions are superseded.
   1 passed, 0 failed, 0.13s. The historical assertion failure's cause remains unknown.
   This prior local result is historical evidence only, not proof of current source
   or combined CI acceptance, and does not authorize further local execution.
-- Use native subagents only, resume-first where a usable session exists. No model
-  pinning and no workflow-based dispatch.
-- All local Grok builds and test runs are forbidden, including `sig build` and
-  local cargo compilation/tests. Compilation and Rust tests run exclusively in
-  GitHub Actions, after a full source review by reading and review.
-- This restriction is forward-looking: preserve correct source work and the
-  verification worktree. Last local test `bld-1792890778976-5daa03f867344a02bf49e33bfa54b8e2`
-  was cancelled; worker `3682143` is confirmed absent.
-- No force push is authorized, including on the integration branch.
+- The integration/staging operation is complete and only the canonical checkout
+  remains. Follow-up F6, reasoning and F7/request-display work is local source work.
+- Current delivery permits local thematic commits only; follow-up corrections are
+  folded only into new, unpublished branch-unique owner commits. Published history
+  is preserved.
+- No push, build, check, test execution, formatter, restart or sig-orch communication
+  is authorized. Source regression cases remain unexecuted. No fresh delegation is
+  active for the current follow-up task.
+- The active operational plan is
+  `/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-f7-request-display.plan.md`.
+  This document retains integration-source and historical evidence ownership.
 
 ## Input and historical evidence
 

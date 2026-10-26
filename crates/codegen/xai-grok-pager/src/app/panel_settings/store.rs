@@ -63,6 +63,12 @@ impl PanelSettingsStore {
         warnings
     }
 
+    pub fn reload_global(&mut self) -> Vec<LoadWarning> {
+        let (global, warnings) = LayerFile::load(Layer::Global, self.root.join(GLOBAL_FILE));
+        self.global = global;
+        warnings
+    }
+
     pub fn session_key(&self) -> Option<&SessionKey> {
         self.session.as_ref().map(|session| &session.key)
     }
@@ -91,8 +97,9 @@ impl PanelSettingsStore {
     /// Stores `setting` in `layer`. Selecting the session layer stores nothing; only this call creates an override.
     pub fn set(&mut self, layer: Layer, setting: Setting) -> Result<SaveOutcome, SaveError> {
         let layer = match setting {
-            Setting::DockPlacement(_) => Layer::Global,
+            Setting::DockPlacement(_) | Setting::ShowCompleted { .. } => Layer::Global,
             Setting::Section { section, .. } => section.storage_layer(layer),
+            Setting::DisplayScope(_) => Layer::Session,
             Setting::KindForm { .. } | Setting::OutlineTurns(_) => layer,
         };
         self.save(layer, &[Edit::Set(setting)])
@@ -101,8 +108,9 @@ impl PanelSettingsStore {
     /// Removes `key` from `layer`; in the session layer the global value shows through again.
     pub fn clear(&mut self, layer: Layer, key: SettingKey) -> Result<SaveOutcome, SaveError> {
         let layer = match key {
-            SettingKey::DockPlacement => Layer::Global,
+            SettingKey::DockPlacement | SettingKey::ShowCompleted(_) => Layer::Global,
             SettingKey::Section(section) => section.storage_layer(layer),
+            SettingKey::DisplayScope => Layer::Session,
             SettingKey::KindForm(_) | SettingKey::OutlineTurns => layer,
         };
         self.save(layer, &[Edit::Clear(key)])

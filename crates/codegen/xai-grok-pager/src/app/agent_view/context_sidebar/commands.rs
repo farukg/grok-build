@@ -135,8 +135,8 @@ impl AgentView {
                 goal,
                 anchor,
             } => self.bulk_sidebar(spread, goal, anchor),
-            SidebarCommand::ToggleEditLayer => {
-                self.toggle_panel_edit_layer();
+            SidebarCommand::ToggleDisplayScope => {
+                self.toggle_message_display_scope();
                 InputOutcome::Changed
             }
             SidebarCommand::FocusChat => {
@@ -195,7 +195,7 @@ impl AgentView {
                     DisplayForm::Collapsed => DisplayForm::Expanded,
                     DisplayForm::Expanded => DisplayForm::Collapsed,
                 };
-                self.scrollback.set_kind_default(kind, form);
+                self.scrollback.choose_kind_default(kind, form);
                 InputOutcome::Changed
             }
             None => InputOutcome::Unchanged,
@@ -266,7 +266,7 @@ impl AgentView {
             for kind in kinds {
                 // An unset kind renders by its block's own policy, so it is set even when `shown` already says `form`.
                 if self.scrollback.display_defaults().get(kind) != Some(form) {
-                    self.scrollback.set_kind_default(kind, form);
+                    self.scrollback.choose_kind_default(kind, form);
                     changed = true;
                 }
             }

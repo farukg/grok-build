@@ -6,7 +6,8 @@ use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
 
 /// Which stored layer an edit targets. Global is the default edit layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Layer {
     Global,
     Session,
@@ -69,10 +70,23 @@ pub enum SidebarSection {
 }
 
 impl SidebarSection {
-    pub(super) const fn storage_layer(self, requested: Layer) -> Layer {
+    pub(super) const fn storage_layer(self, _requested: Layer) -> Layer {
+        Layer::Global
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::EnumString, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum CompletedItemsPane {
+    Tasks,
+    Todos,
+}
+
+impl CompletedItemsPane {
+    pub const fn default_visibility(self) -> bool {
         match self {
-            Self::Tasks | Self::Todo => Layer::Global,
-            Self::Context | Self::MessageDisplay | Self::Dock | Self::TodoSection => requested,
+            Self::Tasks => false,
+            Self::Todos => true,
         }
     }
 }
@@ -149,6 +163,8 @@ pub enum Setting {
     /// Default state of F6 turn rows.
     OutlineTurns(DisclosureState),
     DockPlacement(crate::views::dock::DockPlacement),
+    ShowCompleted { pane: CompletedItemsPane, show: bool },
+    DisplayScope(Layer),
 }
 
 /// Names one layered value without its content, for clearing it.
@@ -158,6 +174,8 @@ pub enum SettingKey {
     Section(SidebarSection),
     OutlineTurns,
     DockPlacement,
+    ShowCompleted(CompletedItemsPane),
+    DisplayScope,
 }
 
 /// Everything a layer file can change. Per-turn exceptions exist only in the session layer.
@@ -177,9 +195,21 @@ pub struct LayerSettings {
     outline_turns: Option<DisclosureState>,
     turn_exceptions: BTreeMap<PromptOrdinal, DisclosureState>,
     dock_placement: Option<crate::views::dock::DockPlacement>,
+    completed_items: BTreeMap<CompletedItemsPane, bool>,
+    display_scope: Option<Layer>,
 }
 
 impl LayerSettings {
+    pub fn session_display_scope(&self) -> Layer {
+        self.display_scope.unwrap_or_else(|| {
+            if self.message_forms.is_empty() { Layer::Global } else { Layer::Session }
+        })
+    }
+
+    pub fn show_completed(&self, pane: CompletedItemsPane) -> bool {
+        self.completed_items.get(&pane).copied().unwrap_or_else(|| pane.default_visibility())
+    }
+
     pub fn dock_placement(&self) -> Option<crate::views::dock::DockPlacement> { self.dock_placement }
 
     pub fn message_form(&self, kind: MessageKind) -> Option<DisplayForm> {
@@ -209,6 +239,12 @@ impl LayerSettings {
     /// Applies `edit`; `false` when it changed nothing.
     pub(super) fn apply(&mut self, edit: &Edit) -> bool {
         match *edit {
+            Edit::Set(Setting::DisplayScope(scope)) => self.display_scope.replace(scope) != Some(scope),
+            Edit::Clear(SettingKey::DisplayScope) => self.display_scope.take().is_some(),
+            Edit::Set(Setting::ShowCompleted { pane, show }) => {
+                self.completed_items.insert(pane, show) != Some(show)
+            }
+            Edit::Clear(SettingKey::ShowCompleted(pane)) => self.completed_items.remove(&pane).is_some(),
             Edit::Set(Setting::KindForm { kind, form }) => {
                 MessageKind::settings_kinds().contains(&kind)
                     && self.message_forms.insert(kind, form) != Some(form)
@@ -234,8 +270,12 @@ impl LayerSettings {
     /// `self` with every value `top` holds replacing its own.
     pub(super) fn overlaid_with(&self, top: &Self) -> Self {
         let mut merged = self.clone();
-        merged.message_forms.extend(&top.message_forms);
-        merged.sections.extend(&top.sections);
+        let display_scope = top.session_display_scope();
+        merged.display_scope = Some(display_scope);
+        match display_scope {
+            Layer::Global => {}
+            Layer::Session => merged.message_forms.extend(&top.message_forms),
+        }
         merged.outline_turns = top.outline_turns.or(self.outline_turns);
         merged.turn_exceptions.extend(&top.turn_exceptions);
         merged.dock_placement = top.dock_placement.or(self.dock_placement);
@@ -244,11 +284,20 @@ impl LayerSettings {
 }
 
 /// The settings in force: session override, else global, else the built-in default.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelSettings(LayerSettings);
 
+impl Default for PanelSettings {
+    fn default() -> Self { Self::new(LayerSettings::default()) }
+}
+
 impl PanelSettings {
-    pub(super) fn new(merged: LayerSettings) -> Self {
+    pub fn display_scope(&self) -> Layer {
+        self.0.display_scope.unwrap_or(Layer::Global)
+    }
+
+    pub(super) fn new(mut merged: LayerSettings) -> Self {
+        merged.display_scope = Some(merged.display_scope.unwrap_or(Layer::Global));
         Self(merged)
     }
 

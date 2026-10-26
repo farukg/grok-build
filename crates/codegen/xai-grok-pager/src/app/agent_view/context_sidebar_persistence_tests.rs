@@ -23,6 +23,11 @@ fn open_f7(agent: &mut AgentView) {
     let _ = draw(agent);
 }
 
+fn toggle_display_scope(agent: &mut AgentView) -> InputOutcome {
+    let _ = press(agent, KeyCode::End);
+    press(agent, KeyCode::Char('g'))
+}
+
 fn flip(agent: &mut AgentView, label: &str) {
     let buf = draw(agent);
     assert!(matches!(
@@ -98,7 +103,7 @@ fn a_global_edit_reaches_other_sessions_and_a_session_edit_stays_in_its_session(
         "global applies to every session"
     );
     open_f7(&mut b);
-    let _ = press(&mut b, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut b);
     flip(&mut b, "File edits");
     flip(&mut b, "File reads");
     assert_eq!(form(&b, MessageKind::Edit), Some(DisplayForm::Expanded));
@@ -147,30 +152,31 @@ fn a_global_edit_reaches_other_sessions_and_a_session_edit_stays_in_its_session(
 }
 
 #[test]
-fn g_flips_the_save_target_and_writes_nothing_by_itself() {
+fn g_switches_and_persists_the_effective_display_scope() {
     let _theme = crate::theme::cache::pin_theme();
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("panel-settings");
     let mut agent = view(&root, Some("sess-a"));
     open_f7(&mut agent);
-    assert!(screen(&draw(&mut agent)).contains("saving: global"));
+    assert!(screen(&draw(&mut agent)).contains("display: global"));
 
     assert!(matches!(
-        press(&mut agent, KeyCode::Char('g')),
+        toggle_display_scope(&mut agent),
         InputOutcome::Changed
     ));
     let buf = draw(&mut agent);
-    assert!(screen(&buf).contains("saving: this session"));
-    assert!(!screen(&buf).contains("saving: global"));
+    assert!(screen(&buf).contains("display: this session"));
+    assert!(!screen(&buf).contains("display: global"));
     assert!(matches!(
-        press(&mut agent, KeyCode::Char('g')),
+        toggle_display_scope(&mut agent),
         InputOutcome::Changed
     ));
-    assert!(screen(&draw(&mut agent)).contains("saving: global"));
-    assert!(
-        !root.exists(),
-        "choosing a layer creates no file or directory"
-    );
+    assert!(screen(&draw(&mut agent)).contains("display: global"));
+    assert_eq!(stored(&read_toml(&session_file(&root, "sess-a")), "scope", "message_display"), Some("global"));
+    let mut restored = view(&root, Some("sess-a"));
+    open_f7(&mut restored);
+    assert!(screen(&draw(&mut restored)).contains("display: global"));
+    assert!(!global_file(&root).exists(), "switching scope changes no global value");
 }
 
 #[test]
@@ -180,17 +186,17 @@ fn g_says_why_a_view_without_a_session_cannot_save_to_one() {
     let root = dir.path().join("panel-settings");
     let mut agent = view(&root, None);
     open_f7(&mut agent);
-    let _ = press(&mut agent, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut agent);
     assert!(
-        toast(&agent).contains("no session yet"),
+        toast(&agent).contains("no session is attached"),
         "{}",
         toast(&agent)
     );
-    assert!(screen(&draw(&mut agent)).contains("saving: global"));
+    assert!(screen(&draw(&mut agent)).contains("display: global"));
 
     agent.bind_session_id(acp::SessionId::new("sess-late"));
-    let _ = press(&mut agent, KeyCode::Char('g'));
-    assert!(screen(&draw(&mut agent)).contains("saving: this session"));
+    let _ = toggle_display_scope(&mut agent);
+    assert!(screen(&draw(&mut agent)).contains("display: this session"));
 }
 
 #[test]
@@ -198,7 +204,7 @@ fn a_view_that_keeps_no_settings_says_so_and_still_works() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     assert!(screen(&draw(&mut agent)).contains("not saved"));
-    let _ = press(&mut agent, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut agent);
     assert!(toast(&agent).contains("not stored"), "{}", toast(&agent));
     flip(&mut agent, "File reads");
     assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Expanded));
@@ -244,25 +250,24 @@ fn a_folded_section_stays_folded_after_a_restart() {
 }
 
 #[test]
-fn a_session_fold_stays_in_its_session() {
+fn section_folds_stay_global_while_display_values_use_session_scope() {
     let _theme = crate::theme::cache::pin_theme();
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("panel-settings");
     let mut agent = view(&root, Some("sess-a"));
     open_f7(&mut agent);
-    let _ = press(&mut agent, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut agent);
     let _ = press(&mut agent, KeyCode::End);
     let _ = press(&mut agent, KeyCode::Left);
     let _ = press(&mut agent, KeyCode::Enter);
     assert!(!screen(&draw(&mut agent)).contains("File reads"));
-    assert!(!global_file(&root).exists());
     assert_eq!(
-        stored(
-            &read_toml(&session_file(&root, "sess-a")),
-            "sidebar",
-            "message_display"
-        ),
+        stored(&read_toml(&global_file(&root)), "sidebar", "message_display"),
         Some("collapsed")
+    );
+    assert_eq!(
+        stored(&read_toml(&session_file(&root, "sess-a")), "sidebar", "message_display"),
+        None
     );
     drop(agent);
 
@@ -271,7 +276,7 @@ fn a_session_fold_stays_in_its_session() {
     assert!(!screen(&draw(&mut same)).contains("File reads"));
     let mut other = view(&root, Some("sess-b"));
     open_f7(&mut other);
-    assert!(screen(&draw(&mut other)).contains("File reads"));
+    assert!(!screen(&draw(&mut other)).contains("File reads"));
 }
 
 fn message_display_table(file: &Path) -> toml::map::Map<String, toml::Value> {
@@ -375,7 +380,7 @@ fn a_session_value_equal_to_the_global_one_leaves_no_session_entry() {
     flip(&mut agent, "File reads");
     let global_before = std::fs::read(global_file(&root)).expect("global file");
 
-    let _ = press(&mut agent, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut agent);
     flip(&mut agent, "File reads");
     assert_eq!(
         stored(
@@ -404,33 +409,25 @@ fn a_session_value_equal_to_the_global_one_leaves_no_session_entry() {
 }
 
 #[test]
-fn a_global_edit_that_the_session_overrules_says_so_and_changes_nothing() {
+fn switching_scope_applies_values_immediately_and_preserves_the_other_scope() {
     let _theme = crate::theme::cache::pin_theme();
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("panel-settings");
     let mut agent = view(&root, Some("sess-a"));
     open_f7(&mut agent);
     flip(&mut agent, "File reads");
-    let _ = press(&mut agent, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut agent);
     flip(&mut agent, "File reads");
-    assert_eq!(
-        form(&agent, MessageKind::Read),
-        Some(DisplayForm::Collapsed),
-        "the session value wins"
-    );
-
-    let _ = press(&mut agent, KeyCode::Char('g'));
+    assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Collapsed));
+    let _ = toggle_display_scope(&mut agent);
+    assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Expanded));
     flip(&mut agent, "File reads");
-    assert!(
-        toast(&agent).contains("this session has its own setting"),
-        "{}",
-        toast(&agent)
-    );
-    assert_eq!(
-        form(&agent, MessageKind::Read),
-        Some(DisplayForm::Collapsed)
-    );
+    flip(&mut agent, "File reads");
+    assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Expanded));
+    let _ = toggle_display_scope(&mut agent);
+    assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Collapsed));
     assert!(sidebar_row(&draw(&mut agent), "File reads").contains("1 line"));
+    assert_eq!(stored(&read_toml(&global_file(&root)), "message_display", "read"), Some("expanded"));
 }
 
 #[test]
@@ -441,7 +438,7 @@ fn moving_a_view_to_another_session_applies_that_sessions_settings() {
     let mut b = view(&root, Some("sess-b"));
     open_f7(&mut b);
     flip(&mut b, "File reads");
-    let _ = press(&mut b, KeyCode::Char('g'));
+    let _ = toggle_display_scope(&mut b);
     flip(&mut b, "File edits");
     drop(b);
 
@@ -466,7 +463,7 @@ fn moving_a_view_to_another_session_applies_that_sessions_settings() {
         "global stays"
     );
     open_f7(&mut agent);
-    assert!(screen(&draw(&mut agent)).contains("saving: global"));
+    assert!(screen(&draw(&mut agent)).contains("display: global"));
 }
 
 #[test]
@@ -489,7 +486,7 @@ fn an_unreadable_settings_file_is_reported_when_the_view_opens() {
 }
 
 #[test]
-fn a_failed_save_says_which_file_and_why_and_the_form_still_changes() {
+fn a_failed_save_reports_its_cause_and_restores_the_effective_form() {
     let _theme = crate::theme::cache::pin_theme();
     let dir = tempfile::tempdir().expect("tempdir");
     let blocker = dir.path().join("a-file");
@@ -512,8 +509,8 @@ fn a_failed_save_says_which_file_and_why_and_the_form_still_changes() {
     assert!(message.contains(&reason), "{message}");
     assert_eq!(
         form(&agent, MessageKind::Read),
-        Some(DisplayForm::Expanded),
-        "the view still changes"
+        None,
+        "the failed preference is not shown as effective"
     );
-    assert!(sidebar_row(&draw(&mut agent), "File reads").contains("full"));
+    assert!(sidebar_row(&draw(&mut agent), "File reads").contains("1 line"));
 }

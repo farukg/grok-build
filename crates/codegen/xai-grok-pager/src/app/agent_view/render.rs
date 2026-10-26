@@ -1260,6 +1260,16 @@ impl AgentView {
         let dim = theme.dim().bg(theme.bg_base);
         let faint = theme.faint().bg(theme.bg_base);
         let mut status = AgentStatusBar::new(&theme);
+        status.push(
+            "auto_scroll",
+            Line::from(Span::styled(
+                "[Auto-scroll]",
+                hover_or(
+                    self.hit_auto_scroll.hovered,
+                    bg.fg(if self.scrollback.follow_mode() { theme.link_fg } else { theme.gray }),
+                ),
+            )),
+        );
         if !dock_on {
             let task_counts = self.tasks.status_counts(
                 &self.session.bg_tasks,
@@ -1433,6 +1443,8 @@ impl AgentView {
         self.hit_credits.rect = areas.get("credits").copied();
         self.hit_plan_button.rect = areas.get("plan").copied();
         let dropdown_open = self.prompt.any_dropdown_open();
+        self.hit_auto_scroll
+            .set_unless_dropdown(areas.get("auto_scroll").copied(), dropdown_open);
         self.hit_dashboard
             .set_unless_dropdown(areas.get("dashboard").copied(), dropdown_open);
         self.hit_deliver

@@ -42,7 +42,9 @@ impl PanelSettingsStore {
 fn held_beneath(beneath: &LayerSettings, setting: Setting) -> bool {
     let defaults = PanelSettings::default();
     match setting {
+        Setting::DisplayScope(_) => false,
         Setting::DockPlacement(placement) => beneath.dock_placement() == Some(placement),
+        Setting::ShowCompleted { pane, show } => beneath.show_completed(pane) == show,
         Setting::KindForm { kind, form } => beneath.message_form(kind) == Some(form),
         Setting::Section { section, state } => {
             beneath
@@ -61,7 +63,9 @@ fn held_beneath(beneath: &LayerSettings, setting: Setting) -> bool {
 
 fn key_of(setting: Setting) -> SettingKey {
     match setting {
+        Setting::DisplayScope(_) => SettingKey::DisplayScope,
         Setting::DockPlacement(_) => SettingKey::DockPlacement,
+        Setting::ShowCompleted { pane, .. } => SettingKey::ShowCompleted(pane),
         Setting::KindForm { kind, .. } => SettingKey::KindForm(kind),
         Setting::Section { section, .. } => SettingKey::Section(section),
         Setting::OutlineTurns(_) => SettingKey::OutlineTurns,

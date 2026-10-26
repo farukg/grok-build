@@ -7,7 +7,7 @@ use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 use super::error::LoadProblem;
 use super::types::{
-    DisclosureState, Edit, Layer, LayerSettings, PromptOrdinal, Setting, SettingKey, SidebarSection,
+    CompletedItemsPane, DisclosureState, Edit, Layer, LayerSettings, PromptOrdinal, Setting, SettingKey, SidebarSection,
 };
 use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
@@ -103,6 +103,27 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
         match (name, item.as_str().and_then(|value| value.parse::<crate::views::dock::DockPlacement>().ok()), layer) {
             ("placement", Some(placement), Layer::Global) => { decoded.settings.apply(&Edit::Set(Setting::DockPlacement(placement))); }
             _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("dock.{name}") }),
+        }
+    }
+    for (name, item) in entries(doc, &["scope"], &mut decoded.problems) {
+        match (name, layer, item.as_str().and_then(|value| value.parse::<Layer>().ok())) {
+            ("message_display", Layer::Session, Some(scope)) => {
+                decoded.settings.apply(&Edit::Set(Setting::DisplayScope(scope)));
+            }
+            _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("scope.{name}") }),
+        }
+    }
+    for (name, item) in entries(doc, &["completed_items"], &mut decoded.problems) {
+        let show = match item.as_str() {
+            Some("show") => Some(true),
+            Some("hide") => Some(false),
+            _ => None,
+        };
+        match (layer, name.parse::<CompletedItemsPane>().ok(), show) {
+            (Layer::Global, Some(pane), Some(show)) => {
+                decoded.settings.apply(&Edit::Set(Setting::ShowCompleted { pane, show }));
+            }
+            _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("completed_items.{name}") }),
         }
     }
     for (name, item) in entries(doc, &[MESSAGE_DISPLAY], &mut decoded.problems) {
@@ -211,6 +232,14 @@ fn entries<'a>(
 pub(super) fn encode(doc: &mut DocumentMut, edit: &Edit) {
     let root: &mut dyn TableLike = doc.as_table_mut();
     match edit {
+        Edit::Set(Setting::DisplayScope(scope)) => put(root, &["scope"], "message_display", (*scope).into()),
+        Edit::Clear(SettingKey::DisplayScope) => remove(root, &["scope"], "message_display"),
+        Edit::Set(Setting::ShowCompleted { pane, show }) => {
+            put(root, &["completed_items"], (*pane).into(), if *show { "show" } else { "hide" });
+        }
+        Edit::Clear(SettingKey::ShowCompleted(pane)) => {
+            remove(root, &["completed_items"], (*pane).into());
+        }
         Edit::Set(Setting::DockPlacement(placement)) => put(root, &["dock"], "placement", (*placement).into()),
         Edit::Clear(SettingKey::DockPlacement) => remove(root, &["dock"], "placement"),
         Edit::Set(Setting::KindForm { kind, form }) => {

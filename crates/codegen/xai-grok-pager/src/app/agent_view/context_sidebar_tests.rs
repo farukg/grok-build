@@ -176,6 +176,22 @@ fn ready_report() -> ContextPolicyReport {
     }
 }
 
+#[test]
+fn context_clicks_never_change_policy_even_with_bulk_modifiers() {
+    let _theme = crate::theme::cache::pin_theme();
+    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT, KeyModifiers::CONTROL] {
+        let mut agent = open_sidebar();
+        let before = disclosure(&agent);
+        let buf = draw(&mut agent);
+        assert!(matches!(click_row_with(&mut agent, &buf, "Core instructions", modifiers), InputOutcome::Changed));
+        assert_eq!(disclosure(&agent), before);
+        let after = draw(&mut agent);
+        assert!(sidebar_row(&after, "Core instructions").contains("ON"));
+        assert!(!screen(&after).contains("Applying"));
+        assert!(!screen(&after).contains("Notice: "));
+    }
+}
+
 /// F7 open, the shell answered, first frame drawn: the cursor sits on the first context switch.
 fn open_sidebar() -> AgentView {
     let mut agent = test_fixtures::make_agent();
@@ -385,7 +401,7 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
 }
 
 #[test]
-fn f7_enter_and_space_fold_a_title_and_a_click_unfolds_it() {
+fn f7_context_title_click_only_selects_and_keyboard_changes_disclosure() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let _ = press(&mut agent, KeyCode::Left);
@@ -410,11 +426,11 @@ fn f7_enter_and_space_fold_a_title_and_a_click_unfolds_it() {
         click_row(&mut agent, &buf, "\u{25B8} Context"),
         InputOutcome::Changed
     ));
+    assert!(!disclosure(&agent).is_expanded(SectionId::Context));
+    assert_eq!(cursor(&agent), Some(SectionId::Context.title_line()));
+    assert!(matches!(press(&mut agent, KeyCode::Char(' ')), InputOutcome::Changed));
     let buf = draw(&mut agent);
-    assert!(
-        screen(&buf).contains("Core instructions"),
-        "a click on a folded title unfolds it"
-    );
+    assert!(screen(&buf).contains("Core instructions"));
     assert!(screen(&buf).contains("\u{25BE} Context"));
 
     assert!(matches!(

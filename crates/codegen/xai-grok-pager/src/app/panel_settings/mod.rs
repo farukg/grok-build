@@ -21,6 +21,6 @@ mod types;
 pub use error::{LoadProblem, LoadWarning, SaveError, SaveOutcome};
 pub use store::{LoadReport, PanelSettingsStore};
 pub use types::{
-    DisclosureState, Layer, LayerSettings, PanelSettings, PromptOrdinal, SessionKey,
+    CompletedItemsPane, DisclosureState, Layer, LayerSettings, PanelSettings, PromptOrdinal, SessionKey,
     SessionKeyError, Setting, SettingKey, SidebarSection,
 };

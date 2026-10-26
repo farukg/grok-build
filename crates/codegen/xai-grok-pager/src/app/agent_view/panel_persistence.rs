@@ -59,7 +59,21 @@ impl PanelPersistence {
             .unwrap_or_default()
     }
 
-    /// The layer edits are saved to.
+    pub(crate) fn display_layer(&self) -> Layer {
+        self.store.as_ref().and_then(PanelSettingsStore::session)
+            .map(crate::app::panel_settings::LayerSettings::session_display_scope)
+            .unwrap_or(Layer::Global)
+    }
+
+    pub(crate) fn display_saving_status(&self) -> &'static str {
+        if self.store.is_none() { return "display: not saved"; }
+        match self.display_layer() {
+            Layer::Global => "display: global (g)",
+            Layer::Session => "display: this session (g)",
+        }
+    }
+
+    /// The F6 edit target.
     pub(crate) fn edit_layer(&self) -> Layer {
         self.edit_layer
     }
@@ -152,6 +166,68 @@ fn save_failure_text(error: &SaveError) -> String {
 }
 
 impl AgentView {
+    pub(crate) fn global_panel_settings(&self) -> Option<crate::app::panel_settings::LayerSettings> {
+        self.panel_persistence.store.as_ref().map(|store| store.global().clone())
+    }
+
+    pub(crate) fn reload_global_panel_settings(&mut self) {
+        let Some(store) = self.panel_persistence.store_mut() else { return; };
+        let warnings = store.reload_global();
+        self.restore_panel_settings();
+        self.restore_global_completed_filters();
+        self.toast_load_warnings(&warnings);
+    }
+
+    fn restore_global_completed_filters(&mut self) {
+        use crate::app::panel_settings::CompletedItemsPane;
+        if let Some(store) = self.panel_persistence.store.as_ref() {
+            self.tasks.set_show_done(store.global().show_completed(CompletedItemsPane::Tasks));
+            self.todo.set_show_done(store.global().show_completed(CompletedItemsPane::Todos));
+        }
+    }
+
+    pub(crate) fn save_global_completed_filters(&mut self, tasks: Option<bool>, todos: Option<bool>) {
+        use crate::app::panel_settings::CompletedItemsPane;
+        let settings: Vec<_> = [(CompletedItemsPane::Tasks, tasks), (CompletedItemsPane::Todos, todos)]
+            .into_iter().filter_map(|(pane, show)| show.map(|show| Setting::ShowCompleted { pane, show }))
+            .collect();
+        if !settings.is_empty() {
+            self.save_global_panel_settings(&settings);
+            self.restore_global_completed_filters();
+        }
+    }
+
+    pub(crate) fn save_display_settings(&mut self, settings: &[Setting]) -> bool {
+        let layer = self.panel_persistence.display_layer();
+        let mut wanted = settings.to_vec();
+        if layer == Layer::Session {
+            wanted.push(Setting::DisplayScope(Layer::Session));
+        }
+        let result = self.panel_persistence.store_mut().map(|store| store.set_deviations(layer, &wanted));
+        result.is_some_and(|result| self.report_panel_save(result))
+    }
+
+    pub(crate) fn toggle_message_display_scope(&mut self) {
+        let next = match self.panel_persistence.display_layer() {
+            Layer::Global => Layer::Session,
+            Layer::Session => Layer::Global,
+        };
+        let result = self.panel_persistence.store_mut().map(|store| store.set(Layer::Session, Setting::DisplayScope(next)));
+        match result {
+            Some(result) => {
+                if self.report_panel_save(result) {
+                    self.apply_f7_panel_settings(true);
+                }
+            }
+            None => self.show_toast("Message display settings are not stored in this view"),
+        }
+    }
+
+    pub(crate) fn save_global_panel_settings(&mut self, settings: &[Setting]) -> bool {
+        let result = self.panel_persistence.store_mut().map(|store| store.set_deviations(Layer::Global, settings));
+        result.is_some_and(|result| self.report_panel_save(result))
+    }
+
     pub(crate) fn restore_dock_placement(&self) {
         if let Some(placement) = self.panel_persistence.store.as_ref().and_then(|store| store.global().dock_placement())
             && crate::app::dock_requirement_pin().or_else(crate::app::dock_env_override)
@@ -180,6 +256,7 @@ impl AgentView {
         let (persistence, warnings) = PanelPersistence::open(root, session);
         self.panel_persistence = persistence;
         self.restore_panel_settings();
+        self.restore_global_completed_filters();
         self.restore_dock_placement();
         if let Some(store) = self.panel_persistence.store_mut() {
             use crate::app::panel_settings::SidebarSection;

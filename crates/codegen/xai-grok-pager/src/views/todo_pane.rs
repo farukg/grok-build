@@ -218,7 +218,7 @@ impl TodoPane {
             list_state,
             style: TodoPaneStyle::default(),
             list_style: ListPaneStyle::default(),
-            show_done: true,
+            show_done: crate::app::panel_settings::CompletedItemsPane::Todos.default_visibility(),
             overlay: OverlayState::hidden(),
             last_theme: crate::theme::Theme::current_kind(),
         }
@@ -275,9 +275,15 @@ impl TodoPane {
     }
 
     /// Toggle visibility of completed and cancelled items.
+    pub fn set_show_done(&mut self, show: bool) {
+        if self.show_done != show {
+            self.show_done = show;
+            self.rebuild_entries();
+        }
+    }
+
     pub fn toggle_show_done(&mut self) {
-        self.show_done = !self.show_done;
-        self.rebuild_entries();
+        self.set_show_done(!self.show_done);
     }
 
     /// Desired height in lines for layout computation. Returns 0 when hidden (overlay not visible or no

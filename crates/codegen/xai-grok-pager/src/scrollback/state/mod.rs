@@ -418,18 +418,11 @@ impl ScrollbackState {
     }
 
     pub fn set_kind_default(&mut self, kind: MessageKind, form: DisplayForm) {
-        if self.display_defaults.get(kind) == Some(form) {
-            return;
+        if self.display_defaults.get(kind) != Some(form) {
+            let previous = self.display_defaults.clone();
+            self.display_defaults.set(kind, form);
+            self.refresh_display_defaults(&previous, Some(kind), false);
         }
-        self.display_defaults.set(kind, form);
-        let mode = DisplayMode::from(form);
-        for entry in self.entries.values_mut() {
-            if MessageKind::from(&entry.block) == kind && entry.form == EntryForm::FollowingKind {
-                entry.display_mode = mode;
-                entry.invalidate_cache();
-            }
-        }
-        self.invalidate_heights();
     }
 
     /// Get current appearance config.
@@ -662,31 +655,23 @@ impl ScrollbackState {
     /// finish-transition gate, so the kind default cannot be silently undone later in the
     /// lifecycle.
     fn resolve_kind_mode(&self, block: &RenderBlock) -> DisplayMode {
-        let setting = self.display_defaults.get(MessageKind::from(block));
-        match (block, setting) {
-            (RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), setting) => {
-                let expanded_by_default = match setting {
-                    Some(DisplayForm::Expanded) => true,
-                    Some(DisplayForm::Collapsed) => false,
-                    None => self.appearance.scrollback.blocks.edit.effective_expanded(
-                        crate::appearance::cache::load_collapsed_edit_blocks(),
-                    ),
-                };
-                edit_default_display_mode(expanded_by_default, edit)
-            }
-            (_, Some(form)) => DisplayMode::from(form),
-            (block, None) => block.default_display_mode(),
-        }
+        kind_default::resolve_mode(
+            block,
+            self.display_defaults.get(MessageKind::from(block)),
+            self.appearance.scrollback.blocks.edit.effective_expanded(
+                crate::appearance::cache::load_collapsed_edit_blocks(),
+            ),
+        )
     }
 
-    /// A fresh entry still at its block's built-in default takes the kind setting, else the state-owned policy.
-    /// An explicit mode chosen by the producer survives both; a successful untrusted edit summary always expands,
-    /// because its one-liner cannot truthfully compress the change.
+    /// F7 choices take precedence over a fresh block's producer-selected default.
     fn apply_kind_default(&self, entry: &mut ScrollbackEntry) {
-        if entry.display_mode != entry.block.default_display_mode() {
-            return;
+        let kind = MessageKind::from(&entry.block);
+        if self.display_defaults.get(kind).is_some()
+            || entry.display_mode == entry.block.default_display_mode()
+        {
+            entry.display_mode = self.resolve_kind_mode(&entry.block);
         }
-        entry.display_mode = self.resolve_kind_mode(&entry.block);
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -1034,6 +1019,7 @@ impl ScrollbackState {
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
         // Resolved before the mutable borrow: the mode the NEW block's kind resolves to.
         let resolved_mode = self.resolve_kind_mode(&block);
+        let has_kind_setting = self.display_defaults.get(MessageKind::from(&block)).is_some();
         let Some(entry) = self.entries.get_mut(&entry_id) else {
             return false;
         };
@@ -1059,7 +1045,7 @@ impl ScrollbackState {
         };
         entry.block = block;
         if is_same_kind {
-            if untrusted_rising && !(respect_manual_folds && entry.display_mode_pinned) {
+            if untrusted_rising && !has_kind_setting && !(respect_manual_folds && entry.display_mode_pinned) {
                 entry.display_mode = DisplayMode::Expanded;
             }
         } else if respect_manual_folds && entry.display_mode_pinned {
@@ -1091,6 +1077,9 @@ impl ScrollbackState {
     /// Flag off to on collapses rows open only because `expanded_by_default` was `Some(true)`.
     /// `Some(false)` is collapsed on both sides, so that walk no-ops.
     pub fn apply_collapsed_edit_blocks_flip(&mut self, old_flag: bool, new_flag: bool) {
+        if self.display_defaults.get(MessageKind::Edit).is_some() {
+            return;
+        }
         let edit_cfg = &self.appearance.scrollback.blocks.edit;
         let old_expanded = edit_cfg.effective_expanded(old_flag);
         let new_expanded = edit_cfg.effective_expanded(new_flag);

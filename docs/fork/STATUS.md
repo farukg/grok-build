@@ -52,6 +52,14 @@ transport-stream changes. Source scope and unexecuted regression cases are docum
 in [F1 display](streams/f1-display.md#thinking-section-boundaries-and-chronological-order-2026-10-26).
 Raw SSE evidence and runtime confirmation for the two reported sessions remain open.
 
+The local UI-preference follow-up makes Dock/Todos/Context/Message Display section
+folds global, persists separate global completed-item h filters, reloads changed global
+preferences into loaded pager views, makes Context clicks selection-only, simplifies
+notice labels, and adds a clickable follow-state Auto-scroll label. Source tests are
+unexecuted. The independent Context/Display scopes, warning flow, grouped controls,
+renderer completion and request-inspection work remain active and incomplete. User
+scope/presentation preferences are recorded in [F6/F7 design](design/f6-f7.md).
+
 ## Current source disposition and open gates
 
 - R: local terminal execution identity, shutdown enrollment/kill settlement and
@@ -182,17 +190,17 @@ runtime acceptance is unverified. See the
 
 ## Continuing delivery
 
-Use the [owner-takeover plan](plan/owner-takeover.md), preserving existing author
-source and canonical documentation for integration. Not all required work is on
-published `main`. Push normally only to `farukg/grok-build` (`origin`); no force
-push is authorized, including force-with-lease on stream branches.
+The previous integration and staging are complete; the artifact/source identities
+are recorded at the top of this document and in the [owner-takeover plan](plan/owner-takeover.md).
+Only the canonical checkout remains. Subsequent F6, reasoning and F7/request-display
+changes are local source work and have no matching built/staged artifact yet.
 
-The release workflow is artifact-build/package-only; formatting guard execution stays
-in `linux-test`, not `linux-build`. Current integration remains in progress and has
-no final SHA. The current delivery instruction authorizes only the necessary GitHub
-release build for current `main`; no tests, local checks, formatters or `sig build`
-are authorized. Stage only the exact current-main artifact after that release build
-succeeds. Historical failure evidence above must not be treated as current acceptance.
+The current instruction authorizes local thematic commits only. No push, release
+build, test execution, local check, formatter, restart or sig-orch communication is
+authorized. The active F7/request-display plan lives under the Grok workspace plan
+owner; the earlier integration plan is source/evidence reference material. Prior
+build success proves its recorded source artifact only. Current runtime acceptance
+remains open.
 
 Historical stream references and `plan/grb-001.md` remain useful capability/design
 owners, not authority to restart obsolete branch or local-verification workflows.

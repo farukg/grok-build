@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 
 use super::super::codec::kind_name;
 use super::super::{
-    DisclosureState, Layer, LayerSettings, LoadProblem, LoadReport, PanelSettings,
+    CompletedItemsPane, DisclosureState, Layer, LayerSettings, LoadProblem, LoadReport, PanelSettings,
     PanelSettingsStore, PromptOrdinal, SaveError, SaveOutcome, SessionKey, Setting, SettingKey,
     SidebarSection,
 };
@@ -46,6 +46,73 @@ fn file_names(dir: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+#[test]
+fn display_scope_switches_apply_stored_values_and_preserve_session_deviations() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(dir.path(), Some("first")).store;
+    store.set(Layer::Global, kind_form(MessageKind::Read, DisplayForm::Expanded)).unwrap();
+    store.set(Layer::Session, kind_form(MessageKind::Read, DisplayForm::Collapsed)).unwrap();
+    assert_eq!(store.effective().display_scope(), Layer::Session);
+    store.set(Layer::Session, Setting::DisplayScope(Layer::Global)).unwrap();
+    assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Expanded));
+    assert_eq!(store.session().unwrap().message_form(MessageKind::Read), Some(DisplayForm::Collapsed));
+    store.set(Layer::Session, Setting::DisplayScope(Layer::Session)).unwrap();
+    assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Collapsed));
+    let reopened = open(dir.path(), Some("first")).store;
+    assert_eq!(reopened.effective().display_scope(), Layer::Session);
+    assert_eq!(reopened.effective().message_form(MessageKind::Read), Some(DisplayForm::Collapsed));
+    store.attach_session(Some(key("new-session")));
+    assert_eq!(store.effective().display_scope(), Layer::Global);
+    assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Expanded));
+}
+
+#[test]
+fn explicit_global_display_scope_survives_even_when_global_has_no_kind_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(dir.path(), Some("first")).store;
+    store.set(Layer::Session, kind_form(MessageKind::Read, DisplayForm::Expanded)).unwrap();
+    store.set(Layer::Session, Setting::DisplayScope(Layer::Global)).unwrap();
+    let reopened = open(dir.path(), Some("first")).store;
+    assert_eq!(reopened.effective().display_scope(), Layer::Global);
+    assert_eq!(reopened.effective().message_form(MessageKind::Read), None);
+    assert_eq!(reopened.session().unwrap().message_form(MessageKind::Read), Some(DisplayForm::Expanded));
+}
+
+#[test]
+fn f7_section_disclosure_is_global_and_survives_session_switches() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(dir.path(), Some("first")).store;
+    for section in [SidebarSection::Dock, SidebarSection::TodoSection, SidebarSection::Context, SidebarSection::MessageDisplay] {
+        store.set(Layer::Session, Setting::Section { section, state: DisclosureState::Collapsed }).unwrap();
+    }
+    assert!(store.attach_session(Some(key("second"))).is_empty());
+    let reopened = open(dir.path(), Some("third")).store;
+    for section in [SidebarSection::Dock, SidebarSection::TodoSection, SidebarSection::Context, SidebarSection::MessageDisplay] {
+        assert_eq!(store.effective().section(section), DisclosureState::Collapsed);
+        assert_eq!(reopened.effective().section(section), DisclosureState::Collapsed);
+        assert_eq!(reopened.session().unwrap().section(section), None);
+    }
+}
+
+#[test]
+fn completed_item_filters_are_independent_global_values_and_refresh_live_stores() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = open(dir.path(), Some("first")).store;
+    let mut second = open(dir.path(), Some("second")).store;
+    assert!(!first.global().show_completed(CompletedItemsPane::Tasks));
+    assert!(first.global().show_completed(CompletedItemsPane::Todos));
+    first.set(Layer::Session, Setting::ShowCompleted { pane: CompletedItemsPane::Tasks, show: true }).unwrap();
+    second.set(Layer::Session, Setting::ShowCompleted { pane: CompletedItemsPane::Todos, show: false }).unwrap();
+    assert!(first.reload_global().is_empty());
+    let reopened = open(dir.path(), Some("future")).store;
+    for settings in [first.global(), reopened.global()] {
+        assert!(settings.show_completed(CompletedItemsPane::Tasks));
+        assert!(!settings.show_completed(CompletedItemsPane::Todos));
+    }
+    assert_eq!(read_toml(&dir.path().join("global.toml"))["completed_items"]["tasks"].as_str(), Some("show"));
+    assert_eq!(read_toml(&dir.path().join("global.toml"))["completed_items"]["todos"].as_str(), Some("hide"));
 }
 
 #[test]

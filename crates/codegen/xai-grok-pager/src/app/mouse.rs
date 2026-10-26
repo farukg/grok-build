@@ -31,6 +31,12 @@ impl AgentView {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.left_mouse_down = true;
+                if self.hit_auto_scroll.contains(mouse.column, mouse.row)
+                    && self.no_input_overlay_pending()
+                {
+                    self.scrollback.toggle_follow();
+                    return InputOutcome::Changed;
+                }
                 if self.hit_todo_close.contains(mouse.column, mouse.row) {
                     self.todo.overlay.escape();
                     self.todo.on_state_change();
@@ -1114,6 +1120,7 @@ impl AgentView {
                     .update_hover(mouse.column, mouse.row);
                 changed |= self.hit_bg_status.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_goal_status.update_hover(mouse.column, mouse.row);
+                changed |= self.hit_auto_scroll.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_bg_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_cwd.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_dashboard.update_hover(mouse.column, mouse.row);
@@ -1361,6 +1368,25 @@ mod tests {
     fn click_edit(agent: &mut AgentView, selected_id: u64) -> InputOutcome {
         click_queue_button(agent, selected_id, |a, c, r| a.queue.edit_click(c, r))
     }
+    #[test]
+    fn auto_scroll_status_click_toggles_the_existing_follow_state() {
+        let mut agent = make_running_agent();
+        agent.hit_auto_scroll.rect = Some(Rect::new(10, 5, 13, 1));
+        agent.scrollback.enable_follow_mode();
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 15,
+            row: 5,
+            modifiers: KeyModifiers::empty(),
+        };
+        assert!(matches!(agent.handle_mouse(&click), InputOutcome::Changed));
+        assert!(!agent.scrollback.follow_mode());
+        assert!(matches!(agent.handle_mouse(&click), InputOutcome::Changed));
+        assert!(agent.scrollback.follow_mode());
+        assert!(!agent.hit_auto_scroll.contains(9, 5));
+        assert!(!agent.hit_auto_scroll.contains(23, 5));
+    }
+
     #[test]
     fn mouse_send_now_tracks_automatic_wake_cancellation() {
         let mut active = running_agent_local_only();

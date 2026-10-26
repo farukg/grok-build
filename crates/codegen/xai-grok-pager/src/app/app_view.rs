@@ -2221,6 +2221,13 @@ impl AppView {
                 .get(&id)
                 .map(|agent| (id, agent.tasks.overlay.visible, agent.todo.overlay.visible))
         });
+        let preferences_before = self.active_view.agent_id().and_then(|id| {
+            self.agents.get(&id).map(|agent| (
+                id,
+                (agent.tasks.show_done(), agent.todo.show_done()),
+                agent.global_panel_settings(),
+            ))
+        });
         let minimal_todo_before = self.minimal_state.show_todos;
         let outcome = self.handle_input_inner(ev, arrived_at, paste_provenance);
         if let Some((id, old_tasks, old_todo)) = before {
@@ -2244,6 +2251,30 @@ impl AppView {
                 }
                 for (_, agent) in self.agents.all_mut() {
                     agent.adopt_global_work_visibility(tasks, todo);
+                }
+            }
+        }
+        if let Some((id, old_filters, old_preferences)) = preferences_before {
+            let filters = self.agents.get_mut(&id).and_then(|agent| {
+                let current = (agent.tasks.show_done(), agent.todo.show_done());
+                if current == old_filters { return None; }
+                agent.save_global_completed_filters(
+                    (current.0 != old_filters.0).then_some(current.0),
+                    (current.1 != old_filters.1).then_some(current.1),
+                );
+                Some((agent.tasks.show_done(), agent.todo.show_done()))
+            });
+            if let Some((tasks, todos)) = filters {
+                for (_, agent) in self.agents.all_mut() {
+                    agent.tasks.set_show_done(tasks);
+                    agent.todo.set_show_done(todos);
+                }
+            }
+            let global_changed = self.agents.get(&id)
+                .is_some_and(|agent| agent.global_panel_settings() != old_preferences);
+            if global_changed {
+                for (_, agent) in self.agents.all_mut() {
+                    agent.reload_global_panel_settings();
                 }
             }
         }

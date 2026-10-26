@@ -117,20 +117,20 @@ fn label(category: ContextCategory) -> &'static str {
         ContextCategory::Reasoning => "Reasoning",
         ContextCategory::ToolExchanges => "Tool calls and results",
         ContextCategory::RuntimeNotices(notice) => match notice {
-            RuntimeNotice::SystemReminder => "Notice: reminders",
-            RuntimeNotice::LengthContinue => "Notice: length continue",
-            RuntimeNotice::AutoContinue => "Notice: auto continue",
-            RuntimeNotice::AutoRecovery => "Notice: auto recovery",
-            RuntimeNotice::Interjection => "Notice: interjections",
-            RuntimeNotice::AgentMessage => "Notice: agent messages",
-            RuntimeNotice::TaskCompleted => "Notice: task completed",
-            RuntimeNotice::SubagentCompleted => "Notice: subagent completed",
-            RuntimeNotice::NotificationDrain => "Notice: notifications",
-            RuntimeNotice::GoalSummary => "Notice: goal summary",
-            RuntimeNotice::GoalClassifierNudge => "Notice: goal nudge",
-            RuntimeNotice::SchedulerFired => "Notice: scheduled task",
-            RuntimeNotice::StopHookFeedback => "Notice: stop hook",
-            RuntimeNotice::WorkingDirectorySwitch => "Notice: directory switch",
+            RuntimeNotice::SystemReminder => "reminders",
+            RuntimeNotice::LengthContinue => "length continue",
+            RuntimeNotice::AutoContinue => "auto continue",
+            RuntimeNotice::AutoRecovery => "auto recovery",
+            RuntimeNotice::Interjection => "interjections",
+            RuntimeNotice::AgentMessage => "agent messages",
+            RuntimeNotice::TaskCompleted => "task completed",
+            RuntimeNotice::SubagentCompleted => "subagent completed",
+            RuntimeNotice::NotificationDrain => "notifications",
+            RuntimeNotice::GoalSummary => "goal summary",
+            RuntimeNotice::GoalClassifierNudge => "goal nudge",
+            RuntimeNotice::SchedulerFired => "scheduled task",
+            RuntimeNotice::StopHookFeedback => "stop hook",
+            RuntimeNotice::WorkingDirectorySwitch => "directory switch",
         },
         ContextCategory::Memory => "Memory",
         ContextCategory::CompactionSummary => "Compaction summary",
@@ -443,7 +443,17 @@ impl AgentView {
                         if let Some(panel) = self.timeline_mode.panel_mut() {
                             panel.focus = crate::views::timeline_panel::PanelFocus::Chat;
                         }
-                        Some(self.run_sidebar_command_saving(gesture::activation(mouse.modifiers)))
+                        let in_context = match line {
+                            SidebarLine::Row(section, _) | SidebarLine::SectionTitle(section) => {
+                                section == CONTEXT_SECTION
+                            }
+                            SidebarLine::Hosted(_) => false,
+                        };
+                        if in_context {
+                            Some(InputOutcome::Changed)
+                        } else {
+                            Some(self.run_sidebar_command_saving(gesture::activation(mouse.modifiers)))
+                        }
                     }
                     Some(SidebarHit::Line(SidebarLine::Hosted(_))) => {
                         open.focus = SidebarFocus::Chat;
@@ -598,7 +608,7 @@ impl AgentView {
             PolicyState::Ready(_) => gesture::hint_for(cursor_target),
         };
         let header = [Line::from("Session overview")];
-        let saving = self.panel_persistence.saving_status();
+        let saving = self.panel_persistence.display_saving_status();
         let footer = footer::lines(status, saving);
         open.layout = Some(Sidebar::render(
             SidebarRender {

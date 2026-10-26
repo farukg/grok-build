@@ -1,16 +1,15 @@
 //! Saving what an F7 gesture changed (section folds, message-display forms) and restoring it.
 //!
-//! A gesture runs unchanged; the stored view is read before and after, and what differs goes to the
-//! shared edit layer (`panel_persistence`). A form the user set is stored as chosen: a kind nobody set
+//! A gesture's changed forms use the effective Display scope; changed section folds use Global.
+//! A form the user set is stored as chosen: a kind nobody set
 //! renders by its block's own policy, which is not one form, so no stored form can be called redundant.
 //! Context switches belong to the shell and are never touched here.
 
 use super::gesture::SidebarCommand;
 use super::{AgentView, ContextSidebar, SectionDisclosure, SectionId};
-use crate::app::agent_view::panel_persistence::OVERRULED;
 use crate::app::app_view::InputOutcome;
 use crate::app::panel_settings::{DisclosureState, PanelSettings, Setting, SidebarSection};
-use crate::scrollback::block::MessageKind;
+use crate::scrollback::block::{DisplayDefaults, MessageKind};
 use crate::scrollback::types::DisplayForm;
 use strum::IntoEnumIterator;
 
@@ -85,64 +84,33 @@ impl AgentView {
         if forms.is_empty() && sections.is_empty() {
             return;
         }
-        let settings: Vec<Setting> = forms
-            .iter()
-            .map(|&(kind, form)| Setting::KindForm { kind, form })
-            .chain(sections.iter().map(|&(section, open)| Setting::Section {
-                section: stored_section(section),
-                state: DisclosureState::from_expanded(open),
-            }))
-            .collect();
-        if self.save_panel_settings(&settings) {
-            self.show_what_is_in_force(&forms, &sections);
-        }
-    }
-
-    /// A save to the global layer changes nothing while this session holds its own value for the same
-    /// setting. Show the value in force and say so, so the screen matches what a restart will bring.
-    fn show_what_is_in_force(
-        &mut self,
-        forms: &[(MessageKind, DisplayForm)],
-        sections: &[(SectionId, bool)],
-    ) {
-        let in_force = self.panel_persistence.effective();
-        let mut overruled = false;
-        for &(kind, form) in forms {
-            if let Some(stored) = in_force.message_form(kind)
-                && stored != form
-            {
-                self.scrollback.set_kind_default(kind, stored);
-                overruled = true;
-            }
-        }
-        if let ContextSidebar::Open(open) = &mut self.context_sidebar {
-            let mut disclosure = open.disclosure();
-            for &(section, open_now) in sections {
-                let stored = in_force.section(stored_section(section)).is_expanded();
-                if stored != open_now {
-                    disclosure.set_expanded(section, stored);
-                    overruled = true;
-                }
-            }
-            if disclosure != open.disclosure() {
-                open.apply_disclosure(disclosure);
-            }
-        }
-        if overruled {
-            self.show_toast(OVERRULED);
+        let section_settings: Vec<_> = sections.iter().map(|&(section, open)| Setting::Section {
+            section: stored_section(section),
+            state: DisclosureState::from_expanded(open),
+        }).collect();
+        let form_settings: Vec<_> = forms.iter().map(|&(kind, form)| Setting::KindForm { kind, form }).collect();
+        if !section_settings.is_empty() { self.save_global_panel_settings(&section_settings); }
+        if !form_settings.is_empty() { self.save_display_settings(&form_settings); }
+        if self.panel_persistence.store.is_some() {
+            self.restore_f7_panel_settings();
         }
     }
 
     /// Applies the stored message-display forms to the scrollback, and the folds to an open F7.
     /// A kind the stored layers no longer set (another session's override) goes back to its block's own policy.
     pub(in crate::app::agent_view) fn restore_f7_panel_settings(&mut self) {
+        self.apply_f7_panel_settings(false);
+    }
+
+    pub(in crate::app::agent_view) fn apply_f7_panel_settings(&mut self, reset_overrides: bool) {
         let stored = self.panel_persistence.effective();
+        let mut defaults = DisplayDefaults::default();
         for &kind in MessageKind::settings_kinds() {
-            match stored.message_form(kind) {
-                Some(form) => self.scrollback.set_kind_default(kind, form),
-                None => self.scrollback.clear_kind_default(kind),
+            if let Some(form) = stored.message_form(kind) {
+                defaults.set(kind, form);
             }
         }
+        self.scrollback.replace_display_defaults(defaults, reset_overrides);
         if let ContextSidebar::Open(open) = &mut self.context_sidebar {
             open.apply_disclosure(restored_disclosure(&stored));
         }

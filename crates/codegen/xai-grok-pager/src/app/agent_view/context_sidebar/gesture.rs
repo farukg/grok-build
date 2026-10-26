@@ -2,7 +2,8 @@
 //!
 //! | gesture                       | section title               | Message display row            | Context row                      |
 //! |-------------------------------|-----------------------------|--------------------------------|----------------------------------|
-//! | Enter, Space, click           | fold or unfold the section  | flip this kind                 | ask the shell to flip the switch |
+//! | Enter, Space                  | fold or unfold the section  | flip this kind                 | ask the shell to flip the switch |
+//! Context clicks, including modified clicks and its title, only select and focus.
 //! | Shift+Enter, Shift+click      | toggle all other sections   | toggle all other kinds         | toggle all other sections        |
 //! | `+` / `-`                     | open / close all sections   | bulk kinds full / on one line  | open / close all sections        |
 //! | Ctrl+Enter, Ctrl+click, `*`   | toggle everything else      | toggle everything else         | toggle everything else           |
@@ -49,8 +50,8 @@ pub(super) enum SidebarCommand {
         /// Whether the cursor line itself is part of the change.
         anchor: BulkAnchor,
     },
-    /// Flip where edits are saved: globally or for this session only.
-    ToggleEditLayer,
+    /// Select and apply the stored global or session Message Display values.
+    ToggleDisplayScope,
     FocusChat,
     Close,
 }
@@ -86,7 +87,7 @@ pub(super) fn command_for(key: &KeyEvent, page: usize) -> Option<SidebarCommand>
         KeyCode::Char('+') if plain => bulk(Spread::Peers, Goal::Set(BulkDirection::Expand)),
         KeyCode::Char('-') if plain => bulk(Spread::Peers, Goal::Set(BulkDirection::Collapse)),
         KeyCode::Char('*') if plain => bulk(Spread::Everything, Goal::Toggle),
-        KeyCode::Char('g') if plain => Some(SidebarCommand::ToggleEditLayer),
+        KeyCode::Char('g') if plain => Some(SidebarCommand::ToggleDisplayScope),
         _ => None,
     }
 }
