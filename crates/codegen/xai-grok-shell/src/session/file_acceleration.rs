@@ -31,7 +31,7 @@ pub struct FileAccelerationSettings {
     pub routes: Option<Arc<str>>,
 }
 
-pub fn settings(config: &Config) -> FileAccelerationSettings {
+pub(crate) fn settings(config: &Config) -> FileAccelerationSettings {
     FileAccelerationSettings {
         is_enabled: config.is_feature_enabled(Feature::FileAcceleration),
         routes: resolve_file_acceleration_routes(

@@ -55,7 +55,7 @@ pub struct PublishedCompletion {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum CompletionResultReference {
+pub(crate) enum CompletionResultReference {
     Prepared {
         path: std::path::PathBuf,
     },
@@ -66,7 +66,7 @@ pub enum CompletionResultReference {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SubagentCompletionFact {
+pub(crate) struct SubagentCompletionFact {
     #[serde(with = "xai_chat_state::completion::completion_id_serde")]
     pub id: SubagentCompletionId,
     pub state: SubagentState,

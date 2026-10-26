@@ -238,7 +238,8 @@ pub(super) fn handle_session_notification_with_origin(
             session_notif.meta.as_ref(),
         );
     }
-    let lifecycle_child = lifecycle_child_session_id(&session_notif.update)
+    let lifecycle_child_session = lifecycle_child_session_id(&session_notif.update);
+    let lifecycle_child = lifecycle_child_session
         .and_then(|child_session_id| app.agents.find_by_session_id(child_session_id));
     let is_active = is_matched_agent_active(app, parent_id);
     let agent = app
@@ -267,7 +268,7 @@ pub(super) fn handle_session_notification_with_origin(
             // duplicate strip row or attempt).
             if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
                 tracing::debug!(
-                    child_session_id = lifecycle.child_session_id,
+                    child_session_id = lifecycle_child_session,
                     event_id = meta.event_id.as_deref(),
                     "duplicate subagent lifecycle re-delivery dropped"
                 );

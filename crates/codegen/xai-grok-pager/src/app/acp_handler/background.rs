@@ -745,6 +745,10 @@ pub(super) fn apply_background_tasks_snapshot(
     truncated: bool,
     is_replay: bool,
 ) -> bool {
+    fn non_blank(value: &Option<String>) -> Option<&str> {
+        value.as_deref().filter(|value| !value.trim().is_empty())
+    }
+
     let mut changed = false;
     let snapshot_ids: std::collections::HashSet<String> =
         tasks.iter().map(|row| row.task_id.clone()).collect();
@@ -755,9 +759,6 @@ pub(super) fn apply_background_tasks_snapshot(
         let start_time =
             snapshot_system_time(&row.started_at).unwrap_or_else(std::time::SystemTime::now);
         let end_time = row.ended_at.as_deref().and_then(snapshot_system_time);
-        let non_blank = |value: &Option<String>| {
-            value.as_deref().filter(|value| !value.trim().is_empty())
-        };
         match agent.session.bg_tasks.entry(row.task_id.clone()) {
             std::collections::btree_map::Entry::Occupied(mut occupied) => {
                 let task = occupied.get_mut();
