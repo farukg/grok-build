@@ -1,12 +1,16 @@
-# Owner-takeover execution plan (Krillin, updated 2026-10-25)
+# Owner-takeover execution plan (Krillin, updated 2026-10-26)
 
-Status: started work was integrated at `7ec4c932653b9a777db24e32b3200935d777b5e3`;
-release build [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
-failed at `5f50af26` with four shell compiler errors. Scoped S/D integration corrections
-and removal of two obsolete chat-state imports are underway on `main`. No checks or
-tests were launched. Release success, staging and runtime acceptance remain pending;
-record artifact proof only from a successful actual GitHub release Run/Commit record.
+Status: source/artifact commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` passed
+GitHub Actions [linux-build run 40247692299](https://github.com/farukg/grok-build/actions/runs/40247692299)
+and its exact-run artifact was staged. Checksum validation succeeded; the release
+binary was placed at `/home/fg/.cache/cargo-target/quick/release/xai-grok-pager`, and
+the deployment stage reported 1 promoted, 0 skipped, to `/home/fg/.cargo/bin/grok`.
+No runtime/PTY verification, tests, or process restarts were performed; running-binary
+identity is unverified. A later docs-only commit is not this source/artifact commit.
 No new feature or review project is authorized.
+
+The preceding release attempt [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
+failed on intermediate `5f50af26` and was superseded by the successful run above.
 
 **Verification boundary: no checks, tests, formatters, local builds, or `sig build`;
 no sig-orch communications.** This also forbids compiler/formatter verification
@@ -16,15 +20,16 @@ integration. Historical local-guard instructions are superseded.
 
 ## Current execution baseline
 
-- Preserved canonical `main` commit: `875ff73c`.
-- Preserved owner commit: `e7ceeb50` in
-  `/home/fg/projects/worktrees.d/org/forks/grok-build@owner-takeover`.
-  Source integration began with `7ec4c932653b9a777db24e32b3200935d777b5e3`;
-  release run `40242190071` failed at `5f50af26`. Four shell compile errors were
-  reported: missing `fs` import, obsolete `observation.text`, sibling visibility for
-  `project_notification_batch`, and receipt unit/bool return mismatch. Scoped S/D
-  corrections and two obsolete chat-state import removals are underway on `main`.
-  No checks or tests were launched; preservation commits are not the final source tip.
+- Preserved canonical `main` commit: `875ff73c`; preserved owner commit: `e7ceeb50`.
+- Integrated source/artifact commit: `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f`.
+  GitHub Actions release build run `40247692299` succeeded and its artifact was staged
+  after checksum validation (1 promoted, 0 skipped; target `/home/fg/.cargo/bin/grok`).
+  No tests, runtime/PTY verification, process restarts, or running-binary identity
+  verification were performed. The later docs-only commit is outside this artifact's
+  source commit and has not been built.
+- Superseded intermediate: source integration began at
+  `7ec4c932653b9a777db24e32b3200935d777b5e3`; run `40242190071` failed on `5f50af26`
+  before scoped corrections. That failure is historical and not the final build result.
 - Historical Wave A baseline: `5abbd3c5599c18133ea271049d8c3da3510cc736`.
   Its checkpoint merge completed before preservation; historical acceptance facts
   are retained below and do not describe current source acceptance.
@@ -151,24 +156,20 @@ outside this scope.
 
 ## Historical Wave C — final acceptance and staging
 
-The following is prior delivery planning, not authorization for new review or tests
-in the current delivery unit. Current integrated `main` is `5f50af26`; release build
-run `40242190071` is in progress, with no success or staging claimed.
+The release-build and staging steps are complete for source/artifact commit
+`479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f`: run `40247692299` succeeded and the exact
+artifact was checksum-validated and staged (1 promoted, 0 skipped). The prior numbered
+steps below are retained as future acceptance criteria, not completed evidence or
+authorization for checks/tests/restarts in this delivery scope.
 
-1. Confirm review closure, the full source review by reading, and same-SHA green
-   GitHub Actions build + relevant tests; record exact run IDs and conclusions.
-2. Stage via `org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --run-id <id> --commit <sha>`.
-3. Report to Faruk explicitly whether grok-CLI restart suffices or the grok-leader service
-   must restart too (`docs/fork/recon/runtime-environment.md`).
-4. Verify the actually selected + running grok stand from the staged artifact, not from
-   older release paths.
-5. Real terminal/PTY acceptance on the running binary, including Wave B modal key
-   routing, dashboard round-trip and Main/Subagents navigation, all-visible-region
-   Tab traversal, pane focus continuity, Dock placements and independent F7 section,
-   OFF Context row layout, reused Todos section, and global Tasks/Todos toggle
-   persistence across session switches, new sessions and restarts. These interaction
-   requirements remain pending/unverified until evidence is recorded. Do not claim
-   staging, runtime selection or acceptance complete without evidence.
+- No tests or terminal/PTY acceptance were run; runtime behavior is unverified.
+- No restart was performed. Whether the staged binary is the currently running binary
+  is unknown; report restart requirements only from the runtime-environment procedure.
+- Modal routing, dashboard round-trip, focus traversal, Dock/Context/Todos behavior and
+  global toggle persistence remain unverified. Do not claim runtime selection or
+  interaction acceptance without corresponding evidence.
+- Record this release's proof against the exact Run/Commit pair; later docs-only
+  commits are not built into this artifact.
 
 ## Verification and ownership boundaries
 

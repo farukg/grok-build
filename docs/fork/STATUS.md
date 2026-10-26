@@ -1,18 +1,21 @@
 # Fork status
 
-Current delivery status: 2026-10-25. The fork is `farukg/grok-build` (`origin`);
+Current delivery status: 2026-10-26. The fork is `farukg/grok-build` (`origin`);
 `xai-org/grok-build` is upstream, not the push destination.
 
-Started-work source was first integrated at `7ec4c932653b9a777db24e32b3200935d777b5e3`.
-Release build [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
-failed at `5f50af26` with four shell compiler errors (missing `fs` import, obsolete
-`observation.text`, sibling visibility for `project_notification_batch`, and receipt
-unit/bool return mismatch). Scoped S/D corrections and removal of two obsolete
-chat-state imports are in progress on `main`; no checks or
-tests have been launched. A successful release build, staging, activation, and verified
-installed/running artifact are not established. Record artifact proof only from a
-successful actual GitHub release Run/Commit delivery record. Preserved refs `875ff73c`
-and `e7ceeb50` remain available.
+Source/artifact commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` passed GitHub
+Actions [linux-build run 40247692299](https://github.com/farukg/grok-build/actions/runs/40247692299).
+The exact-run artifact was staged: checksum validation succeeded, the release binary
+was placed at `/home/fg/.cache/cargo-target/quick/release/xai-grok-pager`, and the
+Grok deployment stage reported 1 promoted, 0 skipped, with installed target
+`/home/fg/.cargo/bin/grok`. This records build and stage evidence only; no process
+restart, running-binary identity, runtime/PTY acceptance, or tests were performed.
+The earlier build attempt [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
+failed on intermediate commit `5f50af26`; it was superseded by the successful run
+above. Preserved refs `875ff73c` and `e7ceeb50` remain available.
+
+The subsequent docs-only commit is not the source/artifact commit and has not itself
+been built. Keep artifact provenance tied to the exact successful Run/Commit record.
 
 Historical published `main` at `ba47d59ffc2538a6f4138ce61fd186376776fe21` was an
 independently source-reviewed Root/Child intermediate. GitHub Actions
@@ -22,9 +25,9 @@ triggered by the intermediate push. This is historical build-only evidence;
 same-SHA `linux-test` acceptance was unverified and it does not establish current
 main's build or acceptance.
 
-**Effective policy: no local executing checks, builds, tests, formatters,
-validation scripts or hooks, including `sig build`. Executing verification belongs
-exclusively to GitHub Actions. No sig-orch communications are authorized.** No force
+**Effective policy: checks, tests, formatters, validation scripts and hooks remain
+disabled locally and in GitHub Actions. Required release-artifact builds run solely
+in GitHub Actions. Local builds, `sig build` and sig-orch communication remain disabled.** No force
 push is authorized on any branch. Historical local results and older handoff
 instructions do not override this policy.
 
@@ -53,11 +56,11 @@ Current evidence supersedes their older local-verification and gateway-owner tex
   schema/pass-through, correlated producer availability and consumer-first rollout
   acceptance are unverified. SIG delivery-outage diagnosis is separate; no shared
   restart is authorized.
-- Source closure is not compilation, test discovery, runtime, or UI acceptance. Run
-  `40242190071` failed at `5f50af26` with four shell compiler errors; scoped source
-  corrections are underway. No tests or additional checks are authorized. Staging
-  and selected/running artifact evidence remain pending until a successful release
-  Run/Commit record and subsequent delivery evidence exist.
+- Source closure is not test discovery, runtime, or UI acceptance. Source/artifact
+  commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` has successful release-build
+  evidence in run `40247692299` and exact-run staging evidence above. No tests,
+  process restarts, or runtime/PTY verification were performed; the currently running
+  binary is unverified. No additional checks or tests are authorized in this scope.
 
 ## Historical fold baseline
 
