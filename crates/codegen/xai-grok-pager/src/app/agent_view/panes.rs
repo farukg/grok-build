@@ -964,6 +964,23 @@ impl AgentView {
         };
         InputOutcome::Action(Action::OpenSession(child_sid))
     }
+    /// The composer's real End boundary: the caret already sits at its line end with no
+    /// selection, so a plain `End` would not move anything.
+    pub(super) fn prompt_caret_at_local_end(&self) -> bool {
+        self.prompt.selection_range().is_none()
+            && self
+                .prompt
+                .text()
+                .get(self.prompt.cursor()..)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('\n'))
+    }
+
+    /// The dock's real End boundary: the cursor already sits on the last row (or the dock is empty).
+    pub(super) fn dock_at_local_end(&self) -> bool {
+        let items = self.dock_items();
+        items.is_empty() || self.dock_cursor + 1 >= items.len()
+    }
+
     /// Dock-focused key handling (remote `dock_enabled`).
     pub(super) fn handle_dock_key(&mut self, key: &KeyEvent) -> InputOutcome {
         use crate::views::dock::DockItem;
@@ -992,6 +1009,10 @@ impl AgentView {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.dock_cursor = (self.dock_cursor + 1).min(items.len() - 1);
+                InputOutcome::Changed
+            }
+            KeyCode::End => {
+                self.dock_cursor = items.len().saturating_sub(1);
                 InputOutcome::Changed
             }
             KeyCode::Right | KeyCode::Char('l') => match items.get(self.dock_cursor) {

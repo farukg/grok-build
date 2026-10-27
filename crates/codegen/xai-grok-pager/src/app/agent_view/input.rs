@@ -14,7 +14,7 @@ use crate::app::app_view::InputOutcome;
 use crate::key;
 use crate::views::plan_approval_view::PlanApprovalFocus;
 use crossterm::event::{
-    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use std::time::Instant;
 /// External-editor access to the ordinary composer.
@@ -121,6 +121,52 @@ impl AgentView {
                 break;
             }
         }
+    }
+
+    /// Plain `End` in a focused non-scrollback pane runs that pane's own End navigation first.
+    /// When the pane already sits at its real End boundary — a repeated `End` would change
+    /// nothing there — the same key scrolls the transcript to tail and enables its existing
+    /// follow state, keeping focus in the pane. Boundary ownership is positive per pane;
+    /// modals and dialogs return before this, and unsupported keys never reach it.
+    fn end_key_transcript_follow(&mut self, key: &KeyEvent) -> Option<InputOutcome> {
+        if key.code != KeyCode::End
+            || !key.modifiers.is_empty()
+            || self.key_owner() != KeyOwner::Pane
+        {
+            return None;
+        }
+        let at_local_end = match self.visible_focus() {
+            // Scrollback's own `End` is already the tail+follow gesture.
+            VisibleFocus::Pane(AgentPane::Scrollback) => return None,
+            // Layers over the composer (history browse, dropdowns) keep plain End.
+            VisibleFocus::Pane(AgentPane::Prompt) if self.prompt.any_dropdown_open() => {
+                return None;
+            }
+            VisibleFocus::Pane(AgentPane::Prompt) => self.prompt_caret_at_local_end(),
+            VisibleFocus::Pane(AgentPane::Todo) => self.todo.at_end_boundary(),
+            VisibleFocus::Pane(AgentPane::Queue) => self.queue.at_end_boundary(),
+            VisibleFocus::Pane(AgentPane::Tasks) => self.tasks.at_end_boundary(),
+            VisibleFocus::Pane(AgentPane::Dock) | VisibleFocus::SidebarDock => {
+                self.dock_at_local_end()
+            }
+            VisibleFocus::Timeline => {
+                let panel = self.timeline_mode.panel_mut()?;
+                panel.refresh(&self.scrollback);
+                panel.end_nav_is_stay()
+            }
+            VisibleFocus::Context => self.sidebar_end_is_stay(),
+            // The /btw overlay is a dialog surface; End is not a transcript gesture there.
+            VisibleFocus::Btw => return None,
+        };
+        if !at_local_end {
+            return None;
+        }
+        self.persistent_text_selection = None;
+        self.table_selection_geometry = None;
+        self.selection_created_at = None;
+        self.highlighted_link_idx = None;
+        self.scrollback.enable_follow_mode();
+        Some(InputOutcome::Changed)
     }
 
     /// The composer is the editing target regardless of pane focus (like the other global chords); overlays and dropdowns still own input.
@@ -1064,6 +1110,12 @@ impl AgentView {
         {
             self.cycle_visible_focus(self.visible_focus());
             return InputOutcome::Changed;
+        }
+        if let Event::Key(key) = ev
+            && key.kind != KeyEventKind::Release
+            && let Some(outcome) = self.end_key_transcript_follow(key)
+        {
+            return outcome;
         }
         if let Some(outcome) = self.route_context_sidebar_input(ev) {
             return outcome;
@@ -2639,4 +2691,550 @@ mod scrollback_paste_focus_forward_tests {
         assert_eq!(agent.prompt.images.len(), 1);
         assert!(agent.prompt.text().contains("[Image #1]"));
     }
+}
+
+#[cfg(test)]
+mod end_follow_shortcut_tests {
+    use super::test_fixtures::{make_agent, running_subagent_info};
+    use super::{AgentPane, AgentView};
+    use crate::actions::ActionRegistry;
+    use crate::app::actions::Action;
+    use crate::app::app_view::InputOutcome;
+    use crate::scrollback::block::RenderBlock;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn modified(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(KeyEvent::new(code, modifiers))
+    }
+
+    /// Multi-page transcript with follow off and no selection: the state a session
+    /// returns to after a switch away and back.
+    fn agent_with_parked_transcript(pane: AgentPane) -> AgentView {
+        let mut agent = make_agent();
+        for i in 0..12 {
+            agent
+                .scrollback
+                .push_block(RenderBlock::agent_message(format!("message {i}\nsecond line")));
+        }
+        agent.scrollback.prepare_layout(80, 10);
+        agent.scrollback.scroll_up(6);
+        agent.scrollback.clear_selection();
+        assert!(!agent.scrollback.is_follow_mode());
+        assert!(agent.scrollback.selected().is_none());
+        agent.set_active_pane(pane, true);
+        agent
+    }
+
+    fn draw(agent: &mut AgentView) {
+        let _theme = crate::theme::cache::pin_theme();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let mut effects = Vec::new();
+        agent.draw(
+            area,
+            &mut buf,
+            &ActionRegistry::defaults(),
+            &mut crate::scrollback::render::ScratchBuffer::new(),
+            None,
+            false,
+            crate::app::agent_view::BannerSlotParams::none(),
+            false,
+            &mut effects,
+            crate::app::agent_view::AppRenderParams::default(),
+        );
+    }
+
+    fn transcript_at_tail_with_follow(agent: &AgentView) -> bool {
+        agent.scrollback.is_follow_mode() && !agent.scrollback.has_content_below()
+    }
+
+    #[test]
+    fn prompt_end_mid_line_moves_the_caret_not_the_transcript() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let reg = ActionRegistry::defaults();
+        agent.prompt.set_text("line one\nline two");
+        agent.prompt.set_cursor(0);
+        let offset_before = agent.scrollback.scroll_offset();
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert_eq!(
+            agent.prompt.cursor(),
+            "line one".len(),
+            "first End performs the composer's own line-end navigation"
+        );
+        assert_eq!(agent.scrollback.scroll_offset(), offset_before);
+        assert!(!agent.scrollback.is_follow_mode());
+    }
+
+    #[test]
+    fn prompt_end_at_line_end_tails_the_transcript_and_keeps_focus() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let reg = ActionRegistry::defaults();
+        agent.prompt.set_text("hello world");
+        agent.prompt.set_cursor("hello world".len());
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(
+            agent.active_pane,
+            AgentPane::Prompt,
+            "the End fallback keeps focus in the composer"
+        );
+        assert_eq!(agent.prompt.cursor(), "hello world".len());
+    }
+
+    #[test]
+    fn prompt_end_with_a_selection_stays_local() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let reg = ActionRegistry::defaults();
+        agent.prompt.set_text("hello world");
+        agent.prompt.set_cursor("hello world".len());
+        agent.prompt.textarea.set_selection(0, 5);
+        let offset_before = agent.scrollback.scroll_offset();
+        agent.handle_input(&key(KeyCode::End), &reg);
+        assert!(!agent.scrollback.is_follow_mode());
+        assert_eq!(agent.scrollback.scroll_offset(), offset_before);
+    }
+
+    #[test]
+    fn prompt_end_with_an_open_dropdown_stays_local() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let reg = ActionRegistry::defaults();
+        agent.prompt.set_text("/he");
+        agent.prompt.refresh_slash(&agent.session.models);
+        assert!(agent.prompt.slash_open(), "fixture must open the slash bar");
+        agent.prompt.set_cursor(agent.prompt.text().len());
+        agent.handle_input(&key(KeyCode::End), &reg);
+        assert!(
+            !agent.scrollback.is_follow_mode(),
+            "the open dropdown owns End; the transcript must not tail"
+        );
+    }
+
+    #[test]
+    fn modified_end_never_tails_the_transcript() {
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SHIFT] {
+            let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+            let reg = ActionRegistry::defaults();
+            agent.prompt.set_text("hello");
+            agent.prompt.set_cursor("hello".len());
+            agent.handle_input(&modified(KeyCode::End, modifiers), &reg);
+            assert!(
+                !agent.scrollback.is_follow_mode(),
+                "End with {modifiers:?} is not the transcript-tail gesture"
+            );
+        }
+    }
+
+    #[test]
+    fn todo_end_runs_local_list_end_before_the_transcript_fallback() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Todo);
+        let reg = ActionRegistry::defaults();
+        agent.todo.update_todos(vec![
+            xai_grok_shell::tools::TodoItem {
+                content: "one".into(),
+                status: xai_grok_shell::tools::TodoStatus::Pending,
+                priority: Default::default(),
+                meta: None,
+            },
+            xai_grok_shell::tools::TodoItem {
+                content: "two".into(),
+                status: xai_grok_shell::tools::TodoStatus::Pending,
+                priority: Default::default(),
+                meta: None,
+            },
+        ]);
+        agent.todo.overlay.visible = true;
+        agent.todo.overlay.focused = true;
+        draw(&mut agent);
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert_eq!(
+            agent.todo.list_state.selected_index(),
+            Some(1),
+            "first End performs the pane's own select-last navigation"
+        );
+        assert!(!agent.scrollback.is_follow_mode());
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert!(
+            transcript_at_tail_with_follow(&agent),
+            "the repeated End at the pane boundary tails the transcript"
+        );
+        assert_eq!(agent.active_pane, AgentPane::Todo);
+    }
+
+    #[test]
+    fn tasks_end_on_an_empty_pane_tails_the_transcript() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Tasks);
+        let reg = ActionRegistry::defaults();
+        agent.tasks.overlay.visible = true;
+        agent.tasks.overlay.focused = true;
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(agent.active_pane, AgentPane::Tasks);
+    }
+
+    #[test]
+    fn dock_end_moves_to_the_last_row_then_repeated_end_tails_the_transcript() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Dock);
+        let reg = ActionRegistry::defaults();
+        agent.dock_shown = true;
+        agent.dock_on = true;
+        for child in ["child-a", "child-b", "child-c"] {
+            agent
+                .subagent_sessions
+                .insert(child.to_string(), running_subagent_info(child));
+        }
+        let rows = agent.dock_items().len();
+        assert!(rows >= 2, "fixture must lay out more than one dock row");
+        agent.dock_cursor = 0;
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert_eq!(
+            agent.dock_cursor,
+            rows - 1,
+            "first End performs the dock's own last-row navigation"
+        );
+        assert!(!agent.scrollback.is_follow_mode());
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Changed
+        ));
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(agent.active_pane, AgentPane::Dock);
+    }
+
+    #[test]
+    fn scrollback_end_stays_the_registry_goto_bottom() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Scrollback);
+        let reg = ActionRegistry::defaults();
+        assert!(matches!(
+            agent.handle_input(&key(KeyCode::End), &reg),
+            InputOutcome::Action(Action::GotoBottom)
+        ));
+    }
+
+    #[test]
+    fn a_block_viewer_owns_end_before_the_transcript_fallback() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let reg = ActionRegistry::defaults();
+        agent.prompt.set_text("hello");
+        agent.prompt.set_cursor("hello".len());
+        agent.block_viewer = Some(crate::views::block_viewer::BlockViewerPane::for_plain_text(
+            "t", "content",
+        ));
+        agent.handle_input(&key(KeyCode::End), &reg);
+        assert!(
+            !agent.scrollback.is_follow_mode(),
+            "an open dialog owns End; the transcript must not tail"
+        );
+    }
+
+    #[test]
+    fn cancel_turn_card_keeps_end_even_over_a_prompt_at_line_end() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        agent.prompt.set_text("draft");
+        agent.prompt.set_cursor(5);
+        agent.cancel_turn_view = Some(crate::views::modal::CancelTurnViewState {
+            active_idx: 0,
+            running_count: 1,
+        });
+        let offset = agent.scrollback.scroll_offset();
+        agent.handle_input(&key(KeyCode::End), &ActionRegistry::defaults());
+        assert!(agent.cancel_turn_view.is_some());
+        assert_eq!(agent.scrollback.scroll_offset(), offset);
+        assert!(!agent.scrollback.is_follow_mode());
+        assert_eq!(agent.active_pane, AgentPane::Prompt);
+    }
+
+    fn populated_list(pane: AgentPane) -> AgentView {
+        let mut agent = agent_with_parked_transcript(pane);
+        match pane {
+            AgentPane::Todo => {
+                agent.todo.update_todos(vec![xai_grok_shell::tools::TodoItem {
+                    content: "needle".into(),
+                    status: xai_grok_shell::tools::TodoStatus::Pending,
+                    priority: Default::default(),
+                    meta: None,
+                }]);
+                agent.todo.overlay.visible = true;
+                agent.todo.overlay.focused = true;
+            }
+            AgentPane::Tasks => {
+                super::test_fixtures::add_running_bg_task(&mut agent);
+                agent.tasks.overlay.visible = true;
+                agent.tasks.overlay.focused = true;
+            }
+            AgentPane::Queue => {
+                agent.session.pending_prompts.push_back(crate::app::agent::QueuedPrompt::plain(
+                    1, "needle", crate::app::agent::QueueEntryKind::Prompt,
+                ));
+                agent.queue.overlay.visible = true;
+                agent.queue.overlay.focused = true;
+            }
+            AgentPane::Prompt | AgentPane::Scrollback | AgentPane::Dock => {
+                panic!("list fixture requires a list pane");
+            }
+        }
+        draw(&mut agent);
+        let area = Rect::new(0, 0, 80, 12);
+        let mut buf = Buffer::empty(area);
+        let layout = crate::appearance::LayoutConfig::default();
+        match pane {
+            AgentPane::Todo => agent.todo.render(area, &mut buf, true, &layout),
+            AgentPane::Tasks => agent.tasks.render(
+                area, &mut buf, true, &layout, &agent.session.bg_tasks,
+                &agent.subagent_sessions, &agent.session.scheduled_tasks,
+            ),
+            AgentPane::Queue => agent.queue.render(area, &mut buf, true, &layout, None, false),
+            AgentPane::Prompt | AgentPane::Scrollback | AgentPane::Dock => unreachable!(),
+        }
+        agent.restore_visible_focus(super::VisibleFocus::Pane(pane));
+        agent
+    }
+
+    fn list_state(agent: &AgentView, pane: AgentPane) -> &crate::views::list_pane::ListPaneState {
+        match pane {
+            AgentPane::Todo => &agent.todo.list_state,
+            AgentPane::Tasks => &agent.tasks.list_state,
+            AgentPane::Queue => &agent.queue.list_state,
+            AgentPane::Prompt | AgentPane::Scrollback | AgentPane::Dock => {
+                panic!("list fixture requires a list pane");
+            }
+        }
+    }
+
+    #[test]
+    fn list_search_and_filter_end_move_the_editor_caret_without_tailing() {
+        let registry = ActionRegistry::defaults();
+        for pane in [AgentPane::Todo, AgentPane::Tasks] {
+            for open in ['/', 'f'] {
+                let mut agent = populated_list(pane);
+                agent.handle_input(&key(KeyCode::End), &registry);
+                assert!(!agent.scrollback.is_follow_mode());
+                agent.handle_input(&key(KeyCode::Char(open)), &registry);
+                assert!(list_state(&agent, pane).input_mode().is_some());
+                agent.handle_input(&Event::Paste("needle".into()), &registry);
+                agent.handle_input(&key(KeyCode::Home), &registry);
+                assert_eq!(list_state(&agent, pane).input_textarea().cursor(), 0);
+                let offset = agent.scrollback.scroll_offset();
+                for _ in 0..2 {
+                    agent.handle_input(&key(KeyCode::End), &registry);
+                    assert_eq!(list_state(&agent, pane).input_textarea().cursor(), 6);
+                    assert_eq!(agent.scrollback.scroll_offset(), offset);
+                    assert!(!agent.scrollback.is_follow_mode());
+                    assert_eq!(agent.active_pane, pane);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn whitespace_list_reply_keeps_repeated_end_in_its_editor() {
+        let registry = ActionRegistry::defaults();
+        for pane in [AgentPane::Todo, AgentPane::Tasks, AgentPane::Queue] {
+            let mut agent = populated_list(pane);
+            agent.handle_input(&key(KeyCode::End), &registry);
+            match pane {
+                AgentPane::Todo => agent.todo.list_state.open_comment_input("   "),
+                AgentPane::Tasks => agent.tasks.list_state.open_comment_input("   "),
+                AgentPane::Queue => agent.queue.list_state.open_comment_input("   "),
+                AgentPane::Prompt | AgentPane::Scrollback | AgentPane::Dock => unreachable!(),
+            }
+            agent.handle_input(&key(KeyCode::Home), &registry);
+            let offset = agent.scrollback.scroll_offset();
+            for _ in 0..2 {
+                agent.handle_input(&key(KeyCode::End), &registry);
+                assert_eq!(list_state(&agent, pane).input_text(), "   ");
+                assert_eq!(list_state(&agent, pane).input_textarea().cursor(), 3);
+                assert_eq!(agent.scrollback.scroll_offset(), offset);
+                assert!(!agent.scrollback.is_follow_mode());
+            }
+        }
+    }
+
+    #[test]
+    fn queue_and_tasks_end_reach_local_end_before_following_the_transcript() {
+        let registry = ActionRegistry::defaults();
+        for pane in [AgentPane::Queue, AgentPane::Tasks] {
+            let mut agent = populated_list(pane);
+            agent.handle_input(&key(KeyCode::End), &registry);
+            assert!(!agent.scrollback.is_follow_mode());
+            agent.handle_input(&key(KeyCode::End), &registry);
+            assert!(transcript_at_tail_with_follow(&agent));
+            assert_eq!(agent.active_pane, pane);
+        }
+    }
+
+    #[test]
+    fn f6_and_f7_end_use_the_local_tree_before_tailing_without_focus_change() {
+        use super::VisibleFocus;
+        let registry = ActionRegistry::defaults();
+        for (function, focus) in [(6, VisibleFocus::Timeline), (7, VisibleFocus::Context)] {
+            let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+            agent.handle_input(&key(KeyCode::F(function)), &registry);
+            draw(&mut agent);
+            assert_eq!(agent.visible_focus(), focus);
+            agent.handle_input(&key(KeyCode::Home), &registry);
+            let offset = agent.scrollback.scroll_offset();
+            agent.handle_input(&key(KeyCode::End), &registry);
+            assert!(!agent.scrollback.is_follow_mode(), "first End belongs to {focus:?}");
+            if function == 7 {
+                assert_eq!(agent.scrollback.scroll_offset(), offset);
+            }
+            agent.handle_input(&key(KeyCode::End), &registry);
+            assert!(transcript_at_tail_with_follow(&agent));
+            assert_eq!(agent.visible_focus(), focus);
+        }
+    }
+
+
+    #[test]
+    fn history_search_owns_repeated_end() {
+        use crate::views::history_search::HistoryEntry;
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let history = [HistoryEntry { text: "earlier draft".into() }];
+        assert!(agent.prompt.history_search.activate_browse(&history, ""));
+        agent.prompt.set_text("earlier draft");
+        agent.prompt.set_cursor(13);
+        let offset = agent.scrollback.scroll_offset();
+        for _ in 0..2 {
+            agent.handle_input(&key(KeyCode::End), &ActionRegistry::defaults());
+            assert!(!agent.scrollback.is_follow_mode());
+            assert_eq!(agent.scrollback.scroll_offset(), offset);
+        }
+    }
+
+    #[test]
+    fn f6_end_refreshes_rows_appended_since_the_last_draw() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let registry = ActionRegistry::defaults();
+        agent.handle_input(&key(KeyCode::F(6)), &registry);
+        draw(&mut agent);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        let appended = agent.scrollback.push_block(RenderBlock::agent_message("new endpoint"));
+        agent.scrollback.scroll_up(1);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert_eq!(agent.timeline_mode.panel().unwrap().cursor_row().unwrap().entry_id(), appended);
+        assert!(!agent.scrollback.is_follow_mode(), "stale End must navigate before tailing");
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(agent.visible_focus(), super::VisibleFocus::Timeline);
+    }
+
+    #[test]
+    fn empty_f6_outline_is_a_positive_end_boundary() {
+        let mut agent = make_agent();
+        agent.scrollback.prepare_layout(80, 10);
+        agent.scrollback.scroll_up(1);
+        agent.handle_input(&key(KeyCode::F(6)), &ActionRegistry::defaults());
+        agent.handle_input(&key(KeyCode::End), &ActionRegistry::defaults());
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(agent.visible_focus(), super::VisibleFocus::Timeline);
+    }
+
+
+    #[test]
+    fn rewind_and_shortcuts_modal_keep_repeated_end() {
+        let registry = ActionRegistry::defaults();
+        let mut rewind = agent_with_parked_transcript(AgentPane::Prompt);
+        rewind.rewind_state = Some(crate::views::rewind::RewindState::new_cancel_offer(0, None, None));
+        let mut shortcuts = agent_with_parked_transcript(AgentPane::Prompt);
+        shortcuts.handle_agent_action_with_registry(crate::actions::ActionId::ShortcutsHelp, &registry);
+        assert!(shortcuts.active_modal.is_some());
+        for mut agent in [rewind, shortcuts] {
+            let offset = agent.scrollback.scroll_offset();
+            for _ in 0..2 {
+                agent.handle_input(&key(KeyCode::End), &registry);
+                assert_eq!(agent.scrollback.scroll_offset(), offset);
+                assert!(!agent.scrollback.is_follow_mode());
+            }
+        }
+    }
+
+    #[test]
+    fn f7_folded_endpoint_comes_from_the_current_visible_tree() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let registry = ActionRegistry::defaults();
+        agent.handle_input(&key(KeyCode::F(7)), &registry);
+        draw(&mut agent);
+        agent.handle_input(&key(KeyCode::Home), &registry);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        // Left on a leaf selects its parent; Left again folds that section.
+        agent.handle_input(&key(KeyCode::Left), &registry);
+        agent.handle_input(&key(KeyCode::Left), &registry);
+        let offset = agent.scrollback.scroll_offset();
+        assert!(!agent.scrollback.is_follow_mode());
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert!(agent.scrollback.scroll_offset() >= offset);
+        assert_eq!(agent.visible_focus(), super::VisibleFocus::Context);
+    }
+
+
+    #[test]
+    fn unselected_f7_routes_end_locally_before_using_its_endpoint() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let registry = ActionRegistry::defaults();
+        agent.handle_input(&key(KeyCode::F(7)), &registry);
+        let cursor = |agent: &AgentView| match &agent.context_sidebar {
+            super::super::context_sidebar::ContextSidebar::Closed => None,
+            super::super::context_sidebar::ContextSidebar::Open(open) => open.cursor(),
+        };
+        assert_eq!(cursor(&agent), None);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert!(cursor(&agent).is_some());
+        assert!(!agent.scrollback.is_follow_mode());
+        let initial = cursor(&agent);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert_ne!(cursor(&agent), initial);
+        assert!(!agent.scrollback.is_follow_mode());
+        let endpoint = cursor(&agent);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert_eq!(cursor(&agent), endpoint);
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(agent.visible_focus(), super::VisibleFocus::Context);
+    }
+
+    #[test]
+    fn f6_with_a_removed_cursor_navigates_the_new_outline_before_following() {
+        let mut agent = agent_with_parked_transcript(AgentPane::Prompt);
+        let registry = ActionRegistry::defaults();
+        agent.handle_input(&key(KeyCode::F(6)), &registry);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        let ids: Vec<_> = agent.scrollback.iter_entries().map(|(id, _)| id).collect();
+        for id in ids {
+            assert!(agent.scrollback.remove_entry(id));
+        }
+        agent.scrollback.push_block(RenderBlock::agent_message("replacement first"));
+        let last = agent.scrollback.push_block(RenderBlock::agent_message("replacement last"));
+        agent.scrollback.scroll_up(1);
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert_eq!(agent.timeline_mode.panel().unwrap().cursor_row().unwrap().entry_id(), last);
+        assert!(!agent.scrollback.is_follow_mode());
+        agent.handle_input(&key(KeyCode::End), &registry);
+        assert!(transcript_at_tail_with_follow(&agent));
+        assert_eq!(agent.visible_focus(), super::VisibleFocus::Timeline);
+    }
+
 }

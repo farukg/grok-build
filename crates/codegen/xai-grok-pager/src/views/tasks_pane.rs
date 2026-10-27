@@ -935,6 +935,12 @@ impl TasksPane {
         }
         self.list_state.handle_key_event(key, &self.entries)
     }
+
+    /// The pane's real End boundary: a plain `End` would not move the selection.
+    pub fn at_end_boundary(&self) -> bool {
+        self.list_state.at_last_selectable(&self.entries)
+    }
+
     pub fn handle_paste(&mut self, text: &str) -> bool {
         self.list_state.handle_paste(text, &self.entries)
     }

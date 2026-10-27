@@ -1260,6 +1260,26 @@ impl ListPaneState {
         }
     }
 
+    /// Whether [`Self::select_last`] would leave the selection unchanged: the pane's real
+    /// End boundary (already following, cursor already on the last selectable item, or
+    /// nothing selectable at all).
+    pub fn at_last_selectable<T: ListItem>(&self, items: &[T]) -> bool {
+        if self.input_mode.is_some() || self.visual_mode {
+            return false;
+        }
+        if self.config.follow_enabled && !self.visual_mode {
+            return self.follow_mode;
+        }
+        let count = self.layout.item_count();
+        (0..count)
+            .rev()
+            .find(|&vi| {
+                self.item_at(vi, items)
+                    .is_some_and(|item| item.is_selectable())
+            })
+            .is_none_or(|last| self.selected_index == Some(last))
+    }
+
     /// Select item at visible index `vi`, if selectable. On click: exits follow, cursor on clicked
     /// item. Clears visual mode (a click is a single select).
     pub fn select_at<T: ListItem>(&mut self, target_vi: usize, items: &[T]) {

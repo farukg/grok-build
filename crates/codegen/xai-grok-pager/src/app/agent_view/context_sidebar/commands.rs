@@ -152,6 +152,20 @@ impl AgentView {
         }
     }
 
+    pub(crate) fn sidebar_end_is_stay(&self) -> bool {
+        let ContextSidebar::Open(open) = &self.context_sidebar else {
+            return false;
+        };
+        let outline = Outline::build(open.disclosure, open.todo_count);
+        if outline.rows().is_empty() {
+            return true;
+        }
+        let Some(at) = open.sidebar.cursor.and_then(|line| outline.index_of(line)) else {
+            return false;
+        };
+        matches!(navigate(outline.rows(), at, TreeKey::End), TreeStep::Stay)
+    }
+
     fn navigate_sidebar(&mut self, key: TreeKey) -> InputOutcome {
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return InputOutcome::Unchanged;

@@ -2278,3 +2278,160 @@ fn reapply_thinking_fold_policy_preserves_expanded_tool_groups() {
         "expanded tool-call members must stay visible after thinking refold, visible_tools={visible_tools}"
     );
 }
+
+/// Multi-page transcript helper for viewport-anchor tests.
+fn paged_scrollback() -> ScrollbackState {
+    let mut state = ScrollbackState::new();
+    for i in 0..20 {
+        state.push_block(agent_block(&format!("message {i}\nline two")));
+    }
+    state.prepare_layout(80, 10);
+    state
+}
+
+/// A session that returns with no selection must anchor the first Down to the visible
+/// viewport instead of entry zero, which would teleport the viewport to the top.
+#[test]
+fn select_next_without_selection_anchors_to_the_viewport_top() {
+    let mut state = paged_scrollback();
+    state.goto_bottom();
+    state.clear_selection();
+    state.scroll_up(8);
+    let offset_before = state.scroll_offset();
+
+    state.select_next();
+
+    let sel = state.selected().expect("first Down selects an entry");
+    assert!(sel > 0, "first Down must not select entry zero, got {sel}");
+    assert!(
+        state.entry_overlaps_viewport(sel),
+        "the anchor selection must overlap the remembered viewport"
+    );
+    assert_eq!(
+        state.scroll_offset(),
+        offset_before,
+        "the first Down must not teleport the viewport"
+    );
+}
+
+/// The first Up with no selection anchors to the bottom of the visible viewport.
+#[test]
+fn select_prev_without_selection_anchors_to_the_viewport_bottom() {
+    let mut state = paged_scrollback();
+    state.goto_bottom();
+    state.clear_selection();
+    state.scroll_up(8);
+    let offset_before = state.scroll_offset();
+    let last = state.len() - 1;
+
+    state.select_prev();
+
+    let sel = state.selected().expect("first Up selects an entry");
+    assert!(
+        sel < last,
+        "the anchor must be the bottom-most visible entry, not the transcript tail"
+    );
+    assert!(state.entry_overlaps_viewport(sel));
+    assert_eq!(state.scroll_offset(), offset_before);
+}
+
+/// Without a laid-out viewport there is nothing visible to anchor on; the scan falls
+/// back to the first selectable entry and still does not scroll.
+#[test]
+fn select_next_without_selection_or_layout_falls_back_to_the_range_start() {
+    let mut state = ScrollbackState::new();
+    for i in 0..6 {
+        state.push_block(agent_block(&format!("message {i}")));
+    }
+    assert_eq!(state.viewport_height, 0);
+
+    state.select_next();
+
+    assert_eq!(state.selected(), Some(0));
+    assert_eq!(state.scroll_offset(), 0);
+}
+
+/// A selection whose entry was removed while the session was away is clamped near the
+/// tail by the removal owner; the next Down continues from there, not from entry zero.
+#[test]
+fn select_next_continues_from_a_selection_clamped_by_removal() {
+    let mut state = paged_scrollback();
+    state.goto_bottom();
+    let tail_id = state
+        .iter_entries()
+        .last()
+        .map(|(id, _)| id)
+        .expect("fixture has entries");
+    assert!(state.remove_entry(tail_id));
+    let clamped = state.selected().expect("removal clamps the selection");
+    assert!(clamped > 0);
+
+    state.select_next();
+
+    let sel = state.selected().expect("Down keeps a selection");
+    assert!(sel >= clamped, "Down continues from the clamped tail position");
+    assert!(
+        state.scroll_offset() > 0,
+        "the viewport must stay near the remembered tail"
+    );
+}
+
+
+#[test]
+fn absent_selection_crosses_a_nonselectable_window_directionally() {
+    for down in [true, false] {
+        let mut state = paged_scrollback();
+        let system = state.len();
+        state.push_block(RenderBlock::system("system row\n".repeat(60)));
+        state.push_block(agent_block("after system"));
+        state.prepare_layout(80, 10);
+        state.scroll_to_entry_top(system);
+        state.scroll_down(5);
+        state.clear_selection();
+        assert!(state.entry_overlaps_viewport(system));
+        assert!(!state.entry_overlaps_viewport(system - 1));
+        assert!(!state.entry_overlaps_viewport(system + 1));
+
+        if down {
+            state.select_next();
+            assert_eq!(state.selected(), Some(system + 1));
+        } else {
+            state.select_prev();
+            assert_eq!(state.selected(), Some(system - 1));
+        }
+        assert!(state.scroll_offset() > 0);
+    }
+}
+
+#[test]
+fn absent_selection_without_layout_up_uses_the_last_selectable_entry() {
+    let mut state = ScrollbackState::new();
+    state.push_block(agent_block("first"));
+    state.push_block(agent_block("last"));
+    state.push_block(RenderBlock::system("not selectable"));
+    state.select_prev();
+    assert_eq!(state.selected(), Some(1));
+    assert_eq!(state.scroll_offset(), 0);
+}
+
+
+#[test]
+fn absent_selection_skips_hidden_group_members_near_the_viewport() {
+    let mut state = paged_scrollback();
+    let mut appearance = AppearanceConfig::default();
+    appearance.scrollback.display.group_max_visible = 3;
+    state.set_appearance(appearance);
+    let tools = state.len();
+    push_tool_calls(&mut state, 20);
+    state.prepare_layout(80, 10);
+    assert!((tools..state.len()).any(|idx| cached_height_at(&state, idx) == 0));
+    state.goto_bottom();
+    state.clear_selection();
+    let offset = state.scroll_offset();
+    state.select_prev();
+    let selected = state.selected().unwrap();
+    assert!(selected >= tools);
+    assert!(cached_height_at(&state, selected) > 0);
+    assert!(state.entry_overlaps_viewport(selected));
+    assert_eq!(state.scroll_offset(), offset);
+}

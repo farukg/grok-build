@@ -1,5 +1,11 @@
 use super::*;
 
+pub(super) enum ViewportAnchor {
+    NoLayout,
+    Selected,
+    Unselectable(Range<usize>),
+}
+
 /// Find the response anchor for a turn: the first AgentMessage of the trailing agent-message run within `range`.
 /// Everything else (session events, system messages, empty streaming placeholders) is skipped without breaking the
 /// run.
@@ -432,41 +438,37 @@ impl ScrollbackState {
         self.select_viewport_edge(/* prefer_top */ false);
     }
 
-    /// Select selectable entry covering the visual top (`prefer_top`) or bottom row; walk inward if needed.
-    fn select_viewport_edge(&mut self, prefer_top: bool) {
+    /// Select the first or last selectable entry inside the laid-out viewport.
+    pub(super) fn select_viewport_edge(&mut self, prefer_top: bool) -> ViewportAnchor {
         if self.viewport_height == 0 || self.last_width == 0 {
-            return;
+            return ViewportAnchor::NoLayout;
         }
         self.ensure_layout_cache(self.last_width);
         let range = self.visible_entry_range();
-        if range.is_empty() {
-            return;
-        }
         let Some((vp_top, vp_bottom)) = self.viewport_virtual_bounds() else {
-            return;
+            return ViewportAnchor::Unselectable(0..0);
         };
-        // Empty viewport (bottom == top) has no edge row to anchor on.
-        if vp_bottom <= vp_top {
-            return;
+        if range.is_empty() || vp_bottom <= vp_top {
+            return ViewportAnchor::Unselectable(0..0);
         }
-        let edge_row = if prefer_top { vp_top } else { vp_bottom - 1 };
-        let Some(raw_edge) = self.entry_at_virtual_row(edge_row) else {
-            return;
+        let (Some(first), Some(last)) = (
+            self.entry_at_virtual_row(vp_top),
+            self.entry_at_virtual_row(vp_bottom - 1),
+        ) else {
+            return ViewportAnchor::Unselectable(0..0);
         };
-        // Clamp into the visible range so `..=` / `..` never panic on inverted bounds.
-        let edge_idx = raw_edge.clamp(range.start, range.end - 1);
-
+        let visible = first.max(range.start)..(last + 1).min(range.end);
         let pick = if prefer_top {
-            (edge_idx..range.end).find(|&idx| self.is_selectable_in_viewport(idx))
+            visible.clone().find(|&idx| self.is_selectable_in_viewport(idx))
         } else {
-            (range.start..=edge_idx)
-                .rev()
-                .find(|&idx| self.is_selectable_in_viewport(idx))
+            visible.clone().rev().find(|&idx| self.is_selectable_in_viewport(idx))
         };
-
         if let Some(idx) = pick {
             self.selected = Some(idx);
             self.sync_current_turn();
+            ViewportAnchor::Selected
+        } else {
+            ViewportAnchor::Unselectable(visible)
         }
     }
 

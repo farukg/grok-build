@@ -7764,7 +7764,7 @@ fn session_navigation_preserves_the_visible_focus_owner() {
     for focus in [
         VisibleFocus::Pane(AgentPane::Prompt),
         VisibleFocus::Pane(AgentPane::Todo),
-        VisibleFocus::Pane(AgentPane::Tasks),
+        VisibleFocus::Pane(if crate::views::dock::enabled() { AgentPane::Dock } else { AgentPane::Tasks }),
         VisibleFocus::Timeline,
         VisibleFocus::Context,
     ] {

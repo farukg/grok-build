@@ -49,6 +49,10 @@ impl TimelinePanelState {
         )
     }
 
+    pub(crate) fn end_nav_is_stay(&self) -> bool {
+        matches!(self.navigate(PanelNav::End), TreeStep::Stay)
+    }
+
     /// Open or close the branch under the cursor; `Stay` on a leaf.
     pub fn toggle_step(&self) -> TreeStep {
         toggle(self.view.tree(), self.cursor)

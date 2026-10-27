@@ -1,6 +1,7 @@
 //! Selection and folding for [`ScrollbackState`]: selected-entry tracking, fold/expand operations, group expansion, and view-mode visibility.
 
 use super::*;
+use super::nav::ViewportAnchor;
 
 mod group_expansion;
 
@@ -137,8 +138,18 @@ impl ScrollbackState {
         }
 
         // Find starting position
-        let start = match self.selected {
-            None => range.start,
+        let selected = self.selected;
+        let start = match selected {
+            None => match self.select_viewport_edge(true) {
+                ViewportAnchor::Selected => return,
+                ViewportAnchor::NoLayout => range.start,
+                ViewportAnchor::Unselectable(visible) => {
+                    if visible.is_empty() {
+                        return;
+                    }
+                    visible.end
+                }
+            },
             Some(i) if i < range.start => range.start,
             Some(i) => i + 1,
         };
@@ -176,8 +187,18 @@ impl ScrollbackState {
         }
 
         // Find starting position
-        let start = match self.selected {
-            None => range.end - 1,
+        let selected = self.selected;
+        let start = match selected {
+            None => match self.select_viewport_edge(false) {
+                ViewportAnchor::Selected => return,
+                ViewportAnchor::NoLayout => range.end - 1,
+                ViewportAnchor::Unselectable(visible) => {
+                    if visible.is_empty() || visible.start <= range.start {
+                        return;
+                    }
+                    visible.start - 1
+                }
+            },
             Some(i) if i >= range.end => range.end - 1,
             Some(i) if i <= range.start => {
                 // Already at start, can't go further back

@@ -5856,3 +5856,6 @@ impl AppView {
 #[cfg(test)]
 #[path = "app_view_tests.rs"]
 pub(crate) mod tests;
+#[cfg(test)]
+#[path = "focused_navigation_restore_tests.rs"]
+pub(crate) mod focused_navigation_restore_tests;
