@@ -54,15 +54,14 @@ product tests and interactive/runtime acceptance remain open.
 ## Current staged artifact
 
 The verified staging command is
-`stage-grok-release.sh --from gitlab --branch ci/gitlab-build-proof`.
-It selected pipeline `10841`, job `84460`, source
-`809fa9a101a653a23d10693cc149273f31409f28`, downloaded the release tarball and
+`stage-grok-release.sh --from gitlab --branch main --run-id 10858 --commit 7df297304fbce8c34be194c57cb8d99806bc8654`.
+It selected pipeline `10858`, job `84561`, downloaded the release tarball and
 checksum, and passed checksum validation. `sig deploy stage grok` reported
 1 promoted, 0 unchanged, 0 skipped-not-built. The installed CLI returned
-`grok 1.0.45 (809fa9a101a6) [alpha]` from `--version`.
+`grok 1.0.45 (7df297304fbc) [alpha]` from `--version`.
 Running sessions keep their existing executable until manually restarted.
-The glue script's 26 isolated regression tests passed, including both sources,
-branch selection, provenance rejection and checksum failure handling.
+This operation verified artifact selection, checksum and installed version;
+product tests and interactive/runtime acceptance remain open.
 
 The CI changes from the isolated proof are integrated on `main`. The completed
 proof worktree has been removed; the published proof branch and job artifacts
