@@ -7,11 +7,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 use xai_grok_shell::session::ContextItemRef;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ContextRemovalTarget {
-    pub agent_id: crate::app::agent::AgentId,
-    pub session_id: agent_client_protocol::SessionId,
-    pub row: TimelineRow,
-    pub items: Vec<ContextItemRef>,
+pub struct ContextRemovalTarget {
+    pub(crate) agent_id: crate::app::agent::AgentId,
+    pub(crate) session_id: agent_client_protocol::SessionId,
+    pub(crate) row: TimelineRow,
+    pub(crate) items: Vec<ContextItemRef>,
 }
 
 impl AgentView {

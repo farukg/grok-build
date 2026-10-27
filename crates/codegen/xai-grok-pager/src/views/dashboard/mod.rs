@@ -44,10 +44,10 @@ pub use chrome::HeaderUpgradeCta;
 pub(crate) use render::render_dashboard;
 pub use render::{popup_rect, render_popup_overlay};
 pub use row::{
-    DashboardRow, RowBadge, SessionLane, build_rows_with_roster, classify_top_level,
+    DashboardRow, RowBadge, SessionLane, classify_top_level,
     roster_activity_to_state, sort_rows,
 };
-pub(crate) use row::RowScope;
+pub(crate) use row::{RowScope, build_rows_with_roster};
 pub(crate) use row::{WorkspaceRowInputs, build_rows_with_workspace};
 pub(crate) use state::DashboardStopAction;
 pub use state::{

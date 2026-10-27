@@ -173,7 +173,7 @@ pub(crate) fn apply_scope(rows: &mut Vec<DashboardRow>, scope: RowScope<'_>) {
 /// `Main` lists top-level rows and filters `subagent` roster entries out; `Subagents` lists
 /// locally-attached child views plus exactly the `subagent` roster entries; `All` lists both sides,
 /// deduplicated by session id.
-pub fn build_rows_with_roster(
+pub(crate) fn build_rows_with_roster(
     agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     reorder: &[DashboardRowId],

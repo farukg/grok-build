@@ -6,6 +6,7 @@
 //! - [`Effect`]: produced by dispatch, consumed by the event loop (async).
 //! - [`TaskResult`]: produced by spawned tasks, fed back into dispatch.
 use super::agent::AgentId;
+pub use super::agent_view::context_removal::ContextRemovalTarget;
 use crate::app::status_line::StatusLineRun;
 use crate::scrollback::entry::EntryId;
 use agent_client_protocol as acp;
@@ -451,7 +452,7 @@ pub enum Action {
     OpenRequestInspector,
     /// Fetch (or refresh) the raw captured body for the open request inspector.
     FetchRequestBody,
-    RemoveContextItems(crate::app::agent_view::context_removal::ContextRemovalTarget),
+    RemoveContextItems(ContextRemovalTarget),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
     DemoteToBackground,
