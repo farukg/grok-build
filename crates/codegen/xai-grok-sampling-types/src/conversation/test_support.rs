@@ -71,6 +71,7 @@ pub(super) fn btw_mid_turn_conversation() -> Vec<ConversationItem> {
         ConversationItem::user("Fix the bug"),
         // Completed turn with thinking
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I'll look at the code.".into(),
@@ -81,6 +82,7 @@ pub(super) fn btw_mid_turn_conversation() -> Vec<ConversationItem> {
         }),
         // Completed tool pair
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),
@@ -95,6 +97,7 @@ pub(super) fn btw_mid_turn_conversation() -> Vec<ConversationItem> {
         }),
         ConversationItem::tool_result("call_1", "fn main() {}"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I see the issue.".into(),
@@ -105,6 +108,7 @@ pub(super) fn btw_mid_turn_conversation() -> Vec<ConversationItem> {
         }),
         // Mid-turn: orphaned tool_use (no result yet)
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),
@@ -122,6 +126,7 @@ pub(super) fn btw_mid_turn_conversation() -> Vec<ConversationItem> {
 
 pub(super) fn assistant_with_calls(calls: &[(&str, &str)]) -> ConversationItem {
     ConversationItem::Assistant(AssistantItem {
+        output_origin: Default::default(),
         evidence: Default::default(),
         source: Default::default(),
         content: String::new().into(),

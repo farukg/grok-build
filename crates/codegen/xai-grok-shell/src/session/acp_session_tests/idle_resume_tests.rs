@@ -152,6 +152,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 is_chat_kind: false,
                 state,
                 notifications: NotificationSender {
+                    source_publications: Default::default(),
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx,

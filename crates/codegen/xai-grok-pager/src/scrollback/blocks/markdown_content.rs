@@ -13,7 +13,7 @@ use crate::scrollback::types::{BlockLine, BlockOutput};
 
 use super::quote_bar::QuoteBarStrip;
 
-pub(crate) const MARKDOWN_BODY_RANGE: u16 = 0;
+pub(crate) const MARKDOWN_BODY_RANGE: usize = 0;
 use crate::syntax::get_syntect;
 use crate::theme::{ThemeKind, cache as theme_cache, md_style};
 use xai_grok_markdown::StreamingMarkdownRenderer;

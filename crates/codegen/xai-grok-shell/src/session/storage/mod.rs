@@ -36,6 +36,7 @@ impl SessionListVisibility {
 }
 
 pub mod jsonl;
+pub mod request_capture;
 pub(crate) mod relocation;
 mod replay;
 #[cfg(test)]
@@ -129,17 +130,40 @@ pub(crate) fn fail_next_atomic_write(fault: AtomicWriteFault) {
     ATOMIC_WRITE_FAULT.set(Some(fault));
 }
 
+pub(crate) fn write_private_bytes_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_bytes_atomic_with_mode(path, bytes, sync_file_durable, || sync_parent_dir_durable(path), Some(0o600))
+}
+
 fn write_bytes_atomic_with(
     path: &Path,
     bytes: &[u8],
     sync_file: impl Fn(&std::fs::File) -> io::Result<()>,
     sync_parent: impl Fn() -> io::Result<()>,
 ) -> io::Result<()> {
+    write_bytes_atomic_with_mode(path, bytes, sync_file, sync_parent, None)
+}
+
+fn write_bytes_atomic_with_mode(
+    path: &Path,
+    bytes: &[u8],
+    sync_file: impl Fn(&std::fs::File) -> io::Result<()>,
+    sync_parent: impl Fn() -> io::Result<()>,
+    mode: Option<u32>,
+) -> io::Result<()> {
     let tmp = temp_sibling(path);
     #[cfg(test)]
     let fault = ATOMIC_WRITE_FAULT.take();
     let write_synced = || -> io::Result<()> {
-        let mut file = std::fs::File::create(&tmp)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if let Some(mode) = mode {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(mode).create_new(true);
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        let mut file = options.open(&tmp)?;
         #[cfg(test)]
         if matches!(fault, Some(AtomicWriteFault::Write)) {
             file = std::fs::File::open(&tmp)?;
@@ -665,6 +689,7 @@ pub(crate) mod chat_rebuild {
                 return None;
             }
             let item = ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: std::sync::Arc::<str>::from(std::mem::take(&mut self.agent_text)),
@@ -1809,6 +1834,8 @@ pub use jsonl::JsonlStorageAdapter;
 #[cfg(any(test, feature = "test-support"))]
 pub use replay::load_updates_for_replay_at;
 pub use replay::{
+    PassiveReplayBatch, PassiveReplayCursor, PassiveReplayError, PassiveReplayLimits, PassiveReplayPhase,
+    ReplayBudget, ReplayCompletion, ReplayCorruptionPolicy, ReplayFinalRecordPolicy, ReplayStart,
     PreparedReplay, ReplayEmission, ReplayLookupFallback, ReplayPathHint, ReplayedUpdate,
     load_updates_for_replay, prepare_replay_lines, replay_would_emit, stream_replay_updates_at,
     stream_replay_updates_at_hinted,
@@ -1888,113 +1915,152 @@ struct ToolUpdateAt {
     tool_call_id: ToolCallId,
 }
 
-/// Survivors of a rewind filter pass, with the turn and tool positions that later markers address.
-/// Removed items stay as tombstones until the end, so recorded positions stay valid.
+/// Marker work yields after each positional visit.
+enum RetentionWork {
+    Idle,
+    Rewind { cut: usize, target: usize },
+    Remove { refs: std::vec::IntoIter<ContextItemRef> },
+    FindTurn { refs: std::vec::IntoIter<ContextItemRef>, prompt_index: usize, before: usize },
+    RemoveRange { refs: std::vec::IntoIter<ContextItemRef>, next: usize, end: usize },
+    RemoveTool { refs: std::vec::IntoIter<ContextItemRef>, tool_call_id: ToolCallId, next: usize },
+}
+
+/// Positional tombstones survive removals; rewind alone reclaims the tail.
 struct RewindSurvivors<T> {
     items: Vec<Survivor<T>>,
     turns: Vec<TurnStart>,
     tool_updates: Vec<ToolUpdateAt>,
+    tracker: UserRunTurnTracker,
+    work: RetentionWork,
 }
 
 impl<T> RewindSurvivors<T> {
-    fn rewind_to(&mut self, target: usize) {
-        // Out-of-range target keeps every survivor: fold to `items.len()`.
-        let cut = self
-            .turns
-            .get(target)
-            .map_or(self.items.len(), |turn| turn.position);
-        self.items.truncate(cut);
-        self.turns.truncate(target);
-        self.tool_updates.retain(|tool| tool.position < cut);
-    }
-
-    fn remove(&mut self, refs: &[ContextItemRef]) {
-        for reference in refs {
-            match reference {
-                ContextItemRef::Turn { prompt_index } => self.remove_turn(*prompt_index),
-                ContextItemRef::ToolExchange { tool_call_id } => {
-                    for tool in &self.tool_updates {
-                        if tool.tool_call_id == *tool_call_id
-                            && let Some(survivor) = self.items.get_mut(tool.position)
-                        {
-                            *survivor = Survivor::Removed;
-                        }
-                    }
-                }
-            }
+    fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            turns: Vec::new(),
+            tool_updates: Vec::new(),
+            tracker: UserRunTurnTracker::new(),
+            work: RetentionWork::Idle,
         }
     }
 
-    fn remove_turn(&mut self, prompt_index: usize) {
-        let Some(turn) = self
-            .turns
-            .iter()
-            .rposition(|turn| turn.prompt_index == Some(prompt_index))
-        else {
-            return;
-        };
-        let mut bounds = self.turns.iter().skip(turn).map(|turn| turn.position);
-        let start = bounds.next().unwrap_or(self.items.len());
-        let end = bounds.next().unwrap_or(self.items.len());
-        self.items
-            .iter_mut()
-            .take(end)
-            .skip(start)
-            .for_each(|survivor| *survivor = Survivor::Removed);
+    fn is_idle(&self) -> bool {
+        matches!(self.work, RetentionWork::Idle)
     }
 
-    fn into_kept(self) -> Vec<T> {
-        self.items
-            .into_iter()
-            .filter_map(|survivor| match survivor {
-                Survivor::Kept(item) => Some(item),
-                Survivor::Removed => None,
-            })
-            .collect()
-    }
-}
-
-/// Shared rewind dead-branch filter. `classify` maps each item to its [`RewindStep`].
-/// The driver tracks prompt boundaries and, on a marker, truncates survivors back to the target prompt or drops removed items.
-/// [`filter_rewind_lines`] and [`filter_rewind_updates`] wrap this over raw JSONL and typed updates so the two paths share one algorithm.
-fn filter_rewind_by<T>(items: Vec<T>, classify: impl Fn(&T) -> RewindStep) -> Vec<T> {
-    let mut survivors = RewindSurvivors {
-        items: Vec::with_capacity(items.len()),
-        turns: Vec::new(),
-        tool_updates: Vec::new(),
-    };
-    let mut tracker = UserRunTurnTracker::new();
-
-    for item in items {
-        match classify(&item) {
+    /// The driver drains pending marker work before accepting another record.
+    fn push(&mut self, item: T, step: RewindStep) {
+        match step {
             RewindStep::Rewind { target } => {
-                survivors.rewind_to(target);
-                tracker.on_non_user();
-                continue;
+                let cut = self.turns.get(target).map_or(self.items.len(), |turn| turn.position);
+                self.work = RetentionWork::Rewind { cut, target };
+                self.tracker.on_non_user();
+                return;
             }
             RewindStep::RemoveItems(refs) => {
-                survivors.remove(&refs);
-                tracker.on_non_user();
-                continue;
+                self.work = RetentionWork::Remove { refs: refs.into_iter() };
+                self.tracker.on_non_user();
+                return;
             }
             RewindStep::UserChunk { prompt_index } => {
-                if tracker.on_user_chunk(prompt_index) {
-                    survivors.turns.push(TurnStart {
-                        position: survivors.items.len(),
-                        prompt_index,
-                    });
+                if self.tracker.on_user_chunk(prompt_index) {
+                    self.turns.push(TurnStart { position: self.items.len(), prompt_index });
                 }
             }
             RewindStep::ToolUpdate(tool_call_id) => {
-                survivors.tool_updates.push(ToolUpdateAt {
-                    position: survivors.items.len(),
-                    tool_call_id,
-                });
-                tracker.on_non_user();
+                self.tool_updates.push(ToolUpdateAt { position: self.items.len(), tool_call_id });
+                self.tracker.on_non_user();
             }
-            RewindStep::Other => tracker.on_non_user(),
+            RewindStep::Other => self.tracker.on_non_user(),
         }
-        survivors.items.push(Survivor::Kept(item));
+        self.items.push(Survivor::Kept(item));
+    }
+
+    /// One positional visit or pop, including marker references and tombstones.
+    fn advance(&mut self) {
+        self.work = match std::mem::replace(&mut self.work, RetentionWork::Idle) {
+            RetentionWork::Idle => RetentionWork::Idle,
+            RetentionWork::Rewind { cut, target } => {
+                if self.items.len() > cut {
+                    self.items.pop();
+                    RetentionWork::Rewind { cut, target }
+                } else if self.turns.len() > target {
+                    self.turns.pop();
+                    RetentionWork::Rewind { cut, target }
+                } else if self.tool_updates.last().is_some_and(|tool| tool.position >= cut) {
+                    self.tool_updates.pop();
+                    RetentionWork::Rewind { cut, target }
+                } else {
+                    RetentionWork::Idle
+                }
+            }
+            RetentionWork::Remove { mut refs } => match refs.next() {
+                Some(ContextItemRef::Turn { prompt_index }) => RetentionWork::FindTurn {
+                    refs, prompt_index, before: self.turns.len(),
+                },
+                Some(ContextItemRef::ToolExchange { tool_call_id }) => RetentionWork::RemoveTool {
+                    refs, tool_call_id, next: 0,
+                },
+                None => RetentionWork::Idle,
+            },
+            RetentionWork::FindTurn { refs, prompt_index, before } => {
+                if before == 0 {
+                    RetentionWork::Remove { refs }
+                } else {
+                    let index = before - 1;
+                    if self.turns[index].prompt_index == Some(prompt_index) {
+                        RetentionWork::RemoveRange {
+                            refs, next: self.turns[index].position,
+                            end: self.turns.get(index + 1).map_or(self.items.len(), |turn| turn.position),
+                        }
+                    } else {
+                        RetentionWork::FindTurn { refs, prompt_index, before: index }
+                    }
+                }
+            }
+            RetentionWork::RemoveRange { refs, next, end } => {
+                if next < end {
+                    if let Some(slot) = self.items.get_mut(next) {
+                        *slot = Survivor::Removed;
+                    }
+                    RetentionWork::RemoveRange { refs, next: next + 1, end }
+                } else {
+                    RetentionWork::Remove { refs }
+                }
+            }
+            RetentionWork::RemoveTool { refs, tool_call_id, next } => {
+                if let Some(tool) = self.tool_updates.get(next) {
+                    if tool.tool_call_id == tool_call_id {
+                        if let Some(slot) = self.items.get_mut(tool.position) {
+                            *slot = Survivor::Removed;
+                        }
+                    }
+                    RetentionWork::RemoveTool { refs, tool_call_id, next: next + 1 }
+                } else {
+                    RetentionWork::Remove { refs }
+                }
+            }
+        };
+    }
+
+    fn into_kept(self) -> Vec<T> {
+        self.items.into_iter().filter_map(|survivor| match survivor {
+            Survivor::Kept(item) => Some(item),
+            Survivor::Removed => None,
+        }).collect()
+    }
+}
+
+/// Both synchronous replay and cooperative replay use this positional retention owner.
+fn filter_rewind_by<T>(items: Vec<T>, classify: impl Fn(&T) -> RewindStep) -> Vec<T> {
+    let mut survivors = RewindSurvivors::new();
+    for item in items {
+        let step = classify(&item);
+        survivors.push(item, step);
+        while !survivors.is_idle() {
+            survivors.advance();
+        }
     }
     survivors.into_kept()
 }

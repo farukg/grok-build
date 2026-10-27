@@ -26,6 +26,7 @@ mod permissions;
 mod prompt;
 mod prompt_ack;
 mod queue;
+mod request_viewer;
 mod rewind;
 mod rewind_remove;
 mod router;

@@ -180,7 +180,7 @@ fn make_cache(heights: &[u16]) -> LayoutCache {
         virtual_y.push(y);
         let gap_after = 1u16; // constant for now
         entries.push(EntryLayoutInfo {
-            height: h,
+            height: usize::from(h),
             gap_after,
             group_header_count: 0,
             group_collapse_header: false,
@@ -362,7 +362,7 @@ fn test_hit_test_no_scroll_no_header() {
 
     // Check actual cached heights for debugging
     let heights: Vec<u16> = (0..state.len())
-        .map(|i| state.get_cached_entry_height(i).unwrap())
+        .map(|i| u16::try_from(state.get_cached_entry_height(i).unwrap()).unwrap())
         .collect();
 
     // With no-vpad prompt (height 1) and stub blocks (height 1), and ENTRY_GAP=1:
@@ -408,7 +408,7 @@ fn test_hit_test_with_sticky_header_excludes_header_rows() {
         .header_screen_rows();
 
     let heights: Vec<u16> = (0..state.len())
-        .map(|i| state.get_cached_entry_height(i).unwrap())
+        .map(|i| u16::try_from(state.get_cached_entry_height(i).unwrap()).unwrap())
         .collect();
     let virtual_y = &cache.virtual_y;
 
@@ -546,7 +546,7 @@ fn lazy_resumed_pinned_prompt_collapses_to_real_height() {
     );
     let full_height = at(&cache.entries, pinned.entry_idx).height;
     assert!(
-        pinned.visible_height() <= full_height,
+        usize::from(pinned.visible_height()) <= full_height,
         "sticky header ({}) must not exceed the prompt's full height ({full_height})",
         pinned.visible_height(),
     );
@@ -584,7 +584,7 @@ fn cache_total(state: &ScrollbackState) -> u32 {
         .sum()
 }
 
-fn exact_height(state: &ScrollbackState, idx: usize, width: u16) -> u16 {
+fn exact_height(state: &ScrollbackState, idx: usize, width: u16) -> usize {
     let theme = Theme::current();
     let entry = state.entry(idx).unwrap();
     EntryRenderer::new(entry, &theme)
@@ -2191,7 +2191,7 @@ fn window_fixture(
         y += height as usize + gap_after as usize;
         let is_header = verb_headers.contains(&i);
         layouts.push(EntryLayoutInfo {
-            height,
+            height: usize::from(height),
             gap_after,
             verb_group_header: is_header,
             group_header_count: u16::from(is_header),

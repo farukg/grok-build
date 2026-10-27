@@ -32,6 +32,8 @@ pub mod privacy;
 pub mod prompt_history;
 pub mod prompt_meta;
 pub mod recap;
+pub mod request_snapshot;
+pub mod request_preview;
 pub mod remove_items;
 pub mod repair;
 pub(crate) mod review;

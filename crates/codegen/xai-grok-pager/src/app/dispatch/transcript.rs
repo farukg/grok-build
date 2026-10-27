@@ -13,40 +13,31 @@ use xai_grok_telemetry::session_ctx::log_event;
 ///
 /// Respects the block's raw/pretty mode for markdown content.
 pub(super) fn dispatch_copy_block_content(app: &mut AppView) {
-    with_active_agent(app, |agent| {
-        let Some(idx) = agent.scrollback.selected() else {
-            return;
-        };
-        if agent.scrollback.entry_content_hidden_by_group(idx) {
-            return;
+    let ActiveView::Agent(owner) = app.active_view else { return };
+    let Some(agent) = app.agents.get(&owner) else { return };
+    let Some(idx) = agent.scrollback.selected() else { return };
+    if agent.scrollback.entry_content_hidden_by_group(idx) { return; }
+    let Some(entry) = agent.scrollback.entry(idx) else { return };
+    let id = entry.id;
+    let binding = agent.session_binding_epoch;
+    let inline = entry.block.is_bg_task() || entry.block.is_subagent();
+    if inline {
+        let output = app.agents.inline_copy_text(owner, id);
+        let Some(agent) = app.agents.get_mut(&owner) else { return };
+        if agent.session_binding_epoch != binding || agent.scrollback.get_by_id(id).is_none() { return; }
+        match output {
+            crate::app::session_views::InlineCopyOutcome::Ready(text) if !text.is_empty() => { agent.copy_to_clipboard(&text); }
+            crate::app::session_views::InlineCopyOutcome::Ready(_) | crate::app::session_views::InlineCopyOutcome::Empty => agent.show_toast("Canonical output is empty"),
+            crate::app::session_views::InlineCopyOutcome::Loading => agent.show_toast("Loading canonical output; copy again when ready"),
+            crate::app::session_views::InlineCopyOutcome::Unavailable => agent.show_toast("Canonical output unavailable"),
+            crate::app::session_views::InlineCopyOutcome::Failed => agent.show_toast("Canonical output could not be read"),
         }
-        let Some(entry) = agent.scrollback.entry(idx) else {
-            return;
-        };
-
-        // BgTask blocks: copy stdout from the shared `bg_tasks` store
-        let text = if let RenderBlock::BgTask(block) = &entry.block {
-            let stdout = agent
-                .session
-                .bg_tasks
-                .get(&block.task_id)
-                .map(|t| t.stdout.clone())
-                .unwrap_or_default();
-            if stdout.is_empty() {
-                None
-            } else {
-                Some(stdout)
-            }
-        } else {
-            entry.block.copy_text(entry.raw)
-        };
-
-        if let Some(text) = text
-            && !text.is_empty()
-        {
-            agent.copy_to_clipboard(&text);
-        }
-    });
+        return;
+    }
+    let text = entry.block.copy_text(entry.raw);
+    if let Some(text) = text.filter(|text| !text.is_empty())
+        && let Some(agent) = app.agents.get_mut(&owner)
+    { agent.copy_to_clipboard(&text); }
 }
 
 /// Copy the Nth most recent assistant message to the clipboard, or to `file_path`.

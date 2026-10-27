@@ -24,6 +24,7 @@ impl SessionClientCaps {
 }
 
 pub(crate) struct NotificationSender {
+    pub source_publications: parking_lot::Mutex<super::request_capture::SourcePublications>,
     pub gateway: GatewaySender,
     /// When false, notifications are persisted but NOT forwarded to the client.
     /// Opened by `MvpAgent::load_session` when the client explicitly loads the session.
@@ -50,6 +51,7 @@ impl NotificationSender {
         persistence_tx: mpsc::UnboundedSender<PersistenceMsg>,
     ) -> Self {
         Self {
+            source_publications: Default::default(),
             gateway,
             gateway_enabled: Arc::new(AtomicBool::new(true)),
             persistence_tx,

@@ -221,34 +221,33 @@ pub(crate) fn minimal_renderer<'a>(
 /// committed.
 pub(crate) fn insert_committed(
     terminal: &mut PagerTerminal,
-    renderer: EntryRenderer<'_>,
+    mut renderer: EntryRenderer<'_>,
     width: u16,
     max_rows: u16,
     footer_style: Style,
 ) -> std::io::Result<()> {
     let full_h = renderer.desired_height(width);
-    if full_h == 0 {
-        return Ok(());
+    let commit_h = if max_rows > 0 { full_h.min(usize::from(max_rows)) } else { full_h };
+    if commit_h == 0 { return Ok(()); }
+    let mut skip = 0;
+    while skip < commit_h {
+        let height = u16::try_from((commit_h - skip).min(usize::from(u16::MAX)))
+            .map_err(std::io::Error::other)?;
+        renderer = renderer.with_skip_rows(skip);
+        let area = Rect { x: 0, y: 0, width, height };
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        let mut wraps = renderer.row_soft_wraps(height);
+        if commit_h < full_h {
+            paint_committed(&mut buf, &renderer, width, full_h, footer_style);
+            wraps = commit_wrap_flags(&renderer, height, full_h);
+        } else {
+            renderer.render(area, &mut buf);
+            super::full_view::trim_trailing_pads(&mut buf);
+        }
+        let rows = super::full_view::buffer_to_semantic_rows(&buf, &wraps);
+        terminal.insert_before_rows(&rows)?;
+        skip += usize::from(height);
     }
-    let commit_h = if max_rows > 0 && full_h > max_rows {
-        max_rows
-    } else {
-        full_h
-    };
-    // Off-screen paint then wrap-aware emit: a dense `insert_before` grid turns pads and soft wraps into hard breaks.
-    let area = Rect {
-        x: 0,
-        y: 0,
-        width,
-        height: commit_h,
-    };
-    let mut buf = ratatui::buffer::Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, full_h, footer_style);
-    let wraps = commit_wrap_flags(&renderer, buf.area.height, full_h);
-    let rows = super::full_view::buffer_to_semantic_rows(&buf, &wraps);
-    // Propagated (not swallowed): the caller must NOT mark the entry committed when the terminal write failed
-    // Print-once means a marked-but-unprinted block can never be emitted again
-    terminal.insert_before_rows(&rows)?;
     insert_gap(terminal);
     Ok(())
 }
@@ -269,7 +268,7 @@ fn paint_committed(
     buf: &mut ratatui::buffer::Buffer,
     renderer: &EntryRenderer<'_>,
     width: u16,
-    full_h: u16,
+    full_h: usize,
     footer_style: Style,
 ) {
     let commit_h = buf.area.height;
@@ -277,12 +276,12 @@ fn paint_committed(
         x: buf.area.x,
         y: buf.area.y,
         width,
-        height: full_h,
+        height: commit_h,
     };
     renderer.render(area, buf);
-    if commit_h > 0 && commit_h < full_h {
+    if commit_h > 0 && usize::from(commit_h) < full_h {
         // Top `commit_h - 1` rows are content; the last row is the footer.
-        let hidden = full_h.saturating_sub(commit_h.saturating_sub(1));
+        let hidden = full_h.saturating_sub(usize::from(commit_h.saturating_sub(1)));
         let y = buf.area.y + commit_h - 1;
         let row = Rect {
             x: buf.area.x,
@@ -301,9 +300,9 @@ fn paint_committed(
 }
 
 /// Renderer joiners for the painted commit. A cap footer is not a wrap continuation.
-fn commit_wrap_flags(renderer: &EntryRenderer<'_>, height: u16, full_h: u16) -> Vec<bool> {
+fn commit_wrap_flags(renderer: &EntryRenderer<'_>, height: u16, full_h: usize) -> Vec<bool> {
     let mut wraps = renderer.row_soft_wraps(height);
-    if height > 0 && height < full_h {
+    if height > 0 && usize::from(height) < full_h {
         let last = usize::from(height) - 1;
         if let Some(flag) = wraps.get_mut(last) {
             *flag = false;

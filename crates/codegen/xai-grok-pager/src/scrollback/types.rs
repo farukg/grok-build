@@ -172,8 +172,7 @@ pub struct BlockLine {
     pub wrap: WrapMode,
     pub selectable: Selectable,
     /// Logical selection range id within this block output.
-    /// Ids count up from 0; `u16::MAX` is reserved for the synthetic group-header row the renderer adds (`render::GROUP_HEADER_RANGE_ID`).
-    pub selection_range: Option<u16>,
+    pub selection_range: Option<usize>,
     /// Optional source-of-truth text for the selectable portion of this line.
     pub selection_text: Option<String>,
     /// Soft-wrap joiner: how this line connects to the previous when copying. The first line of a block should always
@@ -271,7 +270,7 @@ impl BlockLine {
     }
 
     /// Set the logical selection range id.
-    pub fn with_selection_range(mut self, range: Option<u16>) -> Self {
+    pub fn with_selection_range(mut self, range: Option<usize>) -> Self {
         self.selection_range = range;
         self
     }
@@ -463,6 +462,9 @@ pub(crate) struct SelectionBoundary {
 }
 
 impl SelectionBoundary {
+    pub(crate) fn prefix_len(&self) -> usize { self.prefix.len() }
+    pub(crate) fn suffix_len(&self) -> usize { self.suffix.len() }
+
     pub(crate) fn new(prefix: String, suffix: String) -> Self {
         Self {
             prefix,
@@ -583,8 +585,8 @@ impl BlockOutput {
         self.lines.is_empty()
     }
 
-    pub fn height(&self) -> u16 {
-        self.lines.len() as u16
+    pub fn height(&self) -> usize {
+        self.lines.len()
     }
 
     /// Wrap the first line with the prefix and the last line with the suffix.

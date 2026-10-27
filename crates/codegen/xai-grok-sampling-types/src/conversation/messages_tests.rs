@@ -393,6 +393,7 @@ fn test_tool_result_with_images_to_anthropic() {
     let req = ConversationRequest::from_items(vec![
         ConversationItem::user("Read this"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),

@@ -24,8 +24,8 @@ use crate::scrollback::types::{
 use crate::theme::Theme;
 use crate::util::format_duration;
 
-const SENT_MESSAGE_ID_RANGE: u16 = 0;
-const SENT_MESSAGE_TEXT_RANGE: u16 = 1;
+const SENT_MESSAGE_ID_RANGE: usize = 0;
+const SENT_MESSAGE_TEXT_RANGE: usize = 1;
 const HEADER_LABEL: &str = "Message ";
 const FALLBACK_NOUN: &str = "subagent";
 const PARENT_NOUN: &str = "parent";

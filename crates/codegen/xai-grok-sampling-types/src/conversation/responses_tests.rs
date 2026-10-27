@@ -656,6 +656,7 @@ fn test_encrypted_reasoning_included_in_responses_api_request() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "The answer is 4.".into(),
@@ -716,6 +717,7 @@ fn test_only_encrypted_reasoning_included_in_request() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "Hi!".into(),
@@ -984,6 +986,7 @@ fn test_transform_cwd_rewrites_reasoning_sibling() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: format!("I edited {worktree}/src/main.rs").into(),
@@ -1177,6 +1180,7 @@ fn empty_reason_reasoning_only() {
                 status: None,
             }.into()),
             ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: String::new().into(),
@@ -1583,6 +1587,7 @@ fn empty_content_assistant_with_tool_calls_and_reasoning() {
         ConversationItem::user("u1"),
         reasoning_sibling("r1", "must call a tool", Some("enc_pre_tool")),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: Arc::<str>::from(""),

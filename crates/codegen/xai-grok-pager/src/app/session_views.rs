@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 
 #[path = "session_inline_output.rs"]
 mod inline_output;
+pub(crate) use inline_output::InlineCopyOutcome;
 
 #[derive(Default)]
 pub struct SessionViews {
@@ -19,10 +20,10 @@ impl SessionViews {
     }
 
     pub fn get(&self, id: &AgentId) -> Option<&AgentView> {
-        self.views.get(id)
+        self.views.get(id).inspect(|view| view.scrollback.bind_selection_source(id.0, view.session_binding_epoch))
     }
     pub fn get_mut(&mut self, id: &AgentId) -> Option<&mut AgentView> {
-        self.views.get_mut(id)
+        self.views.get_mut(id).inspect(|view| view.scrollback.bind_selection_source(id.0, view.session_binding_epoch))
     }
     pub(crate) fn insert(&mut self, id: AgentId, view: AgentView) -> Option<AgentView> {
         self.views.insert(id, view)

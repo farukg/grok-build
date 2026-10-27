@@ -785,10 +785,19 @@ impl ScrollbackPane {
 
         // `block_line_idx` counts every line, painted or not.
         let mut selection_lines = Vec::new();
+        let mut source_offsets = std::collections::HashMap::<usize, usize>::new();
         for (block_line_idx, line) in output.lines.iter().enumerate() {
             if y >= content_area.y + content_area.height {
                 break;
             }
+            let byte_start = if let Some(range) = line.selection_range {
+                let seen = source_offsets.contains_key(&range);
+                let offset = source_offsets.entry(range).or_default();
+                if seen { *offset += line.joiner.as_deref().unwrap_or("\n").len(); }
+                let start = *offset;
+                *offset += derive_selection_text(line).len();
+                start
+            } else { 0 };
             // Render line in the content area (not overlapping with accent).
             // Bidi: content paint only; selection maps visual columns back
             buf.set_line_safe_bidi(content_area.x, y, &line.content, content_area.width);
@@ -797,8 +806,10 @@ impl ScrollbackPane {
                 selectable_cols(&line.content, &line.selectable),
             ) {
                 selection_lines.push(ResolvedSelectableLine {
+                    byte_start,
                     entry_idx: selection_entry_idx,
-                    range_id,
+                    range_id: super::selection_identity::RangeIdentity::new(entry.selection_identity(),
+                        super::selection_identity::SelectablePart::Block, range_id),
                     block_line_idx,
                     screen_y: y,
                     screen_x: content_area.x,
@@ -936,6 +947,7 @@ impl ScrollbackPane {
             &self.media_paths,
             Some((state.group_spans(), paint_range.start)),
             state.cwd(),
+            None,
         );
         let result = rendered.result;
         let selection_boundaries = rendered.selection_boundaries;

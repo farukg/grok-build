@@ -1,3 +1,4 @@
+use super::selection_position::{SourcePosition, SelectionPositions};
 use std::cmp::{max, min};
 use std::ops::Range;
 use std::sync::{Arc, LazyLock};
@@ -86,7 +87,7 @@ pub struct ResolvedSelectionModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedSelectionBoundary {
     entry_idx: usize,
-    range_id: u16,
+    range_id: crate::scrollback::selection_identity::RangeIdentity,
     block_line_idx: usize,
     boundary: Arc<SelectionBoundary>,
 }
@@ -95,6 +96,16 @@ struct ResolvedSelectionBoundary {
 pub(crate) struct ResolvedSelectionBoundaries(Vec<ResolvedSelectionBoundary>);
 
 impl ResolvedSelectionBoundaries {
+    pub(crate) fn append_reroot(&mut self, other: Self,
+        root: super::selection_identity::EntryIdentity, entry_idx: usize)
+    {
+        self.0.extend(other.0.into_iter().map(|mut boundary| {
+            boundary.entry_idx = entry_idx;
+            boundary.range_id.root = root;
+            boundary
+        }));
+    }
+
     pub(crate) fn push(&mut self, line: &ResolvedSelectableLine, boundary: Arc<SelectionBoundary>) {
         self.0.push(ResolvedSelectionBoundary {
             entry_idx: line.entry_idx,
@@ -108,8 +119,7 @@ impl ResolvedSelectionBoundaries {
         self.0
             .iter()
             .find(|boundary| {
-                boundary.entry_idx == line.entry_idx
-                    && boundary.range_id == line.range_id
+                boundary.range_id == line.range_id
                     && boundary.block_line_idx == line.block_line_idx
             })
             .map(|boundary| boundary.boundary.as_ref())
@@ -119,8 +129,7 @@ impl ResolvedSelectionBoundaries {
         self.0
             .iter()
             .find(|boundary| {
-                boundary.entry_idx == hit.entry_idx
-                    && boundary.range_id == hit.range_id
+                boundary.range_id == hit.range_id
                     && boundary.block_line_idx == hit.block_line_idx
             })
             .map(|boundary| boundary.boundary.as_ref())
@@ -135,17 +144,16 @@ impl ResolvedSelectionBoundaries {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSelectableRange {
     pub entry_idx: usize,
-    pub range_id: u16,
+    pub range_id: crate::scrollback::selection_identity::RangeIdentity,
     pub lines: Vec<ResolvedSelectableLine>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSelectableLine {
     pub entry_idx: usize,
-    /// Block `selection_range` ids count up from 0.
-    /// `u16::MAX` is reserved for the labeled group header's synthetic row (`render::GROUP_HEADER_RANGE_ID`).
-    pub range_id: u16,
+    pub range_id: crate::scrollback::selection_identity::RangeIdentity,
     pub block_line_idx: usize,
+    pub byte_start: usize,
     pub screen_y: u16,
     pub screen_x: u16,
     pub selectable_cols: Range<u16>,
@@ -159,6 +167,14 @@ pub struct ResolvedSelectableLine {
 }
 
 impl ResolvedSelectableLine {
+    pub(crate) fn position(&self, column: u16) -> SourcePosition {
+        match self.range_id.part {
+            super::selection_identity::SelectablePart::Overlay => SourcePosition::Overlay { row: self.block_line_idx, column },
+            super::selection_identity::SelectablePart::Block | super::selection_identity::SelectablePart::TaskOutput(_)
+            | super::selection_identity::SelectablePart::GroupHeader => SourcePosition::at(&self.text, self.byte_start, column),
+        }
+    }
+
     /// `(col distance, clamped col-within-range)` for a pointer at screen `col` on this line. Distance is 0 with the
     /// exact offset inside the selectable span, otherwise the gap to the nearer edge with the offset clamped to that
     /// edge. Every hit test resolves columns through this, so their same-row behavior cannot diverge.
@@ -197,8 +213,9 @@ pub struct VisibleBlockGeometry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RangeHit {
+    pub position: SourcePosition,
     pub entry_idx: usize,
-    pub range_id: u16,
+    pub range_id: crate::scrollback::selection_identity::RangeIdentity,
     /// Stable line identifier: the line's index within the block's full output.
     /// Unlike the position in the visible `range.lines[]` array, this does not change when the viewport scrolls.
     pub block_line_idx: usize,
@@ -255,14 +272,14 @@ pub enum SelectionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableSelectionGeometry {
     pub entry_idx: usize,
-    pub range_id: u16,
+    pub range_id: crate::scrollback::selection_identity::RangeIdentity,
     pub geometry: TableGeometry,
 }
 
 impl TableSelectionGeometry {
     /// The geometry, if it was resolved for (`entry_idx`, `range_id`).
-    pub fn for_selection(&self, entry_idx: usize, range_id: u16) -> Option<&TableGeometry> {
-        (self.entry_idx == entry_idx && self.range_id == range_id).then_some(&self.geometry)
+    pub fn for_selection(&self, range_id: crate::scrollback::selection_identity::RangeIdentity) -> Option<&TableGeometry> {
+        (self.range_id == range_id).then_some(&self.geometry)
     }
 }
 
@@ -271,8 +288,9 @@ impl TableSelectionGeometry {
 /// Cleared on the next click elsewhere, Escape, or any scrollback navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PersistentTextSelection {
+    pub positions: SelectionPositions,
     pub entry_idx: usize,
-    pub range_id: u16,
+    pub range_id: crate::scrollback::selection_identity::RangeIdentity,
     pub anchor: SelectionEndpoint,
     pub head: SelectionEndpoint,
     pub origin: SelectionOrigin,
@@ -282,7 +300,6 @@ pub struct PersistentTextSelection {
 impl ResolvedSelectionModel {
     pub fn push_line(&mut self, line: ResolvedSelectableLine) {
         if let Some(last) = self.ranges.last_mut()
-            && last.entry_idx == line.entry_idx
             && last.range_id == line.range_id
         {
             last.lines.push(line);
@@ -294,6 +311,52 @@ impl ResolvedSelectionModel {
             range_id: line.range_id,
             lines: vec![line],
         });
+    }
+
+    pub fn positions(&self, range: super::selection_identity::RangeIdentity,
+        anchor: SelectionEndpoint, head: SelectionEndpoint) -> Option<SelectionPositions>
+    {
+        let lines = &self.range(range)?.lines;
+        let position = |endpoint: SelectionEndpoint| {
+            let line = lines.iter().find(|line| line.block_line_idx == endpoint.block_line_idx)?;
+            Some(line.position(endpoint.col_within_range))
+        };
+        Some(SelectionPositions { anchor: position(anchor)?, head: position(head)? })
+    }
+
+    pub(crate) fn endpoint(&self, range: super::selection_identity::RangeIdentity,
+        position: SourcePosition) -> Option<SelectionEndpoint>
+    {
+        if let SourcePosition::Overlay { row, column } = position {
+            return Some(SelectionEndpoint { block_line_idx: row, col_within_range: column });
+        }
+        let lines = &self.range(range)?.lines;
+        let byte = position.byte()?;
+        for line in lines {
+            if let Some(column) = position.column(&line.text, line.byte_start) {
+                return Some(SelectionEndpoint { block_line_idx: line.block_line_idx, col_within_range: column });
+            }
+        }
+        let first = lines.first()?;
+        let last = lines.last()?;
+        if byte < first.byte_start {
+            if first.block_line_idx == 0 { return None; }
+            Some(SelectionEndpoint { block_line_idx: first.block_line_idx.saturating_sub(1), col_within_range: 0 })
+        } else if byte > last.byte_start + last.text.len() {
+            Some(SelectionEndpoint { block_line_idx: last.block_line_idx.checked_add(1)?, col_within_range: 0 })
+        } else { None }
+    }
+
+    #[cfg(test)]
+    pub fn range_local(&self, entry_idx: usize, local: usize) -> Option<&ResolvedSelectableRange> {
+        self.ranges.iter().find(|range| range.entry_idx == entry_idx && range.range_id.local == local)
+    }
+
+    pub fn same_source_line(&self, hit: &RangeHit, position: SourcePosition) -> bool {
+        self.line_for_hit(hit).is_some_and(|line| match position {
+            SourcePosition::Text { .. } | SourcePosition::Empty { .. } => position.column(&line.text, line.byte_start).is_some(),
+            SourcePosition::Overlay { row, .. } => row == hit.block_line_idx,
+        })
     }
 
     pub fn hit_test_selectable_range(&self, col: u16, row: u16) -> Option<RangeHit> {
@@ -309,6 +372,7 @@ impl ResolvedSelectionModel {
                 };
 
                 let hit = RangeHit {
+                    position: line.position(col_within_range),
                     entry_idx: range.entry_idx,
                     range_id: range.range_id,
                     block_line_idx: line.block_line_idx,
@@ -338,7 +402,7 @@ impl ResolvedSelectionModel {
         col: u16,
         row: u16,
     ) -> Option<RangeHit> {
-        let range = self.range(anchor.entry_idx, anchor.range_id)?;
+        let range = self.range(anchor.range_id)?;
         let mut best: Option<((u16, u16), usize, RangeHit)> = None;
 
         for line in &range.lines {
@@ -349,6 +413,7 @@ impl ResolvedSelectionModel {
             let key = (line.screen_y.abs_diff(row), col_distance);
             let anchor_distance = line.block_line_idx.abs_diff(anchor.block_line_idx);
             let hit = RangeHit {
+                position: line.position(col_within_range),
                 entry_idx: range.entry_idx,
                 range_id: range.range_id,
                 block_line_idx: line.block_line_idx,
@@ -378,10 +443,10 @@ impl ResolvedSelectionModel {
             .map(|b| b.content_width)
     }
 
-    pub fn range(&self, entry_idx: usize, range_id: u16) -> Option<&ResolvedSelectableRange> {
+    pub fn range(&self, range_id: crate::scrollback::selection_identity::RangeIdentity) -> Option<&ResolvedSelectableRange> {
         self.ranges
             .iter()
-            .find(|range| range.entry_idx == entry_idx && range.range_id == range_id)
+            .find(|range| range.range_id == range_id)
     }
 
     /// Hit-test for text selection: only return a hit when the click is directly on selectable columns (distance == 0).
@@ -398,6 +463,7 @@ impl ResolvedSelectionModel {
                 };
                 if distance == 0 {
                     return Some(RangeHit {
+                        position: line.position(col_within_range),
                         entry_idx: range.entry_idx,
                         range_id: range.range_id,
                         block_line_idx: line.block_line_idx,
@@ -413,7 +479,7 @@ impl ResolvedSelectionModel {
     ///
     /// Shorthand for `model.range(hit)` then `find(block_line_idx)`.
     pub fn line_for_hit(&self, hit: &RangeHit) -> Option<&ResolvedSelectableLine> {
-        self.range(hit.entry_idx, hit.range_id)?
+        self.range(hit.range_id)?
             .lines
             .iter()
             .find(|l| l.block_line_idx == hit.block_line_idx)
@@ -451,7 +517,7 @@ pub(crate) fn reconstruct_selection_text_with_boundaries(
     boundaries: &ResolvedSelectionBoundaries,
     drag: &ActiveTextDrag,
 ) -> Option<String> {
-    let range = model.range(drag.anchor.entry_idx, drag.anchor.range_id)?;
+    let range = model.range(drag.anchor.range_id)?;
     let start_bl = min(drag.anchor.block_line_idx, drag.head.block_line_idx);
     let end_bl = max(drag.anchor.block_line_idx, drag.head.block_line_idx);
     let mut out = String::new();
@@ -516,18 +582,13 @@ pub fn render_active_selection_overlay(
     table: Option<&TableGeometry>,
     buf: &mut Buffer,
 ) {
+    let Some(anchor) = model.endpoint(drag.anchor.range_id, drag.anchor.position) else { return };
+    let Some(head) = model.endpoint(drag.anchor.range_id, drag.head.position) else { return };
     render_selection_overlay_impl(
         model,
-        drag.anchor.entry_idx,
         drag.anchor.range_id,
-        SelectionEndpoint {
-            block_line_idx: drag.anchor.block_line_idx,
-            col_within_range: drag.anchor.col_within_range,
-        },
-        SelectionEndpoint {
-            block_line_idx: drag.head.block_line_idx,
-            col_within_range: drag.head.col_within_range,
-        },
+        anchor,
+        head,
         drag.kind,
         table,
         buf,
@@ -543,12 +604,14 @@ pub fn render_persistent_selection_overlay(
     table: Option<&TableGeometry>,
     buf: &mut Buffer,
 ) {
+    let Some(anchor) = model.endpoint(selection.range_id, selection.positions.anchor) else { return };
+    let Some(head) = model.endpoint(selection.range_id, selection.positions.head) else { return };
+    if selection.kind != SelectionKind::Linear && (anchor != selection.anchor || head != selection.head) { return; }
     render_selection_overlay_impl(
         model,
-        selection.entry_idx,
         selection.range_id,
-        selection.anchor,
-        selection.head,
+        anchor,
+        head,
         selection.kind,
         table,
         buf,
@@ -558,15 +621,14 @@ pub fn render_persistent_selection_overlay(
 #[allow(clippy::too_many_arguments)]
 fn render_selection_overlay_impl(
     model: &ResolvedSelectionModel,
-    entry_idx: usize,
-    range_id: u16,
+    range_id: crate::scrollback::selection_identity::RangeIdentity,
     anchor: SelectionEndpoint,
     head: SelectionEndpoint,
     kind: SelectionKind,
     table: Option<&TableGeometry>,
     buf: &mut Buffer,
 ) {
-    let Some(range) = model.range(entry_idx, range_id) else {
+    let Some(range) = model.range(range_id) else {
         return;
     };
     // Table kinds need their geometry; without it (stale side-car) paint nothing rather than a misleading linear sweep
@@ -1033,7 +1095,7 @@ pub(crate) fn reconstruct_full_selection_text_with_boundaries(
         if idx < start_bl || idx > end_bl {
             continue;
         }
-        if line.selection_range != Some(drag.anchor.range_id) {
+        if line.selection_range != Some(drag.anchor.range_id.local) {
             continue;
         }
 
@@ -1352,7 +1414,7 @@ pub fn semantic_selection_at(
     hit: &RangeHit,
     separators: &str,
 ) -> Option<SemanticSelection> {
-    let range = model.range(hit.entry_idx, hit.range_id)?;
+    let range = model.range(hit.range_id)?;
     let lines = &range.lines;
     let hit_pos = lines
         .iter()
@@ -1551,14 +1613,16 @@ mod tests {
     fn single_line_drag(block_line_idx: usize, width: u16) -> ActiveTextDrag {
         ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: block_line_idx, column: 0 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: block_line_idx, column: width - 1 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx,
                 col_within_range: width - 1,
             },
@@ -1576,8 +1640,9 @@ mod tests {
             let mut model = ResolvedSelectionModel::default();
             let boundaries = ResolvedSelectionBoundaries::default();
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 1,
                 screen_y: 0,
                 screen_x: 0,
@@ -1642,14 +1707,16 @@ mod tests {
             };
             let drag_cols = |a: u16, h: u16| ActiveTextDrag {
                 anchor: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: a },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: a,
                 },
                 head: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: h },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: h,
                 },
@@ -1705,8 +1772,9 @@ mod tests {
         with_rtl_bidi(|| {
             let mut model = ResolvedSelectionModel::default();
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 screen_y: 0,
                 screen_x: 0,
@@ -1719,14 +1787,16 @@ mod tests {
             // Dragging them copies the logical word
             let drag = ActiveTextDrag {
                 anchor: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 2 },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: 2,
                 },
                 head: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 4 },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: 4,
                 },
@@ -1747,8 +1817,9 @@ mod tests {
         with_rtl_bidi(|| {
             let mut model = ResolvedSelectionModel::default();
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 screen_y: 0,
                 screen_x: 0,
@@ -1759,14 +1830,16 @@ mod tests {
             });
             let drag = ActiveTextDrag {
                 anchor: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: 0,
                 },
                 head: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 1 },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: 1,
                 },
@@ -1796,14 +1869,16 @@ mod tests {
             };
             let drag = ActiveTextDrag {
                 anchor: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: 0,
                 },
                 head: RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 1 },
                     entry_idx: 0,
-                    range_id: 0,
+                    range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                     block_line_idx: 0,
                     col_within_range: 1,
                 },
@@ -1832,14 +1907,16 @@ mod tests {
         // 16 painted cells (one per grapheme); drag the whole row (0..=15).
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 15 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: 15,
             },
@@ -1859,8 +1936,9 @@ mod tests {
         with_rtl_bidi(|| {
             let mut model = ResolvedSelectionModel::default();
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 screen_y: 0,
                 screen_x: 0,
@@ -1870,8 +1948,9 @@ mod tests {
                 joiner_to_previous: None,
             });
             let hit = RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 1 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: 1,
             };
@@ -1894,8 +1973,9 @@ mod tests {
             (2, "bar", Some(" ".to_string()), "", "   "),
         ] {
             let line = ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: idx,
                 screen_y: idx as u16,
                 screen_x: 0,
@@ -1915,14 +1995,16 @@ mod tests {
         }
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 0 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 1,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 2, column: 2 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 2,
                 col_within_range: 2,
             },
@@ -1970,8 +2052,9 @@ mod tests {
     fn hit_test_selectable_range_returns_matching_hit() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 1,
-            range_id: 7,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(7),
             block_line_idx: 0,
             screen_y: 3,
             screen_x: 10,
@@ -1983,7 +2066,7 @@ mod tests {
 
         let hit = model.hit_test_selectable_range(13, 3).unwrap();
         assert_eq!(hit.entry_idx, 1);
-        assert_eq!(hit.range_id, 7);
+        assert_eq!(hit.range_id.local, 7);
         assert_eq!(hit.block_line_idx, 0);
         assert_eq!(hit.col_within_range, 1);
     }
@@ -1992,8 +2075,9 @@ mod tests {
     fn hit_test_selectable_range_clamps_to_nearest_column_on_same_row() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 1,
-            range_id: 7,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(7),
             block_line_idx: 0,
             screen_y: 3,
             screen_x: 10,
@@ -2012,14 +2096,15 @@ mod tests {
 
     /// One selectable line for the nearest-in-range fixtures.
     fn nearest_line(
-        range_id: u16,
+        range_id: usize,
         block_line_idx: usize,
         screen_y: u16,
         selectable_cols: Range<u16>,
     ) -> ResolvedSelectableLine {
         ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(range_id),
             block_line_idx,
             screen_y,
             screen_x: 4,
@@ -2030,10 +2115,11 @@ mod tests {
         }
     }
 
-    fn range_anchor(range_id: u16, block_line_idx: usize) -> RangeHit {
+    fn range_anchor(range_id: usize, block_line_idx: usize) -> RangeHit {
         RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: block_line_idx, column: 0 },
             entry_idx: 0,
-            range_id,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(range_id),
             block_line_idx,
             col_within_range: 0,
         }
@@ -2100,7 +2186,7 @@ mod tests {
 
         // Row 6 holds range 1's line; range 0's nearest is 4 rows away.
         let hit = model.hit_test_nearest_in_range(anchor, 3, 6).unwrap();
-        assert_eq!(hit.range_id, 0);
+        assert_eq!(hit.range_id.local, 0);
         assert_eq!(hit.block_line_idx, 0);
     }
 
@@ -2291,8 +2377,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for (i, text) in lines.iter().enumerate() {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -2336,8 +2423,9 @@ mod tests {
         let mut scrolled_model = ResolvedSelectionModel::default();
         for (i, line_text) in lines.iter().enumerate().take(7) {
             scrolled_model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -2816,8 +2904,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for (i, (text, joiner)) in fragments.iter().enumerate() {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -2832,8 +2921,9 @@ mod tests {
 
     fn wrap_hit(block_line_idx: usize, col_within_range: u16) -> RangeHit {
         RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: block_line_idx, column: col_within_range },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx,
             col_within_range,
         }
@@ -3105,8 +3195,9 @@ mod tests {
 
         let mut padded = ResolvedSelectionModel::default();
         padded.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 0,
             screen_x: 0,
@@ -3116,8 +3207,9 @@ mod tests {
             joiner_to_previous: None,
         });
         padded.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 1,
             screen_y: 1,
             screen_x: 0,
@@ -3240,8 +3332,9 @@ mod tests {
             let text = crate::scrollback::types::line_plain_text(line);
             last_width = display_width(&text);
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -3278,8 +3371,9 @@ mod tests {
         selectable_cols: Range<u16>,
     ) -> ResolvedSelectableLine {
         ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx,
             screen_y: block_line_idx as u16,
             screen_x: 0,
@@ -3421,14 +3515,16 @@ mod tests {
         let line = make_test_line(3, 0..20);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 2, column: 5 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 2,
                 col_within_range: 5,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 4, column: 12 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 4,
                 col_within_range: 12,
             },
@@ -3464,8 +3560,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for i in 0..3u16 {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i as usize,
                 screen_y: i,
                 screen_x: 2,
@@ -3477,8 +3574,9 @@ mod tests {
         }
         // anchor=(line 0, col 3), head=(line 2, col 5)
         let sel = PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 3 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 2, column: 5 } },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             anchor: SelectionEndpoint {
                 block_line_idx: 0,
                 col_within_range: 3,
@@ -3530,8 +3628,9 @@ mod tests {
     fn persistent_overlay_nonexistent_range_is_noop() {
         let model = ResolvedSelectionModel::default();
         let sel = PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 5 } },
             entry_idx: 99,
-            range_id: 5,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(5),
             anchor: SelectionEndpoint {
                 block_line_idx: 0,
                 col_within_range: 0,
@@ -3554,8 +3653,9 @@ mod tests {
     fn persistent_overlay_single_line_word_selection() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 0,
             screen_x: 5,
@@ -3566,8 +3666,9 @@ mod tests {
         });
         // Selecting cols 6..11 ("world") on a line at screen_x=5.
         let sel = PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 6 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 10 } },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             anchor: SelectionEndpoint {
                 block_line_idx: 0,
                 col_within_range: 6,
@@ -3602,8 +3703,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for i in 0..4u16 {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i as usize,
                 screen_y: i,
                 screen_x: 0,
@@ -3615,14 +3717,16 @@ mod tests {
         }
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 3 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 1,
                 col_within_range: 3,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 3, column: 8 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 3,
                 col_within_range: 8,
             },
@@ -3630,8 +3734,9 @@ mod tests {
             anchor_content_width: None,
         };
         let sel = PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 3 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 3, column: 8 } },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             anchor: SelectionEndpoint {
                 block_line_idx: 1,
                 col_within_range: 3,
@@ -3664,8 +3769,9 @@ mod tests {
     fn hit_test_text_exact_returns_hit_on_selectable_column() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 5,
             screen_x: 4,
@@ -3678,7 +3784,7 @@ mod tests {
         // Column 6 = screen_x(4) + selectable_cols.start(2), so it is within range
         let hit = model.hit_test_text_exact(6, 5).unwrap();
         assert_eq!(hit.entry_idx, 0);
-        assert_eq!(hit.range_id, 0);
+        assert_eq!(hit.range_id.local, 0);
         assert_eq!(hit.block_line_idx, 0);
         assert_eq!(hit.col_within_range, 0);
 
@@ -3691,8 +3797,9 @@ mod tests {
     fn hit_test_text_exact_returns_none_outside_selectable_cols() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 5,
             screen_x: 4,
@@ -3717,8 +3824,9 @@ mod tests {
     fn hit_test_text_exact_vs_nearest_range_comparison() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 3,
             screen_x: 10,
@@ -3743,8 +3851,9 @@ mod tests {
     fn hit_test_text_exact_multiple_ranges_same_row() {
         let mut model = ResolvedSelectionModel::default();
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 2,
             screen_x: 0,
@@ -3754,8 +3863,9 @@ mod tests {
             joiner_to_previous: None,
         });
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 1,
-            range_id: 1,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(1),
             block_line_idx: 0,
             screen_y: 2,
             screen_x: 10,
@@ -3802,8 +3912,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for (i, text) in TABLE_LINES.iter().enumerate() {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -3818,8 +3929,9 @@ mod tests {
 
     fn table_hit(block_line_idx: usize, col_within_range: u16) -> RangeHit {
         RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: block_line_idx, column: col_within_range },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx,
             col_within_range,
         }

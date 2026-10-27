@@ -10,6 +10,10 @@ use crate::extensions::code_nav::CodeNavEligibility;
 use std::num::NonZeroU64;
 #[path = "notification_suppression_load_tests.rs"]
 mod notification_suppression_load;
+#[path = "tests/request_snapshot_tests.rs"]
+mod request_snapshot_tests;
+#[path = "tests/request_preview_tests.rs"]
+mod request_preview_tests;
 /// Build an unsigned JWT with a `tier` claim (header.payload.sig base64url).
 fn jwt_with_tier(tier: u64) -> String {
     use base64::Engine;

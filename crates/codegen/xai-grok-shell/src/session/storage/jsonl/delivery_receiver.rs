@@ -18,6 +18,11 @@ use xai_chat_state::{
     StrictAppendError,
 };
 
+struct DeliveryHistoryBinding {
+    binding: DeliveryBinding,
+    source: xai_grok_sampling_types::SourceOccurrence,
+}
+
 impl JsonlStorageAdapter {
     fn receiver_lease_file(&self, info: &Info) -> PathBuf {
         self.session_dir(info).join("delivery-execution.lock")
@@ -78,7 +83,8 @@ impl JsonlStorageAdapter {
         .map_err(io::Error::other)?
     }
     fn recover_delivery_state(&self, info: &Info, summary: &mut Summary) -> io::Result<()> {
-        for binding in self.delivery_bindings(info)? {
+        for retained in self.delivery_bindings(info)? {
+            let binding = retained.binding;
             if let Some(record) = summary.completion_delivery.receiver.records.get_mut(&binding.delivery_id) {
                 record.record_projection(&binding).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
             }
@@ -153,7 +159,7 @@ impl JsonlStorageAdapter {
         }
     }
 
-    fn delivery_bindings(&self, info: &Info) -> io::Result<Vec<DeliveryBinding>> {
+    fn delivery_bindings(&self, info: &Info) -> io::Result<Vec<DeliveryHistoryBinding>> {
         let bytes = match std::fs::read(self.chat_file(info)) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -161,16 +167,14 @@ impl JsonlStorageAdapter {
         };
         let mut bindings = Vec::new();
         for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-            if !line.ends_with(b"\n") {
-                break;
-            }
-            if line.trim_ascii().is_empty() {
-                continue;
-            }
-            let value: serde_json::Value =
-                serde_json::from_slice(line).map_err(io::Error::other)?;
+            if !line.ends_with(b"\n") { break; }
+            if line.trim_ascii().is_empty() { continue; }
+            let value: serde_json::Value = serde_json::from_slice(line).map_err(io::Error::other)?;
             if let Some(binding) = value.get("_session_delivery") {
-                bindings.push(serde_json::from_value(binding.clone()).map_err(io::Error::other)?);
+                bindings.push(DeliveryHistoryBinding {
+                    binding: serde_json::from_value(binding.clone()).map_err(io::Error::other)?,
+                    source: value.get("source").and_then(|source| serde_json::from_value(source.clone()).ok()).unwrap_or_default(),
+                });
             }
         }
         Ok(bindings)
@@ -525,12 +529,10 @@ impl JsonlStorageAdapter {
                 "delivery digest mismatch",
             )));
         }
-        let existing = self
-            .delivery_bindings(info)
-            .map_err(StrictAppendError::NotCommitted)?
-            .into_iter()
-            .find(|existing| existing.delivery_id == binding.delivery_id);
-        if let Some(existing) = existing {
+        let retained_bindings = self.delivery_bindings(info).map_err(StrictAppendError::NotCommitted)?;
+        let existing = retained_bindings.iter().find(|retained| retained.binding.delivery_id == binding.delivery_id);
+        if let Some(retained) = existing {
+            let existing = &retained.binding;
             if existing.payload_digest != binding.payload_digest {
                 return Err(StrictAppendError::NotCommitted(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -547,14 +549,19 @@ impl JsonlStorageAdapter {
             Self::sync_parent_directory(&path).map_err(StrictAppendError::Indeterminate)?;
             mutate_locked(&self.summary_file(info), &self.summary_lock_file(info), |summary| {
                 if let Some(record) = summary.completion_delivery.receiver.records.get_mut(&existing.delivery_id) {
-                    record.record_projection(&existing).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                    record.record_projection(existing).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 }
                 Ok(())
             }).map_err(StrictAppendError::Indeterminate)?;
+            let identity = xai_chat_state::input_projection::InputReceiptIdentity::Delivery { delivery_id: existing.delivery_id.clone() };
+            let sources = if retained_bindings.iter().all(|entry| entry.binding.delivery_id != binding.delivery_id || entry.source == retained.source) {
+                xai_chat_state::input_projection::ReceiptSources::retained(identity, retained.source)
+            } else { xai_chat_state::input_projection::ReceiptSources::unavailable(identity) };
             return Ok(CompletionProjectionAck::AlreadyPresent {
                 history: self
                     .read_chat_history_sync(path, CHAT_FORMAT_VERSION)
                     .map_err(StrictAppendError::Indeterminate)?,
+                sources,
             });
         }
         let payload = match &record.execution {

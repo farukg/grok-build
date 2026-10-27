@@ -1447,6 +1447,7 @@ async fn side_question_trims_reasoning_orphaned_by_mid_turn_truncation() {
                     "planning the file read",
                 ).into()),
                 ConversationItem::Assistant(AssistantItem {
+                    output_origin: Default::default(),
                     evidence: Default::default(),
                     source: Default::default(),
                     content: String::new().into(),

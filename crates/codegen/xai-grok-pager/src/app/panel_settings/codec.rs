@@ -101,6 +101,32 @@ pub(super) struct Decoded {
     pub problems: Vec<LoadProblem>,
 }
 
+impl Decoded {
+    pub(super) fn has_invalid_known(&self) -> bool {
+        self.invalid_known_key().is_some()
+    }
+
+    pub(super) fn invalid_known_key(&self) -> Option<&str> {
+        self.problems.iter().find_map(|problem| match problem {
+            LoadProblem::InvalidKnown { key } => Some(key.as_str()),
+            LoadProblem::Unreadable { .. } | LoadProblem::Malformed(_)
+            | LoadProblem::NewerVersion { .. } | LoadProblem::IgnoredEntry { .. } => None,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EntryLocation {
+    Active,
+    Legacy,
+}
+
+impl EntryLocation {
+    fn for_layer(layer: Layer, stored: Layer) -> Self {
+        if layer == stored { Self::Active } else { Self::Legacy }
+    }
+}
+
 /// Reads every recognized value of `doc`; anything else is reported and left alone.
 pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
     let mut decoded = Decoded {
@@ -108,21 +134,23 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
         problems: Vec::new(),
     };
     decode_version(doc, &mut decoded);
-    for (name, item) in entries(doc, &["dock"], &mut decoded.problems) {
+    for (name, item) in entries(doc, &["dock"], &mut decoded.problems, EntryLocation::for_layer(layer, Layer::Global)) {
         match (name, item.as_str().and_then(|value| value.parse::<crate::views::dock::DockPlacement>().ok()), layer) {
             ("placement", Some(placement), Layer::Global) => { decoded.settings.apply(&Edit::Set(Setting::DockPlacement(placement))); }
+            ("placement", None, Layer::Global) => decoded.problems.push(LoadProblem::InvalidKnown { key: "dock.placement".to_owned() }),
             _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("dock.{name}") }),
         }
     }
-    for (name, item) in entries(doc, &["scope"], &mut decoded.problems) {
+    for (name, item) in entries(doc, &["scope"], &mut decoded.problems, EntryLocation::for_layer(layer, Layer::Session)) {
         match (name, layer, item.as_str().and_then(|value| value.parse::<Layer>().ok())) {
             ("message_display", Layer::Session, Some(scope)) => {
                 decoded.settings.apply(&Edit::Set(Setting::DisplayScope(scope)));
             }
+            ("message_display", Layer::Session, None) => decoded.problems.push(LoadProblem::InvalidKnown { key: "scope.message_display".to_owned() }),
             _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("scope.{name}") }),
         }
     }
-    for (name, item) in entries(doc, &["completed_items"], &mut decoded.problems) {
+    for (name, item) in entries(doc, &["completed_items"], &mut decoded.problems, EntryLocation::for_layer(layer, Layer::Global)) {
         let show = match item.as_str() {
             Some("show") => Some(true),
             Some("hide") => Some(false),
@@ -132,10 +160,11 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
             (Layer::Global, Some(pane), Some(show)) => {
                 decoded.settings.apply(&Edit::Set(Setting::ShowCompleted { pane, show }));
             }
+            (Layer::Global, Some(_), None) => decoded.problems.push(LoadProblem::InvalidKnown { key: format!("completed_items.{name}") }),
             _ => decoded.problems.push(LoadProblem::IgnoredEntry { key: format!("completed_items.{name}") }),
         }
     }
-    for (name, item) in entries(doc, &[MESSAGE_DISPLAY], &mut decoded.problems) {
+    for (name, item) in entries(doc, &[MESSAGE_DISPLAY], &mut decoded.problems, EntryLocation::Active) {
         let key = format!("{MESSAGE_DISPLAY}.{name}");
         match (kind_from_name(name), item.as_str().and_then(form_from_name)) {
             (Some(kind), Some(form)) => {
@@ -143,10 +172,11 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
                     .settings
                     .apply(&Edit::Set(Setting::KindForm { kind, form }));
             }
-            (None, _) | (_, None) => decoded.problems.push(LoadProblem::IgnoredEntry { key }),
+            (None, _) => decoded.problems.push(LoadProblem::IgnoredEntry { key }),
+            (Some(_), None) => decoded.problems.push(LoadProblem::InvalidKnown { key }),
         }
     }
-    for (name, item) in entries(doc, &[SIDEBAR], &mut decoded.problems) {
+    for (name, item) in entries(doc, &[SIDEBAR], &mut decoded.problems, EntryLocation::Active) {
         let key = format!("{SIDEBAR}.{name}");
         match (name.parse::<SidebarSection>().ok(), disclosure_of(item)) {
             (Some(section), Some(state)) => {
@@ -158,16 +188,20 @@ pub(super) fn decode(layer: Layer, doc: &DocumentMut) -> Decoded {
                         .apply(&Edit::Set(Setting::Section { section, state }));
                 }
             }
-            (None, _) | (_, None) => decoded.problems.push(LoadProblem::IgnoredEntry { key }),
+            (None, _) => decoded.problems.push(LoadProblem::IgnoredEntry { key }),
+            (Some(section), None) => decoded.problems.push(if section.storage_layer(layer) == layer {
+                LoadProblem::InvalidKnown { key }
+            } else { LoadProblem::IgnoredEntry { key } }),
         }
     }
-    for (name, item) in entries(doc, &[OUTLINE], &mut decoded.problems) {
+    for (name, item) in entries(doc, &[OUTLINE], &mut decoded.problems, EntryLocation::Active) {
         match (name, disclosure_of(item)) {
             (OUTLINE_TURNS, Some(state)) => {
                 decoded
                     .settings
                     .apply(&Edit::Set(Setting::OutlineTurns(state)));
             }
+            (OUTLINE_TURNS, None) => decoded.problems.push(LoadProblem::InvalidKnown { key: format!("{OUTLINE}.{OUTLINE_TURNS}") }),
             (TURN_EXCEPTIONS, _) => {}
             _ => decoded.problems.push(LoadProblem::IgnoredEntry {
                 key: format!("{OUTLINE}.{name}"),
@@ -190,20 +224,23 @@ fn decode_version(doc: &DocumentMut, decoded: &mut Decoded) {
             decoded.problems.push(LoadProblem::NewerVersion { found });
         }
         Some(found) if found >= 1 => {}
-        Some(_) | None => decoded.problems.push(LoadProblem::IgnoredEntry {
+        Some(_) | None => decoded.problems.push(LoadProblem::InvalidKnown {
             key: VERSION.to_owned(),
         }),
     }
 }
 
 fn decode_turn_exceptions(doc: &DocumentMut, decoded: &mut Decoded) {
-    for (name, item) in entries(doc, &[OUTLINE, TURN_EXCEPTIONS], &mut decoded.problems) {
+    for (name, item) in entries(doc, &[OUTLINE, TURN_EXCEPTIONS], &mut decoded.problems, EntryLocation::Active) {
         match (name.parse::<u32>().ok(), disclosure_of(item)) {
             (Some(prompt), Some(state)) => {
                 let prompt = PromptOrdinal::from_stored(prompt);
                 decoded.settings.apply(&Edit::Turn(prompt, Some(state)));
             }
-            (None, _) | (_, None) => decoded.problems.push(LoadProblem::IgnoredEntry {
+            (None, _) => decoded.problems.push(LoadProblem::IgnoredEntry {
+                key: format!("{OUTLINE}.{TURN_EXCEPTIONS}.{name}"),
+            }),
+            (Some(_), None) => decoded.problems.push(LoadProblem::InvalidKnown {
                 key: format!("{OUTLINE}.{TURN_EXCEPTIONS}.{name}"),
             }),
         }
@@ -215,6 +252,7 @@ fn entries<'a>(
     doc: &'a DocumentMut,
     path: &[&str],
     problems: &mut Vec<LoadProblem>,
+    location: EntryLocation,
 ) -> Vec<(&'a str, &'a Item)> {
     let mut current: &dyn TableLike = doc.as_table();
     let mut dotted = String::new();
@@ -229,7 +267,10 @@ fn entries<'a>(
         match item.as_table_like() {
             Some(next) => current = next,
             None => {
-                problems.push(LoadProblem::IgnoredEntry { key: dotted });
+                problems.push(match location {
+                    EntryLocation::Active => LoadProblem::InvalidKnown { key: dotted },
+                    EntryLocation::Legacy => LoadProblem::IgnoredEntry { key: dotted },
+                });
                 return Vec::new();
             }
         }

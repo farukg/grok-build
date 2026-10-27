@@ -27,6 +27,7 @@ fn call(id: &str) -> ToolCall {
 
 fn answer(text: &str, calls: Vec<ToolCall>) -> Item {
     Item::Assistant(AssistantItem {
+        output_origin: Default::default(),
         evidence: Default::default(),
         source: Default::default(),
         content: text.into(),

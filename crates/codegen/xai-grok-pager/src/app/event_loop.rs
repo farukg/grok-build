@@ -1318,7 +1318,7 @@ pub(crate) async fn run(
         app.voice_ui_active = false;
     }
     app.apply_voice_mode_enabled(voice_mode_enabled);
-    crate::views::dock::set_enabled(crate::app::resolve_dock_enabled(
+    crate::views::dock::set_enabled(crate::app::confirm_dock_enabled(
         remote_settings.as_ref().and_then(|s| s.dock_enabled),
     ));
     if app.gate.is_none()
@@ -2590,7 +2590,6 @@ pub(crate) async fn run(
                 );
                 app.set_appearance(config);
                 app.apply_effective_compact();
-
                 // Reload the scroll settings from the pager caches (resynced when a setting changes via the settings registry)
                 app.scroll_config = crate::input::mouse::ScrollConfig::from_settings();
                 presenter.request(false);

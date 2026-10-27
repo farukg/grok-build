@@ -336,10 +336,17 @@ pub(crate) fn stream_responses_tracked<'a>(
             // Track whether ResponseIncomplete should break the loop after the content-aware idle check below
             let mut should_break = false;
 
+            let output_origin = match &event {
+                ResponseStreamEvent::ResponseOutputTextDelta(event) => xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(event.item_id.clone()) },
+                ResponseStreamEvent::ResponseReasoningSummaryTextDelta(event) => xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(event.item_id.clone()) },
+                ResponseStreamEvent::ResponseReasoningTextDelta(event) => xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(event.item_id.clone()) },
+                _ => xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
+            };
             let separates_reasoning = reasoning_sections.observe(&event);
             if separates_reasoning {
                 chunk_index += 1;
                 yield SamplingEvent::ChannelToken {
+                    origin: output_origin.clone(),
                     request_id: request_id.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "\n\n".to_owned(),
@@ -361,6 +368,7 @@ pub(crate) fn stream_responses_tracked<'a>(
                         chunk_index += 1;
                         message_chunk_count += 1;
                         yield SamplingEvent::ChannelToken {
+                            origin: output_origin.clone(),
                             request_id: request_id.clone(),
                             channel: SamplingChannel::Text,
                             text: delta,
@@ -380,6 +388,7 @@ pub(crate) fn stream_responses_tracked<'a>(
                         }
                         chunk_index += 1;
                         yield SamplingEvent::ChannelToken {
+                            origin: output_origin.clone(),
                             request_id: request_id.clone(),
                             channel: SamplingChannel::Reasoning,
                             text: delta,
@@ -403,6 +412,7 @@ pub(crate) fn stream_responses_tracked<'a>(
                         }
                         reasoning_acc.push_str(&delta);
                         yield SamplingEvent::ChannelToken {
+                            origin: output_origin.clone(),
                             request_id: request_id.clone(),
                             channel: SamplingChannel::Reasoning,
                             text: delta,
@@ -1195,6 +1205,13 @@ mod tests {
             })
             .collect();
         assert_eq!(text_tokens, vec!["hello"]);
+        let origins: Vec<_> = events.iter().filter_map(|event| match event {
+            SamplingEvent::ChannelToken { channel: SamplingChannel::Text, origin, .. } => Some(origin.clone()),
+            _ => None,
+        }).collect();
+        assert_eq!(origins, vec![xai_grok_sampling_types::OutputOrigin::Item {
+            reference: xai_grok_sampling_types::ProviderOutputRef::Item("item-1".into()),
+        }]);
 
         match events.last().unwrap() {
             SamplingEvent::Completed { response, .. } => {

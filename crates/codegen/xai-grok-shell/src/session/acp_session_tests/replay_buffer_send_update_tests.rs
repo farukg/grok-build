@@ -105,6 +105,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         is_chat_kind: false,
         state,
         notifications: NotificationSender {
+            source_publications: Default::default(),
             gateway,
             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             persistence_tx,

@@ -169,6 +169,7 @@ fn render_with_selection_boundaries(
         &[],
         None,
         None,
+        None,
     )
 }
 
@@ -1010,6 +1011,7 @@ fn full_row_drag(
 ) -> crate::scrollback::text_selection::ActiveTextDrag {
     use crate::scrollback::text_selection::{ActiveTextDrag, RangeHit};
     let hit = RangeHit {
+        position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: 0 },
         entry_idx: line.entry_idx,
         range_id: line.range_id,
         block_line_idx: line.block_line_idx,
@@ -1048,7 +1050,7 @@ fn labeled_truncation_header_synthetic_line_copies_label_text() {
     // Collapsed: the header row copies its hidden-prefix label.
     let (buf, result) = render_state(&state, viewport, true);
     let model = &result.selection_model;
-    let header = model.range(0, GROUP_HEADER_RANGE_ID).expect("header range");
+    let header = model.range_local(0, GROUP_HEADER_RANGE_ID).expect("header range");
     assert_eq!(header.lines.len(), 1);
     assert_eq!(at(&header.lines, 0).text, "Ran 3 commands");
     assert_eq!(at(&header.lines, 0).screen_y, 0);
@@ -1080,7 +1082,7 @@ fn labeled_truncation_header_synthetic_line_copies_label_text() {
     let (_, result) = render_state(&state, viewport, true);
     let model = &result.selection_model;
     let header = model
-        .range(0, GROUP_HEADER_RANGE_ID)
+        .range_local(0, GROUP_HEADER_RANGE_ID)
         .expect("expanded header range");
     assert_eq!(at(&header.lines, 0).text, "Ran 6 commands");
     let copy = reconstruct_selection_text(model, &full_row_drag(at(&header.lines, 0)))
@@ -1114,7 +1116,7 @@ fn plain_count_truncation_header_contributes_no_selectable_line() {
     assert!(
         result
             .selection_model
-            .range(0, GROUP_HEADER_RANGE_ID)
+            .range_local(0, GROUP_HEADER_RANGE_ID)
             .is_none(),
         "plain-count header must not gain the synthetic label range"
     );
@@ -1173,11 +1175,11 @@ fn verb_and_truncation_headers_share_one_label_channel() {
 
     let model = &result.selection_model;
     let verb = model
-        .range(0, GROUP_HEADER_RANGE_ID)
+        .range_local(0, GROUP_HEADER_RANGE_ID)
         .expect("verb header range");
     assert_eq!(at(&verb.lines, 0).text, "Read 2 files");
     let trunc = model
-        .range(2, GROUP_HEADER_RANGE_ID)
+        .range_local(2, GROUP_HEADER_RANGE_ID)
         .expect("truncation header range");
     assert_eq!(at(&trunc.lines, 0).text, "Ran 3 commands");
 }
@@ -2342,12 +2344,12 @@ fn verb_group_expanded_slot_header_and_member_select_independently() {
     let model = &result.selection_model;
 
     // The two rows resolve to two distinct ranges, one line each on their own screen rows
-    let header = model.range(0, GROUP_HEADER_RANGE_ID).expect("header range");
+    let header = model.range_local(0, GROUP_HEADER_RANGE_ID).expect("header range");
     assert_eq!(header.lines.len(), 1);
     assert_eq!(at(&header.lines, 0).text, "Read 2 files");
     assert_eq!(at(&header.lines, 0).screen_y, 0);
     let member = model
-        .range(0, crate::scrollback::blocks::tool::TOOL_HEADER_RANGE)
+        .range_local(0, crate::scrollback::blocks::tool::TOOL_HEADER_RANGE)
         .expect("member range");
     assert_eq!(member.lines.len(), 1);
     assert!(at(&member.lines, 0).text.contains("b1.rs"));
@@ -2950,6 +2952,7 @@ fn edit_boundary_sidecar_stays_aligned_when_prefix_row_is_clipped() {
         .flat_map(|range| &range.lines)
         .find_map(|line| {
             let hit = crate::scrollback::text_selection::RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: 0 },
                 entry_idx: line.entry_idx,
                 range_id: line.range_id,
                 block_line_idx: line.block_line_idx,

@@ -113,6 +113,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     nudges_used_this_session: 0,
                 }),
                 notifications: NotificationSender {
+                    source_publications: Default::default(),
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx: persistence.tx.clone(),
@@ -651,6 +652,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     nudges_used_this_session: 0,
                 }),
                 notifications: NotificationSender {
+                    source_publications: Default::default(),
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx: persistence.tx.clone(),

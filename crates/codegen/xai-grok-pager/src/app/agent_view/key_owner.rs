@@ -128,7 +128,7 @@ impl AgentView {
             KeyOwner::Card(BlockingCard::Permission)
         } else if self.line_viewer.is_some() {
             KeyOwner::LineViewer
-        } else if self.block_viewer.is_some() {
+        } else if self.block_viewer.is_some() || self.request_viewer.is_some() {
             KeyOwner::BlockViewer
         } else if self.plan_approval_view.is_some() && !parked {
             KeyOwner::PlanApproval

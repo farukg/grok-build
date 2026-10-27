@@ -25,6 +25,10 @@ pub mod metrics;
 mod prewarm;
 mod request_compression;
 pub mod request_capture;
+mod request_body;
+pub mod request_preview;
+#[cfg(test)]
+mod request_preview_tests;
 pub mod retry;
 pub mod sampling_log;
 mod shared_http;

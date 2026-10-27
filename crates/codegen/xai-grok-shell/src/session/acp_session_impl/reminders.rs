@@ -855,7 +855,7 @@ impl SessionActor {
                 self.reminder_wrapper_tag(),
             ))
             .await
-            .is_some();
+            .is_ok();
         if !delivered {
             crate::session::fork_status::release_claim(&session_dir);
         }

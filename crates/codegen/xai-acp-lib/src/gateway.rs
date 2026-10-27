@@ -10,7 +10,7 @@ use tracing::Instrument;
 use crate::{
     AcpMethod, acp_send,
     common::AcpResult,
-    message::{AcpAgentMessage, AcpArgs, AcpClientMessage, AcpRequest, AcpSide},
+    message::{AcpAgentMessage, AcpArgs, AcpClientMessage, AcpRequest, AcpSide, TraceDisclosure},
 };
 
 type SpawnFn = Rc<dyn Fn(Pin<Box<dyn Future<Output = ()>>>)>;
@@ -106,34 +106,71 @@ pub type AcpAgentGatewaySender = AcpGatewaySender<acp::AgentSide>;
 pub type AcpClientGatewayReceiver = AcpGatewayReceiver<acp::ClientSide, acp::ClientSideConnection>;
 pub type AcpClientGatewaySender = AcpGatewaySender<acp::ClientSide>;
 
-fn before_request<T: AcpRequest>(args: &AcpArgs<T>, tracing: bool) -> Option<String> {
+/// Gateway debug-trace phase for one RPC; [`Self::line`] is the single
+/// formatter enforcing [`TraceDisclosure`], so payload-carrying calls can
+/// never serialize their request, response, or error payloads into a trace.
+#[derive(Debug, Clone, Copy)]
+enum TracePhase {
+    SendingRequest,
+    ReceivedRequest,
+    ReceivedResponse,
+    ReceivedError,
+}
+
+impl TracePhase {
+    fn subject(self) -> (&'static str, &'static str) {
+        match self {
+            Self::SendingRequest => ("sending", "request"),
+            Self::ReceivedRequest => ("received", "request"),
+            Self::ReceivedResponse => ("received", "response"),
+            Self::ReceivedError => ("received", "error"),
+        }
+    }
+
+    fn line(self, disclosure: &TraceDisclosure, payload: impl FnOnce() -> String) -> String {
+        let (verb, noun) = self.subject();
+        match disclosure {
+            TraceDisclosure::Payload { method } => {
+                format!("{verb} {} {noun}: {}", crate::common::compact_json(method), payload())
+            }
+            TraceDisclosure::EnvelopeOnly { method } => {
+                format!("{verb} {} {noun}: payload withheld", crate::common::compact_json(method))
+            }
+        }
+    }
+}
+
+fn before_request<T: AcpRequest>(args: &AcpArgs<T>, tracing: bool) -> Option<TraceDisclosure> {
     tracing.then(|| {
-        let method = crate::common::compact_json(&args.method_name());
+        let disclosure = args.trace_disclosure();
         tracing::debug!(
-            "sending {method} request: {}",
-            crate::common::compact_json(&args.request)
+            "{}",
+            TracePhase::SendingRequest.line(&disclosure, || {
+                crate::common::compact_json(&args.request)
+            })
         );
-        method
+        disclosure
     })
 }
 
 fn after_request<T: Serialize>(
     response_tx: oneshot::Sender<AcpResult<T>>,
     response: AcpResult<T>,
-    method: Option<String>,
+    trace: Option<TraceDisclosure>,
 ) -> bool {
-    if let Some(method) = method {
-        match response {
-            Ok(ref response) => {
-                tracing::debug!(
-                    "received {method} response: {}",
-                    crate::common::compact_json(&response)
-                );
-            }
-            Err(ref err) => {
-                // Log at debug level - errors are handled visually in the TUI status bar
-                tracing::debug!("received {method} error: {err}");
-            }
+    if let Some(disclosure) = trace.as_ref() {
+        match &response {
+            Ok(response) => tracing::debug!(
+                "{}",
+                TracePhase::ReceivedResponse.line(disclosure, || {
+                    crate::common::compact_json(response)
+                })
+            ),
+            // Log at debug level - errors are handled visually in the TUI status bar
+            Err(err) => tracing::debug!(
+                "{}",
+                TracePhase::ReceivedError.line(disclosure, || err.to_string())
+            ),
         }
     }
     response_tx.send(response).is_ok()
@@ -148,9 +185,9 @@ macro_rules! handle {
             .unwrap_or_else(tracing::Span::none);
         ($spawn)(Box::pin(
             async move {
-                let method = before_request(&($args), $tracing);
+                let trace = before_request(&($args), $tracing);
                 let response = ($conn).$name(($args).request).await;
-                let _ = after_request(($args).response_tx, response, method);
+                let _ = after_request(($args).response_tx, response, trace);
             }
             .instrument(span),
         ));
@@ -159,9 +196,9 @@ macro_rules! handle {
     // $on_meta is accepted (but unused) to disambiguate from the primary pattern.
     (no_meta, $args:expr, $tracing:expr, $conn:expr, $name:ident, $spawn:expr, $on_meta:expr $(,)?) => {
         ($spawn)(Box::pin(async move {
-            let method = before_request(&($args), $tracing);
+            let trace = before_request(&($args), $tracing);
             let response = ($conn).$name(($args).request).await;
-            let _ = after_request(($args).response_tx, response, method);
+            let _ = after_request(($args).response_tx, response, trace);
         }));
     };
 }
@@ -372,10 +409,12 @@ impl<S: AcpSide> AcpGatewaySender<S> {
         S::OutMessage: From<AcpArgs<T>>,
     {
         if self.tracing {
-            let method = crate::common::compact_json(&request.method_name());
+            let disclosure = request.trace_disclosure();
             tracing::debug!(
-                "received {method} request: {}",
-                crate::common::compact_json(&request)
+                "{}",
+                TracePhase::ReceivedRequest.line(&disclosure, || {
+                    crate::common::compact_json(&request)
+                })
             );
         }
         acp_send(request, &self.tx).await
@@ -694,3 +733,7 @@ mod tests {
             .await;
     }
 }
+
+#[cfg(test)]
+#[path = "gateway_trace_tests.rs"]
+mod trace_tests;

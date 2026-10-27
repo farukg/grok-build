@@ -199,6 +199,7 @@ mod tests {
 
     fn make_assistant(text: &str) -> ConversationItem {
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: text.into(),

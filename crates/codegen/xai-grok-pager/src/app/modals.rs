@@ -850,6 +850,10 @@ impl AgentView {
                                 let _ = self.open_timeline_panel_at(at);
                                 InputOutcome::Changed
                             }
+                            PaletteCommand::RequestInspector => {
+                                self.active_modal = None;
+                                InputOutcome::Action(Action::OpenRequestInspector)
+                            }
                             PaletteCommand::OpenFeedbackModal => {
                                 self.active_modal = None;
                                 InputOutcome::Action(Action::OpenFeedbackModal(Default::default()))

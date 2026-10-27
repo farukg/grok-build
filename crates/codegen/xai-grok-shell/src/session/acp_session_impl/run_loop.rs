@@ -1428,6 +1428,9 @@ pub(super) async fn run_session(
                                 let _ = respond_to.send(outcome);
                             });
                         }
+                        SessionCommand::PreviewRequest { request, respond_to } => {
+                            let _ = respond_to.send(session.preview_next_request(request).await);
+                        }
                         SessionCommand::GetContextPolicy { respond_to } => {
                             let _ = respond_to.send(session.context_policy_report().await);
                         }

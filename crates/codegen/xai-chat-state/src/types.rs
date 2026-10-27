@@ -6,6 +6,65 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 use xai_grok_sampling_types::{ConversationItem, ConversationRequest, SamplingConfig};
 
+/// An applied append, without a durability or provider-dispatch claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppliedAppend {
+    pub source: xai_grok_sampling_types::SourceOccurrence,
+}
+
+#[derive(Debug)]
+pub enum MutationReply {
+    Unobserved,
+    Observed(tokio::sync::oneshot::Sender<AppliedAppend>),
+}
+
+impl MutationReply {
+    pub(crate) fn send(self, applied: AppliedAppend) {
+        match self {
+            Self::Unobserved => {}
+            Self::Observed(reply) => { let _ = reply.send(applied); }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppendBinding {
+    Applied(AppliedAppend),
+    ReceiptSourceUnavailable,
+    NotApplied,
+}
+
+#[derive(Debug, Clone)]
+pub struct MutationAck<A> {
+    pub acknowledgement: A,
+    pub binding: AppendBinding,
+}
+
+#[derive(Debug)]
+pub enum MutationAdmissionError {
+    MailboxClosed(crate::handle::ChatStateMailboxClosed),
+    /// The mutation may already have applied.
+    ReplyLost(tokio::sync::oneshot::error::RecvError),
+}
+
+impl std::fmt::Display for MutationAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MailboxClosed(source) => write!(f, "{source}"),
+            Self::ReplyLost(source) => write!(f, "chat-state mutation reply lost: {source}"),
+        }
+    }
+}
+
+impl std::error::Error for MutationAdmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MailboxClosed(source) => Some(source),
+            Self::ReplyLost(source) => Some(source),
+        }
+    }
+}
+
 /// A policy command was not admitted, or its admitted outcome could not be observed.
 #[derive(Debug)]
 pub enum ContextPolicyAdmissionError {
@@ -148,10 +207,15 @@ pub enum MemoryReminderPersistence {
     RequestOnly,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub enum RequestPreparation {
     Sampling { memory_reminder: MemoryReminderPersistence },
     Preview,
+    PreviewWith {
+        history: PreviewHistory,
+        policy: xai_grok_sampling_types::ContextPolicy,
+        appended: Vec<ConversationItem>,
+    },
 }
 
 /// Reply of [`crate::ChatStateHandle::build_request`]: the wire-ready request plus the lossless
@@ -408,5 +472,34 @@ mod tests {
         assert_eq!(deserialized.stream_start_ms, Some(1234567890));
         assert_eq!(deserialized.turn_start_ms, Some(1234567800));
         assert_eq!(deserialized.last_compaction_prompt_index, Some(2));
+    }
+}
+
+
+pub struct ChatStatePreview {
+    pub canonical_history: Vec<ConversationItem>,
+    pub sampling_config: xai_grok_sampling_types::SamplingConfig,
+    pub built: BuiltConversationRequest,
+}
+
+impl std::fmt::Debug for ChatStatePreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatStatePreview").finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewFailure { MailboxClosed, ReplyLost }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewHistory { Stable, InFlight }
+
+impl std::fmt::Debug for RequestPreparation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sampling { memory_reminder } => f.debug_tuple("Sampling").field(memory_reminder).finish(),
+            Self::Preview => f.write_str("Preview"),
+            Self::PreviewWith { .. } => f.write_str("PreviewWith { .. }"),
+        }
     }
 }

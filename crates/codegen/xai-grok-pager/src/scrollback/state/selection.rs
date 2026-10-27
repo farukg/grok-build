@@ -106,6 +106,7 @@ impl ScrollbackState {
     }
 
     pub fn set_selected(&mut self, index: Option<usize>) {
+        self.pending_inline_anchor = None;
         self.selected = index.filter(|&i| i < self.entries.len());
         if let Some(sel) = self.selected {
             self.current_turn = self.turn_containing(sel);
@@ -132,6 +133,7 @@ impl ScrollbackState {
     /// Skips entries where block.is_selectable() returns false.
     /// If already at the last entry, overscroll turns on follow (like list_pane's one-past).
     pub fn select_next(&mut self) {
+        self.pending_inline_anchor = None;
         let range = self.visible_entry_range();
         if range.is_empty() {
             return;
@@ -181,6 +183,7 @@ impl ScrollbackState {
     /// Select previous selectable entry (k key).
     /// Skips entries where block.is_selectable() returns false.
     pub fn select_prev(&mut self) {
+        self.pending_inline_anchor = None;
         let range = self.visible_entry_range();
         if range.is_empty() {
             return;
@@ -274,7 +277,7 @@ impl ScrollbackState {
     pub fn collapse_selected(&mut self) {
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable()
+            && entry.can_collapse()
         {
             let target_mode = entry.block.collapse_mode(entry.is_running);
             if entry.display_mode != target_mode {
@@ -290,7 +293,7 @@ impl ScrollbackState {
     pub fn expand_selected(&mut self) {
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable()
+            && entry.can_expand()
             && entry.display_mode != DisplayMode::Expanded
         {
             self.fold_selected_impl(|entry| entry.set_display_mode(DisplayMode::Expanded));
@@ -300,7 +303,10 @@ impl ScrollbackState {
     pub fn toggle_fold_selected(&mut self) {
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable()
+            && match entry.display_mode {
+                DisplayMode::Collapsed => entry.can_expand(),
+                DisplayMode::Truncated | DisplayMode::Expanded => entry.can_collapse(),
+            }
         {
             self.fold_selected_impl(|entry| entry.toggle_fold());
         }

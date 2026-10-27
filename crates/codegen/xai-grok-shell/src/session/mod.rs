@@ -20,6 +20,8 @@ pub(crate) mod memory_state;
 pub mod merge;
 pub(crate) mod message_delivery;
 pub mod notifications;
+pub mod request_capture;
+pub mod source_binding;
 pub mod pending_interaction;
 pub mod prompt_queue;
 mod remove_items;

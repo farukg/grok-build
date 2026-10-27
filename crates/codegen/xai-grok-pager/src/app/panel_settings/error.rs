@@ -10,12 +10,23 @@ use super::types::Layer;
 pub enum LoadProblem {
     #[error("file is unreadable ({kind})")]
     Unreadable { kind: io::ErrorKind },
-    #[error("file is not valid TOML: {0}")]
+    #[error("file is not valid TOML")]
     Malformed(toml_edit::TomlError),
     #[error("file was written by a newer format version {found}; unknown parts are preserved")]
     NewerVersion { found: i64 },
-    #[error("ignored unrecognized or invalid entry `{key}`")]
+    #[error("ignored unrecognized or legacy-location entry `{key}`")]
     IgnoredEntry { key: String },
+    #[error("invalid value for known setting `{key}`")]
+    InvalidKnown { key: String },
+}
+
+impl LoadProblem {
+    pub(crate) fn retains_last_layer(&self) -> bool {
+        match self {
+            Self::Unreadable { .. } | Self::Malformed(_) | Self::InvalidKnown { .. } => true,
+            Self::NewerVersion { .. } | Self::IgnoredEntry { .. } => false,
+        }
+    }
 }
 
 /// A [`LoadProblem`] with the layer file it came from. Callers log it with `tracing::warn!`.
@@ -31,6 +42,8 @@ pub struct LoadWarning {
 pub enum SaveError {
     #[error("no session is attached, so session settings cannot be stored")]
     NoSession,
+    #[error("cannot save panel settings: invalid value for `{key}` remains in {}", .path.display())]
+    InvalidKnown { path: PathBuf, key: String },
     #[error("cannot write panel settings file {}", .path.display())]
     Io {
         path: PathBuf,

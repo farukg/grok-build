@@ -30,12 +30,12 @@ use crate::theme::Theme;
 
 /// Densified body line count for shrink-to-content (v1: the current-turn body). Counts only content
 /// after the last user prompt.
-pub fn densified_body_line_count(scrollback: &ScrollbackState, width: u16) -> u16 {
+pub fn densified_body_line_count(scrollback: &ScrollbackState, width: u16, budget: u16) -> u16 {
     if width == 0 || scrollback.is_empty() {
         return 0;
     }
     let after = find_last_user_idx(scrollback).map(|i| i + 1).unwrap_or(0);
-    densified_lines_from(scrollback, width, after).len() as u16
+    u16::try_from(densified_tail_from(scrollback, width, after, usize::from(budget)).len()).unwrap_or(budget)
 }
 
 /// Whether scrollback has a user prompt that dense paint will pin when height allows (drives the pin row in shrink desired content).
@@ -60,13 +60,13 @@ pub fn paint_peek_live_tail(scrollback: &ScrollbackState, area: Rect, buf: &mut 
     let last_user = find_last_user_idx(scrollback);
     // The body is the current turn when a last user exists; the full stream otherwise
     let body_start = last_user.map(|i| i + 1).unwrap_or(0);
-    let flat = densified_lines_from(scrollback, content_w, body_start);
+    let flat = densified_tail_from(scrollback, content_w, body_start, height + 1);
 
     // Pin when we have a last user and at least one middle row.
     let pin = last_user.and_then(|idx| {
         let entry = scrollback.entry(idx)?;
-        let lines = dense_entry_lines(entry, content_w, appearance, cwd);
-        lines.into_iter().next()
+        let ctx = entry.context_with_mode(content_w, dense_mode(entry), appearance, cwd);
+        entry.output_tree_uncached(&ctx).lines().next().map(|line| line.content.clone())
     });
     let pin_rows = usize::from(pin.is_some());
     let body_budget = height.saturating_sub(pin_rows);
@@ -121,36 +121,45 @@ fn pure_tail_with_ellipsis(flat: Vec<Line<'static>>, budget: usize) -> (bool, Ve
 }
 
 fn find_last_user_idx(scrollback: &ScrollbackState) -> Option<usize> {
-    (0..scrollback.len()).rev().find(|&idx| {
-        scrollback
-            .entry(idx)
-            .is_some_and(|e| e.block.is_user_prompt())
-    })
+    scrollback.last_user_prompt_index()
 }
 
-/// Densified lines from entry index `start` (inclusive) through the end.
-fn densified_lines_from(
-    scrollback: &ScrollbackState,
-    width: u16,
-    start: usize,
-) -> Vec<Line<'static>> {
+fn densified_tail_from(scrollback: &ScrollbackState, width: u16, start: usize,
+    budget: usize) -> Vec<Line<'static>>
+{
     let appearance = scrollback.appearance();
     let cwd = scrollback.cwd();
     let show_thinking = load_show_thinking_blocks();
-    let mut flat = Vec::new();
-    for idx in start..scrollback.len() {
-        let Some(entry) = scrollback.entry(idx) else {
-            continue;
-        };
-        if entry.is_hidden_thinking(show_thinking) {
-            continue;
+    let mut tail = Vec::new();
+    for index in (start..scrollback.len()).rev() {
+        if tail.len() >= budget { break; }
+        let Some(entry) = scrollback.entry(index) else { continue };
+        if entry.is_hidden_thinking(show_thinking) { continue; }
+        let ctx = entry.context_with_mode(width, dense_mode(entry), appearance, cwd);
+        let tree = entry.output_tree_uncached(&ctx);
+        let remaining = budget - tail.len();
+        let window = tree.len().saturating_sub(remaining)..tree.len();
+        if entry.block.is_bg_task() || entry.block.is_subagent() {
+            scrollback.request_inline_output(entry.id, width, window.clone());
         }
-        flat.extend(dense_entry_lines(entry, width, appearance, cwd));
+        let keep_blanks = !entry.is_foldable();
+        let pending = tree.has_deferred(window.clone());
+        let before = tail.len();
+        for row in window.rev() {
+            if tail.len() >= budget { break; }
+            let Some(source) = tree.line(row) else { continue };
+            if keep_blanks || !line_is_blank(&source.line.content) {
+                tail.push(source.line.content.clone());
+            }
+        }
+        if pending && tail.len() == before && tail.len() < budget { tail.push(Line::from("Loading output")); }
     }
-    flat
+    tail.reverse();
+    tail
 }
 
 fn dense_mode(entry: &ScrollbackEntry) -> DisplayMode {
+    if entry.block.is_bg_task() || entry.block.is_subagent() { return entry.display_mode; }
     if entry.is_foldable() {
         entry.block.collapse_mode(entry.is_running)
     } else if entry.block.is_user_prompt() {
@@ -158,24 +167,6 @@ fn dense_mode(entry: &ScrollbackEntry) -> DisplayMode {
     } else {
         DisplayMode::Expanded
     }
-}
-
-fn dense_entry_lines(
-    entry: &ScrollbackEntry,
-    width: u16,
-    appearance: &crate::appearance::AppearanceConfig,
-    cwd: Option<&std::path::Path>,
-) -> Vec<Line<'static>> {
-    let mode = dense_mode(entry);
-    let ctx = entry.context_with_mode(width, mode, appearance, cwd);
-    let output = entry.output_uncached(&ctx);
-    let keep_blanks = !entry.is_foldable();
-    output
-        .lines
-        .into_iter()
-        .map(|bl: BlockLine| bl.content)
-        .filter(|line| keep_blanks || !line_is_blank(line))
-        .collect()
 }
 
 fn line_is_blank(line: &Line<'_>) -> bool {
@@ -445,7 +436,7 @@ mod tests {
         current.push(ScrollbackEntry::new(RenderBlock::tool_call(
             "bash", "two", true,
         )));
-        let current_n = densified_body_line_count(&current, 40);
+        let current_n = densified_body_line_count(&current, 40, u16::MAX);
         assert!(current_n >= 2, "current-turn tools contribute: {current_n}");
 
         let mut with_prior = ScrollbackState::new();
@@ -461,13 +452,13 @@ mod tests {
             "bash", "two", true,
         )));
         assert_eq!(
-            densified_body_line_count(&with_prior, 40),
+            densified_body_line_count(&with_prior, 40, u16::MAX),
             current_n,
             "prior turn must not inflate densified body count"
         );
 
         let mut user_only = ScrollbackState::new();
         user_only.push(ScrollbackEntry::new(RenderBlock::user_prompt("only")));
-        assert_eq!(densified_body_line_count(&user_only, 40), 0);
+        assert_eq!(densified_body_line_count(&user_only, 40, u16::MAX), 0);
     }
 }

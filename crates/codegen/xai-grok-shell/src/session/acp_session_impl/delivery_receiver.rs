@@ -174,11 +174,11 @@ impl SessionActor {
                 parent_task: admission.parent_task.clone(),
             },
         };
-        match self
-            .chat_state_handle
-            .append_delivery_and_ack(projection, admission)
-            .await
-        {
+        let projection = xai_chat_state::InputProjection::Delivery(projection);
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
+        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        self.observe_strict_source(identity, &result);
+        match result.map(|ack| ack.acknowledgement).map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement)) {
             Ok(xai_chat_state::CompletionProjectionAck::Appended) => {
                 self.delivery_changed(&DeliveryReceipt {
                     session_id: self.session_id_string(),

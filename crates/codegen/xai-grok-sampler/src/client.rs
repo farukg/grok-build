@@ -31,7 +31,7 @@ use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
     ConversationResponse, CreateResponseWrapper, DEFAULT_EXACT_REPETITION_MIN_TOKENS,
     DOOM_LOOP_CHECK_HEADER, EXACT_REPETITION_CHECK_HEADER, MessagesRequestWrapper,
-    ResponseModelMetadata, Result, SamplingError, SentCredential, build_messages_request,
+    ResponseModelMetadata, Result, SamplingError, SentCredential,
     is_check_event, messages, rs,
 };
 use xai_grok_sampling_types::{
@@ -53,7 +53,7 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 
 /// Product identifier baked into User-Agent strings.
 const AGENT_PRODUCT: &str = "grok-shell";
-const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
+pub(crate) const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
 
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
@@ -235,7 +235,7 @@ fn extract_context_total(value: &serde_json::Value) -> Option<u32> {
 /// Splice the raw-JSON hosted-tool entries for `web_search` and `x_search` into a serialized Responses request body's `tools` array.
 /// `x_search` has no `rs::Tool` variant, and `web_search`'s typed filters cannot carry `excluded_domains`, so both travel as raw JSON.
 /// Neither may also be emitted as a typed `rs::Tool`; the API rejects the duplicate.
-fn splice_extra_tool_entries(
+pub(crate) fn splice_extra_tool_entries(
     request_body: &mut serde_json::Value,
     entries: Vec<serde_json::Value>,
 ) {
@@ -337,19 +337,19 @@ fn extract_served_route(headers: &reqwest::header::HeaderMap) -> Option<ServedRo
 
 /// Wrapper for streaming chat completion requests that adds `stream` and `stream_options` without modifying the original `ChatCompletionRequest`.
 #[derive(Serialize)]
-struct StreamingChatRequest<'a> {
+pub(crate) struct StreamingChatRequest<'a> {
     #[serde(flatten)]
-    inner: &'a ChatCompletionRequest,
-    stream: bool,
-    stream_options: StreamOptions,
+    pub(crate) inner: &'a ChatCompletionRequest,
+    pub(crate) stream: bool,
+    pub(crate) stream_options: StreamOptions,
 }
 
 #[derive(Serialize)]
-struct StreamOptions {
-    include_usage: bool,
+pub(crate) struct StreamOptions {
+    pub(crate) include_usage: bool,
 }
 
-fn append_response_includes(body: &mut serde_json::Value, extra_includes: &[String]) {
+pub(crate) fn append_response_includes(body: &mut serde_json::Value, extra_includes: &[String]) {
     if extra_includes.is_empty() {
         return;
     }
@@ -957,26 +957,6 @@ impl SamplingClient {
         self.endpoint.url_for_path(path)
     }
 
-    fn apply_defaults(&self, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
-        if request.model.is_none() {
-            request.model = Some(self.defaults.model.clone());
-        }
-
-        if request.max_tokens.is_none() {
-            request.max_tokens = self.defaults.max_completion_tokens;
-        }
-
-        if request.temperature.is_none() {
-            request.temperature = self.defaults.temperature;
-        }
-
-        if request.top_p.is_none() {
-            request.top_p = self.defaults.top_p;
-        }
-
-        Ok(request)
-    }
-
     /// `sent_bearer` is the fragment [`Self::post`] captured for the request that produced `response` (401 attribution).
     async fn handle_response(
         &self,
@@ -1032,7 +1012,7 @@ impl SamplingClient {
         &self,
         request: ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
-        let payload = self.apply_defaults(request)?;
+        let payload = crate::request_body::apply_defaults(&self.defaults, request)?;
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
         let model_id = payload.model.clone().unwrap_or_default();
@@ -1068,7 +1048,7 @@ impl SamplingClient {
             sent_bearer,
         } = self.post(self.endpoint("chat/completions"));
         let built_request = self
-            .build_json_request(grok_headers.apply(builder), &payload)
+            .build_json_request(grok_headers.apply(builder), crate::request_body::chat_body(&payload, crate::request_body::BodyMode::NonStreaming)?)
             .await?;
         let response = self.send(built_request).await?;
 
@@ -1081,18 +1061,14 @@ impl SamplingClient {
         self.handle_response(response, sent_bearer.as_deref()).await
     }
 
-    /// Serialize `payload` onto `builder` the way `RequestBuilder::json` does
+    /// Attach final JSON bytes to `builder` the way `RequestBuilder::json` does
     /// (a caller-set `Content-Type` wins), zstd-compressing large bodies when
     /// the shell marked this endpoint as accepting it.
-    async fn build_json_request<T: Serialize + ?Sized>(
+    async fn build_json_request(
         &self,
         builder: reqwest::RequestBuilder,
-        payload: &T,
+        json: Vec<u8>,
     ) -> Result<reqwest::Request> {
-        let json = serde_json::to_vec(payload).map_err(|e| {
-            tracing::error!("Failed to serialize request body: {}", e);
-            SamplingError::Serialization(e)
-        })?;
         let mut request = builder.build().map_err(|e| {
             tracing::error!("Failed to build HTTP request: {}", e);
             SamplingError::Http(e)
@@ -1192,19 +1168,10 @@ impl SamplingClient {
         Option<ResponseModelMetadata>,
     )> {
         let mut span_timing = StreamSpanTiming::start(region);
-        let payload = self.apply_defaults(request)?;
+        let payload = crate::request_body::apply_defaults(&self.defaults, request)?;
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
         let model_id = payload.model.clone().unwrap_or_default();
-
-        // Wrap the request with streaming fields and serialize once.
-        let streaming_request = StreamingChatRequest {
-            inner: &payload,
-            stream: true,
-            stream_options: StreamOptions {
-                include_usage: true,
-            },
-        };
 
         let grok_headers = GrokRequestHeaders {
             capabilities_opt_in: self.defaults.gateway_capabilities_header,
@@ -1227,7 +1194,7 @@ impl SamplingClient {
             .apply(builder)
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
         let built_request = self
-            .build_json_request(http_request, &streaming_request)
+            .build_json_request(http_request, crate::request_body::chat_body(&payload, crate::request_body::BodyMode::Streaming)?)
             .await?;
 
         tracing::debug!(
@@ -1357,66 +1324,14 @@ impl SamplingClient {
     // Responses API
     // =========================================================================
 
-    fn apply_response_defaults(&self, request: &mut CreateResponseWrapper) -> Result<()> {
-        if request.inner.model.is_none() {
-            request.inner.model = Some(self.defaults.model.clone());
-        }
-
-        if request.inner.temperature.is_none() {
-            request.inner.temperature = self.defaults.temperature;
-        }
-
-        if request.inner.top_p.is_none() {
-            request.inner.top_p = self.defaults.top_p;
-        }
-
-        if request.inner.max_output_tokens.is_none() {
-            request.inner.max_output_tokens = self.defaults.max_completion_tokens;
-        }
-
-        // The API defaults `store` to true, which breaks ZDR compliance
-        if request.inner.store.is_none() {
-            request.inner.store = Some(false);
-        }
-
-        if let Some(summary) = self.defaults.reasoning_summary {
-            let summary = summary.to_responses_api();
-            match request.inner.reasoning.as_mut() {
-                Some(reasoning) => reasoning.summary = summary,
-                None if summary.is_some() => {
-                    request.inner.reasoning = Some(rs::Reasoning {
-                        effort: None,
-                        summary,
-                    });
-                }
-                None => {}
-            }
-        }
-
-        // Encrypted reasoning replay is xAI/Codex-origin only. Custom
-        // endpoints (including sigma-gateway on loopback) reject unknown
-        // include values; opt in via extra_response_includes instead.
-        if self
-            .defaults
-            .extra_response_includes
-            .iter()
-            .any(|include| include == "reasoning.encrypted_content")
-        {
-            let includes = request.inner.include.get_or_insert_with(Vec::new);
-            if !includes.contains(&rs::IncludeEnum::ReasoningEncryptedContent) {
-                includes.push(rs::IncludeEnum::ReasoningEncryptedContent);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Create a response using the Responses API (non-streaming).
     pub async fn create_response(
         &self,
         mut request: CreateResponseWrapper,
     ) -> Result<rs::Response> {
-        self.apply_response_defaults(&mut request)?;
+        crate::request_body::apply_response_defaults(&self.defaults, &mut request)?;
+
+        let request_body = crate::request_body::responses_body(&self.defaults, &mut request, crate::request_body::BodyMode::NonStreaming)?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
         let x_grok_req_id = request.x_grok_req_id.as_deref().unwrap_or_default();
@@ -1448,23 +1363,13 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
-        let extra_tool_entries = std::mem::take(&mut request.extra_tool_entries);
-        let mut request_body = serde_json::to_value(&request.inner).map_err(|e| {
-            tracing::error!("Failed to serialize responses request: {}", e);
-            SamplingError::Serialization(e)
-        })?;
-        splice_extra_tool_entries(&mut request_body, extra_tool_entries);
-        append_response_includes(&mut request_body, &self.defaults.extra_response_includes);
-        // async-openai's ReasoningTextContent struct omits the `type` discriminator that the Responses API requires on input
-        // Patch it in after serializing
-        xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
         self.prepare_bearer().await;
         let SentRequest {
             builder,
             sent_bearer,
         } = self.post(self.endpoint("responses"));
         let built_request = self
-            .build_json_request(grok_headers.apply(builder), &request_body)
+            .build_json_request(grok_headers.apply(builder), request_body)
             .await?;
         let response = self.send(built_request).await?;
 
@@ -1561,9 +1466,11 @@ impl SamplingClient {
         Option<crate::doom_loop::DoomLoopSignalCollector>,
     )> {
         let mut span_timing = StreamSpanTiming::start(region);
-        self.apply_response_defaults(&mut request)?;
+        crate::request_body::apply_response_defaults(&self.defaults, &mut request)?;
 
         request.inner.stream = Some(true);
+
+        let request_body = crate::request_body::responses_body(&self.defaults, &mut request, crate::request_body::BodyMode::Streaming)?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
         let x_grok_req_id = request.x_grok_req_id.as_deref().unwrap_or_default();
@@ -1578,6 +1485,7 @@ impl SamplingClient {
             "Sending responses API stream request"
         );
 
+
         let grok_headers = GrokRequestHeaders {
             capabilities_opt_in: self.defaults.gateway_capabilities_header,
             conv_id: x_grok_conv_id,
@@ -1590,20 +1498,6 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
-        let extra_tool_entries = std::mem::take(&mut request.extra_tool_entries);
-        let mut request_body = serde_json::to_value(&request.inner).map_err(|e| {
-            tracing::error!("Failed to serialize responses request: {}", e);
-            SamplingError::Serialization(e)
-        })?;
-        // Inject xAI-specific fields not in async-openai's CreateResponse type.
-        if self.defaults.stream_tool_calls
-            && let Some(obj) = request_body.as_object_mut()
-        {
-            obj.insert("stream_tool_calls".to_owned(), serde_json::json!(true));
-        }
-        splice_extra_tool_entries(&mut request_body, extra_tool_entries);
-        append_response_includes(&mut request_body, &self.defaults.extra_response_includes);
-        xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
         // Fresh per attempt so signals never leak across retries; `None` (check disabled) sends no header and does no peek work per event
         let doom_loop = self
             .defaults
@@ -1625,7 +1519,7 @@ impl SamplingClient {
                     DEFAULT_EXACT_REPETITION_MIN_TOKENS.to_string(),
                 );
         }
-        let built_request = self.build_json_request(http_request, &request_body).await?;
+        let built_request = self.build_json_request(http_request, request_body).await?;
 
         tracing::debug!(
             url = %built_request.url(),
@@ -1762,35 +1656,12 @@ impl SamplingClient {
     // Anthropic Messages API
     // =========================================================================
 
-    fn apply_message_defaults(&self, request: &mut MessagesRequestWrapper) -> Result<()> {
-        if request.inner.model.is_empty() {
-            request.inner.model = self.defaults.model.clone();
-        }
-
-        if request.inner.max_tokens == 0 {
-            request.inner.max_tokens = self
-                .defaults
-                .max_completion_tokens
-                .unwrap_or(ANTHROPIC_DEFAULT_MAX_TOKENS);
-        }
-
-        if request.inner.temperature.is_none() {
-            request.inner.temperature = self.defaults.temperature;
-        }
-
-        if request.inner.top_p.is_none() {
-            request.inner.top_p = self.defaults.top_p;
-        }
-
-        Ok(())
-    }
-
     /// Create a message using the Anthropic Messages API (non-streaming).
     pub async fn create_message(
         &self,
         mut request: MessagesRequestWrapper,
     ) -> Result<messages::MessagesResponse> {
-        self.apply_message_defaults(&mut request)?;
+        crate::request_body::apply_message_defaults(&self.defaults, &mut request)?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
         let x_grok_req_id = request.x_grok_req_id.as_deref().unwrap_or_default();
@@ -1827,7 +1698,7 @@ impl SamplingClient {
             sent_bearer,
         } = self.post(self.endpoint("messages"));
         let built_request = self
-            .build_json_request(grok_headers.apply(builder), &request.inner)
+            .build_json_request(grok_headers.apply(builder), crate::request_body::json_body(&request.inner)?)
             .await?;
         let response = self.send(built_request).await?;
 
@@ -1919,7 +1790,7 @@ impl SamplingClient {
         Option<ResponseModelMetadata>,
     )> {
         let mut span_timing = StreamSpanTiming::start(region);
-        self.apply_message_defaults(&mut request)?;
+        crate::request_body::apply_message_defaults(&self.defaults, &mut request)?;
 
         request.inner.stream = Some(true);
 
@@ -1957,7 +1828,7 @@ impl SamplingClient {
             .apply(builder)
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
         let built_request = self
-            .build_json_request(http_request, &request.inner)
+            .build_json_request(http_request, crate::request_body::json_body(&request.inner)?)
             .await?;
 
         tracing::debug!(
@@ -2089,26 +1960,6 @@ impl SamplingClient {
     // Unified Conversation API
     // =========================================================================
 
-    fn apply_conversation_defaults(&self, request: &mut ConversationRequest) -> Result<()> {
-        if request.model.is_none() {
-            request.model = Some(self.defaults.model.clone());
-        }
-
-        if request.temperature.is_none() {
-            request.temperature = self.defaults.temperature;
-        }
-
-        if request.top_p.is_none() {
-            request.top_p = self.defaults.top_p;
-        }
-
-        if request.max_output_tokens.is_none() {
-            request.max_output_tokens = self.defaults.max_completion_tokens;
-        }
-
-        Ok(())
-    }
-
     /// Send a conversation request using the Chat Completions API (streaming).
     pub async fn conversation_stream(
         &self,
@@ -2117,7 +1968,7 @@ impl SamplingClient {
         BoxStream<'static, Result<ChatCompletionChunk>>,
         Option<ResponseModelMetadata>,
     )> {
-        self.apply_conversation_defaults(&mut request)?;
+        crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
@@ -2133,7 +1984,7 @@ impl SamplingClient {
         &self,
         mut request: ConversationRequest,
     ) -> Result<ChatCompletionResponse> {
-        self.apply_conversation_defaults(&mut request)?;
+        crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
@@ -2156,34 +2007,9 @@ impl SamplingClient {
         Option<ResponseModelMetadata>,
         Option<crate::doom_loop::DoomLoopSignalCollector>,
     )> {
-        self.apply_conversation_defaults(&mut request)?;
+        crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let trace = request.trace.take();
-        let x_grok_conv_id = request.x_grok_conv_id.clone();
-        let x_grok_req_id = request.x_grok_req_id.clone();
-        let x_grok_session_id = request.x_grok_session_id.clone();
-        let x_grok_turn_idx = request.x_grok_turn_idx.clone();
-        let x_grok_transient_retry = request.x_grok_transient_retry.clone();
-        let x_grok_agent_id = request.x_grok_agent_id.clone();
-
-        // The hosted tools travel as raw JSON, spliced in after serialization by `splice_extra_tool_entries`, whose doc explains why each one does
-        let extra_tools = xai_grok_sampling_types::extra_tool_entries(&request.hosted_tools);
-
-        let responses_request: rs::CreateResponse = (&request).into();
-
-        let mut wrapper = CreateResponseWrapper::new(responses_request);
-        wrapper.x_grok_conv_id = x_grok_conv_id;
-        wrapper.x_grok_req_id = x_grok_req_id;
-        wrapper.x_grok_session_id = x_grok_session_id;
-        wrapper.x_grok_turn_idx = x_grok_turn_idx;
-        wrapper.x_grok_transient_retry = x_grok_transient_retry;
-        wrapper.x_grok_agent_id = x_grok_agent_id;
-        wrapper.extra_tool_entries = extra_tools;
-        wrapper.traceparent = request.traceparent;
-
-        if let Some(trace) = trace {
-            wrapper.trace = Some(trace);
-        }
+        let wrapper = crate::request_body::responses_request(request, crate::request_body::BodyMode::Streaming);
 
         self.create_response_stream(wrapper).await
     }
@@ -2193,33 +2019,9 @@ impl SamplingClient {
         &self,
         mut request: ConversationRequest,
     ) -> Result<rs::Response> {
-        self.apply_conversation_defaults(&mut request)?;
+        crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let trace = request.trace.take();
-        let x_grok_conv_id = request.x_grok_conv_id.clone();
-        let x_grok_req_id = request.x_grok_req_id.clone();
-        let x_grok_session_id = request.x_grok_session_id.clone();
-        let x_grok_turn_idx = request.x_grok_turn_idx.clone();
-        let x_grok_transient_retry = request.x_grok_transient_retry.clone();
-        let x_grok_agent_id = request.x_grok_agent_id.clone();
-
-        // The hosted tools travel as raw JSON, spliced in by `create_response` via `splice_extra_tool_entries`, whose doc explains why
-        let extra_tools = xai_grok_sampling_types::extra_tool_entries(&request.hosted_tools);
-
-        let responses_request: rs::CreateResponse = (&request).into();
-
-        let mut wrapper = CreateResponseWrapper::new(responses_request);
-        wrapper.x_grok_conv_id = x_grok_conv_id;
-        wrapper.x_grok_req_id = x_grok_req_id;
-        wrapper.x_grok_session_id = x_grok_session_id;
-        wrapper.x_grok_turn_idx = x_grok_turn_idx;
-        wrapper.x_grok_transient_retry = x_grok_transient_retry;
-        wrapper.x_grok_agent_id = x_grok_agent_id;
-        wrapper.extra_tool_entries = extra_tools;
-
-        if let Some(trace) = trace {
-            wrapper.trace = Some(trace);
-        }
+        let wrapper = crate::request_body::responses_request(request, crate::request_body::BodyMode::NonStreaming);
 
         self.create_response(wrapper).await
     }
@@ -2232,30 +2034,9 @@ impl SamplingClient {
         BoxStream<'static, Result<messages::MessageStreamEvent>>,
         Option<ResponseModelMetadata>,
     )> {
-        self.apply_conversation_defaults(&mut request)?;
+        crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let trace = request.trace.take();
-        let x_grok_conv_id = request.x_grok_conv_id.clone();
-        let x_grok_req_id = request.x_grok_req_id.clone();
-        let x_grok_session_id = request.x_grok_session_id.clone();
-        let x_grok_turn_idx = request.x_grok_turn_idx.clone();
-        let x_grok_transient_retry = request.x_grok_transient_retry.clone();
-        let x_grok_agent_id = request.x_grok_agent_id.clone();
-
-        let messages_request = build_messages_request(&request);
-
-        let mut wrapper = MessagesRequestWrapper::new(messages_request);
-        wrapper.x_grok_conv_id = x_grok_conv_id;
-        wrapper.x_grok_req_id = x_grok_req_id;
-        wrapper.x_grok_session_id = x_grok_session_id;
-        wrapper.x_grok_turn_idx = x_grok_turn_idx;
-        wrapper.x_grok_transient_retry = x_grok_transient_retry;
-        wrapper.x_grok_agent_id = x_grok_agent_id;
-        wrapper.traceparent = request.traceparent;
-
-        if let Some(trace) = trace {
-            wrapper.trace = Some(trace);
-        }
+        let wrapper = crate::request_body::messages_request(request, crate::request_body::BodyMode::Streaming);
 
         self.create_message_stream(wrapper).await
     }
@@ -2265,29 +2046,9 @@ impl SamplingClient {
         &self,
         mut request: ConversationRequest,
     ) -> Result<messages::MessagesResponse> {
-        self.apply_conversation_defaults(&mut request)?;
+        crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let trace = request.trace.take();
-        let x_grok_conv_id = request.x_grok_conv_id.clone();
-        let x_grok_req_id = request.x_grok_req_id.clone();
-        let x_grok_session_id = request.x_grok_session_id.clone();
-        let x_grok_turn_idx = request.x_grok_turn_idx.clone();
-        let x_grok_transient_retry = request.x_grok_transient_retry.clone();
-        let x_grok_agent_id = request.x_grok_agent_id.clone();
-
-        let messages_request = build_messages_request(&request);
-
-        let mut wrapper = MessagesRequestWrapper::new(messages_request);
-        wrapper.x_grok_conv_id = x_grok_conv_id;
-        wrapper.x_grok_req_id = x_grok_req_id;
-        wrapper.x_grok_session_id = x_grok_session_id;
-        wrapper.x_grok_turn_idx = x_grok_turn_idx;
-        wrapper.x_grok_transient_retry = x_grok_transient_retry;
-        wrapper.x_grok_agent_id = x_grok_agent_id;
-
-        if let Some(trace) = trace {
-            wrapper.trace = Some(trace);
-        }
+        let wrapper = crate::request_body::messages_request(request, crate::request_body::BodyMode::NonStreaming);
 
         self.create_message(wrapper).await
     }
@@ -3848,7 +3609,7 @@ mod tests {
     fn reasoning_summary_unset_keeps_the_built_request() {
         let client = client_with_summary(None);
         let mut request = built_response_request();
-        client.apply_response_defaults(&mut request).unwrap();
+        crate::request_body::apply_response_defaults(&client.defaults, &mut request).unwrap();
         let reasoning = request.inner.reasoning.expect("reasoning block kept");
         assert_eq!(reasoning.effort, Some(rs::ReasoningEffort::High));
         assert_eq!(reasoning.summary, Some(rs::ReasoningSummary::Concise));
@@ -3858,7 +3619,7 @@ mod tests {
     fn reasoning_summary_none_omits_the_field_but_keeps_effort() {
         let client = client_with_summary(Some(xai_grok_sampling_types::ReasoningSummary::None));
         let mut request = built_response_request();
-        client.apply_response_defaults(&mut request).unwrap();
+        crate::request_body::apply_response_defaults(&client.defaults, &mut request).unwrap();
         let body = serde_json::to_value(&request.inner).unwrap();
         assert_eq!(
             body.get("reasoning"),
@@ -3876,7 +3637,7 @@ mod tests {
     fn reasoning_summary_override_replaces_the_built_value() {
         let client = client_with_summary(Some(xai_grok_sampling_types::ReasoningSummary::Detailed));
         let mut request = built_response_request();
-        client.apply_response_defaults(&mut request).unwrap();
+        crate::request_body::apply_response_defaults(&client.defaults, &mut request).unwrap();
         assert_eq!(
             request.inner.reasoning.unwrap().summary,
             Some(rs::ReasoningSummary::Detailed)
@@ -3888,7 +3649,7 @@ mod tests {
         let with_summary =
             client_with_summary(Some(xai_grok_sampling_types::ReasoningSummary::Auto));
         let mut request = CreateResponseWrapper::new(rs::CreateResponse::default());
-        with_summary.apply_response_defaults(&mut request).unwrap();
+        crate::request_body::apply_response_defaults(&with_summary.defaults, &mut request).unwrap();
         assert_eq!(
             request.inner.reasoning,
             Some(rs::Reasoning {
@@ -3899,7 +3660,7 @@ mod tests {
 
         let without = client_with_summary(Some(xai_grok_sampling_types::ReasoningSummary::None));
         let mut request = CreateResponseWrapper::new(rs::CreateResponse::default());
-        without.apply_response_defaults(&mut request).unwrap();
+        crate::request_body::apply_response_defaults(&without.defaults, &mut request).unwrap();
         assert_eq!(request.inner.reasoning, None);
     }
 }

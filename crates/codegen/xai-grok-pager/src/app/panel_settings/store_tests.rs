@@ -105,7 +105,9 @@ fn completed_item_filters_are_independent_global_values_and_refresh_live_stores(
     assert!(first.global().show_completed(CompletedItemsPane::Todos));
     first.set(Layer::Session, Setting::ShowCompleted { pane: CompletedItemsPane::Tasks, show: true }).unwrap();
     second.set(Layer::Session, Setting::ShowCompleted { pane: CompletedItemsPane::Todos, show: false }).unwrap();
-    assert!(first.reload_global().is_empty());
+    let reload = first.reload_global();
+    assert!(reload.warnings.is_empty());
+    assert!(reload.changed);
     let reopened = open(dir.path(), Some("future")).store;
     for settings in [first.global(), reopened.global()] {
         assert!(settings.show_completed(CompletedItemsPane::Tasks));
@@ -562,7 +564,7 @@ fn invalid_entries_are_reported_and_valid_ones_still_load() {
         .warnings
         .iter()
         .filter_map(|warning| match &warning.problem {
-            LoadProblem::IgnoredEntry { key } => Some(key.clone()),
+            LoadProblem::IgnoredEntry { key } | LoadProblem::InvalidKnown { key } => Some(key.clone()),
             LoadProblem::Unreadable { .. }
             | LoadProblem::Malformed(_)
             | LoadProblem::NewerVersion { .. } => None,
@@ -573,6 +575,7 @@ fn invalid_entries_are_reported_and_valid_ones_still_load() {
         ignored,
         ["message_display.bogus_kind", "message_display.execute"]
     );
+    assert!(report.warnings.iter().any(|warning| warning.problem == LoadProblem::InvalidKnown { key: "message_display.execute".to_owned() }));
     let settings = report.store.effective();
     assert_eq!(
         settings.message_form(MessageKind::Read),

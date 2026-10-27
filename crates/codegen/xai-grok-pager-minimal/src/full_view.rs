@@ -131,7 +131,7 @@ fn render_entry_to_ansi(
     let mut expanded = entry.clone();
     expanded.set_display_mode(DisplayMode::Expanded);
 
-    let renderer = EntryRenderer::new(&expanded, theme)
+    let mut renderer = EntryRenderer::new(&expanded, theme)
         .with_appearance(appearance.clone())
         .with_cwd(Some(cwd))
         .with_flat_background(true);
@@ -139,10 +139,16 @@ fn render_entry_to_ansi(
     if height == 0 {
         return;
     }
-    let area = Rect::new(0, 0, FULL_VIEW_WIDTH, height);
-    let mut buf = Buffer::empty(area);
-    renderer.render(area, &mut buf);
-    buffer_to_ansi(&buf, out);
+    let mut skip = 0;
+    while skip < height {
+        let Ok(rows) = u16::try_from((height - skip).min(usize::from(u16::MAX))) else { return };
+        renderer = renderer.with_skip_rows(skip);
+        let area = Rect::new(0, 0, FULL_VIEW_WIDTH, rows);
+        let mut buf = Buffer::empty(area);
+        renderer.render(area, &mut buf);
+        buffer_to_ansi(&buf, out);
+        skip += usize::from(rows);
+    }
     // Blank line between blocks so the transcript breathes in the pager.
     out.push('\n');
 }

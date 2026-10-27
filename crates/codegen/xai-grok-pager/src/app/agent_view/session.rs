@@ -424,6 +424,8 @@ impl AgentView {
             pinned_upgrade_cta_live: false,
             block_viewer: None,
             block_viewer_resume: None,
+            request_viewer: None,
+            request_snapshot_generation: 0,
             scrollback_search: None,
             hit_sb_copy: Default::default(),
             hit_sb_view: Default::default(),

@@ -20,10 +20,12 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
     let mut content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut backend_tool_count: usize = 0;
+    let mut output_references = Vec::new();
 
     for item in response.output {
         match item {
             rs::OutputItem::Message(msg) => {
+                output_references.push(crate::ProviderOutputRef::Item(msg.id.clone()));
                 for content_part in msg.content {
                     if let rs::OutputMessageContent::OutputText(text_content) = content_part {
                         if !content.is_empty() {
@@ -34,6 +36,8 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
                 }
             }
             rs::OutputItem::FunctionCall(fc) => {
+                if let Some(id) = &fc.id { output_references.push(crate::ProviderOutputRef::Item(id.clone())); }
+                output_references.push(crate::ProviderOutputRef::ToolCall(fc.call_id.clone()));
                 // Tied to the assistant turn: a ToolResult must follow each one in conversation order, so they are not siblings
                 tool_calls.push(ToolCall {
                     id: Arc::<str>::from(fc.call_id),
@@ -85,6 +89,7 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
 
     tracing::info!(model_id = %model_id, ?model_fingerprint, ?reasoning_effort, "response_to_conversation_items setting model metadata on AssistantItem");
     items.push(ConversationItem::Assistant(AssistantItem {
+        output_origin: crate::OutputOrigin::from_references(output_references),
         evidence: Default::default(),
         source: Default::default(),
         content: Arc::<str>::from(content),

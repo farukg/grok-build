@@ -49,6 +49,7 @@ fn fork_filter_consecutive_users_with_tool_calls() {
         ConversationItem::user("prefix"),
         ConversationItem::user("query"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),
@@ -78,6 +79,7 @@ fn fork_filter_preserves_complete_tool_turn() {
     let mut items = vec![
         ConversationItem::user("q"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),
@@ -104,6 +106,7 @@ fn fork_filter_strips_incomplete_tool_turn() {
         ConversationItem::assistant("a1"),
         ConversationItem::user("q2"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),
@@ -156,6 +159,7 @@ fn fork_filter_keeps_multi_tool_turn_with_reasoning_between_results() {
         ConversationItem::user("q"),
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("plan").into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),
@@ -231,6 +235,7 @@ fn fork_filter_keeps_earlier_turns_with_dangling_tail() {
     };
     let asst = |calls: Vec<ToolCall>| {
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: String::new().into(),

@@ -68,8 +68,8 @@ struct App {
     persistent_selection: Option<PersistentTextSelection>,
     /// Timestamp when the persistent selection was created (for auto-dismiss).
     selection_created_at: Option<Instant>,
-    /// Last click for multi-click detection: (time, entry_idx, range_id, block_line_idx, count).
-    last_click: Option<(Instant, usize, u16, usize, u8)>,
+    last_click: Option<(Instant, xai_grok_pager::scrollback::selection_identity::RangeIdentity,
+        xai_grok_pager::scrollback::selection_position::SourcePosition, u8)>,
     /// The selection model from the last frame, kept for click processing.
     last_selection_model: ResolvedSelectionModel,
 }
@@ -109,10 +109,9 @@ impl App {
 
     /// Count multi-clicks on the same (entry, range, line).
     fn count_click(&self, now: Instant, hit: &RangeHit) -> u8 {
-        if let Some((prev_time, eidx, rid, bli, count)) = self.last_click
-            && eidx == hit.entry_idx
+        if let Some((prev_time, rid, position, count)) = self.last_click
             && rid == hit.range_id
-            && bli == hit.block_line_idx
+            && self.last_selection_model.same_source_line(hit, position)
             && now.duration_since(prev_time).as_millis() < MULTI_CLICK_TIMEOUT_MS
         {
             count.saturating_add(1)
@@ -140,9 +139,8 @@ impl App {
         if next_count > 0 {
             self.last_click = Some((
                 now,
-                hit.entry_idx,
                 hit.range_id,
-                hit.block_line_idx,
+                hit.position,
                 next_count,
             ));
         } else {
@@ -160,12 +158,14 @@ impl App {
         } else {
             "word"
         };
+        let Some(positions) = self.last_selection_model.positions(hit.range_id, sel.anchor, sel.head) else { return };
         self.push(format!(
             "double-click {kind}: \"{}\"",
             truncate_for_display(&sel.text)
         ));
 
         self.persistent_selection = Some(PersistentTextSelection {
+            positions,
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
             anchor: sel.anchor,
@@ -188,22 +188,20 @@ impl App {
             return;
         }
 
+        let anchor = SelectionEndpoint { block_line_idx: hit.block_line_idx, col_within_range: 0 };
+        let head = SelectionEndpoint { block_line_idx: hit.block_line_idx, col_within_range: width.saturating_sub(1) };
+        let Some(positions) = self.last_selection_model.positions(hit.range_id, anchor, head) else { return };
         self.push(format!(
             "triple-click line: \"{}\"",
             truncate_for_display(&line.text)
         ));
 
         self.persistent_selection = Some(PersistentTextSelection {
+            positions,
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
-            anchor: SelectionEndpoint {
-                block_line_idx: hit.block_line_idx,
-                col_within_range: 0,
-            },
-            head: SelectionEndpoint {
-                block_line_idx: hit.block_line_idx,
-                col_within_range: width.saturating_sub(1),
-            },
+            anchor,
+            head,
             origin: SelectionOrigin::TripleClick,
             kind: Default::default(),
         });

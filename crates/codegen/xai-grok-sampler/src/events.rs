@@ -53,6 +53,7 @@ pub enum SamplingEvent {
 
     /// Content token in a named channel (text or reasoning).
     ChannelToken {
+        origin: xai_grok_sampling_types::OutputOrigin,
         request_id: RequestId,
         channel: SamplingChannel,
         text: String,

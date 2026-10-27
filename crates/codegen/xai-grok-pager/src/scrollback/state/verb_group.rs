@@ -134,6 +134,7 @@ pub(crate) fn scan_run_forward<'e>(
 }
 
 /// Aggregated header state for one verb-group run.
+#[derive(Debug, Clone)]
 pub struct VerbGroupHeaderLabel {
     /// Styled label line rendered on the header row.
     pub line: Line<'static>,
@@ -147,6 +148,7 @@ pub struct VerbGroupHeaderLabel {
 
 /// The single channel that carries a group-header row's aggregated label, mirroring the fold families of
 /// `groups::GroupKind`. A header row belongs to exactly one fold, so a row carries at most one label.
+#[derive(Debug, Clone)]
 pub enum GroupHeaderLabel {
     /// Verb-group run header ("Read 3 files, Searched 2 patterns").
     VerbRun(VerbGroupHeaderLabel),

@@ -113,7 +113,7 @@ async fn mixed_v1_v2_batch_survives_lost_ack_restart_and_old_parent_terminal() {
     assert_eq!(state.obligations.len(), 5);
     assert_eq!(state.receipts.len(), 5);
     let new = recovery::task("replacement-terminal-parent");
-    let CompletionProjectionAck::Continue { history } = restored.append_completion_commit_aware(&info, &projection(&ids, &new), &new).await.unwrap() else { panic!("unfinished terminal batch must continue its existing history") };
+    let CompletionProjectionAck::Continue { history, .. } = restored.append_completion_commit_aware(&info, &projection(&ids, &new), &new).await.unwrap() else { panic!("unfinished terminal batch must continue its existing history") };
     assert_eq!(history.iter().filter(|item| item.text_content() == "one terminal batch").count(), 1);
     restored.append_update_durable_commit_aware(&info, &recovery::terminal(&info, "reused-parent-prompt", &old, ReceiverTurnOrigin::Other)).await.unwrap();
     assert_eq!(restored.recover_subagent_completions(&info).await.unwrap().completion_delivery.obligations.len(), 5);

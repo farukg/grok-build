@@ -88,9 +88,11 @@ async fn committed_projection_error_retries_without_a_second_model_input() {
     let ack = storage
         .append_completion_sync(&info, &projection, &admission(), |file| file.sync_all())
         .unwrap();
-    let CompletionProjectionAck::AlreadyPresent { history } = ack else {
+    let CompletionProjectionAck::AlreadyPresent { history, sources } = ack else {
         panic!("same completion must reconcile existing projection")
     };
+    assert_eq!(sources.retained.len(), 1);
+    assert_eq!(sources.retained[0].source, xai_grok_sampling_types::SourceOccurrence::Unadmitted, "a legacy receipt has no admitted source, even when its body is retained");
     assert_eq!(
         history
             .iter()

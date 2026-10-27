@@ -627,6 +627,7 @@ pub(crate) async fn spawn_session_actor(
         hard_clear_age_turns: session_pruning_config.hard_clear_age_turns,
     };
     let (chat_state_event_tx, chat_state_event_rx) = mpsc::unbounded_channel();
+    let source_publications = crate::session::request_capture::SourcePublications::restored();
     let chat_state_handle = xai_chat_state::ChatStateActor::spawn_with_pruning(
         conversation.clone(),
         chat_state_sampling_config,
@@ -1851,6 +1852,7 @@ pub(crate) async fn spawn_session_actor(
         is_chat_kind,
         state,
         notifications: NotificationSender {
+            source_publications: parking_lot::Mutex::new(source_publications),
             gateway: gateway.clone(),
             gateway_enabled: gateway_enabled.clone(),
             persistence_tx: persistence.tx.clone(),

@@ -13,6 +13,20 @@ pub(super) fn attach_parent_admissions(actor: &mut SessionActor) {
         let (lease, _) = storage.claim_receiver(&info).await.unwrap();
         while let Some(message) = rx.recv().await {
             match message {
+                PersistenceMsg::ReadPublishedRequestSources { respond_to } => {
+                    let _ = respond_to.send(crate::session::storage::request_capture::published_sources(directory.path()));
+                }
+                PersistenceMsg::BeginRequestCapture { origin } => {
+                    crate::session::storage::request_capture::begin(directory.path(), &origin).unwrap();
+                }
+                PersistenceMsg::RecordRequestCapture { request, attempt, evidence, respond_to } => {
+                    let notification = crate::session::storage::request_capture::record(directory.path(), info.id.0.as_ref(), request, attempt, evidence);
+                    let _ = respond_to.send(notification);
+                }
+                PersistenceMsg::ReadRequestSnapshots { request, respond_to } => {
+                    let result = crate::session::storage::request_capture::read(directory.path(), info.id.0.as_ref(), request).unwrap();
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::CancelParentMessages { message_ids, respond_to } => {
                     let result = storage.cancel_parent_messages(&info, &message_ids, crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await;
                     let _ = respond_to.send(result);
@@ -38,6 +52,20 @@ pub(super) fn attach(actor: &mut SessionActor, capture: mpsc::UnboundedSender<Pe
         let (lease, _) = storage.claim_receiver(&info).await.unwrap();
         while let Some(message) = rx.recv().await {
             match message {
+                PersistenceMsg::ReadPublishedRequestSources { respond_to } => {
+                    let _ = respond_to.send(crate::session::storage::request_capture::published_sources(directory.path()));
+                }
+                PersistenceMsg::BeginRequestCapture { origin } => {
+                    crate::session::storage::request_capture::begin(directory.path(), &origin).unwrap();
+                }
+                PersistenceMsg::RecordRequestCapture { request, attempt, evidence, respond_to } => {
+                    let notification = crate::session::storage::request_capture::record(directory.path(), info.id.0.as_ref(), request, attempt, evidence);
+                    let _ = respond_to.send(notification);
+                }
+                PersistenceMsg::ReadRequestSnapshots { request, respond_to } => {
+                    let result = crate::session::storage::request_capture::read(directory.path(), info.id.0.as_ref(), request).unwrap();
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::CancelParentMessages { message_ids, respond_to } => {
                     let result = storage.cancel_parent_messages(&info, &message_ids, crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await;
                     let _ = respond_to.send(result);

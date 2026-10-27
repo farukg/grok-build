@@ -10,7 +10,7 @@ use crate::scrollback::types::{
     AccentStyle, BlockBackground, BlockContext, BlockLine, BlockOutput, DisplayMode, Selectable,
 };
 
-const USER_PROMPT_BODY_RANGE: u16 = 0;
+const USER_PROMPT_BODY_RANGE: usize = 0;
 /// A prompt is foldable only when it exceeds this many visual lines.
 const FOLD_THRESHOLD_LINES: usize = 3;
 /// Visible lines of a collapsed or truncated (pinned header) prompt.

@@ -6,6 +6,8 @@ mod request_visibility_tests;
 mod context_policy_tests;
 #[path = "source_occurrence_tests.rs"]
 mod source_occurrence_tests;
+#[path = "request_preview_tests.rs"]
+mod request_preview_tests;
 
 use std::collections::HashMap;
 use std::num::NonZeroU64;
@@ -218,10 +220,11 @@ async fn push_user_message_and_ack_waits_for_actor_acceptance() {
         .push_user_message_and_ack(ConversationItem::user("hello"))
         .await;
 
-    assert!(ack.is_some());
+    let ack = ack.unwrap();
 
     let conv = h.handle.get_conversation().await;
     assert_eq!(conv.len(), 1);
+    assert_eq!(Some(ack.source), conv.first().map(ConversationItem::source));
 
     let records = h.drain_persistence();
     assert_eq!(records.len(), 1);
@@ -2210,6 +2213,7 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     // In production this is built from the stream and pushed via `push_assistant_response`.
     let assistant_with_tools =
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I'll read the file, fix it, and run tests.".into(),
@@ -2495,6 +2499,7 @@ async fn dangling_tool_calls_after_crash_are_repaired_on_load() {
         ConversationItem::system("You are a helpful assistant."),
         ConversationItem::user("Read, edit, and test"),
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: std::sync::Arc::<str>::from(""),
@@ -4753,6 +4758,7 @@ async fn get_last_model_metadata_returns_both_fields() {
         ConversationItem::system("sys"),
         ConversationItem::user("hi"),
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "hello".into(),
@@ -4800,6 +4806,7 @@ async fn sampling_config_survives_compaction_replacement() {
             ConversationItem::system("You are a helpful assistant."),
             ConversationItem::user("fix the bug"),
             ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: "I'll fix it.".into(),
@@ -4882,6 +4889,7 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
             ConversationItem::system("sys"),
             ConversationItem::user("task"),
             ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: "done".into(),
@@ -4919,6 +4927,7 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
     h.handle
         .push_assistant_response(ConversationItem::Assistant(
             xai_grok_sampling_types::AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: "working on it".into(),

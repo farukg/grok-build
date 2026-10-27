@@ -13,13 +13,14 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use notify::RecursiveMode;
 use notify_debouncer_mini::{DebounceEventResult, Debouncer};
 use tokio::sync::mpsc;
 
 use super::watcher::{
-    AccessFilteredWatcher, attach_new_refresh_dirs, new_filtered_debouncer, paths_equal,
+    AccessFilteredWatcher, WatchDiagnosis, attach_new_refresh_dirs, new_filtered_debouncer, paths_equal,
 };
 
 /// Coalesces the create+rename pair of an atomic settings write into one change.
@@ -64,10 +65,117 @@ fn classify(path: &Path, root: &Path, sessions: &Path) -> Option<PanelSettingsCh
     None
 }
 
+const MAX_PENDING: usize = 64;
+
+#[derive(Default)]
+enum PendingChanges {
+    #[default]
+    Quiet,
+    Changes(Vec<PanelSettingsChange>),
+    Root,
+}
+
+impl PendingChanges {
+    fn merge(&mut self, change: PanelSettingsChange) {
+        if change == PanelSettingsChange::Root {
+            *self = Self::Root;
+            return;
+        }
+        match self {
+            Self::Root => {}
+            Self::Quiet => *self = Self::Changes(vec![change]),
+            Self::Changes(changes) => {
+                if !changes.contains(&change) {
+                    if changes.len() == MAX_PENDING {
+                        *self = Self::Root;
+                    } else {
+                        changes.push(change);
+                    }
+                }
+            }
+        }
+    }
+
+    fn pop(&mut self) -> Option<PanelSettingsChange> {
+        match self {
+            Self::Quiet => None,
+            Self::Root => { *self = Self::Quiet; Some(PanelSettingsChange::Root) }
+            Self::Changes(changes) => {
+                let change = changes.pop();
+                if changes.is_empty() { *self = Self::Quiet; }
+                change
+            }
+        }
+    }
+}
+
+struct ChangeSender {
+    pending: Arc<Mutex<PendingChanges>>,
+    wake: mpsc::Sender<()>,
+}
+
+impl ChangeSender {
+    fn send(&self, change: PanelSettingsChange) {
+        let mut pending = self.pending.lock().unwrap_or_else(|error| error.into_inner());
+        pending.merge(change);
+        let _ = self.wake.try_send(());
+    }
+
+    fn events(&self, result: DebounceEventResult, root: &Path, sessions: &Path) {
+        match result {
+            Ok(events) => {
+                for event in events {
+                    if let Some(change) = classify(&event.path, root, sessions) {
+                        self.send(change);
+                    }
+                }
+            }
+            Err(error) => {
+                let diagnosis = WatchDiagnosis::from(&error);
+                tracing::warn!(%diagnosis, "panel settings watcher resynchronizing");
+                self.send(PanelSettingsChange::Root);
+            }
+        }
+    }
+}
+
+/// Bounded pending scopes with one wake, shared with the native callback.
+pub struct PanelSettingsReceiver {
+    pending: Arc<Mutex<PendingChanges>>,
+    wake: mpsc::Receiver<()>,
+}
+
+impl PanelSettingsReceiver {
+    fn take(&mut self) -> Option<PanelSettingsChange> {
+        let mut pending = self.pending.lock().unwrap_or_else(|error| error.into_inner());
+        pending.pop()
+    }
+
+    pub async fn recv(&mut self) -> Option<PanelSettingsChange> {
+        loop {
+            if let Some(change) = self.take() { return Some(change); }
+            self.wake.recv().await?;
+        }
+    }
+
+    #[cfg(test)]
+    fn try_recv(&mut self) -> Result<PanelSettingsChange, mpsc::error::TryRecvError> {
+        if let Some(change) = self.take() { return Ok(change); }
+        self.wake.try_recv()?;
+        self.take().ok_or(mpsc::error::TryRecvError::Empty)
+    }
+}
+
+fn change_channel() -> (ChangeSender, PanelSettingsReceiver) {
+    let pending = Arc::new(Mutex::new(PendingChanges::Quiet));
+    let (wake, rx) = mpsc::channel(1);
+    (ChangeSender { pending: pending.clone(), wake: wake.clone() },
+     PanelSettingsReceiver { pending, wake: rx })
+}
+
 /// Watches the panel-settings root for writes from any process sharing it.
 ///
-/// Drop stops watching. Events arrive on an unbounded channel; a slow consumer
-/// cannot lose the last change, only its delivery latency.
+/// Drop stops watching. Slow consumers coalesce pending scopes, overflowing to Root.
 pub struct PanelSettingsWatcher {
     debouncer: Debouncer<AccessFilteredWatcher>,
     refresh_dirs: Vec<(PathBuf, RecursiveMode)>,
@@ -82,42 +190,29 @@ impl PanelSettingsWatcher {
     pub fn start(
         root: &Path,
         debounce: Option<Duration>,
-    ) -> Option<(Self, mpsc::UnboundedReceiver<PanelSettingsChange>)> {
-        let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    ) -> Option<(Self, PanelSettingsReceiver)> {
+        let root = std::path::absolute(root).ok()?;
         let sessions = root.join(SESSIONS_DIR);
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = change_channel();
         let root_for_events = root.clone();
         let sessions_for_events = sessions.clone();
         let mut debouncer = new_filtered_debouncer(
             debounce.unwrap_or(DEBOUNCE),
             move |res: DebounceEventResult| {
-                let Ok(events) = res else { return };
-                let mut changes: Vec<PanelSettingsChange> = Vec::new();
-                for event in events {
-                    if let Some(change) =
-                        classify(&event.path, &root_for_events, &sessions_for_events)
-                        && !changes.contains(&change)
-                    {
-                        changes.push(change);
-                    }
-                }
-                for change in changes {
-                    let _ = tx.send(change);
-                }
+                tx.events(res, &root_for_events, &sessions_for_events);
             },
         )
-        .map_err(|error| tracing::warn!(%error, "failed to create panel settings watcher"))
+        .map_err(|error| tracing::warn!(diagnosis = %WatchDiagnosis::from(&error), "failed to create panel settings watcher"))
         .ok()?;
 
         let mut refresh_dirs = vec![
             (root.clone(), RecursiveMode::NonRecursive),
             (sessions, RecursiveMode::NonRecursive),
         ];
-        if let Some(parent) = root
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            refresh_dirs.push((parent.to_path_buf(), RecursiveMode::NonRecursive));
+        let stable_parent = root.parent().filter(|parent| !parent.as_os_str().is_empty())
+            .map(Path::to_path_buf);
+        if let Some(parent) = &stable_parent {
+            refresh_dirs.push((parent.clone(), RecursiveMode::NonRecursive));
         }
         let mut refreshed_dirs = HashSet::new();
         attach_new_refresh_dirs(
@@ -140,9 +235,14 @@ impl PanelSettingsWatcher {
         ))
     }
 
-    /// Attaches the watches for directories that exist now but did not at
-    /// [`Self::start`]. Call after a [`PanelSettingsChange::Root`].
+    /// Reinstalls root/session watches after replacement or event loss, retaining the parent.
+    /// Call after a [`PanelSettingsChange::Root`].
     pub fn refresh_watches(&mut self) -> bool {
+        self.refreshed_dirs.retain(|target| {
+            if self.refresh_dirs.get(2).map(|(parent, _)| parent) == Some(target) { return true; }
+            AccessFilteredWatcher::invalidate_directory(self.debouncer.watcher(), target);
+            false
+        });
         attach_new_refresh_dirs(
             &mut self.debouncer,
             &self.refresh_dirs,
@@ -157,7 +257,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn drain(rx: &mut mpsc::UnboundedReceiver<PanelSettingsChange>) -> Vec<PanelSettingsChange> {
+    fn drain(rx: &mut PanelSettingsReceiver) -> Vec<PanelSettingsChange> {
         let mut seen = Vec::new();
         while let Ok(change) = rx.try_recv() {
             seen.push(change);
@@ -167,7 +267,7 @@ mod tests {
 
     /// Polls like the config-watcher tests: no tokio runtime, one try_recv per tick.
     fn wait_for(
-        rx: &mut mpsc::UnboundedReceiver<PanelSettingsChange>,
+        rx: &mut PanelSettingsReceiver,
         want: PanelSettingsChange,
     ) -> Option<PanelSettingsChange> {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -183,7 +283,7 @@ mod tests {
         }
     }
 
-    fn assert_silent(rx: &mut mpsc::UnboundedReceiver<PanelSettingsChange>) {
+    fn assert_silent(rx: &mut PanelSettingsReceiver) {
         let deadline = std::time::Instant::now() + Duration::from_millis(700);
         loop {
             let seen = drain(rx);
@@ -301,4 +401,81 @@ mod tests {
         wait_for(&mut first_rx, PanelSettingsChange::Global).expect("own root observes");
         assert_silent(&mut second_rx);
     }
+    #[test]
+    fn slow_consumer_deduplicates_across_callbacks_and_overflow_resyncs_every_scope() {
+        let (tx, mut rx) = change_channel();
+        for _ in 0..1000 { tx.send(PanelSettingsChange::Global); }
+        assert_eq!(rx.wake.len(), 1);
+        assert_eq!(drain(&mut rx), vec![PanelSettingsChange::Global]);
+        for index in 0..=MAX_PENDING {
+            tx.send(PanelSettingsChange::Session { session: format!("session-{index}") });
+        }
+        tx.send(PanelSettingsChange::Global);
+        tx.send(PanelSettingsChange::Session { session: "latest".to_owned() });
+        assert_eq!(rx.wake.len(), 1);
+        assert_eq!(drain(&mut rx), vec![PanelSettingsChange::Root]);
+        tx.send(PanelSettingsChange::Global);
+        assert_eq!(drain(&mut rx), vec![PanelSettingsChange::Global]);
+    }
+
+    #[test]
+    fn backend_errors_request_one_root_resync_with_native_watch_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("panel-settings");
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        let (mut watcher, mut native_rx) = PanelSettingsWatcher::start(&root, Some(DEBOUNCE_TEST)).unwrap();
+        let (tx, mut rx) = change_channel();
+        tx.send(PanelSettingsChange::Global);
+        for _ in 0..100 {
+            tx.events(Err(notify::Error::generic("backend failure")), &root, &root.join("sessions"));
+        }
+        assert_eq!(drain(&mut rx), vec![PanelSettingsChange::Root]);
+        assert!(watcher.refresh_watches());
+        write_atomically(&root.join("global.toml"), "version = 1\n");
+        wait_for(&mut native_rx, PanelSettingsChange::Global).expect("error resync reinstalls a working native watch");
+        drop(tx);
+        assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Disconnected)));
+    }
+
+    #[test]
+    fn rapid_root_and_sessions_replacement_reinstalls_watches_for_later_edits() {
+        for replace_root in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("panel-settings");
+            let sessions = root.join("sessions");
+            fs::create_dir_all(&sessions).unwrap();
+            let (mut watcher, mut rx) = PanelSettingsWatcher::start(&root, Some(DEBOUNCE_TEST)).unwrap();
+            let replaced = if replace_root { &root } else { &sessions };
+            fs::remove_dir_all(replaced).unwrap();
+            fs::create_dir_all(&sessions).unwrap();
+            wait_for(&mut rx, PanelSettingsChange::Root).expect("replacement observed by stable parent");
+            assert!(watcher.refresh_watches());
+            assert_silent(&mut rx);
+            write_atomically(&sessions.join("after.toml"), "version = 1\n");
+            wait_for(&mut rx, PanelSettingsChange::Session { session: "after".to_owned() }).expect("new sessions inode watched");
+            write_atomically(&root.join("global.toml"), "version = 1\n");
+            wait_for(&mut rx, PanelSettingsChange::Global).expect("new root inode watched");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_root_symlink_keeps_the_configured_parent_watch() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        fs::create_dir_all(first.join("sessions")).unwrap();
+        fs::create_dir_all(second.join("sessions")).unwrap();
+        let root = dir.path().join("panel-settings");
+        std::os::unix::fs::symlink(&first, &root).unwrap();
+        let (mut watcher, mut rx) = PanelSettingsWatcher::start(&root, Some(DEBOUNCE_TEST)).unwrap();
+        fs::remove_file(&root).unwrap();
+        std::os::unix::fs::symlink(&second, &root).unwrap();
+        wait_for(&mut rx, PanelSettingsChange::Root).expect("configured symlink replacement observed");
+        assert!(watcher.refresh_watches());
+        assert_silent(&mut rx);
+        write_atomically(&second.join("global.toml"), "version = 1\n");
+        wait_for(&mut rx, PanelSettingsChange::Global).expect("replacement target watched");
+    }
+
 }

@@ -26,6 +26,10 @@ impl fmt::Debug for LocalRequestBody {
 }
 
 impl LocalRequestBody {
+    pub(crate) fn from_serialized(bytes: Vec<u8>) -> Self {
+        Self { digest: blake3::hash(&bytes), bytes: bytes.into() }
+    }
+
     pub fn digest(&self) -> blake3::Hash { self.digest }
 
     /// Sensitive local-only bytes. Publication must use the scrubbed representation instead.

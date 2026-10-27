@@ -62,23 +62,21 @@ impl AgentView {
     /// Held-highlight table geometry, if it was resolved for this selection.
     pub(in crate::app) fn table_geometry_for_selection(
         &self,
-        entry_idx: usize,
-        range_id: u16,
+        range_id: crate::scrollback::selection_identity::RangeIdentity,
     ) -> Option<&TableGeometry> {
         self.table_selection_geometry
             .as_ref()
-            .and_then(|t| t.for_selection(entry_idx, range_id))
+            .and_then(|t| t.for_selection(range_id))
     }
 
     /// Active-drag table geometry. Separate from the held highlight so both can paint.
     pub(in crate::app) fn drag_table_geometry_for(
         &self,
-        entry_idx: usize,
-        range_id: u16,
+        range_id: crate::scrollback::selection_identity::RangeIdentity,
     ) -> Option<&TableGeometry> {
         self.drag_table_geometry
             .as_ref()
-            .and_then(|t| t.for_selection(entry_idx, range_id))
+            .and_then(|t| t.for_selection(range_id))
     }
 
     /// Drop a `/btw` highlight and any geometry keyed to the overlay.
@@ -111,7 +109,7 @@ impl AgentView {
     /// Overlay has no chrome and the visible model is only the window; detect/copy need the full wrap.
     fn with_btw_output<R>(
         &self,
-        range_id: u16,
+        range_id: crate::scrollback::selection_identity::RangeIdentity,
         width_override: Option<u16>,
         f: impl FnOnce(
             &dyn Fn(usize) -> Option<String>,
@@ -131,12 +129,49 @@ impl AgentView {
         let output = content.output(content_width as usize);
         let source = |i: usize| -> Option<String> {
             let line = output.lines.get(i)?;
-            if line.selection_range != Some(range_id) {
+            if line.selection_range != Some(range_id.local) {
                 return None;
             }
             Some(crate::scrollback::types::derive_selection_text(line))
         };
         Some(f(&source, &output.lines, content))
+    }
+
+    fn source_positions(&self, range: crate::scrollback::selection_identity::RangeIdentity,
+        anchor: SelectionEndpoint, head: SelectionEndpoint)
+        -> Option<crate::scrollback::selection_position::SelectionPositions>
+    {
+        use crate::scrollback::selection_position::{SelectionPositions, SourcePosition};
+        if range.part == crate::scrollback::selection_identity::SelectablePart::Overlay {
+            return Some(SelectionPositions {
+                anchor: SourcePosition::Overlay { row: anchor.block_line_idx, column: anchor.col_within_range },
+                head: SourcePosition::Overlay { row: head.block_line_idx, column: head.col_within_range },
+            });
+        }
+        let leaf = self.selection_leaf(range, None)?;
+        let position = |endpoint: SelectionEndpoint| {
+            let line = leaf.line(endpoint.block_line_idx)?;
+            if line.line.selection_range != Some(range.local) { return None; }
+            Some(SourcePosition::at(&crate::scrollback::types::derive_selection_text(line.line),
+                line.byte_start, endpoint.col_within_range))
+        };
+        Some(SelectionPositions { anchor: position(anchor)?, head: position(head)? })
+    }
+
+    fn selection_leaf(&self, range: crate::scrollback::selection_identity::RangeIdentity,
+        width: Option<u16>) -> Option<std::rc::Rc<crate::scrollback::entry::inline_output::OutputTree>>
+    {
+        let entry = self.scrollback.get_by_id(range.root.entry)?;
+        if entry.selection_identity() != range.root { return None; }
+        if !entry.block.is_bg_task() && !entry.block.is_subagent() {
+            let width = width.or_else(|| {
+                let index = self.scrollback.index_of_id(range.root.entry)?
+                    .checked_sub(self.scrollback.visible_entry_range().start)?;
+                self.last_scrollback_selection_model.visible_block_content_width(index)
+            })?;
+            entry.ensure_cached(width, self.scrollback.appearance(), false, self.scrollback.cwd());
+        }
+        entry.cached_tree().selection_leaf(range)
     }
 
     /// Run `f` with a text source over the anchor entry's full block output (so off-screen fragments are included).
@@ -145,28 +180,19 @@ impl AgentView {
     fn with_entry_output_text_source<R>(
         &self,
         entry_idx: usize,
-        range_id: u16,
+        range_id: crate::scrollback::selection_identity::RangeIdentity,
         width_override: Option<u16>,
         f: impl FnOnce(&dyn Fn(usize) -> Option<String>) -> R,
     ) -> Option<R> {
         if entry_idx == BTW_OVERLAY_ENTRY_IDX {
             return self.with_btw_output(range_id, width_override, |src, _, _| f(src));
         }
-        let scrollback = &self.scrollback;
-        let visible_start = scrollback.visible_entry_range().start;
-        let abs_idx = entry_idx + visible_start;
-        // The per-block content width the geometry/hits were captured against; see the width note in `reconstruct_drag_copy`
-        let content_width = width_override.or_else(|| {
-            self.last_scrollback_selection_model
-                .visible_block_content_width(entry_idx)
-        })?;
-        let entry = scrollback.get(abs_idx)?;
-        let appearance = scrollback.appearance();
-        let effective = entry.effective_output(content_width, appearance, false, scrollback.cwd());
-        let lines = &effective.output().lines;
+        let leaf = self.selection_leaf(range_id, width_override)?;
+        let rendered = leaf.rendered_leaf()?;
+        let lines = &rendered.output.lines;
         let source = |i: usize| -> Option<String> {
             let line = lines.get(i)?;
-            if line.selection_range != Some(range_id) {
+            if line.selection_range != Some(range_id.local) {
                 return None;
             }
             Some(crate::scrollback::types::derive_selection_text(line))
@@ -177,7 +203,7 @@ impl AgentView {
     fn with_entry_table_copy_source<R>(
         &self,
         entry_idx: usize,
-        range_id: u16,
+        range_id: crate::scrollback::selection_identity::RangeIdentity,
         width_override: Option<u16>,
         geom: &TableGeometry,
         f: impl FnOnce(&dyn Fn(usize) -> Option<String>, Option<&xai_grok_markdown::TableCopyMeta>) -> R,
@@ -197,22 +223,19 @@ impl AgentView {
                 })
             });
         }
-        let scrollback = &self.scrollback;
-        let visible_start = scrollback.visible_entry_range().start;
-        let abs_idx = entry_idx + visible_start;
-        let content_width = width_override.or_else(|| {
-            self.last_scrollback_selection_model
-                .visible_block_content_width(entry_idx)
-        })?;
-        let entry = scrollback.get(abs_idx)?;
-        let appearance = scrollback.appearance();
-        let mode = entry.display_mode();
-        let offset = entry.block.markdown_body_line_offset(mode, appearance);
-        let effective = entry.effective_output(content_width, appearance, false, scrollback.cwd());
-        let lines = &effective.output().lines;
+        let entry = self.scrollback.get_by_id(range_id.root.entry)?;
+        if entry.selection_identity() != range_id.root { return None; }
+        let leaf = self.selection_leaf(range_id, width_override)?;
+        let rendered = leaf.rendered_leaf()?;
+        let lines = &rendered.output.lines;
+        let root_tree = entry.cached_tree();
+        let entry = if range_id.source == range_id.root { entry }
+            else { root_tree.selection_owner(range_id)?.entry.as_ref() };
+        let appearance = self.scrollback.appearance();
+        let offset = entry.block.markdown_body_line_offset(entry.display_mode(), appearance);
         let source = |i: usize| -> Option<String> {
             let line = lines.get(i)?;
-            if line.selection_range != Some(range_id) {
+            if line.selection_range != Some(range_id.local) {
                 return None;
             }
             Some(crate::scrollback::types::derive_selection_text(line))
@@ -230,6 +253,14 @@ impl AgentView {
                 });
             f(&source, meta)
         }))
+    }
+
+    fn select_source_root(&mut self, hit: &RangeHit) {
+        if hit.entry_idx == BTW_OVERLAY_ENTRY_IDX { return; }
+        if self.scrollback.get_by_id(hit.range_id.root.entry)
+            .is_some_and(|entry| entry.selection_identity() == hit.range_id.root)
+            && let Some(index) = self.scrollback.index_of_id(hit.range_id.root.entry)
+        { self.scrollback.set_selected(Some(index)); }
     }
 
     /// Detect the table grid under a drag anchor.
@@ -253,7 +284,7 @@ impl AgentView {
         head: &RangeHit,
         prev: SelectionKind,
     ) -> SelectionKind {
-        let geom = self.drag_table_geometry_for(anchor.entry_idx, anchor.range_id);
+        let geom = self.drag_table_geometry_for(anchor.range_id);
         resolve_table_drag_kind(geom, anchor, head, prev)
     }
 
@@ -696,9 +727,24 @@ impl AgentView {
     /// Clipboard text for a finished drag, tagged with the kind that produced it (`Linear` when a table copy fell through).
     /// The persisted highlight then mirrors what reached the clipboard.
     fn reconstruct_drag_copy(&self, drag: &ActiveTextDrag) -> Option<(String, SelectionKind)> {
+        let resolved;
+        let drag = if drag.anchor.range_id.part == crate::scrollback::selection_identity::SelectablePart::Overlay {
+            drag
+        } else {
+            let leaf = self.selection_leaf(drag.anchor.range_id, drag.anchor_content_width)?;
+            let (anchor_row, anchor_col) = leaf.resolve_position(drag.anchor.range_id.local, drag.anchor.position)?;
+            let (head_row, head_col) = leaf.resolve_position(drag.anchor.range_id.local, drag.head.position)?;
+            resolved = ActiveTextDrag {
+                anchor: RangeHit { block_line_idx: anchor_row, col_within_range: anchor_col, ..drag.anchor },
+                head: RangeHit { block_line_idx: head_row, col_within_range: head_col, ..drag.head },
+                ..*drag
+            };
+            &resolved
+        };
+
         if drag.kind != SelectionKind::Linear
             && let Some(geom) =
-                self.drag_table_geometry_for(drag.anchor.entry_idx, drag.anchor.range_id)
+                self.drag_table_geometry_for(drag.anchor.range_id)
             && let Some(text) = self
                 .with_entry_table_copy_source(
                     drag.anchor.entry_idx,
@@ -736,36 +782,19 @@ impl AgentView {
             return reconstruct_selection_text(&self.last_btw_selection_model, drag)
                 .map(|text| (text, SelectionKind::Linear));
         }
-        let scrollback = &self.scrollback;
-        let visible_start = scrollback.visible_entry_range().start;
-        let abs_idx = drag.anchor.entry_idx + visible_start;
-        // Width must come from the same VisibleBlockGeometry the drag's block_line_idx values were captured against
-        // The pane-wide width re-wraps timestamp-reserving blocks and shifts every index
-        // Prefer the drag-start snapshot: by mouse-up the anchor block may have autoscrolled fully out of `visible_blocks`
-        let entry_content_width = drag.anchor_content_width.or_else(|| {
-            self.last_scrollback_selection_model
-                .visible_block_content_width(drag.anchor.entry_idx)
-        });
-        if let Some(entry) = scrollback.get(abs_idx)
-            && let Some(content_width) = entry_content_width
-        {
-            let appearance = scrollback.appearance();
-            entry.ensure_cached(content_width, appearance, false, scrollback.cwd());
-            let rendered = entry.cached_rendered_output_ref();
-            if let Some(text) = reconstruct_full_selection_text_with_boundaries(
-                &rendered.output.lines,
-                &rendered.boundaries,
-                drag,
-            ) {
-                return Some((text, SelectionKind::Linear));
-            }
+        if let Some(leaf) = self.selection_leaf(drag.anchor.range_id, drag.anchor_content_width) {
+            let rendered = leaf.rendered_leaf()?;
+            return reconstruct_full_selection_text_with_boundaries(&rendered.output.lines,
+                &rendered.boundaries, drag).map(|text| (text, SelectionKind::Linear));
         }
-        reconstruct_selection_text_with_boundaries(
-            &self.last_scrollback_selection_model,
-            &self.last_scrollback_selection_boundaries,
-            drag,
-        )
-        .map(|text| (text, SelectionKind::Linear))
+        match drag.anchor.range_id.part {
+            crate::scrollback::selection_identity::SelectablePart::Overlay =>
+                reconstruct_selection_text_with_boundaries(&self.last_scrollback_selection_model,
+                    &self.last_scrollback_selection_boundaries, drag).map(|text| (text, SelectionKind::Linear)),
+            crate::scrollback::selection_identity::SelectablePart::Block
+            | crate::scrollback::selection_identity::SelectablePart::TaskOutput(_)
+            | crate::scrollback::selection_identity::SelectablePart::GroupHeader => None,
+        }
     }
 
     /// Persist a finished drag as the highlight.
@@ -785,6 +814,7 @@ impl AgentView {
         self.persistent_text_selection = Some(PersistentTextSelection {
             entry_idx: drag.anchor.entry_idx,
             range_id: drag.anchor.range_id,
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: drag.anchor.position, head: drag.head.position },
             anchor: SelectionEndpoint {
                 block_line_idx: drag.anchor.block_line_idx,
                 col_within_range: drag.anchor.col_within_range,
@@ -1200,9 +1230,8 @@ impl AgentView {
     /// Count text-level multi-clicks, incrementing when the new click lands on the same (entry, range, line) within [`MULTI_CLICK_TIMEOUT_MS`].
     pub(in crate::app) fn count_text_click(&self, now: Instant, hit: &RangeHit) -> u8 {
         if let Some(ref prev) = self.last_text_click
-            && prev.entry_idx == hit.entry_idx
             && prev.range_id == hit.range_id
-            && prev.block_line_idx == hit.block_line_idx
+            && self.selection_model_for_hit(hit).same_source_line(hit, prev.position)
             && now.duration_since(prev.time).as_millis() < MULTI_CLICK_TIMEOUT_MS
         {
             prev.click_count.saturating_add(1)
@@ -1221,6 +1250,10 @@ impl AgentView {
         self.persistent_text_selection = Some(PersistentTextSelection {
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
+            positions: match model.positions(hit.range_id, selection.anchor, selection.head) {
+                Some(positions) => positions,
+                None => return,
+            },
             anchor: selection.anchor,
             head: selection.head,
             origin: SelectionOrigin::DoubleClick,
@@ -1229,9 +1262,7 @@ impl AgentView {
         self.selection_created_at = Some(Instant::now());
         self.copy_to_clipboard_debounced(&selection.text);
 
-        if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
-            self.scrollback.set_selected(Some(hit.entry_idx));
-        }
+        self.select_source_root(hit);
     }
 
     fn selection_text_for_full_line(&self, hit: &RangeHit) -> Option<String> {
@@ -1273,6 +1304,8 @@ impl AgentView {
         self.persistent_text_selection = Some(PersistentTextSelection {
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
+            positions: crate::scrollback::selection_position::SelectionPositions {
+                anchor: line.position(0), head: line.position(width.saturating_sub(1)) },
             anchor: SelectionEndpoint {
                 block_line_idx: hit.block_line_idx,
                 col_within_range: 0,
@@ -1290,9 +1323,7 @@ impl AgentView {
             self.copy_to_clipboard_debounced(&clipboard_text);
         }
 
-        if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
-            self.scrollback.set_selected(Some(hit.entry_idx));
-        }
+        self.select_source_root(hit);
     }
 
     /// Select the logical line (paragraph or list item) at `hit`.
@@ -1302,7 +1333,7 @@ impl AgentView {
         // Resolve the run's first/last rendered lines under an immutable borrow, then release it before mutating selection state
         let resolved = {
             let model = self.selection_model_for_hit(hit);
-            let Some(range) = model.range(hit.entry_idx, hit.range_id) else {
+            let Some(range) = model.range(hit.range_id) else {
                 return;
             };
             let Some(click_pos) = range
@@ -1360,12 +1391,20 @@ impl AgentView {
         let model = self.selection_model_for_hit(hit);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: match model.range(hit.range_id).and_then(|range| range.lines.iter()
+                    .find(|line| line.block_line_idx == first_block_line_idx)) {
+                    Some(line) => line.position(0), None => return,
+                },
                 entry_idx: hit.entry_idx,
                 range_id: hit.range_id,
                 block_line_idx: first_block_line_idx,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: match model.range(hit.range_id).and_then(|range| range.lines.iter()
+                    .find(|line| line.block_line_idx == last_block_line_idx)) {
+                    Some(line) => line.position(last_width.saturating_sub(1)), None => return,
+                },
                 entry_idx: hit.entry_idx,
                 range_id: hit.range_id,
                 block_line_idx: last_block_line_idx,
@@ -1385,6 +1424,7 @@ impl AgentView {
         };
 
         self.persistent_text_selection = Some(PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: drag.anchor.position, head: drag.head.position },
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
             anchor: SelectionEndpoint {
@@ -1404,9 +1444,7 @@ impl AgentView {
             self.copy_to_clipboard_debounced(&text);
         }
 
-        if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
-            self.scrollback.set_selected(Some(hit.entry_idx));
-        }
+        self.select_source_root(hit);
     }
 
     /// Select and copy the whole table cell at `hit`, wrapped fragments included.
@@ -1431,7 +1469,12 @@ impl AgentView {
 
         let lines = geometry.row_lines(cell.row);
         let band = geometry.band(cell.col);
+        let Some(positions) = self.source_positions(hit.range_id,
+            SelectionEndpoint { block_line_idx: lines.start, col_within_range: band.start },
+            SelectionEndpoint { block_line_idx: lines.end.saturating_sub(1), col_within_range: band.end.saturating_sub(1) })
+        else { return false };
         self.persistent_text_selection = Some(PersistentTextSelection {
+            positions,
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
             anchor: SelectionEndpoint {
@@ -1455,9 +1498,7 @@ impl AgentView {
         if !clipboard_text.is_empty() {
             self.copy_to_clipboard_debounced(&clipboard_text);
         }
-        if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
-            self.scrollback.set_selected(Some(hit.entry_idx));
-        }
+        self.select_source_root(hit);
         true
     }
 
@@ -1480,7 +1521,12 @@ impl AgentView {
 
         let first = geometry.row_lines(0);
         let last = geometry.row_lines(head_cell.row);
+        let Some(positions) = self.source_positions(hit.range_id,
+            SelectionEndpoint { block_line_idx: first.start, col_within_range: geometry.band(0).start },
+            SelectionEndpoint { block_line_idx: last.end.saturating_sub(1), col_within_range: geometry.band(head_cell.col).end.saturating_sub(1) })
+        else { return false };
         self.persistent_text_selection = Some(PersistentTextSelection {
+            positions,
             entry_idx: hit.entry_idx,
             range_id: hit.range_id,
             anchor: SelectionEndpoint {
@@ -1507,9 +1553,7 @@ impl AgentView {
         if !clipboard_text.is_empty() {
             self.copy_to_clipboard_debounced(&clipboard_text);
         }
-        if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
-            self.scrollback.set_selected(Some(hit.entry_idx));
-        }
+        self.select_source_root(hit);
         true
     }
 }
@@ -1543,8 +1587,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for (i, text) in TABLE.iter().enumerate() {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -1557,7 +1602,7 @@ mod tests {
         agent.update_scrollback_selection_state(model, Default::default());
         agent.table_selection_geometry = Some(TableSelectionGeometry {
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             geometry: table_geometry(),
         });
         agent
@@ -1566,14 +1611,16 @@ mod tests {
     fn table_drag() -> ActiveTextDrag {
         ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 2 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 1,
                 col_within_range: 2,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 3, column: 12 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 3,
                 col_within_range: 12,
             },
@@ -1592,8 +1639,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for (bl, text, joiner) in lines {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: *bl,
                 screen_y: *bl as u16,
                 screen_x: 0,
@@ -1621,8 +1669,9 @@ mod tests {
         ]);
 
         agent.select_paragraph_at(&RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 0 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 1, // a continuation row
             col_within_range: 0,
         });
@@ -1652,8 +1701,9 @@ mod tests {
         ]);
 
         agent.select_paragraph_at(&RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 0 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 1,
             col_within_range: 0,
         });
@@ -1677,8 +1727,9 @@ mod tests {
         ]);
 
         agent.select_paragraph_at(&RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 0 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 1, // start of the wrapped bullet
             col_within_range: 0,
         });
@@ -1699,8 +1750,9 @@ mod tests {
         let mut agent = agent_with_range_lines(&[(1, "solo", None)]);
 
         agent.select_paragraph_at(&RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 0 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 1,
             col_within_range: 0,
         });
@@ -1721,8 +1773,9 @@ mod tests {
             (1, "rest https://x.ai", 5, "", "   ", "https://x.ai"),
         ] {
             let line = ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 screen_y: entry_idx as u16,
                 screen_x: 0,
@@ -1740,8 +1793,9 @@ mod tests {
             );
             model.push_line(line);
             let hit = RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: hit_col },
                 entry_idx,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: hit_col,
             };
@@ -1766,8 +1820,9 @@ mod tests {
             .enumerate()
         {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: i,
                 screen_y: i as u16,
                 screen_x: 0,
@@ -1779,16 +1834,18 @@ mod tests {
         }
         agent.update_scrollback_selection_state(model, Default::default());
         agent.select_word_at(&RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 0 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 1,
             col_within_range: 0,
         });
         assert_eq!(
             agent.persistent_text_selection,
             Some(PersistentTextSelection {
+                positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 9 } },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 anchor: SelectionEndpoint {
                     block_line_idx: 0,
                     col_within_range: 0,
@@ -1851,15 +1908,18 @@ mod tests {
             )
         };
         let mut agent = make_agent();
+        agent.scrollback = state;
         agent.update_scrollback_selection_state(model, rendered.selection_boundaries);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: first_line_idx, column: 0 },
                 entry_idx,
                 range_id,
                 block_line_idx: first_line_idx,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: last_line_idx, column: last_width.saturating_sub(1) },
                 entry_idx,
                 range_id,
                 block_line_idx: last_line_idx,
@@ -1874,12 +1934,13 @@ mod tests {
         );
         let full_line_copies: Vec<String> = agent
             .last_scrollback_selection_model
-            .range(entry_idx, range_id)
+            .range(range_id)
             .expect("installed Edit range")
             .lines
             .iter()
             .filter_map(|line| {
                 agent.selection_text_for_full_line(&RangeHit {
+                    position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: 0 },
                     entry_idx: line.entry_idx,
                     range_id: line.range_id,
                     block_line_idx: line.block_line_idx,
@@ -1965,12 +2026,14 @@ mod tests {
             .saturating_sub(line.selectable_cols.start);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: 0 },
                 entry_idx: line.entry_idx,
                 range_id: line.range_id,
                 block_line_idx: line.block_line_idx,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: path_width.saturating_sub(1) },
                 entry_idx: line.entry_idx,
                 range_id: line.range_id,
                 block_line_idx: line.block_line_idx,
@@ -2169,8 +2232,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for i in 0..count {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: first_bl + i,
                 screen_y: first_y + i as u16,
                 screen_x: 0,
@@ -2260,8 +2324,9 @@ mod tests {
     fn reclamp_noop_without_last_drag_mouse() {
         let mut agent = make_agent();
         let anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 2 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             col_within_range: 2,
         };
@@ -2292,8 +2357,9 @@ mod tests {
     fn reclamp_btw_drag_gated_to_btw_rebuild_and_model() {
         let mut agent = make_agent();
         let btw_anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
             entry_idx: crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             col_within_range: 0,
         };
@@ -2317,8 +2383,9 @@ mod tests {
         // Once the btw model has lines, only the btw rebuild moves the head.
         let mut btw_model = ResolvedSelectionModel::default();
         btw_model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 3,
             screen_y: 6,
             screen_x: 0,
@@ -2353,14 +2420,16 @@ mod tests {
 
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 8 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: 8,
             },
@@ -2466,11 +2535,14 @@ mod tests {
                 "| Name | Role |\n|------|------|\n| Alice | Eng |",
             ));
 
+        let range_id = crate::scrollback::selection_identity::RangeIdentity::new(
+            agent.scrollback.entry(0).unwrap().selection_identity(),
+            crate::scrollback::selection_identity::SelectablePart::Block, 0);
         // Freeze the side-car the way promotion does, from the entry's own rendering at the snapshot width (probe scan finds a grid line)
         let probe_geometry = (0..6)
             .find_map(|probe| {
                 agent
-                    .with_entry_output_text_source(0, 0, Some(WIDTH), |src| {
+                    .with_entry_output_text_source(0, range_id, Some(WIDTH), |src| {
                         TableGeometry::detect(src, probe)
                     })
                     .flatten()
@@ -2483,7 +2555,7 @@ mod tests {
         let head_col = probe_geometry.band(0).end.saturating_sub(1);
         // Re-detect at the anchor line: the copy path requires the side-car to exactly match its own re-detect there
         let geometry = agent
-            .with_entry_output_text_source(0, 0, Some(WIDTH), |src| {
+            .with_entry_output_text_source(0, range_id, Some(WIDTH), |src| {
                 TableGeometry::detect(src, anchor_line)
             })
             .flatten()
@@ -2491,15 +2563,16 @@ mod tests {
         // Active copy reads the drag slot (`reconstruct_drag_copy`), not the held highlight.
         agent.drag_table_geometry = Some(TableSelectionGeometry {
             entry_idx: 0,
-            range_id: 0,
+            range_id,
             geometry,
         });
         // The rebuilt frame no longer contains the anchor block at all.
         agent.last_scrollback_selection_model = ResolvedSelectionModel::default();
 
         let anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: anchor_line, column: anchor_col },
             entry_idx: 0,
-            range_id: 0,
+            range_id,
             block_line_idx: anchor_line,
             col_within_range: anchor_col,
         };
@@ -2541,8 +2614,9 @@ mod tests {
         ));
 
         let anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             col_within_range: 0,
         };
@@ -2589,8 +2663,9 @@ mod tests {
         for (idx, line) in output.lines.iter().enumerate() {
             let text = crate::scrollback::types::line_plain_text(&line.content);
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: BTW_OVERLAY_ENTRY_IDX,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: idx,
                 screen_y: 10 + idx as u16,
                 screen_x: 2,
@@ -2621,7 +2696,7 @@ mod tests {
                 agent
                     .with_entry_output_text_source(
                         BTW_OVERLAY_ENTRY_IDX,
-                        0,
+                        crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                         Some(BTW_TABLE_WIDTH),
                         |src| TableGeometry::detect(src, probe),
                     )
@@ -2638,8 +2713,9 @@ mod tests {
         let header = probe.row_lines(0);
         let header_col = probe.band(0).start + 1;
         let hit = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: header.start, column: header_col },
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: header.start,
             col_within_range: header_col,
         };
@@ -2649,7 +2725,7 @@ mod tests {
         assert_eq!(
             agent.with_entry_table_copy_source(
                 BTW_OVERLAY_ENTRY_IDX,
-                0,
+                crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 Some(BTW_TABLE_WIDTH),
                 &geometry,
                 |_, meta| meta.is_some(),
@@ -2659,7 +2735,7 @@ mod tests {
         );
         agent.drag_table_geometry = Some(TableSelectionGeometry {
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             geometry: geometry.clone(),
         });
 
@@ -2724,7 +2800,7 @@ mod tests {
         let held = table_geometry();
         agent.table_selection_geometry = Some(TableSelectionGeometry {
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             geometry: held.clone(),
         });
         agent.selection_created_at = Some(Instant::now() - Duration::from_secs(3600));
@@ -2732,22 +2808,23 @@ mod tests {
         let geometry = btw_table_geometry(&agent);
         let header = geometry.row_lines(0);
         let anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: header.start, column: geometry.band(0).start + 1 },
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: header.start,
             col_within_range: geometry.band(0).start + 1,
         };
         agent.arm_text_drag(&mouse_drag(4, 12), anchor, anchor, Some(BTW_TABLE_WIDTH));
 
         assert_eq!(
-            agent.drag_table_geometry_for(BTW_OVERLAY_ENTRY_IDX, 0),
+            agent.drag_table_geometry_for(crate::scrollback::selection_identity::RangeIdentity::overlay(0)),
             Some(&geometry)
         );
-        assert_eq!(agent.table_geometry_for_selection(0, 0), Some(&held));
+        assert_eq!(agent.table_geometry_for_selection(crate::scrollback::selection_identity::RangeIdentity::overlay(0)), Some(&held));
         assert!(agent.tick_selection_highlight());
-        assert!(agent.table_geometry_for_selection(0, 0).is_none());
+        assert!(agent.table_geometry_for_selection(crate::scrollback::selection_identity::RangeIdentity::overlay(0)).is_none());
         assert_eq!(
-            agent.drag_table_geometry_for(BTW_OVERLAY_ENTRY_IDX, 0),
+            agent.drag_table_geometry_for(crate::scrollback::selection_identity::RangeIdentity::overlay(0)),
             Some(&geometry)
         );
     }
@@ -2758,8 +2835,9 @@ mod tests {
         let mut agent = agent_with_btw_table();
         let geometry = btw_table_geometry(&agent);
         agent.persistent_text_selection = Some(PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 4 } },
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             anchor: SelectionEndpoint {
                 block_line_idx: 0,
                 col_within_range: 0,
@@ -2773,12 +2851,12 @@ mod tests {
         });
         agent.table_selection_geometry = Some(TableSelectionGeometry {
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             geometry: geometry.clone(),
         });
         agent.drag_table_geometry = Some(TableSelectionGeometry {
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             geometry,
         });
         agent.btw_selection_wrap_width = Some(BTW_TABLE_WIDTH);
@@ -2810,8 +2888,9 @@ mod tests {
         let mut model = ResolvedSelectionModel::default();
         for (bl, y) in [(0usize, 5u16), (1, 6)] {
             model.push_line(ResolvedSelectableLine {
+                byte_start: 0,
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: bl,
                 screen_y: y,
                 screen_x: 0,
@@ -2822,8 +2901,9 @@ mod tests {
             });
         }
         model.push_line(ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 1,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 10,
             screen_x: 0,
@@ -2891,8 +2971,9 @@ mod tests {
 
         let drag = agent.drag_selection.expect("converted to text drag");
         let entry_hit = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 10 },
             entry_idx: 1,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             col_within_range: 10,
         };
@@ -2925,8 +3006,9 @@ mod tests {
         assert_eq!(
             drag.anchor,
             RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 14 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 1,
                 col_within_range: 14,
             },
@@ -3077,8 +3159,9 @@ mod tests {
         assert_eq!(
             drag.anchor,
             RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 14 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 1,
                 col_within_range: 14,
             },
@@ -3200,8 +3283,9 @@ mod tests {
         let mut agent = agent_with_above_prompt_strip();
         let reg = ActionRegistry::defaults();
         let anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             col_within_range: 0,
         };
@@ -3219,7 +3303,7 @@ mod tests {
         );
         agent.table_selection_geometry = Some(TableSelectionGeometry {
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             geometry: table_geometry(),
         });
         agent.selection_created_at = Some(Instant::now());

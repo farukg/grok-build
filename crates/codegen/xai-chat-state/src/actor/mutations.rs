@@ -265,7 +265,7 @@ impl ChatStateActor {
     }
 
     /// Push any conversation item (user, assistant, or tool result) and persist it.
-    pub(super) fn push_message(&mut self, item: ConversationItem) {
+    pub(super) fn push_message(&mut self, item: ConversationItem) -> crate::AppliedAppend {
         // A second answer to a call already answered in the trailing result run (the cancel halt text, then the real
         // backgrounded-command result) is deduped now. Readers such as compaction never run the lazy repair.
         let answers_answered_call = matches!(
@@ -281,15 +281,16 @@ impl ChatStateActor {
                     ConversationItem::ToolResult(old) if old.tool_call_id == new.tool_call_id
                 ))
         );
-        self.push_message_unchecked(item);
+        let applied = self.push_message_unchecked(item);
         if answers_answered_call {
             self.rewrite_history(HistoryRewrite::IntegrityRepair, |conversation| {
                 dedup_duplicate_tool_results(conversation)
             });
         }
+        applied
     }
 
-    fn push_message_unchecked(&mut self, item: ConversationItem) {
+    fn push_message_unchecked(&mut self, item: ConversationItem) -> crate::AppliedAppend {
         let count_in_delta = !matches!(item, ConversationItem::Assistant(_));
         if count_in_delta {
             let estimated_tokens = super::state::estimate_item_tokens(&item);
@@ -303,31 +304,33 @@ impl ChatStateActor {
                 "ChatState: push_message updated estimated_tokens_since_model"
             );
         }
-        self.persist_and_push_message(item);
+        self.persist_and_push_message(item)
     }
 
     /// Persist model output already included in the provider's usage total.
-    pub(super) fn push_model_output(&mut self, item: ConversationItem) {
-        self.persist_and_push_message(item);
+    pub(super) fn push_model_output(&mut self, item: ConversationItem) -> crate::AppliedAppend {
+        self.persist_and_push_message(item)
     }
 
     /// Persist model output whose provider response omitted usage.
-    pub(super) fn push_unreported_model_output(&mut self, item: ConversationItem) {
+    pub(super) fn push_unreported_model_output(&mut self, item: ConversationItem) -> crate::AppliedAppend {
         self.state.estimated_tokens_since_model += super::state::estimate_item_tokens(&item);
-        self.persist_and_push_message(item);
+        self.persist_and_push_message(item)
     }
 
-    fn persist_and_push_message(&mut self, mut item: ConversationItem) {
+    fn persist_and_push_message(&mut self, mut item: ConversationItem) -> crate::AppliedAppend {
         self.persist_source_normalization();
         super::source_occurrence::admit(&mut item);
+        let applied = crate::AppliedAppend { source: item.source() };
         self.persistence.persist_message(&item);
         self.state.conversation.push(item);
+        applied
     }
 
     /// Push a user message, repairing dangling tool calls first so cancel/crash tails stay consistent.
     /// Also runs [`prune_retained_conversation`] to hard-clear very old tool results in memory.
-    pub(super) fn push_user_message(&mut self, item: ConversationItem) {
-        self.push_user_message_with_repair_reason(item, DanglingToolCallReason::UserCancelled);
+    pub(super) fn push_user_message(&mut self, item: ConversationItem) -> crate::AppliedAppend {
+        self.push_user_message_with_repair_reason(item, DanglingToolCallReason::UserCancelled)
     }
 
     /// Like [`Self::push_user_message`] but takes an explicit repair reason.
@@ -335,7 +338,7 @@ impl ChatStateActor {
         &mut self,
         item: ConversationItem,
         reason: DanglingToolCallReason,
-    ) {
+    ) -> crate::AppliedAppend {
         // A turn-starting or mid-turn user item landing on a trailing continue reminder
         // means the continuation is dead — the stranded reminder must not sit before the new instruction.
         // A live reminder is never trailing here: its continuation is still in flight.
@@ -368,8 +371,9 @@ impl ChatStateActor {
             model_reported_total = self.state.total_tokens.tokens(),
             "ChatState: push_user_message updated estimated_tokens_since_model"
         );
-        self.persist_and_push_message(item);
+        let applied = self.persist_and_push_message(item);
         self.prune_retained_conversation();
+        applied
     }
 
     /// Eagerly hard-clear tool results from very old turns in the retained conversation.

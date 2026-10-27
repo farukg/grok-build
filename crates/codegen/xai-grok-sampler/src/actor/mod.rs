@@ -114,6 +114,9 @@ impl SamplerActor {
                     completion_tx,
                 ));
             }
+            SamplerCommand::Preview { request, reply } => {
+                let _ = reply.send(crate::request_preview::preview(&self.state.config, *request));
+            }
             SamplerCommand::Cancel { request_id } => {
                 self.state.cancel(&request_id);
             }

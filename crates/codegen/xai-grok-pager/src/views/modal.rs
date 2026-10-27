@@ -373,6 +373,8 @@ pub enum PaletteCommand {
     OpenFeedbackModal,
     /// Expand the timeline into its outline panel (F6).
     TimelinePanel,
+    /// Open the captured model-request inspector (F3).
+    RequestInspector,
 }
 /// Build the default set of palette entries with section grouping.
 pub(crate) fn default_palette_entries(
@@ -455,6 +457,11 @@ pub(crate) fn default_palette_entries(
             label: "Timeline".into(),
             shortcut: "F6".into(),
             command: PaletteCommand::TimelinePanel,
+        },
+        PaletteEntry {
+            label: "Inspect Model Request".into(),
+            shortcut: "F3".into(),
+            command: PaletteCommand::RequestInspector,
         },
         PaletteEntry {
             label: "View Plan".into(),
@@ -600,6 +607,10 @@ pub(crate) fn default_palette_entries(
         }
         true
     });
+    // The captured-request inspector has no surface in minimal mode.
+    if screen_mode.is_minimal() {
+        entries.retain(|entry| !matches!(entry.command, PaletteCommand::RequestInspector));
+    }
     if !screen_mode.is_minimal()
         && let Some(entry) = entries
             .iter_mut()

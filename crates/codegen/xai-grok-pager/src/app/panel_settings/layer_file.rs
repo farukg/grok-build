@@ -23,6 +23,12 @@ enum FileContent {
     Corrupt(LoadProblem),
 }
 
+enum SaveSource {
+    Healthy,
+    SyntaxRepair,
+    SemanticRepair,
+}
+
 pub(super) struct LayerFile {
     layer: Layer,
     path: PathBuf,
@@ -76,7 +82,7 @@ impl LayerFile {
             Ok(FileContent::Absent) => (Some(LayerSettings::default()), Vec::new()),
             Ok(FileContent::Document(doc)) => {
                 let decoded = codec::decode(self.layer, &doc);
-                (Some(decoded.settings), decoded.problems)
+                (if decoded.has_invalid_known() { None } else { Some(decoded.settings) }, decoded.problems)
             }
             Ok(FileContent::Corrupt(problem)) => (None, vec![problem]),
             Err(err) => (None, vec![LoadProblem::Unreadable { kind: err.kind() }]),
@@ -110,29 +116,39 @@ impl LayerFile {
             path: self.path.clone(),
             source,
         };
-        let (mut doc, mut current, corrupt) = match read(&self.path).map_err(io_error)? {
-            FileContent::Absent => (DocumentMut::new(), LayerSettings::default(), false),
+        let (mut doc, mut current, source) = match read(&self.path).map_err(io_error)? {
+            FileContent::Absent => (DocumentMut::new(), LayerSettings::default(), SaveSource::Healthy),
             FileContent::Document(doc) => {
-                let current = codec::decode(self.layer, &doc).settings;
-                (doc, current, false)
+                let decoded = codec::decode(self.layer, &doc);
+                let source = if decoded.has_invalid_known() { SaveSource::SemanticRepair } else { SaveSource::Healthy };
+                (doc, decoded.settings, source)
             }
-            FileContent::Corrupt(_) => (DocumentMut::new(), LayerSettings::default(), true),
+            FileContent::Corrupt(_) => (DocumentMut::new(), LayerSettings::default(), SaveSource::SyntaxRepair),
         };
-        let applied: Vec<&Edit> = edits.iter().filter(|edit| current.apply(edit)).collect();
-        if applied.is_empty() {
+        let applied: Vec<&Edit> = edits.iter().filter(|edit| {
+            let changed = current.apply(edit);
+            changed || matches!(source, SaveSource::SemanticRepair)
+        }).collect();
+        for edit in &applied {
+            codec::encode(&mut doc, edit);
+        }
+        let decoded = codec::decode(self.layer, &doc);
+        if let Some(key) = decoded.invalid_known_key() {
+            return Err(SaveError::InvalidKnown { path: self.path.clone(), key: key.to_owned() });
+        }
+        current = decoded.settings;
+        if applied.is_empty() && matches!(source, SaveSource::Healthy) {
             self.settings = current;
             return Ok(SaveOutcome::Unchanged);
         }
-        let backup = if corrupt {
-            let backup = backup_path(&self.path);
-            std::fs::rename(&self.path, &backup).map_err(io_error)?;
-            Some(backup)
-        } else {
-            None
+        let backup = match source {
+            SaveSource::Healthy => None,
+            SaveSource::SyntaxRepair | SaveSource::SemanticRepair => {
+                let backup = backup_path(&self.path);
+                std::fs::rename(&self.path, &backup).map_err(io_error)?;
+                Some(backup)
+            }
         };
-        for edit in applied {
-            codec::encode(&mut doc, edit);
-        }
         codec::stamp_version(&mut doc);
         if let Some(parent) = self.path.parent() {
             create_dir_all_owner_only(parent).map_err(io_error)?;

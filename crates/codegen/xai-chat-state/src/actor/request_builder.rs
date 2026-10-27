@@ -31,15 +31,15 @@ impl ChatStateActor {
         req_id: String,
     ) -> crate::types::BuiltConversationRequest {
         use crate::types::{MemoryReminderPersistence, RequestPreparation};
-        let (persist_memory_reminder, preview) = match preparation {
-            RequestPreparation::Sampling { memory_reminder: MemoryReminderPersistence::Canonical } => (true, false),
-            RequestPreparation::Sampling { memory_reminder: MemoryReminderPersistence::RequestOnly } => (false, false),
-            RequestPreparation::Preview => (false, true),
+        let (persist_memory_reminder, preview, history, context_policy, appended) = match preparation {
+            RequestPreparation::Sampling { memory_reminder: MemoryReminderPersistence::Canonical } => (true, false, crate::types::PreviewHistory::Stable, self.state.context_policy.clone(), Vec::new()),
+            RequestPreparation::Sampling { memory_reminder: MemoryReminderPersistence::RequestOnly } => (false, false, crate::types::PreviewHistory::Stable, self.state.context_policy.clone(), Vec::new()),
+            RequestPreparation::Preview => (false, true, crate::types::PreviewHistory::Stable, self.state.context_policy.clone(), Vec::new()),
+            RequestPreparation::PreviewWith { history, policy, appended } => (false, true, history, policy, appended),
         };
         if !preview {
             self.persist_source_normalization();
         }
-        let context_policy = self.state.context_policy.clone();
         let mut injected_records = Vec::new();
         let mut memory_reminder = memory_reminder;
         let mut memory_record = None;
@@ -59,8 +59,10 @@ impl ChatStateActor {
         }
         let (trigger_bytes, reclaim_target_bytes) =
             image_budget_limits(self.state.sampling_config.max_request_bytes);
+        let additional_tokens = appended.iter().map(super::state::estimate_item_tokens).sum::<u64>();
         let mut request_items = self.state.conversation.clone();
-        if preview {
+        request_items.extend(appended);
+        if preview && history == crate::types::PreviewHistory::Stable {
             xai_grok_sampling_types::dedup_duplicate_tool_results(&mut request_items);
             xai_grok_sampling_types::repair_dangling_tool_calls(
                 &mut request_items,
@@ -91,7 +93,7 @@ impl ChatStateActor {
                 body_bytes_after,
             });
         }
-        items = self.prune_items_for_turn_request(items);
+        items = self.prune_items_for_turn_request(items, additional_tokens);
         let pruned = tool_result_prune_delta(&self.state.conversation, &items);
         let mut replacement_bodies = String::new();
         if !pruned.is_empty() {
@@ -220,9 +222,10 @@ impl ChatStateActor {
     pub(super) fn prune_items_for_turn_request(
         &self,
         mut items: Vec<ConversationItem>,
+        additional_tokens: u64,
     ) -> Vec<ConversationItem> {
         if should_prune(
-            self.state.estimate_at_last_response + self.state.estimated_tokens_since_model,
+            self.state.estimate_at_last_response + self.state.estimated_tokens_since_model + additional_tokens,
             self.state.sampling_config.context_window,
         ) {
             prune_conversation(&mut items, &self.pruning_config);

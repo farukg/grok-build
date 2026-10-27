@@ -522,7 +522,7 @@ fn assert_committed_fits_entry(label: &str, entry: &ScrollbackEntry, width: u16)
     let appearance = committed_appearance(&AppearanceConfig::default());
 
     let renderer = minimal_renderer(entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let h = renderer.desired_height(width);
+    let h = u16::try_from(renderer.desired_height(width)).unwrap();
     assert!(h > 0, "{label}@{width}: desired_height was 0");
     // The accent bar and background fill intentionally stretch to the given area height (chrome, not content)
     // Only the content columns (x >= chrome_width) carry real text that `insert_before` would clip
@@ -557,7 +557,7 @@ fn committed_block_uses_owning_session_cwd_for_tool_paths() {
     let appearance = committed_appearance(&AppearanceConfig::default());
     let renderer = minimal_renderer(&entry, &theme, appearance, cwd, COMMITTED_TICK);
     let width = 80;
-    let height = renderer.desired_height(width);
+    let height = u16::try_from(renderer.desired_height(width)).unwrap();
     let area = Rect::new(0, 0, width, height);
     let mut buf = Buffer::empty(area);
     renderer.render(area, &mut buf);
@@ -688,7 +688,7 @@ fn terminal_native_lock_paints_only_native_colors() {
         let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
 
         let width = 100u16;
-        let h = renderer.desired_height(width).max(1);
+        let h = u16::try_from(renderer.desired_height(width)).unwrap().max(1);
         let area = Rect::new(0, 0, width, h);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -728,14 +728,14 @@ fn large_commit_is_capped_with_footer() {
 
     let width = 80u16;
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let full_h = renderer.desired_height(width);
+    let full_h = u16::try_from(renderer.desired_height(width)).unwrap();
     assert!(full_h > 12, "expected a tall block, got {full_h}");
 
     // Paint into a cap-height buffer (what `insert_committed` allocates).
     let cap = 12u16;
     let area = Rect::new(0, 0, width, cap);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, usize::from(full_h), theme.dim());
 
     // The final row is the overflow footer naming the hidden line count and pointing at /transcript; the buffer is exactly `cap` rows (bounded)
     let last: String = (0..width)
@@ -763,12 +763,12 @@ fn small_commit_is_not_capped() {
 
     let width = 80u16;
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let full_h = renderer.desired_height(width);
+    let full_h = u16::try_from(renderer.desired_height(width)).unwrap();
 
     // Buffer is exactly the block's height, so there is no footer (uncapped path)
     let area = Rect::new(0, 0, width, full_h);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, usize::from(full_h), theme.dim());
 
     let mut all = String::new();
     for y in 0..full_h {
@@ -834,10 +834,10 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
 
     let width = 80u16;
-    let h = renderer.desired_height(width);
+    let h = u16::try_from(renderer.desired_height(width)).unwrap();
     let area = Rect::new(0, 0, width, h);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, usize::from(h), theme.dim());
 
     // The committed edit uses a flat background (terminal transparency), but must still paint the per-line diff backgrounds
     // Otherwise an added / removed line is indistinguishable from context
@@ -860,7 +860,7 @@ fn committed_edit_keeps_diff_line_backgrounds() {
         "committed edit lost the delete (red) diff background"
     );
 
-    let wraps = commit_wrap_flags(&renderer, buf.area.height, h);
+    let wraps = commit_wrap_flags(&renderer, buf.area.height, usize::from(h));
     let rows = crate::full_view::buffer_to_semantic_rows(&buf, &wraps);
     match theme.diff_insert_bg {
         Color::Rgb(r, g, b) => {
@@ -940,7 +940,7 @@ fn no_block_spends_the_accent_column() {
             test_cwd(),
             COMMITTED_TICK,
         );
-        let h = renderer.desired_height(60);
+        let h = u16::try_from(renderer.desired_height(60)).unwrap();
         let area = Rect::new(0, 0, 60, h);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1002,7 +1002,7 @@ fn committed_thinking_paints_a_dim_rail_under_the_bullet() {
         test_cwd(),
         COMMITTED_TICK,
     );
-    let h = renderer.desired_height(width);
+    let h = u16::try_from(renderer.desired_height(width)).unwrap();
     assert!(h > 1, "expected a multi-row reasoning block, got {h}");
     let area = Rect::new(0, 0, width, h);
     let mut buf = Buffer::empty(area);
@@ -1022,7 +1022,7 @@ fn committed_thinking_paints_a_dim_rail_under_the_bullet() {
 
     let answer = ScrollbackEntry::new(RenderBlock::agent_message("the answer"));
     let renderer = minimal_renderer(&answer, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let area = Rect::new(0, 0, width, renderer.desired_height(width).max(1));
+    let area = Rect::new(0, 0, width, u16::try_from(renderer.desired_height(width)).unwrap().max(1));
     let mut buf = Buffer::empty(area);
     renderer.render(area, &mut buf);
     assert_ne!(
@@ -1157,7 +1157,7 @@ fn collapsed_thinking_commit_is_one_advertised_row() {
             test_cwd(),
             COMMITTED_TICK,
         );
-        let h = renderer.desired_height(width);
+        let h = u16::try_from(renderer.desired_height(width)).unwrap();
         assert_eq!(h, 1, "collapsed reasoning is one row @{width}");
         let area = Rect::new(0, 0, width, h);
         let mut buf = Buffer::empty(area);
@@ -1202,11 +1202,11 @@ fn paint_yaml_agent(width: u16, trim: bool) -> (ratatui::buffer::Buffer, u16, Ve
     let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(yaml_commit_body()));
     entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let full_h = renderer.desired_height(width);
+    let full_h = u16::try_from(renderer.desired_height(width)).unwrap();
     let area = Rect::new(0, 0, width, full_h);
     let mut buf = Buffer::empty(area);
     if trim {
-        paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+        paint_committed(&mut buf, &renderer, width, usize::from(full_h), theme.dim());
     } else {
         renderer.render(area, &mut buf);
     }
@@ -1299,10 +1299,10 @@ fn semantic_copy_exact_width_hard_break_code_lines_stay_separate() {
     let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(body));
     entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let full_h = renderer.desired_height(width);
+    let full_h = u16::try_from(renderer.desired_height(width)).unwrap();
     let area = Rect::new(0, 0, width, full_h);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, usize::from(full_h), theme.dim());
     let wraps = renderer.row_soft_wraps(buf.area.height);
     let copy = crate::full_view::buffer_to_semantic_copy(&buf, &wraps);
     assert!(
@@ -1327,20 +1327,20 @@ fn capped_footer_does_not_join_wrapped_line() {
     let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(body));
     entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let full_h = renderer.desired_height(width);
+    let full_h = u16::try_from(renderer.desired_height(width)).unwrap();
     assert!(full_h > 2, "unbreakable token must wrap, got {full_h}");
 
     let cap = 2u16;
     let area = Rect::new(0, 0, width, cap);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, usize::from(full_h), theme.dim());
 
     let raw = renderer.row_soft_wraps(cap);
     assert!(
         raw.first().copied().unwrap_or(false),
         "precondition: first painted row wraps onto the overwritten continuation: {raw:?}"
     );
-    let wraps = commit_wrap_flags(&renderer, cap, full_h);
+    let wraps = commit_wrap_flags(&renderer, cap, usize::from(full_h));
     assert!(
         !wraps.iter().any(|w| *w),
         "cap footer must not inherit a wrap joiner: {wraps:?}"
@@ -1372,10 +1372,10 @@ fn semantic_copy_multiline_command_keeps_newline_joiners() {
     let mut entry = ScrollbackEntry::new(RenderBlock::execute(format!("{line_a}\n{line_b}")));
     entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let full_h = renderer.desired_height(width);
+    let full_h = u16::try_from(renderer.desired_height(width)).unwrap();
     let area = Rect::new(0, 0, width, full_h);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, usize::from(full_h), theme.dim());
     let wraps = renderer.row_soft_wraps(buf.area.height);
     assert!(
         !wraps.iter().any(|w| *w),

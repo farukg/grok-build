@@ -220,7 +220,8 @@ fn compute_target(app: &mut AppView, term_h: u16, width: u16) -> u16 {
     // with no visible diff.
     if let Some(modal) = active_modal(agent) {
         let modal_h = modal_height(modal, agent, term_h, content_w);
-        let tail_h = super::live::tail_height(agent, width, &commit_app);
+        let tail_h = u16::try_from(super::live::tail_height(agent, width, &commit_app)
+            .min(usize::from(ceiling))).unwrap_or(ceiling);
         return modal_target(tail_h, modal_h, sl_h, base, ceiling);
     }
 
@@ -235,7 +236,8 @@ fn compute_target(app: &mut AppView, term_h: u16, width: u16) -> u16 {
     // When a turn is "thinking" the tail is empty, so the prompt stays right under the content instead of floating
     // below a fixed empty region. The region is not bottom-pinned, so the rest of the screen below stays empty (the
     // app "owns" the window from the top down).
-    let tail_h = super::live::tail_height(agent, width, &commit_app);
+    let tail_h = u16::try_from(super::live::tail_height(agent, width, &commit_app)
+            .min(usize::from(ceiling))).unwrap_or(ceiling);
     let todos_h = super::todo::todo_panel_height(agent, force_todos);
     // Below the prompt sits either the dropdown overlay or the 1-row info bar (model · context usage · turn time/tokens)
     // Reserve at least the info row when no dropdown is open so it isn't clipped and doesn't scroll content

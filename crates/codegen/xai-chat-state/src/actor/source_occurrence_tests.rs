@@ -2,6 +2,139 @@ use super::*;
 use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch, SourceOccurrence};
 
 #[tokio::test]
+async fn append_ack_returns_each_actual_admission_without_observational_appends() {
+    let mut h = TestHarness::new();
+    let first = h.handle.push_user_message_and_ack(ConversationItem::user("same")).await.unwrap();
+    let second = h.handle.push_user_message_and_ack(ConversationItem::user("same")).await.unwrap();
+    assert_ne!(first.source, second.source);
+    let history = h.handle.get_conversation().await;
+    assert_eq!(history.iter().map(ConversationItem::source).collect::<Vec<_>>(), [first.source, second.source]);
+    let persisted: Vec<_> = h.drain_persistence().into_iter().filter_map(|record| match record {
+        PersistenceRecord::Message(item) => Some(item.source()),
+        _ => None,
+    }).collect();
+    assert_eq!(persisted, [first.source, second.source]);
+    assert_eq!(h.handle.get_conversation().await.len(), 2);
+    assert!(h.drain_persistence().is_empty());
+}
+
+#[tokio::test]
+async fn batch_ack_keeps_generated_and_human_sources_separate() {
+    let h = TestHarness::new();
+    let applied = h.handle.push_user_messages_batch_and_ack(vec![
+        ConversationItem::working_directory_switch("cwd", 1),
+        ConversationItem::user("same"),
+    ]).await.unwrap();
+    assert_eq!(applied.len(), 2);
+    assert_ne!(applied.first().unwrap().source, applied.get(1).unwrap().source);
+    assert_eq!(applied.iter().map(|ack| ack.source).collect::<Vec<_>>(),
+        h.handle.get_conversation().await.iter().map(ConversationItem::source).collect::<Vec<_>>());
+}
+
+#[tokio::test]
+async fn append_ack_reports_admission_owner_not_incoming_source() {
+    let h = TestHarness::new();
+    let first = h.handle.push_user_message_and_ack(ConversationItem::user("original")).await.unwrap();
+    let mut reused = ConversationItem::user("reused");
+    *reused.source_mut() = first.source;
+    let applied = h.handle.push_user_message_and_ack(reused).await.unwrap();
+    assert_ne!(applied.source, first.source);
+    assert_eq!(Some(applied.source), h.handle.get_conversation().await.get(1).map(ConversationItem::source));
+}
+
+#[tokio::test]
+async fn append_transport_distinguishes_closed_mailbox_from_reply_loss() {
+    assert!(matches!(crate::ChatStateHandle::noop().push_user_message_and_ack(
+        ConversationItem::user("not admitted")
+    ).await, Err(crate::MutationAdmissionError::MailboxClosed(_))));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = crate::ChatStateHandle::new(tx);
+    let request = tokio::spawn(async move {
+        handle.push_user_message_and_ack(ConversationItem::user("may apply")).await
+    });
+    let command = rx.recv().await.unwrap();
+    let crate::commands::ChatStateCommand::PushUserMessageAndAck { reply, .. } = command else {
+        panic!("expected append command");
+    };
+    drop(reply);
+    assert!(matches!(request.await.unwrap(), Err(crate::MutationAdmissionError::ReplyLost(_))));
+}
+
+#[tokio::test]
+async fn strict_switch_retry_returns_the_authoritative_source() {
+    let h = TestHarness::new();
+    let generation = std::num::NonZeroU64::new(1).unwrap();
+    let first = h.handle.append_working_directory_switch_with_source_and_ack("first".into(), generation).await.unwrap();
+    let retry = h.handle.append_working_directory_switch_with_source_and_ack("different retry".into(), generation).await.unwrap();
+    assert_eq!(first.binding, retry.binding);
+    assert!(matches!(first.binding, crate::AppendBinding::Applied(_)));
+    assert!(matches!(retry.acknowledgement, crate::StrictAppendAck::AlreadyPresent(_)));
+    assert_eq!(h.handle.get_conversation().await.len(), 1);
+}
+
+#[tokio::test]
+async fn legacy_strict_switch_receipt_does_not_publish_the_discarded_candidate() {
+    let mut h = TestHarness::with_manual_persistence_ack(vec![]);
+    let handle = h.handle.clone();
+    let request = tokio::spawn(async move {
+        handle.append_working_directory_switch_with_source_and_ack(
+            "candidate".into(), std::num::NonZeroU64::new(1).unwrap(),
+        ).await
+    });
+    let reply = h.persistence_rx.next_persistence_ack().await.unwrap();
+    reply.send(Ok(crate::StrictAppendAck::AlreadyPresent(
+        ConversationItem::working_directory_switch("legacy", 1),
+    ))).unwrap();
+    let ack = request.await.unwrap().unwrap();
+    assert_eq!(ack.binding, crate::AppendBinding::ReceiptSourceUnavailable);
+    assert_eq!(h.handle.get_conversation().await.first().unwrap().text_content(), "legacy");
+}
+
+#[tokio::test]
+async fn strict_append_binding_comes_from_the_persisted_projection() {
+    let mut h = TestHarness::new();
+    let projection = crate::InputProjection::Delivery(crate::DeliveryProjection {
+        item: ConversationItem::user("strict input"),
+        binding: crate::DeliveryBinding {
+            delivery_id: "delivery".into(), payload_digest: "digest".into(),
+            turn_id: "prompt".into(), parent_task: crate::ParentTask::Unknown,
+        },
+    });
+    let ack = h.handle.append_input_with_source_and_ack(projection, crate::InputAdmission {
+        parent_task: crate::ParentTask::Instance { id: "owner".into() },
+        cancellation: tokio_util::sync::CancellationToken::new(),
+    }).await.unwrap();
+    assert!(matches!(ack.acknowledgement, crate::CompletionProjectionAck::Appended));
+    let crate::AppendBinding::Applied(applied) = ack.binding else { panic!("applied append"); };
+    let records = h.drain_persistence();
+    let persisted = records.iter().find_map(|record| match record {
+        PersistenceRecord::Input(projection) => Some(projection.item()),
+        _ => None,
+    }).unwrap();
+    assert_eq!(applied.source, persisted.source());
+    assert_eq!(h.handle.get_conversation().await.first().unwrap().source(), applied.source);
+}
+
+#[tokio::test]
+async fn cancelled_strict_append_has_no_applied_binding_or_history() {
+    let h = TestHarness::new();
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    cancellation.cancel();
+    let result = h.handle.append_input_with_source_and_ack(
+        crate::InputProjection::Delivery(crate::DeliveryProjection {
+            item: ConversationItem::user("cancelled"),
+            binding: crate::DeliveryBinding {
+                delivery_id: "cancelled".into(), payload_digest: "digest".into(),
+                turn_id: "prompt".into(), parent_task: crate::ParentTask::Unknown,
+            },
+        }),
+        crate::InputAdmission { parent_task: crate::ParentTask::Unknown, cancellation },
+    ).await;
+    assert!(matches!(result, Err(crate::StrictAppendError::NotCommitted(_))));
+    assert!(h.handle.get_conversation().await.is_empty());
+}
+
+#[tokio::test]
 async fn identical_occurrences_survive_persistence_restore_compaction_and_retry_builds() {
     let mut h = TestHarness::new();
     h.handle.push_user_message(ConversationItem::user("question"));
@@ -299,4 +432,39 @@ async fn local_evidence_changes_neither_provider_bodies_nor_image_or_token_budge
             assert!(right.items[1].evidence().transforms().contains(&ContentTransform::SystemHeadRewritten));
         }
     }
+}
+
+#[tokio::test]
+async fn output_acknowledgements_forward_the_actual_admission_and_keep_accounting_owners() {
+    let mut h = TestHarness::new();
+    let first = h.handle.push_assistant_response_and_ack(ConversationItem::assistant_tool_calls(vec![xai_grok_sampling_types::ToolCall {
+        id: "actual-call".into(), name: "read_file".into(), arguments: "{}".into(),
+    }])).await.unwrap();
+    let result = h.handle.push_tool_result_and_ack(ConversationItem::tool_result("actual-call", "same output")).await.unwrap();
+    let second = h.handle.push_model_output_and_ack(ConversationItem::assistant("same output")).await.unwrap();
+    let third = h.handle.push_unreported_model_output_and_ack(ConversationItem::assistant("same output")).await.unwrap();
+    let expected = vec![first.source, result.source, second.source, third.source];
+    let history = h.handle.get_conversation().await;
+    assert_eq!(history.iter().map(ConversationItem::source).collect::<Vec<_>>(), expected);
+    assert_ne!(second.source, third.source);
+    let persisted: Vec<_> = h.drain_persistence().into_iter().filter_map(|record| match record {
+        PersistenceRecord::Message(item) => Some(item.source()),
+        _ => None,
+    }).collect();
+    assert_eq!(persisted, expected);
+    assert_eq!(h.handle.get_conversation().await.len(), 4);
+    assert!(h.drain_persistence().is_empty());
+}
+
+#[tokio::test]
+async fn output_ack_transport_keeps_mailbox_closed_distinct_from_reply_lost() {
+    assert!(matches!(crate::ChatStateHandle::noop().push_model_output_and_ack(ConversationItem::assistant("not admitted")).await,
+        Err(crate::MutationAdmissionError::MailboxClosed(_))));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = crate::ChatStateHandle::new(tx);
+    let request = tokio::spawn(async move { handle.push_model_output_and_ack(ConversationItem::assistant("may have applied")).await });
+    let command = rx.recv().await.unwrap();
+    let crate::commands::ChatStateCommand::PushModelOutput { reply: crate::MutationReply::Observed(reply), .. } = command else { panic!("observed output command"); };
+    drop(reply);
+    assert!(matches!(request.await.unwrap(), Err(crate::MutationAdmissionError::ReplyLost(_))));
 }

@@ -21,6 +21,8 @@ pub mod render;
 pub mod scrollback_pane;
 pub mod search;
 pub mod selection;
+pub mod selection_identity;
+pub mod selection_position;
 pub mod state;
 pub mod sticky;
 pub mod table_geometry;

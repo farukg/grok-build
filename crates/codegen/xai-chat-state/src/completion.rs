@@ -93,15 +93,36 @@ pub struct CompletionProjection {
 #[derive(Clone, Debug)]
 pub enum CompletionProjectionAck {
     Appended,
-    Continue { history: Vec<ConversationItem> },
+    Continue { history: Vec<ConversationItem>, sources: crate::input_projection::ReceiptSources },
     TurnClosed,
     /// Also reconciles a caller whose persistence acknowledgement was lost.
-    AlreadyPresent { history: Vec<ConversationItem> },
+    AlreadyPresent { history: Vec<ConversationItem>, sources: crate::input_projection::ReceiptSources },
+}
+
+impl CompletionProjectionAck {
+    pub(crate) fn with_source(self, source: xai_grok_sampling_types::SourceOccurrence) -> crate::MutationAck<Self> {
+        let binding = match &self {
+            Self::Appended => crate::AppendBinding::Applied(crate::AppliedAppend { source }),
+            Self::Continue { sources, .. } | Self::AlreadyPresent { sources, .. } => sources.binding(),
+            Self::TurnClosed => crate::AppendBinding::NotApplied,
+        };
+        crate::MutationAck { acknowledgement: self, binding }
+    }
 }
 
 pub type CompletionProjectionError = StrictAppendError<CompletionProjectionAck>;
 
 impl CompletionProjection {
+    pub fn receipt_identity(&self) -> crate::input_projection::InputReceiptIdentity {
+        use crate::input_projection::InputReceiptIdentity;
+        let completions = self.receipts().map(|receipt| receipt.completion.clone()).collect();
+        match &self.item {
+            ConversationItem::ToolResult(result) => InputReceiptIdentity::CompletionToolResult { completions, tool_call_id: result.tool_call_id.to_string() },
+            ConversationItem::User(_) | ConversationItem::System(_) | ConversationItem::Assistant(_)
+            | ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_) => InputReceiptIdentity::Completion { completions },
+        }
+    }
+
     pub fn receipts(&self) -> impl Iterator<Item = &CompletionReceipt> {
         std::iter::once(&self.receipt).chain(&self.additional_receipts)
     }

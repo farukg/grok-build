@@ -100,7 +100,7 @@ async fn response_reasoning_does_not_inflate_model_reported_context() {
             actor.record_response_token_usage(&response, None);
             let usage_reported = response.usage.is_some();
             actor
-                .record_response_items(response.items, usage_reported)
+                .record_response_items(&xai_grok_sampler::RequestId::from("accounting-request"), response.message_id.as_deref(), response.items, usage_reported)
                 .await;
 
             assert_eq!(actor.chat_state_handle.get_total_tokens().await, 440_000);
@@ -175,7 +175,7 @@ async fn response_without_usage_keeps_model_output_as_estimated_growth() {
             actor.record_response_token_usage(&response, None);
             let usage_reported = response.usage.is_some();
             actor
-                .record_response_items(response.items, usage_reported)
+                .record_response_items(&xai_grok_sampler::RequestId::from("accounting-request"), response.message_id.as_deref(), response.items, usage_reported)
                 .await;
 
             assert_eq!(actor.chat_state_handle.get_total_tokens().await, 100_000);
@@ -286,7 +286,8 @@ async fn build_session_info_used_reflects_recorded_response() {
             actor
                 .chat_state_handle
                 .push_user_message_and_ack(ConversationItem::user("hello hello hello hello"))
-                .await;
+                .await
+                .unwrap();
 
             actor.record_response_token_usage(&response_with_usage(120_000), None);
 

@@ -167,6 +167,7 @@ pub fn stream_chat_completions<'a>(
                         return;
                     }
                     yield SamplingEvent::ChannelToken {
+                        origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Text },
                         request_id: request_id.clone(),
                         channel: SamplingChannel::Text,
                         text,
@@ -187,6 +188,7 @@ pub fn stream_chat_completions<'a>(
                     chunk_index += 1;
                     reasoning_acc.push_str(&thought);
                     yield SamplingEvent::ChannelToken {
+                        origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                         request_id: request_id.clone(),
                         channel: SamplingChannel::Reasoning,
                         text: thought,
@@ -274,6 +276,7 @@ pub fn stream_chat_completions<'a>(
                 items.push(ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(reasoning_acc).into()));
             }
             items.push(ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: std::sync::Arc::<str>::from(content_acc),

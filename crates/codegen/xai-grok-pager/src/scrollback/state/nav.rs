@@ -138,6 +138,7 @@ impl ScrollbackState {
     /// Jump directly to a turn by index: select its prompt and scroll it to the viewport top (same behavior as h/l turn navigation, random access).
     /// Returns `false` for an out-of-range index.
     pub fn jump_to_turn(&mut self, turn_idx: usize) -> bool {
+        self.pending_inline_anchor = None;
         if turn_idx >= self.turns.len() {
             return false;
         }
@@ -149,6 +150,7 @@ impl ScrollbackState {
     /// Returns `false` if the id no longer exists or isn't a turn's prompt (e.g. removed since capture).
     /// Stable identity means a shifted index can't land on the wrong block.
     pub fn jump_to_entry(&mut self, prompt_id: EntryId) -> bool {
+        self.pending_inline_anchor = None;
         let Some(entry_idx) = self.index_of_id(prompt_id) else {
             return false;
         };
@@ -163,6 +165,7 @@ impl ScrollbackState {
     /// If we're before the first turn (e.g., at system messages), jumps to the first turn.
     /// Otherwise jumps to the next turn.
     pub fn next_turn(&mut self) -> bool {
+        self.pending_inline_anchor = None;
         // If no turns exist, nothing to do
         if self.turns.is_empty() {
             return false;
@@ -191,6 +194,7 @@ impl ScrollbackState {
     /// current turn's prompt. If already on a prompt, jumps to the previous turn's prompt. If at first turn's prompt
     /// and pre-turn exists with selectable entries, jumps there.
     pub fn prev_turn(&mut self) -> bool {
+        self.pending_inline_anchor = None;
         // If no turns exist, nothing to do
         if self.turns.is_empty() {
             return false;
@@ -266,6 +270,7 @@ impl ScrollbackState {
     /// Snap the viewport up to the nearest response anchor above. Anchors are computed on demand; only plausible
     /// candidates are measured exactly. Returns `false` without a layout or when no anchor lies above.
     pub fn prev_response(&mut self) -> bool {
+        self.pending_inline_anchor = None;
         if self.viewport_height == 0 || self.last_width == 0 {
             return false;
         }
@@ -306,6 +311,7 @@ impl ScrollbackState {
     /// Snap the viewport down to the nearest response anchor below. Returns `false` without a layout or when no
     /// anchor lies below.
     pub fn next_response(&mut self) -> bool {
+        self.pending_inline_anchor = None;
         if self.viewport_height == 0 || self.last_width == 0 {
             return false;
         }
@@ -366,6 +372,7 @@ impl ScrollbackState {
     // Scrolling
 
     pub fn scroll_up(&mut self, rows: u16) {
+        self.pending_inline_anchor = None;
         self.scroll_offset = self.scroll_offset.saturating_sub(rows as usize);
         self.follow_mode = false;
         self.bump_generation();
@@ -374,6 +381,7 @@ impl ScrollbackState {
     /// Scroll down by n rows. A scroll that lands at the bottom moved real rows and never engages, so a fast
     /// scroll-down ending there can't re-enter follow by accident.
     pub fn scroll_down(&mut self, rows: u16) {
+        self.pending_inline_anchor = None;
         let max_offset = self
             .total_height
             .saturating_sub(self.viewport_height as usize);
@@ -428,12 +436,14 @@ impl ScrollbackState {
 
     /// Page up: scroll viewport, then select the topmost selectable on-screen entry.
     pub fn page_up(&mut self) {
+        self.pending_inline_anchor = None;
         self.scroll_up(self.page_scroll_rows());
         self.select_viewport_edge(/* prefer_top */ true);
     }
 
     /// Page down: scroll viewport, then select the bottommost selectable on-screen entry.
     pub fn page_down(&mut self) {
+        self.pending_inline_anchor = None;
         self.scroll_down(self.page_scroll_rows());
         self.select_viewport_edge(/* prefer_top */ false);
     }
@@ -492,6 +502,7 @@ impl ScrollbackState {
     }
 
     pub fn goto_top(&mut self) {
+        self.pending_inline_anchor = None;
         self.scroll_offset = 0;
         self.follow_mode = false;
         let range = self.visible_entry_range();
@@ -503,6 +514,7 @@ impl ScrollbackState {
     }
 
     pub fn goto_bottom(&mut self) {
+        self.pending_inline_anchor = None;
         self.release_pin_reserve();
         let max_offset = self
             .total_height
@@ -684,7 +696,10 @@ impl ScrollbackState {
 
         // Check if entry fits in viewport content area
         let content_height = self.viewport_height.saturating_sub(header_height);
-        let entry_fits = entry_height <= content_height;
+        let entry_fits = entry_height <= usize::from(content_height);
+        if !entry_fits && self.entry_overlaps_viewport(selected_idx)
+            && self.entry(selected_idx).is_some_and(|entry| entry.inline_request_width().is_some())
+        { return; }
 
         let old_scroll = self.scroll_offset;
 
@@ -850,6 +865,7 @@ impl ScrollbackState {
     /// Unlike ensure_selected_visible (which only scrolls if entry is outside viewport), this always scrolls to position the entry at the top.
     /// Used for 'l' (next turn) navigation where we want the prompt at the very top.
     pub fn scroll_to_entry_top(&mut self, entry_idx: usize) {
+        self.pending_inline_anchor = None;
         let Some(scroll) = self.entry_top_scroll_offset(entry_idx) else {
             return;
         };
@@ -888,6 +904,7 @@ impl ScrollbackState {
     }
 
     pub fn scroll_to_entry_center(&mut self, entry_idx: usize) {
+        self.pending_inline_anchor = None;
         if self.entries.is_empty() || self.viewport_height == 0 || self.last_width == 0 {
             return;
         }
@@ -925,6 +942,7 @@ impl ScrollbackState {
     /// Select entry `entry_idx` and reveal it: expand a fold and un-truncate its group so it is no longer hidden.
     /// Wrapped or tall entries thus land the match on screen instead of scrolling it past the viewport.
     pub fn reveal_entry_line(&mut self, entry_idx: usize, line_in_entry: usize) {
+        self.pending_inline_anchor = None;
         if entry_idx >= self.entries.len() {
             return;
         }
@@ -994,7 +1012,7 @@ impl ScrollbackState {
             .layout_cache
             .as_ref()
             .and_then(|cache| cache.entries.get(entry_idx))
-            .map_or(0, |info| u16::from(info.is_expanded_verb_header()));
+            .map_or(0, |info| usize::from(info.is_expanded_verb_header()));
         let row_offset = self
             .rendered_row_offset_within_entry(entry_idx, line_in_entry)
             .saturating_add(header_rows)
@@ -1013,9 +1031,9 @@ impl ScrollbackState {
     /// Rendered-row offset of `line_in_entry` within entry `entry_idx` at the current layout width.
     /// Maps the logical line the search index reports through the entry's word-wrapped output to the row actually painted.
     /// Reveal thus scrolls to where the match is rather than to an unwrapped estimate.
-    fn rendered_row_offset_within_entry(&self, entry_idx: usize, line_in_entry: usize) -> u16 {
+    fn rendered_row_offset_within_entry(&self, entry_idx: usize, line_in_entry: usize) -> usize {
         if self.last_width == 0 {
-            return u16::try_from(line_in_entry).unwrap_or(u16::MAX);
+            return line_in_entry;
         }
         let Some((_, entry)) = self.entries.get_index(entry_idx) else {
             return 0;

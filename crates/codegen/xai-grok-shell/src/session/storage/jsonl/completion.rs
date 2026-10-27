@@ -5,6 +5,8 @@ mod tests;
 use super::*;
 #[path = "notification_projection.rs"]
 mod notification_projection;
+#[path = "receipt_source.rs"]
+mod receipt_source;
 use crate::session::completion_delivery::{CompletionMutation, SubagentCompletionEvent};
 use crate::session::storage::summary_write::{SummaryPatch, apply_patch_locked};
 use xai_chat_state::{
@@ -309,32 +311,7 @@ impl JsonlStorageAdapter {
     }
 
     fn completion_receipts(path: &Path) -> io::Result<Vec<CompletionReceipt>> {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
-        };
-        let mut receipts = Vec::new();
-        for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-            if !line.ends_with(b"\n") {
-                break;
-            }
-            if line.trim_ascii().is_empty() {
-                continue;
-            }
-            let value: serde_json::Value =
-                serde_json::from_slice(line).map_err(io::Error::other)?;
-            if value.get("_notification_batch").is_some() {
-                let projection: xai_chat_state::input_projection::NotificationProjection = serde_json::from_value(value)
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                receipts.extend(projection.receipts);
-            } else if value.get("_subagent_completion").is_some() {
-                let projection: CompletionProjection = serde_json::from_value(value)
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                receipts.extend(projection.receipts().cloned());
-            }
-        }
-        Ok(receipts)
+        Ok(Self::projection_receipts(&Self::read_completion_projections(path)?))
     }
 
     pub(super) fn read_completion_state_sync(
@@ -405,7 +382,8 @@ impl JsonlStorageAdapter {
         let mut summary = self
             .read_summary_sync(info)
             .map_err(StrictAppendError::NotCommitted)?;
-        let receipts = Self::completion_receipts(&path).map_err(StrictAppendError::NotCommitted)?;
+        let retained_projections = Self::read_completion_projections(&path).map_err(StrictAppendError::NotCommitted)?;
+        let receipts = Self::projection_receipts(&retained_projections);
         if matches!(projection.item, ConversationItem::User(_)) && projection.receipts().any(|receipt| {
             summary.completion_delivery.obligations.iter().any(|obligation| matches!(obligation,
                 crate::session::completion_delivery::CompletionObligation::Suppressed { id, .. } if id == &receipt.completion))
@@ -553,9 +531,10 @@ impl JsonlStorageAdapter {
             let history = self
                 .read_chat_history_sync(path.clone(), CHAT_FORMAT_VERSION)
                 .map_err(StrictAppendError::Indeterminate)?;
+            let sources = Self::retained_completion_sources(&retained_projections, projection.receipt_identity());
             match &continuation {
-                Some(_) => CompletionProjectionAck::Continue { history },
-                None => CompletionProjectionAck::AlreadyPresent { history },
+                Some(_) => CompletionProjectionAck::Continue { history, sources },
+                None => CompletionProjectionAck::AlreadyPresent { history, sources },
             }
         } else {
             let mut line = serde_json::to_vec(projection).map_err(|error| {

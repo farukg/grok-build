@@ -4909,6 +4909,12 @@ impl AppView {
                                     dash_upgrade_cta,
                                     self.credit_balance.as_ref(),
                                 );
+                                let peek_output_owner = dashboard.peek_viewport.as_ref().and_then(|lease| match &lease.row {
+                                    crate::views::dashboard::DashboardRowId::TopLevel(id) => Some(*id),
+                                    crate::views::dashboard::DashboardRowId::Roster { .. }
+                                    | crate::views::dashboard::DashboardRowId::Workspace { .. } => None,
+                                });
+                                if let Some(owner) = peek_output_owner { agents.prepare_inline_output(owner); }
                                 let (popup_cursor, popup_post_flush, drawn_popup_agent) =
                                     if let Some(agent_id) = dashboard.attached_agent {
                                         let theme = crate::theme::Theme::current();

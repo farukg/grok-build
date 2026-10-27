@@ -87,6 +87,16 @@ impl SamplerHandle {
         });
     }
 
+    pub async fn preview_request(
+        &self, request: ConversationRequest,
+    ) -> Result<crate::request_preview::NativePreview, crate::request_preview::NativePreviewFailure> {
+        use crate::request_preview::NativePreviewFailure;
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(SamplerCommand::Preview { request: Box::new(request), reply })
+            .map_err(|_| NativePreviewFailure::MailboxClosed)?;
+        response.await.map_err(|_| NativePreviewFailure::ReplyLost)?
+    }
+
     /// No-op if the request id is unknown (already finished or never submitted).
     pub fn cancel(&self, request_id: RequestId) {
         let _ = self.cmd_tx.send(SamplerCommand::Cancel { request_id });

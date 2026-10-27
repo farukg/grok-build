@@ -11,7 +11,7 @@ use crate::scrollback::types::{
 };
 use crate::theme::Theme;
 
-const EXECUTE_STDOUT_RANGE_BASE: u16 = 1;
+const EXECUTE_STDOUT_RANGE_BASE: usize = 1;
 
 /// Execute tool call: runs a shell command.
 #[derive(Debug, Clone)]

@@ -63,7 +63,7 @@ async fn multi_result_commit_loss_recovers_one_input_and_one_continuation_for_th
         "not another model input".into(),
     );
     resume.receipt.parent_task = new.parent_task.clone();
-    let CompletionProjectionAck::Continue { history } = storage
+    let CompletionProjectionAck::Continue { history, .. } = storage
         .append_completion_commit_aware(&info, &resume, &new)
         .await
         .unwrap()

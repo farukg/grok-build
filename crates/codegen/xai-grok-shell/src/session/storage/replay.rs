@@ -5,7 +5,7 @@
 //! - Production child/fork replay streams one typed ACP update at a time ([`stream_replay_updates_at`]).
 //!   [`load_updates_for_replay_at`] stays a typed materialize-all reference for tests.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -84,7 +84,6 @@ pub enum ReplayEmission {
 /// One update forwarded by the streaming child replay.
 /// The stream carries ACP transcript updates plus persisted xAI child events (compaction, retry, memory lifecycle) in file order.
 /// The file order lets a rebuilt view keep its non-ACP markers.
-#[derive(Debug)]
 pub enum ReplayedUpdate {
     /// The second field is the persisted line's `_meta` (original `agentTimestampMs`/`turnStartMs`).
     /// That is how rebuilt entries keep their run-time timestamps.
@@ -93,17 +92,26 @@ pub enum ReplayedUpdate {
     Xai(XaiUpdate, Option<serde_json::Value>),
 }
 
+impl std::fmt::Debug for ReplayedUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Acp(_, _) => "ReplayedUpdate::Acp",
+            Self::Xai(_, _) => "ReplayedUpdate::Xai",
+        })
+    }
+}
+
 /// Collapses a ToolCall and its ToolCallUpdates into one ToolCall during replay.
 /// Parent forward never flushes leftovers (cursor/`_meta.eventId` contract).
 /// Child stream EOF calls [`Self::take_pending`] so start-only tools still hydrate.
 pub(crate) struct ReplayToolCollapser {
-    pending: HashMap<acp::ToolCallId, acp::ToolCall>,
+    pending: BTreeMap<std::sync::Arc<str>, acp::ToolCall>,
 }
 
 impl ReplayToolCollapser {
     pub(crate) fn new() -> Self {
         Self {
-            pending: HashMap::new(),
+            pending: BTreeMap::new(),
         }
     }
 
@@ -118,19 +126,19 @@ impl ReplayToolCollapser {
                 ) {
                     return Some(acp::SessionUpdate::ToolCall(tc));
                 }
-                self.pending.insert(tc.tool_call_id.clone(), tc);
+                self.pending.insert(tc.tool_call_id.0.clone(), tc);
                 None
             }
             acp::SessionUpdate::ToolCallUpdate(mut u) => match u.fields.status {
                 Some(acp::ToolCallStatus::Completed) | Some(acp::ToolCallStatus::Failed) => {
-                    if let Some(mut base) = self.pending.remove(&u.tool_call_id) {
+                    if let Some(mut base) = self.pending.remove(&u.tool_call_id.0) {
                         base.update(std::mem::take(&mut u.fields));
                         return Some(acp::SessionUpdate::ToolCall(base));
                     }
                     Some(acp::SessionUpdate::ToolCallUpdate(u))
                 }
                 None => {
-                    if let Some(base) = self.pending.get_mut(&u.tool_call_id) {
+                    if let Some(base) = self.pending.get_mut(&u.tool_call_id.0) {
                         base.update(std::mem::take(&mut u.fields));
                     }
                     None
@@ -146,6 +154,10 @@ impl ReplayToolCollapser {
         std::mem::take(&mut self.pending)
             .into_values()
             .map(acp::SessionUpdate::ToolCall)
+    }
+
+    fn pop_pending(&mut self) -> Option<acp::SessionUpdate> {
+        self.pending.pop_first().map(|(_, call)| acp::SessionUpdate::ToolCall(call))
     }
 
     #[cfg(test)]
@@ -312,20 +324,13 @@ pub fn stream_replay_updates_at_hinted<F: FnMut(ReplayedUpdate)>(
     let mut collapser = ReplayToolCollapser::new();
     let mut forwarded = false;
     for line in live {
-        if line_is_dropped_on_replay(line) {
-            continue;
-        }
-        match SessionUpdateEnvelope::from_str(line) {
-            Ok(SessionUpdate::Acp(notif)) => {
-                let notif = *notif;
-                let update = strip_context_wrappers(notif.update);
-                if let Some(update) = collapser.push(update) {
-                    forwarded = true;
-                    f(ReplayedUpdate::Acp(update, notif.meta));
-                }
+        if let Some(update) = replay_line(line, &mut collapser, ReplayCorruptionPolicy::SkipMalformed)
+            .map_err(io::Error::other)?
+        {
+            if matches!(&update, ReplayedUpdate::Acp(_, _)) {
+                forwarded = true;
             }
-            Ok(SessionUpdate::Xai(notif)) => f(ReplayedUpdate::Xai(notif.update, notif.meta)),
-            Err(e) => tracing::debug!(error = %e, "skipping unparseable replay line"),
+            f(update);
         }
     }
     for update in collapser.take_pending() {
@@ -443,6 +448,28 @@ pub(crate) fn line_is_dropped_on_replay(line: &str) -> bool {
     line_is_available_commands_update(line) || line_is_in_progress_tool_call_update(line)
 }
 
+fn replay_line(
+    line: &str,
+    tools: &mut ReplayToolCollapser,
+    corruption: ReplayCorruptionPolicy,
+) -> Result<Option<ReplayedUpdate>, PassiveReplayError> {
+    if line_is_dropped_on_replay(line) {
+        return Ok(None);
+    }
+    match SessionUpdateEnvelope::from_str(line) {
+        Ok(SessionUpdate::Acp(notif)) => {
+            let notif = *notif;
+            Ok(tools.push(strip_context_wrappers(notif.update))
+                .map(|update| ReplayedUpdate::Acp(update, notif.meta)))
+        }
+        Ok(SessionUpdate::Xai(notif)) => Ok(Some(ReplayedUpdate::Xai(notif.update, notif.meta))),
+        Err(_) => match corruption {
+            ReplayCorruptionPolicy::RejectMalformed => Err(PassiveReplayError::MalformedRecord),
+            ReplayCorruptionPolicy::SkipMalformed => Ok(None),
+        },
+    }
+}
+
 /// Extract `_meta.totalTokens` from a persisted update line without allocating a `serde_json::Value`.
 fn line_total_tokens(line: &str) -> Option<u64> {
     if !line.contains(TOTAL_TOKENS_KEY) {
@@ -508,23 +535,21 @@ pub fn prepare_replay_lines<'a>(contents: &'a str, cursor: Option<&str>) -> Prep
         .find_map(|l| line_total_tokens(l))
         .unwrap_or(0);
 
-    let cursor_pos = cursor
-        .and_then(|id| filtered.iter().rposition(|l| line_has_event_id(l, id)))
-        .filter(|&pos| {
-            let bounded = filtered
-                .get(pos + 1..)
-                .unwrap_or(&[])
-                .iter()
-                .all(|l| line_is_dropped_on_replay(l) || line_event_id(l).is_some());
-            if !bounded {
-                tracing::warn!(
-                    "replay: post-cursor tail contains eventId-less lines; full replay instead"
-                );
-            }
-            bounded
-        });
-    let mark_replay = cursor_pos.is_none();
-    let start = cursor_pos.map_or(0, |pos| pos + 1);
+    let mut selection = cursor
+        .and_then(|id| filtered.iter().rposition(|line| line_has_event_id(line, id)))
+        .map_or(ReplaySelection::NotFound, |position| ReplaySelection::After { next: position + 1 });
+    if let ReplaySelection::After { next } = selection
+        && let Some(cursor) = cursor
+    {
+        for (index, line) in filtered.iter().enumerate().skip(next) {
+            selection.observe(line, index, cursor);
+        }
+    }
+    if matches!(selection, ReplaySelection::Unbounded) {
+        tracing::warn!("replay: post-cursor tail contains eventId-less lines; full replay instead");
+    }
+    let (start, replay_start) = selection.resolve();
+    let mark_replay = matches!(replay_start, ReplayStart::Full);
 
     let mut lines: Vec<&str> = Vec::with_capacity(filtered.len().saturating_sub(start));
     let mut total_live = 0usize;
@@ -557,4 +582,630 @@ pub(crate) fn filter_delta_replay_lines(contents: &str) -> Vec<&str> {
         .filter(|l| !l.trim().is_empty() && !line_is_dropped_on_replay(l))
         .collect();
     filter_rewind_lines(live)
+}
+
+/// All limits are caller-selected, nonzero bounds. A record's serde/merge work is
+/// indivisible and may cost up to `max_record_bytes`; IO and marker visits yield.
+#[derive(Clone, Copy, Debug)]
+pub struct PassiveReplayLimits {
+    pub max_record_bytes: std::num::NonZeroUsize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ReplayBudget {
+    pub bytes: std::num::NonZeroUsize,
+    /// Includes retention visits, tombstones, record parsing and phase transitions.
+    pub records: std::num::NonZeroUsize,
+    pub emits: std::num::NonZeroUsize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ReplayCorruptionPolicy {
+    RejectMalformed,
+    /// Matches established replay: malformed JSON/notifications are not forwarded.
+    SkipMalformed,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ReplayFinalRecordPolicy {
+    /// Like `str::lines`, parse an unterminated final record (including valid JSON).
+    Parse,
+    /// The captured EOF is a cut; an unterminated suffix is not a committed record.
+    IgnoreUnterminated,
+}
+
+/// No paths, transcript data or serde diagnostics escape this boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassiveReplayError {
+    Io(io::ErrorKind),
+    SnapshotChanged,
+    RecordTooLarge,
+    InvalidUtf8,
+    MalformedRecord,
+    NotFinished,
+    MissingOrAmbiguous,
+    Failed,
+}
+
+impl From<io::Error> for PassiveReplayError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error.kind())
+    }
+}
+
+impl std::fmt::Display for PassiveReplayError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "passive replay: {self:?}")
+    }
+}
+
+impl std::error::Error for PassiveReplayError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassiveReplayPhase {
+    Planning,
+    Selecting,
+    Emitting,
+    Flushing,
+    Verifying,
+    Finishing,
+    Finished,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayCompletion {
+    pub emission: ReplayEmission,
+    pub start: ReplayStart,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayStart {
+    Full,
+    AfterCursor,
+}
+
+pub struct PassiveReplayBatch {
+    pub updates: Vec<ReplayedUpdate>,
+    pub phase: PassiveReplayPhase,
+    /// IO bytes plus bytes consumed by the incremental line scanner.
+    pub bytes_used: usize,
+    pub records_used: usize,
+}
+
+impl std::fmt::Debug for PassiveReplayBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PassiveReplayBatch")
+            .field("updates", &self.updates.len())
+            .field("phase", &self.phase)
+            .field("bytes_used", &self.bytes_used)
+            .field("records_used", &self.records_used)
+            .finish()
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct ReplayFileEpoch {
+    length: u64,
+    modified: std::time::SystemTime,
+    #[cfg(unix)]
+    identity: (u64, u64),
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+impl ReplayFileEpoch {
+    fn read(file: &std::fs::File) -> Result<Self, PassiveReplayError> {
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            length: metadata.len(),
+            modified: metadata.modified()?,
+            #[cfg(unix)]
+            identity: (metadata.dev(), metadata.ino()),
+            #[cfg(unix)]
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReplayRecord {
+    offset: u64,
+    length: u64,
+    digest: blake3::Hash,
+    observation: ReplayCursorObservation,
+}
+
+const REPLAY_IO_CHUNK_BYTES: usize = 8192;
+
+struct ReplayLineReader {
+    end: u64,
+    read_at: u64,
+    line_at: u64,
+    buffer: [u8; REPLAY_IO_CHUNK_BYTES],
+    next: usize,
+    filled: usize,
+    line: Vec<u8>,
+    digest: blake3::Hasher,
+}
+
+enum ReplayLineProgress {
+    Yield,
+    Record(ReplayRecord, Vec<u8>),
+    End,
+}
+
+impl ReplayLineReader {
+    fn new(start: u64, end: u64) -> Self {
+        Self { end, read_at: start, line_at: start, buffer: [0; REPLAY_IO_CHUNK_BYTES], next: 0, filled: 0, line: Vec::new(), digest: blake3::Hasher::new() }
+    }
+
+    fn next(
+        &mut self,
+        file: &mut std::fs::File,
+        bytes: &mut usize,
+        limit: usize,
+        final_record: ReplayFinalRecordPolicy,
+    ) -> Result<ReplayLineProgress, PassiveReplayError> {
+        use std::io::{Read, Seek};
+        loop {
+            if self.next < self.filled {
+                if *bytes == 0 {
+                    return Ok(ReplayLineProgress::Yield);
+                }
+                let byte = self.buffer[self.next];
+                self.next += 1;
+                *bytes -= 1;
+                if byte == b'\n' {
+                    let offset = self.line_at;
+                    let consumed = u64::try_from(self.filled - self.next).map_err(|_| PassiveReplayError::RecordTooLarge)?;
+                    self.line_at = self.read_at - consumed;
+                    return Ok(ReplayLineProgress::Record(
+                        ReplayRecord { offset, length: self.line_at - offset, digest: blake3::hash(&self.line), observation: ReplayCursorObservation::Other },
+                        std::mem::take(&mut self.line),
+                    ));
+                }
+                if self.line.len() == limit {
+                    return Err(PassiveReplayError::RecordTooLarge);
+                }
+                self.line.push(byte);
+            } else if self.read_at == self.end {
+                if self.line.is_empty() {
+                    return Ok(ReplayLineProgress::End);
+                }
+                return match final_record {
+                    ReplayFinalRecordPolicy::Parse => Ok(ReplayLineProgress::Record(
+                        ReplayRecord { offset: self.line_at, length: self.end - self.line_at, digest: blake3::hash(&self.line), observation: ReplayCursorObservation::Other },
+                        std::mem::take(&mut self.line),
+                    )),
+                    ReplayFinalRecordPolicy::IgnoreUnterminated => {
+                        self.line.clear();
+                        Ok(ReplayLineProgress::End)
+                    }
+                };
+            } else {
+                if *bytes == 0 {
+                    return Ok(ReplayLineProgress::Yield);
+                }
+                let chunk = u64::try_from(self.buffer.len()).map_err(|_| PassiveReplayError::RecordTooLarge)?;
+                let available = usize::try_from((self.end - self.read_at).min(chunk))
+                    .map_err(|_| PassiveReplayError::RecordTooLarge)?;
+                let count = available.min(*bytes);
+                file.seek(io::SeekFrom::Start(self.read_at))?;
+                let count = file.read(&mut self.buffer[..count])?;
+                if count == 0 {
+                    return Err(PassiveReplayError::SnapshotChanged);
+                }
+                self.digest.update(&self.buffer[..count]);
+                self.read_at += u64::try_from(count).map_err(|_| PassiveReplayError::RecordTooLarge)?;
+                *bytes -= count;
+                self.next = 0;
+                self.filled = count;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+enum ReplaySelection {
+    #[default]
+    NotFound,
+    After { next: usize },
+    Unbounded,
+}
+
+#[derive(Clone, Copy)]
+enum ReplayCursorObservation {
+    Match,
+    Unbounded,
+    Other,
+}
+
+impl ReplayCursorObservation {
+    fn from_line(line: &str, cursor: &str) -> Self {
+        if line_has_event_id(line, cursor) {
+            Self::Match
+        } else if !line_is_dropped_on_replay(line) && line_event_id(line).is_none() {
+            Self::Unbounded
+        } else {
+            Self::Other
+        }
+    }
+}
+
+impl ReplaySelection {
+    fn observe(&mut self, line: &str, index: usize, cursor: &str) {
+        self.observe_record(ReplayCursorObservation::from_line(line, cursor), index);
+    }
+
+    fn observe_record(&mut self, observation: ReplayCursorObservation, index: usize) {
+        match observation {
+            ReplayCursorObservation::Match => *self = Self::After { next: index + 1 },
+            ReplayCursorObservation::Unbounded => match self {
+                Self::NotFound => {}
+                Self::After { .. } | Self::Unbounded => *self = Self::Unbounded,
+            },
+            ReplayCursorObservation::Other => {}
+        }
+    }
+
+    fn resolve(self) -> (usize, ReplayStart) {
+        match self {
+            Self::NotFound | Self::Unbounded => (0, ReplayStart::Full),
+            Self::After { next } => (next, ReplayStart::AfterCursor),
+        }
+    }
+}
+
+struct ReplayPrefixProof {
+    end: u64,
+    digest: blake3::Hash,
+}
+
+struct PassiveEmission {
+    proof: ReplayPrefixProof,
+    tools: ReplayToolCollapser,
+    completion: ReplayCompletion,
+}
+
+enum PassiveState {
+    Planning(Box<ReplayLineReader>),
+    Selecting { next: usize, selection: ReplaySelection, proof: ReplayPrefixProof },
+    Emitting { next: usize, emission: PassiveEmission },
+    EmitRead { index: usize, reader: Box<ReplayLineReader>, emission: PassiveEmission },
+    Flushing(PassiveEmission),
+    Verifying { reader: Box<ReplayLineReader>, expected: blake3::Hash, completion: ReplayCompletion },
+    Finishing(ReplayCompletion),
+    Finished(ReplayCompletion),
+    Faulted { error: PassiveReplayError, _suspended: Box<PassiveState> },
+    Failed,
+}
+
+/// Storage-only, Send-owned replay. It holds an open read-only descriptor and an
+/// offset/tombstone plan, not another transcript. No callback or runtime is started.
+///
+/// The descriptor's EOF at open is a fixed fence. Storage's same-inode writer
+/// appends (including torn-tail healing); full rewrites atomically replace the inode.
+/// Growth never extends the fence or restarts progress. Observed shrink or same-size
+/// metadata changes fail. Planning hashes every fenced byte; emission checks each
+/// retained record and a final budgeted pass verifies the entire prefix, including
+/// removed records and ignored tails. Growth cannot waive these integrity checks.
+/// This is not an atomic filesystem snapshot: arbitrary in-place races during or
+/// after verification are outside the append-only storage contract and may escape
+/// observation. Rename keeps the opened inode rather than retargeting the replay.
+/// Stage batches until `finish` succeeds; an error invalidates the entire replay.
+/// Dropping cancels without emitting; cancellation/fault destruction is O(plan),
+/// so dispose of abandoned cursors off-UI. No Pager production caller exists yet.
+/// Planning, retained emission and integrity verification cost 2–3 passes' IO;
+/// cursor selection uses stored observations rather than rereading payloads.
+/// Syscalls, vector growth and one bounded record's serde/hash/merge are indivisible.
+pub struct PassiveReplayCursor {
+    file: std::fs::File,
+    epoch: ReplayFileEpoch,
+    limits: PassiveReplayLimits,
+    corruption: ReplayCorruptionPolicy,
+    final_record: ReplayFinalRecordPolicy,
+    cursor: Option<String>,
+    retained: super::RewindSurvivors<ReplayRecord>,
+    state: PassiveState,
+}
+
+impl PassiveReplayCursor {
+    /// Validated storage lookup, including relocation when requested by `hint`.
+    /// Run open off-UI: relocation may scan the sessions root. No lookup occurs in
+    /// `next_batch`. The shared resolver intentionally conflates missing/ambiguous.
+    pub fn open_at(
+        session_id: &str,
+        grok_home: &Path,
+        hint: ReplayPathHint<'_>,
+        limits: PassiveReplayLimits,
+        corruption: ReplayCorruptionPolicy,
+        final_record: ReplayFinalRecordPolicy,
+        cursor: Option<String>,
+    ) -> Result<Self, PassiveReplayError> {
+        if !is_safe_session_id_component(session_id) || session_id.contains('\\') {
+            return Err(PassiveReplayError::MissingOrAmbiguous);
+        }
+        let path = resolve_replay_updates_path(session_id, grok_home, hint)?
+            .ok_or(PassiveReplayError::MissingOrAmbiguous)?;
+        Self::open(&path, limits, corruption, final_record, cursor)
+    }
+
+    /// `path` must come from the existing validated storage resolver. This performs
+    /// only open/stat; keep opening and eventual disposal off-UI.
+    pub(crate) fn open(
+        path: &Path,
+        limits: PassiveReplayLimits,
+        corruption: ReplayCorruptionPolicy,
+        final_record: ReplayFinalRecordPolicy,
+        cursor: Option<String>,
+    ) -> Result<Self, PassiveReplayError> {
+        let file = std::fs::File::open(path)?;
+        let epoch = ReplayFileEpoch::read(&file)?;
+        let end = epoch.length;
+        Ok(Self {
+            file, epoch, limits, corruption, final_record, cursor,
+            retained: super::RewindSurvivors::new(),
+            state: PassiveState::Planning(Box::new(ReplayLineReader::new(0, end))),
+        })
+    }
+
+    pub fn phase(&self) -> PassiveReplayPhase {
+        match &self.state {
+            PassiveState::Planning(_) => PassiveReplayPhase::Planning,
+            PassiveState::Selecting { .. } => PassiveReplayPhase::Selecting,
+            PassiveState::Emitting { .. } | PassiveState::EmitRead { .. } => PassiveReplayPhase::Emitting,
+            PassiveState::Flushing(_) => PassiveReplayPhase::Flushing,
+            PassiveState::Verifying { .. } => PassiveReplayPhase::Verifying,
+            PassiveState::Finishing(_) => PassiveReplayPhase::Finishing,
+            PassiveState::Finished(_) => PassiveReplayPhase::Finished,
+            PassiveState::Faulted { .. } | PassiveState::Failed => PassiveReplayPhase::Failed,
+        }
+    }
+
+    fn check_epoch(&self) -> Result<ReplayFileEpoch, PassiveReplayError> {
+        let current = ReplayFileEpoch::read(&self.file)?;
+        #[cfg(unix)]
+        if current.identity != self.epoch.identity {
+            return Err(PassiveReplayError::SnapshotChanged);
+        }
+        if current.length < self.epoch.length
+            || (current.length == self.epoch.length && current != self.epoch)
+        {
+            return Err(PassiveReplayError::SnapshotChanged);
+        }
+        Ok(current)
+    }
+
+    /// Budgets bound IO/scanning bytes, positional/record visits and emitted items,
+    /// not wall time. Two metadata reads and bounded record serde are indivisible.
+    pub fn next_batch(&mut self, budget: ReplayBudget) -> Result<PassiveReplayBatch, PassiveReplayError> {
+        match &self.state {
+            PassiveState::Faulted { error, .. } => return Err(*error),
+            PassiveState::Failed => return Err(PassiveReplayError::Failed),
+            PassiveState::Planning(_) | PassiveState::Selecting { .. }
+            | PassiveState::Emitting { .. } | PassiveState::EmitRead { .. } | PassiveState::Flushing(_)
+            | PassiveState::Verifying { .. } | PassiveState::Finishing(_) | PassiveState::Finished(_) => {}
+        }
+        let result = self.advance_batch(budget);
+        if let Err(error) = &result {
+            let suspended = std::mem::replace(&mut self.state, PassiveState::Failed);
+            self.state = PassiveState::Faulted { error: *error, _suspended: Box::new(suspended) };
+        }
+        result
+    }
+
+    fn advance_batch(&mut self, budget: ReplayBudget) -> Result<PassiveReplayBatch, PassiveReplayError> {
+        self.epoch = self.check_epoch()?;
+        let mut bytes = budget.bytes.get();
+        let mut records = budget.records.get();
+        let mut emits = budget.emits.get();
+        let mut updates = Vec::new();
+        while records > 0 && emits > 0 {
+            let state = std::mem::replace(&mut self.state, PassiveState::Failed);
+            self.state = match state {
+                PassiveState::Planning(mut reader) => {
+                    if !self.retained.is_idle() {
+                        self.retained.advance();
+                        records -= 1;
+                        PassiveState::Planning(reader)
+                    } else {
+                        match reader.next(&mut self.file, &mut bytes, self.limits.max_record_bytes.get(), self.final_record)? {
+                            ReplayLineProgress::Yield => {
+                                self.state = PassiveState::Planning(reader);
+                                break;
+                            }
+                            ReplayLineProgress::End => {
+                                records -= 1;
+                                let proof = ReplayPrefixProof { end: reader.end, digest: reader.digest.finalize() };
+                                if self.cursor.is_some() {
+                                    PassiveState::Selecting { next: 0, selection: ReplaySelection::default(), proof }
+                                } else {
+                                    PassiveState::Emitting {
+                                        next: 0,
+                                        emission: PassiveEmission {
+                                            proof,
+                                            tools: ReplayToolCollapser::new(),
+                                            completion: ReplayCompletion { emission: ReplayEmission::Empty, start: ReplayStart::Full },
+                                        },
+                                    }
+                                }
+                            }
+                            ReplayLineProgress::Record(mut record, raw) => {
+                                records -= 1;
+                                let line = std::str::from_utf8(&raw).map_err(|_| PassiveReplayError::InvalidUtf8)?;
+                                if !line.trim().is_empty() {
+                                    if matches!(self.corruption, ReplayCorruptionPolicy::RejectMalformed)
+                                        && SessionUpdateEnvelope::from_str(line).is_err()
+                                    {
+                                        return Err(PassiveReplayError::MalformedRecord);
+                                    }
+                                    if let Some(cursor) = self.cursor.as_deref() {
+                                        record.observation = ReplayCursorObservation::from_line(line, cursor);
+                                    }
+                                    self.retained.push(record, super::rewind_step_for_line(line));
+                                }
+                                PassiveState::Planning(reader)
+                            }
+                        }
+                    }
+                }
+                PassiveState::Selecting { next, mut selection, proof } => {
+                    records -= 1;
+                    match self.retained.items.get(next) {
+                        Some(super::Survivor::Removed) => PassiveState::Selecting { next: next + 1, selection, proof },
+                        Some(super::Survivor::Kept(record)) => {
+                            selection.observe_record(record.observation, next);
+                            PassiveState::Selecting { next: next + 1, selection, proof }
+                        }
+                        None => {
+                            let (next, start) = selection.resolve();
+                            PassiveState::Emitting {
+                                next,
+                                emission: PassiveEmission {
+                                    proof,
+                                    tools: ReplayToolCollapser::new(),
+                                    completion: ReplayCompletion { emission: ReplayEmission::Empty, start },
+                                },
+                            }
+                        }
+                    }
+                }
+                PassiveState::Emitting { next, emission } => {
+                    records -= 1;
+                    match self.retained.items.get(next) {
+                        Some(super::Survivor::Removed) => PassiveState::Emitting { next: next + 1, emission },
+                        Some(super::Survivor::Kept(record)) => PassiveState::EmitRead {
+                            index: next, reader: Box::new(ReplayLineReader::new(record.offset, record.offset + record.length)), emission,
+                        },
+                        None => PassiveState::Flushing(emission),
+                    }
+                }
+                PassiveState::EmitRead { index, mut reader, mut emission } => {
+                    let progress = match reader.next(&mut self.file, &mut bytes, self.limits.max_record_bytes.get(), ReplayFinalRecordPolicy::Parse) {
+                        Ok(progress) => progress,
+                        Err(error) => {
+                            self.state = PassiveState::EmitRead { index, reader, emission };
+                            return Err(error);
+                        }
+                    };
+                    match progress {
+                        ReplayLineProgress::Yield => {
+                            self.state = PassiveState::EmitRead { index, reader, emission };
+                            break;
+                        }
+                        ReplayLineProgress::End => {
+                            self.state = PassiveState::EmitRead { index, reader, emission };
+                            return Err(PassiveReplayError::SnapshotChanged);
+                        },
+                        ReplayLineProgress::Record(read_record, raw) => {
+                            records -= 1;
+                            if let Some(super::Survivor::Kept(record)) = self.retained.items.get(index) {
+                                if read_record.digest != record.digest {
+                                    self.state = PassiveState::EmitRead { index, reader, emission };
+                                    return Err(PassiveReplayError::SnapshotChanged);
+                                }
+                            }
+                            let line = match std::str::from_utf8(&raw) {
+                                Ok(line) => line,
+                                Err(_) => {
+                                    self.state = PassiveState::EmitRead { index, reader, emission };
+                                    return Err(PassiveReplayError::InvalidUtf8);
+                                }
+                            };
+                            match replay_line(line, &mut emission.tools, self.corruption) {
+                                Ok(Some(update)) => {
+                                    if matches!(&update, ReplayedUpdate::Acp(_, _)) {
+                                        emission.completion.emission = ReplayEmission::Emitted;
+                                    }
+                                    updates.push(update);
+                                    emits -= 1;
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    self.state = PassiveState::EmitRead { index, reader, emission };
+                                    return Err(error);
+                                }
+                            }
+                            PassiveState::Emitting { next: index + 1, emission }
+                        }
+                    }
+                }
+                PassiveState::Flushing(mut emission) => {
+                    records -= 1;
+                    if let Some(update) = emission.tools.pop_pending() {
+                        emission.completion.emission = ReplayEmission::Emitted;
+                        updates.push(ReplayedUpdate::Acp(update, None));
+                        emits -= 1;
+                        PassiveState::Flushing(emission)
+                    } else {
+                        PassiveState::Verifying {
+                            reader: Box::new(ReplayLineReader::new(0, emission.proof.end)),
+                            expected: emission.proof.digest,
+                            completion: emission.completion,
+                        }
+                    }
+                }
+                PassiveState::Verifying { mut reader, expected, completion } => {
+                    match reader.next(&mut self.file, &mut bytes, self.limits.max_record_bytes.get(), self.final_record)? {
+                        ReplayLineProgress::Yield => {
+                            self.state = PassiveState::Verifying { reader, expected, completion };
+                            break;
+                        }
+                        ReplayLineProgress::Record(_, _) => {
+                            records -= 1;
+                            PassiveState::Verifying { reader, expected, completion }
+                        }
+                        ReplayLineProgress::End => {
+                            records -= 1;
+                            if reader.digest.finalize() != expected {
+                                return Err(PassiveReplayError::SnapshotChanged);
+                            }
+                            PassiveState::Finishing(completion)
+                        }
+                    }
+                }
+                PassiveState::Finishing(completion) => {
+                    records -= 1;
+                    if self.retained.items.pop().is_some()
+                        || self.retained.turns.pop().is_some()
+                        || self.retained.tool_updates.pop().is_some()
+                    {
+                        PassiveState::Finishing(completion)
+                    } else {
+                        PassiveState::Finished(completion)
+                    }
+                }
+                PassiveState::Finished(completion) => {
+                    self.state = PassiveState::Finished(completion);
+                    break;
+                }
+                PassiveState::Faulted { error, _suspended } => {
+                    self.state = PassiveState::Faulted { error, _suspended };
+                    return Err(error);
+                }
+                PassiveState::Failed => return Err(PassiveReplayError::Failed),
+            };
+        }
+        self.epoch = self.check_epoch()?;
+        Ok(PassiveReplayBatch {
+            updates, phase: self.phase(), bytes_used: budget.bytes.get() - bytes,
+            records_used: budget.records.get() - records,
+        })
+    }
+
+    /// A successful finish is the only commit point for staged consumer updates.
+    pub fn finish(&self) -> Result<ReplayCompletion, PassiveReplayError> {
+        self.check_epoch()?;
+        match &self.state {
+            PassiveState::Finished(completion) => Ok(*completion),
+            PassiveState::Faulted { error, .. } => Err(*error),
+            PassiveState::Failed => Err(PassiveReplayError::Failed),
+            PassiveState::Planning(_) | PassiveState::Selecting { .. }
+            | PassiveState::Emitting { .. } | PassiveState::EmitRead { .. } | PassiveState::Flushing(_)
+            | PassiveState::Verifying { .. } | PassiveState::Finishing(_) => Err(PassiveReplayError::NotFinished),
+        }
+    }
 }

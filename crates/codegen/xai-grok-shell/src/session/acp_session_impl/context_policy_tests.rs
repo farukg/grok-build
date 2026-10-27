@@ -71,13 +71,13 @@ async fn sampling_uses_built_policy_even_when_policy_changes_during_publication(
                         SchemaTransport::Native => Some(schema.clone()),
                         SchemaTransport::Tool => None,
                     };
+                    actor.push_system_reminder("publication barrier fixture");
                     let built = actor.chat_state_handle.build_request(tools, Some(
                         "<memory-context>request memory</memory-context>".into(),
                     ), false, None, "c".into(), "r".into()).await.unwrap();
                     assert_eq!(built.context_policy, policy);
                     assert!(!built.injected_records.is_empty());
-                    let mut published = Vec::new();
-                    let prepare = actor.prepare_request_for_sampling(built, native_schema, &mut published);
+                    let prepare = actor.prepare_request_for_sampling(built, native_schema);
                     let change_policy = async {
                         let PersistenceMsg::AppendUpdatesAndAck { respond_to, .. } = persisted.recv().await.unwrap() else {
                             panic!("request publication must await persistence");
@@ -90,7 +90,6 @@ async fn sampling_uses_built_policy_even_when_policy_changes_during_publication(
                         respond_to.send(Ok(())).unwrap();
                     };
                     let (request, ()) = tokio::join!(prepare, change_policy);
-                    let request = request.unwrap();
                     match initial {
                         ContextSwitch::Included => {
                             assert_eq!(request.hosted_tools.len(), 1);

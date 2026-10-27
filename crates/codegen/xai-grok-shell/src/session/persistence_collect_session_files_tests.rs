@@ -241,3 +241,19 @@ fn skips_empty_subdirectories() {
     assert_eq!(files.len(), 1);
     assert_eq!(at(&files, 0).name, "file.txt");
 }
+
+#[test]
+fn private_request_capture_is_never_a_session_upload_or_copy_artifact() {
+    let dir = TempDir::new().unwrap();
+    let captures = dir.path().join(crate::session::storage::request_capture::DIRECTORY);
+    fs::create_dir(&captures).unwrap();
+    fs::write(captures.join("body.raw.json"), b"private local model input").unwrap();
+    fs::write(captures.join("request.json"), b"local-only diagnostic evidence").unwrap();
+    fs::write(dir.path().join("chat_history.jsonl"), b"legitimate history").unwrap();
+    let mut files = Vec::new();
+    collect_session_files_recursive(dir.path(), dir.path(), &mut files);
+    assert_eq!(files.len(), 1);
+    assert_eq!(at(&files, 0).name, "chat_history.jsonl");
+    assert_eq!(at(&files, 0).data, b"legitimate history");
+    assert!(captures.join("body.raw.json").is_file());
+}

@@ -227,7 +227,7 @@ macro_rules! merge_text_chunks {
                             acp::TextContent::new(format!("{}{}", $prev_text.text, $new_text.text))
                                 .meta($prev_text.meta),
                         ))
-                        .meta($prev_chunk_meta),
+                        .meta(crate::session::source_binding::merge_output_meta($prev_chunk_meta, $new_chunk_meta)),
                     ),
                 )
                 .meta(merge_meta($prev_meta, $new_meta)),

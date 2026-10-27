@@ -180,6 +180,8 @@ use session_mode::*;
 mod child_tool_projection;
 #[path = "acp_session_impl/length_salvage.rs"]
 mod length_salvage;
+#[path = "acp_session_impl/request_capture.rs"]
+mod request_capture;
 #[path = "acp_session_impl/sampler_turn.rs"]
 mod sampler_turn;
 use sampler_turn::*;
@@ -250,6 +252,8 @@ mod stop_gate;
 pub use stop_gate::MAX_STOP_HOOK_CONTINUATIONS_PER_TURN;
 #[path = "acp_session_impl/context_policy.rs"]
 mod context_policy;
+#[path = "acp_session_impl/request_preview.rs"]
+mod request_preview;
 #[path = "acp_session_impl/context_snapshot.rs"]
 mod context_snapshot;
 #[path = "acp_session_impl/recap.rs"]

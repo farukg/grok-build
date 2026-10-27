@@ -22,6 +22,11 @@ pub(crate) enum SamplerCommand {
         completion_tx: Option<oneshot::Sender<CollectedSamplingResult>>,
     },
 
+    Preview {
+        request: Box<ConversationRequest>,
+        reply: oneshot::Sender<Result<crate::request_preview::NativePreview, crate::request_preview::NativePreviewFailure>>,
+    },
+
     Cancel {
         request_id: RequestId,
     },

@@ -333,6 +333,8 @@ pub struct UserItem {
 /// Old sessions on disk may still carry a `reasoning` field; serde silently ignores it on read (no `deny_unknown_fields`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantItem {
+    #[serde(skip)]
+    pub output_origin: crate::OutputOrigin,
     #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
     pub source: crate::SourceOccurrence,
     #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
@@ -1493,6 +1495,7 @@ impl ConversationItem {
     /// Create an assistant message
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: Arc::<str>::from(content.into()),
@@ -1508,6 +1511,7 @@ impl ConversationItem {
     /// Callers should push that item to the conversation list separately.
     pub fn assistant_with_model(content: impl Into<String>, model_id: impl Into<String>) -> Self {
         Self::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: Arc::<str>::from(content.into()),
@@ -1521,6 +1525,7 @@ impl ConversationItem {
     /// Create an assistant message that makes tool calls
     pub fn assistant_tool_calls(tool_calls: Vec<ToolCall>) -> Self {
         Self::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: Arc::<str>::from(""),
@@ -3314,6 +3319,7 @@ mod tests {
         let root = "/home/user/project";
 
         let mut items = vec![ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: format!("I'll read the file at {worktree}/src/main.rs").into(),
@@ -3409,6 +3415,7 @@ mod tests {
             ),
             // Assistant with tool calls for the fix
             ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: format!("I'll fix the bug in {worktree}/src/main.rs").into(),
@@ -3499,6 +3506,7 @@ mod tests {
         let mut items = vec![
             ConversationItem::system(format!("Working in {root}.")),
             ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: format!("I previously edited {root}/src/main.rs").into(),

@@ -106,7 +106,7 @@ impl PolicyState {
     }
 }
 
-fn label(category: ContextCategory) -> &'static str {
+pub(crate) fn label(category: ContextCategory) -> &'static str {
     match category {
         ContextCategory::CoreInstructions => "Core instructions",
         ContextCategory::ProjectInstructions => "Project rules",

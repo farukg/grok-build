@@ -43,6 +43,7 @@ pub mod prompt_widget;
 pub mod question_view;
 pub(crate) mod queue_mutation;
 pub mod queue_pane;
+pub mod request_viewer;
 pub mod rewind;
 pub mod row_style;
 pub(crate) mod scheduled_next;

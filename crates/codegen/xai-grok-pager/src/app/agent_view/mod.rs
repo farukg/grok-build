@@ -185,9 +185,10 @@ pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
 #[cfg(test)]
 mod role_tests;
 pub(crate) mod context_removal;
-mod context_sidebar;
+pub(crate) mod context_sidebar;
 #[cfg(test)]
 mod context_sidebar_tests;
+mod request_viewer;
 mod panel_persistence;
 #[cfg(test)]
 pub(crate) mod removal_test_support;
@@ -426,15 +427,12 @@ impl PromptInputMode {
         }
     }
 }
-/// Multi-click state for text-level selection (word/line).
-/// Unlike block-level `last_click` (which tracks by entry_idx), this tracks by (entry_idx, range_id, block_line_idx) to ensure double-click word selection only triggers when clicking the same text region.
+/// Multi-click state for source-bound text selection.
 #[derive(Debug, Clone)]
 pub struct TextClickState {
     pub time: Instant,
-    pub entry_idx: usize,
-    pub range_id: u16,
-    pub block_line_idx: usize,
-    pub col_within_range: u16,
+    pub range_id: crate::scrollback::selection_identity::RangeIdentity,
+    pub position: crate::scrollback::selection_position::SourcePosition,
     pub click_count: u8,
 }
 /// Maximum time (ms) between consecutive clicks to count as a multi-click.
@@ -1278,6 +1276,11 @@ pub struct AgentView {
     /// Fullscreen block viewer. When `Some`, replaces the scrollback area.
     pub(crate) block_viewer: Option<BlockViewerPane>,
     pub(crate) block_viewer_resume: Option<BlockViewerResume>,
+    /// Captured model-request inspector for this view's session. When `Some`, overlays the
+    /// scrollback area and owns input like the block viewer.
+    pub(crate) request_viewer: Option<crate::views::request_viewer::RequestViewerState>,
+    /// Monotonic correlation for the inspector's capture queries.
+    pub(crate) request_snapshot_generation: u64,
     /// Active scrollback search session. When `Some`, vim `/` (or `/find`) is
     /// searching the scrollback. Inert until input wiring opens it.
     pub(crate) scrollback_search: Option<ScrollbackSearchState>,
@@ -2027,6 +2030,7 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         | ActionId::ToggleTasks
         | ActionId::ToggleTimelinePanel
         | ActionId::ToggleContextSidebar
+        | ActionId::ToggleRequestInspector
         | ActionId::EditPromptExternal
         | ActionId::ToggleQueue
         | ActionId::OpenSessions

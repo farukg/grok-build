@@ -14,6 +14,18 @@ static TURNS_ACTIVE: xai_grok_telemetry::activity::ActivityGauge =
 /// Synthetic tool for schema-constrained final answers on backends without native
 /// output constraints (Messages API); intercepted in the loop, never really executed.
 const STRUCTURED_OUTPUT_TOOL: &str = "StructuredOutput";
+pub(super) fn structured_output_tool_spec(schema: serde_json::Value) -> ToolSpec {
+    ToolSpec {
+        name: STRUCTURED_OUTPUT_TOOL.to_string(),
+        description: Some(
+            "Return your final answer as JSON matching the required schema. \
+             Call this exactly once, at the end; do not return the answer as text."
+                .to_string(),
+        ),
+        parameters: schema,
+    }
+}
+
 /// Max times the model may re-call `StructuredOutput` with non-conforming args before the turn ends with the last validation error.
 const STRUCTURED_OUTPUT_MAX_RETRIES: u32 = 3;
 /// Turn-freeze usage drain: bounds a wedged foreground child at turn end; folds normally land in one or two polls because they run before worktree dispose.
@@ -556,6 +568,7 @@ impl SessionActor {
             self.invalidate_side_calls_for_new_prompt();
         }
         self.ensure_session_disk_writable().await?;
+        let mut strict_source_origin = self.strict_input_origin(&input_origin);
         let preprojected_subagent = match input_origin.as_prompt_origin() {
             super::super::PromptOrigin::Delivery {
                 delivery_id,
@@ -601,9 +614,9 @@ impl SessionActor {
                 }
             }
             _ => match self.project_terminal_input(&input_origin, prompt_id, Self::queue_text_from_blocks(&prompt_blocks)).await {
-                Ok(Some(true)) => true,
-                Ok(Some(false)) => return ok_end_turn(0, None),
-                Ok(None) => false,
+                Ok(TerminalInputProjection::Applied { origin }) => { strict_source_origin = Some(origin); true }
+                Ok(TerminalInputProjection::AlreadyPresent { .. }) => return ok_end_turn(0, None),
+                Ok(TerminalInputProjection::NotApplicable) => false,
                 Err(error) => return Err(acp::Error::internal_error().data(format!("terminal completion persistence: {error}"))),
             },
         };
@@ -931,8 +944,18 @@ impl SessionActor {
         });
         let current_prompt_index = self.chat_state_handle.get_prompt_index().await;
         xai_grok_telemetry::session_ctx::begin_prompt_id();
+        let input_source_ref = self.prompt_input_ref(prompt_id);
         let mut chunk_meta = serde_json::Map::new();
         chunk_meta.insert("modelId".into(), serde_json::json!(model_id));
+        if let Some(origin) = strict_source_origin {
+            chunk_meta.insert(crate::session::source_binding::STRICT_ORIGIN_META.into(), serde_json::json!(origin));
+        }
+        if !preprojected_subagent {
+            chunk_meta.insert(
+                crate::session::request_capture::INPUT_SOURCE_META.into(),
+                serde_json::json!(&input_source_ref),
+            );
+        }
         chunk_meta.insert(
             "promptIndex".into(),
             serde_json::json!(current_prompt_index),
@@ -1289,13 +1312,22 @@ impl SessionActor {
                     user_chat.add_image(format!("data:{};base64,{}", image.mime_type, image.data));
                 }
             }
-            if preprojected_subagent
-                || self
-                    .chat_state_handle
-                    .push_user_message_and_ack(user_chat)
-                    .await
-                    .is_some()
-            {
+            use crate::session::request_capture::InputSourceUnknown;
+            let committed = if preprojected_subagent {
+                true
+            } else {
+                let applied = self.chat_state_handle.push_user_message_and_ack(user_chat).await.map_err(|error| {
+                    tracing::error!(session_id = %self.session_info.id, prompt_id, %error, "input append acknowledgement unavailable");
+                    match error {
+                        xai_chat_state::MutationAdmissionError::MailboxClosed(_) => InputSourceUnknown::MailboxClosed,
+                        xai_chat_state::MutationAdmissionError::ReplyLost(_) => InputSourceUnknown::ReplyLost,
+                    }
+                });
+                let committed = applied.is_ok();
+                self.observe_input_source(input_source_ref, applied);
+                committed
+            };
+            if committed {
                 self.mark_front_message_committed().await;
                 let commit_ids: Vec<&str> = commit_ids.iter().map(String::as_str).collect();
                 self.mark_completions_reported(&commit_ids).await;
@@ -2806,7 +2838,6 @@ impl SessionActor {
         } else {
             false
         };
-        let mut published_request_records = Vec::new();
         let structured_output_native = schema_ok && native_backend;
         let structured_output_tool = schema_ok && !native_backend;
         loop {
@@ -2977,15 +3008,7 @@ impl SessionActor {
                 effective_tools.push(super::stop_gate::wait_tool_spec());
             }
             if structured_output_tool && let Some(schema) = json_schema.clone() {
-                effective_tools.push(ToolSpec {
-                    name: STRUCTURED_OUTPUT_TOOL.to_string(),
-                    description: Some(
-                        "Return your final answer as JSON matching the required schema. \
-                         Call this exactly once, at the end; do not return the answer as text."
-                            .to_string(),
-                    ),
-                    parameters: schema,
-                });
+                effective_tools.push(structured_output_tool_spec(schema));
             }
             self.persist_tool_definitions_artifact(&effective_tools)
                 .await;
@@ -3041,8 +3064,8 @@ impl SessionActor {
             let structured_output_tool = structured_output_tool && structured_output_validator.is_some();
             let native_json_schema = if structured_output_native { json_schema.clone() } else { None };
             let mut request = self.prepare_request_for_sampling(
-                request, native_json_schema, &mut published_request_records,
-            ).await?;
+                request, native_json_schema,
+            ).await;
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());
@@ -3101,10 +3124,10 @@ impl SessionActor {
                     turn_parked,
                 )
                 .await;
-            let (response, latency) = match model_sampler_outcome {
-                Ok(SamplerTurnOutcome::Response(r, latency)) => {
+            let (response, latency, output_request_id) = match model_sampler_outcome {
+                Ok(SamplerTurnOutcome::Response(r, latency, request_id)) => {
                     salvage.response_arrived();
-                    (r, latency)
+                    (r, latency, request_id)
                 }
                 Err(error) => {
                     if salvage.awaiting_continuation()
@@ -3518,7 +3541,11 @@ impl SessionActor {
             {
                 self.signals_handle().record_model_fingerprint(fp);
             }
-            let fallback_text = response.fallback_text();
+            let fallback_text = response.fallback_text().map(|text| {
+                let reference = response.assistant().map(|item| item.output_origin.clone()).filter(|origin| !origin.is_unknown())
+                    .unwrap_or_else(|| xai_grok_sampling_types::OutputOrigin::channel_aggregate(xai_grok_sampling_types::OutputChannel::Text, response.message_id.as_deref()));
+                (text, reference)
+            });
             let stop_reason = response.stop_reason;
             let response_is_empty = response.is_empty();
             let turn_refused =
@@ -3550,20 +3577,25 @@ impl SessionActor {
             let record_response_span = xai_grok_telemetry::region::Region::from_span(
                 tracing::info_span!("turn.record_response", item_count = response_item_count),
             );
-            self.record_response_items(response.items, usage_reported)
+            let output_message_id = response.message_id.clone();
+            self.record_response_items(&output_request_id, output_message_id.as_deref(), response.items, usage_reported)
                 .await;
             record_response_span.close();
-            if let Some(text) = fallback_text {
+            if let Some((text, reference)) = fallback_text {
                 tracing::warn!(
                     text_len = text.len(),
                     "emitting fallback AgentMessageChunk — no text chunks were streamed"
                 );
                 self.record_turn_first_token(None);
                 self.record_turn_first_meaningful_output(None);
+                let origin = crate::session::source_binding::OutputSourceOrigin {
+                    session_id: self.session_id_string(), request_id: output_request_id.as_str().to_owned(),
+                    reference,
+                };
                 self.send_update(
                     acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                         acp::ContentBlock::Text(acp::TextContent::new(text)),
-                    )),
+                    ).meta(Some(origin.into_meta()))),
                     None,
                 )
                 .await;

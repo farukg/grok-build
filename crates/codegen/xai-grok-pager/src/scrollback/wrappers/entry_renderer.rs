@@ -30,7 +30,8 @@ pub struct EntryRenderer<'a> {
     /// Number of rows to skip from the top of the entry.
     /// When non-zero, the renderer acts as if the entry starts `skip_rows` rows lower, omitting that many top rows (vpad, then content lines).
     /// The remainder renders into `area`; this eliminates scratch-buffer rendering of partially-visible entries.
-    skip_rows: u16,
+    skip_rows: usize,
+    native_paint: bool,
     /// Whether this entry's block is groupable (participates in dense groups).
     /// When true AND display_mode == Collapsed, the bullet is dimmed.
     groupable: bool,
@@ -66,6 +67,7 @@ impl<'a> EntryRenderer<'a> {
             appearance: OnceCell::new(),
             tick: 0,
             skip_rows: 0,
+            native_paint: true,
             groupable: false,
             is_selected: false,
             mouse_pos: None,
@@ -78,6 +80,13 @@ impl<'a> EntryRenderer<'a> {
             cwd: None,
         }
     }
+
+    pub(crate) fn with_native_paint(mut self, enabled: bool) -> Self {
+        self.native_paint = enabled;
+        self
+    }
+
+    pub(crate) fn chrome_width_for_inline(&self) -> u16 { self.chrome_width() + self.timestamp_reserved() }
 
     pub fn with_cwd(mut self, cwd: Option<&'a Path>) -> Self {
         self.cwd = cwd;
@@ -158,7 +167,7 @@ impl<'a> EntryRenderer<'a> {
     /// Skip the first `n` rows of the entry when rendering.
     /// The skipped rows consume vpad first, then content lines.
     /// This allows partially-visible entries to be rendered directly into the output buffer without a scratch buffer intermediate.
-    pub fn with_skip_rows(mut self, n: u16) -> Self {
+    pub fn with_skip_rows(mut self, n: usize) -> Self {
         self.skip_rows = n;
         self
     }
@@ -234,7 +243,7 @@ impl<'a> EntryRenderer<'a> {
             } else if vg.running {
                 let brightness = theme::wave_brightness(
                     self.tick,
-                    self.skip_rows,
+                    u16::try_from(self.skip_rows % usize::from(self.appearance().animation.wave_rows.max(1))).unwrap_or(0),
                     self.appearance().animation.wave_rows,
                     WAVE_SPEED,
                 );
@@ -364,7 +373,7 @@ impl<'a> EntryRenderer<'a> {
     /// Mirrors `desired_height` but derives the content line count from the block's raw source text (`searchable_text`)
     /// instead of laying it out. On-screen entries get their EXACT `desired_height`, so visible content is never
     /// estimated.
-    pub fn estimate_height(&self, width: u16) -> u16 {
+    pub fn estimate_height(&self, width: u16) -> usize {
         if self.thinking_hidden() {
             return 0;
         }
@@ -376,13 +385,13 @@ impl<'a> EntryRenderer<'a> {
         // `estimate_extra_rows` adds the Mermaid treatment rows (one affordance row or fallback caption per diagram)
         // Those live inside `output()` and are invisible to this source-based estimate, so it never under-reserves
         self.assemble_height(content_width, content_lines)
-            .saturating_add(self.entry.block.estimate_extra_rows())
+            .saturating_add(usize::from(self.entry.block.estimate_extra_rows()))
     }
 
     /// Estimate the rendered content-line count without laying the block out.
     /// Memoized per content width on the entry, cleared by `invalidate_cache`.
     /// A full layout rebuild at the same width (e.g. after a fold or group-expand) then doesn't re-clone every entry's source text.
-    fn estimate_content_lines(&self, content_width: u16) -> u16 {
+    fn estimate_content_lines(&self, content_width: u16) -> usize {
         if let Some(lines) = self.entry.cached_estimate_lines(content_width) {
             return lines;
         }
@@ -399,22 +408,21 @@ impl<'a> EntryRenderer<'a> {
     }
 
     /// Combine a content-line count with this entry's vpad + inline-media rows.
-    /// Saturating throughout so a multi-MB block whose line count hits the u16 ceiling can't overflow and corrupt `virtual_y` / `total_height`.
     /// Shared by `desired_height` and `estimate_height` so the assembly stays canonical.
-    fn assemble_height(&self, content_width: u16, content_lines: u16) -> u16 {
-        let vpad: u16 = if self.entry.block.has_vpad_for(self.appearance()) {
+    fn assemble_height(&self, content_width: u16, content_lines: usize) -> usize {
+        let vpad: usize = if self.entry.block.has_vpad_for(self.appearance()) {
             2
         } else {
             0
         };
         content_lines
             .saturating_add(vpad)
-            .saturating_add(self.inline_media_rows(content_width))
+            .saturating_add(usize::from(self.inline_media_rows(content_width)))
     }
 
     /// The forward ([`rendered_row_of_logical_line`]) and inverse ([`logical_line_of_rendered_row`]) derive from one
     /// predicate and can't drift. They still occupy rows, so the full-enumeration index is used.
-    pub(crate) fn logical_line_start_rows(&self, width: u16) -> (Vec<u16>, u16) {
+    pub(crate) fn logical_line_start_rows(&self, width: u16) -> (Vec<usize>, usize) {
         let content_width = width
             .saturating_sub(self.chrome_width())
             .saturating_sub(self.timestamp_reserved());
@@ -423,7 +431,7 @@ impl<'a> EntryRenderer<'a> {
         let ctx = self
             .entry
             .context(content_width, self.appearance(), self.cwd);
-        let vpad_top: u16 = if self.entry.block.has_vpad(&ctx) {
+        let vpad_top: usize = if self.entry.block.has_vpad(&ctx) {
             1
         } else {
             0
@@ -437,10 +445,10 @@ impl<'a> EntryRenderer<'a> {
             .filter(|(_, line)| {
                 !matches!(line.selectable, Selectable::None) && line.joiner.is_none()
             })
-            .map(|(idx, _)| vpad_top.saturating_add(u16::try_from(idx).unwrap_or(u16::MAX)))
+            .map(|(idx, _)| vpad_top.saturating_add(idx))
             .collect();
         let last_content_row = vpad_top.saturating_add(
-            u16::try_from(output.len().saturating_sub(1)).unwrap_or(u16::MAX),
+            output.len().saturating_sub(1),
         );
         (starts, last_content_row)
     }
@@ -456,10 +464,10 @@ impl<'a> EntryRenderer<'a> {
             return flags;
         }
         let output = self.entry.cached_tree();
-        let vpad_top = u16::from(self.entry.block.has_vpad_for(self.appearance()));
+        let vpad_top = usize::from(self.entry.block.has_vpad_for(self.appearance()));
         let (header_rows, skip_remaining) = if self.group_collapse_header {
             if self.skip_rows == 0 {
-                (1u16, 0u16)
+                (1u16, 0usize)
             } else {
                 (0u16, self.skip_rows.saturating_sub(1))
             }
@@ -470,20 +478,12 @@ impl<'a> EntryRenderer<'a> {
         let content_skip = skip_remaining.saturating_sub(vpad_top);
         let start_y = header_rows.saturating_add(u16::from(vpad_top_visible));
 
-        let mut painted = 0u16;
-        for line in output.lines_from(usize::from(content_skip)) {
-            if painted > 0 && line.joiner.as_deref().is_some_and(str::is_empty) {
-                let wrap_y = start_y.saturating_add(painted.saturating_sub(1));
-                let cont_y = start_y.saturating_add(painted);
-                if cont_y < height
-                    && let Some(flag) = flags.get_mut(usize::from(wrap_y))
-                {
-                    *flag = true;
-                }
-            }
-            painted = painted.saturating_add(1);
-            if start_y.saturating_add(painted) >= height {
-                break;
+        for screen_y in start_y..height {
+            let Some(next) = content_skip.checked_add(usize::from(screen_y - start_y))
+                .and_then(|index| index.checked_add(1)).and_then(|index| output.line(index))
+            else { break };
+            if let Some(flag) = flags.get_mut(usize::from(screen_y)) {
+                *flag = next.line.joiner.as_deref().is_some_and(str::is_empty);
             }
         }
         flags
@@ -491,7 +491,7 @@ impl<'a> EntryRenderer<'a> {
 
     /// The rendered-row offset (from the entry's top, including any top vpad row) where the search index's
     /// `logical_line`-th line begins at `width`. Past the last logical line, clamps to the final content row.
-    pub fn rendered_row_of_logical_line(&self, width: u16, logical_line: usize) -> u16 {
+    pub fn rendered_row_of_logical_line(&self, width: u16, logical_line: usize) -> usize {
         let (starts, last_content_row) = self.logical_line_start_rows(width);
         starts
             .get(logical_line)
@@ -501,7 +501,7 @@ impl<'a> EntryRenderer<'a> {
 
     /// Inverse of [`rendered_row_of_logical_line`]. Shares `logical_line_start_rows` with that method so the two
     /// provably round-trip.
-    pub fn logical_line_of_rendered_row(&self, width: u16, row: u16) -> usize {
+    pub fn logical_line_of_rendered_row(&self, width: u16, row: usize) -> usize {
         let (starts, _) = self.logical_line_start_rows(width);
         // `starts` is ascending: the count of starts at or before `row`, minus 1, is the 0-based index of the logical line containing `row`
         starts
@@ -536,7 +536,7 @@ fn fill_bg_spaces(buf: &mut Buffer, rect: Rect, bg: ratatui::style::Color) {
 }
 
 impl Renderable for EntryRenderer<'_> {
-    fn desired_height(&self, width: u16) -> u16 {
+    fn desired_height(&self, width: u16) -> usize {
         if self.thinking_hidden() {
             return 0;
         }
@@ -548,8 +548,7 @@ impl Renderable for EntryRenderer<'_> {
         // The non-selected cached output therefore gives the correct height
         self.entry
             .ensure_cached(content_width, self.appearance(), false, self.cwd);
-        // Clamp the line count: a pathologically large block could exceed u16.
-        let content_lines = self.entry.cached_tree().len().min(u16::MAX as usize) as u16;
+        let content_lines = self.entry.cached_tree().len();
         self.assemble_height(content_width, content_lines)
     }
 
@@ -578,7 +577,7 @@ impl Renderable for EntryRenderer<'_> {
                     return;
                 }
                 let remaining = Rect::new(area.x, area.y + 1, area.width, remaining_height);
-                (remaining, 0u16)
+                (remaining, 0usize)
             } else {
                 // Header is scrolled off: reduce skip_rows by 1 for content
                 (area, self.skip_rows - 1)
@@ -720,7 +719,7 @@ impl Renderable for EntryRenderer<'_> {
                 for row in 0..accent_area.height {
                     let y = accent_area.y + row;
                     let brightness =
-                        theme::wave_brightness(self.tick, skip_rows + row, wave_rows, WAVE_SPEED);
+                        theme::wave_brightness(self.tick, u16::try_from((skip_rows + usize::from(row)) % usize::from(wave_rows.max(1))).unwrap_or(0), wave_rows, WAVE_SPEED);
                     let animated_color = blend_color(bg, color, brightness).unwrap_or(color);
                     let style = self.accent_paint_style(animated_color);
                     buf.set_string_safe(accent_area.x, y, crate::glyphs::accent_bar(), style);
@@ -743,7 +742,7 @@ impl Renderable for EntryRenderer<'_> {
         let has_vpad = self.entry.block.has_vpad(&ctx);
         // Determine how many rows of vpad/content to skip.
         // Layout is: [vpad_top?] [content lines...] [vpad_bottom?]
-        let vpad_top = if has_vpad { 1u16 } else { 0 };
+        let vpad_top = usize::from(has_vpad);
         let skip_remaining = skip_rows;
 
         // Skip vpad_top (0 or 1 row)
@@ -769,10 +768,11 @@ impl Renderable for EntryRenderer<'_> {
         let own_gutter = ts_reserved > 0 && bg_color.is_none() && content_area.width > ts_reserved;
 
         // Content lines: skip the first `content_skip` lines
-        for line in output.lines_from(content_skip as usize) {
-            if row >= max_row {
-                break;
-            }
+        for index in content_skip..output.len() {
+            if row >= max_row { break; }
+            let Some(source) = output.line(index) else { row += 1; continue };
+            if source.native { row += 1; continue; }
+            let line = source.line;
 
             // Apply line-specific background if set
             // Decorative panel bands (tool result previews) are dropped in flat mode so they blend with the terminal's own background
@@ -799,6 +799,24 @@ impl Renderable for EntryRenderer<'_> {
             }
 
             row += 1;
+        }
+
+        if self.native_paint {
+            let visible = usize::from(content_area.height);
+            output.visit_native(content_skip..content_skip.saturating_add(visible), 0, &mut |offset, part| {
+                let start = offset.max(content_skip);
+                let end = (offset + part.layout.height).min(content_skip + visible);
+                if start >= end { return; }
+                let Ok(y_offset) = u16::try_from(start - content_skip) else { return };
+                let Ok(height) = u16::try_from(end - start) else { return };
+                EntryRenderer::new(&part.entry, self.theme).with_appearance_ref(&part.appearance)
+                    .with_cwd(part.cwd.as_deref()).with_tick(part.clock.get()).with_mouse_pos(self.mouse_pos)
+                    .with_groupable(part.entry.block.is_groupable()).with_skip_rows(start - offset)
+                    .with_group_header_label(part.header_label.as_ref())
+                    .with_group_header_count(part.layout.group_header_count)
+                    .with_group_collapse_header(part.layout.group_collapse_header)
+                    .render(Rect::new(content_area.x, content_area.y + y_offset, part.width, height), buf);
+            });
         }
 
         // Overlay timestamp on the first content line for message blocks.
@@ -879,6 +897,10 @@ impl Renderable for EntryRenderer<'_> {
 }
 
 #[cfg(test)]
+#[path = "virtual_geometry_tests.rs"]
+mod virtual_geometry_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::scrollback::RenderBlock;
@@ -903,7 +925,7 @@ mod tests {
         let appearance = AppearanceConfig::default();
         let assert_joiners = |entry: &ScrollbackEntry, width: u16| {
             let renderer = EntryRenderer::new(entry, &theme).with_appearance(appearance.clone());
-            let height = renderer.desired_height(width);
+            let height = u16::try_from(renderer.desired_height(width)).unwrap();
             let wraps = renderer.row_soft_wraps(height);
             let output = entry.cached_output_ref();
             let vpad_top = u16::from(entry.block.has_vpad_for(&appearance));
@@ -1103,7 +1125,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1128,7 +1150,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1156,7 +1178,7 @@ mod tests {
         let hover_x = width - 2 - 5; // inside the timestamp zone
         let renderer = EntryRenderer::new(&entry, &theme).with_mouse_pos(Some((hover_x, 0)));
 
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1187,7 +1209,7 @@ mod tests {
         // Render with the mouse hovering the timestamp: expanded format
         let hover_x = width - 2 - 3;
         let renderer = EntryRenderer::new(&entry, &theme).with_mouse_pos(Some((hover_x, 0)));
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf_hover = Buffer::empty(area);
         renderer.render(area, &mut buf_hover);
@@ -1223,7 +1245,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         assert!(height > 0);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -1258,7 +1280,7 @@ mod tests {
             let renderer = EntryRenderer::new(&entry, &theme).with_appearance(appearance.clone());
             assert_eq!(renderer.timestamp_reserved(), 10);
             let width = 100;
-            let height = renderer.desired_height(width);
+            let height = u16::try_from(renderer.desired_height(width)).unwrap();
             let area = Rect::new(0, 0, width, height);
             let mut buf = Buffer::empty(area);
             renderer.render(area, &mut buf);
@@ -1282,7 +1304,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         assert!(height > 0);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -1313,7 +1335,7 @@ mod tests {
         for (name, block, content_row) in positive_blocks {
             let entry = ScrollbackEntry::new(block);
             let renderer = EntryRenderer::new(&entry, &theme);
-            let height = renderer.desired_height(width);
+            let height = u16::try_from(renderer.desired_height(width)).unwrap();
             let area = Rect::new(0, 0, width, height);
             let mut buf = Buffer::empty(area);
             renderer.render(area, &mut buf);
@@ -1335,7 +1357,7 @@ mod tests {
         for (name, block) in negative_blocks {
             let entry = ScrollbackEntry::new(block).with_display_mode(DisplayMode::Expanded);
             let renderer = EntryRenderer::new(&entry, &theme);
-            let height = renderer.desired_height(width);
+            let height = u16::try_from(renderer.desired_height(width)).unwrap();
             let area = Rect::new(0, 0, width, height);
             let mut buf = Buffer::empty(area);
             renderer.render(area, &mut buf);
@@ -1360,7 +1382,7 @@ mod tests {
         // Short timestamp "h:mm AM" is 7-8 chars; code requires content_width > ts_width + 1.
         // Width 12: chrome (5 actual) leaves content_width 7, just barely not enough for the 8-char timestamp plus 1
         let width: u16 = 12;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1385,7 +1407,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         assert!(height >= 3, "need multiple content rows, got {height}");
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -1418,7 +1440,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         // Seed a ghost in the gutter on the first content row too.
@@ -1448,7 +1470,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1487,7 +1509,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let content_left =
             HorizontalLayout::ACCENT + renderer.appearance().scrollback.layout.block_pad_left;
@@ -1625,22 +1647,18 @@ mod tests {
     }
 
     #[test]
-    fn estimate_wrapped_line_count_saturates_at_u16_max() {
-        // More than u16::MAX source lines must cap, not overflow the running total
+    fn estimate_wrapped_line_count_preserves_rows_beyond_terminal_coordinates() {
         let entry = ScrollbackEntry::new(RenderBlock::user_prompt("\n".repeat(70_000)));
-        assert_eq!(entry.estimate_source_lines(80), u16::MAX);
+        assert_eq!(entry.estimate_source_lines(80), 70_000);
     }
 
     #[test]
-    fn estimate_height_saturates_instead_of_overflowing() {
+    fn estimate_height_preserves_content_and_vpad_beyond_terminal_coordinates() {
         let _theme = pin_theme();
-        // A pathologically tall block (multi-MB source) hits the line-count cap; adding vpad on top must SATURATE, not overflow
-        // Overflow means a debug panic or a release wrap that corrupts virtual_y
-        // Stub has vpad, so this exercises the saturating_add in `assemble_height`
         let theme = Theme::current();
         let entry = ScrollbackEntry::new(RenderBlock::stub("\n".repeat(70_000), Color::Blue));
         let r = EntryRenderer::new(&entry, &theme);
-        assert_eq!(r.estimate_height(80), u16::MAX);
+        assert_eq!(r.estimate_height(80), 70_002);
     }
 
     #[test]
@@ -1740,7 +1758,7 @@ mod tests {
     }
 
     fn render_to_buf(renderer: &EntryRenderer<'_>, width: u16) -> Buffer {
-        let height = renderer.desired_height(width);
+        let height = u16::try_from(renderer.desired_height(width)).unwrap();
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);

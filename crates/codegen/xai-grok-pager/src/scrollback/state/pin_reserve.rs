@@ -42,7 +42,7 @@ impl ScrollbackState {
     /// Shift the captured pin pose by any height change ABOVE the pinned prompt.
     /// Growth above moves the prompt's virtual_y, so the captured offset (relative to the visible range top) must move with it.
     /// Changes at or below the prompt leave its offset put, so this is a no-op for ordinary streaming, where the response grows below the prompt.
-    pub(super) fn shift_pin_reserve_target_for_changes(&mut self, changes: &[(usize, i32)]) {
+    pub(super) fn shift_pin_reserve_target_for_changes(&mut self, changes: &[(usize, i128)]) {
         if !self.pin_reserve_active {
             return;
         }
@@ -53,16 +53,16 @@ impl ScrollbackState {
             return;
         };
         let start = self.visible_entry_range().start;
-        let above: i64 = changes
+        let above: i128 = changes
             .iter()
             .filter(|&&(idx, _)| idx >= start && idx < prompt_idx)
-            .map(|&(_, d)| d as i64)
+            .map(|&(_, d)| d as i128)
             .sum();
         if above != 0 {
-            let shifted = (target as i64 + above).max(0) as usize;
+            let shifted = (target as i128 + above).max(0) as usize;
             self.pin_reserve_target = Some(shifted);
             if self.follow_mode && self.follow_preserve_scroll {
-                self.scroll_offset = (self.scroll_offset as i64 + above).max(0) as usize;
+                self.scroll_offset = (self.scroll_offset as i128 + above).max(0) as usize;
             }
         }
     }
@@ -204,7 +204,7 @@ impl ScrollbackState {
         Some(self.sticky_adjusted_entry_top(cache, &range, entry_y))
     }
 
-    fn last_user_prompt_index(&self) -> Option<usize> {
+    pub(crate) fn last_user_prompt_index(&self) -> Option<usize> {
         if let Some(idx) = self.turns.last().map(|turn| turn.prompt_index)
             && self
                 .entries

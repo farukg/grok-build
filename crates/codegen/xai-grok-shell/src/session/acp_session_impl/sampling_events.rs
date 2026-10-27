@@ -1,11 +1,11 @@
 use super::*;
 
 impl SessionActor {
-    async fn send_thought_chunk(&self, text: String, chunk_index: u64) {
+    async fn send_thought_chunk(&self, text: String, chunk_index: u64, origin: crate::session::source_binding::OutputSourceOrigin) {
         self.send_update(
             acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
                 acp::TextContent::new(text),
-            ))),
+            )).meta(Some(origin.into_meta()))),
             Some(chunk_index),
         )
         .await;
@@ -108,6 +108,7 @@ impl SessionActor {
     ) {
         use xai_grok_sampler::{SamplingChannel, SamplingEvent};
 
+        let local_request = matches!(&event, SamplingEvent::LocalRequest { .. });
         let request_owned = self
             .turn_stream_drained
             .lock()
@@ -137,12 +138,14 @@ impl SessionActor {
         ) {
             self.close_stream_apply_span(event.request_id());
         }
-        if !request_owned && !closes_backend_tool && !resolves_pending_strip {
+        if !request_owned && !closes_backend_tool && !resolves_pending_strip && !local_request {
             return;
         }
 
         match event {
-            SamplingEvent::LocalRequest { .. } => {}
+            SamplingEvent::LocalRequest { request_id, attempt, evidence } => {
+                self.observe_local_request(request_id, attempt, evidence).await;
+            }
             SamplingEvent::StreamStarted {
                 request_id,
                 timestamp_ms,
@@ -169,11 +172,16 @@ impl SessionActor {
                 self.emit_event(crate::session::events::Event::FirstToken);
             }
             SamplingEvent::ChannelToken {
+                origin,
                 request_id,
                 channel,
                 text,
                 chunk_index,
-            } => match channel {
+            } => {
+                let origin = crate::session::source_binding::OutputSourceOrigin {
+                    session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(), reference: origin,
+                };
+                match channel {
                 SamplingChannel::Text => {
                     self.bump_stream_apply_span(&request_id, text.len());
                     // Append to the out-of-band trace accumulator; it never enters chat_state
@@ -206,7 +214,7 @@ impl SessionActor {
                     self.send_update(
                         acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                             acp::ContentBlock::Text(acp::TextContent::new(text)),
-                        )),
+                        ).meta(Some(origin.into_meta()))),
                         Some(chunk_index),
                     )
                     .await;
@@ -240,7 +248,7 @@ impl SessionActor {
                     self.emit_event(crate::session::events::Event::PhaseChanged {
                         phase: crate::session::events::Phase::StreamingReasoning,
                     });
-                    self.send_thought_chunk(text, chunk_index).await;
+                    self.send_thought_chunk(text, chunk_index, origin).await;
                 }
                 SamplingChannel::Narration => {
                     // Not appended to the capture. The capture already recorded these deltas as reasoning
@@ -257,10 +265,11 @@ impl SessionActor {
                             acp::ContentBlock::Text(acp::TextContent::new(format!(
                                 "\n\n{text}\n\n"
                             ))),
-                        )),
+                        ).meta(Some(origin.into_meta()))),
                         Some(chunk_index),
                     )
                     .await;
+                }
                 }
             },
             SamplingEvent::ToolCallDelta {
@@ -543,6 +552,11 @@ impl SessionActor {
                 // A backend tool start is a token (ttft) but not meaningful text output (ttfm).
                 self.record_turn_first_token(Some(&request_id));
                 let (title, kind, raw_input) = backend_tool_display(&name);
+                let mut meta = crate::session::source_binding::OutputSourceOrigin {
+                    session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(),
+                    reference: xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(call_id.clone()) },
+                }.into_meta();
+                meta.insert("backend".to_owned(), serde_json::Value::Bool(true));
                 self.send_update(
                     acp::SessionUpdate::ToolCall(
                         acp::ToolCall::new(
@@ -554,17 +568,17 @@ impl SessionActor {
                         .content(vec![])
                         .locations(vec![])
                         .raw_input(Some(raw_input))
-                        .meta(serde_json::json!({"backend": true}).as_object().cloned()),
+                        .meta(Some(meta)),
                     ),
                     None,
                 )
                 .await;
             }
             SamplingEvent::BackendToolCallCompleted {
+                request_id,
                 call_id,
                 name,
                 result,
-                ..
             } => {
                 // Propagate the backend call's real success or failure: the payload's `status` decides the ACP terminal status
                 // A backend-reported failure lands as `Failed`, reaching the headless `web_search_tool_result_error` branch
@@ -577,6 +591,10 @@ impl SessionActor {
                     }
                 }
                 let (title, _kind, _raw_input) = backend_tool_display(&name);
+                let origin = crate::session::source_binding::OutputSourceOrigin {
+                    session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(),
+                    reference: xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(call_id.clone()) },
+                };
                 self.send_update(
                     acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
                         acp::ToolCallId::new(Arc::from(call_id.as_str())),
@@ -584,7 +602,7 @@ impl SessionActor {
                             .status(Some(status))
                             .title(Some(title))
                             .raw_output(result),
-                    )),
+                    ).meta(Some(origin.into_meta()))),
                     None,
                 )
                 .await;

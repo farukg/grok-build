@@ -23,6 +23,7 @@ fn user_text(text: &str) -> ConversationItem {
 
 fn assistant_text(text: &str) -> ConversationItem {
     ConversationItem::Assistant(AssistantItem {
+        output_origin: Default::default(),
         evidence: Default::default(),
         source: Default::default(),
         content: text.into(),
@@ -35,6 +36,7 @@ fn assistant_text(text: &str) -> ConversationItem {
 
 fn assistant_with_tool_call(text: &str, name: &str, args: &str) -> ConversationItem {
     ConversationItem::Assistant(AssistantItem {
+        output_origin: Default::default(),
         evidence: Default::default(),
         source: Default::default(),
         content: text.into(),
@@ -72,6 +74,7 @@ fn assistant_with_reasoning_items(
             }.into()));
     }
     out.push(ConversationItem::Assistant(AssistantItem {
+        output_origin: Default::default(),
         evidence: Default::default(),
         source: Default::default(),
         content: content.into(),
@@ -198,6 +201,7 @@ fn flatten_skips_reasoning_when_encrypted_only() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "ok".into(),
@@ -231,6 +235,7 @@ fn flatten_skips_reasoning_when_text_is_empty() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "ok".into(),
@@ -506,6 +511,7 @@ fn window_assistant_text_pin_skips_empty_assistant_turns() {
     // Assistant items with empty `.content` (tool-call-only routing turns) MUST NOT count toward min_assistant_turns
     // They have no prose for the classifier to interpret
     let empty_asst = ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+        output_origin: Default::default(),
         evidence: Default::default(),
         source: Default::default(),
         content: String::new().into(),

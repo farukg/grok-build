@@ -302,3 +302,72 @@ fn reloads_never_write_any_file() {
         "the damaged file is preserved exactly; repair belongs to the next save"
     );
 }
+
+#[test]
+fn semantic_invalid_known_values_retain_the_entire_last_layer_until_recovery_or_deletion() {
+    for damaged in [
+        "[message_display]\nread = \"invalid\"\n",
+        "[dock]\nplacement = \"invalid\"\n",
+        "[completed_items]\ntasks = 42\n",
+        "[sidebar]\ncontext = false\n",
+        "outline = false\n",
+        "version = false\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open(dir.path(), None).store;
+        store.set(Layer::Global, kind_form(MessageKind::Read, DisplayForm::Expanded)).unwrap();
+        std::fs::write(global_file(dir.path()), damaged).unwrap();
+        let before = tree_snapshot(dir.path());
+        let reload = store.reload_global();
+        assert!(!reload.changed);
+        assert!(reload.warnings.iter().any(|warning| matches!(warning.problem, LoadProblem::InvalidKnown { .. })));
+        assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Expanded));
+        assert_eq!(tree_snapshot(dir.path()), before);
+        std::fs::remove_file(global_file(dir.path())).unwrap();
+        let deleted = store.reload_global();
+        assert!(deleted.changed && deleted.warnings.is_empty());
+        assert_eq!(store.effective().message_form(MessageKind::Read), None);
+        std::fs::write(global_file(dir.path()), "[message_display]\nread = \"collapsed\"\n").unwrap();
+        assert!(store.reload_global().changed);
+        assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Collapsed));
+    }
+}
+
+#[test]
+fn unknown_keys_and_legacy_locations_do_not_block_recognized_reload_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(dir.path(), Some("legacy")).store;
+    std::fs::write(global_file(dir.path()), "[message_display]\nfuture_kind = false\nread = \"collapsed\"\n").unwrap();
+    let reload = store.reload_global();
+    assert!(reload.changed);
+    assert!(matches!(&reload.warnings[..], [warning] if matches!(warning.problem, LoadProblem::IgnoredEntry { .. })));
+    assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Collapsed));
+    std::fs::create_dir_all(dir.path().join("sessions")).unwrap();
+    std::fs::write(session_file(dir.path(), "legacy"), "[sidebar]\ncontext = false\n[scope]\nmessage_display = \"session\"\n[message_display]\nread = \"expanded\"\n").unwrap();
+    let reload = store.reload_session();
+    assert!(reload.changed);
+    assert!(matches!(&reload.warnings[..], [warning] if matches!(warning.problem, LoadProblem::IgnoredEntry { .. })));
+    assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Expanded));
+    std::fs::write(session_file(dir.path(), "legacy"), "[scope]\nmessage_display = \"invalid\"\n").unwrap();
+    assert!(!store.reload_session().changed);
+    assert_eq!(store.effective().message_form(MessageKind::Read), Some(DisplayForm::Expanded));
+}
+
+#[test]
+fn saving_semantic_damage_requires_actual_repair_preserves_unknowns_and_backs_up_original() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(dir.path(), None).store;
+    let original = "future = 42\n[message_display]\nread = \"invalid\"\n";
+    std::fs::write(global_file(dir.path()), original).unwrap();
+    let refused = store.set(Layer::Global, kind_form(MessageKind::Edit, DisplayForm::Expanded));
+    assert!(matches!(refused, Err(super::super::SaveError::InvalidKnown { .. })));
+    assert_eq!(std::fs::read_to_string(global_file(dir.path())).unwrap(), original);
+    assert!(!dir.path().join("global.toml.bad").exists());
+    let repaired = store.set(Layer::Global, kind_form(MessageKind::Read, DisplayForm::Collapsed)).unwrap();
+    assert!(matches!(repaired, super::super::SaveOutcome::Repaired { .. }));
+    assert_eq!(std::fs::read_to_string(dir.path().join("global.toml.bad")).unwrap(), original);
+    let report = open(dir.path(), None);
+    assert!(report.warnings.is_empty());
+    assert_eq!(report.store.effective().message_form(MessageKind::Read), Some(DisplayForm::Collapsed));
+    assert!(std::fs::read_to_string(global_file(dir.path())).unwrap().contains("future = 42"));
+}

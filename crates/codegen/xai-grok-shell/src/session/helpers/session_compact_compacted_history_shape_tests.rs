@@ -48,6 +48,7 @@ async fn test_compacted_history_raw_strings() {
         ),
         ConversationItem::assistant("Let me look at the file."),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I'll read the file now.".into(),
@@ -62,6 +63,7 @@ async fn test_compacted_history_raw_strings() {
         }),
         ConversationItem::tool_result("tc1", "fn login() { /* buggy code */ }"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "Found the bug, applying fix.".into(),
@@ -224,6 +226,7 @@ async fn grok_build_compaction_drops_working_tail_regression_206460() {
             "<user_info>\nOS: macos\n</user_info>\n\n<user_query>\nread auth.rs\n</user_query>",
         ),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "reading the file".into(),

@@ -1334,7 +1334,7 @@ impl EditToolCallBlock {
                     lines.push(BlockLine::separator(Line::from("")));
 
                     let diff_lines = self.render_diff_lines(&theme, ctx.width, &config);
-                    let mut diff_range_id: u16 = 1;
+                    let mut diff_range_id: usize = 1;
                     for output in diff_lines {
                         if output.is_separator {
                             lines.push(BlockLine::separator(output.line));

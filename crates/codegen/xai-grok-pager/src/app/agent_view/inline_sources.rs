@@ -15,6 +15,7 @@ pub(crate) enum InlineReplay {
 pub(crate) struct TaskProjection {
     pub key: SourceKey,
     pub width: u16,
+    pub source: crate::scrollback::selection_identity::EntryIdentity,
     pub output: Weak<OutputTree>,
 }
 
@@ -22,14 +23,18 @@ pub(crate) struct ChildProjection {
     pub key: SourceKey,
     pub width: u16,
     pub structure: u64,
-    pub indices: HashMap<EntryId, usize>,
+    pub indices: Rc<HashMap<EntryId, usize>>,
+    pub ids: Vec<EntryId>,
+    pub layouts: Vec<crate::scrollback::state::EntryLayoutInfo>,
+    pub groups: Vec<crate::scrollback::state::groups::GroupSpan>,
+    pub materialized: HashSet<EntryId>,
     pub tree: Rc<EntryTree>,
 }
 
 #[derive(Default)]
 pub(crate) struct InlineSources {
     pub signal: Rc<RevisionSignal>,
-    task_revisions: HashMap<String, u64>,
+    task_revisions: RefCell<HashMap<String, Rc<RevisionSignal>>>,
     pub observed_tasks: HashMap<String, Vec<EntryId>>,
     pub replay: InlineReplay,
     pub transcript: RefCell<Option<ChildProjection>>,
@@ -40,13 +45,17 @@ pub(crate) struct InlineSources {
 
 impl InlineSources {
     pub fn task_revision(&self, id: &str) -> u64 {
-        self.task_revisions.get(id).copied().unwrap_or(0)
+        self.task_revisions.borrow().get(id).map_or(0, |signal| signal.revision())
+    }
+
+    pub(crate) fn task_signal(&self, id: &str) -> Rc<RevisionSignal> {
+        Rc::clone(self.task_revisions.borrow_mut().entry(id.to_owned()).or_default())
     }
 
     pub fn note_task(&mut self, id: &str) {
         self.signal.bump();
         self.task_outputs.borrow_mut().remove(id);
-        self.task_revisions.insert(id.to_owned(), self.signal.revision());
+        self.task_signal(id).bump();
     }
 }
 

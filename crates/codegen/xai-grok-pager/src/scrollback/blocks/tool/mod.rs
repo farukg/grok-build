@@ -49,7 +49,7 @@ use std::fmt;
 /// Shared selection-range id for tool-call header lines.
 /// Headers are single logical selection targets (path/query/url/command);
 /// using one id across tool kinds keeps multi-line drag/copy grouping simple.
-pub(crate) const TOOL_HEADER_RANGE: u16 = 0;
+pub(crate) const TOOL_HEADER_RANGE: usize = 0;
 
 /// 1-based inclusive line range for display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

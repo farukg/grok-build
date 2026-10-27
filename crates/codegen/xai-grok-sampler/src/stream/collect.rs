@@ -146,6 +146,7 @@ mod tests {
     #[tokio::test]
     async fn intermediate_events_are_dropped() {
         let token = SamplingEvent::ChannelToken {
+            origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Text },
             request_id: rid(),
             channel: SamplingChannel::Text,
             text: "hi".into(),

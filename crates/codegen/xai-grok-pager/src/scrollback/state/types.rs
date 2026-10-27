@@ -93,7 +93,7 @@ pub(super) const RESUME_WARM_PAGES: u16 = 3;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EntryLayoutInfo {
     /// Rendered height at current width.
-    pub height: u16,
+    pub height: usize,
     /// Gap rows after this entry (0 for dense group members, 1 otherwise).
     pub gap_after: u16,
     /// When non-zero, this entry renders as a group header instead of its normal block content. Frames with fold spans
@@ -121,7 +121,7 @@ impl EntryLayoutInfo {
     }
 
     /// Add the synthetic verb-run header row to a member's own measured height.
-    pub fn with_verb_header_row(&self, member_height: u16) -> u16 {
-        member_height.saturating_add(u16::from(self.is_expanded_verb_header()))
+    pub fn with_verb_header_row(&self, member_height: usize) -> usize {
+        member_height.saturating_add(usize::from(self.is_expanded_verb_header()))
     }
 }

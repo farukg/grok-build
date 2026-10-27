@@ -541,6 +541,7 @@ pub enum SubagentCompletion {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
 pub enum SessionUpdate {
+    RequestSourceObserved { observation: crate::session::source_binding::SourceBindingObservation },
     /// A diff review request containing one or more file diffs for user review.
     DiffReview {
         /// The diff content to be reviewed.

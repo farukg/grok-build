@@ -292,9 +292,14 @@ impl AgentView {
         match self.key_owner() {
             KeyOwner::LineViewer => self.line_viewer_bar(),
             KeyOwner::BlockViewer => ShortcutsBarContent::Surface(
-                self.block_viewer
+                self.request_viewer
                     .as_ref()
                     .map(|viewer| viewer.shortcuts_hints())
+                    .or_else(|| {
+                        self.block_viewer
+                            .as_ref()
+                            .map(|viewer| viewer.shortcuts_hints())
+                    })
                     .unwrap_or_default(),
             ),
             KeyOwner::Card(BlockingCard::Permission) => ShortcutsBarContent::Surface(
@@ -1729,7 +1734,7 @@ impl AgentView {
                 render_active_selection_overlay(
                     &self.last_scrollback_selection_model,
                     drag,
-                    self.drag_table_geometry_for(drag.anchor.entry_idx, drag.anchor.range_id),
+                    self.drag_table_geometry_for(drag.anchor.range_id),
                     buf,
                 );
             } else if let Some(ref block_drag) = self.block_drag_selection {
@@ -1740,7 +1745,7 @@ impl AgentView {
                 render_persistent_selection_overlay(
                     &self.last_scrollback_selection_model,
                     sel,
-                    self.table_geometry_for_selection(sel.entry_idx, sel.range_id),
+                    self.table_geometry_for_selection(sel.range_id),
                     buf,
                 );
             }
@@ -2012,7 +2017,7 @@ impl AgentView {
                 render_active_selection_overlay(
                     &self.last_btw_selection_model,
                     drag,
-                    self.drag_table_geometry_for(drag.anchor.entry_idx, drag.anchor.range_id),
+                    self.drag_table_geometry_for(drag.anchor.range_id),
                     buf,
                 );
             } else if let Some(ref sel) = self.persistent_text_selection
@@ -2021,7 +2026,7 @@ impl AgentView {
                 render_persistent_selection_overlay(
                     &self.last_btw_selection_model,
                     sel,
-                    self.table_geometry_for_selection(sel.entry_idx, sel.range_id),
+                    self.table_geometry_for_selection(sel.range_id),
                     buf,
                 );
             }
@@ -3748,6 +3753,22 @@ impl AgentView {
             self.pane_areas = layout.pane_areas();
             return (None, prompt_post_flush);
         }
+        if self.request_viewer.is_some() {
+            self.close_foreign_request_viewer();
+            if let Some(ref mut viewer) = self.request_viewer {
+                let overlay_area = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: layout.shortcuts.y.saturating_sub(area.y),
+                };
+                viewer.render(overlay_area, buf);
+                let hints = viewer.shortcuts_hints();
+                ShortcutsBar::new(&hints).render(layout.shortcuts, buf);
+            }
+            self.pane_areas = layout.pane_areas();
+            return (prompt_cursor_pos, prompt_post_flush);
+        }
         let block_viewer_toast = self.active_toast_message().map(|s| s.to_string());
         if let Some(ref mut viewer) = self.block_viewer {
             use ratatui::style::Modifier;
@@ -4516,8 +4537,9 @@ mod selection_state_tests {
     fn frame_reset_clears_model_and_companion_together() {
         let mut model = ResolvedSelectionModel::default();
         let line = ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 0,
             screen_x: 0,

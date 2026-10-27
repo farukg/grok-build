@@ -43,6 +43,23 @@ impl AcpSide for acp::ClientSide {
 /// Extends each request/response type pair with the side marker type and schema method name.
 pub trait AcpMethod {
     fn method_name(&self) -> &'static str;
+
+    /// What a gateway debug trace may reveal about this call. The default
+    /// discloses full payloads; extension methods whose payloads can embed
+    /// captured request bodies override with
+    /// [`TraceDisclosure::EnvelopeOnly`].
+    fn trace_disclosure(&self) -> TraceDisclosure {
+        TraceDisclosure::Payload { method: self.method_name().to_owned() }
+    }
+}
+
+/// Gateway debug-trace disclosure for one RPC: the attribution label plus
+/// whether the trace may serialize payloads. `EnvelopeOnly` keeps request,
+/// response, and error payloads of payload-carrying calls out of traces.
+#[derive(Debug, Clone)]
+pub enum TraceDisclosure {
+    Payload { method: String },
+    EnvelopeOnly { method: String },
 }
 
 /// Connect together ACP request and response types for each rpc method.
@@ -74,6 +91,10 @@ impl<T: AcpRequest, S: StorageMarker> AcpMethod for AcpArgsGeneric<T, S> {
     fn method_name(&self) -> &'static str {
         self.request.borrow().method_name()
     }
+
+    fn trace_disclosure(&self) -> TraceDisclosure {
+        self.request.borrow().trace_disclosure()
+    }
 }
 
 #[allow(type_alias_bounds)]
@@ -104,7 +125,30 @@ macro_rules! acp_define_request_response {
     };
 }
 
-acp_define_request_response!(acp::ExtRequest, acp::ExtResponse, "ext_method");
+/// Extension methods whose request, response, and error payloads can embed
+/// captured request bodies; gateway traces attribute them by method only.
+pub(crate) fn payload_free_ext_method(method: &str) -> bool {
+    matches!(method, "x.ai/session/request_snapshot" | "x.ai/session/request_preview")
+}
+
+impl AcpRequest for acp::ExtRequest {
+    type Response = acp::ExtResponse;
+}
+
+impl AcpMethod for acp::ExtRequest {
+    fn method_name(&self) -> &'static str {
+        "ext_method"
+    }
+
+    fn trace_disclosure(&self) -> TraceDisclosure {
+        if payload_free_ext_method(&self.method) {
+            TraceDisclosure::EnvelopeOnly { method: self.method.to_string() }
+        } else {
+            TraceDisclosure::Payload { method: self.method_name().to_owned() }
+        }
+    }
+}
+
 acp_define_request_response!(acp::ExtNotification, (), "ext_notification");
 
 pub trait StorageMarker: fmt::Debug + Clone + Copy {

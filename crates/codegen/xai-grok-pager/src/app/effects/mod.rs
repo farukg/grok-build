@@ -3,6 +3,7 @@
 //! When tasks complete, the event loop converts their output into [`TaskResult`] and feeds it back through dispatch.
 mod helpers;
 mod remove_context_items;
+mod request_snapshot;
 mod session_list;
 use super::actions;
 use super::worktree_session;
@@ -1932,6 +1933,12 @@ pub(crate) fn execute(
                     Err(error) => Err(ContextPolicyTransportError::Encode(error)),
                 };
                 TaskResult::ContextPolicyAnswered { agent_id, session_id, generation, result }
+            });
+        }
+        Effect::RequestSnapshotQuery { agent_id, session_id, query, generation } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                request_snapshot::query(agent_id, session_id, query, generation, &tx).await
             });
         }
         Effect::DeliverSubagent { child_session_id, delivery } => {

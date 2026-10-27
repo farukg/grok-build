@@ -116,7 +116,7 @@ impl DashboardState {
         let (body_measured, pin_user) = scrollback
             .map(|scrollback| {
                 (
-                    peek_tail::densified_body_line_count(scrollback, middle_w),
+                    peek_tail::densified_body_line_count(scrollback, middle_w, max_content),
                     peek_tail::scrollback_has_last_user(scrollback),
                 )
             })

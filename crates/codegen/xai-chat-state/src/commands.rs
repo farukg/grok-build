@@ -61,6 +61,16 @@ pub enum StrictAppendError<A = StrictAppendAck> {
     Indeterminate(std::io::Error),
 }
 impl<A> StrictAppendError<A> {
+    pub fn map_acknowledgement<B>(self, map: impl FnOnce(A) -> B) -> StrictAppendError<B> {
+        match self {
+            Self::NotCommitted(source) => StrictAppendError::NotCommitted(source),
+            Self::Committed { acknowledgement, source } => StrictAppendError::Committed {
+                acknowledgement: map(acknowledgement), source,
+            },
+            Self::Indeterminate(source) => StrictAppendError::Indeterminate(source),
+        }
+    }
+
     pub fn io_error(&self) -> &std::io::Error {
         match self {
             Self::NotCommitted(source) | Self::Indeterminate(source) | Self::Committed { source, .. } => source,
@@ -87,14 +97,14 @@ pub enum ChatStateCommand {
     /// Push an ordered batch and acknowledge once every message is processed.
     PushUserMessagesBatchAndAck {
         items: Vec<ConversationItem>,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Vec<crate::AppliedAppend>>,
     },
 
     /// Push a user message and acknowledge once the chat-state actor has
     /// accepted and processed it.
     PushUserMessageAndAck {
         item: ConversationItem,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<crate::AppliedAppend>,
     },
 
     /// Append one working-directory switch without repair or pruning, then
@@ -102,13 +112,13 @@ pub enum ChatStateCommand {
     AppendWorkingDirectorySwitchAndAck {
         content: String,
         cwd_generation: std::num::NonZeroU64,
-        reply: oneshot::Sender<Result<StrictAppendAck, StrictAppendError>>,
+        reply: oneshot::Sender<Result<crate::MutationAck<StrictAppendAck>, StrictAppendError<crate::MutationAck<StrictAppendAck>>>>,
     },
 
     AppendInputAndAck {
         projection: crate::InputProjection,
         admission: crate::InputAdmission,
-        reply: oneshot::Sender<Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError>>,
+        reply: oneshot::Sender<Result<crate::MutationAck<crate::CompletionProjectionAck>, StrictAppendError<crate::MutationAck<crate::CompletionProjectionAck>>>>,
     },
 
     /// Push a user message with an explicit dangling-repair reason.
@@ -118,16 +128,16 @@ pub enum ChatStateCommand {
     },
 
     /// Record the assistant's response (text + tool calls).
-    PushAssistantResponse { item: ConversationItem },
+    PushAssistantResponse { item: ConversationItem, reply: crate::MutationReply },
 
     /// Record a tool result.
-    PushToolResult { item: ConversationItem },
+    PushToolResult { item: ConversationItem, reply: crate::MutationReply },
 
     /// Persist model output already included in the provider's usage total.
-    PushModelOutput { item: ConversationItem },
+    PushModelOutput { item: ConversationItem, reply: crate::MutationReply },
 
     /// Persist model output whose provider response omitted usage.
-    PushUnreportedModelOutput { item: ConversationItem },
+    PushUnreportedModelOutput { item: ConversationItem, reply: crate::MutationReply },
 
     /// Record accumulated token usage from a streaming response.
     RecordTokenUsage { total_tokens: u64 },
@@ -263,6 +273,15 @@ pub enum ChatStateCommand {
         conv_id: String,
         req_id: String,
         reply: oneshot::Sender<crate::types::BuiltConversationRequest>,
+    },
+
+    PreviewConversation {
+        history: crate::types::PreviewHistory,
+        policy: xai_grok_sampling_types::ContextPolicy,
+        appended: Vec<ConversationItem>,
+        tools: Vec<ToolSpec>,
+        memory: Option<String>,
+        reply: oneshot::Sender<crate::types::ChatStatePreview>,
     },
 
     /// Get a clone of the full conversation.
@@ -477,15 +496,19 @@ mod tests {
             reply: tx,
         };
         let _ = ChatStateCommand::PushAssistantResponse {
+            reply: crate::MutationReply::Unobserved,
             item: ConversationItem::assistant("hi"),
         };
         let _ = ChatStateCommand::PushToolResult {
+            reply: crate::MutationReply::Unobserved,
             item: ConversationItem::tool_result("call-1", "result"),
         };
         let _ = ChatStateCommand::PushModelOutput {
+            reply: crate::MutationReply::Unobserved,
             item: ConversationItem::assistant("model output"),
         };
         let _ = ChatStateCommand::PushUnreportedModelOutput {
+            reply: crate::MutationReply::Unobserved,
             item: ConversationItem::assistant("unreported output"),
         };
         let _ = ChatStateCommand::RecordTokenUsage { total_tokens: 100 };

@@ -139,9 +139,15 @@ fn session_key(id: &str) -> Option<SessionKey> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum LoadConsequence {
+    Opened,
+    Reloaded,
+}
+
 /// The first problem in the toast (it names the file and the cause), the rest only in the log.
 /// `consequence` states what the view does about it, which differs between open and reload.
-fn load_warning_text(warnings: &[LoadWarning], consequence: &str) -> Option<String> {
+fn load_warning_text(warnings: &[LoadWarning], consequence: LoadConsequence) -> Option<String> {
     for warning in warnings {
         tracing::warn!(%warning, "panel settings");
     }
@@ -149,6 +155,11 @@ fn load_warning_text(warnings: &[LoadWarning], consequence: &str) -> Option<Stri
     let more = match rest.len() {
         0 => String::new(),
         count => format!(" (and {count} more)"),
+    };
+    let consequence = match consequence {
+        LoadConsequence::Opened => "usable settings and defaults apply",
+        LoadConsequence::Reloaded if warnings.iter().any(|warning| warning.problem.retains_last_layer()) => "kept the last loaded values",
+        LoadConsequence::Reloaded => "recognized values apply; ignored entries are preserved",
     };
     Some(format!(
         "Panel settings partly unusable, {consequence}: {first}{more}"
@@ -180,14 +191,16 @@ impl AgentView {
         let Some(store) = self.panel_persistence.store_mut() else {
             return false;
         };
+        let dock_before = store.global().dock_placement();
         let reload = store.reload_global();
+        let dock_changed = dock_before != store.global().dock_placement();
         if reload.changed {
             self.restore_panel_settings();
             self.restore_global_completed_filters();
             self.restore_global_work_visibility();
-            self.restore_dock_placement();
+            if dock_changed { self.restore_dock_placement(); }
         }
-        self.toast_load_warnings(&reload.warnings, "kept the last loaded values");
+        self.toast_load_warnings(&reload.warnings, LoadConsequence::Reloaded);
         reload.changed || !reload.warnings.is_empty()
     }
 
@@ -220,7 +233,7 @@ impl AgentView {
             let scope_reset = self.panel_persistence.effective().display_scope() != scope_before;
             self.apply_f7_panel_settings(scope_reset);
         }
-        self.toast_load_warnings(&reload.warnings, "kept the last loaded values");
+        self.toast_load_warnings(&reload.warnings, LoadConsequence::Reloaded);
         reload.changed || !reload.warnings.is_empty()
     }
 
@@ -289,11 +302,20 @@ impl AgentView {
     }
 
     pub(crate) fn restore_dock_placement(&self) {
+        if !self.apply_dock_override() {
+            crate::views::dock::set_enabled(crate::app::current_dock_enabled());
+        }
+    }
+
+    pub(crate) fn apply_dock_override(&self) -> bool {
         if let Some(placement) = self.panel_persistence.store.as_ref().and_then(|store| store.global().dock_placement())
             && crate::app::dock_requirement_pin().or_else(crate::app::dock_env_override)
                 .is_none_or(|pin| pin == placement.is_visible())
         {
             crate::views::dock::set_placement(placement);
+            true
+        } else {
+            false
         }
     }
 
@@ -318,8 +340,8 @@ impl AgentView {
         self.restore_panel_settings();
         self.restore_global_completed_filters();
         self.restore_global_work_visibility();
-        self.restore_dock_placement();
-        self.toast_load_warnings(&warnings, "defaults apply");
+        self.apply_dock_override();
+        self.toast_load_warnings(&warnings, LoadConsequence::Opened);
     }
 
     pub(crate) fn save_global_work_visibility(&mut self, tasks: Option<bool>, todo: Option<bool>) {
@@ -347,11 +369,11 @@ impl AgentView {
         let session = self.session.session_id.as_ref().map(|id| &*id.0);
         if let Some(warnings) = self.panel_persistence.sync_session(session) {
             self.restore_panel_settings();
-            self.toast_load_warnings(&warnings, "defaults apply");
+            self.toast_load_warnings(&warnings, LoadConsequence::Opened);
         }
     }
 
-    fn toast_load_warnings(&mut self, warnings: &[LoadWarning], consequence: &str) {
+    fn toast_load_warnings(&mut self, warnings: &[LoadWarning], consequence: LoadConsequence) {
         if let Some(text) = load_warning_text(warnings, consequence) {
             self.show_toast(&text);
         }

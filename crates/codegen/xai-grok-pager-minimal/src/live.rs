@@ -468,15 +468,15 @@ fn draw_tail(
     if entries.is_empty() {
         return;
     }
-    let gap = super::commit::MINIMAL_BLOCK_GAP;
-    let heights: Vec<u16> = entries
+    let gap = usize::from(super::commit::MINIMAL_BLOCK_GAP);
+    let heights: Vec<usize> = entries
         .iter()
         .map(|e| renderer(*e).desired_height(width))
         .collect();
-    let total: u16 = heights
+    let total: usize = heights
         .iter()
-        .fold(0u16, |acc, &h| acc.saturating_add(h).saturating_add(gap));
-    let mut skip_top = total.saturating_sub(area.height);
+        .fold(0usize, |acc, &h| acc.saturating_add(h).saturating_add(gap));
+    let mut skip_top = total.saturating_sub(usize::from(area.height));
     let mut y = area.y;
     let bottom = area.y + area.height;
     for (e, &content_h) in entries.iter().zip(&heights) {
@@ -490,7 +490,7 @@ fn draw_tail(
         let entry_skip = slot_skip.min(content_h);
         let visible_content = content_h.saturating_sub(entry_skip);
         if visible_content > 0 {
-            let draw_h = visible_content.min(bottom.saturating_sub(y));
+            let Ok(draw_h) = u16::try_from(visible_content.min(usize::from(bottom.saturating_sub(y)))) else { break };
             if draw_h == 0 {
                 break;
             }
@@ -507,9 +507,8 @@ fn draw_tail(
             }
         }
         let gap_skipped = slot_skip.saturating_sub(entry_skip);
-        let gap_visible = gap
-            .saturating_sub(gap_skipped)
-            .min(bottom.saturating_sub(y));
+        let Ok(gap_visible) = u16::try_from(gap.saturating_sub(gap_skipped)
+            .min(usize::from(bottom.saturating_sub(y)))) else { break };
         y += gap_visible;
         if y >= bottom {
             break;
@@ -748,13 +747,13 @@ pub(super) fn tail_height(
     agent: &xai_grok_pager::app::agent_view::AgentView,
     width: u16,
     appearance: &xai_grok_pager::appearance::AppearanceConfig,
-) -> u16 {
+) -> usize {
     let theme = Theme::current();
     let sb = &agent.scrollback;
     let turn_running = minimal_api::is_turn_or_wake_running(agent);
-    let gap = super::commit::MINIMAL_BLOCK_GAP;
+    let gap = usize::from(super::commit::MINIMAL_BLOCK_GAP);
     let mut i = super::commit::scan_frontier(sb, turn_running).tail_start;
-    let mut total = 0u16;
+    let mut total = 0usize;
     while let Some(e) = sb.get(i) {
         let h =
             live_tail_renderer(e, &theme, appearance, &agent.session.cwd, 0).desired_height(width);
@@ -874,7 +873,7 @@ mod tests {
         assert_ne!(painted_height, visible_accent_height);
         assert_eq!(
             tail_height(&agent, width, &appearance),
-            painted_height.saturating_add(super::super::commit::MINIMAL_BLOCK_GAP)
+            painted_height.saturating_add(usize::from(super::super::commit::MINIMAL_BLOCK_GAP))
         );
     }
     /// The tail and the committed footprint are one builder with a different tick; this test catches anyone forking them again.

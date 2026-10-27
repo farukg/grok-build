@@ -40,7 +40,7 @@ impl EntryId {
     /// Create a new EntryId with a specific value.
     /// For production use, prefer getting EntryId from `ScrollbackState::push()` which assigns IDs automatically.
     /// This is mainly for placeholders/testing.
-    pub fn new(id: u64) -> Self {
+    pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
@@ -49,18 +49,9 @@ impl EntryId {
     }
 }
 
-/// Saturates at `u16::MAX` so a multi-MB block cannot overflow `virtual_y`.
-fn wrapped_lines_from_widths(widths: &[u32], content_width: u16) -> u16 {
-    let cw = content_width.max(1) as usize;
-    let mut total: usize = 0;
-    for &w in widths {
-        let w = w as usize;
-        total += if w == 0 { 1 } else { w.div_ceil(cw) };
-        if total >= u16::MAX as usize {
-            return u16::MAX;
-        }
-    }
-    total.max(1) as u16
+fn wrapped_lines_from_widths(widths: &[usize], content_width: u16) -> usize {
+    let cw = usize::from(content_width.max(1));
+    widths.iter().map(|&width| width.max(1).div_ceil(cw)).sum::<usize>().max(1)
 }
 
 /// A scrollback entry: block content and display state.
@@ -104,15 +95,18 @@ pub struct ScrollbackEntry {
 
     /// Cached cheap height-estimate line count: `(content_width, lines)`.
     /// Lets a same-width rebuild reuse the estimate instead of re-cloning the block's source text. Cleared by `invalidate_cache`.
-    cached_estimate_lines: RefCell<Option<(u16, u16)>>,
+    cached_estimate_lines: RefCell<Option<(u16, usize)>>,
 
     /// Display width of each source line. Width-independent, so unlike every other cache here it survives a resize.
     /// Re-deriving it per width is what made a resize cost O(total conversation bytes).
-    cached_line_widths: RefCell<Option<Vec<u32>>>,
+    cached_line_widths: RefCell<Option<Vec<usize>>>,
     inline_projection: RefCell<Option<InlineProjection>>,
     inline_revision: Cell<u64>,
     inline_width: Cell<Option<u16>>,
     output_revision: Rc<RevisionSignal>,
+    output_authority: Rc<()>,
+    selection_instance: u64,
+    selection_binding: Cell<super::selection_identity::SourceBinding>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +143,20 @@ impl EffectiveOutput<'_> {
     }
 }
 
+static NEXT_SELECTION_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 impl ScrollbackEntry {
+    pub(crate) fn selection_identity(&self) -> super::selection_identity::EntryIdentity {
+        super::selection_identity::EntryIdentity { binding: self.selection_binding.get(),
+            entry: self.id, instance: self.selection_instance }
+    }
+
+    pub(crate) fn bind_selection_source(&self, binding: super::selection_identity::SourceBinding) {
+        if self.selection_binding.replace(binding) != binding {
+            self.cached_output.borrow_mut().take();
+        }
+    }
+
     /// Create a new entry with expanded display mode.
     /// For production use, prefer `ScrollbackState::push()` which assigns the EntryId automatically.
     /// This constructor is mainly for testing.
@@ -181,6 +188,9 @@ impl ScrollbackEntry {
             inline_revision: Cell::new(0),
             inline_width: Cell::new(None),
             output_revision: Rc::default(),
+            output_authority: Rc::new(()),
+            selection_instance: NEXT_SELECTION_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            selection_binding: Cell::new(super::selection_identity::SourceBinding::Detached),
         }
     }
 
@@ -215,6 +225,9 @@ impl ScrollbackEntry {
             inline_revision: Cell::new(0),
             inline_width: Cell::new(None),
             output_revision: Rc::default(),
+            output_authority: Rc::new(()),
+            selection_instance: NEXT_SELECTION_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            selection_binding: Cell::new(super::selection_identity::SourceBinding::Detached),
         }
     }
 
@@ -237,7 +250,11 @@ impl ScrollbackEntry {
     /// Most blocks toggle between Collapsed and Expanded.
     /// Some blocks (like thinking) cycle through 3 modes.
     pub fn toggle_fold(&mut self) {
-        if self.is_foldable() {
+        let allowed = match self.display_mode {
+            DisplayMode::Collapsed => self.can_expand(),
+            DisplayMode::Truncated | DisplayMode::Expanded => self.can_collapse(),
+        };
+        if allowed {
             self.display_mode = self
                 .block
                 .next_fold_mode(self.display_mode, self.is_running);
@@ -297,7 +314,7 @@ impl ScrollbackEntry {
     }
 
     /// Memoized cheap height-estimate line count for `content_width`, if cached.
-    pub fn cached_estimate_lines(&self, content_width: u16) -> Option<u16> {
+    pub fn cached_estimate_lines(&self, content_width: u16) -> Option<usize> {
         self.cached_estimate_lines
             .borrow()
             .filter(|&(w, _)| w == content_width)
@@ -305,14 +322,14 @@ impl ScrollbackEntry {
     }
 
     /// Store the cheap height-estimate line count for `content_width`.
-    pub fn store_estimate_lines(&self, content_width: u16, lines: u16) {
+    pub fn store_estimate_lines(&self, content_width: u16, lines: usize) {
         *self.cached_estimate_lines.borrow_mut() = Some((content_width, lines));
     }
 
     /// Cheap wrapped-line estimate for the block's source text at `content_width`.
     /// An APPROXIMATION: it ignores word boundaries, and for a markdown block it reflects the last rendered view.
     /// On-screen entries are always measured exactly, so nothing depends on it being right.
-    pub fn estimate_source_lines(&self, content_width: u16) -> u16 {
+    pub fn estimate_source_lines(&self, content_width: u16) -> usize {
         let mut slot = self.cached_line_widths.borrow_mut();
         let widths = slot.get_or_insert_with(|| {
             let Some(text) = self.block.searchable_text() else {
@@ -321,7 +338,7 @@ impl ScrollbackEntry {
             // Renderers drop a single trailing newline.
             let text = text.strip_suffix('\n').unwrap_or(&text);
             text.split('\n')
-                .map(|line| unicode_width::UnicodeWidthStr::width(line) as u32)
+                .map(|line| unicode_width::UnicodeWidthStr::width(line))
                 .collect()
         });
         wrapped_lines_from_widths(widths, content_width)
@@ -389,7 +406,8 @@ impl ScrollbackEntry {
             cwd: cwd_key.clone(),
         };
         let rendered = Rc::new(self.block.rendered_output(&ctx));
-        let header = OutputTree::leaf(Rc::clone(&rendered));
+        let header = OutputTree::identified(Rc::clone(&rendered), self.selection_identity(),
+            super::selection_identity::SelectablePart::Block);
         let tree = if self.display_mode != DisplayMode::Collapsed
             && (self.block.is_bg_task() || self.block.is_subagent())
         {
@@ -408,7 +426,7 @@ impl ScrollbackEntry {
             cwd: cwd_key,
             inline_revision: self.inline_revision.get(),
             rendered,
-            tree,
+            tree: OutputTree::rooted(tree, self.selection_identity()),
         });
     }
 
@@ -537,6 +555,25 @@ impl ScrollbackEntry {
         self.block.is_foldable()
     }
 
+    pub(crate) fn can_collapse(&self) -> bool {
+        if self.block.is_bg_task() || self.block.is_subagent() {
+            return self.display_mode != DisplayMode::Collapsed;
+        }
+        self.is_foldable()
+    }
+
+    pub(crate) fn can_expand(&self) -> bool {
+        if self.block.is_bg_task() || self.block.is_subagent() {
+            return self.inline_projection.borrow().as_ref().is_none_or(|source| match &source.body {
+                SourceBody::Content(tree) => !tree.is_empty(),
+                SourceBody::Available | SourceBody::Waiting | SourceBody::Loading
+                | SourceBody::Unavailable => true,
+                SourceBody::Empty | SourceBody::Cycle => false,
+            });
+        }
+        self.is_foldable()
+    }
+
     pub(crate) fn inline_request_width(&self) -> Option<u16> {
         self.inline_width.get()
     }
@@ -549,12 +586,43 @@ impl ScrollbackEntry {
         })
     }
 
+    pub(crate) fn inline_body_window(&self, window: std::ops::Range<usize>) -> std::ops::Range<usize> {
+        let header = self.cached_output.borrow().as_ref().map_or(0, |cache| cache.rendered.output.len());
+        let before = header;
+        window.start.saturating_sub(before)..window.end.saturating_sub(before)
+    }
+
+    pub(crate) fn inline_width_pending(&self) -> bool {
+        self.inline_projection.borrow().as_ref().is_some_and(|projection| Some(projection.width) != self.inline_width.get())
+    }
+
+    pub(crate) fn inline_window_pending(&self, window: std::ops::Range<usize>) -> bool {
+        let window = self.inline_body_window(window);
+        self.inline_projection.borrow().as_ref().is_some_and(|projection| match &projection.body {
+            SourceBody::Content(output) => output.has_deferred(window),
+            SourceBody::Available | SourceBody::Empty | SourceBody::Waiting | SourceBody::Loading
+            | SourceBody::Unavailable | SourceBody::Cycle => false,
+        })
+    }
+
     pub(crate) fn set_inline_source(&self, projection: InlineProjection) {
         *self.inline_projection.borrow_mut() = Some(projection);
         self.inline_revision.set(self.inline_revision.get().wrapping_add(1));
         *self.cached_estimate_lines.borrow_mut() = None;
         *self.cached_truncated_height.borrow_mut() = None;
     }
+
+    pub(crate) fn inline_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.output_authority = Rc::new(());
+        snapshot
+    }
+
+    pub(crate) fn output_authority(&self) -> std::rc::Weak<()> { Rc::downgrade(&self.output_authority) }
+
+    pub(crate) fn note_paint_changed(&self) { self.output_revision.bump(); }
+
+    pub(crate) fn output_signal(&self) -> Rc<RevisionSignal> { Rc::clone(&self.output_revision) }
 
     pub(crate) fn subscribe_output_changes(&self, signal: &Rc<RevisionSignal>,
         dirty: &Rc<RefCell<std::collections::HashSet<EntryId>>>)
@@ -574,8 +642,24 @@ impl ScrollbackEntry {
     }
 
     /// Render without touching the entry's cache (dashboard peek renders at a foreign width).
+    pub(crate) fn output_tree_uncached(&self, ctx: &BlockContext) -> Rc<OutputTree> {
+        if ctx.mode == self.display_mode && !ctx.is_selected {
+            self.ensure_cached(ctx.width, &ctx.appearance, false, ctx.cwd.as_deref());
+            return self.cached_tree();
+        }
+        let header = OutputTree::identified(Rc::new(self.block.rendered_output(ctx)), self.selection_identity(),
+            super::selection_identity::SelectablePart::Block);
+        if !self.block.is_bg_task() && !self.block.is_subagent() { return header; }
+        self.inline_width.set(Some(ctx.width));
+        if ctx.mode == DisplayMode::Collapsed { return header; }
+        let projection = self.inline_projection.borrow();
+        let body = projection.as_ref().filter(|source| source.width == ctx.width && source.expanded)
+            .map_or_else(|| SourceBody::Loading.output(), |source| source.body.output());
+        OutputTree::rooted(OutputTree::branch([header, body]), self.selection_identity())
+    }
+
     pub fn output_uncached(&self, ctx: &BlockContext) -> BlockOutput {
-        self.block.rendered_output(ctx).output
+        self.output_tree_uncached(ctx).materialize()
     }
 
     pub fn context_with_budget(

@@ -182,6 +182,7 @@ impl AgentView {
             || self.image_viewer.is_some()
             || self.video_viewer.is_some()
             || self.block_viewer.is_some()
+            || self.request_viewer.is_some()
             || self.gboom.is_some()
             || self.show_goal_detail
             || self.btw_focused
@@ -207,6 +208,7 @@ impl AgentView {
     pub(crate) fn is_bare_scrollback(&self) -> bool {
         self.active_pane == AgentPane::Scrollback
             && self.block_viewer.is_none()
+            && self.request_viewer.is_none()
             && self.line_viewer.is_none()
             && self.active_modal.is_none()
             && self.image_viewer.is_none()
@@ -250,6 +252,7 @@ impl AgentView {
             || self.agents_modal.is_some()
             || self.persona_detail.is_some()
             || self.block_viewer.is_some()
+            || self.request_viewer.is_some()
             || (self.line_viewer.is_some() && self.plan_approval_view.is_none())
     }
     /// The dropdown is only open while the draft holds an `@` token, so `text().is_empty()` already covers it.
@@ -848,6 +851,31 @@ impl AgentView {
                 }
                 Event::Mouse(mouse) => self.handle_agents_modal_mouse(mouse),
                 Event::Paste(text) => self.handle_agents_modal_paste(text),
+                _ => InputOutcome::Changed,
+            };
+        }
+        if self.request_viewer.is_some() {
+            return match ev {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if registry.lookup(key, When::AgentScreen) == Some(ActionId::ToggleRequestInspector) {
+                        return self.handle_agent_action_with_registry(ActionId::ToggleRequestInspector, registry);
+                    }
+                    if registry.lookup(key, When::Always).is_some() {
+                        return InputOutcome::Unchanged;
+                    }
+                    self.handle_request_viewer_key(key)
+                }
+                Event::Mouse(mouse) => self.handle_request_viewer_mouse(mouse),
+                Event::Paste(text) => self
+                    .request_viewer
+                    .as_mut()
+                    .map_or(InputOutcome::Unchanged, |viewer| {
+                        if viewer.handle_paste(text) {
+                            InputOutcome::Changed
+                        } else {
+                            InputOutcome::Unchanged
+                        }
+                    }),
                 _ => InputOutcome::Changed,
             };
         }
@@ -1493,6 +1521,7 @@ impl AgentView {
             ActionId::OpenSessions => self.open_session_picker(),
             ActionId::ToggleTimelinePanel => self.toggle_timeline_panel(),
             ActionId::ToggleContextSidebar => self.toggle_context_sidebar(),
+            ActionId::ToggleRequestInspector => self.toggle_request_viewer(),
             ActionId::ToggleMouseCapture => {
                 crate::unified_log::info(
                     "mouse_reporting_toggle.handle_agent_action",
@@ -1875,14 +1904,16 @@ mod btw_focus_tests {
         agent.btw_state = Some(BtwOverlayState::done("q".into(), long_btw_answer()));
         agent.btw_focused = true;
         let anchor = RangeHit {
+            position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             col_within_range: 0,
         };
         agent.persistent_text_selection = Some(PersistentTextSelection {
+            positions: crate::scrollback::selection_position::SelectionPositions { anchor: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 }, head: crate::scrollback::selection_position::SourcePosition::Overlay { row: 1, column: 4 } },
             entry_idx: BTW_OVERLAY_ENTRY_IDX,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             anchor: SelectionEndpoint {
                 block_line_idx: 0,
                 col_within_range: 0,

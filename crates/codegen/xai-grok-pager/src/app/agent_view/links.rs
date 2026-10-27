@@ -357,8 +357,9 @@ mod link_click_tests {
         setup_scrollback_area(agent, Rect::new(0, 0, 80, 24));
         let mut model = ResolvedSelectionModel::default();
         model.push_line(crate::scrollback::text_selection::ResolvedSelectableLine {
+            byte_start: 0,
             entry_idx: 0,
-            range_id: 0,
+            range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
             block_line_idx: 0,
             screen_y: 5,
             screen_x: 0,
@@ -1540,8 +1541,9 @@ mod link_click_tests {
             start_col: 15,
             start_row: 5,
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 15 },
                 entry_idx: 0,
-                range_id: 0,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(0),
                 block_line_idx: 0,
                 col_within_range: 15,
             },

@@ -64,7 +64,14 @@ async fn final_capture_equals_http_body_after_each_provider_serializer() {
     for backend in [ApiBackend::ChatCompletions, ApiBackend::Responses, ApiBackend::Messages] {
         let (url, mut bodies, task) = server(axum::http::StatusCode::BAD_REQUEST).await;
         let config = SamplerConfig { base_url: url, model: "fixture-model".into(), api_backend: backend.clone(),
-            api_key: Some(["fixture", "auth"].join("-")), stream_tool_calls: true, ..Default::default() };
+            api_key: Some(["fixture", "auth"].join("-")), stream_tool_calls: true,
+            extra_response_includes: vec!["preview.additional.include".into()], ..Default::default() };
+        let (preview_events, mut preview_rx) = mpsc::unbounded_channel();
+        let sampler = crate::SamplerActor::spawn(config.clone(), crate::RetryPolicy::default(), preview_events);
+        let preview = sampler.preview_request(request()).await.unwrap();
+        assert_eq!(sampler.active_count().await, 0);
+        assert!(matches!(preview_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+        assert!(!format!("{preview:?}").contains("sensitive request body"));
         let (events, mut rx) = mpsc::unbounded_channel();
         let request = request();
         let capture = CaptureAttempt {
@@ -83,6 +90,8 @@ async fn final_capture_equals_http_body_after_each_provider_serializer() {
             panic!("serializer evidence must precede dispatch");
         };
         assert_eq!(body.sensitive_local_bytes(), actual.as_ref());
+        assert_eq!(preview.body.sensitive_local_bytes(), actual.as_ref());
+        assert!(matches!(preview_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
         assert!(!String::from_utf8(actual.to_vec()).unwrap().contains(&["fixture", "auth"].join("-")));
         assert_eq!(membership.len(), 5);
         assert!(!format!("{body:?}").contains("sensitive request body"));
@@ -93,6 +102,7 @@ async fn final_capture_equals_http_body_after_each_provider_serializer() {
         match backend {
             ApiBackend::Responses => {
                 assert_eq!(value["stream_tool_calls"], true);
+                assert!(value["include"].as_array().unwrap().iter().any(|include| include == "preview.additional.include"));
                 assert!(value["tools"].as_array().unwrap().iter().any(|tool| tool["type"] == "web_search"));
                 let reasoning = value["input"].as_array().unwrap().iter().find(|item| item["type"] == "reasoning").unwrap();
                 assert_eq!(reasoning["content"][0]["type"], "reasoning_text");
@@ -146,7 +156,7 @@ async fn preparing_a_body_does_not_claim_dispatch_or_acceptance() {
     let client = SamplingClient::new(SamplerConfig { base_url: "http://127.0.0.1:1/v1".into(), model: "fixture".into(), ..Default::default() }).unwrap().with_capture(capture);
     let payload = serde_json::json!({"messages":[{"role":"user","content":"prepared"}]});
     let builder = client.http.post("http://127.0.0.1:1/v1/chat/completions");
-    let built = client.build_json_request(builder, &payload).await.unwrap();
+    let built = client.build_json_request(builder, crate::request_body::json_body(&payload).unwrap()).await.unwrap();
     let SamplingEvent::LocalRequest { evidence: LocalRequestEvidence::Prepared { body, .. }, .. } = rx.recv().await.unwrap() else { panic!("expected prepared evidence"); };
     assert_eq!(built.body().unwrap().as_bytes().unwrap(), body.sensitive_local_bytes());
     assert!(matches!(rx.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)));
@@ -163,7 +173,7 @@ async fn compressed_http_body_decodes_to_the_exact_captured_json() {
         base_url: "http://127.0.0.1:1/v1".into(), model: "fixture".into(), request_compression: RequestCompression::Zstd, ..Default::default()
     }).unwrap().with_capture(capture);
     let payload = serde_json::json!({"content": "large-body".repeat(crate::request_compression::MIN_COMPRESS_BYTES)});
-    let built = client.build_json_request(client.http.post("http://127.0.0.1:1/v1/chat/completions"), &payload).await.unwrap();
+    let built = client.build_json_request(client.http.post("http://127.0.0.1:1/v1/chat/completions"), crate::request_body::json_body(&payload).unwrap()).await.unwrap();
     assert_eq!(built.headers().get(CONTENT_ENCODING).unwrap(), "zstd");
     let SamplingEvent::LocalRequest { evidence: LocalRequestEvidence::Prepared { body, .. }, .. } = rx.recv().await.unwrap() else { panic!("expected prepared evidence"); };
     let decoded = zstd::decode_all(built.body().unwrap().as_bytes().unwrap()).unwrap();

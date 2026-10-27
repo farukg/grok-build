@@ -384,6 +384,7 @@ pub fn minimal_btw_surface_available(v: &AgentView) -> bool {
         && v.persona_detail.is_none()
         && v.agents_modal.is_none()
         && v.block_viewer.is_none()
+        && v.request_viewer.is_none()
         && v.active_modal.is_none()
         && v.no_input_overlay_pending()
         && v.rewind_state.is_none()

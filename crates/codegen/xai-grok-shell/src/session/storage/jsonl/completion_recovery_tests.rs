@@ -156,13 +156,15 @@ async fn restart_continues_existing_projection_and_fences_late_parent_terminals(
     restored.recover_subagent_completions(&info).await.unwrap();
     let new = task("new-parent-instance");
     let retry = projected(&event, "reused-prompt", &new);
-    let CompletionProjectionAck::Continue { history } = restored
+    let CompletionProjectionAck::Continue { history, sources } = restored
         .append_completion_commit_aware(&info, &retry, &new)
         .await
         .unwrap()
     else {
         panic!("unfinished projection must continue")
     };
+    assert_eq!(sources.retained.len(), 1);
+    assert_eq!(sources.retained[0].source, xai_grok_sampling_types::SourceOccurrence::Unadmitted, "continuation cannot create evidence absent from the original receipt");
     assert_eq!(
         history
             .iter()

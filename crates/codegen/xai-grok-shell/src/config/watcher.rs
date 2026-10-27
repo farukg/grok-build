@@ -51,6 +51,54 @@ impl notify::Watcher for AccessFilteredWatcher {
     }
 }
 
+pub(crate) enum WatchDiagnosis {
+    BackendEventLoss,
+    Io(std::io::ErrorKind),
+    PathMissing,
+    RegistrationMissing,
+    InvalidConfiguration,
+    WatchLimit,
+}
+
+impl From<&notify::Error> for WatchDiagnosis {
+    fn from(error: &notify::Error) -> Self {
+        match &error.kind {
+            notify::ErrorKind::Generic(_) => Self::BackendEventLoss,
+            notify::ErrorKind::Io(error) => Self::Io(error.kind()),
+            notify::ErrorKind::PathNotFound => Self::PathMissing,
+            notify::ErrorKind::WatchNotFound => Self::RegistrationMissing,
+            notify::ErrorKind::InvalidConfig(_) => Self::InvalidConfiguration,
+            notify::ErrorKind::MaxFilesWatch => Self::WatchLimit,
+        }
+    }
+}
+
+impl std::fmt::Display for WatchDiagnosis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BackendEventLoss => f.write_str("backend event loss"),
+            Self::Io(kind) => write!(f, "I/O ({kind})"),
+            Self::PathMissing => f.write_str("watch path missing"),
+            Self::RegistrationMissing => f.write_str("watch registration missing"),
+            Self::InvalidConfiguration => f.write_str("invalid watcher configuration"),
+            Self::WatchLimit => f.write_str("native watch limit reached"),
+        }
+    }
+}
+
+impl AccessFilteredWatcher {
+    /// Directory replacement invalidates the native registration even if its path exists again.
+    pub(crate) fn invalidate_directory(watcher: &mut dyn Watcher, path: &Path) {
+        match watcher.unwatch(path) {
+            Ok(()) => {}
+            Err(error) => match &error.kind {
+                notify::ErrorKind::WatchNotFound | notify::ErrorKind::PathNotFound => {}
+                _ => tracing::warn!(diagnosis = %WatchDiagnosis::from(&error), "failed to remove obsolete panel settings watch; reinstalling"),
+            },
+        }
+    }
+}
+
 /// `new_debouncer` equivalent that builds the debouncer on top of [`AccessFilteredWatcher`] instead of the raw `RecommendedWatcher`.
 pub(crate) fn new_filtered_debouncer<F: notify_debouncer_mini::DebounceEventHandler>(
     timeout: Duration,

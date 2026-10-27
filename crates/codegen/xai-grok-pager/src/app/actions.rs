@@ -447,6 +447,10 @@ pub enum Action {
     FetchContextPolicy,
     /// Submit a revision-bound Context edit.
     SetContextPolicy(xai_grok_shell::sampling::ContextPolicyEdit),
+    /// Open the request inspector on the active session's latest captured request.
+    OpenRequestInspector,
+    /// Fetch (or refresh) the raw captured body for the open request inspector.
+    FetchRequestBody,
     RemoveContextItems(crate::app::agent_view::context_removal::ContextRemovalTarget),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
@@ -1456,6 +1460,29 @@ pub enum ContextPolicyTransportError {
     Rpc(#[source] agent_client_protocol::Error),
 }
 
+/// What an `Effect::RequestSnapshotQuery` asks of the shell's capture store.
+#[derive(Debug, Clone)]
+pub enum RequestSnapshotQuery {
+    /// The newest captured request of the session.
+    Latest,
+    /// The publication body of one exact prepared observation.
+    Body { key: crate::views::request_viewer::RequestBodyKey },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RequestSnapshotTransportError {
+    #[error("Capture request encoding failed")]
+    Encode(#[source] serde_json::Error),
+    #[error("Capture response decoding failed")]
+    Decode(#[source] serde_json::Error),
+    #[error("Capture RPC failed; the capture store state may be unknown")]
+    Rpc(#[source] agent_client_protocol::Error),
+    #[error("Capture store is unavailable")]
+    Unavailable(xai_grok_shell::session::request_capture::CaptureFailure),
+    #[error("Capture store answered an unexpected state")]
+    UnexpectedShape,
+}
+
 /// Async side effect produced by [`super::dispatch::dispatch`].
 /// The event loop spawns these into a `JoinSet`; completions come back through [`TaskResult`] as `Action::TaskComplete`.
 #[derive(Debug)]
@@ -1670,6 +1697,13 @@ pub enum Effect {
         agent_id: AgentId,
         session_id: acp::SessionId,
         change: ContextPolicyChange,
+        generation: u64,
+    },
+    /// Read captured request evidence via `x.ai/session/request_snapshot`.
+    RequestSnapshotQuery {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        query: RequestSnapshotQuery,
         generation: u64,
     },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
@@ -2735,6 +2769,21 @@ pub enum TaskResult {
         session_id: acp::SessionId,
         generation: u64,
         result: Result<xai_grok_shell::extensions::context_policy::ContextPolicyResponse, ContextPolicyTransportError>,
+    },
+    /// The shell answered the inspector's latest-request query; `None` means nothing is captured.
+    RequestSnapshotLoaded {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        generation: u64,
+        result: Result<Option<xai_grok_shell::session::request_capture::RequestSnapshot>, RequestSnapshotTransportError>,
+    },
+    /// The shell answered the inspector's raw-body query.
+    RequestBodyLoaded {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        generation: u64,
+        key: crate::views::request_viewer::RequestBodyKey,
+        result: Result<crate::views::request_viewer::RequestBodyContent, RequestSnapshotTransportError>,
     },
     DeliverSubagentComplete {
         outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,

@@ -952,6 +952,29 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
+        TaskResult::RequestSnapshotLoaded { agent_id, session_id, generation, result } => {
+            let follow_up = app
+                .agents
+                .get_mut(&agent_id)
+                .and_then(|agent| agent.request_snapshot_loaded(&session_id, generation, result));
+            match follow_up {
+                Some((session_id, query, generation)) => vec![
+                    crate::app::actions::Effect::RequestSnapshotQuery {
+                        agent_id,
+                        session_id,
+                        query,
+                        generation,
+                    },
+                ],
+                None => vec![],
+            }
+        }
+        TaskResult::RequestBodyLoaded { agent_id, session_id, generation, key, result } => {
+            if let Some(agent) = app.agents.get_mut(&agent_id) {
+                agent.request_body_loaded(&session_id, generation, &key, result);
+            }
+            vec![]
+        }
         TaskResult::DeliverSubagentComplete { outcome } => {
             use xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome;
             match outcome {

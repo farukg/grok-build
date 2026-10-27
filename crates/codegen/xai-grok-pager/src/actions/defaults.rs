@@ -899,6 +899,26 @@ pub(super) fn default_actions(
         },
     ];
 
+    // The captured-request inspector paints over the scrollback area, so it exists only in
+    // screen modes that render the agent view (minimal has its own surface).
+    if !screen_mode.is_minimal() {
+        actions.push(ActionDef {
+            id: ActionId::ToggleRequestInspector,
+            label: "request",
+            description: "Inspect the latest captured model request",
+            default_key: key!(F(3)),
+            alt_keys: vec![],
+            category: Category::Panels,
+            context: When::AgentScreen,
+            hint_priority: None,
+            hint_key_display: None,
+            requires_confirmation: false,
+            long_help: Some(
+                "Shows the latest model request the shell captured for this session.\nReadable lists per-attempt facts (prepared, dispatch, response, outcome) and the request's member categories; r switches to the raw captured body, fetched on demand.\nNothing is prepared or sent here, and prepared or dispatched never claims the model consumed it: the view only reads capture evidence that already exists. It refreshes when the shell reports a new real request observation.",
+            ),
+        });
+    }
+
     // Toggle terminal mouse reporting (mouse capture). Single binding: Ctrl+R on scrollback only, which takes that
     // chord from OpenSessions while scrollback is focused. Under Panels (not Essentials): advanced/opt-in only.
     if mouse_reporting_toggle_enabled {

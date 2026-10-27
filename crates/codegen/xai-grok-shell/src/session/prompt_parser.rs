@@ -208,6 +208,45 @@ pub(crate) async fn parse_prompt_with_skills(
         is_cursor,
     })
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviewPromptDeferred { AttachmentPreparation, FileExpansion, LargePromptOffload }
+
+pub(crate) fn preview_prompt_text(
+    prompt: &[acp::ContentBlock], verbatim: bool, is_cursor: bool, send_now: bool,
+) -> Result<String, PreviewPromptDeferred> {
+    let mut parts = Vec::new();
+    for block in prompt {
+        match block {
+            acp::ContentBlock::Text(text) => parts.push(text.text.clone()),
+            _ => return Err(PreviewPromptDeferred::AttachmentPreparation),
+        }
+    }
+    let message = parts.join(" ");
+    if !collect_file_references(&message).is_empty() {
+        return Err(PreviewPromptDeferred::FileExpansion);
+    }
+    let (context, query) = render_message(message, Vec::new(), Vec::new(), &[], verbatim, is_cursor);
+    if !crate::session::placeholder_images::extract_placeholders(&query).is_empty() {
+        return Err(PreviewPromptDeferred::AttachmentPreparation);
+    }
+    let query = crate::session::placeholder_images::strip_paths_from_image_placeholders(query);
+    let query = if send_now && !verbatim {
+        xai_interjection_core::frame_user_turn(xai_interjection_core::INTERJECTION_NOTE, &query)
+    } else {
+        query
+    };
+    let extraction = xai_grok_tools::util::base64_images::extract_base64_images(query.clone());
+    if !is_cursor && !extraction.images.is_empty() {
+        return Err(PreviewPromptDeferred::AttachmentPreparation);
+    }
+    let query = if is_cursor { query } else { extraction.text };
+    let text = ParsedPrompt::assemble_parts_with_skills(&context, &query, "", is_cursor);
+    if !verbatim && xai_grok_tools::implementations::grok_build::read_file::exceeds_read_cap(&text) {
+        return Err(PreviewPromptDeferred::LargePromptOffload);
+    }
+    Ok(text)
+}
+
 /// Returns `(context, query)`, the two halves of the prompt kept separate.
 /// The caller can truncate context without searching for the query boundary.
 fn render_message(

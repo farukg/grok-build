@@ -57,7 +57,7 @@ pub enum ContextPolicyFailure {
     Apply { failures: Vec<ContextPolicyApplyFailure>, durability: ContextDurability },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextIoKind {
     NotFound,

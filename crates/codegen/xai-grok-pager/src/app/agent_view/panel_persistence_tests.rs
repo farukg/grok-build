@@ -152,3 +152,121 @@ fn a_damaged_global_file_keeps_the_state_and_names_the_cause() {
         "the reload says what it did instead of claiming defaults: {toast}"
     );
 }
+
+#[test]
+fn dock_override_removal_recomputes_real_default_chain() {
+    use crate::app::panel_settings::{Layer, PanelSettingsStore, SettingKey};
+    use crate::views::dock::{self, DockPlacement};
+    const CHILD: &str = "GROK_PANEL_DOCK_REGRESSION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // A fresh test process isolates OnceLock-backed home resolution.
+        let dir = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("dock_override_removal_recomputes_real_default_chain")
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HOME", dir.path())
+            .env("GROK_HOME", dir.path())
+            .current_dir(dir.path())
+            .status().unwrap();
+        assert!(status.success());
+        return;
+    }
+    let home = xai_grok_config::grok_home();
+    let root = home.join("panel-settings");
+    assert_eq!(crate::app::dock_requirement_pin(), None, "fixture requires no system dock pin");
+    dock::set_enabled_for_test(false);
+    for (config, env, pin, remote, expected) in [
+        (None, None, None, None, false),
+        (None, None, None, Some(true), true),
+        (Some(false), None, None, Some(true), false),
+        (Some(true), None, None, Some(false), true),
+        (Some(true), Some(false), None, Some(true), false),
+        (Some(false), Some(true), None, Some(false), true),
+        (Some(false), Some(true), Some(false), Some(true), false),
+        (Some(false), Some(false), Some(true), Some(false), true),
+    ] {
+        let config_path = home.join("config.toml");
+        let pin_path = home.join("requirements.toml");
+        for (path, value) in [(&config_path, config), (&pin_path, pin)] {
+            match value {
+                Some(value) => std::fs::write(path, format!("[features]\ndock = {value}\n")).unwrap(),
+                None => { if path.exists() { std::fs::remove_file(path).unwrap(); } }
+            }
+        }
+        unsafe {
+            match env {
+                Some(value) => std::env::set_var("GROK_DOCK", if value { "true" } else { "false" }),
+                None => std::env::remove_var("GROK_DOCK"),
+            }
+        }
+        crate::app::confirm_dock_enabled(remote);
+        let mut reader = view(&root, Some("reader"));
+        let mut writer = PanelSettingsStore::open(&root, None).store;
+        for delete_file in [false, true] {
+            writer.set(Layer::Global, Setting::DockPlacement(DockPlacement::Top)).unwrap();
+            reader.reload_global_panel_settings();
+            if pin.or(env).is_none_or(|visible| visible) {
+                assert_eq!(dock::placement(), DockPlacement::Top);
+            } else {
+                assert!(!dock::enabled(), "explicit visibility pins cannot be overruled");
+            }
+            if delete_file {
+                std::fs::remove_file(global_file(&root)).unwrap();
+            } else {
+                writer.clear(Layer::Global, SettingKey::DockPlacement).unwrap();
+            }
+            assert!(reader.reload_global_panel_settings());
+            assert_eq!(dock::enabled(), expected, "removal uses current Pin/Env/Config/Remote/Builtin inputs");
+        }
+    }
+    std::fs::remove_file(home.join("requirements.toml")).unwrap();
+    unsafe { std::env::remove_var("GROK_DOCK"); }
+    crate::app::confirm_dock_enabled(Some(false));
+    let mut reader = view(&root, Some("reader"));
+    let mut writer = PanelSettingsStore::open(&root, None).store;
+    writer.set(Layer::Global, Setting::DockPlacement(DockPlacement::Top)).unwrap();
+    reader.reload_global_panel_settings();
+    std::fs::write(home.join("config.toml"), "[features]\ndock = true\n").unwrap();
+    writer.clear(Layer::Global, SettingKey::DockPlacement).unwrap();
+    assert!(reader.reload_global_panel_settings());
+    assert!(dock::enabled(), "a config edit made while the override was active must be read now");
+}
+
+#[test]
+fn semantic_damage_keeps_view_state_with_a_safe_cause_then_recovers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut writer = view(root, None);
+    writer.save_global_panel_settings(&[kind_form(MessageKind::Read, DisplayForm::Expanded)]);
+    let mut reader = view(root, None);
+    std::fs::write(global_file(root), "[message_display]\nread = \"invalid-choice-marker\"\n").unwrap();
+    assert!(reader.reload_global_panel_settings());
+    assert_eq!(reader.scrollback.display_defaults().get(MessageKind::Read), Some(DisplayForm::Expanded));
+    let toast = &reader.toast.as_ref().unwrap().0;
+    assert!(toast.contains("invalid value for known setting `message_display.read`"));
+    assert!(toast.contains("kept the last loaded values"));
+    assert!(!toast.contains("invalid-choice-marker"));
+    std::fs::write(global_file(root), "[message_display]\nread = \"collapsed\"\n").unwrap();
+    assert!(reader.reload_global_panel_settings());
+    assert_eq!(reader.scrollback.display_defaults().get(MessageKind::Read), Some(DisplayForm::Collapsed));
+}
+
+#[test]
+fn default_constructors_leave_preferences_unattached_and_reload_passive() {
+    use crate::acp::model_state::ModelState;
+    use crate::app::app_view::AppView;
+    use crate::render::draw::EscapeWriter;
+    let mut agent = make_agent();
+    assert!(agent.panel_persistence.store.is_none());
+    assert!(!agent.reload_global_panel_settings());
+    assert!(!agent.reload_session_panel_settings("unattached"));
+    assert!(agent.panel_persistence.store.is_none());
+    assert!(agent.toast.is_none());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = AppView::new(tx, ModelState::default(), Vec::new(), EscapeWriter::disconnected());
+    assert!(app.panel_settings_root.is_none());
+    assert!(!app.reload_all_panel_settings());
+    assert!(app.panel_settings_root.is_none());
+    assert!(rx.try_recv().is_err());
+}

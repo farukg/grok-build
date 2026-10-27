@@ -29,7 +29,7 @@ use crate::theme::Theme;
 
 /// Synthetic header `range_id`, reserved above block `selection_range` ids (which count up from 0).
 /// Expanded verb slot maps member 0's line 0 beside the header; a shared id would merge both rows into one selectable range.
-pub(crate) const GROUP_HEADER_RANGE_ID: u16 = u16::MAX;
+pub(crate) const GROUP_HEADER_RANGE_ID: usize = usize::MAX;
 
 /// Label for the inline-media native-open text button (terminals without inline graphics).
 /// Graphics terminals use a shorter overlay `[Open]` instead.
@@ -217,6 +217,7 @@ pub fn render_scrolled_entries_with_scratch(
         media_paths,
         group_spans,
         cwd,
+        None,
     )
     .result
 }
@@ -240,6 +241,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
     media_paths: &[std::path::PathBuf],
     group_spans: Option<(&[GroupSpan], usize)>,
     cwd: Option<&std::path::Path>,
+    header_override: Option<&GroupHeaderLabel>,
 ) -> ScrollRenderResultWithBoundaries {
     if entries.is_empty() || viewport.width == 0 || viewport.height == 0 {
         return ScrollRenderResultWithBoundaries::default();
@@ -309,19 +311,11 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         };
 
         // Calculate visible height
-        let skip_rows: u16 = if top_clipped {
-            (viewport_start - entry_start) as u16
-        } else {
-            0
+        let skip_rows = viewport_start.saturating_sub(entry_start);
+        let visible_height = entry_end.min(viewport_end) - entry_start.max(viewport_start);
+        let Ok(render_height) = u16::try_from(visible_height.min(usize::from(viewport.height))) else {
+            continue;
         };
-        let visible_height: u16 = if bottom_clipped {
-            (viewport_end - entry_start.max(viewport_start)) as u16
-        } else {
-            height - skip_rows
-        };
-
-        // Calculate actual render height (clamped to viewport)
-        let render_height = visible_height.min(viewport.height);
 
         if render_height == 0 {
             y = entry_end + entry_layout_info.gap_after as usize;
@@ -336,7 +330,8 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         let is_selected = selected_idx == Some(logical_idx);
         // Both fold families feed the one label channel; a header row belongs to exactly one fold, so the branches are
         // exclusive by construction. Without spans the walk stops at its own run-breaker classification.
-        let header_label = if entry_layout_info.verb_group_header {
+        let header_label = if let Some(label) = header_override { Some(label.clone()) }
+        else if entry_layout_info.verb_group_header {
             let show_thinking = crate::appearance::cache::load_show_thinking_blocks();
             let end = group_spans
                 .and_then(|(spans, base)| {
@@ -380,6 +375,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         let renderer = EntryRenderer::new(entry, theme)
             .with_appearance_ref(appearance)
             .with_tick(tick)
+            .with_native_paint(false)
             .with_skip_rows(skip_rows)
             .with_groupable(entry.block.is_groupable())
             .with_selected(is_selected)
@@ -436,7 +432,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
 
         let ctx = entry.context(content_width, appearance, cwd);
         let has_vpad = entry.block.has_vpad(&ctx);
-        let vpad_top = if has_vpad { 1u16 } else { 0 };
+        let vpad_top = usize::from(has_vpad);
         let content_skip = skip_rows.saturating_sub(vpad_top) as usize;
         let first_visible_content_y = render_y + if skip_rows < vpad_top { 1 } else { 0 };
         let max_y = render_y + render_height;
@@ -474,7 +470,9 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             let chrome_offset = group_header_chrome_prefix_width();
             result.selection_model.push_line(ResolvedSelectableLine {
                 entry_idx: logical_idx,
-                range_id: GROUP_HEADER_RANGE_ID,
+                byte_start: 0,
+                range_id: super::selection_identity::RangeIdentity::new(entry.selection_identity(),
+                    super::selection_identity::SelectablePart::GroupHeader, GROUP_HEADER_RANGE_ID),
                 block_line_idx: 0,
                 screen_y: render_y,
                 screen_x: entry_row_layout.content.x.saturating_add(chrome_offset),
@@ -487,11 +485,10 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             });
         }
         for block_line_idx in content_skip..mapped_len {
-            let Some(source_line) = tree.line(block_line_idx) else { break };
+            if screen_y >= max_y { break; }
+            let Some(source_line) = tree.line(block_line_idx) else { screen_y += 1; continue };
+            if source_line.native { screen_y += 1; continue; }
             let line = source_line.line;
-            if screen_y >= max_y {
-                break;
-            }
             // Each `BlockLine` is one already-wrapped screen row, so the single-row paint path applies. The haystack is the
             // rendered glyphs, not the indexed source text, so the highlighted set can diverge from the index match set.
             // Markdown markers present in source but absent on screen won't highlight.
@@ -523,7 +520,8 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
                 let resolved_line = ResolvedSelectableLine {
                     entry_idx: logical_idx,
                     range_id,
-                    block_line_idx,
+                    byte_start: source_line.byte_start,
+                    block_line_idx: source_line.local_row,
                     screen_y,
                     screen_x: entry_row_layout.content.x,
                     // A boundary may expose one otherwise blank terminal cell as an input anchor; no content is painted or copied there
@@ -802,6 +800,29 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
                     has_button_row: false,
                 });
             }
+        }
+
+        if !is_group_header || verb_expanded_slot {
+            let available = usize::from(max_y.saturating_sub(first_visible_content_y));
+            tree.visit_native(content_skip..content_skip.saturating_add(available), 0, &mut |offset, part| {
+                let nested_viewport = Rect::new(entry_row_layout.content.x, first_visible_content_y,
+                    content_width, u16::try_from(available).unwrap_or(0));
+                let entries = [part.entry.as_ref()];
+                let nested = render_scrolled_entries_with_selection_boundaries(buf, nested_viewport,
+                    &entries, content_skip, None, theme, &part.appearance, &[part.layout], part.clock.get(),
+                    mouse_pos, None, search_highlight, offset, 0, &part.media_paths, None, part.cwd.as_deref(), part.header_label.as_ref());
+                for range in nested.result.selection_model.ranges {
+                    for mut line in range.lines {
+                        line.entry_idx = logical_idx;
+                        line.range_id.root = entry.selection_identity();
+                        result.selection_model.push_line(line);
+                    }
+                }
+                selection_boundaries.append_reroot(nested.selection_boundaries, entry.selection_identity(), logical_idx);
+                result.link_overlay.extend_from(&nested.result.link_overlay);
+                result.inline_media.extend(nested.result.inline_media);
+                result.diagram_affordances.extend(nested.result.diagram_affordances);
+            });
         }
 
         // Track selected entry

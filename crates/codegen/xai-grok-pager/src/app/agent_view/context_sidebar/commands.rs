@@ -80,6 +80,11 @@ impl OpenContextSidebar {
     }
 
     pub(crate) fn apply_disclosure(&mut self, disclosure: super::SectionDisclosure) {
+        if self.disclosure == disclosure && self.sidebar.cursor.is_none_or(|line| {
+            Outline::build(disclosure, self.todo_count).index_of(line).is_some()
+        }) {
+            return;
+        }
         let target = self.sidebar.cursor.and_then(|line| CursorTarget::of(line, self.disclosure));
         self.disclosure = disclosure;
         if let Some(target) = target {

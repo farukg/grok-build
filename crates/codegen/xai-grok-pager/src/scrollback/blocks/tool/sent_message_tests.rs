@@ -147,8 +147,8 @@ fn render_selection_state(
     )
 }
 
-fn reachable_full_range_drag(model: &ResolvedSelectionModel, range_id: u16) -> ActiveTextDrag {
-    let range = model.range(0, range_id).expect("selection range");
+fn reachable_full_range_drag(model: &ResolvedSelectionModel, range_id: usize) -> ActiveTextDrag {
+    let range = model.range_local(0, range_id).expect("selection range");
     let first = range.lines.first().expect("selection range first line");
     let last = range.lines.last().expect("selection range last line");
     let anchor = model
@@ -157,14 +157,14 @@ fn reachable_full_range_drag(model: &ResolvedSelectionModel, range_id: u16) -> A
             first.screen_y,
         )
         .expect("first painted cell must be hit-testable");
-    assert_eq!(anchor.range_id, range_id);
+    assert_eq!(anchor.range_id.local, range_id);
     let last_col = last
         .screen_x
         .saturating_add(last.selectable_cols.end.saturating_sub(1));
     let head = model
         .hit_test_nearest_in_range(anchor, last_col, last.screen_y)
         .expect("last painted cell must be reachable in range");
-    assert_eq!(head.range_id, range_id);
+    assert_eq!(head.range_id.local, range_id);
     ActiveTextDrag {
         anchor,
         head,
@@ -423,8 +423,8 @@ fn header_text_never_carries_text_reason_or_raw_id_for_named() {
     );
     assert_eq!(Some(CHILD_SID), block.child_session_id());
     let (model, _, _) = render_selection_state(block, 60);
-    assert!(model.range(0, SENT_MESSAGE_ID_RANGE).is_none());
-    assert!(model.range(0, SENT_MESSAGE_TEXT_RANGE).is_some());
+    assert!(model.range_local(0, SENT_MESSAGE_ID_RANGE).is_none());
+    assert!(model.range_local(0, SENT_MESSAGE_TEXT_RANGE).is_some());
 
     let unresolved_block = rejected(unresolved("sub-123", "follow up"));
     assert_eq!(
@@ -461,7 +461,7 @@ fn wrapped_message_joiners_reconstruct_word_midword_and_trailing_newline_exactly
 
     let (model, boundaries, cached) = render_selection_state(block, 22);
     assert!(
-        model.range(0, SENT_MESSAGE_TEXT_RANGE).is_some(),
+        model.range_local(0, SENT_MESSAGE_TEXT_RANGE).is_some(),
         "message selection range"
     );
     let drag = reachable_full_range_drag(&model, SENT_MESSAGE_TEXT_RANGE);
@@ -477,7 +477,7 @@ fn wrapped_message_joiners_reconstruct_word_midword_and_trailing_newline_exactly
     assert_eq!(full, text);
 
     let last_line = model
-        .range(0, SENT_MESSAGE_TEXT_RANGE)
+        .range_local(0, SENT_MESSAGE_TEXT_RANGE)
         .and_then(|range| range.lines.last())
         .expect("last reachable message row");
     let partial_hit = model
@@ -503,9 +503,9 @@ fn wrapped_message_joiners_reconstruct_word_midword_and_trailing_newline_exactly
     assert!(!full_partial.ends_with('\n'));
     assert_eq!(
         model
-            .range(0, SENT_MESSAGE_ID_RANGE)
+            .range_local(0, SENT_MESSAGE_ID_RANGE)
             .expect("destination selection range")
-            .range_id,
+            .range_id.local,
         SENT_MESSAGE_ID_RANGE
     );
 }
@@ -516,7 +516,7 @@ fn newline_only_messages_have_real_selection_anchors_and_copy_exactly() {
         let block = sent(unresolved("sub-123", text));
         let (model, boundaries, cached) = render_selection_state(block, 40);
         let range = model
-            .range(0, SENT_MESSAGE_TEXT_RANGE)
+            .range_local(0, SENT_MESSAGE_TEXT_RANGE)
             .expect("blank message selection range");
         let blank_rows = text.chars().filter(|&ch| ch == '\n').count();
         assert_eq!(range.lines.len(), blank_rows);
@@ -608,7 +608,7 @@ fn destination_id_wraps_literally_and_reconstructs_through_joiners() {
 
     let (model, boundaries, cached) = render_selection_state(block, 22);
     assert!(
-        model.range(0, SENT_MESSAGE_ID_RANGE).is_some(),
+        model.range_local(0, SENT_MESSAGE_ID_RANGE).is_some(),
         "destination selection range"
     );
     let drag = reachable_full_range_drag(&model, SENT_MESSAGE_ID_RANGE);
@@ -623,7 +623,7 @@ fn destination_id_wraps_literally_and_reconstructs_through_joiners() {
     assert_eq!(visible, subagent_id);
     assert_eq!(full, subagent_id);
     assert!(
-        model.range(0, SENT_MESSAGE_TEXT_RANGE).is_some(),
+        model.range_local(0, SENT_MESSAGE_TEXT_RANGE).is_some(),
         "destination and message must have independent ranges"
     );
 }

@@ -48,7 +48,9 @@ fn every_top_and_semantic_group_fold_is_global_across_a_b_new_and_reopen() {
     for section in sections {
         a.set(Layer::Session, Setting::Section { section, state: DisclosureState::Collapsed }).unwrap();
     }
-    assert!(b.reload_global().is_empty());
+    let reload = b.reload_global();
+    assert!(reload.warnings.is_empty());
+    assert!(reload.changed);
     for id in ["a", "b", "new"] {
         a.attach_session(Some(session(id)));
         let reopened = PanelSettingsStore::open(root.path(), Some(session(id))).store;

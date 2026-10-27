@@ -1,5 +1,4 @@
 use super::*;
-use std::fs;
 use xai_chat_state::input_projection::NotificationProjection;
 
 impl JsonlStorageAdapter {
@@ -32,24 +31,15 @@ impl JsonlStorageAdapter {
         {
             return Err(StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::InvalidInput, "invalid notification batch admission")));
         }
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(StrictAppendError::NotCommitted(error)),
-        };
-        for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-            if !line.ends_with(b"\n") { break; }
-            if line.trim_ascii().is_empty() { continue; }
-            let value: serde_json::Value = serde_json::from_slice(line).map_err(|error| StrictAppendError::NotCommitted(io::Error::other(error)))?;
-            if value.get("_notification_batch").is_none() { continue; }
-            let previous: NotificationProjection = serde_json::from_value(value)
-                .map_err(|error| StrictAppendError::NotCommitted(io::Error::other(error)))?;
-            if previous.binding.id == projection.binding.id {
+        let retained_projections = Self::read_notification_projections(&path).map_err(StrictAppendError::NotCommitted)?;
+        for previous in &retained_projections {
+            if matches!(&previous.identity, xai_chat_state::input_projection::InputReceiptIdentity::Notification { batch_id, .. } if batch_id == &projection.binding.id) {
                 Self::sync_file_durable(&OpenOptions::new().read(true).open(&path).map_err(StrictAppendError::Indeterminate)?)
                     .map_err(StrictAppendError::Indeterminate)?;
                 Self::sync_parent_directory(&path).map_err(StrictAppendError::Indeterminate)?;
                 let history = self.read_chat_history_sync(path.clone(), CHAT_FORMAT_VERSION).map_err(StrictAppendError::Indeterminate)?;
-                return Ok(CompletionProjectionAck::AlreadyPresent { history });
+                let sources = Self::retained_completion_sources(&retained_projections, projection.receipt_identity());
+                return Ok(CompletionProjectionAck::AlreadyPresent { history, sources });
             }
         }
         let receipts = Self::completion_receipts(&path).map_err(StrictAppendError::NotCommitted)?;

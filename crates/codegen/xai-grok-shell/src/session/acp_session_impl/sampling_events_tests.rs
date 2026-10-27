@@ -45,6 +45,7 @@ async fn channel_tokens_accumulate_into_streaming_capture() {
             for chunk in ["Let me ", "think ", "step by step. "] {
                 actor
                     .handle_sampling_event(SamplingEvent::ChannelToken {
+                        origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                         request_id: req.clone(),
                         channel: SamplingChannel::Reasoning,
                         text: chunk.to_string(),
@@ -54,6 +55,7 @@ async fn channel_tokens_accumulate_into_streaming_capture() {
             }
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Text },
                     request_id: req.clone(),
                     channel: SamplingChannel::Text,
                     text: "Answer: 42".to_string(),
@@ -114,6 +116,7 @@ async fn narration_token_sends_message_chunk_and_skips_capture() {
             own_request(&actor, &req);
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "Found the bug; fixing next.".to_string(),
@@ -125,6 +128,7 @@ async fn narration_token_sends_message_chunk_and_skips_capture() {
 
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req,
                     channel: SamplingChannel::Narration,
                     text: "Found the bug; fixing next.".to_string(),
@@ -169,6 +173,7 @@ async fn whitespace_reasoning_reaches_capture_and_session_updates_unchanged() {
             own_request(&actor, &req);
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req,
                     channel: SamplingChannel::Reasoning,
                     text: " \t\n".to_string(),
@@ -221,6 +226,7 @@ async fn same_prompt_restart_accumulates_segments_via_handler() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "first gen reasoning".to_string(),
@@ -236,6 +242,7 @@ async fn same_prompt_restart_accumulates_segments_via_handler() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req,
                     channel: SamplingChannel::Reasoning,
                     text: "second gen reasoning".to_string(),
@@ -291,6 +298,7 @@ async fn completed_event_clears_slot_keeps_prior_uncommitted_segments() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "prior uncommitted reasoning".to_string(),
@@ -306,6 +314,7 @@ async fn completed_event_clears_slot_keeps_prior_uncommitted_segments() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "committed reasoning".to_string(),
@@ -393,6 +402,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
             // Otherwise the tool call could still race ahead of trailing text
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Text },
                     request_id: req.clone(),
                     channel: SamplingChannel::Text,
                     text: "the scrollback blo".to_string(),
@@ -478,6 +488,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: late_req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "committed request reasoning".to_string(),
@@ -500,6 +511,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
 
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: late_req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: " queued after timeout".to_string(),
@@ -552,6 +564,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: newer_req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "newer request reasoning".to_string(),
@@ -620,6 +633,7 @@ async fn unowned_stream_events_do_not_mutate_capture_or_notify_the_next_turn() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: stale.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "stale reasoning".to_string(),
@@ -755,6 +769,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "I should consider...".to_string(),
@@ -932,6 +947,7 @@ async fn observe_only_confident_completion_stays_warn_only() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "loop loop loop".to_string(),
@@ -1089,6 +1105,7 @@ async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "loop loop loop".to_string(),
@@ -1140,6 +1157,7 @@ async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "still looping".to_string(),
@@ -1252,6 +1270,7 @@ async fn tool_call_delta_marks_streaming_capture_phase() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "I'll call a tool.".to_string(),
@@ -1387,6 +1406,7 @@ async fn reasoning_only_doomloop_turn_captures_every_generation_as_segments() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "thinking attempt 1".to_string(),
@@ -1401,6 +1421,7 @@ async fn reasoning_only_doomloop_turn_captures_every_generation_as_segments() {
                 .await;
             actor
                 .handle_sampling_event(SamplingEvent::ChannelToken {
+                    origin: xai_grok_sampling_types::OutputOrigin::ChannelAggregate { channel: xai_grok_sampling_types::OutputChannel::Reasoning },
                     request_id: req.clone(),
                     channel: SamplingChannel::Reasoning,
                     text: "thinking attempt 2".to_string(),

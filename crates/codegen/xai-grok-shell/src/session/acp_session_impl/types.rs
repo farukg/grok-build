@@ -57,6 +57,13 @@ pub(crate) enum SamplerFailureRecovery {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TerminalInputProjection {
+    NotApplicable,
+    Applied { origin: crate::session::source_binding::StrictInputRef },
+    AlreadyPresent { origin: crate::session::source_binding::StrictInputRef },
+}
+
 /// Outcome of a single turn attempt via the sampler-based path.
 /// `CompactAndResubmit` short-circuits the outer turn loop with `continue` (the turn driver re-builds the request from the latest chat state).
 pub(crate) enum SamplerTurnOutcome {
@@ -64,6 +71,7 @@ pub(crate) enum SamplerTurnOutcome {
     Response(
         Box<ConversationResponse>,
         Box<xai_grok_sampler::InferenceLatencyStats>,
+        xai_grok_sampler::RequestId,
     ),
     CompactAndResubmit,
     /// Retry through the auth-retry schedule. Mirrors

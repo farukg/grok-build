@@ -21,7 +21,7 @@ use crate::views::overlay_list::ListOverlay;
 
 /// Viewport snapshot captured when the picker opens, restored on Esc / failed jump.
 /// The viewport is a width-stable [`ScrollAnchor`] bookmark, not a raw scroll offset (which clamps and drifts under a resize).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JumpRestore {
     pub(crate) bookmark: Option<ScrollAnchor>,
     pub selected: Option<usize>,

@@ -1244,6 +1244,10 @@ impl AgentView {
                 _ => {}
             }
         }
+        if let Some(ref mut viewer) = self.request_viewer {
+            viewer.handle_scroll(lines);
+            return;
+        }
         if let Some(ref mut viewer) = self.block_viewer {
             viewer.handle_scroll(lines);
             return;

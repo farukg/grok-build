@@ -24,7 +24,7 @@ use xai_grok_shell::extensions::notification::{
 };
 
 /// Shared text-selection range id for recap body lines (header is excluded).
-const RECAP_BODY_RANGE: u16 = 0;
+const RECAP_BODY_RANGE: usize = 0;
 
 /// Which pager-local memory command a [`SessionEvent::MemoryCommandStarted`] marker belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

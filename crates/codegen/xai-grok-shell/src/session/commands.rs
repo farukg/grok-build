@@ -570,6 +570,10 @@ pub enum SessionCommand {
         request: RemoveItemsRequest,
         respond_to: oneshot::Sender<RemoveContextItemsOutcome>,
     },
+    PreviewRequest {
+        request: crate::extensions::request_preview::RequestPreviewRequest,
+        respond_to: oneshot::Sender<crate::extensions::request_preview::RequestPreview>,
+    },
     GetContextPolicy {
         respond_to: oneshot::Sender<Result<crate::extensions::context_policy::ContextPolicyReport, crate::session::helpers::context_policy_store::ContextPolicyError>>,
     },

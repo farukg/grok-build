@@ -67,20 +67,22 @@ impl ChatStateHandle {
     pub async fn push_user_messages_batch_and_ack(
         &self,
         items: Vec<ConversationItem>,
-    ) -> Option<()> {
-        self.query("PushUserMessagesBatchAndAck", |reply| {
-            ChatStateCommand::PushUserMessagesBatchAndAck { items, reply }
-        })
-        .await
+    ) -> Result<Vec<crate::AppliedAppend>, crate::MutationAdmissionError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(ChatStateCommand::PushUserMessagesBatchAndAck { items, reply })
+            .map_err(|_| crate::MutationAdmissionError::MailboxClosed(ChatStateMailboxClosed))?;
+        response.await.map_err(crate::MutationAdmissionError::ReplyLost)
     }
 
-    /// Push a user message and await acknowledgement that the chat-state actor
-    /// has accepted and processed it.
-    pub async fn push_user_message_and_ack(&self, item: ConversationItem) -> Option<()> {
-        self.query("PushUserMessageAndAck", |reply| {
-            ChatStateCommand::PushUserMessageAndAck { item, reply }
-        })
-        .await
+    /// Acknowledge the applied append, not persistence or provider dispatch.
+    pub async fn push_user_message_and_ack(
+        &self,
+        item: ConversationItem,
+    ) -> Result<crate::AppliedAppend, crate::MutationAdmissionError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(ChatStateCommand::PushUserMessageAndAck { item, reply })
+            .map_err(|_| crate::MutationAdmissionError::MailboxClosed(ChatStateMailboxClosed))?;
+        response.await.map_err(crate::MutationAdmissionError::ReplyLost)
     }
 
     /// Strictly append one working-directory switch and await persistence.
@@ -90,20 +92,25 @@ impl ChatStateHandle {
         content: String,
         cwd_generation: std::num::NonZeroU64,
     ) -> Result<StrictAppendAck, StrictAppendError> {
-        self.query("AppendWorkingDirectorySwitchAndAck", |reply| {
-            ChatStateCommand::AppendWorkingDirectorySwitchAndAck {
-                content,
-                cwd_generation,
-                reply,
-            }
-        })
-        .await
-        .unwrap_or_else(|| {
-            Err(StrictAppendError::Indeterminate(std::io::Error::new(
+        self.append_working_directory_switch_with_source_and_ack(content, cwd_generation).await
+            .map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))
+    }
+
+    pub async fn append_working_directory_switch_with_source_and_ack(
+        &self,
+        content: String,
+        cwd_generation: std::num::NonZeroU64,
+    ) -> Result<crate::MutationAck<StrictAppendAck>, StrictAppendError<crate::MutationAck<StrictAppendAck>>> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(ChatStateCommand::AppendWorkingDirectorySwitchAndAck { content, cwd_generation, reply })
+            .map_err(|_| StrictAppendError::Indeterminate(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
-                "chat-state actor unavailable; retry by generation",
-            )))
-        })
+                crate::MutationAdmissionError::MailboxClosed(ChatStateMailboxClosed),
+            )))?;
+        response.await.map_err(|source| StrictAppendError::Indeterminate(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe, crate::MutationAdmissionError::ReplyLost(source),
+        )))?
     }
 
     pub async fn append_completion_and_ack(
@@ -111,12 +118,9 @@ impl ChatStateHandle {
         projection: crate::completion::CompletionProjection,
         admission: crate::InputAdmission,
     ) -> Result<crate::completion::CompletionProjectionAck, crate::completion::CompletionProjectionError> {
-        self.query("AppendCompletionAndAck", |reply| {
-            ChatStateCommand::AppendInputAndAck { projection: crate::InputProjection::Subagent(projection), admission, reply }
-        }).await.unwrap_or_else(|| Err(StrictAppendError::Indeterminate(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
-            "completion projection acknowledgement unavailable; retry the same attempt",
-        ))))
+        self.append_input_with_source_and_ack(crate::InputProjection::Subagent(projection), admission).await
+            .map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))
     }
 
     pub async fn append_notification_and_ack(
@@ -124,11 +128,9 @@ impl ChatStateHandle {
         projection: crate::input_projection::NotificationProjection,
         admission: crate::InputAdmission,
     ) -> Result<crate::CompletionProjectionAck, crate::CompletionProjectionError> {
-        self.query("AppendNotificationAndAck", |reply| {
-            ChatStateCommand::AppendInputAndAck { projection: crate::InputProjection::Notification(projection), admission, reply }
-        }).await.unwrap_or_else(|| Err(StrictAppendError::Indeterminate(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe, "notification projection acknowledgement unavailable; retry the same batch",
-        ))))
+        self.append_input_with_source_and_ack(crate::InputProjection::Notification(projection), admission).await
+            .map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))
     }
 
     pub async fn append_delivery_and_ack(
@@ -136,11 +138,25 @@ impl ChatStateHandle {
         projection: crate::DeliveryProjection,
         admission: crate::InputAdmission,
     ) -> Result<crate::CompletionProjectionAck, crate::CompletionProjectionError> {
-        self.query("AppendDeliveryAndAck", |reply| {
-            ChatStateCommand::AppendInputAndAck { projection: crate::InputProjection::Delivery(projection), admission, reply }
-        }).await.unwrap_or_else(|| Err(StrictAppendError::Indeterminate(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe, "delivery projection acknowledgement unavailable",
-        ))))
+        self.append_input_with_source_and_ack(crate::InputProjection::Delivery(projection), admission).await
+            .map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))
+    }
+
+    pub async fn append_input_with_source_and_ack(
+        &self,
+        projection: crate::InputProjection,
+        admission: crate::InputAdmission,
+    ) -> Result<crate::MutationAck<crate::CompletionProjectionAck>, StrictAppendError<crate::MutationAck<crate::CompletionProjectionAck>>> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(ChatStateCommand::AppendInputAndAck { projection, admission, reply })
+            .map_err(|_| StrictAppendError::Indeterminate(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                crate::MutationAdmissionError::MailboxClosed(ChatStateMailboxClosed),
+            )))?;
+        response.await.map_err(|source| StrictAppendError::Indeterminate(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe, crate::MutationAdmissionError::ReplyLost(source),
+        )))?
     }
 
     /// Push a user message with an explicit dangling-repair reason.
@@ -158,24 +174,50 @@ impl ChatStateHandle {
     pub fn push_assistant_response(&self, item: ConversationItem) {
         let _ = self
             .cmd_tx
-            .send(ChatStateCommand::PushAssistantResponse { item });
+            .send(ChatStateCommand::PushAssistantResponse { item, reply: crate::MutationReply::Unobserved });
     }
 
     /// Record a tool result.
     pub fn push_tool_result(&self, item: ConversationItem) {
-        let _ = self.cmd_tx.send(ChatStateCommand::PushToolResult { item });
+        let _ = self.cmd_tx.send(ChatStateCommand::PushToolResult { item, reply: crate::MutationReply::Unobserved });
     }
 
     /// Persist model output already included in the provider's usage total.
     pub fn push_model_output(&self, item: ConversationItem) {
-        let _ = self.cmd_tx.send(ChatStateCommand::PushModelOutput { item });
+        let _ = self.cmd_tx.send(ChatStateCommand::PushModelOutput { item, reply: crate::MutationReply::Unobserved });
     }
 
     /// Persist model output whose provider response omitted usage.
     pub fn push_unreported_model_output(&self, item: ConversationItem) {
         let _ = self
             .cmd_tx
-            .send(ChatStateCommand::PushUnreportedModelOutput { item });
+            .send(ChatStateCommand::PushUnreportedModelOutput { item, reply: crate::MutationReply::Unobserved });
+    }
+
+    async fn observe_output_append(
+        &self,
+        command: impl FnOnce(crate::MutationReply) -> ChatStateCommand,
+    ) -> Result<crate::AppliedAppend, crate::MutationAdmissionError> {
+        let (reply, receive) = oneshot::channel();
+        self.cmd_tx.send(command(crate::MutationReply::Observed(reply)))
+            .map_err(|_| crate::MutationAdmissionError::MailboxClosed(ChatStateMailboxClosed))?;
+        receive.await.map_err(crate::MutationAdmissionError::ReplyLost)
+    }
+
+    pub async fn push_assistant_response_and_ack(&self, item: ConversationItem) -> Result<crate::AppliedAppend, crate::MutationAdmissionError> {
+        self.observe_output_append(|reply| ChatStateCommand::PushAssistantResponse { item, reply }).await
+    }
+
+    pub async fn push_tool_result_and_ack(&self, item: ConversationItem) -> Result<crate::AppliedAppend, crate::MutationAdmissionError> {
+        self.observe_output_append(|reply| ChatStateCommand::PushToolResult { item, reply }).await
+    }
+
+    pub async fn push_model_output_and_ack(&self, item: ConversationItem) -> Result<crate::AppliedAppend, crate::MutationAdmissionError> {
+        self.observe_output_append(|reply| ChatStateCommand::PushModelOutput { item, reply }).await
+    }
+
+    pub async fn push_unreported_model_output_and_ack(&self, item: ConversationItem) -> Result<crate::AppliedAppend, crate::MutationAdmissionError> {
+        self.observe_output_append(|reply| ChatStateCommand::PushUnreportedModelOutput { item, reply }).await
     }
 
     /// Record accumulated token usage.
@@ -506,6 +548,20 @@ impl ChatStateHandle {
             req_id,
             reply,
         }).await
+    }
+
+    pub async fn preview_request_with_context(
+        &self,
+        history: crate::types::PreviewHistory,
+        policy: xai_grok_sampling_types::ContextPolicy,
+        appended: Vec<ConversationItem>,
+        tools: Vec<ToolSpec>,
+        memory: Option<String>,
+    ) -> Result<crate::types::ChatStatePreview, crate::types::PreviewFailure> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(ChatStateCommand::PreviewConversation { history, policy, appended, tools, memory, reply })
+            .map_err(|_| crate::types::PreviewFailure::MailboxClosed)?;
+        response.await.map_err(|_| crate::types::PreviewFailure::ReplyLost)
     }
 
     /// Get a clone of the full conversation.

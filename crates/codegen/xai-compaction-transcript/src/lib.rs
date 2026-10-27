@@ -774,6 +774,7 @@ mod tests {
         let items = vec![
             user("Fix the bug"),
             ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: "Done".into(),

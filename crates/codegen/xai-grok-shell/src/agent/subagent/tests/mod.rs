@@ -1526,6 +1526,7 @@ fn verbatim_fork_falls_back_to_summary_on_incomplete_tail() {
             ConversationItem::assistant("a1"),
             ConversationItem::user("q2"),
             ConversationItem::Assistant(AssistantItem {
+                output_origin: Default::default(),
                 evidence: Default::default(),
                 source: Default::default(),
                 content: String::new().into(),
@@ -1665,6 +1666,7 @@ fn planner_fork_with_dangling_tool_call_stays_forked() {
         ConversationItem::system("parent system"),
         ConversationItem::user("UNIQUE_RUNNING_TURN_MARKER migrate the clean planner"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "checking the build".into(),

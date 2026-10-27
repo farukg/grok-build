@@ -12,7 +12,7 @@ mod timeline;
 mod types;
 pub mod verb_group;
 
-pub(crate) use layout::ScrollAnchor;
+pub(crate) use layout::{ScrollAnchor, gap_after_between};
 pub use layout::compute_paint_window;
 pub(crate) use timeline::prompt_preview;
 pub use timeline::{TimelineEntry, TimelineRow, TimelineRowKey, TimelineRowKind};
@@ -167,6 +167,9 @@ pub struct ScrollbackState {
     /// One-shot viewport-top anchor armed by a structural entry mutation (removal/insertion) just before it invalidates the layout cache.
     /// Consumed by the next `prepare_layout`; see [`StructuralScrollAnchor`].
     structural_scroll_anchor: Option<StructuralScrollAnchor>,
+    pending_inline_anchor: Option<ScrollAnchor>,
+    selection_binding: std::cell::Cell<super::selection_identity::SourceBinding>,
+    inline_output_demands: std::cell::RefCell<std::collections::HashMap<EntryId, (u16, Range<usize>)>>,
 
     // Sticky modes. Display mode applied to thinking blocks when they finish running. Defaults to `Collapsed`
     // (auto-collapse on finish). Toggled by `expand_all_thinking()` (Ctrl+E) between `Expanded` and `Collapsed`.
@@ -174,7 +177,7 @@ pub struct ScrollbackState {
 
     // Animation
     /// Frame tick counter for animations (increments each render tick).
-    tick: u64,
+    tick: std::rc::Rc<std::cell::Cell<u64>>,
 
     // Appearance
     /// Current appearance configuration (hot-reloadable).
@@ -233,6 +236,15 @@ impl Default for ScrollbackState {
 }
 
 impl ScrollbackState {
+    pub(crate) fn bind_selection_source(&self, agent: usize, epoch: u32) {
+        self.selection_binding.set(super::selection_identity::SourceBinding::Session { agent, epoch });
+    }
+
+    fn scoped_entry<'a>(&self, entry: &'a ScrollbackEntry) -> &'a ScrollbackEntry {
+        entry.bind_selection_source(self.selection_binding.get());
+        entry
+    }
+
     /// Create a new empty state.
     pub fn new() -> Self {
         Self {
@@ -264,8 +276,11 @@ impl ScrollbackState {
             last_width: 0,
             layout_cache: None,
             structural_scroll_anchor: None,
+            inline_output_demands: Default::default(),
+            pending_inline_anchor: None,
+            selection_binding: std::cell::Cell::new(super::selection_identity::SourceBinding::Detached),
             thinking_display_mode: DisplayMode::Collapsed,
-            tick: 0,
+            tick: std::rc::Rc::new(std::cell::Cell::new(0)),
             appearance: AppearanceConfig::default(),
             batch_depth: 0,
             gaps_may_be_dirty: false,
@@ -431,15 +446,17 @@ impl ScrollbackState {
     }
 
     /// Current animation tick value (for spinner frame selection, etc.).
+    pub(crate) fn animation_clock(&self) -> std::rc::Rc<std::cell::Cell<u64>> { std::rc::Rc::clone(&self.tick) }
+
     pub fn animation_tick(&self) -> u64 {
-        self.tick
+        self.tick.get()
     }
 
     /// A redraw is requested only when an animated entry (running wave accent or unexpired finish-flash) is actually
     /// inside the viewport window. Redrawing an otherwise static screen at ~30fps is pure waste: the frame diff would
     /// be empty.
     pub fn tick(&mut self) -> bool {
-        self.tick = self.tick.wrapping_add(1);
+        self.tick.set(self.tick.get().wrapping_add(1));
 
         let mut needs_redraw = !self.running.is_empty() && self.any_running_in_viewport();
 
@@ -488,7 +505,7 @@ impl ScrollbackState {
 
     /// Get the current tick counter (for animation synchronization).
     pub fn tick_count(&self) -> u64 {
-        self.tick
+        self.tick.get()
     }
 
     /// Check if animation ticks are needed. Off-screen running entries don't need ticks. Finish-flashes deliberately do
@@ -499,7 +516,7 @@ impl ScrollbackState {
 
     /// Get the current animation tick value.
     pub fn current_tick(&self) -> u64 {
-        self.tick
+        self.tick.get()
     }
 
     // Link map generation
@@ -938,12 +955,13 @@ impl ScrollbackState {
 
     /// Get entry by index.
     pub fn get(&self, index: usize) -> Option<&ScrollbackEntry> {
-        self.entries.get_index(index).map(|(_, v)| v)
+        self.entries.get_index(index).map(|(_, v)| self.scoped_entry(v))
     }
 
     /// Get entry by index mutably.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut ScrollbackEntry> {
-        self.entries.get_index_mut(index).map(|(_, v)| v)
+        let binding = self.selection_binding.get();
+        self.entries.get_index_mut(index).map(|(_, entry)| { entry.bind_selection_source(binding); entry })
     }
 
     /// Get the last entry.
@@ -997,14 +1015,15 @@ impl ScrollbackState {
     /// O(1) average via IndexMap.
     /// Returns None if the entry doesn't exist (was removed or ID is invalid).
     pub fn get_by_id(&self, id: EntryId) -> Option<&ScrollbackEntry> {
-        self.entries.get(&id)
+        self.entries.get(&id).map(|entry| self.scoped_entry(entry))
     }
 
     /// Get entry by ID mutably.
     /// O(1) average via IndexMap.
     /// Returns None if the entry doesn't exist (was removed or ID is invalid).
     pub fn get_by_id_mut(&mut self, id: EntryId) -> Option<&mut ScrollbackEntry> {
-        self.entries.get_mut(&id)
+        let binding = self.selection_binding.get();
+        self.entries.get_mut(&id).map(|entry| { entry.bind_selection_source(binding); entry })
     }
 
     /// The escalation fires only on that rising edge, so a user's collapse of an already-untrusted block sticks. A row
@@ -1220,6 +1239,7 @@ impl ScrollbackState {
             return false;
         }
         entry.is_pending_user_input = pending;
+        entry.note_paint_changed();
         // No `invalidate_cache()`: the cached output is identical, only the post-pass bullet styling differs frame to frame
         // The flip is structural though: `run_step` keeps pending rows out of verb-group runs
         // An already-folded run must re-run its folds to surface the prompt row (and refold once it resolves)
@@ -1337,7 +1357,7 @@ impl ScrollbackState {
 
     /// Get an entry by index (immutable).
     pub fn entry(&self, index: usize) -> Option<&ScrollbackEntry> {
-        self.entries.get_index(index).map(|(_, v)| v)
+        self.entries.get_index(index).map(|(_, v)| self.scoped_entry(v))
     }
 
     /// Iterate over all entries mutably.
@@ -1513,7 +1533,7 @@ impl ScrollbackState {
                     let total_delta = self.patch_virtual_y_for_dirty(&changes);
                     // Streamed growth must shrink the reserve rather than inflate max_offset.
                     let content = self.total_height.saturating_sub(self.pin_reserve_pad);
-                    let new_content = (content as i64 + total_delta as i64).max(0) as usize;
+                    let new_content = (content as i128 + total_delta).max(0) as usize;
                     self.pin_reserve_pad = self.pin_reserve_pad_rows(new_content);
                     self.total_height = new_content.saturating_add(self.pin_reserve_pad);
                 }
@@ -1638,6 +1658,7 @@ impl ScrollbackState {
     ///
     /// Clamps to `[0, max_offset]` and disables follow mode since the user is explicitly positioning the viewport.
     pub fn set_scroll_offset(&mut self, offset: usize) {
+        self.pending_inline_anchor = None;
         let max_offset = self
             .total_height
             .saturating_sub(self.viewport_height as usize);
@@ -1751,13 +1772,13 @@ pub(super) mod test_util {
     }
 
     /// Helper: get cached height for entry at index `idx`.
-    pub(super) fn cached_height_at(state: &ScrollbackState, idx: usize) -> u16 {
+    pub(super) fn cached_height_at(state: &ScrollbackState, idx: usize) -> usize {
         state
             .layout_cache
             .as_ref()
             .and_then(|c| c.entries.get(idx))
             .map(|e| e.height)
-            .unwrap_or(u16::MAX)
+            .unwrap_or(usize::MAX)
     }
 
     pub(super) struct ScrollTestHarness {

@@ -881,10 +881,8 @@ impl AgentView {
                                 if handled {
                                     self.last_text_click = Some(TextClickState {
                                         time: now,
-                                        entry_idx: hit.entry_idx,
                                         range_id: hit.range_id,
-                                        block_line_idx: hit.block_line_idx,
-                                        col_within_range: hit.col_within_range,
+                                        position: hit.position,
                                         click_count: text_click_count,
                                     });
                                     self.last_click = None;

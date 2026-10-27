@@ -346,14 +346,16 @@ mod tests {
         // Full drag from the first to the last row copies a\n\nb.
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 0, column: 0 },
                 entry_idx: 0,
-                range_id: MARKDOWN_BODY_RANGE,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(MARKDOWN_BODY_RANGE),
                 block_line_idx: 0,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 2, column: u16::MAX },
                 entry_idx: 0,
-                range_id: MARKDOWN_BODY_RANGE,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(MARKDOWN_BODY_RANGE),
                 block_line_idx: 2,
                 col_within_range: u16::MAX,
             },

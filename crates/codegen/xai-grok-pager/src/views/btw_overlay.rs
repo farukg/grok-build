@@ -136,8 +136,9 @@ fn push_btw_selectable_line(
         return;
     };
     model.push_line(ResolvedSelectableLine {
+        byte_start: 0,
         entry_idx: BTW_OVERLAY_ENTRY_IDX,
-        range_id,
+        range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(range_id),
         block_line_idx,
         screen_y,
         screen_x,
@@ -469,7 +470,7 @@ mod tests {
     use crate::render::osc8::resolve_link_target;
 
     /// Markdown body range id (`MARKDOWN_BODY_RANGE`); `/btw` hits and copy share it.
-    const BTW_OVERLAY_RANGE_ID: u16 = 0;
+    const BTW_OVERLAY_RANGE_ID: usize = 0;
 
     fn render_with_model(
         state: &BtwOverlayState,
@@ -577,7 +578,7 @@ mod tests {
             panic!("should have selectable ranges: {model:?}");
         };
         assert_eq!(range.entry_idx, BTW_OVERLAY_ENTRY_IDX);
-        assert_eq!(range.range_id, BTW_OVERLAY_RANGE_ID);
+        assert_eq!(range.range_id.local, BTW_OVERLAY_RANGE_ID);
         assert!(!range.lines.is_empty());
         for (i, line) in range.lines.iter().enumerate() {
             assert_eq!(line.block_line_idx, i);
@@ -760,14 +761,16 @@ mod tests {
         let full_model = state.full_selection_model(40);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 2, column: 0 },
                 entry_idx: BTW_OVERLAY_ENTRY_IDX,
-                range_id: BTW_OVERLAY_RANGE_ID,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(BTW_OVERLAY_RANGE_ID),
                 block_line_idx: 2,
                 col_within_range: 0,
             },
             head: RangeHit {
+                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 14, column: 5 },
                 entry_idx: BTW_OVERLAY_ENTRY_IDX,
-                range_id: BTW_OVERLAY_RANGE_ID,
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(BTW_OVERLAY_RANGE_ID),
                 block_line_idx: 14,
                 col_within_range: 5,
             },

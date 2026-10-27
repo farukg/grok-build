@@ -33,7 +33,7 @@ impl SessionActor {
         input: &InputOrigin,
         prompt_id: &str,
         text: String,
-    ) -> Result<Option<bool>, CompletionProjectionError> {
+    ) -> Result<TerminalInputProjection, CompletionProjectionError> {
         let mut ids = input.completions().to_vec();
         let mut durable_text = Vec::new();
         if ids.is_empty() && matches!(input.as_prompt_origin(), PromptOrigin::TaskCompleted { .. } | PromptOrigin::WorkflowCompleted { .. }) {
@@ -58,9 +58,20 @@ impl SessionActor {
                 }
             }
         }
-        if ids.is_empty() && matches!(input.notification_batch(), super::notification_drain::NotificationBatchPayload::TerminalOnly) { return Ok(None); }
+        if ids.is_empty() && matches!(input.notification_batch(), super::notification_drain::NotificationBatchPayload::TerminalOnly) { return Ok(TerminalInputProjection::NotApplicable); }
         let text = if durable_text.is_empty() { text } else { durable_text.join("\n\n") };
-        self.project_notification_batch(ids, prompt_id, text, input.notification_batch()).await.map(Some)
+        let origin = match input.notification_batch() {
+            super::notification_drain::NotificationBatchPayload::TerminalOnly => crate::session::source_binding::StrictInputRef::CompletionAggregate {
+                session_id: self.session_id_string(), completions: ids.clone(),
+            },
+            super::notification_drain::NotificationBatchPayload::Rows { id, .. } => crate::session::source_binding::StrictInputRef::Notification {
+                session_id: self.session_id_string(), batch_id: id.clone(),
+            },
+        };
+        self.project_notification_batch(ids, prompt_id, text, input.notification_batch()).await.map(|changed| {
+            if changed { TerminalInputProjection::Applied { origin } }
+            else { TerminalInputProjection::AlreadyPresent { origin } }
+        })
     }
 
     pub(crate) async fn project_terminal_batch(
@@ -148,7 +159,12 @@ impl SessionActor {
                 completion, prompt_id: prompt_id.to_owned(), parent_task: admission.parent_task.clone(),
             }).collect(),
         };
-        let acknowledgement = self.chat_state_handle.append_notification_and_ack(projection, admission).await?;
+        let projection = xai_chat_state::InputProjection::Notification(projection);
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
+        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        self.observe_strict_source(identity, &result);
+        let acknowledgement = result.map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))?;
         match acknowledgement {
             xai_chat_state::CompletionProjectionAck::Appended | xai_chat_state::CompletionProjectionAck::Continue { .. } => {
                 self.acknowledge_terminal_receipts(&ids).await;
@@ -224,8 +240,9 @@ impl SessionActor {
             };
             let Some((running, queued, origin, text)) = candidate else { return changed; };
             match self.project_terminal_input(&origin, &running, text).await {
-                Ok(Some(projected)) => changed |= projected,
-                Ok(None) => return changed,
+                Ok(TerminalInputProjection::Applied { .. }) => changed = true,
+                Ok(TerminalInputProjection::AlreadyPresent { .. }) => {}
+                Ok(TerminalInputProjection::NotApplicable) => return changed,
                 Err(error) => { tracing::error!(%error, "terminal wake retained after projection failure"); return changed; }
             }
             let mut state = self.state.lock().await;

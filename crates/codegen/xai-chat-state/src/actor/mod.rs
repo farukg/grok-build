@@ -132,25 +132,24 @@ impl ChatStateActor {
                 }
             }
             ChatStateCommand::PushUserMessagesBatchAndAck { items, reply } => {
-                for item in items {
-                    self.push_user_message(item);
-                }
-                let _ = reply.send(());
+                let applied = items.into_iter().map(|item| self.push_user_message(item)).collect();
+                let _ = reply.send(applied);
             }
             ChatStateCommand::PushUserMessageAndAck { item, reply } => {
-                self.push_user_message(item);
-                let _ = reply.send(());
+                let applied = self.push_user_message(item);
+                let _ = reply.send(applied);
             }
             ChatStateCommand::AppendInputAndAck { mut projection, admission, reply } => {
                 self.persist_source_normalization();
                 source_occurrence::admit(projection.item_mut());
+                let source = projection.item().source();
                 if matches!(projection.item(), xai_grok_sampling_types::ConversationItem::User(_)) {
                     self.pop_stranded_continue_reminder();
                     self.ensure_conversation_integrity();
                 }
                 let result = self.persistence.persist_input_and_ack(&projection, &admission).await
-                    .unwrap_or_else(|_| Err(crate::StrictAppendError::Indeterminate(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe, "completion persistence acknowledgement lost",
+                    .unwrap_or_else(|source| Err(crate::StrictAppendError::Indeterminate(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe, crate::MutationAdmissionError::ReplyLost(source),
                     ))));
                 let acknowledgement = match &result {
                     Ok(ack) => Some(ack),
@@ -162,11 +161,13 @@ impl ChatStateActor {
                         self.state.estimated_tokens_since_model += state::estimate_item_tokens(projection.item());
                         self.state.conversation.push(projection.into_item());
                     }
-                    Some(crate::CompletionProjectionAck::AlreadyPresent { history } | crate::CompletionProjectionAck::Continue { history }) => {
+                    Some(crate::CompletionProjectionAck::AlreadyPresent { history, .. } | crate::CompletionProjectionAck::Continue { history, .. }) => {
                         self.replace_conversation_state(history.clone(), false);
                     }
                     Some(crate::CompletionProjectionAck::TurnClosed) | None => {}
                 }
+                let result = result.map(|ack| ack.with_source(source))
+                    .map_err(|error| error.map_acknowledgement(|ack| ack.with_source(source)));
                 let _ = reply.send(result);
             }
             ChatStateCommand::AppendWorkingDirectorySwitchAndAck {
@@ -206,25 +207,36 @@ impl ChatStateActor {
                     }) => Some(authoritative),
                     Err(_) => None,
                 };
+                let binding = match authoritative {
+                    Some(item) if !item.source().is_unadmitted() => crate::AppendBinding::Applied(crate::AppliedAppend { source: item.source() }),
+                    Some(_) => crate::AppendBinding::ReceiptSourceUnavailable,
+                    None => crate::AppendBinding::NotApplied,
+                };
                 if let Some(authoritative) = authoritative {
                     self.converge_working_directory_switch(generation, authoritative.clone());
                 }
+                let wrap = |acknowledgement| crate::MutationAck { acknowledgement, binding };
+                let result = result.map(wrap).map_err(|error| error.map_acknowledgement(wrap));
                 let _ = reply.send(result);
             }
             ChatStateCommand::PushUserMessageWithRepairReason { item, reason } => {
                 self.push_user_message_with_repair_reason(item, reason);
             }
-            ChatStateCommand::PushAssistantResponse { item } => {
-                self.push_message(item);
+            ChatStateCommand::PushAssistantResponse { item, reply } => {
+                let applied = self.push_message(item);
+                reply.send(applied);
             }
-            ChatStateCommand::PushToolResult { item } => {
-                self.push_message(item);
+            ChatStateCommand::PushToolResult { item, reply } => {
+                let applied = self.push_message(item);
+                reply.send(applied);
             }
-            ChatStateCommand::PushModelOutput { item } => {
-                self.push_model_output(item);
+            ChatStateCommand::PushModelOutput { item, reply } => {
+                let applied = self.push_model_output(item);
+                reply.send(applied);
             }
-            ChatStateCommand::PushUnreportedModelOutput { item } => {
-                self.push_unreported_model_output(item);
+            ChatStateCommand::PushUnreportedModelOutput { item, reply } => {
+                let applied = self.push_unreported_model_output(item);
+                reply.send(applied);
             }
             ChatStateCommand::RecordTokenUsage { total_tokens } => {
                 self.record_token_usage(total_tokens);
@@ -381,9 +393,10 @@ impl ChatStateActor {
                 req_id,
                 reply,
             } => {
-                match preparation {
+                match &preparation {
                     crate::types::RequestPreparation::Sampling { .. } => self.ensure_conversation_integrity(),
-                    crate::types::RequestPreparation::Preview => {}
+                    crate::types::RequestPreparation::Preview
+                    | crate::types::RequestPreparation::PreviewWith { .. } => {}
                 }
                 let request = self.build_conversation_request(
                     tool_definitions,
@@ -394,6 +407,15 @@ impl ChatStateActor {
                     req_id,
                 );
                 let _ = reply.send(request);
+            }
+            ChatStateCommand::PreviewConversation { history, policy, appended, tools, memory, reply } => {
+                let canonical_history = self.state.conversation.clone();
+                let sampling_config = self.state.sampling_config.clone();
+                let built = self.build_conversation_request(
+                    tools, memory, crate::types::RequestPreparation::PreviewWith { history, policy, appended },
+                    None, String::new(), String::new(),
+                );
+                let _ = reply.send(crate::types::ChatStatePreview { canonical_history, sampling_config, built });
             }
             ChatStateCommand::GetConversation { reply } => {
                 tracing::debug!(
@@ -436,7 +458,7 @@ impl ChatStateActor {
                 let _ = reply.send(self.state.sampling_config.clone());
             }
             ChatStateCommand::ApplyTurnRequestPruning { items, reply } => {
-                let _ = reply.send(self.prune_items_for_turn_request(items));
+                let _ = reply.send(self.prune_items_for_turn_request(items, 0));
             }
             ChatStateCommand::GetAgentEditedPaths { reply } => {
                 let _ = reply.send(self.state.agent_edited_paths.clone());

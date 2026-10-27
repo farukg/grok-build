@@ -9,11 +9,11 @@ use ratatui::{buffer::Buffer, layout::Rect};
 use std::path::PathBuf;
 use std::time::Instant;
 
-fn view(sid: &str) -> AgentView {
+pub(super) fn view(sid: &str) -> AgentView {
     crate::app::agent_view::test_agent_view(Some(sid), PathBuf::from("/tmp"))
 }
 
-fn settle(views: &mut SessionViews, owner: AgentId, width: u16) -> Buffer {
+pub(super) fn settle(views: &mut SessionViews, owner: AgentId, width: u16) -> Buffer {
     let area = Rect::new(0, 0, width, 60);
     for _ in 0..8 {
         views.prepare_inline_output(owner);
@@ -26,11 +26,11 @@ fn settle(views: &mut SessionViews, owner: AgentId, width: u16) -> Buffer {
     panic!("inline source layout did not settle");
 }
 
-fn painted(buffer: &Buffer) -> String {
+pub(super) fn painted(buffer: &Buffer) -> String {
     buffer.content.iter().map(|cell| cell.symbol()).collect::<String>()
 }
 
-fn task_views() -> (SessionViews, EntryId) {
+pub(super) fn task_views() -> (SessionViews, EntryId) {
     let mut root = view("inline-root");
     let mut task = running_bg_task("task", false);
     task.command = "ls".into();
@@ -40,7 +40,7 @@ fn task_views() -> (SessionViews, EntryId) {
     (SessionViews::from([(AgentId(0), root)]), id)
 }
 
-fn child_views(sid: &str, child: AgentView) -> (SessionViews, EntryId) {
+pub(super) fn child_views(sid: &str, child: AgentView) -> (SessionViews, EntryId) {
     let mut root = view("inline-root");
     let id = root.scrollback.push_block(RenderBlock::Subagent(SubagentBlock::started(
         "delegation is not the transcript", sid, "explore", None, None, None, false)));
@@ -55,8 +55,12 @@ fn child_views(sid: &str, child: AgentView) -> (SessionViews, EntryId) {
     (views, id)
 }
 
-fn source_text(views: &mut SessionViews, id: EntryId) -> Option<String> {
-    views.inline_copy_text(AgentId(0), id)
+pub(super) fn source_text(views: &mut SessionViews, id: EntryId) -> Option<String> {
+    match views.inline_copy_text(AgentId(0), id) {
+        super::InlineCopyOutcome::Ready(text) => Some(text),
+        super::InlineCopyOutcome::Empty | super::InlineCopyOutcome::Loading
+        | super::InlineCopyOutcome::Unavailable | super::InlineCopyOutcome::Failed => None,
+    }
 }
 
 #[test]
@@ -273,4 +277,47 @@ fn full_inline_stdout_tail_remains_reachable_beyond_terminal_coordinate_range() 
     views.get_mut(&AgentId(0)).unwrap().scrollback.goto_bottom();
     let buffer = settle(&mut views, AgentId(0), 80);
     assert!(painted(&buffer).contains("INLINE_REAL_TAIL"));
+}
+
+#[test]
+fn left_collapses_empty_output_and_late_data_preserves_the_selected_mode() {
+    let (mut views, id) = task_views();
+    let root = views.get_mut(&AgentId(0)).unwrap();
+    root.session.bg_tasks.get_mut("task").unwrap().status = crate::app::agent::BgTaskStatus::Done;
+    root.scrollback.set_selected(Some(0));
+    settle(&mut views, AgentId(0), 80);
+    let root = views.get_mut(&AgentId(0)).unwrap();
+    assert!(!root.scrollback.get_by_id(id).unwrap().is_foldable());
+    root.scrollback.collapse_selected();
+    assert_eq!(root.scrollback.get_by_id(id).unwrap().display_mode, DisplayMode::Collapsed);
+    root.scrollback.expand_selected();
+    assert_eq!(root.scrollback.get_by_id(id).unwrap().display_mode, DisplayMode::Collapsed);
+    root.set_bg_task_stdout("task", "late canonical body".into());
+    settle(&mut views, AgentId(0), 80);
+    let root = views.get(&AgentId(0)).unwrap();
+    assert_eq!(root.scrollback.get_by_id(id).unwrap().display_mode, DisplayMode::Collapsed);
+    assert_eq!(root.scrollback.selected(), Some(0));
+}
+
+#[test]
+fn explicit_cold_expand_and_loading_collapse_do_not_activate_a_child() {
+    let sid = "inline-loading-fold";
+    let mut child = view(sid);
+    child.session.loading_replay = true;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    child.session.acp_tx = tx;
+    let (mut views, id) = child_views(sid, child);
+    let before = crate::app::subagent::test_support::transcript_reads();
+    let root = views.get_mut(&AgentId(0)).unwrap();
+    root.scrollback.set_selected(Some(0));
+    root.scrollback.get_by_id_mut(id).unwrap().set_display_mode(DisplayMode::Collapsed);
+    root.scrollback.expand_selected();
+    assert_eq!(root.scrollback.get_by_id(id).unwrap().display_mode, DisplayMode::Expanded);
+    settle(&mut views, AgentId(0), 80);
+    let root = views.get_mut(&AgentId(0)).unwrap();
+    assert!(!root.scrollback.get_by_id(id).unwrap().is_foldable());
+    root.scrollback.collapse_selected();
+    assert_eq!(root.scrollback.get_by_id(id).unwrap().display_mode, DisplayMode::Collapsed);
+    assert_eq!(crate::app::subagent::test_support::transcript_reads(), before);
+    assert!(rx.try_recv().is_err());
 }

@@ -95,13 +95,13 @@ fn reprint_committed(app: &AppView, terminal: &mut PagerTerminal, width: u16) ->
         })
         .collect();
 
-    let mut budget = REPRINT_MAX_ROWS;
+    let mut budget = usize::from(REPRINT_MAX_ROWS);
     let mut first = committed.len();
     for (k, &(i, cap)) in committed.iter().enumerate().rev() {
         let Some(entry) = sb.get(i) else { continue };
         let renderer = minimal_renderer(entry, &theme, appearance.clone(), cwd, COMMITTED_TICK);
         let full = renderer.desired_height(width);
-        let rows = if cap > 0 { full.min(cap) } else { full };
+        let rows = if cap > 0 { full.min(usize::from(cap)) } else { full };
         if rows > budget {
             break;
         }

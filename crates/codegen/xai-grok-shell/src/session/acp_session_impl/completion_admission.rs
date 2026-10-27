@@ -126,11 +126,11 @@ impl SessionActor {
             .current_turn_admission(prompt_id)
             .await
             .map_err(xai_chat_state::StrictAppendError::NotCommitted)?;
-        match self
-            .chat_state_handle
-            .append_completion_and_ack(projection, admission)
-            .await?
-        {
+        let projection = xai_chat_state::InputProjection::Subagent(projection);
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
+        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        self.observe_strict_source(identity, &result);
+        match result.map(|ack| ack.acknowledgement).map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))? {
             CompletionProjectionAck::Appended | CompletionProjectionAck::Continue { .. } => {
                 for completion in &completions {
                     self.acknowledge_subagent_completion(completion);
@@ -177,7 +177,19 @@ impl SessionActor {
         let terminal_ids = observations.clone();
         let mut observations = observations.into_iter();
         let Some(first) = observations.next() else {
-            self.chat_state_handle.push_tool_result(item);
+            let identity = match &item {
+                ConversationItem::ToolResult(result) => Some(crate::session::source_binding::StrictSourceOrigin::ToolResult {
+                    session_id: self.session_id_string(), tool_call_id: result.tool_call_id.to_string(),
+                }),
+                ConversationItem::User(_) | ConversationItem::System(_) | ConversationItem::Assistant(_) | ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_) => None,
+            };
+            let result = self.chat_state_handle.push_tool_result_and_ack(item).await;
+            if let Some(identity) = identity {
+                self.publish_source_observation(crate::session::source_binding::SourceBindingObservation::Strict {
+                    identity, binding: Self::mutation_source_binding(&result),
+                });
+            }
+            result.map_err(|error| acp::Error::internal_error().data(format!("tool-result admission: {error}")))?;
             return Ok(());
         };
         let prompt_id = self
@@ -205,13 +217,13 @@ impl SessionActor {
             .current_turn_admission(&prompt_id)
             .await
             .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
-        let acknowledgement = self
-            .chat_state_handle
-            .append_completion_and_ack(projection, admission)
-            .await
-            .map_err(|error| {
-                acp::Error::internal_error().data(format!("child tool-result persistence: {error}"))
-            })?;
+        let projection = xai_chat_state::InputProjection::Subagent(projection);
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
+        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        self.observe_strict_source(identity, &result);
+        let acknowledgement = result.map_err(|error| {
+            acp::Error::internal_error().data(format!("child tool-result persistence: {error}"))
+        })?.acknowledgement;
         match acknowledgement {
             CompletionProjectionAck::TurnClosed => {
                 return Err(acp::Error::internal_error()

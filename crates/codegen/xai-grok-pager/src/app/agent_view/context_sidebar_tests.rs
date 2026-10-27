@@ -1126,3 +1126,56 @@ mod persistence;
 
 #[path = "todo_preparation_tests.rs"]
 mod todo_preparation;
+
+#[test]
+fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal() {
+    use crate::app::panel_settings::{CompletedItemsPane, Layer, PanelSettingsStore, Setting};
+    let _theme = crate::theme::cache::pin_theme();
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = open_sidebar();
+    agent.open_panel_settings_in(dir.path());
+    let first = draw(&mut agent);
+    let selected = cursor(&agent);
+    for _ in 0..12 {
+        let _ = agent.handle_input(&Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: first.area.right() - 10,
+            row: 15,
+            modifiers: KeyModifiers::NONE,
+        }), &ActionRegistry::defaults());
+    }
+    let before = draw(&mut agent);
+    assert!(!screen(&before).contains("Core instructions"), "the selected row is genuinely offscreen");
+    assert_ne!(screen(&first), screen(&before), "the wheel moved the viewport without moving selection");
+    assert_eq!(cursor(&agent), selected);
+    let mut writer = PanelSettingsStore::open(dir.path(), None).store;
+    writer.set(Layer::Global, Setting::ShowCompleted { pane: CompletedItemsPane::Tasks, show: true }).unwrap();
+    assert!(agent.reload_global_panel_settings());
+    let after = draw(&mut agent);
+    assert_eq!(screen(&after), screen(&before), "an external h edit must not reveal the offscreen cursor");
+    assert_eq!(cursor(&agent), selected);
+
+    let _ = press(&mut agent, KeyCode::End);
+    writer.set(Layer::Global, Setting::ShowCompleted { pane: CompletedItemsPane::Tasks, show: false }).unwrap();
+    assert!(agent.reload_global_panel_settings());
+    assert!(screen(&draw(&mut agent)).contains("Memory captures"), "a legitimate pending End reveal survives reload");
+}
+
+#[test]
+fn external_group_fold_repairs_selected_leaf_to_its_semantic_parent() {
+    use crate::app::panel_settings::{DisclosureState, Layer, PanelSettingsStore, Setting, SidebarSection};
+    let _theme = crate::theme::cache::pin_theme();
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = open_sidebar();
+    agent.open_panel_settings_in(dir.path());
+    focus_row(&mut agent, "File reads");
+    let mut writer = PanelSettingsStore::open(dir.path(), None).store;
+    writer.set(Layer::Global, Setting::Section { section: SidebarSection::DisplayFiles, state: DisclosureState::Collapsed }).unwrap();
+    assert!(agent.reload_global_panel_settings());
+    let selected_label = match &agent.context_sidebar {
+        ContextSidebar::Open(open) => open.cursor_label(),
+        ContextSidebar::Closed => None,
+    };
+    assert_eq!(selected_label, Some(crate::scrollback::block::MessageGroup::Files.label()));
+    let _ = draw(&mut agent);
+}

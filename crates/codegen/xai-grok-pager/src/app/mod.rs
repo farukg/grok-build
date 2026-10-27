@@ -231,6 +231,30 @@ pub(crate) fn resolve_dock_enabled(remote: Option<bool>) -> bool {
     sources.remote = remote;
     Feature::Dock.resolve(sources).value
 }
+#[cfg(not(test))]
+static DOCK_REMOTE_GATE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+#[cfg(test)]
+thread_local! {
+    static DOCK_REMOTE_GATE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Called only with startup settings or an acknowledged settings notification.
+pub(crate) fn confirm_dock_enabled(remote: Option<bool>) -> bool {
+    #[cfg(not(test))]
+    { *DOCK_REMOTE_GATE.lock().unwrap_or_else(|error| error.into_inner()) = remote; }
+    #[cfg(test)]
+    DOCK_REMOTE_GATE.with(|gate| gate.set(remote));
+    resolve_dock_enabled(remote)
+}
+
+pub(crate) fn current_dock_enabled() -> bool {
+    #[cfg(not(test))]
+    let remote = *DOCK_REMOTE_GATE.lock().unwrap_or_else(|error| error.into_inner());
+    #[cfg(test)]
+    let remote = DOCK_REMOTE_GATE.with(std::cell::Cell::get);
+    resolve_dock_enabled(remote)
+}
+
 fn terminal_theme_flag_in(layer: &toml::Value) -> Option<bool> {
     layer
         .get("features")?

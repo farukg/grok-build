@@ -13,7 +13,7 @@ pub trait Renderable {
     /// Height needed at this width in lines.
     ///
     /// This should be efficient (ideally O(1)) as it may be called frequently during scroll position calculations.
-    fn desired_height(&self, width: u16) -> u16;
+    fn desired_height(&self, width: u16) -> usize;
 }
 
 // ============================================================================
@@ -22,7 +22,7 @@ pub trait Renderable {
 
 impl Renderable for () {
     fn render(&self, _area: Rect, _buf: &mut Buffer) {}
-    fn desired_height(&self, _width: u16) -> u16 {
+    fn desired_height(&self, _width: u16) -> usize {
         0
     }
 }
@@ -31,7 +31,7 @@ impl Renderable for &str {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.render_ref(area, buf);
     }
-    fn desired_height(&self, _width: u16) -> u16 {
+    fn desired_height(&self, _width: u16) -> usize {
         1
     }
 }
@@ -40,7 +40,7 @@ impl Renderable for String {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.as_str().render_ref(area, buf);
     }
-    fn desired_height(&self, _width: u16) -> u16 {
+    fn desired_height(&self, _width: u16) -> usize {
         1
     }
 }
@@ -49,7 +49,7 @@ impl<'a> Renderable for Span<'a> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.render_ref(area, buf);
     }
-    fn desired_height(&self, _width: u16) -> u16 {
+    fn desired_height(&self, _width: u16) -> usize {
         1
     }
 }
@@ -59,7 +59,7 @@ impl<'a> Renderable for Line<'a> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         WidgetRef::render_ref(self, area, buf);
     }
-    fn desired_height(&self, _width: u16) -> u16 {
+    fn desired_height(&self, _width: u16) -> usize {
         1
     }
 }
@@ -74,7 +74,7 @@ impl<R: Renderable> Renderable for Option<R> {
         }
     }
 
-    fn desired_height(&self, width: u16) -> u16 {
+    fn desired_height(&self, width: u16) -> usize {
         if let Some(renderable) = self {
             renderable.desired_height(width)
         } else {
@@ -87,7 +87,7 @@ impl<R: Renderable> Renderable for Arc<R> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.as_ref().render(area, buf);
     }
-    fn desired_height(&self, width: u16) -> u16 {
+    fn desired_height(&self, width: u16) -> usize {
         self.as_ref().desired_height(width)
     }
 }
@@ -96,7 +96,7 @@ impl<R: Renderable + ?Sized> Renderable for Box<R> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.as_ref().render(area, buf);
     }
-    fn desired_height(&self, width: u16) -> u16 {
+    fn desired_height(&self, width: u16) -> usize {
         self.as_ref().desired_height(width)
     }
 }

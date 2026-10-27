@@ -50,6 +50,7 @@ impl From<ChatRequestMessage> for ConversationItem {
                     .collect();
 
                 ConversationItem::Assistant(AssistantItem {
+                    output_origin: Default::default(),
                     evidence: Default::default(),
                     source: Default::default(),
                     content: Arc::<str>::from(content),
@@ -242,6 +243,7 @@ impl From<ChatResponseMessage> for ConversationItem {
             .collect();
 
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: Arc::<str>::from(content),

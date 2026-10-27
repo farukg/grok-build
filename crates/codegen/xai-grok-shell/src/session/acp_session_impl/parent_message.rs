@@ -533,7 +533,11 @@ impl SessionActor {
                 parent_task: admission.parent_task.clone(),
             },
         };
-        match self.chat_state_handle.append_delivery_and_ack(projection, admission).await {
+        let projection = xai_chat_state::InputProjection::Delivery(projection);
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
+        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        self.observe_strict_source(identity, &result);
+        match result.map(|ack| ack.acknowledgement).map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement)) {
             Ok(xai_chat_state::CompletionProjectionAck::Appended) => Ok(true),
             Ok(xai_chat_state::CompletionProjectionAck::AlreadyPresent { .. }) => Ok(false),
             Ok(xai_chat_state::CompletionProjectionAck::TurnClosed) => Err(acp::Error::internal_error().data("parent-message turn closed before projection")),
@@ -595,11 +599,15 @@ impl SessionActor {
                     super::parent_interject::order_for_delivery(messages).collect();
                 let mut notifications = Vec::with_capacity(ordered.len());
                 for message in &ordered {
+                    let mut source_meta = user_chunk_meta.clone().unwrap_or_default();
+                    source_meta.insert(crate::session::source_binding::STRICT_ORIGIN_META.to_owned(), serde_json::json!(crate::session::source_binding::StrictInputRef::Delivery {
+                        session_id: self.session_id_string(), delivery_id: crate::session::delivery_receiver::parent_message_delivery_id(message.identity()),
+                    }));
                     let update = acp::SessionUpdate::UserMessageChunk(
                         acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
                             message.content().text.to_string(),
                         )))
-                        .meta(user_chunk_meta.clone()),
+                        .meta(Some(source_meta)),
                     );
                     let mut meta = self.build_notification_meta();
                     if let Some(prompt_id) = &prompt_id {

@@ -163,9 +163,9 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
         }
     }
     if let Some(remote_v) = update.dock_enabled {
-        crate::views::dock::set_enabled(crate::app::resolve_dock_enabled(Some(remote_v)));
+        crate::views::dock::set_enabled(crate::app::confirm_dock_enabled(Some(remote_v)));
         if let Some(agent) = app.active_view.agent_id().and_then(|id| app.agents.get(&id)) {
-            agent.restore_dock_placement();
+            agent.apply_dock_override();
         }
     }
     // Presence-aware: omit (an older shell, or one without settings yet) keeps the seeded tier, null means fetched settings cleared it

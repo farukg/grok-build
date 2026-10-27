@@ -2005,6 +2005,7 @@ async fn build_compacted_history_multi_turn_with_parallel_tool_calls() {
         ),
         // [3] Assistant with 2 parallel tool calls
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I'll read both files for you.".into(),
@@ -2040,6 +2041,7 @@ async fn build_compacted_history_multi_turn_with_parallel_tool_calls() {
         ),
         // [8] Assistant with 2 parallel tool calls
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I'll fix the typo and run tests.".into(),
@@ -2777,6 +2779,7 @@ fn conversation_item_preserves_reasoning_siblings() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "response".into(),
@@ -2803,6 +2806,7 @@ fn strip_reasoning_blocks_drops_reasoning_siblings() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "response".into(),
@@ -2848,6 +2852,7 @@ fn prepare_for_summarization_drops_reasoning_sibling_on_mutated_assistant() {
         ConversationItem::user("do stuff"),
         mk_reasoning(),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "I'll search.".into(),
@@ -2897,6 +2902,7 @@ fn prepare_for_summarization_drops_standalone_reasoning_sibling() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "plain text response".into(),
@@ -2931,6 +2937,7 @@ fn prepare_for_summarization_handles_multi_assistant_mixed_conversation() {
         ConversationItem::user("first turn"),
         mk_reasoning(),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "calling grep".into(),
@@ -2947,6 +2954,7 @@ fn prepare_for_summarization_handles_multi_assistant_mixed_conversation() {
         ConversationItem::user("second turn"),
         mk_reasoning(),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "thinking only".into(),
@@ -2958,6 +2966,7 @@ fn prepare_for_summarization_handles_multi_assistant_mixed_conversation() {
         ConversationItem::tool_result("tc2", "stray"),
         ConversationItem::user("third turn"),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "plain reply".into(),
@@ -3023,6 +3032,7 @@ fn prepare_for_summarization_is_idempotent() {
             status: None,
         }.into()),
         ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: "hi".into(),

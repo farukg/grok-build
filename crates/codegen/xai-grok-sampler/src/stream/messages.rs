@@ -279,6 +279,7 @@ pub fn stream_messages<'a>(
                                     }
                                     chunk_index += 1;
                                     yield SamplingEvent::ChannelToken {
+                                        origin: xai_grok_sampling_types::OutputOrigin::channel_aggregate(xai_grok_sampling_types::OutputChannel::Reasoning, final_message_id.as_deref()),
                                         request_id: request_id.clone(),
                                         channel: SamplingChannel::Reasoning,
                                         text: thinking,
@@ -322,6 +323,7 @@ pub fn stream_messages<'a>(
                                         return;
                                     }
                                     yield SamplingEvent::ChannelToken {
+                                        origin: xai_grok_sampling_types::OutputOrigin::channel_aggregate(xai_grok_sampling_types::OutputChannel::Text, final_message_id.as_deref()),
                                         request_id: request_id.clone(),
                                         channel: SamplingChannel::Text,
                                         text,
@@ -372,6 +374,7 @@ pub fn stream_messages<'a>(
                                 {
                                     chunk_index += 1;
                                     yield SamplingEvent::ChannelToken {
+                                        origin: xai_grok_sampling_types::OutputOrigin::channel_aggregate(xai_grok_sampling_types::OutputChannel::Reasoning, final_message_id.as_deref()),
                                         request_id: request_id.clone(),
                                         channel: SamplingChannel::Narration,
                                         text: state.thinking_acc.clone(),
@@ -551,6 +554,7 @@ pub fn stream_messages<'a>(
         };
 
         let assistant_item = ConversationItem::Assistant(AssistantItem {
+            output_origin: Default::default(),
             evidence: Default::default(),
             source: Default::default(),
             content: std::sync::Arc::<str>::from(assistant_text),

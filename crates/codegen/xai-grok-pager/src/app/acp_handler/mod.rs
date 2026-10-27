@@ -36,6 +36,7 @@ mod mcp;
 mod permissions;
 mod prompt_origin;
 mod queue;
+mod request_snapshot;
 mod routing;
 mod session_notification;
 mod settings;
@@ -584,6 +585,7 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         "x.ai/models/update" => handle_models_update(notif, app),
         "x.ai/settings/update" => handle_settings_update(notif, app),
         "x.ai/session/context_policy/changed" => context_policy::handle_context_policy_changed(notif, app),
+        "x.ai/session/request_snapshot/observed" => request_snapshot::handle_request_snapshot_observed(notif, app),
         "x.ai/sessions/changed" => handle_sessions_changed(notif, app),
         "x.ai/queue/changed" => handle_queue_changed(notif, app),
         "x.ai/session/prompt_complete" => handle_prompt_complete(notif, app),

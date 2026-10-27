@@ -4,6 +4,57 @@ use xai_grok_sampling_types::ConversationItem;
 
 pub const PARENT_TASK_META: &str = "_grokParentTask";
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "origin", rename_all = "snake_case")]
+pub enum InputReceiptIdentity {
+    Completion { completions: Vec<crate::completion::CompletionIdentity> },
+    CompletionToolResult { completions: Vec<crate::completion::CompletionIdentity>, tool_call_id: String },
+    Notification { batch_id: String, completions: Vec<crate::completion::CompletionIdentity> },
+    Delivery { delivery_id: String },
+}
+
+#[derive(Clone)]
+pub struct RetainedInputSource {
+    pub identity: InputReceiptIdentity,
+    pub source: xai_grok_sampling_types::SourceOccurrence,
+}
+
+#[derive(Clone, Default)]
+pub struct ReceiptSources {
+    pub retained: Vec<RetainedInputSource>,
+    pub missing: Vec<InputReceiptIdentity>,
+}
+
+impl ReceiptSources {
+    pub fn retained(identity: InputReceiptIdentity, source: xai_grok_sampling_types::SourceOccurrence) -> Self {
+        Self { retained: vec![RetainedInputSource { identity, source }], missing: Vec::new() }
+    }
+
+    pub fn unavailable(identity: InputReceiptIdentity) -> Self {
+        Self { retained: Vec::new(), missing: vec![identity] }
+    }
+
+    pub(crate) fn binding(&self) -> crate::AppendBinding {
+        match (self.missing.as_slice(), self.retained.as_slice()) {
+            ([], [retained]) => match retained.source {
+                source @ xai_grok_sampling_types::SourceOccurrence::Admitted { .. } => crate::AppendBinding::Applied(crate::AppliedAppend { source }),
+                xai_grok_sampling_types::SourceOccurrence::Unadmitted | xai_grok_sampling_types::SourceOccurrence::LegacyNormalized { .. } => crate::AppendBinding::ReceiptSourceUnavailable,
+            },
+            _ => crate::AppendBinding::ReceiptSourceUnavailable,
+        }
+    }
+}
+
+impl std::fmt::Debug for InputReceiptIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("InputReceiptIdentity(<opaque>)") }
+}
+impl std::fmt::Debug for RetainedInputSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("RetainedInputSource(<opaque>)") }
+}
+impl std::fmt::Debug for ReceiptSources {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("ReceiptSources(<opaque>)") }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParentTask {
@@ -55,6 +106,14 @@ pub struct NotificationProjection {
     pub receipts: Vec<crate::CompletionReceipt>,
 }
 
+impl NotificationProjection {
+    pub fn receipt_identity(&self) -> InputReceiptIdentity {
+        InputReceiptIdentity::Notification {
+            batch_id: self.binding.id.clone(), completions: self.receipts.iter().map(|receipt| receipt.completion.clone()).collect(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationBatchBinding {
     pub id: String,
@@ -70,6 +129,14 @@ pub enum InputProjection {
 }
 
 impl InputProjection {
+    pub fn receipt_identity(&self) -> InputReceiptIdentity {
+        match self {
+            Self::Subagent(projection) => projection.receipt_identity(),
+            Self::Notification(projection) => projection.receipt_identity(),
+            Self::Delivery(projection) => InputReceiptIdentity::Delivery { delivery_id: projection.binding.delivery_id.clone() },
+        }
+    }
+
     pub fn bind_parent(&mut self, parent: &ParentTask) {
         match self {
             Self::Subagent(projection) => {

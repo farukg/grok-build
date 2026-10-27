@@ -62,8 +62,8 @@ async fn actual_drain_projection_preserves_unrelated_observations_with_exact_ter
             };
             actor.state.lock().await.running_task = Some(super::super::super::support::running_task_stub("batch-caller"));
             let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
-            assert_eq!(bounded(actor.project_terminal_input(&input.input_origin, "batch-caller", text.clone())).await.unwrap(), Some(true));
-            assert_eq!(bounded(actor.project_terminal_input(&input.input_origin, "batch-caller", text)).await.unwrap(), Some(false));
+            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "batch-caller", text.clone())).await.unwrap(), TerminalInputProjection::Applied { .. }));
+            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "batch-caller", text)).await.unwrap(), TerminalInputProjection::AlreadyPresent { .. }));
             let history = actor.chat_state_handle.snapshot().await.unwrap().conversation;
             assert_eq!(history.iter().filter(|item| item.text_content().contains("eligible terminal evidence")).count(), 1);
             assert_eq!(history.iter().filter(|item| item.text_content().contains("independent transient evidence")).count(), 1);
@@ -164,7 +164,7 @@ async fn preexisting_tool_receipt_does_not_consume_a_new_unrelated_observation()
             observed.receipt.parent_task = admission.parent_task.clone();
             assert!(matches!(storage.append_completion_commit_aware(&info, &observed, &admission).await.unwrap(), xai_chat_state::CompletionProjectionAck::Appended));
             let old_history = match storage.append_completion_commit_aware(&info, &observed, &admission).await.unwrap() {
-                xai_chat_state::CompletionProjectionAck::AlreadyPresent { history } => history,
+                xai_chat_state::CompletionProjectionAck::AlreadyPresent { history, .. } => history,
                 other => panic!("expected existing observed history: {other:?}"),
             };
             assert_eq!(old_history.len(), 1);
@@ -199,8 +199,8 @@ async fn preexisting_tool_receipt_does_not_consume_a_new_unrelated_observation()
                 state.pending_inputs.pop_front().unwrap()
             };
             let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
-            assert_eq!(bounded(actor.project_terminal_input(&input.input_origin, "new-observation-caller", text.clone())).await.unwrap(), Some(true));
-            assert_eq!(bounded(actor.project_terminal_input(&input.input_origin, "new-observation-caller", text)).await.unwrap(), Some(false));
+            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "new-observation-caller", text.clone())).await.unwrap(), TerminalInputProjection::Applied { .. }));
+            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "new-observation-caller", text)).await.unwrap(), TerminalInputProjection::AlreadyPresent { .. }));
             let history = actor.chat_state_handle.snapshot().await.unwrap().conversation;
             let text = history.iter().map(ConversationItem::text_content).collect::<Vec<_>>().join("\n");
             assert_eq!(text.matches("previously observed terminal payload").count(), 1);
@@ -257,8 +257,8 @@ async fn event_only_and_all_suppressed_batches_have_their_own_acknowledged_ident
                 state.pending_inputs.pop_front().unwrap()
             };
             let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
-            assert_eq!(bounded(actor.project_terminal_input(&input.input_origin, "event-only-caller", text.clone())).await.unwrap(), Some(true));
-            assert_eq!(bounded(actor.project_terminal_input(&input.input_origin, "event-only-caller", text)).await.unwrap(), Some(false));
+            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "event-only-caller", text.clone())).await.unwrap(), TerminalInputProjection::Applied { .. }));
+            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "event-only-caller", text)).await.unwrap(), TerminalInputProjection::AlreadyPresent { .. }));
             let history = actor.chat_state_handle.snapshot().await.unwrap().conversation;
             assert_eq!(history.len(), 1);
             assert_eq!(history[0].text_content().matches("event-only literal evidence").count(), 1);
@@ -456,7 +456,7 @@ async fn committed_batch_lost_ack_reopens_once_and_finishes_the_replacement_call
         session.send(SessionCommand::GetToolOverrides { respond_to: reply }).unwrap();
         bounded(fence).await.unwrap();
         assert!(bounded(replacement.drain_terminal_wakes_at_safe_point()).await);
-        assert_eq!(bounded(replacement.project_terminal_input(&original_origin, "replacement-batch-caller", original_text)).await.unwrap(), Some(false));
+        assert!(matches!(bounded(replacement.project_terminal_input(&original_origin, "replacement-batch-caller", original_text)).await.unwrap(), TerminalInputProjection::AlreadyPresent { .. }));
         let history = replacement.chat_state_handle.snapshot().await.unwrap().conversation;
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].text_content().matches("original lost-ack terminal text").count(), 1);

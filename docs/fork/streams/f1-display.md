@@ -104,15 +104,27 @@ Unexecuted regression source is in `app/session_inline_output_tests.rs` and
 `app/acp_handler/background_inline_tests.rs`: canonical/wire stdout, equal-length replacement,
 empty/running/final/replay, widths, real live/cached/cold/nested Child content, passive channel
 silence, selection ranges, unavailable/loading identity and cycles. The full-tail oracle beyond
-65,535 rows is intentionally uncompromised and source-predicted red: EntryRenderer still exposes
-`u16` desired heights. Aggregate range IDs also retain their `u16` namespace. No build, check,
-test, formatter, Git mutation, push, restart, runtime or PTY acceptance was performed.
+65,535 rows retains its exact tail expectation. EntryRenderer desired height, skip, estimates,
+layout height and logical-search maps now use `usize`, without a terminal-coordinate tail cap.
+The physical renderer still accepts `u16` Rects. Direct minimal-terminal consumers were migrated:
+`commit.rs` and `full_view.rs` batch full output into physical buffers; `live.rs` retains virtual
+tail coordinates; `overlay.rs` bounds only screen sizing; `reprint.rs` keeps its existing explicit
+reprint policy. Existing small-buffer test fixtures explicitly convert their physical heights.
+New `wrappers/virtual_geometry_tests.rs` covers real rows, search mapping and native soft-wrap
+continuations above 65,535. Fold regressions cover empty/loading collapse, cold intent and late
+source arrival. All regression source remains unexecuted; no build/runtime acceptance is claimed.
 
-Remaining partition seams: the successor-owned whole-block Subagent Copy dispatcher must consume
-`SessionViews::inline_copy_text` instead of block metadata; explicit collapse of unavailable
-Expanded rows still meets the existing input foldability gate. Dashboard/peek renderers were not
-changed. Unbounded composite virtual geometry/range identity and viewport-lazy cold projection
-need architectural continuation; F2/F3 are not marked complete. Decision and capability mapping:
+The whole-block BgTask/Subagent dispatcher now consumes `SessionViews::inline_copy_text` for
+both sources, preserving the originating owner/binding/EntryId and reporting unavailable/empty
+output instead of copying metadata. Existing F6 y dispatch reaches this same owner. Explicit
+collapse no longer depends on body existence; true terminal-empty sources remain non-expandable.
+Remaining gates: aggregate `u16` range identity and compound persisted selection anchors,
+arithmetic-overflow representation, stable part-based viewport anchors, viewport-lazy cold/resize
+projection, explicit cold Copy, native Child leaf/media parity and Dashboard/Peek sources.
+The native passive Shell storage reader loads and prepares the entire file synchronously
+(`session/storage/replay.rs:301–339`); no bounded continuation API exists at that owner. Its
+extension is outside the current pager partition and requires authorization before cold-work
+closure. F2/F3 are not marked complete. Decision and capability mapping:
 `governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-canonical-inline-sources.adr.md` (outside this repo).
 
 ## Next steps

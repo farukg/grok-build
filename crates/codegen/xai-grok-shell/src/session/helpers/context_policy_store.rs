@@ -41,6 +41,9 @@ pub enum ContextPolicyError {
     Admission(#[from] xai_chat_state::ContextPolicyAdmissionError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextPreviewUnavailable { AuthorityNotLoaded, LegacyNotInspected }
+
 #[derive(Debug, Clone)]
 pub(crate) struct ContextPolicyBinding {
     pub authority: ContextPolicyAuthority,
@@ -179,6 +182,20 @@ impl ContextPolicyStore {
             self.loaded = Loaded::Ready(document);
         }
         Ok(())
+    }
+
+    pub fn preview_snapshot(
+        &self, id: &str, incarnation: &str,
+    ) -> Result<(ContextPolicySelection, ContextPolicy), ContextPreviewUnavailable> {
+        let document = self.document().map_err(|_| ContextPreviewUnavailable::AuthorityNotLoaded)?;
+        if !self.inspected_legacy.contains(id) && !document.sessions.contains_key(id) {
+            return Err(ContextPreviewUnavailable::LegacyNotInspected);
+        }
+        let selection = self.selection(id, incarnation)
+            .map_err(|_| ContextPreviewUnavailable::AuthorityNotLoaded)?;
+        let policy = self.effective(id)
+            .map_err(|_| ContextPreviewUnavailable::AuthorityNotLoaded)?;
+        Ok((selection, policy))
     }
 
     pub fn effective(&self, id: &str) -> Result<ContextPolicy, ContextPolicyError> {

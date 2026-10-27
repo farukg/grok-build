@@ -29,7 +29,7 @@ pub struct PromptDescriptor {
 
     /// Total height when rendered inline in the timeline.
     /// This is the FULL height including all padding, borders, content, etc.
-    pub full_height: u16,
+    pub full_height: usize,
 
     /// Minimum height when fully collapsed as a sticky header.
     /// The block should still be recognizable at this size.
@@ -307,7 +307,7 @@ pub fn compute_sticky_layout(
             // For pushed headers, use min(full_height, render_height):
             // - If full_height < render_height: use full_height (don't inflate small prompts with empty padding that we'd then clip into)
             // - If full_height >= render_height: use render_height (keep the collapsed view with proper truncation/ellipsis)
-            let pushed_render_height = pinned_prompt.full_height.min(render_height);
+            let pushed_render_height = u16::try_from(pinned_prompt.full_height.min(usize::from(render_height))).unwrap_or(render_height);
             let push_clip = pushed_render_height.saturating_sub(pushed_visible);
 
             StickyHeaderLayout {
@@ -341,22 +341,10 @@ fn calculate_render_height(
     scroll_offset: usize,
     viewport_height: u16,
 ) -> u16 {
-    // How many rows have scrolled past the prompt's top
-    // `scroll_offset` is a cumulative usize position (can exceed u16 in long sessions), so clamp before narrowing
-    // This only feeds `full_height.saturating_sub(..)` (a u16), so any value past u16::MAX collapses the header to min height anyway
-    let scroll_past = scroll_offset
-        .saturating_sub(prompt.y_virtual)
-        .min(u16::MAX as usize) as u16;
-
-    // Height shrinks 1:1 with scroll_past until we hit minimum
+    let scroll_past = scroll_offset.saturating_sub(prompt.y_virtual);
     let height = prompt.full_height.saturating_sub(scroll_past);
-
-    // A collapsed sticky header can never be taller than the prompt rendered inline. A lazily-estimated prompt can
-    // keep the `MAX_TRUNCATED_HEADER_HEIGHT` seed, never measured because it sits above the viewport when pinned.
-    // Without this clamp it would pad a short pinned prompt with empty rows instead of collapsing to its real height.
-    let min_height = prompt.min_height.max(1).min(prompt.full_height.max(1));
-
-    height.max(min_height).min(viewport_height)
+    let min_height = usize::from(prompt.min_height.max(1)).min(prompt.full_height.max(1));
+    u16::try_from(height.max(min_height).min(usize::from(viewport_height))).unwrap_or(viewport_height)
 }
 
 #[cfg(test)]
@@ -378,7 +366,7 @@ mod tests {
             .map(|(i, &(y, full_h))| PromptDescriptor {
                 entry_idx: i,
                 y_virtual: y,
-                full_height: full_h,
+                full_height: usize::from(full_h),
                 sticky: true,
                 min_height,
             })

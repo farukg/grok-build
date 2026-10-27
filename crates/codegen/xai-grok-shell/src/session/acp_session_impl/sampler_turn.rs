@@ -1821,7 +1821,9 @@ impl SessionActor {
         self: &Arc<Self>,
         mut request: ConversationRequest,
     ) -> Result<SamplerTurnOutcome, xai_grok_sampler::SamplingErrorInfo> {
-        let request_id = xai_grok_sampler::RequestId::random();
+        let snapshot_id = crate::session::request_capture::RequestSnapshotId(uuid::Uuid::new_v4());
+        let request_id = xai_grok_sampler::RequestId::from(snapshot_id.0.to_string());
+        self.begin_request_capture(snapshot_id, &request);
         self.turn_phases.record_sampling_request();
         let _sampling_phase = self.turn_phases.begin_sampling();
         let stream_drained_rx = {
@@ -1936,6 +1938,7 @@ impl SessionActor {
                 Ok(SamplerTurnOutcome::Response(
                     Box::new(response),
                     Box::new(metrics),
+                    request_id,
                 ))
             }
             Err(rich_err) => {
@@ -2285,25 +2288,57 @@ impl SessionActor {
     /// Persist one response's items without re-estimating model output when provider usage already includes it.
     pub(super) async fn record_response_items(
         &self,
+        request_id: &xai_grok_sampler::RequestId,
+        message_id: Option<&str>,
         items: Vec<ConversationItem>,
         usage_reported: bool,
     ) {
+        use xai_grok_sampling_types::{OutputChannel, OutputOrigin};
+        let mut text_bindings = Vec::new();
+        let mut reasoning_bindings = Vec::new();
         for item in items {
-            match item {
-                ConversationItem::Assistant(_) => {
-                    self.record_assistant_response(item, usage_reported).await;
+            let reference = item.output_origin();
+            let channel = match &item {
+                ConversationItem::Assistant(_) => Some(OutputChannel::Text),
+                ConversationItem::Reasoning(_) => Some(OutputChannel::Reasoning),
+                ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::ToolResult(_) | ConversationItem::BackendToolCall(_) => None,
+            };
+            let result = match item {
+                ConversationItem::Assistant(_) => self.record_assistant_response(item, usage_reported).await,
+                ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::ToolResult(_) | ConversationItem::BackendToolCall(_) | ConversationItem::Reasoning(_) => {
+                    if usage_reported { self.chat_state_handle.push_model_output_and_ack(item).await }
+                    else { self.chat_state_handle.push_tool_result_and_ack(item).await }
                 }
-                _ if usage_reported => self.chat_state_handle.push_model_output(item),
-                _ => self.chat_state_handle.push_tool_result(item),
+            };
+            let binding = Self::mutation_source_binding(&result);
+            if !matches!(reference, OutputOrigin::Unknown | OutputOrigin::ChannelAggregate { .. } | OutputOrigin::MessageChannelAggregate { .. }) {
+                self.observe_output_sources(request_id, reference, vec![binding.clone()]);
+            }
+            match channel {
+                Some(OutputChannel::Text) => text_bindings.push(binding),
+                Some(OutputChannel::Reasoning) => reasoning_bindings.push(binding),
+                None => {}
             }
         }
+        for (channel, bindings) in [(OutputChannel::Text, text_bindings), (OutputChannel::Reasoning, reasoning_bindings)] {
+            if !bindings.is_empty() { self.observe_output_sources(request_id, OutputOrigin::channel_aggregate(channel, message_id), bindings); }
+        }
+    }
+
+    fn observe_output_sources(&self, request_id: &xai_grok_sampler::RequestId, reference: xai_grok_sampling_types::OutputOrigin, bindings: Vec<crate::session::request_capture::InputSourceBinding>) {
+        self.publish_source_observation(crate::session::source_binding::SourceBindingObservation::Output {
+            identity: crate::session::source_binding::OutputSourceOrigin {
+                session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(), reference,
+            },
+            bindings,
+        });
     }
 
     pub(super) async fn record_assistant_response(
         &self,
-        assistant_item: ConversationItem,
+        mut assistant_item: ConversationItem,
         usage_reported: bool,
-    ) {
+    ) -> Result<xai_chat_state::AppliedAppend, xai_chat_state::MutationAdmissionError> {
         self.signals_handle().record_assistant_message();
 
         // DEBUG: Log the model_id on the assistant item being recorded
@@ -2317,12 +2352,15 @@ impl SessionActor {
             tracing::info!("Assistant requested tool call: {}", first_call.id);
         }
 
+        if let ConversationItem::Assistant(item) = &mut assistant_item {
+            item.output_origin = Default::default();
+        }
         if usage_reported {
             self.chat_state_handle
-                .push_assistant_response(assistant_item);
+                .push_assistant_response_and_ack(assistant_item).await
         } else {
             self.chat_state_handle
-                .push_unreported_model_output(assistant_item);
+                .push_unreported_model_output_and_ack(assistant_item).await
         }
     }
 }
