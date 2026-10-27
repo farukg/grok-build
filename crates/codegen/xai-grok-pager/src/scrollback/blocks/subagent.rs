@@ -35,8 +35,7 @@ pub enum SubagentBlockKind {
     Cancelled { elapsed: Duration },
 }
 
-/// Collapsed one-liner by default; a row with description, delegation metadata or a failure
-/// reason folds open to them. Groupable and selectable.
+/// Collapsed one-liner by default; the entry projects its real child view when expanded.
 /// Enter / Ctrl-F opens the subagent view.
 #[derive(Debug, Clone)]
 pub struct SubagentBlock {
@@ -293,12 +292,8 @@ impl BlockContent for SubagentBlock {
             Span::styled(span.content.replace('\n', " "), span.style)
         }).collect::<Vec<_>>());
         let line = crate::render::line_utils::truncate_line(line, w);
-        // Collapsed stays the one-line summary; Expanded appends the body the one-liner
-        // truncates away (full description, delegation metadata, failure reason).
         if ctx.mode == DisplayMode::Collapsed {
-            return BlockOutput {
-                lines: vec![line.into()],
-            };
+            return BlockOutput { lines: vec![line.into()] };
         }
         let mut lines = vec![line.into()];
         lines.extend(self.expanded_body(ctx, &theme));
@@ -371,6 +366,7 @@ impl BlockContent for SubagentBlock {
         true
     }
 }
+
 
 #[cfg(test)]
 mod tests {

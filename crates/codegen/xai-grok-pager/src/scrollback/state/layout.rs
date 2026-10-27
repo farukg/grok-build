@@ -101,6 +101,24 @@ impl LayoutCache {
 }
 
 impl ScrollbackState {
+    pub(crate) fn mark_inline_height_dirty(&mut self, id: EntryId) {
+        self.dirty_heights.insert(id);
+        self.gaps_may_be_dirty = true;
+        self.bump_generation();
+    }
+
+    pub(crate) fn inline_render_requests(&self) -> Vec<(EntryId, u16)> {
+        if self.layout_cache.is_none() || self.viewport_height == 0 {
+            return Vec::new();
+        }
+        let (window, _) = self.paint_window(self.visible_entry_range(), self.scroll_offset,
+            usize::from(self.viewport_height));
+        window.filter_map(|index| {
+            let entry = self.entry(index)?;
+            Some((entry.id, entry.inline_request_width()?))
+        }).collect()
+    }
+
     /// Invalidate and rebuild the layout cache from scratch.
     /// `ensure_layout_cache` skips work when the width and entry count are unchanged.
     /// An in-place display-mode or group change must therefore null the cache first for the next read to see fresh heights, gaps, and totals.

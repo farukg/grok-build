@@ -263,7 +263,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         advance_reconnect_cursor(agent, &mut meta);
                         is_active
                     } else if let acp::SessionUpdate::ToolCallUpdate(ref tcu) = notif.request.update
-                        && route_bg_task_stdout(tcu, &mut agent.session)
+                        && route_bg_task_stdout(tcu, agent)
                     {
                         advance_reconnect_cursor(agent, &mut meta);
                         !meta.is_replay && !agent.session.loading_replay

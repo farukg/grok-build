@@ -3,6 +3,9 @@ use crate::app::agent_view::{AgentRole, AgentView, ChildLink};
 use crate::app::subagent::SubagentInfo;
 use indexmap::IndexMap;
 
+#[path = "session_inline_output.rs"]
+mod inline_output;
+
 #[derive(Default)]
 pub struct SessionViews {
     views: IndexMap<AgentId, AgentView>,

@@ -430,10 +430,9 @@ impl<'a> EntryRenderer<'a> {
         };
         self.entry
             .ensure_cached(content_width, self.appearance(), false, self.cwd);
-        let output = self.entry.cached_output_ref();
+        let output = self.entry.cached_tree();
         let starts = output
-            .lines
-            .iter()
+            .lines()
             .enumerate()
             .filter(|(_, line)| {
                 !matches!(line.selectable, Selectable::None) && line.joiner.is_none()
@@ -441,7 +440,7 @@ impl<'a> EntryRenderer<'a> {
             .map(|(idx, _)| vpad_top.saturating_add(u16::try_from(idx).unwrap_or(u16::MAX)))
             .collect();
         let last_content_row = vpad_top.saturating_add(
-            u16::try_from(output.lines.len().saturating_sub(1)).unwrap_or(u16::MAX),
+            u16::try_from(output.len().saturating_sub(1)).unwrap_or(u16::MAX),
         );
         (starts, last_content_row)
     }
@@ -456,7 +455,7 @@ impl<'a> EntryRenderer<'a> {
         if height == 0 || (self.group_header_count > 0 && !self.group_collapse_header) {
             return flags;
         }
-        let output = self.entry.cached_output_ref();
+        let output = self.entry.cached_tree();
         let vpad_top = u16::from(self.entry.block.has_vpad_for(self.appearance()));
         let (header_rows, skip_remaining) = if self.group_collapse_header {
             if self.skip_rows == 0 {
@@ -472,10 +471,7 @@ impl<'a> EntryRenderer<'a> {
         let start_y = header_rows.saturating_add(u16::from(vpad_top_visible));
 
         let mut painted = 0u16;
-        for (i, line) in output.lines.iter().enumerate() {
-            if i < usize::from(content_skip) {
-                continue;
-            }
+        for line in output.lines_from(usize::from(content_skip)) {
             if painted > 0 && line.joiner.as_deref().is_some_and(str::is_empty) {
                 let wrap_y = start_y.saturating_add(painted.saturating_sub(1));
                 let cont_y = start_y.saturating_add(painted);
@@ -553,7 +549,7 @@ impl Renderable for EntryRenderer<'_> {
         self.entry
             .ensure_cached(content_width, self.appearance(), false, self.cwd);
         // Clamp the line count: a pathologically large block could exceed u16.
-        let content_lines = self.entry.cached_output_ref().len().min(u16::MAX as usize) as u16;
+        let content_lines = self.entry.cached_tree().len().min(u16::MAX as usize) as u16;
         self.assemble_height(content_width, content_lines)
     }
 
@@ -743,8 +739,7 @@ impl Renderable for EntryRenderer<'_> {
         let text_width = content_area.width.saturating_sub(ts_reserved);
         self.entry
             .ensure_cached(text_width, self.appearance(), self.is_selected, self.cwd);
-        let cached_ref = self.entry.cached_output_ref();
-        let output: &BlockOutput = &cached_ref;
+        let output = self.entry.cached_tree();
         let has_vpad = self.entry.block.has_vpad(&ctx);
         // Determine how many rows of vpad/content to skip.
         // Layout is: [vpad_top?] [content lines...] [vpad_bottom?]
@@ -774,7 +769,7 @@ impl Renderable for EntryRenderer<'_> {
         let own_gutter = ts_reserved > 0 && bg_color.is_none() && content_area.width > ts_reserved;
 
         // Content lines: skip the first `content_skip` lines
-        for line in output.lines.iter().skip(content_skip as usize) {
+        for line in output.lines_from(content_skip as usize) {
             if row >= max_row {
                 break;
             }

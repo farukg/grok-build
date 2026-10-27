@@ -418,7 +418,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         entry.ensure_cached(content_width, appearance, is_selected, cwd);
         let cached_rendered = entry.cached_rendered_output_ref();
         let cached_output = &cached_rendered.output;
-        let cached_boundaries = &cached_rendered.boundaries;
+        let tree = entry.cached_tree();
 
         result
             .selection_model
@@ -446,11 +446,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         let is_group_header = entry_layout_info.is_group_header();
         let verb_expanded_slot = entry_layout_info.is_expanded_verb_header();
 
-        let mapped_lines = if is_group_header && !verb_expanded_slot {
-            &[]
-        } else {
-            cached_output.lines.as_slice()
-        };
+        let mapped_len = if is_group_header && !verb_expanded_slot { 0 } else { tree.len() };
 
         // Expanded verb-group slot: the header consumes the slot's first screen row, so member 0's content maps one row below
         // This mirrors EntryRenderer's collapse-header render path: when the header scrolls off, the first skipped row is the header, not content
@@ -490,7 +486,9 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
                 joiner_to_previous: None,
             });
         }
-        for (block_line_idx, line) in mapped_lines.iter().enumerate().skip(content_skip) {
+        for block_line_idx in content_skip..mapped_len {
+            let Some(source_line) = tree.line(block_line_idx) else { break };
+            let line = source_line.line;
             if screen_y >= max_y {
                 break;
             }
@@ -515,11 +513,11 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
                 );
             }
             if let (Some(range_id), Some(cols)) = (
-                line.selection_range,
+                source_line.range_id,
                 selectable_cols(&line.content, &line.selectable),
             ) {
                 // Logical text; drag columns are visual and remapped on copy via `logical_slice_for_visual_cols`
-                let boundary = cached_boundaries.get(block_line_idx);
+                let boundary = source_line.boundary;
                 let selectable_cols =
                     crate::scrollback::types::visual_selectable_cols(line).unwrap_or(cols);
                 let resolved_line = ResolvedSelectableLine {
@@ -569,7 +567,8 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             // Basename/relative tool headers need the stored absolute target.
             // The hit box is the selectable path span (respects bullet prepend and Selectable shift)
             {
-                for (idx, bl) in cached_output.lines.iter().enumerate().skip(content_skip) {
+                for (offset, bl) in tree.lines_from(content_skip).enumerate() {
+                    let idx = content_skip + offset;
                     let visible_offset = (idx - content_skip) as u16;
                     let screen_row = first_visible_content_y + visible_offset;
                     if screen_row >= max_y {
@@ -627,11 +626,10 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             // Scan post-wrap lines for plain-text URLs and file paths.
             // For markdown blocks, markdown hyperlinks are already in the overlay (mapped above); explicit tool-link rows are authoritative
             {
-                let visible_lines = cached_output
-                    .lines
-                    .iter()
+                let visible_lines = tree
+                    .lines_from(content_skip)
                     .enumerate()
-                    .skip(content_skip)
+                    .map(|(offset, line)| (content_skip + offset, line))
                     .filter(|(_, bl)| bl.link_target.is_none())
                     .map(|(idx, bl)| {
                         let visible_offset = (idx - content_skip) as u16;

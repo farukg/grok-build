@@ -30,8 +30,7 @@ pub enum BgTaskKind {
     },
 }
 
-/// Compact by default; expanded shows the full description and command.
-/// Canonical stdout integration is owned by the task-store projection.
+/// Compact by default; expanded retains the preamble and projects canonical task stdout.
 /// Enter / Ctrl-F opens the block viewer with stdout from the central store.
 #[derive(Debug, Clone)]
 pub struct BgTaskBlock {
@@ -115,7 +114,6 @@ impl BgTaskBlock {
     }
 
     /// Description rows with runs of blank lines collapsed, followed by one blank separator.
-    /// Shared by the viewer preamble and the Expanded body so both show identical rows.
     fn description_lines(&self, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         let description = self
@@ -244,9 +242,7 @@ impl BlockContent for BgTaskBlock {
                 lines: vec![line.into()],
             };
         }
-        let mut lines = super::tool::body::wrapped_lines(
-            [line], ctx.content_width(), "",
-        );
+        let mut lines = super::tool::body::wrapped_lines([line], ctx.content_width(), "");
         lines.extend(self.expanded_body(ctx, &theme));
         BlockOutput { lines }
     }
@@ -598,6 +594,7 @@ mod tests {
             "newlines should become spaces in failed variant, got: {text:?}"
         );
     }
+
 
     #[test]
     fn expanded_body_shows_description_and_command() {

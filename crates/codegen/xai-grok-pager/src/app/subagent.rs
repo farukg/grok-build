@@ -725,6 +725,7 @@ pub(crate) fn replay_on_open(views: &mut SessionViews, child_id: AgentId) -> Chi
             info.transcript.discovered_memory_only();
         }
     }
+    views.note_inline_content_changed(child_id);
     match outcome {
         Ok(ReplayEmission::Emitted) => ChildReplayOutcome::Replayed,
         Ok(ReplayEmission::Empty) => ChildReplayOutcome::FoundNothingOnDisk,
@@ -866,7 +867,11 @@ pub(crate) fn evict_on_leave(views: &mut SessionViews, child_id: AgentId) -> Evi
     }
     if let Some(child_view) = views.get_mut(&child_id) {
         drop(detach_child_view_content(child_view));
+        child_view.inline_sources.transcript.take();
+        child_view.inline_sources.task_outputs.borrow_mut().clear();
+        child_view.inline_sources.replay = Default::default();
     }
+    views.note_inline_content_changed(child_id);
     if had_content {
         // Deferred so the purge cost lands between frames, not inside this notification.
         crate::memory_release::request_release_after_draw("subagent-evict");

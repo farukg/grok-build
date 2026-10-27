@@ -1,4 +1,5 @@
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
+use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
@@ -8,6 +9,10 @@ use super::types::{BlockContext, BlockOutput, DisplayMode, RenderedBlockOutput};
 use crate::appearance::AppearanceConfig;
 use crate::theme::{ThemeKind, cache as theme_cache};
 
+#[path = "inline_output.rs"]
+pub(crate) mod inline_output;
+use inline_output::{InlineProjection, OutputTree, SourceBody, SourceKey, RevisionSignal};
+
 #[derive(Debug, Clone)]
 struct CachedOutput {
     width: u16,
@@ -15,7 +20,9 @@ struct CachedOutput {
     theme: ThemeKind,
     is_selected: bool,
     cwd: Option<PathBuf>,
-    rendered: RenderedBlockOutput,
+    inline_revision: u64,
+    rendered: Rc<RenderedBlockOutput>,
+    tree: Rc<OutputTree>,
 }
 
 /// Caches truncated-mode line count so layout need not call `block.output()` (syntect or full wrap) on every redraw.
@@ -102,6 +109,10 @@ pub struct ScrollbackEntry {
     /// Display width of each source line. Width-independent, so unlike every other cache here it survives a resize.
     /// Re-deriving it per width is what made a resize cost O(total conversation bytes).
     cached_line_widths: RefCell<Option<Vec<u32>>>,
+    inline_projection: RefCell<Option<InlineProjection>>,
+    inline_revision: Cell<u64>,
+    inline_width: Cell<Option<u16>>,
+    output_revision: Rc<RevisionSignal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +177,10 @@ impl ScrollbackEntry {
             cached_truncated_height: RefCell::new(None),
             cached_estimate_lines: RefCell::new(None),
             cached_line_widths: RefCell::new(None),
+            inline_projection: RefCell::new(None),
+            inline_revision: Cell::new(0),
+            inline_width: Cell::new(None),
+            output_revision: Rc::default(),
         }
     }
 
@@ -196,6 +211,10 @@ impl ScrollbackEntry {
             cached_truncated_height: RefCell::new(None),
             cached_estimate_lines: RefCell::new(None),
             cached_line_widths: RefCell::new(None),
+            inline_projection: RefCell::new(None),
+            inline_revision: Cell::new(0),
+            inline_width: Cell::new(None),
+            output_revision: Rc::default(),
         }
     }
 
@@ -254,6 +273,7 @@ impl ScrollbackEntry {
 
     /// Invalidate only the caches keyed by terminal width: the resize path.
     pub fn invalidate_width_caches(&mut self) {
+        self.output_revision.bump();
         *self.cached_output.borrow_mut() = None;
         *self.cached_truncated_height.borrow_mut() = None;
         *self.cached_estimate_lines.borrow_mut() = None;
@@ -266,6 +286,11 @@ impl ScrollbackEntry {
         let had_output = self.cached_output.borrow().is_some();
         if had_output {
             *self.cached_output.borrow_mut() = None;
+        }
+        if let Some(source) = self.inline_projection.borrow_mut().as_mut()
+            && matches!(source.body, SourceBody::Content(_))
+        {
+            source.body = SourceBody::Available;
         }
         self.block.evict_render_caches();
         had_output
@@ -324,6 +349,9 @@ impl ScrollbackEntry {
         is_selected: bool,
         cwd: Option<&Path>,
     ) {
+        if self.block.is_bg_task() || self.block.is_subagent() {
+            self.inline_width.set(Some(width));
+        }
         // UserPrompt, ToolCall, Thinking, BgTask and Subagent vary their output() based on is_selected; for all other blocks the output is identical
         // Normalize to false for those blocks so selection changes don't thrash the cache
         let effective_selected = is_selected
@@ -343,6 +371,7 @@ impl ScrollbackEntry {
                 && cached.theme == current_theme
                 && cached.is_selected == effective_selected
                 && cached.cwd == cwd_key
+                && cached.inline_revision == self.inline_revision.get()
             {
                 return; // cache hit
             }
@@ -359,14 +388,27 @@ impl ScrollbackEntry {
             is_selected: effective_selected,
             cwd: cwd_key.clone(),
         };
-        let rendered = self.block.rendered_output(&ctx);
+        let rendered = Rc::new(self.block.rendered_output(&ctx));
+        let header = OutputTree::leaf(Rc::clone(&rendered));
+        let tree = if self.display_mode != DisplayMode::Collapsed
+            && (self.block.is_bg_task() || self.block.is_subagent())
+        {
+            let projection = self.inline_projection.borrow();
+            let body = projection.as_ref().filter(|source| source.width == width && source.expanded)
+                .map_or_else(|| SourceBody::Loading.output(), |source| source.body.output());
+            OutputTree::branch([header, body])
+        } else {
+            header
+        };
         *self.cached_output.borrow_mut() = Some(CachedOutput {
             width,
             raw: self.raw,
             theme: current_theme,
             is_selected: effective_selected,
             cwd: cwd_key,
+            inline_revision: self.inline_revision.get(),
             rendered,
+            tree,
         });
     }
 
@@ -384,9 +426,9 @@ impl ScrollbackEntry {
 
     pub(crate) fn cached_rendered_output_ref(&self) -> Ref<'_, RenderedBlockOutput> {
         Ref::map(self.cached_output.borrow(), |opt| {
-            &opt.as_ref()
+            opt.as_ref()
                 .expect("ensure_cached must be called first")
-                .rendered
+                .rendered.as_ref()
         })
     }
 
@@ -441,7 +483,11 @@ impl ScrollbackEntry {
         self.ensure_cached(width, appearance, is_selected, cwd);
         EffectiveOutput {
             ctx,
-            output: EffectiveOutputData::Borrowed(self.cached_output_ref()),
+            output: if self.block.is_bg_task() || self.block.is_subagent() {
+                EffectiveOutputData::Owned(self.cached_tree().materialize())
+            } else {
+                EffectiveOutputData::Borrowed(self.cached_output_ref())
+            },
             has_vpad,
             kind: if is_selected {
                 EffectiveOutputKind::Selected
@@ -484,7 +530,42 @@ impl ScrollbackEntry {
     }
 
     pub fn is_foldable(&self) -> bool {
+        if self.block.is_bg_task() || self.block.is_subagent() {
+            return self.inline_projection.borrow().as_ref()
+                .is_some_and(|source| source.body.is_foldable());
+        }
         self.block.is_foldable()
+    }
+
+    pub(crate) fn inline_request_width(&self) -> Option<u16> {
+        self.inline_width.get()
+    }
+
+    pub(crate) fn inline_source_matches(&self, key: &SourceKey, width: u16) -> bool {
+        self.inline_projection.borrow().as_ref().is_some_and(|source| {
+            source.key == *key && source.width == width
+                && source.expanded == (self.display_mode != DisplayMode::Collapsed)
+                && !(source.expanded && matches!(source.body, SourceBody::Available))
+        })
+    }
+
+    pub(crate) fn set_inline_source(&self, projection: InlineProjection) {
+        *self.inline_projection.borrow_mut() = Some(projection);
+        self.inline_revision.set(self.inline_revision.get().wrapping_add(1));
+        *self.cached_estimate_lines.borrow_mut() = None;
+        *self.cached_truncated_height.borrow_mut() = None;
+    }
+
+    pub(crate) fn subscribe_output_changes(&self, signal: &Rc<RevisionSignal>,
+        dirty: &Rc<RefCell<std::collections::HashSet<EntryId>>>)
+    {
+        self.output_revision.subscribe(signal);
+        self.output_revision.subscribe_entry(self.id, dirty);
+    }
+
+    pub(crate) fn cached_tree(&self) -> Rc<OutputTree> {
+        self.cached_output.borrow().as_ref().map_or_else(
+            || OutputTree::notice("Loading output"), |cache| Rc::clone(&cache.tree))
     }
 
     /// True for a thinking block hidden by the Appearance toggle. Takes the flag as a param so hot layout loops can hoist the cache read.

@@ -240,21 +240,19 @@ impl BgTaskState {
     /// Replace `stdout` with `new_stdout`.
     /// If `new_stdout` exceeds `BG_TASK_MAX_STDOUT`, keeps the head (snapped to a char boundary so UTF-8 stays valid) and sets `truncated = true`.
     /// Always refreshes `stdout_line_count`.
-    pub fn set_stdout(&mut self, new_stdout: String) {
-        if new_stdout.len() <= BG_TASK_MAX_STDOUT {
-            self.stdout = new_stdout;
-        } else {
-            let end =
-                crate::render::line_utils::floor_char_boundary(&new_stdout, BG_TASK_MAX_STDOUT);
-            let Some(head) = new_stdout.get(..end) else {
-                self.stdout = new_stdout;
-                self.stdout_line_count = self.stdout.lines().count();
-                return;
-            };
-            self.stdout = head.to_string();
+    pub fn set_stdout(&mut self, mut new_stdout: String) -> bool {
+        if new_stdout.len() > BG_TASK_MAX_STDOUT {
+            let end = crate::render::line_utils::floor_char_boundary(&new_stdout, BG_TASK_MAX_STDOUT);
+            new_stdout.truncate(end);
             self.truncated = true;
         }
+        if self.stdout == new_stdout {
+            self.stdout_line_count = self.stdout.lines().count();
+            return false;
+        }
+        self.stdout = new_stdout;
         self.stdout_line_count = self.stdout.lines().count();
+        true
     }
     /// Append `chunk` to `stdout`, inserting a `\n` separator first if the buffer is non-empty.
     /// If the resulting buffer exceeds `BG_TASK_MAX_STDOUT`, trims the head (snapped to the next char boundary) and sets `truncated = true`.
@@ -353,6 +351,24 @@ impl BgTaskState {
         }
     }
 }
+impl super::agent_view::AgentView {
+    pub(crate) fn set_bg_task_stdout(&mut self, task_id: &str, stdout: String) -> bool {
+        let changed = self.session.bg_tasks.get_mut(task_id)
+            .is_some_and(|task| task.set_stdout(stdout));
+        if changed {
+            self.note_bg_stdout_changed(task_id);
+        }
+        changed
+    }
+
+    pub(crate) fn append_bg_task_stdout(&mut self, task_id: &str, chunk: &str) {
+        if let Some(task) = self.session.bg_tasks.get_mut(task_id) {
+            task.append_stdout(chunk);
+            self.note_bg_stdout_changed(task_id);
+        }
+    }
+}
+
 /// State for a scheduled (loop) task, displayed in the tasks pane.
 #[derive(Debug, Clone)]
 pub struct ScheduledTaskInfo {

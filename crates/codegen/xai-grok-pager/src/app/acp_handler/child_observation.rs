@@ -120,6 +120,7 @@ pub(super) fn apply_child_acp_update(
             child_view.ended_child_prompt_ids.contains(pid)
                 || child_view.superseded_child_prompt_ids.contains(pid)
         });
+    let mut content_applied = false;
     if !ended {
         let is_live = !meta.is_replay && !child_view.session.loading_replay;
         let apply = !is_live
@@ -145,15 +146,27 @@ pub(super) fn apply_child_acp_update(
                 }
                 backdate_child_turn_clock(child_view);
             }
-            child_view
-                .session
-                .handle_update(update, meta, &mut child_view.scrollback);
+            let content_before = child_view.scrollback.content_generation();
+            let source_before = child_view.inline_sources.signal.revision();
+            let routed_stdout = if let acp::SessionUpdate::ToolCallUpdate(ref tcu) = update {
+                route_bg_task_stdout(tcu, child_view)
+            } else {
+                false
+            };
+            if !routed_stdout {
+                child_view.session.handle_update(update, meta, &mut child_view.scrollback);
+            }
+            content_applied = child_view.scrollback.content_generation() != content_before
+                || child_view.inline_sources.signal.revision() != source_before;
             for entry_id in child_view.session.tracker.take_pending_edit_hl() {
                 child_view.submit_edit_highlight(entry_id);
             }
         }
     }
     let label = subagent_activity_label(child_view);
+    if content_applied {
+        app.agents.note_inline_content_changed(child);
+    }
     if let Some(observation) = context_used {
         observe_child(&mut app.agents, child, observation);
     }
@@ -210,6 +223,9 @@ pub(super) fn apply_child_xai_update(
                     child,
                     ChildObservation::Compacted { tokens_after },
                 );
+            }
+            if changed {
+                app.agents.note_inline_content_changed(child);
             }
             changed && affected
         }
@@ -279,6 +295,7 @@ pub(super) fn apply_child_xai_update(
             if finished {
                 let label = subagent_activity_label(child_view);
                 observe_child(&mut app.agents, child, ChildObservation::Activity(label));
+                app.agents.note_inline_content_changed(child);
             }
             finished && affected
         }

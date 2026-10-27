@@ -77,6 +77,7 @@ impl AgentView {
     pub(crate) fn bind_session_id(&mut self, session_id: agent_client_protocol::SessionId) {
         if self.session.session_id.as_ref() != Some(&session_id) {
             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
+            self.inline_sources = Default::default();
             self.compact_invocations.clear();
             self.last_seen_event_id = None;
             self.last_seen_event_seq = None;
@@ -145,6 +146,7 @@ impl AgentView {
     pub(crate) fn unbind_session_id(&mut self) {
         if self.session.session_id.take().is_some() {
             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
+            self.inline_sources = Default::default();
             self.compact_invocations.clear();
             self.deferred_subagent_finishes.clear();
             self.clear_minimal_btw_lifecycle();
@@ -204,6 +206,7 @@ impl AgentView {
         let mut view = Self {
             session,
             session_binding_epoch: 0,
+            inline_sources: Default::default(),
             compact_invocations: std::collections::HashMap::new(),
             scrollback,
             prompt,

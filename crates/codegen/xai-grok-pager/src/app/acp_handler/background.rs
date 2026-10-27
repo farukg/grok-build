@@ -10,8 +10,9 @@ use xai_grok_tools::computer::types::SESSION_RESTART_SIGNAL;
 /// Returns `true` if the update was consumed (belongs to a bg task), `false` if it should be passed to the normal tracker.
 pub(super) fn route_bg_task_stdout(
     tcu: &acp::ToolCallUpdate,
-    session: &mut super::super::agent::AgentSession,
+    agent: &mut super::super::agent_view::AgentView,
 ) -> bool {
+    let session = &mut agent.session;
     let tc_id = tcu.tool_call_id.0.to_string();
 
     let task_id = match session.bg_tool_call_to_task.get(&tc_id) {
@@ -46,11 +47,11 @@ pub(super) fn route_bg_task_stdout(
 
             // Don't overwrite with empty stdout (shell clears buffer on completion).
             // `set_stdout` handles the BG_TASK_MAX_STDOUT trim, flips `truncated` on TUI-side overflow, and refreshes the cached `stdout_line_count`
-            if !stdout.is_empty()
-                && let Some(bg_task) = session.bg_tasks.get_mut(&task_id)
-            {
-                bg_task.set_stdout(stdout);
-                if chunk_truncated {
+            if !stdout.is_empty() {
+                agent.set_bg_task_stdout(&task_id, stdout);
+                if chunk_truncated
+                    && let Some(bg_task) = agent.session.bg_tasks.get_mut(&task_id)
+                {
                     bg_task.truncated = true;
                 }
             }
@@ -95,7 +96,7 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
     let restored_from_replay = meta.is_replay;
 
-    let (_, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (agent_id, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
@@ -239,6 +240,8 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
         .bg_tool_call_to_task
         .insert(tool_call_id.clone(), task_id.clone());
 
+    agent.note_bg_stdout_changed(&task_id);
+    app.agents.note_inline_content_changed(agent_id);
     is_active
 }
 
@@ -255,7 +258,7 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
         } => (task_id, description, event_text),
         _ => return false,
     };
-    let (_, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (agent_id, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
@@ -271,14 +274,10 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
         return false;
     }
 
-    let session = &mut agent.session;
-
     // Append the event text to the bg task's stdout buffer so the block viewer shows it (same as bash output chunks for bg tasks)
     // `append_stdout` handles the trim, flips `truncated` on overflow, and refreshes `stdout_line_count`
-    if let Some(task) = session.bg_tasks.get_mut(&task_id) {
-        task.append_stdout(&event_text);
-    }
-
+    agent.append_bg_task_stdout(&task_id, &event_text);
+    app.agents.note_inline_content_changed(agent_id);
     is_active
 }
 
@@ -545,7 +544,7 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     // Stamps `restored_from_replay` on tombstones inserted below.
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
 
-    let (_, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (agent_id, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
@@ -593,6 +592,9 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
                 signal = Some(KILLED_SIGNAL.to_owned());
             }
 
+            if !task_snapshot.output.is_empty() {
+                bg_task.set_stdout(task_snapshot.output.clone());
+            }
             bg_task.status = if success {
                 BgTaskStatus::Done
             } else {
@@ -688,6 +690,8 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     if stale_on_load {
         // The replayed "Task started" block above is finished (static bullet); the pane row leaves the running filter via the status update
         // No new scrollback block: nothing happened in this session
+        agent.note_bg_stdout_changed(task_id);
+        app.agents.note_inline_content_changed(agent_id);
         return is_active;
     }
 
@@ -710,6 +714,8 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
         bg_task.scrollback_entry_id = Some(completion_eid);
     }
 
+    agent.note_bg_stdout_changed(task_id);
+    app.agents.note_inline_content_changed(agent_id);
     is_active
 }
 
@@ -815,6 +821,7 @@ pub(super) fn apply_background_tasks_snapshot(
                     is_monitor: row.kind == xai_grok_tools::computer::types::TaskKind::Monitor,
                     restored_from_replay: is_replay,
                 });
+                agent.note_bg_stdout_changed(&row.task_id);
                 changed = true;
             }
         }
@@ -827,6 +834,7 @@ pub(super) fn apply_background_tasks_snapshot(
             .bg_tasks
             .retain(|task_id, _| snapshot_ids.contains(task_id.as_str()));
         if agent.session.bg_tasks.len() != before {
+            agent.inline_sources.signal.bump();
             changed = true;
         }
         agent
@@ -841,3 +849,7 @@ pub(super) fn apply_background_tasks_snapshot(
 
     changed
 }
+
+#[cfg(test)]
+#[path = "background_inline_tests.rs"]
+mod inline_tests;

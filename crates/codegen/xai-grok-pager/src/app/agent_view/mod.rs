@@ -206,6 +206,7 @@ mod task_icon_mouse_tests;
 mod task_status_tests;
 mod timeline_panel;
 mod viewer;
+pub(crate) mod inline_sources;
 mod workflows_overlay;
 use super::actions;
 use super::dispatch;
@@ -764,6 +765,7 @@ pub(crate) struct BlockViewerResume {
 pub struct AgentView {
     pub session: AgentSession,
     pub(crate) session_binding_epoch: u32,
+    pub(crate) inline_sources: inline_sources::InlineSources,
     pub(crate) compact_invocations: std::collections::HashMap<
         crate::app::agent::CompactInvocationId,
         crate::app::agent::CompactInvocation,

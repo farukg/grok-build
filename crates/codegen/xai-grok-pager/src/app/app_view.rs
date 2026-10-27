@@ -4419,6 +4419,7 @@ impl AppView {
                     } else {
                         (None, full_area)
                     };
+                let mut inline_post_flush = None;
                 if view_area.height > 0 {
                     match *active_view {
                         ActiveView::Welcome => {
@@ -4710,7 +4711,7 @@ impl AppView {
                             self.welcome_on_auth_url = on_url;
                             return (cursor, post_flush);
                         }
-                        ActiveView::Agent(id) => {
+                        ActiveView::Agent(id) => loop {
                             let overlay_focused = false;
                             let overlay_active = self
                                 .dashboard
@@ -4745,6 +4746,7 @@ impl AppView {
                             {
                                 d.restore_peek_viewport(agents);
                             }
+                            agents.prepare_inline_output(id);
                             if let Some(agent) = agents.get_mut(&id) {
                                 let announcement_banner_h =
                                     crate::views::announcements::session_banner_height(
@@ -4800,6 +4802,12 @@ impl AppView {
                                         session_nav,
                                     },
                                 );
+                                if agents.prepare_inline_output(id) {
+                                    inline_post_flush = Self::merge_post_flush(inline_post_flush, result.1);
+                                    link_spans.clear();
+                                    f.buffer_mut().reset();
+                                    continue;
+                                }
                                 if let Some(modal) = self.import_claude_modal.as_mut() {
                                     let theme = crate::theme::Theme::current();
                                     crate::views::import_claude_modal::render_import_claude_modal(
@@ -4840,9 +4848,11 @@ impl AppView {
                                     } else {
                                         cursor_pos
                                     };
+                                let post_flush = Self::merge_post_flush(inline_post_flush, post_flush);
                                 return (cursor, Self::merge_escapes(notif_escapes, post_flush));
                             }
-                        }
+                            break;
+                        },
                         ActiveView::AgentDashboard => {
                             if let Some(dashboard) = self.dashboard.as_mut() {
                                 dashboard.voice_listening = voice_listening;
