@@ -468,3 +468,7 @@ mod tests;
 #[cfg(test)]
 #[path = "session_inline_output_completion_tests.rs"]
 mod completion_tests;
+
+#[cfg(test)]
+#[path = "session_inline_output_paint_tests.rs"]
+mod paint_tests;

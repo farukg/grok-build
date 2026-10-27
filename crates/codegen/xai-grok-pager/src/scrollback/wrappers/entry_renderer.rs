@@ -326,7 +326,7 @@ impl<'a> EntryRenderer<'a> {
     /// Width reserved for the timestamp on the right side of content lines.
     ///
     /// When non-zero, content is wrapped at `content_width - reserved` so text never collides with the timestamp overlay.
-    fn timestamp_reserved(&self) -> u16 {
+    pub(crate) fn timestamp_reserved(&self) -> u16 {
         if self.appearance().show_timestamps && self.should_show_timestamp() {
             10 // max short format: "  12:30 PM"
         } else {

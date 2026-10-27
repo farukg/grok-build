@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
-use super::block::{BlockContent, RenderBlock};
+use super::block::BlockContent;
 use super::entry::ScrollbackEntry;
 use super::layout::HorizontalLayout;
 use super::state::EntryLayoutInfo;
@@ -46,22 +46,6 @@ pub fn media_open_button_label(is_video: bool) -> &'static str {
 pub fn media_open_button_col(content_width: u16, is_video: bool) -> u16 {
     let label_w = media_open_button_label(is_video).len() as u16;
     content_width.saturating_sub(label_w) / 2
-}
-
-/// Width reserved for the timestamp on message blocks.
-///
-/// Matches the constant in `EntryRenderer::timestamp_reserved()`.
-fn timestamp_reserved_for_block(block: &RenderBlock, appearance: &AppearanceConfig) -> u16 {
-    if appearance.show_timestamps
-        && matches!(
-            block,
-            RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-        )
-    {
-        10
-    } else {
-        0
-    }
 }
 
 /// Reusable scratch `Buffer` so clipped-entry rendering is greppable and not reallocated every frame.
@@ -409,7 +393,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
 
         // Use cached output for selection model building. Must use the same effective width as the renderer (reduced by
         // timestamp reservation for message blocks) to avoid cache thrashing.
-        let ts_reserved = timestamp_reserved_for_block(&entry.block, appearance);
+        let ts_reserved = renderer.timestamp_reserved();
         let content_width = entry_row_layout.content_width().saturating_sub(ts_reserved);
         entry.ensure_cached(content_width, appearance, is_selected, cwd);
         let cached_rendered = entry.cached_rendered_output_ref();
