@@ -155,7 +155,9 @@ pub(crate) fn publish_context_policy(
     notification: &ContextPolicyNotification,
 ) {
     match serde_json::value::to_raw_value(notification) {
-        Ok(params) => gateway.forward_fire_and_forget(acp::ExtNotification::new(CONTEXT_POLICY_CHANGED, params.into())),
+        Ok(params) => {
+            gateway.forward_fire_and_forget(acp::ExtNotification::new(CONTEXT_POLICY_CHANGED, params.into()));
+        }
         Err(error) => tracing::error!(%error, "could not encode Context notification"),
     }
 }
