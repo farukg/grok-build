@@ -80,7 +80,7 @@ Standing rules that go with them:
 - `protoc` is required. Either install DotSlash (`cargo install dotslash`) so `bin/protoc` works,
   or install protoc from the OS (`apt-get install -y protobuf-compiler`) and export
   `PROTOC=$(command -v protoc)`.
-- `.gitlab-ci.yml` builds the Linux release on build-relevant pushes to `main` and manual main pipelines. The nspawn runner retains the tools image, minimal pinned toolchain, Cargo downloads, target artifacts and incremental compiler state on the build host. Nightly checksum freshness detects content changes across fresh checkouts. `linux-build.yml` and `linux-test.yml` are manual GitHub alternatives; scope explicitly requested tests to the changed behavior.
+- `.gitlab-ci.yml` builds the Linux release on build-relevant pushes to `main` and explicitly requested web/API branch pipelines. The nspawn runner retains the tools image, minimal pinned toolchain, Cargo downloads, target artifacts and incremental compiler state on the build host. Nightly checksum freshness detects content changes across fresh checkouts. `linux-build.yml` and `linux-test.yml` are manual GitHub alternatives; scope explicitly requested tests to the changed behavior.
 - Known failures that are not yours: four `doctor` tests fail on upstream too (see
   `docs/fork/STATUS.md`).
 

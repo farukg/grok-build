@@ -7,7 +7,8 @@ Current delivery status: 2026-10-27. The fork is published at GitLab
 ## Release build delivery
 
 GitLab `.gitlab-ci.yml` owns automatic Linux release builds on build-relevant
-pushes to `main`; docs-only pushes skip compilation. GitHub `linux-build.yml`
+pushes to `main`; docs-only pushes skip compilation. Explicit web/API branch
+pipelines support isolated release-build proofs. GitHub `linux-build.yml`
 is available through manual dispatch. GitLab runs one `linux-release` job on
 the nspawn runner, retaining a secret-free tools image and project-scoped Cargo,
 rustup, target and incremental caches on the build host. Nightly checksum

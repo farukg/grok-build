@@ -15,7 +15,7 @@ workflow:
         - SOURCE_REV
         - .gitlab-ci.yml
         - .gitlab/ci/**/*
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
 
 stages: [build]
 
