@@ -438,20 +438,41 @@ impl std::fmt::Debug for SamplingClient {
     }
 }
 
+/// Non-secret per-request defaults projected from [`SamplerConfig`]; the single contract
+/// `request_body` applies for both HTTP dispatch and the pure preview.
 #[derive(Clone, Debug, Default)]
-struct ClientDefaults {
-    model: String,
-    max_completion_tokens: Option<u32>,
-    temperature: Option<f32>,
-    top_p: Option<f32>,
-    api_backend: ApiBackend,
+pub(crate) struct ClientDefaults {
+    pub(super) model: String,
+    pub(super) max_completion_tokens: Option<u32>,
+    pub(super) temperature: Option<f32>,
+    pub(super) top_p: Option<f32>,
+    pub(super) api_backend: ApiBackend,
     auth_scheme: AuthScheme,
     request_compression: RequestCompression,
-    stream_tool_calls: bool,
-    reasoning_summary: Option<xai_grok_sampling_types::ReasoningSummary>,
-    extra_response_includes: Vec<String>,
+    pub(super) stream_tool_calls: bool,
+    pub(super) reasoning_summary: Option<xai_grok_sampling_types::ReasoningSummary>,
+    pub(super) extra_response_includes: Vec<String>,
     gateway_capabilities_header: bool,
     doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
+}
+
+impl From<&SamplerConfig> for ClientDefaults {
+    fn from(config: &SamplerConfig) -> Self {
+        Self {
+            model: config.model.clone(),
+            max_completion_tokens: config.max_completion_tokens,
+            temperature: config.temperature,
+            top_p: config.top_p,
+            api_backend: config.api_backend.clone(),
+            auth_scheme: config.auth_scheme,
+            request_compression: config.request_compression,
+            stream_tool_calls: config.stream_tool_calls,
+            reasoning_summary: config.reasoning_summary.clone(),
+            extra_response_includes: config.extra_response_includes.clone(),
+            gateway_capabilities_header: config.gateway_capabilities_header,
+            doom_loop_recovery: config.doom_loop_recovery.clone(),
+        }
+    }
 }
 
 /// Endpoint URL builder, resolved once at client construction so each request only appends its path.
@@ -747,20 +768,7 @@ impl SamplingClient {
             has_x_api_key_header = headers.get(HeaderName::from_static("x-api-key")).is_some(),
         );
 
-        let defaults = ClientDefaults {
-            model: config.model,
-            max_completion_tokens: config.max_completion_tokens,
-            temperature: config.temperature,
-            top_p: config.top_p,
-            api_backend: config.api_backend,
-            auth_scheme: config.auth_scheme,
-            request_compression: config.request_compression,
-            stream_tool_calls: config.stream_tool_calls,
-            reasoning_summary: config.reasoning_summary,
-            extra_response_includes: config.extra_response_includes,
-            gateway_capabilities_header: config.gateway_capabilities_header,
-            doom_loop_recovery: config.doom_loop_recovery,
-        };
+        let defaults = ClientDefaults::from(&config);
 
         let endpoint = EndpointTemplate::new(&config.base_url, &config.query_params);
 

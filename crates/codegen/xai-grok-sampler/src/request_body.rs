@@ -4,15 +4,14 @@ use xai_grok_sampling_types::{
     ChatCompletionRequest, ConversationRequest, CreateResponseWrapper, MessagesRequestWrapper,
     Result, SamplingError, build_messages_request,
 };
-use crate::config::SamplerConfig;
-use crate::client::{ANTHROPIC_DEFAULT_MAX_TOKENS, StreamingChatRequest, StreamOptions,
+use crate::client::{ANTHROPIC_DEFAULT_MAX_TOKENS, ClientDefaults, StreamingChatRequest, StreamOptions,
     splice_extra_tool_entries, append_response_includes};
 use xai_grok_sampling_types::rs;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BodyMode { NonStreaming, Streaming }
 
-pub(crate) fn apply_defaults(defaults: &SamplerConfig, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
+pub(crate) fn apply_defaults(defaults: &ClientDefaults, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
     if request.model.is_none() {
         request.model = Some(defaults.model.clone());
     }
@@ -32,7 +31,7 @@ pub(crate) fn apply_defaults(defaults: &SamplerConfig, mut request: ChatCompleti
     Ok(request)
 }
 
-pub(crate) fn apply_response_defaults(defaults: &SamplerConfig, request: &mut CreateResponseWrapper) -> Result<()> {
+pub(crate) fn apply_response_defaults(defaults: &ClientDefaults, request: &mut CreateResponseWrapper) -> Result<()> {
     if request.inner.model.is_none() {
         request.inner.model = Some(defaults.model.clone());
     }
@@ -85,7 +84,7 @@ pub(crate) fn apply_response_defaults(defaults: &SamplerConfig, request: &mut Cr
     Ok(())
 }
 
-pub(crate) fn apply_message_defaults(defaults: &SamplerConfig, request: &mut MessagesRequestWrapper) -> Result<()> {
+pub(crate) fn apply_message_defaults(defaults: &ClientDefaults, request: &mut MessagesRequestWrapper) -> Result<()> {
     if request.inner.model.is_empty() {
         request.inner.model = defaults.model.clone();
     }
@@ -107,7 +106,7 @@ pub(crate) fn apply_message_defaults(defaults: &SamplerConfig, request: &mut Mes
     Ok(())
 }
 
-pub(crate) fn apply_conversation_defaults(defaults: &SamplerConfig, request: &mut ConversationRequest) -> Result<()> {
+pub(crate) fn apply_conversation_defaults(defaults: &ClientDefaults, request: &mut ConversationRequest) -> Result<()> {
     if request.model.is_none() {
         request.model = Some(defaults.model.clone());
     }
@@ -141,7 +140,7 @@ pub(crate) fn chat_body(payload: &ChatCompletionRequest, mode: BodyMode) -> Resu
 }
 
 pub(crate) fn responses_body(
-    defaults: &SamplerConfig, request: &mut CreateResponseWrapper, mode: BodyMode,
+    defaults: &ClientDefaults, request: &mut CreateResponseWrapper, mode: BodyMode,
 ) -> Result<Vec<u8>> {
     let mut body = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
     match mode {
