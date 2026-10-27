@@ -184,6 +184,14 @@ fn entry_ref(entry: &EntryFacts) -> Result<ContextItemRef, EntryRefusal> {
         | MessageKind::ContextInfo
         | MessageKind::MemoryCapture
         | MessageKind::Injected
+        | MessageKind::InjectedOther
+        | MessageKind::InjectedInstructions
+        | MessageKind::InjectedContinuation
+        | MessageKind::InjectedNotification
+        | MessageKind::InjectedMemory
+        | MessageKind::InjectedSummary
+        | MessageKind::InjectedEnvironment
+        | MessageKind::InjectedConversation
         | MessageKind::Stub => Err(EntryRefusal::UiOnly),
     }
 }

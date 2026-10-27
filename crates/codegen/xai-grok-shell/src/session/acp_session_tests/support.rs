@@ -347,6 +347,7 @@ async fn create_test_actor_inner(
     );
     chat_state_handle.record_token_usage(total_tokens);
     let actor = SessionActor {
+        context_policy_binding: Default::default(),
         vcs_root: None,
         transient_retry_enabled: true,
         transient_retries_prompt_total: std::cell::Cell::new(0),

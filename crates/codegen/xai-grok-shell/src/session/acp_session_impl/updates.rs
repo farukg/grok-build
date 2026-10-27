@@ -1017,6 +1017,7 @@ impl SessionActor {
     pub(super) async fn prepare_request_for_sampling(
         &self,
         built: xai_chat_state::BuiltConversationRequest,
+        native_json_schema: Option<serde_json::Value>,
         published: &mut Vec<xai_chat_state::InjectedRequestRecord>,
     ) -> Result<crate::sampling::ConversationRequest, acp::Error> {
         let mut previous: Vec<_> = published.iter().map(|record| (record, false)).collect();
@@ -1032,7 +1033,12 @@ impl SessionActor {
         }
         self.send_injected_request_records(&changed).await?;
         if *published != built.injected_records { published.clone_from(&built.injected_records); }
-        Ok(built.request)
+        let mut request = built.request;
+        if built.context_policy.includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions) {
+            request.hosted_tools = self.hosted_tools_for_turn();
+            request.json_schema = native_json_schema;
+        }
+        Ok(request)
     }
 
     pub(super) async fn send_injected_request_records(

@@ -67,6 +67,17 @@ pub enum SidebarSection {
     Todo,
     Dock,
     TodoSection,
+    ContextInstructions,
+    ContextConversation,
+    ContextContinuation,
+    ContextNotifications,
+    ContextRetained,
+    DisplayConversation,
+    DisplayFiles,
+    DisplayResearch,
+    DisplayWork,
+    DisplaySession,
+    DisplayInjected,
 }
 
 impl SidebarSection {
@@ -214,6 +225,7 @@ impl LayerSettings {
 
     pub fn message_form(&self, kind: MessageKind) -> Option<DisplayForm> {
         self.message_forms.get(&kind).copied()
+            .or_else(|| kind.parent().and_then(|parent| self.message_form(parent)))
     }
 
     pub fn section(&self, section: SidebarSection) -> Option<DisclosureState> {
@@ -274,7 +286,13 @@ impl LayerSettings {
         merged.display_scope = Some(display_scope);
         match display_scope {
             Layer::Global => {}
-            Layer::Session => merged.message_forms.extend(&top.message_forms),
+            Layer::Session => {
+                for &kind in MessageKind::settings_kinds() {
+                    if let Some(form) = top.message_form(kind).or_else(|| self.message_form(kind)) {
+                        merged.message_forms.insert(kind, form);
+                    }
+                }
+            }
         }
         merged.outline_turns = top.outline_turns.or(self.outline_turns);
         merged.turn_exceptions.extend(&top.turn_exceptions);

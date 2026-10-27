@@ -551,6 +551,8 @@ pub fn stream_messages<'a>(
         };
 
         let assistant_item = ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: std::sync::Arc::<str>::from(assistant_text),
             tool_calls: assistant_tool_calls,
             model_id: Some(model_id),

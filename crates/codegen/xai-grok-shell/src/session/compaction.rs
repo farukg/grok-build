@@ -236,10 +236,20 @@ impl SessionActor {
     }
     /// Two-pass compaction summarizes the stored history; a restricted context policy summarizes less.
     async fn compacts_the_whole_history(&self) -> bool {
-        self.chat_state_handle
-            .get_context_policy()
-            .await
-            .is_unrestricted()
+        let _context_policy_guard = match self.admit_context_policy_for_request().await {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::warn!(%error, "two_pass: Context admission unavailable; skipping optimization");
+                return false;
+            }
+        };
+        match self.chat_state_handle.get_context_policy().await {
+            Ok(policy) => policy.is_unrestricted(),
+            Err(error) => {
+                tracing::warn!(%error, "two_pass: context policy unavailable; skipping optimization");
+                false
+            }
+        }
     }
     async fn run_prefire_pass1_inner(self: &Arc<Self>) -> PrefirePass1Run {
         if !self.two_pass_active() || !self.compacts_the_whole_history().await {
@@ -1076,13 +1086,18 @@ impl SessionActor {
         .await;
         let max_retries = 3u32;
         let retry_delay_secs = 3u64;
+        let context_policy_guard = self.admit_context_policy_for_request().await
+            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
         let (conv_len, system_message, full_conversation, context_policy) = tokio::join!(
             self.chat_state_handle.get_conversation_len(),
             self.chat_state_handle.get_system_message(),
             self.chat_state_handle.get_conversation(),
             self.chat_state_handle.get_context_policy(),
         );
+        let context_policy = context_policy
+            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
         let full_conversation = context_policy.project(full_conversation);
+        drop(context_policy_guard);
         let assembly_start = std::time::Instant::now();
         let segment_messages = if self.compaction.compaction_mode.writes_segments() {
             xai_chat_state::compaction_utils::prepare_conversation_for_segment(

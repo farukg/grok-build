@@ -42,24 +42,30 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
                 });
             }
             rs::OutputItem::Reasoning(r) => {
-                items.push(ConversationItem::Reasoning(r));
+                items.push(ConversationItem::Reasoning(r.into()));
             }
             // These calls already ran server-side; they are kept so later turns replay the same context
             rs::OutputItem::WebSearchCall(ws) => {
                 backend_tool_count += 1;
                 items.push(ConversationItem::BackendToolCall(BackendToolCallItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     kind: BackendToolKind::WebSearch(ws),
                 }));
             }
             rs::OutputItem::CustomToolCall(ct) => {
                 backend_tool_count += 1;
                 items.push(ConversationItem::BackendToolCall(BackendToolCallItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     kind: BackendToolKind::XSearch(ct),
                 }));
             }
             rs::OutputItem::CodeInterpreterCall(ci) => {
                 backend_tool_count += 1;
                 items.push(ConversationItem::BackendToolCall(BackendToolCallItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     kind: BackendToolKind::CodeInterpreter(ci),
                 }));
             }
@@ -79,6 +85,8 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
 
     tracing::info!(model_id = %model_id, ?model_fingerprint, ?reasoning_effort, "response_to_conversation_items setting model metadata on AssistantItem");
     items.push(ConversationItem::Assistant(AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: Arc::<str>::from(content),
         tool_calls,
         model_id: Some(model_id),
@@ -210,7 +218,7 @@ fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputIte
         }
         ConversationItem::Reasoning(r) => {
             // `status` is output-only and rejected on input.
-            let mut r = r.clone();
+            let mut r = r.inner.clone();
             r.status = None;
             vec![rs::InputItem::Item(rs::Item::Reasoning(r))]
         }

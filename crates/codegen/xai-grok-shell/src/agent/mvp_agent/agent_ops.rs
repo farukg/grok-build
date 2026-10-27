@@ -2391,6 +2391,7 @@ impl MvpAgent {
         let instance = Self {
             activity,
             session_registry: SessionRegistry::default(),
+            context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyStore::authority(),
             resident_roster_titles: RefCell::new(HashMap::new()),
             initialize_request: OnceLock::new(),
             gateway,
@@ -4888,6 +4889,7 @@ impl MvpAgent {
             let _spawn_on_thread_timer = crate::instrumentation_timer!("session.spawn_on_thread");
             spawn_session_on_thread(
                     session_info.clone(),
+                    self.context_policy_authority.clone(),
                     self.gateway.clone(),
                     sampling_config,
                     credentials,

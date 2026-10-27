@@ -4622,6 +4622,12 @@ async fn mcp_servers_updated_broadcasts_to_all_clients() {
 /// It must reject sessionful / unrelated methods.
 #[test]
 fn machine_wide_broadcast_classifier_matches_both_wire_forms() {
+    assert!(is_machine_wide_broadcast_notification(&pv(
+        r#"{"jsonrpc":"2.0","method":"x.ai/session/context_policy/changed","params":{"sessionId":"s","response":{}}}"#
+    )));
+    assert!(is_machine_wide_broadcast_notification(&pv(
+        r#"{"jsonrpc":"2.0","method":"_x.ai/session/context_policy/changed","params":{"method":"x.ai/session/context_policy/changed","params":{"sessionId":"s","response":{}}}}"#
+    )));
     // Direct forms.
     assert!(is_machine_wide_broadcast_notification(&pv(
         r#"{"jsonrpc":"2.0","method":"x.ai/sessions/changed","params":{}}"#

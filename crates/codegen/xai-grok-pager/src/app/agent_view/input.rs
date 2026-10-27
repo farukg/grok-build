@@ -240,7 +240,8 @@ impl AgentView {
     /// That cascade runs before `handle_input`, so without this guard Left/Esc on an empty prompt would exit the overlay.
     /// It would never reach `/gboom` (turn/close), video (seek/close), image (close), `/agents`, persona detail, or the block viewer.
     pub(super) fn modal_owns_input(&self) -> bool {
-        self.extensions_modal.is_some()
+        self.context_confirmation_pending()
+            || self.extensions_modal.is_some()
             || self.feedback_modal.is_some()
             || self.active_modal.is_some()
             || self.gboom.is_some()
@@ -474,6 +475,9 @@ impl AgentView {
         registry: &ActionRegistry,
         prompt_paging: bool,
     ) -> InputOutcome {
+        if let Some(outcome) = self.route_context_confirmation(ev) {
+            return outcome;
+        }
         let dismissing_modal = self.modal_owns_input()
             && matches!(ev, Event::Key(key) if key!(Esc).matches(key)
                 && key.kind != KeyEventKind::Release);

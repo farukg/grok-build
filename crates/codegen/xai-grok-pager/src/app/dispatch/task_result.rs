@@ -946,9 +946,9 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             None => vec![],
         },
-        TaskResult::ContextPolicyAnswered { agent_id, result } => {
+        TaskResult::ContextPolicyAnswered { agent_id, session_id, generation, result } => {
             if let Some(agent) = app.agents.get_mut(&agent_id) {
-                agent.context_policy_answered(result);
+                agent.context_policy_response_for(&session_id, generation, result);
             }
             vec![]
         }

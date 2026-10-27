@@ -23,6 +23,7 @@ impl ModelRequestHistory {
                     ConversationItem::User(mut user)
                         if user.synthetic_reason == SyntheticReason::AgentMessage =>
                     {
+                        user.evidence.record(xai_grok_sampling_types::ContentTransform::AgentLabelPrepended);
                         user.content.insert(
                             0,
                             ContentPart::Text {
@@ -389,6 +390,12 @@ pub fn extract_messages_since_last_user(
         .filter_map(|item| match item {
             ConversationItem::Assistant(a) => Some(ConversationItem::Assistant(a.clone())),
             ConversationItem::ToolResult(t) => Some(ConversationItem::ToolResult(ToolResultItem {
+                evidence: {
+                    let mut evidence = t.evidence.clone();
+                    evidence.record(xai_grok_sampling_types::ContentTransform::CompactionToolResultOmitted);
+                    evidence
+                },
+                source: t.source,
                 tool_call_id: t.tool_call_id.clone(),
                 content: std::sync::Arc::<str>::from("Tool call omitted..."),
                 images: Vec::new(),
@@ -416,6 +423,12 @@ pub fn extract_messages_since_last_real_user(
         .filter_map(|item| match item {
             ConversationItem::Assistant(a) => Some(ConversationItem::Assistant(a.clone())),
             ConversationItem::ToolResult(t) => Some(ConversationItem::ToolResult(ToolResultItem {
+                evidence: {
+                    let mut evidence = t.evidence.clone();
+                    evidence.record(xai_grok_sampling_types::ContentTransform::CompactionToolResultOmitted);
+                    evidence
+                },
+                source: t.source,
                 tool_call_id: t.tool_call_id.clone(),
                 content: std::sync::Arc::<str>::from("Tool call omitted..."),
                 images: Vec::new(),
@@ -490,6 +503,12 @@ fn extract_messages_since_last_compaction_anchor(
             }
             ConversationItem::ToolResult(result) => {
                 Some(ConversationItem::ToolResult(ToolResultItem {
+                    evidence: {
+                        let mut evidence = result.evidence.clone();
+                        evidence.record(xai_grok_sampling_types::ContentTransform::CompactionToolResultOmitted);
+                        evidence
+                    },
+                    source: result.source,
                     tool_call_id: result.tool_call_id.clone(),
                     content: std::sync::Arc::<str>::from("Tool call omitted..."),
                     images: Vec::new(),
@@ -920,13 +939,14 @@ fn summary_before_recent_carrier(_input: &CompactedHistoryInput<'_>) -> Option<S
 pub fn build_compacted_history(input: CompactedHistoryInput<'_>) -> Vec<ConversationItem> {
     let carrier = summary_before_recent_carrier(&input);
     let summary_first = carrier.is_some();
-    let summary_item = carrier.map(ConversationItem::user_meta).unwrap_or_else(|| {
+    let mut summary_item = carrier.map(ConversationItem::user_meta).unwrap_or_else(|| {
         let mut formatted_summary = format_compact_summary_content(&input.compaction_summary);
         if let Some(ref hint) = input.transcript_hint {
             formatted_summary.push_str(hint);
         }
         ConversationItem::user_meta(formatted_summary)
     });
+    summary_item.evidence_mut().set_compaction(xai_grok_sampling_types::CompactionCoverage::AwaitingReplacement);
     let mut compacted: Vec<ConversationItem> = vec![
         input.system_message,
         ConversationItem::user_meta(input.user_message_prefix),

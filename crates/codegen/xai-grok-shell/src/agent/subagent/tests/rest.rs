@@ -1291,6 +1291,8 @@ fn token_estimation_for_window_safety() {
 fn token_estimation_accounts_for_images() {
     use xai_grok_sampling_types::conversation::{ContentPart, ConversationItem, UserItem};
     let text_only = vec![ConversationItem::User(UserItem {
+        evidence: Default::default(),
+        source: Default::default(),
             content: vec![ContentPart::Text {
                 text: "describe this".into(),
             }],
@@ -1299,6 +1301,8 @@ fn token_estimation_accounts_for_images() {
         })];
     let text_tokens = xai_chat_state::estimate_conversation_tokens(&text_only);
     let with_image = vec![ConversationItem::User(UserItem {
+        evidence: Default::default(),
+        source: Default::default(),
             content: vec![
                 ContentPart::Text {
                     text: "describe this".into(),
@@ -1317,6 +1321,8 @@ fn token_estimation_accounts_for_images() {
             "one image should add 765 tokens"
         );
     let multi_image = vec![ConversationItem::User(UserItem {
+        evidence: Default::default(),
+        source: Default::default(),
             content: vec![
                 ContentPart::Image { url: "img1".into() },
                 ContentPart::Image { url: "img2".into() },

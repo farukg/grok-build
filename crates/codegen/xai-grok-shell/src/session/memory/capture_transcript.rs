@@ -332,7 +332,7 @@ mod tests {
     use super::*;
 
     fn reasoning(text: String) -> ConversationItem {
-        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(text))
+        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(text).into())
     }
 
     fn tool_loop(steps: usize, result_bytes: usize) -> Vec<ConversationItem> {
@@ -394,7 +394,7 @@ mod tests {
                 content: None,
                 encrypted_content: Some("SEALEDCIPHERTEXT".to_owned()),
                 status: None,
-            }),
+            }.into()),
         );
         let condensed = condense_turn_transcript(items, TranscriptBudget::for_attempt(1)).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&condensed.json).unwrap();

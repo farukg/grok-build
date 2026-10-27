@@ -37,6 +37,11 @@ pub enum StripReason {
 /// The session translates these into ACP notifications.
 #[derive(Debug, Clone)]
 pub enum SamplingEvent {
+    LocalRequest {
+        request_id: RequestId,
+        attempt: crate::request_capture::RequestAttemptId,
+        evidence: crate::request_capture::LocalRequestEvidence,
+    },
     /// HTTP stream established, headers read. Emitted before any content.
     StreamStarted {
         request_id: RequestId,
@@ -158,7 +163,8 @@ impl SamplingEvent {
     /// Sampler request that owns this event.
     pub fn request_id(&self) -> &RequestId {
         match self {
-            Self::StreamStarted { request_id, .. }
+            Self::LocalRequest { request_id, .. }
+            | Self::StreamStarted { request_id, .. }
             | Self::FirstToken { request_id }
             | Self::ChannelToken { request_id, .. }
             | Self::ToolCallDelta { request_id, .. }

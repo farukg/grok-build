@@ -227,6 +227,7 @@ fn wedged_child_handle() -> (
     );
     let (signals_handle, signals_actor) = crate::session::signals::SessionSignalsActor::new();
     let handle = SessionHandle {
+        context_policy_binding: Default::default(),
         context_window_selection: Default::default(),
         cmd_tx,
         persistence_tx,
@@ -1360,7 +1361,7 @@ fn forked_initial_context_inherits_parent_across_reasoning() {
             ConversationItem::user("remember UNIQUE_FORK_MARKER_TEST"),
             ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(
                 "deliberating",
-            )),
+            ).into()),
             ConversationItem::assistant("ack"),
         ];
     let ctx = forked_initial_context(items);
@@ -1467,7 +1468,7 @@ fn verbatim_fork_keeps_items_byte_for_byte_when_small() {
             }),
             ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(
                 "thinking",
-            )),
+            ).into()),
             ConversationItem::assistant("ack"),
         ];
     let ctx = verbatim_or_normalize_fork(items, 256_000);
@@ -1525,6 +1526,8 @@ fn verbatim_fork_falls_back_to_summary_on_incomplete_tail() {
             ConversationItem::assistant("a1"),
             ConversationItem::user("q2"),
             ConversationItem::Assistant(AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: String::new().into(),
                 tool_calls: vec![ToolCall {
                     id: "tc1".into(),
@@ -1662,6 +1665,8 @@ fn planner_fork_with_dangling_tool_call_stays_forked() {
         ConversationItem::system("parent system"),
         ConversationItem::user("UNIQUE_RUNNING_TURN_MARKER migrate the clean planner"),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "checking the build".into(),
             tool_calls: vec![ToolCall {
                 id: "tc-running".into(),

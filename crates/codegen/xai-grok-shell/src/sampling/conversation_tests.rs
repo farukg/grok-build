@@ -49,6 +49,8 @@ fn fork_filter_consecutive_users_with_tool_calls() {
         ConversationItem::user("prefix"),
         ConversationItem::user("query"),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: String::new().into(),
             tool_calls: vec![ToolCall {
                 id: "tc1".into(),
@@ -76,6 +78,8 @@ fn fork_filter_preserves_complete_tool_turn() {
     let mut items = vec![
         ConversationItem::user("q"),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: String::new().into(),
             tool_calls: vec![ToolCall {
                 id: "tc1".into(),
@@ -100,6 +104,8 @@ fn fork_filter_strips_incomplete_tool_turn() {
         ConversationItem::assistant("a1"),
         ConversationItem::user("q2"),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: String::new().into(),
             tool_calls: vec![ToolCall {
                 id: "tc1".into(),
@@ -129,7 +135,7 @@ fn fork_filter_keeps_turn_with_reasoning_between_user_and_assistant() {
         ConversationItem::user("q"),
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(
             "thinking",
-        )),
+        ).into()),
         ConversationItem::assistant("a"),
     ];
     fork_filter_chat(&mut items);
@@ -148,8 +154,10 @@ fn fork_filter_keeps_multi_tool_turn_with_reasoning_between_results() {
     let mut items = vec![
         ConversationItem::system("sys"),
         ConversationItem::user("q"),
-        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("plan")),
+        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("plan").into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: String::new().into(),
             tool_calls: vec![
                 ToolCall {
@@ -168,11 +176,11 @@ fn fork_filter_keeps_multi_tool_turn_with_reasoning_between_results() {
             reasoning_effort: None,
         }),
         ConversationItem::tool_result("tc1", "out1"),
-        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("mid")),
+        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("mid").into()),
         ConversationItem::tool_result("tc2", "out2"),
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(
             "reflect",
-        )),
+        ).into()),
         ConversationItem::assistant("final"),
     ];
     fork_filter_chat(&mut items);
@@ -197,7 +205,7 @@ fn fork_filter_drops_trailing_incomplete_goal_turn_after_reasoning() {
         ConversationItem::user("q"),
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(
             "thinking",
-        )),
+        ).into()),
         ConversationItem::assistant("a"),
         ConversationItem::user("/goal do the thing"),
     ];
@@ -223,6 +231,8 @@ fn fork_filter_keeps_earlier_turns_with_dangling_tail() {
     };
     let asst = |calls: Vec<ToolCall>| {
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: String::new().into(),
             tool_calls: calls,
             model_id: None,

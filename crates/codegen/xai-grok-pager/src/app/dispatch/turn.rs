@@ -781,10 +781,14 @@ pub(super) fn dispatch_context_policy(
     else {
         return vec![];
     };
+    let Some(generation) = app.agents.get_mut(&agent_id).and_then(AgentView::context_policy_request_started) else {
+        return vec![];
+    };
     vec![Effect::ContextPolicy {
         agent_id,
         session_id,
         change,
+        generation,
     }]
 }
 

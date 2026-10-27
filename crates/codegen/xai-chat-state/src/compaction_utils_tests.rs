@@ -5,11 +5,21 @@ fn at<T>(xs: &[T], i: usize) -> &T {
     xs.get(i)
         .unwrap_or_else(|| panic!("expected index {i}, len {}", xs.len()))
 }
+fn expected_summary_carrier(summary: &str) -> ConversationItem {
+    let mut item = ConversationItem::user_meta(format_compact_summary_content(summary));
+    *item.evidence_mut() = xai_grok_sampling_types::ContentEvidence::Observed {
+        transforms: Vec::new(),
+        compaction: xai_grok_sampling_types::CompactionCoverage::AwaitingReplacement,
+    };
+    item
+}
 #[test]
 fn summarization_prep_drops_backend_tool_calls() {
     let items = vec![
         ConversationItem::user("hi"),
         ConversationItem::BackendToolCall(BackendToolCallItem {
+            evidence: Default::default(),
+            source: Default::default(),
             kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                 id: "ws_res-uuid_call-uuid-1".to_string(),
                 status: rs::WebSearchToolCallStatus::Completed,
@@ -1995,6 +2005,8 @@ async fn build_compacted_history_multi_turn_with_parallel_tool_calls() {
         ),
         // [3] Assistant with 2 parallel tool calls
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "I'll read both files for you.".into(),
             tool_calls: vec![
                 ToolCall {
@@ -2028,6 +2040,8 @@ async fn build_compacted_history_multi_turn_with_parallel_tool_calls() {
         ),
         // [8] Assistant with 2 parallel tool calls
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "I'll fix the typo and run tests.".into(),
             tool_calls: vec![
                 ToolCall {
@@ -2493,7 +2507,7 @@ async fn compacted_last_query_without_images_is_unchanged() {
         ConversationItem::user_meta("<user_info>OS: linux</user_info>"),
         ConversationItem::user(wrap_user_query("hello")),
         ConversationItem::assistant("Hi!"),
-        ConversationItem::user_meta(format_compact_summary_content("summary")),
+        expected_summary_carrier("summary"),
     ];
     assert_eq!(
         serde_json::to_value(&expected).unwrap(),
@@ -2624,7 +2638,7 @@ async fn compacted_history_emits_paths_note_after_summary() {
         ConversationItem::user_meta("<user_info>OS: linux</user_info>"),
         ConversationItem::user(wrap_user_query("now refactor")),
         ConversationItem::assistant("refactoring"),
-        ConversationItem::user_meta(format_compact_summary_content("summary")),
+        expected_summary_carrier("summary"),
         attached_paths_note(&["/sessions/s1/assets/image-1.png"]),
         ConversationItem::system_reminder("<system-reminder>state</system-reminder>"),
     ];
@@ -2657,7 +2671,7 @@ async fn compacted_history_omits_paths_note_when_empty() {
             },
         ]),
         ConversationItem::assistant("A screenshot."),
-        ConversationItem::user_meta(format_compact_summary_content("summary")),
+        expected_summary_carrier("summary"),
     ];
     assert_eq!(
         serde_json::to_value(&expected).unwrap(),
@@ -2761,8 +2775,10 @@ fn conversation_item_preserves_reasoning_siblings() {
             content: None,
             encrypted_content: Some("encrypted_sig".to_string()),
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "response".into(),
             tool_calls: vec![],
             model_id: None,
@@ -2785,8 +2801,10 @@ fn strip_reasoning_blocks_drops_reasoning_siblings() {
             content: None,
             encrypted_content: Some("encrypted_sig".to_string()),
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "response".into(),
             tool_calls: vec![],
             model_id: None,
@@ -2823,13 +2841,15 @@ fn prepare_for_summarization_drops_reasoning_sibling_on_mutated_assistant() {
             content: None,
             encrypted_content: Some("encrypted_sig".to_string()),
             status: None,
-        })
+        }.into())
     };
     let result = prepare_conversation_for_summarization(vec![
         ConversationItem::system("system"),
         ConversationItem::user("do stuff"),
         mk_reasoning(),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "I'll search.".into(),
             tool_calls: vec![ToolCall {
                 id: "tc1".into(),
@@ -2875,8 +2895,10 @@ fn prepare_for_summarization_drops_standalone_reasoning_sibling() {
             content: None,
             encrypted_content: None,
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "plain text response".into(),
             tool_calls: vec![],
             model_id: None,
@@ -2903,12 +2925,14 @@ fn prepare_for_summarization_handles_multi_assistant_mixed_conversation() {
             content: None,
             encrypted_content: Some("sig".to_string()),
             status: None,
-        })
+        }.into())
     };
     let result = prepare_conversation_for_summarization(vec![
         ConversationItem::user("first turn"),
         mk_reasoning(),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "calling grep".into(),
             tool_calls: vec![ToolCall {
                 id: "tc1".into(),
@@ -2923,6 +2947,8 @@ fn prepare_for_summarization_handles_multi_assistant_mixed_conversation() {
         ConversationItem::user("second turn"),
         mk_reasoning(),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "thinking only".into(),
             tool_calls: vec![],
             model_id: None,
@@ -2932,6 +2958,8 @@ fn prepare_for_summarization_handles_multi_assistant_mixed_conversation() {
         ConversationItem::tool_result("tc2", "stray"),
         ConversationItem::user("third turn"),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "plain reply".into(),
             tool_calls: vec![],
             model_id: None,
@@ -2993,8 +3021,10 @@ fn prepare_for_summarization_is_idempotent() {
             content: None,
             encrypted_content: Some("sig".to_string()),
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "hi".into(),
             tool_calls: vec![ToolCall {
                 id: "tc1".into(),
@@ -3158,7 +3188,7 @@ fn verbatim_reasoning_kept_unless_messages_backend() {
                 content: None,
                 encrypted_content: Some("sig".to_string()),
                 status: None,
-            }),
+            }.into()),
             ConversationItem::assistant_tool_calls(vec![ToolCall {
                 id: "c1".into(),
                 name: "grep".to_string(),
@@ -3393,7 +3423,7 @@ fn fit_counts_encrypted_reasoning_against_budget() {
         content: None,
         encrypted_content: Some(big_enc),
         status: None,
-    });
+    }.into());
     let conv = vec![
         ConversationItem::system("sys"),
         reasoning, // old turn, huge by encrypted bytes, 0 by visible text

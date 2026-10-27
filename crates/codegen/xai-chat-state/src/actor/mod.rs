@@ -6,6 +6,7 @@
 //! - `queries`: Read-only query handlers (get_conversation, snapshot, etc.)
 
 mod context_sections;
+mod source_occurrence;
 mod mutations;
 mod queries;
 pub(crate) mod request_builder;
@@ -80,8 +81,12 @@ impl ChatStateActor {
     ) -> ChatStateHandle {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
+        let mut state = ChatState::new(initial_conversation, sampling_config);
+        if source_occurrence::normalize(&mut state.conversation, source_occurrence::Normalization::Legacy) > 0 {
+            state.identity_normalization = source_occurrence::IdentityNormalization::RewritePending;
+        }
         let actor = ChatStateActor {
-            state: ChatState::new(initial_conversation, sampling_config),
+            state,
             pruning_config,
             persistence,
             cmd_rx,
@@ -136,7 +141,9 @@ impl ChatStateActor {
                 self.push_user_message(item);
                 let _ = reply.send(());
             }
-            ChatStateCommand::AppendInputAndAck { projection, admission, reply } => {
+            ChatStateCommand::AppendInputAndAck { mut projection, admission, reply } => {
+                self.persist_source_normalization();
+                source_occurrence::admit(projection.item_mut());
                 if matches!(projection.item(), xai_grok_sampling_types::ConversationItem::User(_)) {
                     self.pop_stranded_continue_reminder();
                     self.ensure_conversation_integrity();
@@ -167,8 +174,10 @@ impl ChatStateActor {
                 cwd_generation,
                 reply,
             } => {
+                self.persist_source_normalization();
                 let generation = cwd_generation.get();
-                let candidate = ConversationItem::working_directory_switch(content, generation);
+                let mut candidate = ConversationItem::working_directory_switch(content, generation);
+                source_occurrence::admit(&mut candidate);
                 // Pop a crash-stranded reminder BEFORE the strict append: the
                 // pop rewrites history from the in-memory image, which must
                 // not yet contain the acked append, or the rewrite erases it.
@@ -263,8 +272,9 @@ impl ChatStateActor {
                     total_tokens: self.state.total_tokens,
                 });
             }
-            ChatStateCommand::SetContextPolicy { policy } => {
+            ChatStateCommand::SetContextPolicy { policy, reply } => {
                 self.state.context_policy = *policy;
+                let _ = reply.send(self.state.context_policy.clone());
             }
             ChatStateCommand::RecordAgentEditedPath { path } => {
                 self.state.agent_edited_paths.insert(path);
@@ -365,17 +375,20 @@ impl ChatStateActor {
             ChatStateCommand::BuildConversationRequest {
                 tool_definitions,
                 memory_reminder,
-                persist_memory_reminder,
+                preparation,
                 trace,
                 conv_id,
                 req_id,
                 reply,
             } => {
-                self.ensure_conversation_integrity();
+                match preparation {
+                    crate::types::RequestPreparation::Sampling { .. } => self.ensure_conversation_integrity(),
+                    crate::types::RequestPreparation::Preview => {}
+                }
                 let request = self.build_conversation_request(
                     tool_definitions,
                     memory_reminder,
-                    persist_memory_reminder,
+                    preparation,
                     trace,
                     conv_id,
                     req_id,

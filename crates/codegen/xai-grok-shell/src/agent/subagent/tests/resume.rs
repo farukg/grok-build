@@ -266,19 +266,24 @@ fn resume_cwd_fallback_is_reported_to_the_model() {
 }
 
 #[test]
-fn a_child_starts_under_a_restricted_policy_and_the_default_writes_nothing() {
-    use crate::session::helpers::context_policy_store;
-    use xai_grok_sampling_types::{ContextCategory, ContextPolicy, ContextSwitch};
+fn a_child_preserves_scope_and_dormant_choices_and_default_writes_nothing() {
+    use crate::session::helpers::context_policy_store::ContextPolicyStore;
+    use xai_grok_sampling_types::{ContextCategory, ContextPolicyEdit, ContextPolicyMutation, ContextScope, ContextSwitch};
 
     let root = tempfile::tempdir().expect("temp dir");
-    let mut restricted = ContextPolicy::default();
-    restricted.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
-
-    let child = root.path().join("child");
-    write_inherited_context_policy(&child, &restricted);
-    assert_eq!(context_policy_store::load(&child), restricted);
-
-    let untouched = root.path().join("untouched");
-    write_inherited_context_policy(&untouched, &ContextPolicy::default());
-    assert!(!untouched.exists(), "an unrestricted policy costs no I/O");
+    let global = root.path().join("global");
+    let mut store = ContextPolicyStore::new(global.clone());
+    store.inherit("parent", "child").unwrap();
+    assert!(!global.exists(), "a default follower costs no write");
+    let expected = store.selection("parent", "epoch").unwrap().version;
+    store.edit("parent", "epoch", &ContextPolicyEdit {
+        expected,
+        mutation: ContextPolicyMutation::SetCategories {
+            categories: vec![ContextCategory::Reasoning].try_into().unwrap(), value: ContextSwitch::Excluded,
+            target: ContextScope::Session,
+        },
+    }).unwrap();
+    store.inherit("parent", "child").unwrap();
+    assert!(!store.effective("child").unwrap().includes(ContextCategory::Reasoning));
+    assert_eq!(store.selection("child", "child-epoch").unwrap().scope, ContextScope::Session);
 }

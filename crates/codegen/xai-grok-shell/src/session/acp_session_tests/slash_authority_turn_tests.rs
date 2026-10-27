@@ -988,7 +988,7 @@ async fn context_policy_decides_what_the_next_request_sends() {
 
             let mut policy = ContextPolicy::default();
             policy.set(ContextCategory::UserTurns, ContextSwitch::Excluded);
-            actor.set_context_policy(policy);
+            actor.set_context_policy(policy).await.unwrap();
             run_parent_turn(&actor, human_request("second prompt"))
                 .await
                 .expect("second turn");
@@ -1002,7 +1002,7 @@ async fn context_policy_decides_what_the_next_request_sends() {
                 "an excluded category is not sent"
             );
 
-            actor.set_context_policy(ContextPolicy::default());
+            actor.set_context_policy(ContextPolicy::default()).await.unwrap();
             run_parent_turn(&actor, human_request("third prompt"))
                 .await
                 .expect("third turn");

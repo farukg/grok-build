@@ -60,8 +60,10 @@ impl ChatStateActor {
             self.snapshot_turn_slice();
         }
         let changed = mutate(&mut self.state.conversation);
+        super::source_occurrence::normalize(&mut self.state.conversation, super::source_occurrence::Normalization::Admission);
         let mut disk_ack = None;
         if changed > 0 {
+            self.state.identity_normalization = super::source_occurrence::IdentityNormalization::Current;
             match kind {
                 HistoryRewrite::IntegrityRepair | HistoryRewrite::RetainedPrune => {
                     self.persistence.replace_history(&self.state.conversation);
@@ -224,8 +226,15 @@ impl ChatStateActor {
     pub(super) fn converge_working_directory_switch(
         &mut self,
         generation: u64,
-        authoritative: ConversationItem,
+        mut authoritative: ConversationItem,
     ) {
+        let needs_identity_persistence = authoritative.source().is_unadmitted();
+        if needs_identity_persistence {
+            if let Some(existing) = self.state.conversation.iter().find(|item| item.working_directory_switch_generation() == Some(generation)) {
+                *authoritative.source_mut() = existing.source();
+            }
+            super::source_occurrence::normalize(std::slice::from_mut(&mut authoritative), super::source_occurrence::Normalization::Legacy);
+        }
         let existing = self
             .state
             .conversation
@@ -248,6 +257,10 @@ impl ChatStateActor {
             self.state.estimated_tokens_since_model +=
                 super::state::estimate_item_tokens(&authoritative);
             self.state.conversation.push(authoritative);
+        }
+        if needs_identity_persistence {
+            self.persistence.replace_history(&self.state.conversation);
+            self.state.identity_normalization = super::source_occurrence::IdentityNormalization::Current;
         }
     }
 
@@ -304,7 +317,9 @@ impl ChatStateActor {
         self.persist_and_push_message(item);
     }
 
-    fn persist_and_push_message(&mut self, item: ConversationItem) {
+    fn persist_and_push_message(&mut self, mut item: ConversationItem) {
+        self.persist_source_normalization();
+        super::source_occurrence::admit(&mut item);
         self.persistence.persist_message(&item);
         self.state.conversation.push(item);
     }
@@ -353,8 +368,7 @@ impl ChatStateActor {
             model_reported_total = self.state.total_tokens.tokens(),
             "ChatState: push_user_message updated estimated_tokens_since_model"
         );
-        self.persistence.persist_message(&item);
-        self.state.conversation.push(item);
+        self.persist_and_push_message(item);
         self.prune_retained_conversation();
     }
 
@@ -409,6 +423,7 @@ impl ChatStateActor {
                 }
 
                 if tr.content.as_ref() != HARD_CLEAR_PLACEHOLDER {
+                    tr.evidence.record(xai_grok_sampling_types::ContentTransform::ToolResultHardCleared);
                     tr.content = std::sync::Arc::<str>::from(HARD_CLEAR_PLACEHOLDER);
                     cleared += 1;
                 }
@@ -568,11 +583,22 @@ impl ChatStateActor {
         items: Vec<ConversationItem>,
         is_compaction: bool,
     ) {
+        let mut items = items;
+        if is_compaction {
+            super::source_occurrence::record_compaction_replacement(&self.state.conversation, &mut items);
+        }
+        super::source_occurrence::normalize(&mut items, super::source_occurrence::Normalization::Admission);
         self.persistence.replace_history(&items);
+        self.state.identity_normalization = super::source_occurrence::IdentityNormalization::Current;
         self.replace_conversation_state(items, is_compaction);
     }
 
     pub(super) fn replace_conversation_state(&mut self, items: Vec<ConversationItem>, is_compaction: bool) {
+        let mut items = items;
+        if super::source_occurrence::normalize(&mut items, super::source_occurrence::Normalization::Legacy) > 0 {
+            self.persistence.replace_history(&items);
+        }
+        self.state.identity_normalization = super::source_occurrence::IdentityNormalization::Current;
         self.snapshot_turn_slice();
         if is_compaction && let Some(cap) = &mut self.state.turn_capture {
             cap.compaction_occurred = true;
@@ -631,6 +657,8 @@ impl ChatStateActor {
         // Harness trace buffers are transient (not part of the snapshot) and
         // intentionally survive a restore — see `replace_conversation`.
         self.state.conversation = snap.conversation;
+        super::source_occurrence::normalize(&mut self.state.conversation, super::source_occurrence::Normalization::Legacy);
+        self.state.identity_normalization = super::source_occurrence::IdentityNormalization::RewritePending;
         self.rebase_turn_capture_offset();
         self.state.sampling_config = snap.sampling_config;
         self.state.prompt_index = snap.prompt_index;

@@ -270,10 +270,14 @@ impl ChatStateHandle {
     }
 
     /// Replace the context policy every following request is built under.
-    pub fn set_context_policy(&self, policy: xai_grok_sampling_types::ContextPolicy) {
-        let _ = self.cmd_tx.send(ChatStateCommand::SetContextPolicy {
+    pub async fn set_context_policy(
+        &self,
+        policy: xai_grok_sampling_types::ContextPolicy,
+    ) -> Result<xai_grok_sampling_types::ContextPolicy, crate::types::ContextPolicyAdmissionError> {
+        self.context_policy_query(|reply| ChatStateCommand::SetContextPolicy {
             policy: Box::new(policy),
-        });
+            reply,
+        }).await
     }
 
     /// Track that the agent edited a file path.
@@ -470,7 +474,13 @@ impl ChatStateHandle {
             ChatStateCommand::BuildConversationRequest {
                 tool_definitions,
                 memory_reminder,
-                persist_memory_reminder,
+                preparation: crate::types::RequestPreparation::Sampling {
+                    memory_reminder: if persist_memory_reminder {
+                        crate::types::MemoryReminderPersistence::Canonical
+                    } else {
+                        crate::types::MemoryReminderPersistence::RequestOnly
+                    },
+                },
                 trace,
                 conv_id,
                 req_id,
@@ -478,6 +488,24 @@ impl ChatStateHandle {
             }
         })
         .await
+    }
+
+    pub async fn preview_request(
+        &self,
+        tool_definitions: Vec<ToolSpec>,
+        memory_reminder: Option<String>,
+        conv_id: String,
+        req_id: String,
+    ) -> Option<crate::types::BuiltConversationRequest> {
+        self.query("BuildConversationRequest", |reply| ChatStateCommand::BuildConversationRequest {
+            tool_definitions,
+            memory_reminder,
+            preparation: crate::types::RequestPreparation::Preview,
+            trace: None,
+            conv_id,
+            req_id,
+            reply,
+        }).await
     }
 
     /// Get a clone of the full conversation.
@@ -497,10 +525,22 @@ impl ChatStateHandle {
     }
 
     /// Get the context policy requests are built under.
-    pub async fn get_context_policy(&self) -> xai_grok_sampling_types::ContextPolicy {
-        self.query("GetContextPolicy", |reply| ChatStateCommand::GetContextPolicy { reply })
-            .await
-            .unwrap_or_default()
+    pub async fn get_context_policy(
+        &self,
+    ) -> Result<xai_grok_sampling_types::ContextPolicy, crate::types::ContextPolicyAdmissionError> {
+        self.context_policy_query(|reply| ChatStateCommand::GetContextPolicy { reply }).await
+    }
+
+    async fn context_policy_query(
+        &self,
+        command: impl FnOnce(oneshot::Sender<xai_grok_sampling_types::ContextPolicy>) -> ChatStateCommand,
+    ) -> Result<xai_grok_sampling_types::ContextPolicy, crate::types::ContextPolicyAdmissionError> {
+        use crate::types::ContextPolicyAdmissionError;
+
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(command(reply))
+            .map_err(|_| ContextPolicyAdmissionError::MailboxClosed(ChatStateMailboxClosed))?;
+        response.await.map_err(ContextPolicyAdmissionError::ReplyLost)
     }
 
     /// Get current prompt index.

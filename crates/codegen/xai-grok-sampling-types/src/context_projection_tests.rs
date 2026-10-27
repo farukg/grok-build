@@ -14,7 +14,7 @@ fn reasoning(id: &str) -> Item {
         content: None,
         encrypted_content: Some(format!("enc_{id}")),
         status: None,
-    })
+    }.into())
 }
 
 fn call(id: &str) -> ToolCall {
@@ -27,6 +27,8 @@ fn call(id: &str) -> ToolCall {
 
 fn answer(text: &str, calls: Vec<ToolCall>) -> Item {
     Item::Assistant(AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: text.into(),
         tool_calls: calls,
         model_id: None,

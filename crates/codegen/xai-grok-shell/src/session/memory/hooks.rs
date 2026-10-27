@@ -199,6 +199,8 @@ mod tests {
 
     fn make_assistant(text: &str) -> ConversationItem {
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: text.into(),
             tool_calls: vec![],
             model_id: None,
@@ -304,6 +306,8 @@ mod tests {
             make_user("make sure everything compiles cleanly"),
             make_assistant("verified"),
             ConversationItem::ToolResult(ToolResultItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 tool_call_id: "tc_1".to_string(),
                 content: "file written".into(),
                 images: Vec::new(),

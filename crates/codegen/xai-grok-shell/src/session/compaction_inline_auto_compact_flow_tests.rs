@@ -75,6 +75,7 @@ async fn create_test_actor(
     );
     chat_state_handle.record_token_usage(total_tokens);
     SessionActor {
+        context_policy_binding: Default::default(),
         vcs_root: None,
         transient_retry_enabled: true,
         transient_retries_prompt_total: std::cell::Cell::new(0),
@@ -891,13 +892,15 @@ async fn family_switch_compacts_lossy_with_new_model() {
                     content: None,
                     encrypted_content: Some("tco_SEALEDCIPHERTEXT".to_string()),
                     status: None,
-                }),
+                }.into()),
                 ConversationItem::assistant_tool_calls(vec![xai_grok_sampling_types::ToolCall {
                     id: std::sync::Arc::<str>::from("call_xai_minted_id"),
                     name: "run_terminal_command".to_string(),
                     arguments: std::sync::Arc::<str>::from(r#"{"command":"ls"}"#),
                 }]),
                 ConversationItem::ToolResult(xai_grok_sampling_types::ToolResultItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     tool_call_id: "call_xai_minted_id".to_string(),
                     content: std::sync::Arc::<str>::from("file listing"),
                     images: Vec::new(),
@@ -1069,6 +1072,8 @@ async fn e2e_auto_compact_413_steps_ladder_then_sticky_size_suppress() {
                     arguments: std::sync::Arc::<str>::from(r#"{"command":"ls"}"#),
                 }]),
                 ConversationItem::ToolResult(xai_grok_sampling_types::ToolResultItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     tool_call_id: "call_1".to_string(),
                     content: std::sync::Arc::<str>::from("file listing"),
                     images: Vec::new(),

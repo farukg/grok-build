@@ -84,12 +84,16 @@ pub enum ConversationItem {
     BackendToolCall(BackendToolCallItem),
     /// A reasoning item from the Responses API, stored as a sibling of the assistant message so that: N parallel `tco_*` reasoning items (one per backend tool call) round-trip losslessly without last-write-wins clobbering; The interleaved order of `[reasoning, tool_call, reasoning, ..., message]` produced by the model stays byte-stable across turns. That stability is what lets the server-side prefix KV-cache hit.
     /// Wraps `rs::ReasoningItem` directly so no field is dropped on the way through.
-    Reasoning(rs::ReasoningItem),
+    Reasoning(crate::ConversationReasoningItem),
 }
 
 /// System message content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemItem {
+    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    pub source: crate::SourceOccurrence,
+    #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
+    pub evidence: crate::ContentEvidence,
     pub content: Arc<str>,
     /// `Primary` is omitted on write and filled in when absent, so the leading prompt serializes as it did before this field existed.
     #[serde(
@@ -298,6 +302,10 @@ pub enum PriorTurnInterrupt {
 /// User message with text and optional images
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserItem {
+    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    pub source: crate::SourceOccurrence,
+    #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
+    pub evidence: crate::ContentEvidence,
     pub content: Vec<ContentPart>,
     /// `Human` is omitted on write and filled in when absent, so real user turns serialize as they did when this field was optional.
     #[serde(default, skip_serializing_if = "SyntheticReason::is_human")]
@@ -325,6 +333,10 @@ pub struct UserItem {
 /// Old sessions on disk may still carry a `reasoning` field; serde silently ignores it on read (no `deny_unknown_fields`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantItem {
+    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    pub source: crate::SourceOccurrence,
+    #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
+    pub evidence: crate::ContentEvidence,
     /// Text content of the response
     pub content: Arc<str>,
     /// Tool calls made by the assistant (client must execute these locally)
@@ -350,6 +362,10 @@ pub struct AssistantItem {
 /// Tool result message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultItem {
+    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    pub source: crate::SourceOccurrence,
+    #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
+    pub evidence: crate::ContentEvidence,
     /// ID of the tool call this is responding to
     pub tool_call_id: String,
     /// The result content
@@ -365,6 +381,10 @@ pub struct ToolResultItem {
 /// Wraps the typed Responses API output items so they can be round-tripped back to the server and rendered by the pager.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendToolCallItem {
+    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    pub source: crate::SourceOccurrence,
+    #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
+    pub evidence: crate::ContentEvidence,
     /// The specific backend tool that was called.
     pub kind: BackendToolKind,
 }
@@ -955,7 +975,7 @@ impl ConversationResponse {
     /// Used by streaming consumers and the empty-response retry logic that previously inspected `AssistantItem.reasoning`.
     pub fn reasoning_items(&self) -> impl Iterator<Item = &rs::ReasoningItem> {
         self.items.iter().filter_map(|item| match item {
-            ConversationItem::Reasoning(r) => Some(r),
+            ConversationItem::Reasoning(r) => Some(&r.inner),
             _ => None,
         })
     }
@@ -1026,6 +1046,8 @@ impl ConversationItem {
     /// Create the request's system prompt, tagged [`SyntheticReason::Primary`].
     pub fn system(content: impl Into<String>) -> Self {
         Self::System(SystemItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(content.into()),
             synthetic_reason: SyntheticReason::Primary,
         })
@@ -1035,6 +1057,8 @@ impl ConversationItem {
     /// For synthetic injections, use a dedicated constructor such as [`ConversationItem::user_meta`] or [`ConversationItem::system_reminder`].
     pub fn user(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1049,6 +1073,8 @@ impl ConversationItem {
     /// Create a user message with multiple content parts, tagged [`SyntheticReason::Human`] for real user input.
     pub fn user_with_parts(parts: Vec<ContentPart>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: parts,
             synthetic_reason: SyntheticReason::Human,
             cwd_generation: None,
@@ -1061,6 +1087,8 @@ impl ConversationItem {
     /// The startup `<user_info>` / rules / VCS-status prefix, tagged [`SyntheticReason::SessionPrefix`].
     pub fn session_prefix(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1078,6 +1106,8 @@ impl ConversationItem {
         rules: impl Into<String>,
     ) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![
                 ContentPart::Text {
                     text: Arc::<str>::from(environment.into()),
@@ -1100,6 +1130,8 @@ impl ConversationItem {
     /// The command-and-output history message of a `!cmd` turn, tagged [`SyntheticReason::DirectBash`].
     pub fn direct_bash(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1114,6 +1146,8 @@ impl ConversationItem {
     /// The rules and objective that open a `/goal`, tagged [`SyntheticReason::GoalSetup`].
     pub fn goal_setup(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1130,6 +1164,8 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::CompactionMeta`] so downstream code (pruning, compaction helpers) skips it.
     pub fn user_meta(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1146,6 +1182,8 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::SystemReminder`] so downstream code can skip it when counting real user prompts.
     pub fn system_reminder(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1160,6 +1198,8 @@ impl ConversationItem {
     /// The skill and workflow catalog reminder, tagged [`SyntheticReason::SkillCatalog`].
     pub fn skill_catalog(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1174,6 +1214,8 @@ impl ConversationItem {
     /// The MCP server catalog reminder, tagged [`SyntheticReason::McpCatalog`].
     pub fn mcp_catalog(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1188,6 +1230,8 @@ impl ConversationItem {
     /// The synthetic continue reminder, tagged [`SyntheticReason::LengthContinue`].
     pub fn length_continue_reminder(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1216,6 +1260,8 @@ impl ConversationItem {
     /// Once in the conversation, it MUST NOT be replaced or re-inserted; see the variant docstring.
     pub fn project_instructions(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1230,6 +1276,8 @@ impl ConversationItem {
     /// Working-directory switch reminder with a structural generation marker.
     pub fn working_directory_switch(content: impl Into<String>, cwd_generation: u64) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1244,6 +1292,8 @@ impl ConversationItem {
     /// Create a model-authored message received from another agent.
     pub fn agent_message(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1260,6 +1310,8 @@ impl ConversationItem {
     /// never treats human input as model-authored.
     pub fn parent_human_message(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1276,6 +1328,8 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::AutoContinue`] so it is not counted as a real user prompt by truncation / rewind logic.
     pub fn auto_continue(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1292,6 +1346,8 @@ impl ConversationItem {
     /// Tagged with [`SyntheticReason::AutoRecovery`] so it is not counted as a real user prompt by truncation / rewind logic.
     pub fn auto_recovery(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1307,6 +1363,8 @@ impl ConversationItem {
     /// Compaction, replay, and analytics can then distinguish it from real prompts and other synthetic injections.
     pub fn interjection(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1321,6 +1379,8 @@ impl ConversationItem {
     /// Auto-wake synthetic prompt for a completed background bash task.
     pub fn task_completed(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1335,6 +1395,8 @@ impl ConversationItem {
     /// Auto-wake synthetic prompt for a completed background subagent.
     pub fn subagent_completed(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1349,6 +1411,8 @@ impl ConversationItem {
     /// Idle-gated notification drain (batched completions / monitor events).
     pub fn notification_drain(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1363,6 +1427,8 @@ impl ConversationItem {
     /// Goal orchestrator summary turn.
     pub fn goal_summary(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1379,6 +1445,8 @@ impl ConversationItem {
     /// The wire role/tag is the same `<system-reminder>` shape for both.
     pub fn goal_classifier_nudge(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1393,6 +1461,8 @@ impl ConversationItem {
     /// Scheduled task (`/loop`) prompt fired by the scheduler.
     pub fn scheduler_fired(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1407,6 +1477,8 @@ impl ConversationItem {
     /// See [`SyntheticReason::StopHookFeedback`].
     pub fn stop_hook_feedback(content: impl Into<String>) -> Self {
         Self::User(UserItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: vec![ContentPart::Text {
                 text: Arc::<str>::from(content.into()),
             }],
@@ -1421,6 +1493,8 @@ impl ConversationItem {
     /// Create an assistant message
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(content.into()),
             tool_calls: Vec::new(),
             model_id: None,
@@ -1434,6 +1508,8 @@ impl ConversationItem {
     /// Callers should push that item to the conversation list separately.
     pub fn assistant_with_model(content: impl Into<String>, model_id: impl Into<String>) -> Self {
         Self::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(content.into()),
             tool_calls: Vec::new(),
             model_id: Some(model_id.into()),
@@ -1445,6 +1521,8 @@ impl ConversationItem {
     /// Create an assistant message that makes tool calls
     pub fn assistant_tool_calls(tool_calls: Vec<ToolCall>) -> Self {
         Self::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(""),
             tool_calls,
             model_id: None,
@@ -1456,6 +1534,8 @@ impl ConversationItem {
     /// Create a tool result message
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self::ToolResult(ToolResultItem {
+            evidence: Default::default(),
+            source: Default::default(),
             tool_call_id: tool_call_id.into(),
             content: Arc::<str>::from(content.into()),
             images: Vec::new(),
@@ -1471,6 +1551,8 @@ impl ConversationItem {
         images: Vec<ContentPart>,
     ) -> Self {
         Self::ToolResult(ToolResultItem {
+            evidence: Default::default(),
+            source: Default::default(),
             tool_call_id: tool_call_id.into(),
             content: Arc::<str>::from(content.into()),
             images,
@@ -1663,7 +1745,7 @@ pub fn inject_streaming_reasoning_fallback(items: &mut Vec<ConversationItem>, te
         .unwrap_or(items.len());
     items.insert(
         pos,
-        ConversationItem::Reasoning(synthesized_reasoning_item(text)),
+        ConversationItem::Reasoning(synthesized_reasoning_item(text).into()),
     );
 }
 
@@ -1698,10 +1780,12 @@ pub fn upgrade_legacy_reasoning(
             };
             match item {
                 rs::OutputItem::Reasoning(r) => {
-                    siblings.push(ConversationItem::Reasoning(r));
+                    siblings.push(ConversationItem::Reasoning(r.into()));
                 }
                 rs::OutputItem::WebSearchCall(ws) if sibling_btc_ids_seen.insert(ws.id.clone()) => {
                     siblings.push(ConversationItem::BackendToolCall(BackendToolCallItem {
+                        evidence: Default::default(),
+                        source: Default::default(),
                         kind: BackendToolKind::WebSearch(ws),
                     }));
                 }
@@ -1709,6 +1793,8 @@ pub fn upgrade_legacy_reasoning(
                     if sibling_btc_ids_seen.insert(ct.id.clone()) =>
                 {
                     siblings.push(ConversationItem::BackendToolCall(BackendToolCallItem {
+                        evidence: Default::default(),
+                        source: Default::default(),
                         kind: BackendToolKind::XSearch(ct),
                     }));
                 }
@@ -1716,6 +1802,8 @@ pub fn upgrade_legacy_reasoning(
                     if sibling_btc_ids_seen.insert(ci.id.clone()) =>
                 {
                     siblings.push(ConversationItem::BackendToolCall(BackendToolCallItem {
+                        evidence: Default::default(),
+                        source: Default::default(),
                         kind: BackendToolKind::CodeInterpreter(ci),
                     }));
                 }
@@ -1737,7 +1825,7 @@ pub fn upgrade_legacy_reasoning(
             .unwrap_or("")
             .to_string();
         if let Some(item) = build_synthetic_reasoning(id, text, encrypted) {
-            siblings.push(ConversationItem::Reasoning(item));
+            siblings.push(ConversationItem::Reasoning(item.into()));
         }
         return siblings;
     }
@@ -1748,7 +1836,7 @@ pub fn upgrade_legacy_reasoning(
         && !rc.is_empty()
         && let Some(item) = build_synthetic_reasoning(String::new(), Some(rc), None)
     {
-        siblings.push(ConversationItem::Reasoning(item));
+        siblings.push(ConversationItem::Reasoning(item.into()));
     }
 
     siblings
@@ -2350,7 +2438,7 @@ mod compaction_item_bridge_tests {
         assert_eq!(
             CompactionItem::role(&ConversationItem::Reasoning(synthesized_reasoning_item(
                 "t"
-            ))),
+            ).into())),
             CompactionRole::Assistant
         );
     }
@@ -2549,6 +2637,8 @@ mod tests {
         assert_matches!(
             back,
             ConversationItem::User(UserItem {
+                evidence: crate::ContentEvidence::Unknown,
+                source: crate::SourceOccurrence::Unadmitted,
                 prior_turn_interrupt: Some(PriorTurnInterrupt::MidTurnAbort),
                 ..
             })
@@ -2607,6 +2697,8 @@ mod tests {
         assert_matches!(
             item,
             ConversationItem::User(UserItem {
+                evidence: crate::ContentEvidence::Unknown,
+                source: crate::SourceOccurrence::Unadmitted,
                 synthetic_reason: SyntheticReason::ParentHumanMessage,
                 ..
             })
@@ -3222,6 +3314,8 @@ mod tests {
         let root = "/home/user/project";
 
         let mut items = vec![ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: format!("I'll read the file at {worktree}/src/main.rs").into(),
             tool_calls: vec![
                 ToolCall {
@@ -3315,6 +3409,8 @@ mod tests {
             ),
             // Assistant with tool calls for the fix
             ConversationItem::Assistant(AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: format!("I'll fix the bug in {worktree}/src/main.rs").into(),
                 tool_calls: vec![ToolCall {
                     id: "call_2".into(),
@@ -3403,6 +3499,8 @@ mod tests {
         let mut items = vec![
             ConversationItem::system(format!("Working in {root}.")),
             ConversationItem::Assistant(AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: format!("I previously edited {root}/src/main.rs").into(),
                 tool_calls: vec![ToolCall {
                     id: "call_1".into(),
@@ -4508,6 +4606,8 @@ mod tests {
         assert!(matches!(
             item,
             ConversationItem::User(UserItem {
+                evidence: crate::ContentEvidence::Unknown,
+                source: crate::SourceOccurrence::Unadmitted,
                 synthetic_reason: SyntheticReason::AgentMessage,
                 ..
             })
@@ -4795,7 +4895,7 @@ mod tests {
                 content: None,
                 encrypted_content: None,
                 status: None,
-            }),
+            }.into()),
             ConversationItem::Reasoning(rs::ReasoningItem {
                 id: "r2".to_string(),
                 summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
@@ -4804,7 +4904,7 @@ mod tests {
                 content: None,
                 encrypted_content: None,
                 status: None,
-            }),
+            }.into()),
             ConversationItem::assistant("answer"),
         ];
 
@@ -4834,7 +4934,7 @@ mod tests {
                 content: None,
                 encrypted_content: None,
                 status: None,
-            }),
+            }.into()),
         ];
         let msgs = conversation_to_chat_messages(items);
         assert_eq!(
@@ -4853,6 +4953,8 @@ mod tests {
             ConversationItem::user("hi"),
             reasoning_sibling("r1", "thinking before search", None),
             ConversationItem::BackendToolCall(BackendToolCallItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                     id: "ws_1".to_string(),
                     status: rs::WebSearchToolCallStatus::Completed,
@@ -4895,6 +4997,8 @@ mod tests {
         // A BackendToolCall has no Chat Completions equivalent
         // It is emitted as a synthetic assistant message carrying its human-readable `text_summary()`
         let item = ConversationItem::BackendToolCall(BackendToolCallItem {
+            evidence: Default::default(),
+            source: Default::default(),
             kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                 id: "ws_1".to_string(),
                 status: rs::WebSearchToolCallStatus::Completed,

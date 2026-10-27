@@ -271,11 +271,11 @@ pub fn stream_chat_completions<'a>(
         let mut items: Vec<ConversationItem> = Vec::new();
         if first_choice_seen {
             if !reasoning_acc.is_empty() {
-                items.push(ConversationItem::Reasoning(
-                    xai_grok_sampling_types::synthesized_reasoning_item(reasoning_acc),
-                ));
+                items.push(ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(reasoning_acc).into()));
             }
             items.push(ConversationItem::Assistant(AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: std::sync::Arc::<str>::from(content_acc),
                 tool_calls,
                 model_id: Some(model),

@@ -16,6 +16,7 @@ strum = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 # `CompactionDetail`, embedded in `CompactionMode::Segments`.
 xai-compaction-transcript = { workspace = true }
 xai-grok-compaction = { path = "../../common/xai-grok-compaction" }

@@ -654,8 +654,10 @@ fn test_encrypted_reasoning_included_in_responses_api_request() {
             content: None,
             encrypted_content: Some("enc_secret_reasoning_chain".to_string()),
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "The answer is 4.".into(),
             tool_calls: vec![],
             model_id: Some("grok-3".to_string()),
@@ -712,8 +714,10 @@ fn test_only_encrypted_reasoning_included_in_request() {
             content: None,
             encrypted_content: Some("enc_hidden_thoughts".to_string()),
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "Hi!".into(),
             tool_calls: vec![],
             model_id: None,
@@ -978,8 +982,10 @@ fn test_transform_cwd_rewrites_reasoning_sibling() {
             content: None,
             encrypted_content: None,
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: format!("I edited {worktree}/src/main.rs").into(),
             tool_calls: vec![],
             model_id: Some("grok-3".to_string()),
@@ -1169,8 +1175,10 @@ fn empty_reason_reasoning_only() {
                 content: None,
                 encrypted_content: None,
                 status: None,
-            }),
+            }.into()),
             ConversationItem::Assistant(AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: String::new().into(),
                 tool_calls: Vec::new(),
                 model_id: None,
@@ -1209,7 +1217,7 @@ fn build_responses_input_preserves_multi_turn_ordering() {
             content: None,
             encrypted_content: Some(format!("enc_{text}")),
             status: None,
-        })
+        }.into())
     }
     let items: Vec<ConversationItem> = vec![
         ConversationItem::system("you are helpful"),
@@ -1515,6 +1523,8 @@ fn build_responses_input_multi_turn_reasoning_ordering() {
 #[test]
 fn backend_tool_call_position_stable() {
     let ws_a = ConversationItem::BackendToolCall(BackendToolCallItem {
+        evidence: Default::default(),
+        source: Default::default(),
         kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
             id: "ws_a".to_string(),
             status: rs::WebSearchToolCallStatus::Completed,
@@ -1525,6 +1535,8 @@ fn backend_tool_call_position_stable() {
         }),
     });
     let ws_b = ConversationItem::BackendToolCall(BackendToolCallItem {
+        evidence: Default::default(),
+        source: Default::default(),
         kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
             id: "ws_b".to_string(),
             status: rs::WebSearchToolCallStatus::Completed,
@@ -1571,6 +1583,8 @@ fn empty_content_assistant_with_tool_calls_and_reasoning() {
         ConversationItem::user("u1"),
         reasoning_sibling("r1", "must call a tool", Some("enc_pre_tool")),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(""),
             tool_calls: vec![ToolCall {
                 id: Arc::<str>::from("call_1"),

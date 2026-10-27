@@ -1,4 +1,6 @@
 //! F7: the sidebar shows the shell's policy, asks for changes and never shows an unanswered one.
+#[path = "context_scope_tests.rs"]
+mod context_scope;
 use super::{AgentView, AppRenderParams, BannerSlotParams, test_fixtures};
 use crate::actions::ActionRegistry;
 use crate::app::actions::Action;
@@ -10,7 +12,11 @@ use crossterm::event::{
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
-use xai_grok_shell::sampling::{CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch};
+use xai_grok_shell::sampling::{CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch, ContextPolicyMutation, ContextPolicySelection, ContextPolicyVersion, ContextScope};
+
+fn selection(scope: ContextScope, revision: u64) -> Option<ContextPolicySelection> {
+    Some(ContextPolicySelection { version: ContextPolicyVersion { revision, incarnation: "actor".to_owned() }, scope })
+}
 
 fn draw(agent: &mut AgentView) -> Buffer {
     let area = Rect::new(0, 0, 160, 45);
@@ -60,6 +66,7 @@ fn sidebar_row(buf: &Buffer, label: &str) -> String {
 fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = test_fixtures::make_agent();
+    agent.session.session_id = Some(agent_client_protocol::SessionId::new("context-session"));
 
     assert!(matches!(
         press(&mut agent, KeyCode::F(7)),
@@ -70,6 +77,7 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
     let mut policy = ContextPolicy::default();
     policy.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
     agent.context_policy_answered(Ok(ContextPolicyReport {
+        selection: selection(ContextScope::Session, 1),
         policy,
         usage: vec![CategoryTokens {
             category: ContextCategory::Reasoning,
@@ -87,22 +95,21 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
         panic!("space asks the shell for the change");
     };
     let first = xai_grok_shell::sampling::all_categories()[0];
-    assert!(
-        !requested.includes(first),
-        "the cursor starts on the first row, which was ON"
-    );
-    assert!(
-        !requested.includes(ContextCategory::Reasoning),
-        "the rest of the policy is unchanged"
-    );
+    assert_eq!(requested.mutation, ContextPolicyMutation::SetCategories {
+        categories: vec![first].try_into().unwrap(), value: ContextSwitch::Excluded, target: ContextScope::Session,
+    }, "only the selected category is changed");
+    let mut confirmed = ContextPolicy::default();
+    confirmed.set(first, ContextSwitch::Excluded);
+    confirmed.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
     assert!(
         screen(&draw(&mut agent)).contains("Applying"),
         "the row keeps the shell's last answer until it answers again"
     );
 
     agent.context_policy_answered(Ok(ContextPolicyReport {
-        policy: requested,
+        policy: confirmed,
         usage: Vec::new(),
+        selection: selection(ContextScope::Session, 2),
     }));
     assert!(!screen(&draw(&mut agent)).contains("Applying"));
     assert!(matches!(
@@ -110,6 +117,17 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
         InputOutcome::Changed
     ));
     assert!(!screen(&draw(&mut agent)).contains("Session overview"));
+}
+
+fn focus_row(agent: &mut AgentView, label: &str) {
+    let _ = press(agent, KeyCode::Home);
+    for _ in 0..150 {
+        if matches!(&agent.context_sidebar, ContextSidebar::Open(open) if open.cursor_label() == Some(label)) {
+            return;
+        }
+        let _ = press(agent, KeyCode::Down);
+    }
+    panic!("row is not reachable: {label}");
 }
 
 fn click_row(agent: &mut AgentView, buf: &Buffer, label: &str) -> InputOutcome {
@@ -136,6 +154,7 @@ fn f7_message_display_flips_a_kind_between_one_line_and_full() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = test_fixtures::make_agent();
     let _ = press(&mut agent, KeyCode::F(7));
+    focus_row(&mut agent, "File reads");
     let buf = draw(&mut agent);
     assert!(sidebar_row(&buf, "File reads").contains("1 line"));
 
@@ -173,6 +192,7 @@ fn ready_report() -> ContextPolicyReport {
     ContextPolicyReport {
         policy: ContextPolicy::default(),
         usage: Vec::new(),
+        selection: selection(ContextScope::Session, 1),
     }
 }
 
@@ -195,6 +215,7 @@ fn context_clicks_never_change_policy_even_with_bulk_modifiers() {
 /// F7 open, the shell answered, first frame drawn: the cursor sits on the first context switch.
 fn open_sidebar() -> AgentView {
     let mut agent = test_fixtures::make_agent();
+    agent.session.session_id = Some(agent_client_protocol::SessionId::new("context-session"));
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
     let _ = draw(&mut agent);
@@ -300,13 +321,16 @@ fn f7_arrow_keys_walk_the_tree_like_a_tree_view() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let (context, display) = (SectionId::Context, SectionId::Display);
-    assert_eq!(cursor(&agent), Some(context.row_line(0)));
-
+    assert_eq!(cursor(&agent), Some(context.row_line(1)));
+    let _ = press(&mut agent, KeyCode::Left);
+    assert_eq!(cursor(&agent), Some(context.row_line(0)), "Left selects the semantic parent");
+    let _ = press(&mut agent, KeyCode::Left);
+    assert_eq!(cursor(&agent), Some(context.row_line(0)), "Left folds the semantic parent");
     let _ = press(&mut agent, KeyCode::Left);
     assert_eq!(
         cursor(&agent),
         Some(context.title_line()),
-        "Left from a row selects its title"
+        "Left from a folded group selects its section"
     );
     assert!(disclosure(&agent).is_expanded(context));
     let _ = press(&mut agent, KeyCode::Left);
@@ -360,9 +384,13 @@ fn f7_vi_keys_mirror_the_arrows() {
     let mut agent = open_sidebar();
     let context = SectionId::Context;
     let _ = press(&mut agent, KeyCode::Char('h'));
+    assert_eq!(cursor(&agent), Some(context.row_line(0)));
+    let _ = press(&mut agent, KeyCode::Char('h'));
+    let _ = press(&mut agent, KeyCode::Char('h'));
     assert_eq!(cursor(&agent), Some(context.title_line()));
     let _ = press(&mut agent, KeyCode::Char('l'));
     assert_eq!(cursor(&agent), Some(context.row_line(0)));
+    let _ = press(&mut agent, KeyCode::Char('l'));
     let _ = press(&mut agent, KeyCode::Char('j'));
     assert_eq!(cursor(&agent), Some(context.row_line(1)));
     let _ = press(&mut agent, KeyCode::Char('k'));
@@ -374,7 +402,7 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let (context, display) = (SectionId::Context, SectionId::Display);
-    let last = MessageKind::settings_kinds().len() - 1;
+    let last = MessageKind::settings_kinds().len() + 4;
 
     let _ = press(&mut agent, KeyCode::End);
     assert_eq!(cursor(&agent), Some(display.row_line(last)));
@@ -387,7 +415,7 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
     for _ in 0..4 { let _ = press(&mut agent, KeyCode::Down); }
     assert_eq!(cursor(&agent), Some(context.title_line()));
 
-    let _ = press(&mut agent, KeyCode::Enter);
+    let _ = press(&mut agent, KeyCode::Char(' '));
     assert!(!disclosure(&agent).is_expanded(context));
     let _ = press(&mut agent, KeyCode::Down);
     assert_eq!(cursor(&agent), Some(display.title_line()));
@@ -404,11 +432,11 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
 fn f7_context_title_click_only_selects_and_keyboard_changes_disclosure() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::Left);
+    focus_row(&mut agent, "Context");
     assert!(sidebar_row(&draw(&mut agent), "Core instructions").contains("Core instructions"));
 
     assert!(matches!(
-        press(&mut agent, KeyCode::Enter),
+        press(&mut agent, KeyCode::Char(' ')),
         InputOutcome::Changed
     ));
     let buf = draw(&mut agent);
@@ -444,7 +472,7 @@ fn f7_context_title_click_only_selects_and_keyboard_changes_disclosure() {
 fn f7_clicks_hit_the_right_row_after_a_fold() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::Left);
+    focus_row(&mut agent, "Context");
     let _ = press(&mut agent, KeyCode::Left);
     let buf = draw(&mut agent);
     assert!(matches!(
@@ -499,9 +527,8 @@ fn f7_clicks_hit_the_right_row_after_end_scrolls() {
 fn f7_shift_enter_on_a_message_row_sets_the_other_bulk_kinds_and_reverts() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::End);
-    let _ = press(&mut agent, KeyCode::Up);
-    // The cursor sits on the last display row (MemoryCapture): the gesture leaves it,
+    focus_row(&mut agent, "Memory captures");
+    // The cursor sits on MemoryCapture: the gesture leaves it,
     // and the user and assistant rows, exactly as they were.
     let before = never_bulk_toggled_snapshot(&agent);
 
@@ -546,6 +573,7 @@ fn f7_shift_enter_on_a_message_row_sets_the_other_bulk_kinds_and_reverts() {
 fn f7_shift_click_on_a_message_row_sets_the_other_bulk_kinds() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
+    focus_row(&mut agent, "File reads");
     let buf = draw(&mut agent);
     let before = [
         MessageKind::UserPrompt,
@@ -614,7 +642,7 @@ fn f7_plus_and_minus_open_and_close_all_bulk_kinds_and_say_when_nothing_changes(
 fn f7_shift_enter_on_a_title_folds_the_other_sections_and_reverts() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::Left);
+    focus_row(&mut agent, "Context");
     let kinds_before: Vec<_> = MessageKind::settings_kinds()
         .iter()
         .map(|&kind| agent.scrollback.display_defaults().shown(kind))
@@ -644,8 +672,7 @@ fn f7_shift_enter_on_a_title_folds_the_other_sections_and_reverts() {
 fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
-    let _ = press(&mut agent, KeyCode::End);
-    let _ = press(&mut agent, KeyCode::Up);
+    focus_row(&mut agent, "Memory captures");
     let before = never_bulk_toggled_snapshot(&agent);
 
     let _ = press_with(&mut agent, KeyCode::Enter, KeyModifiers::CONTROL);
@@ -686,11 +713,7 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
     assert!(never_bulk_toggled_stay(&agent, &before));
     assert!(!disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
-    assert_eq!(
-        cursor(&agent),
-        Some(SectionId::Display.row_line(MessageKind::settings_kinds().iter().position(|&kind| kind == MessageKind::MemoryCapture).unwrap())),
-        "the cursor row stayed visible"
-    );
+    assert!(matches!(&agent.context_sidebar, ContextSidebar::Open(open) if open.cursor_label() == Some("Memory captures")), "the cursor row stayed visible");
 
     let _ = press(&mut agent, KeyCode::Char('*'));
     assert!(
@@ -717,7 +740,7 @@ fn f7_bulk_gestures_on_a_context_row_never_ask_the_shell_for_a_change() {
     ];
     for (code, modifiers) in gestures {
         let mut agent = open_sidebar();
-        assert_eq!(cursor(&agent), Some(SectionId::Context.row_line(0)));
+        assert_eq!(cursor(&agent), Some(SectionId::Context.row_line(1)));
         let outcome = press_with(&mut agent, code, modifiers);
         assert!(
             matches!(outcome, InputOutcome::Changed),
@@ -740,8 +763,8 @@ fn f7_bulk_gestures_on_a_context_row_never_ask_the_shell_for_a_change() {
         "the cursor row's section stays open"
     );
     assert!(
-        !disclosure(&agent).is_expanded(SectionId::Display),
-        "the other section folded"
+        disclosure(&agent).is_expanded(SectionId::Display),
+        "selection-only Context clicks do not fold other sections"
     );
     let mut agent = open_sidebar();
     let buf = draw(&mut agent);
@@ -787,10 +810,10 @@ fn f7_a_switch_that_cannot_be_sent_says_why() {
 
     let mut unavailable = test_fixtures::make_agent();
     let _ = press(&mut unavailable, KeyCode::F(7));
-    unavailable.context_policy_answered(Err("no policy".to_string()));
+    unavailable.context_policy_answered(Err(crate::app::actions::ContextPolicyTransportError::Rpc(agent_client_protocol::Error::internal_error())));
     let _ = draw(&mut unavailable);
     assert!(matches!(
-        press(&mut unavailable, KeyCode::Enter),
+        press(&mut unavailable, KeyCode::Char(' ')),
         InputOutcome::Changed
     ));
     let when_unavailable = toast(&unavailable);
@@ -825,6 +848,7 @@ fn f7_rows_are_coloured_by_their_meaning() {
     let mut policy = ContextPolicy::default();
     policy.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
     agent.context_policy_answered(Ok(ContextPolicyReport {
+        selection: selection(ContextScope::Session, 1),
         policy,
         usage: Vec::new(),
     }));
@@ -885,6 +909,8 @@ fn f7_rows_are_coloured_by_their_meaning() {
         "a row label is not bold like a title"
     );
 
+    focus_row(&mut agent, "File reads");
+    let buf = draw(&mut agent);
     let one_line = sidebar_style(SidebarRowClass::FormOneLine, &theme);
     let (form_y, form_line) = row_of(&buf, "File reads");
     assert_eq!(
@@ -898,6 +924,7 @@ fn f7_a_flipped_display_form_changes_its_colour() {
     let _theme = crate::theme::cache::pin_theme();
     let theme = Theme::current();
     let mut agent = open_sidebar();
+    focus_row(&mut agent, "File reads");
     let buf = draw(&mut agent);
     let (y, line) = row_of(&buf, "File reads");
     let one_line = cell(&buf, column_of(&line, "1 line"), y).fg;
@@ -978,14 +1005,14 @@ fn f7_titles_summarise_their_section_while_folded() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
     let categories = xai_grok_shell::sampling::all_categories().len();
-    let kinds = MessageKind::settings_kinds().len();
+    let kinds = MessageKind::settings_kinds().len() - 1;
     let buf = draw(&mut agent);
     assert!(
         sidebar_row(&buf, "\u{25BE} Context").contains(&format!("{categories}/{categories} ON"))
     );
 
-    let _ = press(&mut agent, KeyCode::Left);
-    let _ = press(&mut agent, KeyCode::Enter);
+    focus_row(&mut agent, "Context");
+    let _ = press(&mut agent, KeyCode::Char(' '));
     let buf = draw(&mut agent);
     assert!(
         sidebar_row(&buf, "\u{25B8} Context").contains(&format!("{categories}/{categories} ON"))
@@ -993,7 +1020,7 @@ fn f7_titles_summarise_their_section_while_folded() {
 
     let full = MessageKind::settings_kinds()
         .iter()
-        .filter(|&&kind| agent.scrollback.display_defaults().shown(kind) == DisplayForm::Expanded)
+        .filter(|&&kind| kind != MessageKind::Injected && agent.scrollback.display_defaults().shown(kind) == DisplayForm::Expanded)
         .count();
     assert!(sidebar_row(&buf, "Message display").contains(&format!("{full}/{kinds} full")));
 }

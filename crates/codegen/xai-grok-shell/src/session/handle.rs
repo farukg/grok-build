@@ -51,6 +51,7 @@ impl Drop for WorkGuard {
 }
 #[derive(Clone)]
 pub struct SessionHandle {
+    pub(crate) context_policy_binding: super::helpers::context_policy_store::ContextPolicyBinding,
     pub cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     pub(crate) persistence_tx: mpsc::UnboundedSender<PersistenceMsg>,
     /// Shared with the actor so external cancellation can target subagents launched by the active turn only.

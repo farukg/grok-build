@@ -1434,6 +1434,7 @@ pub struct AgentView {
     pub(crate) timeline_mode: crate::views::timeline_panel::TimelineMode,
     /// The F7 sidebar with the session's context switches.
     pub(crate) context_sidebar: context_sidebar::ContextSidebar,
+    pub(crate) context_policy_generation: u64,
     /// Saved F6/F7 settings and the layer (global or this session) the panels save edits to.
     pub(crate) panel_persistence: panel_persistence::PanelPersistence,
     pub(crate) sidebar_heights: sidebars::SidebarHeightsCache,

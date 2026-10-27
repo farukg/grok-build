@@ -137,3 +137,7 @@ impl PanelSettingsStore {
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "hierarchy_tests.rs"]
+mod hierarchy_tests;

@@ -12,6 +12,7 @@ pub use xai_grok_sampler::SamplingClient as Client;
 pub use xai_grok_sampling_types::ServedRoute;
 pub use xai_grok_sampling_types::{
     CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch, RuntimeNotice, all_categories,
+    ContextPolicyCategories, ContextPolicyCategoriesError, ContextPolicyEdit, ContextPolicyMutation, ContextPolicySelection, ContextPolicyVersion, ContextScope, ContextSetting, SessionContextPolicy,
 };
 
 // Re-export async-openai Responses API types under `rs` namespace

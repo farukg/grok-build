@@ -4,6 +4,8 @@ impl From<ChatRequestMessage> for ConversationItem {
     fn from(msg: ChatRequestMessage) -> Self {
         match msg.role {
             Role::System => ConversationItem::System(SystemItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: Arc::<str>::from(msg.text_content()),
                 synthetic_reason: SyntheticReason::Primary,
             }),
@@ -22,6 +24,8 @@ impl From<ChatRequestMessage> for ConversationItem {
                     })
                     .collect();
                 ConversationItem::User(UserItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     content: parts,
                     synthetic_reason: SyntheticReason::Human,
                     cwd_generation: None,
@@ -46,6 +50,8 @@ impl From<ChatRequestMessage> for ConversationItem {
                     .collect();
 
                 ConversationItem::Assistant(AssistantItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     content: Arc::<str>::from(content),
                     tool_calls,
                     model_id,
@@ -56,6 +62,8 @@ impl From<ChatRequestMessage> for ConversationItem {
             Role::Tool => {
                 let content = msg.text_content();
                 ConversationItem::ToolResult(ToolResultItem {
+                    evidence: Default::default(),
+                    source: Default::default(),
                     tool_call_id: msg.tool_call_id.unwrap_or_default(),
                     content: Arc::<str>::from(content),
                     images: Vec::new(),
@@ -234,6 +242,8 @@ impl From<ChatResponseMessage> for ConversationItem {
             .collect();
 
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(content),
             tool_calls,
             model_id: None,

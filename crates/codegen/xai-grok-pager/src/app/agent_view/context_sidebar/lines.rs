@@ -54,15 +54,17 @@ pub(super) fn context_summary(
         .iter()
         .filter(|&&category| report.policy.includes(category))
         .count();
-    Some(format!("{on}/{} ON", categories.len()))
+    let scope = match report.selection.as_ref().map(|selection| selection.scope) {
+        Some(xai_grok_shell::sampling::ContextScope::Global) => "Global · c",
+        Some(xai_grok_shell::sampling::ContextScope::Session) => "Session · c",
+        None => "scope unavailable",
+    };
+    Some(format!("{scope} · {on}/{} ON", categories.len()))
 }
 
 /// `N/M full`: how many message kinds show their full form.
 pub(super) fn display_summary(defaults: &DisplayDefaults) -> String {
-    let kinds = MessageKind::settings_kinds();
-    let full = kinds
-        .iter()
-        .filter(|&&kind| defaults.shown(kind) == DisplayForm::Expanded)
-        .count();
+    let kinds: Vec<_> = MessageKind::settings_kinds().iter().copied().filter(|&kind| kind != MessageKind::Injected).collect();
+    let full = kinds.iter().filter(|&&kind| defaults.shown(kind) == DisplayForm::Expanded).count();
     format!("{full}/{} full", kinds.len())
 }

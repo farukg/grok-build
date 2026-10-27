@@ -26,6 +26,7 @@ pub fn replace_or_insert_system_head(
             if canonical_system_prompt_eq(sys.content.as_ref(), prompt) {
                 return false;
             }
+            sys.evidence.record(xai_grok_sampling_types::ContentTransform::SystemHeadRewritten);
             sys.content = Arc::from(prompt);
             true
         }

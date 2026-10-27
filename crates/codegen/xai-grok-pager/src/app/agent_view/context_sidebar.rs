@@ -23,9 +23,13 @@ use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, al
 mod commands;
 mod footer;
 mod gesture;
+mod groups;
+mod group_commands;
+mod group_rows;
 mod lines;
 mod outline;
 mod persistence;
+mod policy;
 
 use outline::{CursorTarget, Outline};
 pub(crate) use outline::{SectionDisclosure, SectionId};
@@ -41,20 +45,15 @@ enum RowTarget {
     DockPlacement,
     Context(ContextCategory),
     Display(MessageKind),
+    Group(groups::GroupId),
 }
 
-fn row_target(section: SectionIdx, RowIdx(index): RowIdx) -> Option<RowTarget> {
+fn row_target(section: SectionIdx, RowIdx(index): RowIdx, disclosure: SectionDisclosure) -> Option<RowTarget> {
     if section == DOCK_SECTION {
         (index == 0).then_some(RowTarget::DockPlacement)
-    } else if section == CONTEXT_SECTION {
-        all_categories().get(index).copied().map(RowTarget::Context)
-    } else if section == DISPLAY_SECTION {
-        MessageKind::settings_kinds()
-            .get(index)
-            .copied()
-            .map(RowTarget::Display)
     } else {
-        None
+        let section = SectionId::of_index(section)?;
+        outline::section_targets(disclosure, section).get(index).copied()
     }
 }
 
@@ -88,6 +87,8 @@ enum SidebarFocus {
 pub(crate) enum PolicyState {
     Loading,
     Ready(ContextPolicyReport),
+    Confirming { shown: ContextPolicyReport, confirmation: policy::Confirmation },
+    ExpiredConfirmation(policy::ExpiredConfirmation),
     /// A change is with the shell; `shown` stays on screen until it answers.
     Applying {
         shown: ContextPolicyReport,
@@ -98,7 +99,8 @@ pub(crate) enum PolicyState {
 impl PolicyState {
     fn shown(&self) -> Option<&ContextPolicyReport> {
         match self {
-            Self::Ready(report) | Self::Applying { shown: report } => Some(report),
+            Self::Ready(report) | Self::Applying { shown: report } | Self::Confirming { shown: report, .. } => Some(report),
+            Self::ExpiredConfirmation(expired) => expired.shown(),
             Self::Loading | Self::Unavailable => None,
         }
     }
@@ -157,36 +159,6 @@ fn consequence(category: ContextCategory) -> &'static str {
     }
 }
 
-fn kind_label(kind: MessageKind) -> &'static str {
-    match kind {
-        MessageKind::UserPrompt => "Your messages",
-        MessageKind::AgentMessage => "Agent replies",
-        MessageKind::Execute => "Commands",
-        MessageKind::Read => "File reads",
-        MessageKind::Edit => "File edits",
-        MessageKind::ListDir => "Directory listings",
-        MessageKind::Search => "Code searches",
-        MessageKind::WebFetch => "Web fetches",
-        MessageKind::WebSearch => "Web searches",
-        MessageKind::IntegrationSearch => "Integration searches",
-        MessageKind::UseTool => "Integration tools",
-        MessageKind::MemorySearch => "Memory searches",
-        MessageKind::SentMessage => "Sent messages",
-        MessageKind::Skill => "Skills",
-        MessageKind::OtherTool => "Other tools",
-        MessageKind::Thinking => "Reasoning",
-        MessageKind::System => "System messages",
-        MessageKind::SessionEvent => "Session events",
-        MessageKind::BgTask => "Background tasks",
-        MessageKind::Subagent => "Subagents",
-        MessageKind::Workflow => "Workflows",
-        MessageKind::Btw => "Side questions",
-        MessageKind::ContextInfo => "Context info",
-        MessageKind::MemoryCapture => "Memory captures",
-        MessageKind::Injected => "Injected context",
-        MessageKind::Stub => "Stub",
-    }
-}
 
 fn form_label(form: DisplayForm) -> &'static str {
     match form {
@@ -207,7 +179,7 @@ fn display_rows(
             let class = SidebarRowClass::from(form);
             let style = sidebar_style(class, theme);
             SidebarRow {
-                left: lines::leaf_label(class, style, kind_label(kind)),
+                left: lines::leaf_label(class, style, kind.label()),
                 right: Some(Line::from(Span::styled(form_label(form), style.value))),
                 detail: &[],
             }
@@ -235,14 +207,11 @@ fn rows<'a>(
             SidebarRow {
                 left: lines::leaf_label(class, style, label(category)),
                 right: report.map(|report| {
-                    let tokens = report
-                        .usage
-                        .iter()
-                        .find(|usage| usage.category == category)
-                        .map_or(0, |usage| usage.tokens);
+                    let tokens = report.usage.iter().find(|usage| usage.category == category)
+                        .map_or_else(|| "?".to_owned(), |usage| fmt_tokens(usage.tokens));
                     let state = if included { "ON " } else { "OFF" };
                     Line::from(vec![
-                        Span::styled(format!("~{:<4} ", fmt_tokens(tokens)), theme.muted()),
+                        Span::styled(format!("~{tokens:<4} "), theme.muted()),
                         Span::styled(state, style.value),
                     ])
                 }),
@@ -396,19 +365,32 @@ impl AgentView {
     }
 
     /// The shell answered a get or set.
-    pub(crate) fn context_policy_answered(&mut self, answer: Result<ContextPolicyReport, String>) {
-        let ContextSidebar::Open(open) = &mut self.context_sidebar else {
-            return;
-        };
+    pub(crate) fn context_policy_answered(&mut self, answer: Result<ContextPolicyReport, crate::app::actions::ContextPolicyTransportError>) {
+        let ContextSidebar::Open(open) = &mut self.context_sidebar else { return; };
         open.policy = match answer {
-            Ok(report) => PolicyState::Ready(report),
+            Ok(report) => {
+                if let Some(previous) = open.policy.shown() {
+                    if let (Some(old), Some(new)) = (&previous.selection, &report.selection) {
+                        if new.version.revision < old.version.revision { return; }
+                    }
+                }
+                match std::mem::replace(&mut open.policy, PolicyState::Unavailable) {
+                    PolicyState::Confirming { confirmation, .. } => {
+                        if confirmation.still_current(&report) {
+                            PolicyState::Confirming { shown: report, confirmation }
+                        } else {
+                            PolicyState::ExpiredConfirmation(policy::ExpiredConfirmation::Confirmed(report))
+                        }
+                    }
+                    PolicyState::ExpiredConfirmation(_) => PolicyState::ExpiredConfirmation(policy::ExpiredConfirmation::Confirmed(report)),
+                    PolicyState::Loading | PolicyState::Ready(_) | PolicyState::Applying { .. } | PolicyState::Unavailable => PolicyState::Ready(report),
+                }
+            }
             Err(error) => {
                 tracing::warn!(%error, "context policy request failed");
-                match std::mem::replace(&mut open.policy, PolicyState::Unavailable) {
-                    PolicyState::Applying { shown } => PolicyState::Ready(shown),
-                    PolicyState::Loading | PolicyState::Ready(_) | PolicyState::Unavailable => {
-                        PolicyState::Unavailable
-                    }
+                match open.policy {
+                    PolicyState::Confirming { .. } | PolicyState::ExpiredConfirmation(_) => PolicyState::ExpiredConfirmation(policy::ExpiredConfirmation::Unavailable),
+                    PolicyState::Loading | PolicyState::Ready(_) | PolicyState::Applying { .. } | PolicyState::Unavailable => PolicyState::Unavailable,
                 }
             }
         };
@@ -493,27 +475,20 @@ impl AgentView {
     }
 
     fn toggle_context_category(&mut self, category: ContextCategory) -> InputOutcome {
-        let ContextSidebar::Open(open) = &mut self.context_sidebar else {
-            return InputOutcome::Unchanged;
-        };
-        let shown = match open.policy.changeable().cloned() {
+        let ContextSidebar::Open(open) = &self.context_sidebar else { return InputOutcome::Unchanged; };
+        let shown = match open.policy.changeable() {
             Ok(shown) => shown,
-            Err(reason) => {
-                self.show_toast(reason);
-                return InputOutcome::Changed;
-            }
+            Err(reason) => { self.show_toast(reason); return InputOutcome::Changed; }
         };
-        let mut requested = shown.policy.clone();
-        requested.set(
-            category,
-            if shown.policy.includes(category) {
-                ContextSwitch::Excluded
-            } else {
-                ContextSwitch::Included
-            },
-        );
-        open.policy = PolicyState::Applying { shown };
-        InputOutcome::Action(Action::SetContextPolicy(requested))
+        let Some(selection) = &shown.selection else {
+            self.show_toast("Context scope has not been confirmed by the Shell.");
+            return InputOutcome::Changed;
+        };
+        self.request_context_change(xai_grok_shell::sampling::ContextPolicyMutation::SetCategories {
+            categories: xai_grok_shell::sampling::ContextPolicyCategories::one(category),
+            value: if shown.policy.includes(category) { ContextSwitch::Excluded } else { ContextSwitch::Included },
+            target: selection.scope,
+        })
     }
 
     pub(super) fn draw_context_sidebar(&mut self, area: Rect, buf: &mut Buffer) {
@@ -531,10 +506,14 @@ impl AgentView {
             .iter()
             .map(|&category| [Line::from(consequence(category))])
             .collect();
-        let rows = rows(open.policy.shown(), &categories, &consequences, &theme);
         let defaults = self.scrollback.display_defaults();
-        let display = display_rows(MessageKind::settings_kinds(), defaults, &theme);
         let disclosure = open.disclosure;
+        let rows = group_rows::grouped(SectionId::Context, disclosure,
+            rows(open.policy.shown(), &categories, &consequences, &theme),
+            &categories, open.policy.shown(), defaults, &theme);
+        let display = group_rows::grouped(SectionId::Display, disclosure,
+            display_rows(MessageKind::settings_kinds(), defaults, &theme),
+            &categories, open.policy.shown(), defaults, &theme);
         let context_title = lines::title_line(
             SectionId::Context,
             disclosure.is_expanded(SectionId::Context),
@@ -600,10 +579,12 @@ impl AgentView {
             open.sidebar.reveal_cursor(viewport);
             open.reveal_pending = false;
         }
-        let cursor_target = open.sidebar.cursor.and_then(CursorTarget::of);
+        let cursor_target = open.sidebar.cursor.and_then(|line| CursorTarget::of(line, open.disclosure));
         let status = match open.policy {
             PolicyState::Loading => "Loading…",
             PolicyState::Applying { .. } => "Applying…",
+            PolicyState::Confirming { .. } => "Context confirmation · Enter cancels initially",
+            PolicyState::ExpiredConfirmation(_) => "Context confirmation expired · dismiss first",
             PolicyState::Unavailable => "Unavailable for this session",
             PolicyState::Ready(_) => gesture::hint_for(cursor_target),
         };
@@ -627,6 +608,11 @@ impl AgentView {
             },
             buf,
         ));
+        match &open.policy {
+            PolicyState::Confirming { confirmation, .. } => confirmation.render(area, buf, &theme),
+            PolicyState::ExpiredConfirmation(expired) => expired.render(area, buf, &theme),
+            PolicyState::Loading | PolicyState::Ready(_) | PolicyState::Applying { .. } | PolicyState::Unavailable => {},
+        }
         let dock_rect = open.layout.and_then(|layout| layout.hosted_rect(SectionIdx(1), &open.sidebar));
         if self.f7_body.contains((self.pane_areas.dock.x, self.pane_areas.dock.y).into()) {
             self.pane_areas.dock = dock_rect.map(|(rect, _)| rect).unwrap_or_default();
@@ -654,3 +640,7 @@ impl AgentView {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "context_sidebar/hierarchy_tests.rs"]
+mod hierarchy_tests;

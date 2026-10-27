@@ -8,12 +8,8 @@ impl PanelSettingsStore {
     /// Makes `layer` yield `wanted`, in one write. A value the layers beneath already hold removes the layer's own
     /// entry; any other value is stored.
     ///
-    /// A message-display form has no built-in baseline to compare with: a kind nobody set renders by its block's own
-    /// policy (and, for edit blocks, by a user configuration), which is not one [`DisplayForm`]. So a form is
-    /// "held beneath" only when the global layer stores that same form for the kind; in the global layer it is
-    /// always stored. Section and outline folds have a fixed built-in default and compare against it.
-    ///
-    /// [`DisplayForm`]: crate::scrollback::types::DisplayForm
+    /// Explicit child choices remain stored even when inherited values currently agree.
+    /// Otherwise a later parent or Global change could erase the chosen child precedence.
     pub fn set_deviations(
         &mut self,
         layer: Layer,
@@ -45,7 +41,7 @@ fn held_beneath(beneath: &LayerSettings, setting: Setting) -> bool {
         Setting::DisplayScope(_) => false,
         Setting::DockPlacement(placement) => beneath.dock_placement() == Some(placement),
         Setting::ShowCompleted { pane, show } => beneath.show_completed(pane) == show,
-        Setting::KindForm { kind, form } => beneath.message_form(kind) == Some(form),
+        Setting::KindForm { kind, form } => kind.parent().is_none() && beneath.message_form(kind) == Some(form),
         Setting::Section { section, state } => {
             beneath
                 .section(section)

@@ -20,17 +20,26 @@ const SOFT_TRIM_SEPARATOR: &str = "\n\n[…trimmed…]\n\n";
 
 impl ChatStateActor {
     /// Build a `ConversationRequest` from current actor state (image eviction, prune, memory reminder).
-    /// The command handler already ran integrity repair on the actor conversation before this clone.
-    /// Do not re-run dangling/dedup repair on the clone — those would be O(n) no-ops.
+    /// Persisted builds repair at the actor boundary; previews repair only their local copy.
     pub(super) fn build_conversation_request(
         &mut self,
         tool_definitions: Vec<ToolSpec>,
         memory_reminder: Option<String>,
-        persist_memory_reminder: bool,
+        preparation: crate::types::RequestPreparation,
         trace: Option<Box<dyn TraceContext>>,
         conv_id: String,
         req_id: String,
     ) -> crate::types::BuiltConversationRequest {
+        use crate::types::{MemoryReminderPersistence, RequestPreparation};
+        let (persist_memory_reminder, preview) = match preparation {
+            RequestPreparation::Sampling { memory_reminder: MemoryReminderPersistence::Canonical } => (true, false),
+            RequestPreparation::Sampling { memory_reminder: MemoryReminderPersistence::RequestOnly } => (false, false),
+            RequestPreparation::Preview => (false, true),
+        };
+        if !preview {
+            self.persist_source_normalization();
+        }
+        let context_policy = self.state.context_policy.clone();
         let mut injected_records = Vec::new();
         let mut memory_reminder = memory_reminder;
         let mut memory_record = None;
@@ -42,6 +51,7 @@ impl ChatStateActor {
             self.snapshot_turn_slice();
             let injected = inject_memory_reminder(&mut self.state.conversation, reminder);
             if injected {
+                super::source_occurrence::normalize(&mut self.state.conversation, super::source_occurrence::Normalization::Admission);
                 self.persistence.replace_history(&self.state.conversation);
                 memory_record = memory_reminder.take();
             }
@@ -49,8 +59,16 @@ impl ChatStateActor {
         }
         let (trigger_bytes, reclaim_target_bytes) =
             image_budget_limits(self.state.sampling_config.max_request_bytes);
+        let mut request_items = self.state.conversation.clone();
+        if preview {
+            xai_grok_sampling_types::dedup_duplicate_tool_results(&mut request_items);
+            xai_grok_sampling_types::repair_dangling_tool_calls(
+                &mut request_items,
+                xai_grok_sampling_types::DanglingToolCallReason::UserCancelled,
+            );
+        }
         let budgeted = apply_image_budget_with_limits(
-            self.state.conversation.clone(),
+            request_items,
             trigger_bytes,
             reclaim_target_bytes,
         );
@@ -62,7 +80,7 @@ impl ChatStateActor {
             evicted,
         } = budgeted.outcome;
         let mut items = budgeted.items;
-        if inline_images > 0 {
+        if inline_images > 0 && !preview {
             self.send_event(ChatStateEvent::ImageBudget {
                 body_bytes,
                 trigger_bytes,
@@ -93,7 +111,7 @@ impl ChatStateActor {
         {
             memory_record = memory_reminder.take();
         }
-        let memory_withheld = if !self.state.context_policy.includes(ContextCategory::Memory) {
+        let memory_withheld = if !context_policy.includes(ContextCategory::Memory) {
             let had_manifest = matches!(items.first(), Some(ConversationItem::System(system))
                 if split_memory_context(&system.content).1.is_some());
             super::context_sections::withhold_memory_context(&mut items);
@@ -101,8 +119,8 @@ impl ChatStateActor {
         } else {
             false
         };
-        let projected_out = projected_out_categories(&self.state.context_policy);
-        items = self.state.context_policy.project(items);
+        let projected_out = projected_out_categories(&context_policy);
+        items = context_policy.project(items);
         let labeled_agent_messages = items
             .iter()
             .filter(|item| {
@@ -130,9 +148,7 @@ impl ChatStateActor {
                 &summary,
             ));
         }
-        let tool_definitions = if self
-            .state
-            .context_policy
+        let tool_definitions = if context_policy
             .includes(ContextCategory::ToolDefinitions)
         {
             tool_definitions
@@ -144,10 +160,15 @@ impl ChatStateActor {
             && matches!(items.first(), Some(ConversationItem::System(system))
                 if system.content.contains(reminder))
         {
-            injected_records.insert(0, InjectedRequestRecord::new(
-                InjectedRequestKind::MemoryReminder,
-                reminder,
-            ));
+            let source = if persist_memory_reminder {
+                items.first().map(ConversationItem::source).unwrap_or_default()
+            } else {
+                xai_grok_sampling_types::SourceOccurrence::Unadmitted
+            };
+            injected_records.insert(0, InjectedRequestRecord::MemoryReminder {
+                text: reminder.to_owned(),
+                source,
+            });
         }
         for item in &items {
             if let Some(reason) = item.synthetic_reason()
@@ -157,6 +178,7 @@ impl ChatStateActor {
                 injected_records.push(InjectedRequestRecord::Synthetic {
                     reason: reason.clone(),
                     text: item.text_content(),
+                    source: item.source(),
                 });
             }
         }
@@ -189,6 +211,7 @@ impl ChatStateActor {
             length_policy: xai_grok_sampling_types::LengthPolicy::CompleteToolCalls,
         };
         crate::types::BuiltConversationRequest {
+            context_policy,
             request,
             injected_records,
         }
@@ -251,6 +274,7 @@ pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: 
         // Hard clear: very old tool results → replace entirely.
         if turn_from_end >= config.hard_clear_age_turns {
             if tool_result.content.as_ref() != HARD_CLEAR_PLACEHOLDER {
+                tool_result.evidence.record(xai_grok_sampling_types::ContentTransform::ToolResultHardCleared);
                 tool_result.content = std::sync::Arc::<str>::from(HARD_CLEAR_PLACEHOLDER);
             }
             continue;
@@ -261,6 +285,7 @@ pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: 
         if content_len > config.soft_trim_threshold {
             let head = safe_char_slice(&tool_result.content, 0, config.soft_trim_head);
             let tail = safe_char_slice_tail(&tool_result.content, config.soft_trim_tail);
+            tool_result.evidence.record(xai_grok_sampling_types::ContentTransform::ToolResultSoftTrimmed);
             tool_result.content =
                 std::sync::Arc::<str>::from(format!("{head}{SOFT_TRIM_SEPARATOR}{tail}"));
         }
@@ -376,7 +401,11 @@ pub(super) fn inject_memory_reminder(items: &mut Vec<ConversationItem>, reminder
     }
 
     if let Some(ConversationItem::System(sys)) = items.first_mut() {
-        upsert_memory_reminder_text(&mut sys.content, reminder)
+        let changed = upsert_memory_reminder_text(&mut sys.content, reminder);
+        if changed {
+            sys.evidence.record(xai_grok_sampling_types::ContentTransform::SystemHeadRewritten);
+        }
+        changed
     } else {
         items.insert(0, ConversationItem::system(reminder));
         true

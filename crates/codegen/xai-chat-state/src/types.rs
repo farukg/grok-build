@@ -6,6 +6,32 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 use xai_grok_sampling_types::{ConversationItem, ConversationRequest, SamplingConfig};
 
+/// A policy command was not admitted, or its admitted outcome could not be observed.
+#[derive(Debug)]
+pub enum ContextPolicyAdmissionError {
+    MailboxClosed(crate::handle::ChatStateMailboxClosed),
+    /// The command was admitted; a mutation may already have applied.
+    ReplyLost(tokio::sync::oneshot::error::RecvError),
+}
+
+impl std::fmt::Display for ContextPolicyAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MailboxClosed(source) => write!(f, "{source}"),
+            Self::ReplyLost(source) => write!(f, "chat-state policy reply lost: {source}"),
+        }
+    }
+}
+
+impl std::error::Error for ContextPolicyAdmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MailboxClosed(source) => Some(source),
+            Self::ReplyLost(source) => Some(source),
+        }
+    }
+}
+
 /// Token count relative to the current sampling config / tokenizer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenCount {
@@ -65,6 +91,8 @@ pub enum InjectedRequestRecord {
     MemoryReminder {
         /// Complete reminder body as spliced.
         text: String,
+        #[serde(default, skip_serializing_if = "xai_grok_sampling_types::SourceOccurrence::is_unadmitted")]
+        source: xai_grok_sampling_types::SourceOccurrence,
     },
     /// Per-turn transforms applied to the stored history while building the request view
     /// (pruning, memory-context withholding, context-policy projection, agent-message labeling).
@@ -75,6 +103,8 @@ pub enum InjectedRequestRecord {
     Synthetic {
         reason: xai_grok_sampling_types::SyntheticReason,
         text: String,
+        #[serde(default, skip_serializing_if = "xai_grok_sampling_types::SourceOccurrence::is_unadmitted")]
+        source: xai_grok_sampling_types::SourceOccurrence,
     },
 }
 
@@ -83,7 +113,7 @@ impl InjectedRequestRecord {
     pub fn new(kind: InjectedRequestKind, text: &str) -> Self {
         let text = text.to_string();
         match kind {
-            InjectedRequestKind::MemoryReminder => Self::MemoryReminder { text },
+            InjectedRequestKind::MemoryReminder => Self::MemoryReminder { text, source: Default::default() },
             InjectedRequestKind::ContextView => Self::ContextView { text },
         }
     }
@@ -91,7 +121,7 @@ impl InjectedRequestRecord {
     /// The complete body this record carries.
     pub fn text(&self) -> &str {
         match self {
-            Self::MemoryReminder { text } | Self::ContextView { text } | Self::Synthetic { text, .. } => text,
+            Self::MemoryReminder { text, .. } | Self::ContextView { text } | Self::Synthetic { text, .. } => text,
         }
     }
 
@@ -112,10 +142,23 @@ pub enum InjectedRequestKind {
     ContextView,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MemoryReminderPersistence {
+    Canonical,
+    RequestOnly,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RequestPreparation {
+    Sampling { memory_reminder: MemoryReminderPersistence },
+    Preview,
+}
+
 /// Reply of [`crate::ChatStateHandle::build_request`]: the wire-ready request plus the lossless
 /// records of request-only content the CLI renders as collapsed injected entries.
 #[derive(Debug, Clone)]
 pub struct BuiltConversationRequest {
+    pub context_policy: xai_grok_sampling_types::ContextPolicy,
     pub request: ConversationRequest,
     pub injected_records: Vec<InjectedRequestRecord>,
 }

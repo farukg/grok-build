@@ -283,6 +283,7 @@ pub(crate) struct SubagentSpawnContext {
     /// Parent session's ChatStateHandle, used to read the actual live sampling config and credentials from the parent session actor (async).
     /// Cheap Clone (mpsc sender). `None` when the parent SessionHandle is not found.
     pub parent_chat_state: Option<xai_chat_state::ChatStateHandle>,
+    pub context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyAuthority,
     /// Parent session's resolved turn limit, for subagent inheritance.
     pub parent_max_turns: Option<usize>,
     /// All available models for resolving model IDs from overrides.
@@ -1222,38 +1223,31 @@ fn stamp_live_fork_session_metadata(
         tracing::warn!(error = %e, "live fork: failed to write forked session summary");
     }
 }
-/// The policy a child starts under: its resume source's own, else its parent's as of now. Afterwards it is independent.
-async fn context_policy_to_inherit(
+async fn inherit_context_policy(
+    ctx: &SubagentSpawnContext,
     resume_source: Option<&ResumeSourceData>,
-    parent_chat_state: Option<&xai_chat_state::ChatStateHandle>,
-) -> Option<xai_grok_sampling_types::ContextPolicy> {
-    match resume_source {
-        Some(source) => Some(crate::session::helpers::context_policy_store::load(
-            &crate::session::persistence::session_dir(&SessionInfo {
-                id: acp::SessionId::new(source.child_session_id.clone()),
-                cwd: source.child_cwd.clone(),
-            }),
-        )),
-        None => match parent_chat_state {
-            Some(chat_state) => Some(chat_state.get_context_policy().await),
-            None => None,
+    target: &SessionInfo,
+) -> Result<(), crate::session::helpers::context_policy_store::ContextPolicyError> {
+    let source = match resume_source {
+        Some(source) => SessionInfo {
+            id: acp::SessionId::new(source.child_session_id.clone()),
+            cwd: source.child_cwd.clone(),
         },
+        None => SessionInfo {
+            id: acp::SessionId::new(ctx.parent_session_id.clone()),
+            cwd: ctx.parent_cwd.to_string_lossy().into_owned(),
+        },
+    };
+    let store = ctx.context_policy_authority.clone().write_owned().await;
+    if store.inherited_choices_are_current(source.id.0.as_ref(), target.id.0.as_ref()) {
+        return Ok(());
     }
-}
-
-/// Only a restricted policy is written; the session actor reads the file when it starts, so the default path costs nothing.
-fn write_inherited_context_policy(
-    child_session_dir: &Path,
-    policy: &xai_grok_sampling_types::ContextPolicy,
-) {
-    if policy.is_unrestricted() {
-        return;
-    }
-    if let Err(error) = std::fs::create_dir_all(child_session_dir) {
-        tracing::warn!(%error, "could not create the child session dir for its inherited context policy");
-        return;
-    }
-    crate::session::helpers::context_policy_store::save(child_session_dir, policy);
+    let target = target.id.0.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut store = store;
+        store.ensure_session(source.id.0.as_ref(), &crate::session::persistence::session_dir(&source))?;
+        store.inherit(source.id.0.as_ref(), &target)
+    }).await?
 }
 enum BootstrapInitialContext {
     Ready(InitialContext),

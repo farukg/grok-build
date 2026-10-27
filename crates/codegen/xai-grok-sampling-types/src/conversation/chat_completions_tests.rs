@@ -220,6 +220,8 @@ fn test_multiple_tool_calls_roundtrip() {
 fn test_assistant_with_content_and_tool_calls() {
     // Assistant can have both text content and tool calls
     let assistant = AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: "Let me help you with that.".into(),
         tool_calls: vec![ToolCall {
             id: "call_1".into(),

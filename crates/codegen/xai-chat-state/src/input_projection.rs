@@ -96,6 +96,14 @@ impl InputProjection {
         }
     }
 
+    pub(crate) fn item_mut(&mut self) -> &mut ConversationItem {
+        match self {
+            Self::Subagent(projection) => &mut projection.item,
+            Self::Delivery(projection) => &mut projection.item,
+            Self::Notification(projection) => &mut projection.item,
+        }
+    }
+
     pub fn into_item(self) -> ConversationItem {
         match self {
             Self::Subagent(projection) => projection.item,

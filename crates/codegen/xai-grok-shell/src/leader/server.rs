@@ -495,7 +495,7 @@ fn event_seq_of(json: &serde_json::Value) -> Option<u64> {
         .and_then(|v| v.as_str())?;
     event_id.rsplit_once('-')?.1.parse::<u64>().ok()
 }
-/// Whether a payload is a machine-wide notification (no `sessionId`) that must be **broadcast to every client**.
+/// Whether a shared-state notification must be broadcast to every attached client.
 /// These never fall through to the last-active-client fallback: `x.ai/sessions/changed`: the session roster changed; every open dashboard must stay in sync.
 /// Every connected client's model picker must refresh, not just the most recently active one. `x.ai/mcp/servers_updated`: the MCP catalog resolved or changed (managed connectors fetched in the background after `initialize`). The push fires seconds after `initialize` returns. Broadcast is safe: the pager handler only debounce-refetches `mcp/list` for agents with an open extensions modal.
 fn is_machine_wide_broadcast_notification(json: &serde_json::Value) -> bool {
@@ -506,6 +506,7 @@ fn is_machine_wide_broadcast_notification(json: &serde_json::Value) -> bool {
                 | "x.ai/models/update"
                 | "x.ai/mcp/servers_updated"
                 | "x.ai/announcements/update"
+                | "x.ai/session/context_policy/changed"
         )
     )
 }

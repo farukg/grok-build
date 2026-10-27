@@ -7,6 +7,8 @@
 #![deny(clippy::indexing_slicing)]
 
 pub mod context_policy;
+mod context_scope;
+pub use context_scope::{ContextPolicyCategories, ContextPolicyCategoriesError, ContextPolicyEdit, ContextPolicyMutation, ContextPolicySelection, ContextPolicyVersion, ContextScope, ContextSetting, SessionContextPolicy};
 mod context_projection;
 mod context_provenance;
 pub mod conversation;
@@ -16,6 +18,8 @@ pub mod messages;
 pub mod provider_error;
 pub mod serde_helpers;
 pub mod served_route;
+mod source_occurrence;
+pub use source_occurrence::{CoverageKnowledge, ContentEvidence, ContentTransform, CompactionCoverage, ConversationReasoningItem, ProjectedRequestMember, SourceOccurrence, SourceOccurrenceId};
 pub mod tool_overrides;
 pub mod types;
 

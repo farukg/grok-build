@@ -69,6 +69,7 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
         subagent_roles: HashMap::new(),
         subagent_personas: HashMap::new(),
         parent_chat_state: None,
+        context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyStore::authority(),
         available_models: indexmap::IndexMap::new(),
         subagent_model_overrides: HashMap::new(),
         subagent_toggle: toggle,

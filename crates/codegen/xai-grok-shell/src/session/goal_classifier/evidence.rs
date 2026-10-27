@@ -980,6 +980,8 @@ mod tests {
 
     fn assistant(text: &str) -> ConversationItem {
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: text.into(),
             tool_calls: Vec::new(),
             model_id: None,
@@ -990,6 +992,8 @@ mod tests {
 
     fn assistant_tool_call_only() -> ConversationItem {
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "".into(),
             tool_calls: vec![xai_grok_sampling_types::ToolCall {
                 id: "call_1".into(),

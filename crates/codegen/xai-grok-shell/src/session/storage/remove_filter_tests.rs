@@ -24,11 +24,13 @@ fn reasoning(id: &str) -> ConversationItem {
         content: None,
         encrypted_content: Some(format!("enc_{id}")),
         status: None,
-    })
+    }.into())
 }
 
 fn backend_search(id: &str) -> ConversationItem {
     ConversationItem::BackendToolCall(BackendToolCallItem {
+        evidence: Default::default(),
+        source: Default::default(),
         kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
             id: id.to_string(),
             status: rs::WebSearchToolCallStatus::Completed,

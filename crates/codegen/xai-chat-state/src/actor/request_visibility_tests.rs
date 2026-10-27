@@ -44,7 +44,7 @@ async fn withheld_memory_records_follow_the_final_view_without_changing_history_
                     Exclusion::Memory => ContextCategory::Memory,
                     Exclusion::System => ContextCategory::CoreInstructions,
                 }, ContextSwitch::Excluded);
-                h.handle.set_context_policy(policy);
+                h.handle.set_context_policy(policy).await.unwrap();
                 let reminder = format!("<memory-context>\n{}\nWITHHELD_UNICODE_TAIL\n</memory-context>", "ä界".repeat(5000));
                 let built = h.handle.build_request(vec![], Some(reminder.clone()), persistence.enabled(), None,
                     "visibility".into(), "withheld".into()).await.unwrap();
@@ -58,7 +58,7 @@ async fn withheld_memory_records_follow_the_final_view_without_changing_history_
                     | (SystemHead::Prompt, Exclusion::System)
                     | (SystemHead::Absent, Exclusion::System) => vec![ConversationItem::user("human control")],
                 };
-                assert_eq!(serde_json::to_value(&built.items).unwrap(), serde_json::to_value(expected_request).unwrap());
+                assert_eq!(serde_json::to_value(payload_items(&built.items)).unwrap(), serde_json::to_value(expected_request).unwrap());
                 let expected_history = match persistence {
                     MemoryPersistence::RequestOnly => initial,
                     MemoryPersistence::Canonical => {
@@ -70,11 +70,12 @@ async fn withheld_memory_records_follow_the_final_view_without_changing_history_
                     }
                 };
                 let canonical = h.handle.get_conversation().await;
-                assert_eq!(serde_json::to_value(&canonical).unwrap(), serde_json::to_value(&expected_history).unwrap());
+                assert!(canonical.iter().all(|item| !item.source().is_unadmitted()));
+                assert_eq!(serde_json::to_value(payload_items(&canonical)).unwrap(), serde_json::to_value(&expected_history).unwrap());
                 let records = h.drain_persistence();
                 match persistence {
                     MemoryPersistence::Canonical => assert!(records.iter().any(|record| matches!(record,
-                        PersistenceRecord::ReplaceHistory(items) if serde_json::to_value(items).unwrap() == serde_json::to_value(&expected_history).unwrap())),
+                        PersistenceRecord::ReplaceHistory(items) if serde_json::to_value(payload_items(items)).unwrap() == serde_json::to_value(&expected_history).unwrap())),
                         "withholding must not suppress independent canonical memory persistence"),
                     MemoryPersistence::RequestOnly => assert!(!records.iter().any(|record|
                         matches!(record, PersistenceRecord::Message(item) if item.text_content().contains("WITHHELD_UNICODE_TAIL"))

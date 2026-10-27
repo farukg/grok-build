@@ -483,6 +483,7 @@ impl AgentView {
             timeline_hover_preview: None,
             timeline_mode: crate::views::timeline_panel::TimelineMode::Rail,
             context_sidebar: Default::default(),
+            context_policy_generation: 0,
             panel_persistence: Default::default(),
             sidebar_heights: Default::default(),
             f7_body: Default::default(),

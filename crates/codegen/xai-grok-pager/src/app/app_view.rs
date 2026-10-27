@@ -5844,11 +5844,19 @@ impl AppView {
         else {
             return;
         };
+        let Some(generation) = self
+            .agents
+            .get_mut(&id)
+            .and_then(|agent| agent.context_policy_request_started())
+        else {
+            return;
+        };
         self.pending_effects
             .push(crate::app::actions::Effect::ContextPolicy {
                 agent_id: id,
                 session_id,
                 change: crate::app::actions::ContextPolicyChange::Read,
+                generation,
             });
     }
 }

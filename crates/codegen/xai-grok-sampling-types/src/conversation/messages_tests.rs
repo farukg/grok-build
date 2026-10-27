@@ -217,7 +217,7 @@ fn test_messages_request_cache_breakpoint_marks_an_image_tip() {
 fn signed_reasoning(text: &str, signature: &str) -> ConversationItem {
     let mut item = synthesized_reasoning_item(text);
     item.encrypted_content = Some(signature.to_owned());
-    ConversationItem::Reasoning(item)
+    ConversationItem::Reasoning(item.into())
 }
 
 fn assistant_block_types(json: &serde_json::Value) -> Vec<String> {
@@ -236,11 +236,11 @@ fn reasoning_without_signature_is_not_replayed_as_thinking() {
     for unsigned in [
         ConversationItem::Reasoning(synthesized_reasoning_item(
             "recorded under chat completions",
-        )),
+        ).into()),
         {
             let mut item = synthesized_reasoning_item("empty signature");
             item.encrypted_content = Some(String::new());
-            ConversationItem::Reasoning(item)
+            ConversationItem::Reasoning(item.into())
         },
     ] {
         let req = ConversationRequest::from_items(vec![
@@ -393,6 +393,8 @@ fn test_tool_result_with_images_to_anthropic() {
     let req = ConversationRequest::from_items(vec![
         ConversationItem::user("Read this"),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: String::new().into(),
             tool_calls: vec![ToolCall {
                 id: "call_1".into(),

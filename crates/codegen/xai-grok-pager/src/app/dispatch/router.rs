@@ -1093,7 +1093,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::SetContextPolicy(policy) => dispatch_context_policy(
             app,
-            crate::app::actions::ContextPolicyChange::Replace(policy),
+            crate::app::actions::ContextPolicyChange::Edit(policy),
         ),
         Action::RemoveContextItems(target) => dispatch_remove_context_items(app, target),
         Action::CancelScheduledTask(task_id) => dispatch_cancel_scheduled_task(app, task_id),

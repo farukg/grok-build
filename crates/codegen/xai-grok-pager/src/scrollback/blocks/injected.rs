@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use crate::appearance::AppearanceConfig;
 use crate::render::content_kind::styled_rows;
 use crate::render::wrapping::word_wrap_lines_with_joiners;
-use crate::scrollback::block::BlockContent;
+use crate::scrollback::block::{BlockContent, MessageKind};
 use crate::scrollback::types::{
     AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode,
 };
@@ -19,6 +19,7 @@ use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub struct InjectedBlock {
+    kind: MessageKind,
     /// Short surface label ("Task completed", "Memory reminder", …), derived from the
     /// `SyntheticReason` wire name or the request-record kind.
     pub label: String,
@@ -32,11 +33,19 @@ pub struct InjectedBlock {
 impl InjectedBlock {
     pub fn new(label: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
+            kind: MessageKind::Injected,
             label: label.into(),
             text: text.into(),
             starts_turn: false,
         }
     }
+
+    pub fn from_reason(reason: &str, text: impl Into<String>) -> Self {
+        let (kind, label) = decode_reason(reason);
+        Self { kind, label, text: text.into(), starts_turn: false }
+    }
+
+    pub fn message_kind(&self) -> MessageKind { self.kind }
 
     /// Mark the entry as the start of a numbered prompt turn (auto-wake echo).
     pub fn with_starts_turn(mut self, starts_turn: bool) -> Self {
@@ -162,44 +171,49 @@ mod tests;
 /// Human label for a `SyntheticReason` wire name (the chunk-meta string) or a request-record
 /// kind wire name. Unknown future reasons fall back to a generic label; they still render.
 pub fn injected_label(reason: &str) -> String {
+    decode_reason(reason).1
+}
+
+fn decode_reason(reason: &str) -> (MessageKind, String) {
     use serde::Deserialize;
     use serde::de::value::StrDeserializer;
     use xai_grok_shell::sampling::SyntheticReason;
 
     match reason {
-        "memory_reminder" => return "Memory reminder".to_string(),
-        "context_view" => return "Context view".to_string(),
+        "memory_reminder" => return (MessageKind::InjectedMemory, "Memory reminder".to_string()),
+        "context_view" => return (MessageKind::InjectedSummary, "Context view".to_string()),
         _ => {}
     }
     let decoded = SyntheticReason::deserialize(StrDeserializer::<serde::de::value::Error>::new(reason));
     let Ok(decoded) = decoded else {
-        return format!("Injected ({reason})");
+        return (MessageKind::InjectedOther, format!("Injected ({reason})"));
     };
-    match decoded {
-        SyntheticReason::Human => "Your message",
-        SyntheticReason::Primary => "Core instructions",
-        SyntheticReason::CompactionMeta => "Compaction summary",
-        SyntheticReason::SystemReminder => "System reminder",
-        SyntheticReason::LengthContinue => "Length continue",
-        SyntheticReason::ProjectInstructions => "Project rules",
-        SyntheticReason::AutoContinue => "Auto-continue",
-        SyntheticReason::AutoRecovery => "Auto-recovery",
-        SyntheticReason::Interjection => "Interjection",
-        SyntheticReason::AgentMessage => "Agent message",
-        SyntheticReason::ParentHumanMessage => "Parent message",
-        SyntheticReason::TaskCompleted => "Task completed",
-        SyntheticReason::SubagentCompleted => "Subagent completed",
-        SyntheticReason::NotificationDrain => "Notification drain",
-        SyntheticReason::GoalSummary => "Goal continuation",
-        SyntheticReason::GoalClassifierNudge => "Goal check",
-        SyntheticReason::SchedulerFired => "Scheduled task",
-        SyntheticReason::StopHookFeedback => "Stop-hook feedback",
-        SyntheticReason::WorkingDirectorySwitch => "Directory switch",
-        SyntheticReason::SessionPrefix => "Session context",
-        SyntheticReason::DirectBash => "Direct command",
-        SyntheticReason::GoalSetup => "Goal setup",
-        SyntheticReason::SkillCatalog => "Skill catalog",
-        SyntheticReason::McpCatalog => "MCP catalog",
-        SyntheticReason::Unknown => return format!("Injected ({reason})"),
-    }.to_string()
+    let (kind, label) = match decoded {
+        SyntheticReason::Human => (MessageKind::InjectedConversation, "Your message"),
+        SyntheticReason::Primary => (MessageKind::InjectedInstructions, "Core instructions"),
+        SyntheticReason::CompactionMeta => (MessageKind::InjectedSummary, "Compaction summary"),
+        SyntheticReason::SystemReminder => (MessageKind::InjectedContinuation, "System reminder"),
+        SyntheticReason::LengthContinue => (MessageKind::InjectedContinuation, "Length continue"),
+        SyntheticReason::ProjectInstructions => (MessageKind::InjectedInstructions, "Project rules"),
+        SyntheticReason::AutoContinue => (MessageKind::InjectedContinuation, "Auto-continue"),
+        SyntheticReason::AutoRecovery => (MessageKind::InjectedContinuation, "Auto-recovery"),
+        SyntheticReason::Interjection => (MessageKind::InjectedConversation, "Interjection"),
+        SyntheticReason::AgentMessage => (MessageKind::InjectedConversation, "Agent message"),
+        SyntheticReason::ParentHumanMessage => (MessageKind::InjectedConversation, "Parent message"),
+        SyntheticReason::TaskCompleted => (MessageKind::InjectedNotification, "Task completed"),
+        SyntheticReason::SubagentCompleted => (MessageKind::InjectedNotification, "Subagent completed"),
+        SyntheticReason::NotificationDrain => (MessageKind::InjectedNotification, "Notification drain"),
+        SyntheticReason::GoalSummary => (MessageKind::InjectedSummary, "Goal continuation"),
+        SyntheticReason::GoalClassifierNudge => (MessageKind::InjectedContinuation, "Goal check"),
+        SyntheticReason::SchedulerFired => (MessageKind::InjectedNotification, "Scheduled task"),
+        SyntheticReason::StopHookFeedback => (MessageKind::InjectedNotification, "Stop-hook feedback"),
+        SyntheticReason::WorkingDirectorySwitch => (MessageKind::InjectedEnvironment, "Directory switch"),
+        SyntheticReason::SessionPrefix => (MessageKind::InjectedEnvironment, "Session context"),
+        SyntheticReason::DirectBash => (MessageKind::InjectedConversation, "Direct command"),
+        SyntheticReason::GoalSetup => (MessageKind::InjectedContinuation, "Goal setup"),
+        SyntheticReason::SkillCatalog => (MessageKind::InjectedInstructions, "Skill catalog"),
+        SyntheticReason::McpCatalog => (MessageKind::InjectedInstructions, "MCP catalog"),
+        SyntheticReason::Unknown => return (MessageKind::InjectedOther, format!("Injected ({reason})")),
+    };
+    (kind, label.to_string())
 }

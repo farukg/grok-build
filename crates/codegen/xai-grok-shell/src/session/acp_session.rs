@@ -749,6 +749,7 @@ impl StreamApplySpan {
     }
 }
 pub(crate) struct SessionActor {
+    pub(crate) context_policy_binding: super::helpers::context_policy_store::ContextPolicyBinding,
     /// Git/jj working-tree root for templated first-message prefixes, if any.
     pub(crate) vcs_root: Option<std::path::PathBuf>,
     pub(crate) session_info: SessionInfo,

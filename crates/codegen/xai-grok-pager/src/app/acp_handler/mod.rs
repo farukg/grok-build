@@ -28,6 +28,7 @@ use xai_grok_shell::tools::todo::todo_item_from_plan_entry;
 use xai_grok_tools::notification::ScheduledTaskRemovedReason;
 use xai_grok_workspace::permission::bash_command_splitting::BashCommandHighlights;
 mod background;
+mod context_policy;
 mod child_observation;
 mod follow_ups;
 mod interactions;
@@ -582,6 +583,7 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         "x.ai/task_completed" => handle_task_completed(notif, app),
         "x.ai/models/update" => handle_models_update(notif, app),
         "x.ai/settings/update" => handle_settings_update(notif, app),
+        "x.ai/session/context_policy/changed" => context_policy::handle_context_policy_changed(notif, app),
         "x.ai/sessions/changed" => handle_sessions_changed(notif, app),
         "x.ai/queue/changed" => handle_queue_changed(notif, app),
         "x.ai/session/prompt_complete" => handle_prompt_complete(notif, app),

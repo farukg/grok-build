@@ -2809,13 +2809,6 @@ impl SessionActor {
         let mut published_request_records = Vec::new();
         let structured_output_native = schema_ok && native_backend;
         let structured_output_tool = schema_ok && !native_backend;
-        if structured_output_tool {
-            self.push_system_reminder(
-                "A response schema is required. After any tool use, call the \
-                 `StructuredOutput` tool exactly once with your final answer as its \
-                 arguments; do not return the answer as text.",
-            );
-        }
         loop {
             self.emit_event(crate::session::events::Event::LoopStarted { loop_index });
             loop_index += 1;
@@ -2988,7 +2981,7 @@ impl SessionActor {
                     name: STRUCTURED_OUTPUT_TOOL.to_string(),
                     description: Some(
                         "Return your final answer as JSON matching the required schema. \
-                         Call this exactly once, at the end."
+                         Call this exactly once, at the end; do not return the answer as text."
                             .to_string(),
                     ),
                     parameters: schema,
@@ -3003,6 +2996,8 @@ impl SessionActor {
                     build_request_ms = tracing::field::Empty,
                     item_count = tracing::field::Empty,
                 ));
+            let context_policy_guard = self.admit_context_policy_for_request().await
+                .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
             let request = self
                 .chat_state_handle
                 .build_request(
@@ -3021,7 +3016,8 @@ impl SessionActor {
                     req_id.to_owned(),
                 )
                 .await
-                .expect("chat state actor should be alive");
+                .ok_or_else(|| acp::Error::internal_error().data("chat state actor failed to build request"))?;
+            drop(context_policy_guard);
             build_request_span.span().record(
                 "build_request_ms",
                 build_req_start.elapsed().as_millis() as i64,
@@ -3038,7 +3034,15 @@ impl SessionActor {
                     "loop_index": loop_index,
                 })),
             );
-            let mut request = self.prepare_request_for_sampling(request, &mut published_request_records).await?;
+            let structured_output_validator = request.context_policy
+                .includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions)
+                .then_some(&structured_output_validator)
+                .and_then(Option::as_ref);
+            let structured_output_tool = structured_output_tool && structured_output_validator.is_some();
+            let native_json_schema = if structured_output_native { json_schema.clone() } else { None };
+            let mut request = self.prepare_request_for_sampling(
+                request, native_json_schema, &mut published_request_records,
+            ).await?;
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());
@@ -3051,19 +3055,6 @@ impl SessionActor {
                         xai_grok_cloud_config::managed_config::resolve_deployment_key().as_deref(),
                     );
             }
-            if structured_output_native {
-                request.json_schema = json_schema.clone();
-            }
-            request.hosted_tools = if self
-                .chat_state_handle
-                .get_context_policy()
-                .await
-                .includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions)
-            {
-                self.hosted_tools_for_turn()
-            } else {
-                Vec::new()
-            };
             request.max_output_tokens = self
                 .tool_context
                 .clamp_task_model_request(request.max_output_tokens)

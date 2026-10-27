@@ -142,6 +142,7 @@ impl SessionActor {
         }
 
         match event {
+            SamplingEvent::LocalRequest { .. } => {}
             SamplingEvent::StreamStarted {
                 request_id,
                 timestamp_ms,

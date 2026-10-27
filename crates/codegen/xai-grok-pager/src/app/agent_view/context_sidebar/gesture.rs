@@ -1,22 +1,6 @@
-//! Keys and clicks of the F7 sidebar, mapped once into commands.
-//!
-//! | gesture                       | section title               | Message display row            | Context row                      |
-//! |-------------------------------|-----------------------------|--------------------------------|----------------------------------|
-//! | Enter, Space                  | fold or unfold the section  | flip this kind                 | ask the shell to flip the switch |
-//! Context clicks, including modified clicks and its title, only select and focus.
-//! | Shift+Enter, Shift+click      | toggle all other sections   | toggle all other kinds         | toggle all other sections        |
-//! | `+` / `-`                     | open / close all sections   | bulk kinds full / on one line  | open / close all sections        |
-//! | Ctrl+Enter, Ctrl+click, `*`   | toggle everything else      | toggle everything else         | toggle everything else           |
-//! | `g`                           | save to global / this session (same on every row; the footer shows the target)    |
-//!
-//! A toggle opens everything it reaches when any of it is closed (a section folded, a kind on one line) and
-//! otherwise closes it all, so repeating it reverts it. "Everything" is every other section and every other
-//! bulk kind. A modifier activation never changes the line it starts from, and user and assistant message
-//! rows are never part of a bulk gesture: they are turned one by one. Context switches never change in bulk.
-//! Terminals often do not deliver Shift+Enter, Ctrl+Enter or modified clicks, hence the plain `+`, `-` and `*` keys.
-//!
-//! Navigation: Up/Down (k/j) over visible lines, Home/End, PageUp/PageDown, Right (l) unfolds a folded title or steps
-//! to its first row, Left (h) folds an unfolded title or steps from a row to its title. Tab leaves for the chat, Esc closes.
+//! F7 keys share the Outline navigation owner.
+//! Context mouse input selects only; Enter inspects; Space changes values.
+//! Left/Right control disclosure independently of group values.
 
 use super::RowTarget;
 use super::outline::CursorTarget;
@@ -52,6 +36,8 @@ pub(super) enum SidebarCommand {
     },
     /// Select and apply the stored global or session Message Display values.
     ToggleDisplayScope,
+    ToggleContextScope,
+    Inspect,
     FocusChat,
     Close,
 }
@@ -77,6 +63,7 @@ pub(super) fn command_for(key: &KeyEvent, page: usize) -> Option<SidebarCommand>
         KeyCode::End => Some(SidebarCommand::Tree(TreeKey::End)),
         KeyCode::PageUp => Some(SidebarCommand::Tree(TreeKey::PageUp(page))),
         KeyCode::PageDown => Some(SidebarCommand::Tree(TreeKey::PageDown(page))),
+        KeyCode::Enter if key.modifiers.is_empty() => Some(SidebarCommand::Inspect),
         KeyCode::Enter | KeyCode::Char(' ') => Some(activation(key.modifiers)),
         KeyCode::Esc => Some(SidebarCommand::Close),
         KeyCode::Tab => Some(SidebarCommand::FocusChat),
@@ -88,6 +75,7 @@ pub(super) fn command_for(key: &KeyEvent, page: usize) -> Option<SidebarCommand>
         KeyCode::Char('-') if plain => bulk(Spread::Peers, Goal::Set(BulkDirection::Collapse)),
         KeyCode::Char('*') if plain => bulk(Spread::Everything, Goal::Toggle),
         KeyCode::Char('g') if plain => Some(SidebarCommand::ToggleDisplayScope),
+        KeyCode::Char('c') if plain => Some(SidebarCommand::ToggleContextScope),
         _ => None,
     }
 }
@@ -116,8 +104,9 @@ pub(super) fn activation(modifiers: KeyModifiers) -> SidebarCommand {
 pub(super) fn hint_for(target: Option<CursorTarget>) -> &'static str {
     match target {
         Some(CursorTarget::Title(_)) => "Space folds · +/- all · * everything",
+        Some(CursorTarget::Row(RowTarget::Group(_))) => "Space group value · ←/→ fold · Enter details",
         Some(CursorTarget::Row(RowTarget::DockPlacement)) => "Space Off/Top/Bottom · ←/→ fold",
-        Some(CursorTarget::Row(RowTarget::Context(_))) => "Space ON/OFF · ←/→ fold · +/- all",
+        Some(CursorTarget::Row(RowTarget::Context(_))) => "Space ON/OFF · Enter details · c scope · +/- all",
         Some(CursorTarget::Row(RowTarget::Display(_))) => "Space flips · +/- all · * everything",
         None => "Esc closes",
     }

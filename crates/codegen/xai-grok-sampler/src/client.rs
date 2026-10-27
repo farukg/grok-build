@@ -421,6 +421,7 @@ pub struct SamplingClient {
     /// Endpoint URL builder, resolved once from `base_url` and `query_params`.
     endpoint: EndpointTemplate,
     first_use_noted: Arc<AtomicBool>,
+    capture: Option<crate::request_capture::CaptureAttempt>,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -773,7 +774,14 @@ impl SamplingClient {
             header_injector: config.header_injector,
             endpoint,
             first_use_noted: Arc::new(AtomicBool::new(false)),
+            capture: None,
         })
+    }
+
+    pub(crate) fn with_capture(&self, capture: crate::request_capture::CaptureAttempt) -> Self {
+        let mut client = self.clone();
+        client.capture = Some(capture);
+        client
     }
 
     pub fn api_backend(&self) -> ApiBackend {
@@ -1094,6 +1102,9 @@ impl SamplingClient {
                 .headers_mut()
                 .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         }
+        if let Some(capture) = &self.capture {
+            capture.prepared(&json);
+        }
         let body = if should_compress(self.defaults.request_compression, json.len()) {
             match compress_body(&json).await {
                 Some(compressed) => {
@@ -1112,9 +1123,17 @@ impl SamplingClient {
     }
 
     async fn send(&self, request: reqwest::Request) -> Result<reqwest::Response> {
+        if let Some(capture) = &self.capture {
+            capture.emit(crate::request_capture::LocalRequestEvidence::DispatchStarted);
+        }
         self.http
             .execute(request)
             .await
+            .inspect(|response| {
+                if let Some(capture) = &self.capture {
+                    capture.emit(crate::request_capture::LocalRequestEvidence::ResponseHeaders { status: response.status().as_u16() });
+                }
+            })
             .inspect_err(|e| tracing::debug!("HTTP request failed: {}", e))
             .map_err(Into::into)
     }
@@ -1125,12 +1144,18 @@ impl SamplingClient {
         span_timing: &mut StreamSpanTiming,
     ) -> Result<reqwest::Response> {
         span_timing.record_request_build();
+        if let Some(capture) = &self.capture {
+            capture.emit(crate::request_capture::LocalRequestEvidence::DispatchStarted);
+        }
         let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
             span_timing.record_transport_failure(&e.to_string());
             e
         })?;
         span_timing.record_response_headers();
+        if let Some(capture) = &self.capture {
+            capture.emit(crate::request_capture::LocalRequestEvidence::ResponseHeaders { status: response.status().as_u16() });
+        }
         Ok(response)
     }
 
@@ -2359,6 +2384,10 @@ fn stream_collect_error(info: SamplingErrorInfo) -> SamplingError {
         error_code: info.error_code,
     }
 }
+
+#[cfg(test)]
+#[path = "request_capture_tests.rs"]
+mod request_capture_tests;
 
 #[cfg(test)]
 mod tests {

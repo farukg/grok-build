@@ -1226,6 +1226,7 @@ pub(super) fn make_test_handle(
         hunk_cancel,
     );
     crate::session::SessionHandle {
+        context_policy_binding: Default::default(),
         context_window_selection: Default::default(),
         cmd_tx,
         persistence_tx,
@@ -3318,6 +3319,7 @@ async fn lazy_registry_build_resolves_real_remote_trust_before_reading_disk_conf
     assert_eq!(trusted, Some(true), "kill-switched folder counts trusted");
 }
 mod child_prompt_tests;
+mod context_policy_scope_tests;
 mod list_running_heal_tests;
 mod roster_lane_tests;
 #[cfg(unix)]

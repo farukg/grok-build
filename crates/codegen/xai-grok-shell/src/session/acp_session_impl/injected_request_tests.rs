@@ -19,6 +19,7 @@ async fn injected_record_is_durable_before_live_delivery_and_replays_losslessly(
             },
         ).await.unwrap();
         let records: Vec<_> = (0..32).map(|index| InjectedRequestRecord::MemoryReminder {
+            source: Default::default(),
             text: format!("{index}:{}\nVISIBLE_TAIL_{index}", "ä".repeat(5000)),
         }).collect();
         let refs: Vec<_> = records.iter().collect();
@@ -81,7 +82,7 @@ async fn sampling_request_boundary_publishes_changed_second_view_but_not_identic
             }
             let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), format!("r-{iteration}")).await.unwrap();
             let actual_items = built.request.items.clone();
-            let prepare = actor.prepare_request_for_sampling(built, &mut published);
+            let prepare = actor.prepare_request_for_sampling(built, None, &mut published);
             if let Some(expected_body) = addition {
                 let acknowledge = async {
                     let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = persistence_rx.recv().await.unwrap() else {
@@ -128,7 +129,7 @@ async fn equal_body_actor_injections_publish_each_new_occurrence_once() {
                 let expected_count = (iteration + 1).min(2);
                 assert_eq!(built.items.iter().filter(|item| item.text_content() == body).count(), expected_count);
                 assert_eq!(built.injected_records.iter().filter(|record| record.text() == body).count(), expected_count);
-                let prepare = actor.prepare_request_for_sampling(built, &mut published);
+                let prepare = actor.prepare_request_for_sampling(built, None, &mut published);
                 let request = if iteration < 2 {
                     let acknowledge = async {
                         let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = persistence_rx.recv().await.unwrap() else {
@@ -175,7 +176,7 @@ async fn failed_request_record_persistence_does_not_publish_live_content() {
             actor.chat_state_handle.push_user_message(ConversationItem::system_reminder("changed view"));
             let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "r".into()).await.unwrap();
             let mut published = Vec::new();
-            let publish = actor.prepare_request_for_sampling(built, &mut published);
+            let publish = actor.prepare_request_for_sampling(built, None, &mut published);
             let reject = async {
                 let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = persistence_rx.recv().await.unwrap() else {
                     panic!("expected acknowledged request batch");

@@ -39,10 +39,26 @@ impl ScrollbackState {
         self.refresh_display_defaults(&previous, None, reset_overrides);
     }
 
+    pub fn choose_kind_defaults(&mut self, kinds: &[MessageKind], form: DisplayForm) {
+        let previous = self.display_defaults.clone();
+        for &kind in kinds { self.display_defaults.set(kind, form); }
+        self.refresh_kind_defaults(&previous, Some(kinds), true);
+    }
+
     pub(super) fn refresh_display_defaults(
         &mut self,
         previous: &DisplayDefaults,
         target: Option<MessageKind>,
+        reset_overrides: bool,
+    ) {
+        let kinds = target.map(|kind| [kind]);
+        self.refresh_kind_defaults(previous, kinds.as_ref().map(|kinds| kinds.as_slice()), reset_overrides);
+    }
+
+    fn refresh_kind_defaults(
+        &mut self,
+        previous: &DisplayDefaults,
+        targets: Option<&[MessageKind]>,
         reset_overrides: bool,
     ) {
         let edit_expanded = self.appearance.scrollback.blocks.edit.effective_expanded(
@@ -51,7 +67,7 @@ impl ScrollbackState {
         let mut changed = false;
         for entry in self.entries.values_mut() {
             let kind = MessageKind::from(&entry.block);
-            if target.is_some_and(|target| target != kind) {
+            if targets.is_some_and(|targets| !targets.iter().any(|&target| target == kind || kind.parent() == Some(target))) {
                 continue;
             }
             let form = self.display_defaults.get(kind);

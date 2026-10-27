@@ -216,6 +216,7 @@ mod session_retry_policy_tests {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn spawn_session_actor(
     session_info: SessionInfo,
+    context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyAuthority,
     gateway: GatewaySender,
     sampling_config: SamplingConfig,
     credentials: xai_chat_state::Credentials,
@@ -658,9 +659,26 @@ pub(crate) async fn spawn_session_actor(
     .await;
     drop(chat_state_timer);
     chat_state_handle.update_credentials(credentials);
-    chat_state_handle.set_context_policy(crate::session::helpers::context_policy_store::load(
-        &crate::session::persistence::session_dir(&session_info),
-    ));
+    let context_policy_binding = crate::session::helpers::context_policy_store::ContextPolicyBinding::new(context_policy_authority);
+    {
+        let store = context_policy_binding.authority.clone().write_owned().await;
+        let context_session_id = session_info.id.0.to_string();
+        let context_session_dir = crate::session::persistence::session_dir(&session_info);
+        let (store, policy) = tokio::task::spawn_blocking(move || {
+            let mut store = store;
+            let policy = store.ensure_session(&context_session_id, &context_session_dir)
+                .and_then(|()| store.effective(&context_session_id));
+            (store, policy)
+        }).await.map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
+        let policy = policy.map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
+        chat_state_handle.set_context_policy(policy).await
+            .map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
+        context_policy_binding.applied_revision.store(
+            store.selection(session_info.id.0.as_ref(), &context_policy_binding.incarnation)
+                .map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?.version.revision,
+            std::sync::atomic::Ordering::Release,
+        );
+    }
     let state = TokioMutex::new(State {
         running_task: None,
         finalization_gate: Default::default(),
@@ -1815,6 +1833,7 @@ pub(crate) async fn spawn_session_actor(
     let actor_build = spawn_step!("actor_build");
     let context_window_selection = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let session = Arc::new_cyclic(|weak: &std::sync::Weak<SessionActor>| SessionActor {
+        context_policy_binding: context_policy_binding.clone(),
         status_wake: Default::default(),
         session_info: session_info.clone(),
         transient_retry_enabled: !startup_hints.is_subagent
@@ -2450,6 +2469,7 @@ pub(crate) async fn spawn_session_actor(
         let _ = session_done_tx.send(());
     });
     let handle = SessionHandle {
+        context_policy_binding,
         cmd_tx,
         persistence_tx: persistence.tx.clone(),
         current_prompt_id,
@@ -2563,6 +2583,7 @@ pub(crate) fn bind_installed_toolset(
 #[tracing::instrument(level = "debug", skip_all)]
 pub(crate) async fn spawn_session_on_thread(
     session_info: SessionInfo,
+    context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyAuthority,
     gateway: GatewaySender,
     sampling_config: SamplingConfig,
     credentials: xai_chat_state::Credentials,
@@ -2777,6 +2798,7 @@ pub(crate) async fn spawn_session_on_thread(
                 };
                 let actor_fut = spawn_session_actor(
                     session_info,
+                    context_policy_authority,
                     gateway,
                     sampling_config,
                     credentials,

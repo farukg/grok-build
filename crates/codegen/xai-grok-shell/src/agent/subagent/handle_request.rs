@@ -978,10 +978,12 @@ pub(crate) async fn run_shell_child(
         }
     };
     context_bootstrap_span.close();
-    if let Some(policy) =
-        context_policy_to_inherit(resume_source.as_ref(), ctx.parent_chat_state.as_ref()).await
-    {
-        write_inherited_context_policy(&child_session_dir, &policy);
+    if let Err(error) = inherit_context_policy(&ctx, resume_source.as_ref(), &child_session_info).await {
+        return child_run_output(
+            failure_result(&request, &format!("Could not inherit context policy: {error}")),
+            completion_data,
+            None,
+        );
     }
     let verbatim_mirror_fork = initial_context.is_verbatim_fork();
     let InitialContext {
@@ -1531,6 +1533,7 @@ pub(crate) async fn run_shell_child(
     }
     let spawn_result = session::spawn_session_on_thread(
         child_session_info,
+        ctx.context_policy_authority.clone(),
         gateway.clone(),
         effective_sampling_config,
         credentials,

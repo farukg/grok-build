@@ -667,6 +667,7 @@ pub struct MvpAgent {
     pub(crate) activity: crate::agent::activity::AgentActivity,
     /// LEADER-SAFE(per-session).
     session_registry: SessionRegistry,
+    pub(crate) context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyAuthority,
     /// `(title, last_turn_summary)` per resident session id, refreshed each `build_roster`.
     /// Lets the synchronous roster deltas reuse both instead of emitting empty ones; `resident_roster_entry` can't read disk.
     resident_roster_titles: RefCell<RosterDisplayCache>,
@@ -1233,6 +1234,7 @@ mod folder_trust_prompt;
 mod heap_profile;
 mod resource_telemetry;
 mod session_registry;
+mod context_policy;
 mod session_lifecycle;
 mod agent_ops;
 mod acp_agent;

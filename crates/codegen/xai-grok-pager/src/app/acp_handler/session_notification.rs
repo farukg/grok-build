@@ -1408,8 +1408,8 @@ pub(super) fn handle_session_notification_with_origin(
         } => {
             // Request-only content the model saw (memory-reminder splice, view transforms):
             // one collapsed injected entry; the event-seq dedup above drops replay re-delivery.
-            let label = crate::scrollback::blocks::injected_label(kind);
-            agent.scrollback.push_block(RenderBlock::injected(label, text, false));
+            let block = crate::scrollback::blocks::InjectedBlock::from_reason(kind, text);
+            agent.scrollback.push_block(RenderBlock::Injected(block));
             true
         }
         _ => {

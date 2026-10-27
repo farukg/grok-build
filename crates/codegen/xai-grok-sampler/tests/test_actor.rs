@@ -166,6 +166,10 @@ async fn submit_emits_started_first_token_channel_completed() {
     let events = drain_until_terminal(&mut event_rx, Duration::from_secs(5)).await;
     server.shutdown();
 
+    assert!(matches!(events[0], SamplingEvent::LocalRequest {
+        evidence: xai_grok_sampler::request_capture::LocalRequestEvidence::Prepared { .. }, ..
+    }));
+    let events: Vec<_> = events.into_iter().filter(|event| !matches!(event, SamplingEvent::LocalRequest { .. })).collect();
     assert!(matches!(events[0], SamplingEvent::StreamStarted { .. }));
     assert!(
         events

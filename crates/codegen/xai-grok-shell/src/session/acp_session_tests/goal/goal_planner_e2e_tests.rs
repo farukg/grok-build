@@ -468,6 +468,7 @@ async fn planner_fork_inherits_parent_model() {
             // The mirror-child fork must IGNORE it and inherit the parent model, since the radix prefix is per-model
             // Without that forcing, the configured model would flow through and the assertion below would catch the regression
             let actor = StdArc::new(SessionActor {
+                context_policy_binding: Default::default(),
                 transient_retry_enabled: true,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),

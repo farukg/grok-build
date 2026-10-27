@@ -49,6 +49,15 @@ pub(super) fn kind_name(kind: MessageKind) -> Option<&'static str> {
         MessageKind::ContextInfo => Some("context_info"),
         MessageKind::MemoryCapture => Some("memory_capture"),
         MessageKind::Injected => Some("injected"),
+        MessageKind::InjectedOther => Some("injected_other"),
+        MessageKind::InjectedInstructions => Some("injected_instructions"),
+        MessageKind::InjectedContinuation => Some("injected_continuation"),
+        MessageKind::InjectedNotification => Some("injected_notification"),
+        MessageKind::InjectedMemory => Some("injected_memory"),
+        MessageKind::InjectedSummary => Some("injected_summary"),
+        MessageKind::InjectedEnvironment => Some("injected_environment"),
+        MessageKind::InjectedConversation => Some("injected_conversation"),
+
         MessageKind::Stub => None,
     }
 }

@@ -3,7 +3,7 @@
 
 use super::{
     AgentView, InputOutcome, KeyCode, KeyModifiers, click_row, draw, open_sidebar, press,
-    press_with, ready_report, screen, sidebar_row, test_fixtures, toast,
+    press_with, ready_report, screen, sidebar_row, test_fixtures, toast, focus_row,
 };
 use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
@@ -29,6 +29,7 @@ fn toggle_display_scope(agent: &mut AgentView) -> InputOutcome {
 }
 
 fn flip(agent: &mut AgentView, label: &str) {
+    focus_row(agent, label);
     let buf = draw(agent);
     assert!(matches!(
         click_row(agent, &buf, label),
@@ -79,6 +80,7 @@ fn a_changed_form_comes_back_in_a_new_view_even_before_f7_opens() {
         "only the changed kind is restored"
     );
     open_f7(&mut restored);
+    focus_row(&mut restored, "File reads");
     assert!(sidebar_row(&draw(&mut restored), "File reads").contains("full"));
 }
 
@@ -217,8 +219,8 @@ fn a_folded_section_stays_folded_after_a_restart() {
     let root = dir.path().join("panel-settings");
     let mut agent = view(&root, Some("sess-a"));
     open_f7(&mut agent);
-    let _ = press(&mut agent, KeyCode::Home);
-    let _ = press(&mut agent, KeyCode::Enter);
+    focus_row(&mut agent, "Context");
+    let _ = press(&mut agent, KeyCode::Char(' '));
     assert!(!screen(&draw(&mut agent)).contains("Core instructions"));
     assert_eq!(
         stored(&read_toml(&global_file(&root)), "sidebar", "context"),
@@ -239,8 +241,8 @@ fn a_folded_section_stays_folded_after_a_restart() {
         "the other section stays open"
     );
 
-    let _ = press(&mut restored, KeyCode::Home);
-    let _ = press(&mut restored, KeyCode::Enter);
+    focus_row(&mut restored, "Context");
+    let _ = press(&mut restored, KeyCode::Char(' '));
     let file = read_toml(&global_file(&root));
     assert_eq!(
         stored(&file, "sidebar", "context"),
@@ -257,9 +259,8 @@ fn section_folds_stay_global_while_display_values_use_session_scope() {
     let mut agent = view(&root, Some("sess-a"));
     open_f7(&mut agent);
     let _ = toggle_display_scope(&mut agent);
-    let _ = press(&mut agent, KeyCode::End);
-    let _ = press(&mut agent, KeyCode::Left);
-    let _ = press(&mut agent, KeyCode::Enter);
+    focus_row(&mut agent, "Message display");
+    let _ = press(&mut agent, KeyCode::Char(' '));
     assert!(!screen(&draw(&mut agent)).contains("File reads"));
     assert_eq!(
         stored(&read_toml(&global_file(&root)), "sidebar", "message_display"),
@@ -314,6 +315,7 @@ fn an_explicit_one_line_choice_for_edits_survives_a_restart() {
         "the choice is applied, not left to the block's own policy"
     );
     open_f7(&mut restored);
+    focus_row(&mut restored, "File edits");
     assert!(sidebar_row(&draw(&mut restored), "File edits").contains("1 line"));
 }
 
@@ -426,6 +428,7 @@ fn switching_scope_applies_values_immediately_and_preserves_the_other_scope() {
     assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Expanded));
     let _ = toggle_display_scope(&mut agent);
     assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Collapsed));
+    focus_row(&mut agent, "File reads");
     assert!(sidebar_row(&draw(&mut agent), "File reads").contains("1 line"));
     assert_eq!(stored(&read_toml(&global_file(&root)), "message_display", "read"), Some("expanded"));
 }

@@ -352,10 +352,12 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             xai_grok_sampling_types::ContextCategory::Reasoning,
             xai_grok_sampling_types::ContextSwitch::Excluded,
         );
-        crate::session::helpers::context_policy_store::save(
-            &crate::session::persistence::session_dir(&info),
-            &policy,
-        );
+        let expected = agent.context_policy_authority.read().await
+            .selection(child.0.as_ref(), &handle.context_policy_binding.incarnation).unwrap().version;
+        agent.edit_context_policy(&child, &handle, &xai_grok_sampling_types::ContextPolicyEdit {
+            expected,
+            mutation: xai_grok_sampling_types::ContextPolicyMutation::ReplaceSession { policy },
+        }).await.unwrap();
         use crate::session::storage::StorageAdapter as _;
         let storage = crate::session::storage::JsonlStorageAdapter::with_root(
             crate::util::grok_home::grok_home(),
@@ -448,7 +450,7 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
                 serde_json::to_value(&conversation).unwrap()
             );
             assert_eq!(
-                restored.chat_state_handle.get_context_policy().await,
+                restored.chat_state_handle.get_context_policy().await.unwrap(),
                 policy
             );
             assert_eq!(restored.model_id, saved_model);
@@ -475,7 +477,7 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             .expect("a cancelled preparation remains restorable");
         assert_eq!(reloaded.handle.info.id, child);
         assert_eq!(
-            reloaded.handle.chat_state_handle.get_context_policy().await,
+            reloaded.handle.chat_state_handle.get_context_policy().await.unwrap(),
             policy
         );
         assert_eq!(
@@ -568,7 +570,7 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
                 .expect("coordinator registers the held child");
             let tools = live.snapshot_tool_definitions().await.unwrap();
             let schemas = serde_json::to_value(&tools.specs).unwrap();
-            let policy = live.chat_state_handle.get_context_policy().await;
+            let policy = live.chat_state_handle.get_context_policy().await.unwrap();
             server.release_agent_completions();
             (schemas, policy)
         };
@@ -630,7 +632,7 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
             "administrative reload must preserve the original child tool schemas exactly"
         );
         assert_eq!(
-            restored.handle.chat_state_handle.get_context_policy().await,
+            restored.handle.chat_state_handle.get_context_policy().await.unwrap(),
             original_policy
         );
         assert!(recipe.inherited_mcp_servers.is_empty());

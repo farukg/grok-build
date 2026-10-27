@@ -386,6 +386,7 @@ impl MvpAgent {
                 cwd: h.info.cwd.clone(),
             }),
             parent_chat_state,
+            context_policy_authority: self.context_policy_authority.clone(),
             parent_max_turns,
             available_models,
             subagent_model_overrides,

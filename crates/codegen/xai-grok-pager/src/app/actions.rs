@@ -445,8 +445,8 @@ pub enum Action {
     DeliverSubagent,
     /// Ask the shell for the active session's context policy (the F7 sidebar just opened).
     FetchContextPolicy,
-    /// Replace the active session's context policy.
-    SetContextPolicy(xai_grok_shell::sampling::ContextPolicy),
+    /// Submit a revision-bound Context edit.
+    SetContextPolicy(xai_grok_shell::sampling::ContextPolicyEdit),
     RemoveContextItems(crate::app::agent_view::context_removal::ContextRemovalTarget),
     CancelScheduledTask(String),
     /// Demote the currently running execute tool to a background task.
@@ -1443,7 +1443,17 @@ pub enum AfterSessionDelete {
 #[derive(Debug, Clone)]
 pub enum ContextPolicyChange {
     Read,
-    Replace(xai_grok_shell::sampling::ContextPolicy),
+    Edit(xai_grok_shell::sampling::ContextPolicyEdit),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ContextPolicyTransportError {
+    #[error("Context request encoding failed")]
+    Encode(#[source] serde_json::Error),
+    #[error("Context response decoding failed")]
+    Decode(#[source] serde_json::Error),
+    #[error("Context RPC failed; application may be unknown")]
+    Rpc(#[source] agent_client_protocol::Error),
 }
 
 /// Async side effect produced by [`super::dispatch::dispatch`].
@@ -1655,11 +1665,12 @@ pub enum Effect {
         child_session_id: acp::SessionId,
         delivery: xai_grok_shell::extensions::notification::SubagentDelivery,
     },
-    /// Read (`policy: None`) or replace the session's context policy via `x.ai/session/context_policy`.
+    /// Read or edit Context choices via `x.ai/session/context_policy`.
     ContextPolicy {
         agent_id: AgentId,
         session_id: acp::SessionId,
         change: ContextPolicyChange,
+        generation: u64,
     },
     /// Cancel a subagent via `x.ai/subagent/cancel`.
     KillSubagent {
@@ -2721,7 +2732,9 @@ pub enum TaskResult {
     /// The shell answered a context policy get or set.
     ContextPolicyAnswered {
         agent_id: AgentId,
-        result: Result<xai_grok_shell::extensions::context_policy::ContextPolicyReport, String>,
+        session_id: acp::SessionId,
+        generation: u64,
+        result: Result<xai_grok_shell::extensions::context_policy::ContextPolicyResponse, ContextPolicyTransportError>,
     },
     DeliverSubagentComplete {
         outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,

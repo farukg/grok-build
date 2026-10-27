@@ -20,6 +20,7 @@ pub(super) fn withhold_memory_context(items: &mut Vec<ConversationItem>) {
         items.remove(0);
     } else {
         system.content = Arc::from(prompt);
+        system.evidence.record(xai_grok_sampling_types::ContentTransform::SystemHeadRewritten);
     }
 }
 

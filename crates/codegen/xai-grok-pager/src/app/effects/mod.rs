@@ -1904,15 +1904,17 @@ pub(crate) fn execute(
             agent_id,
             session_id,
             change,
+            generation,
         } => {
             let tx = acp_tx.clone();
             tasks.spawn(async move {
                 use xai_grok_shell::extensions::context_policy::{
-                    ContextPolicyAction, ContextPolicyReport, ContextPolicyRequest,
+                    ContextPolicyAction, ContextPolicyResponse, ContextPolicyRequest,
                 };
+                use actions::ContextPolicyTransportError;
                 let action = match change {
                     actions::ContextPolicyChange::Read => ContextPolicyAction::Get,
-                    actions::ContextPolicyChange::Replace(policy) => ContextPolicyAction::Set { policy },
+                    actions::ContextPolicyChange::Edit(edit) => ContextPolicyAction::Edit { edit },
                 };
                 let request = ContextPolicyRequest {
                     session_id: session_id.0.to_string(),
@@ -1922,14 +1924,14 @@ pub(crate) fn execute(
                     Ok(raw) => {
                         let req = acp::ExtRequest::new("x.ai/session/context_policy", raw.into());
                         match acp_send(req, &tx).await {
-                            Ok(resp) => serde_json::from_str::<ContextPolicyReport>(resp.0.get())
-                                .map_err(|error| error.to_string()),
-                            Err(error) => Err(error.to_string()),
+                            Ok(resp) => serde_json::from_str::<ContextPolicyResponse>(resp.0.get())
+                                .map_err(ContextPolicyTransportError::Decode),
+                            Err(error) => Err(ContextPolicyTransportError::Rpc(error)),
                         }
                     }
-                    Err(error) => Err(error.to_string()),
+                    Err(error) => Err(ContextPolicyTransportError::Encode(error)),
                 };
-                TaskResult::ContextPolicyAnswered { agent_id, result }
+                TaskResult::ContextPolicyAnswered { agent_id, session_id, generation, result }
             });
         }
         Effect::DeliverSubagent { child_session_id, delivery } => {

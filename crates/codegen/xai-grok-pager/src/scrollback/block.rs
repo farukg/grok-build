@@ -49,6 +49,14 @@ pub enum MessageKind {
     MemoryCapture,
     /// Runtime-injected context (auto-wake echoes, request-only records): collapsed by default.
     Injected,
+    InjectedOther,
+    InjectedInstructions,
+    InjectedContinuation,
+    InjectedNotification,
+    InjectedMemory,
+    InjectedSummary,
+    InjectedEnvironment,
+    InjectedConversation,
     Stub,
 }
 
@@ -82,12 +90,65 @@ impl From<&RenderBlock> for MessageKind {
             RenderBlock::Btw(_) => Self::Btw,
             RenderBlock::ContextInfo(_) => Self::ContextInfo,
             RenderBlock::MemoryCapture(_) => Self::MemoryCapture,
-            RenderBlock::Injected(_) => Self::Injected,
+            RenderBlock::Injected(block) => block.message_kind(),
         }
     }
 }
 
 impl MessageKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            MessageKind::UserPrompt => "Your messages",
+            MessageKind::AgentMessage => "Agent replies",
+            MessageKind::Execute => "Commands",
+            MessageKind::Read => "File reads",
+            MessageKind::Edit => "File edits",
+            MessageKind::ListDir => "Directory listings",
+            MessageKind::Search => "Code searches",
+            MessageKind::WebFetch => "Web fetches",
+            MessageKind::WebSearch => "Web searches",
+            MessageKind::IntegrationSearch => "Integration searches",
+            MessageKind::UseTool => "Integration tools",
+            MessageKind::MemorySearch => "Memory searches",
+            MessageKind::SentMessage => "Sent messages",
+            MessageKind::Skill => "Skills",
+            MessageKind::OtherTool => "Other tools",
+            MessageKind::Thinking => "Reasoning",
+            MessageKind::System => "System messages",
+            MessageKind::SessionEvent => "Session events",
+            MessageKind::BgTask => "Background tasks",
+            MessageKind::Subagent => "Subagents",
+            MessageKind::Workflow => "Workflows",
+            MessageKind::Btw => "Side questions",
+            MessageKind::ContextInfo => "Context info",
+            MessageKind::MemoryCapture => "Memory captures",
+            MessageKind::Injected => "Legacy injected defaults",
+            MessageKind::InjectedOther => "Other / unknown injection",
+            MessageKind::InjectedInstructions => "Injected instructions",
+            MessageKind::InjectedContinuation => "Continuation / recovery",
+            MessageKind::InjectedNotification => "Runtime notifications",
+            MessageKind::InjectedMemory => "Memory reminders",
+            MessageKind::InjectedSummary => "Summaries / views",
+            MessageKind::InjectedEnvironment => "Session environment",
+            MessageKind::InjectedConversation => "Injected conversation",
+            MessageKind::Stub => "Stub",
+        }
+    }
+
+    pub fn parent(self) -> Option<Self> {
+        match self {
+            Self::InjectedOther | Self::InjectedInstructions | Self::InjectedContinuation | Self::InjectedNotification
+            | Self::InjectedMemory | Self::InjectedSummary | Self::InjectedEnvironment
+            | Self::InjectedConversation => Some(Self::Injected),
+            Self::UserPrompt | Self::AgentMessage | Self::Execute | Self::Read | Self::Edit
+            | Self::ListDir | Self::Search | Self::WebFetch | Self::WebSearch
+            | Self::IntegrationSearch | Self::UseTool | Self::MemorySearch | Self::SentMessage
+            | Self::Skill | Self::OtherTool | Self::Thinking | Self::System | Self::SessionEvent
+            | Self::BgTask | Self::Subagent | Self::Workflow | Self::Btw | Self::ContextInfo
+            | Self::MemoryCapture | Self::Injected | Self::Stub => None,
+        }
+    }
+
     pub fn settings_kinds() -> &'static [Self] {
         &[
             Self::UserPrompt,
@@ -115,6 +176,14 @@ impl MessageKind {
             Self::ContextInfo,
             Self::MemoryCapture,
             Self::Injected,
+            Self::InjectedOther,
+            Self::InjectedInstructions,
+            Self::InjectedContinuation,
+            Self::InjectedNotification,
+            Self::InjectedMemory,
+            Self::InjectedSummary,
+            Self::InjectedEnvironment,
+            Self::InjectedConversation,
         ]
     }
 
@@ -145,6 +214,14 @@ impl MessageKind {
             Self::ContextInfo,
             Self::MemoryCapture,
             Self::Injected,
+            Self::InjectedOther,
+            Self::InjectedInstructions,
+            Self::InjectedContinuation,
+            Self::InjectedNotification,
+            Self::InjectedMemory,
+            Self::InjectedSummary,
+            Self::InjectedEnvironment,
+            Self::InjectedConversation,
         ]
     }
 
@@ -177,7 +254,60 @@ impl MessageKind {
             | Self::Subagent
             | Self::Workflow
             | Self::Btw
-            | Self::Injected => DisplayForm::Collapsed,
+            | Self::Injected
+            | Self::InjectedOther
+            | Self::InjectedInstructions
+            | Self::InjectedContinuation
+            | Self::InjectedNotification
+            | Self::InjectedMemory
+            | Self::InjectedSummary
+            | Self::InjectedEnvironment
+            | Self::InjectedConversation
+                => DisplayForm::Collapsed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::EnumCount)]
+pub(crate) enum MessageGroup {
+    Conversation,
+    Files,
+    Research,
+    Work,
+    Session,
+    Injected,
+}
+
+impl MessageGroup {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Conversation => "Conversation",
+            Self::Files => "Files / commands",
+            Self::Research => "Research / integrations",
+            Self::Work => "Background work",
+            Self::Session => "Session / diagnostics",
+            Self::Injected => "Injected context",
+        }
+    }
+
+    pub(crate) fn kinds(self) -> impl Iterator<Item = MessageKind> {
+        MessageKind::settings_kinds().iter().copied().filter(move |kind| *kind != MessageKind::Injected && kind.group() == Some(self))
+    }
+}
+
+impl MessageKind {
+    pub(crate) fn group(self) -> Option<MessageGroup> {
+        match self {
+            Self::UserPrompt | Self::AgentMessage | Self::Thinking | Self::Btw | Self::SentMessage => Some(MessageGroup::Conversation),
+            Self::Execute | Self::Read | Self::Edit | Self::ListDir | Self::Search => Some(MessageGroup::Files),
+            Self::WebFetch | Self::WebSearch | Self::IntegrationSearch | Self::UseTool
+            | Self::MemorySearch | Self::Skill | Self::OtherTool => Some(MessageGroup::Research),
+            Self::BgTask | Self::Subagent | Self::Workflow => Some(MessageGroup::Work),
+            Self::System | Self::SessionEvent | Self::ContextInfo | Self::MemoryCapture => Some(MessageGroup::Session),
+            Self::Injected | Self::InjectedOther | Self::InjectedInstructions | Self::InjectedContinuation
+            | Self::InjectedNotification | Self::InjectedMemory | Self::InjectedSummary
+            | Self::InjectedEnvironment | Self::InjectedConversation => Some(MessageGroup::Injected),
+            Self::Stub => None,
         }
     }
 }
@@ -199,6 +329,7 @@ impl DisplayDefaults {
         self.forms
             .iter()
             .find_map(|(candidate, form)| (*candidate == kind).then_some(*form))
+            .or_else(|| kind.parent().and_then(|parent| self.get(parent)))
     }
 
     /// What a settings row shows: the user's choice, else the form the kind starts in.

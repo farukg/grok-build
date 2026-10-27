@@ -1428,10 +1428,6 @@ pub(super) async fn run_session(
                                 let _ = respond_to.send(outcome);
                             });
                         }
-                        SessionCommand::SetContextPolicy { policy, respond_to } => {
-                            session.set_context_policy(policy);
-                            let _ = respond_to.send(session.context_policy_report().await);
-                        }
                         SessionCommand::GetContextPolicy { respond_to } => {
                             let _ = respond_to.send(session.context_policy_report().await);
                         }

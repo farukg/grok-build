@@ -384,6 +384,8 @@ impl From<crate::messages::MessagesResponse> for ConversationItem {
         }
 
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: Arc::<str>::from(content),
             tool_calls,
             model_id: Some(resp.model),

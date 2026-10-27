@@ -419,6 +419,8 @@ mod tests {
 
     fn tool_result(content: &str) -> ConversationItem {
         ConversationItem::ToolResult(ToolResultItem {
+            evidence: Default::default(),
+            source: Default::default(),
             tool_call_id: "tc-1".to_string(),
             content: content.into(),
             images: Vec::new(),
@@ -430,7 +432,7 @@ mod tests {
     }
 
     fn reasoning_item(text: &str) -> ConversationItem {
-        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(text))
+        ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item(text).into())
     }
 
     fn extract_background_text(item: &ConversationItem) -> String {

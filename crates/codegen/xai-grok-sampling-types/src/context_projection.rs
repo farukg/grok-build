@@ -34,10 +34,12 @@ impl ContextPolicy {
                     }
                 }
                 ConversationItem::Assistant(mut assistant) => {
-                    if !self.includes(ContextCategory::AssistantTurns) {
+                    if !self.includes(ContextCategory::AssistantTurns) && !assistant.content.is_empty() {
+                        assistant.evidence.record(crate::ContentTransform::AssistantTextWithheld);
                         assistant.content = "".into();
                     }
-                    if !exchanges {
+                    if !exchanges && !assistant.tool_calls.is_empty() {
+                        assistant.evidence.record(crate::ContentTransform::AssistantCallsWithheld);
                         assistant.tool_calls.clear();
                     }
                     let speaks = !assistant.content.is_empty() || !assistant.tool_calls.is_empty();
@@ -91,6 +93,11 @@ impl ContextPolicy {
                     .unzip();
                 if content.is_empty() {
                     return None;
+                }
+                if content.len() != user.content.len() {
+                    user.evidence.record(crate::ContentTransform::PolicyParts {
+                        kept: content.len(), total: user.content.len(),
+                    });
                 }
                 user.content = content;
                 user.sections = Sections::Split(categories);

@@ -213,7 +213,23 @@ fn conversation_body_bytes(conversation: &[ConversationItem]) -> usize {
             | ConversationItem::Reasoning(_) => {}
         }
     }
-    serialized_json_bytes(&blanked) + image_url_bytes
+    let source_bytes: usize = blanked.iter().map(|item| {
+        let source = item.source();
+        if source.is_unadmitted() {
+            0
+        } else {
+            serialized_json_bytes(&source) + ",\"source\":".len()
+        }
+    }).sum();
+    // Local occurrence metadata is not sent to providers.
+    let evidence_bytes: usize = blanked.iter().map(|item| {
+        if item.evidence().is_unknown() {
+            0
+        } else {
+            serialized_json_bytes(item.evidence()) + ",\"evidence\":".len()
+        }
+    }).sum();
+    serialized_json_bytes(&blanked).saturating_sub(source_bytes + evidence_bytes) + image_url_bytes
 }
 
 fn blank_image_urls(parts: &mut [ContentPart], image_url_bytes: &mut usize) {
@@ -243,11 +259,13 @@ fn evict_images_to_budget(
     let tool_note_suffix = format!("\n\n{TOOL_IMAGE_COMPACT_NOTE}");
     let tool_note_bytes = serialized_json_bytes(&tool_note_suffix).saturating_sub(2);
     let mut images = Vec::new();
+    let mut image_totals = vec![0usize; conversation.len()];
     for (item, conversation_item) in conversation.iter().enumerate() {
         match conversation_item {
             ConversationItem::User(user) => {
                 for (part, content_part) in user.content.iter().enumerate() {
                     if let ContentPart::Image { .. } = content_part {
+                        image_totals[item] += 1;
                         images.push((
                             ImageLocation::User { item, part },
                             image_part_bytes(content_part),
@@ -258,6 +276,7 @@ fn evict_images_to_budget(
             ConversationItem::ToolResult(tool_result) => {
                 for content_part in &tool_result.images {
                     if let ContentPart::Image { .. } = content_part {
+                        image_totals[item] += 1;
                         images.push((
                             ImageLocation::ToolResult { item },
                             image_part_bytes(content_part),
@@ -272,6 +291,7 @@ fn evict_images_to_budget(
         }
     }
 
+    let mut remaining_images = image_totals.clone();
     let mut running = current_bytes;
     let mut evicted = 0;
     for (location, image_bytes) in images {
@@ -287,6 +307,10 @@ fn evict_images_to_budget(
                     continue;
                 };
                 *slot = placeholder.clone();
+                remaining_images[item] -= 1;
+                user.evidence.record(xai_grok_sampling_types::ContentTransform::ImagesEvicted {
+                    kept: remaining_images[item], total: image_totals[item],
+                });
                 running = running.saturating_sub(image_bytes.saturating_sub(placeholder_bytes));
             }
             ImageLocation::ToolResult { item } => {
@@ -300,6 +324,10 @@ fn evict_images_to_budget(
                     .position(|part| matches!(part, ContentPart::Image { .. }))
                     .unwrap_or_else(|| unreachable!("discovered tool image must remain present"));
                 tool_result.images.remove(image_index);
+                remaining_images[item] -= 1;
+                tool_result.evidence.record(xai_grok_sampling_types::ContentTransform::ImagesEvicted {
+                    kept: remaining_images[item], total: image_totals[item],
+                });
                 running = running
                     .saturating_sub(image_bytes + usize::from(!tool_result.images.is_empty()));
                 if !tool_result.content.contains(TOOL_IMAGE_COMPACT_NOTE) {

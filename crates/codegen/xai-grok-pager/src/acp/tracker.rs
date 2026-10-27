@@ -1573,8 +1573,8 @@ impl AcpUpdateTracker {
         // defaults own the fold), never as a plain user prompt and never hidden.
         if let Some(reason) = chunk_synthetic_reason(&chunk) {
             let prompt_index = chunk_prompt_index(&chunk);
-            let block = crate::scrollback::blocks::InjectedBlock::new(
-                crate::scrollback::blocks::injected_label(reason),
+            let block = crate::scrollback::blocks::InjectedBlock::from_reason(
+                reason,
                 text,
             )
             .with_starts_turn(prompt_index.is_some());

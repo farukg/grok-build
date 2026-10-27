@@ -2,6 +2,10 @@
 
 #[path = "request_visibility_tests.rs"]
 mod request_visibility_tests;
+#[path = "context_policy_tests.rs"]
+mod context_policy_tests;
+#[path = "source_occurrence_tests.rs"]
+mod source_occurrence_tests;
 
 use std::collections::HashMap;
 use std::num::NonZeroU64;
@@ -69,6 +73,9 @@ impl TestHarness {
     ) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let token = tokio_util::sync::CancellationToken::new();
+        let mut items = items;
+        // General fixtures model already-normalized history; migration has dedicated coverage.
+        super::source_occurrence::normalize(&mut items, super::source_occurrence::Normalization::Legacy);
         let handle = ChatStateActor::spawn(items, config, Box::new(mock), event_tx, token.clone());
         Self {
             handle,
@@ -99,6 +106,17 @@ impl TestHarness {
     fn drain_persistence(&mut self) -> Vec<PersistenceRecord> {
         self.persistence_rx.drain()
     }
+}
+
+fn payload_items(items: &[ConversationItem]) -> Vec<ConversationItem> {
+    items.iter().cloned().map(|mut item| {
+        *item.source_mut() = Default::default();
+        item
+    }).collect()
+}
+
+fn payload_bytes(item: &ConversationItem) -> Vec<u8> {
+    serde_json::to_vec(&payload_items(std::slice::from_ref(item)).remove(0)).unwrap()
 }
 
 // ============================================================================
@@ -225,6 +243,7 @@ async fn strict_switch_append_preserves_prefix_and_deduplicates_generation() {
         .map(|item| serde_json::to_vec(item).unwrap())
         .collect();
     let mut h = TestHarness::with_conversation(prefix);
+    let prefix_sources: Vec<_> = h.handle.get_conversation().await.iter().map(ConversationItem::source).collect();
     let reminder = ConversationItem::working_directory_switch("moved", 3);
 
     assert!(matches!(
@@ -239,17 +258,17 @@ async fn strict_switch_append_preserves_prefix_and_deduplicates_generation() {
     ));
     let conversation = h.handle.get_conversation().await;
     assert_eq!(conversation.len(), 4);
-    for (actual, expected) in conversation.iter().zip(&prefix_json) {
-        assert_eq!(serde_json::to_vec(actual).unwrap(), *expected);
+    for ((actual, expected), source) in conversation.iter().zip(&prefix_json).zip(&prefix_sources) {
+        assert_eq!(payload_bytes(actual), *expected);
+        assert_eq!(actual.source(), *source);
     }
     assert_eq!(
-        serde_json::to_vec({
+        payload_bytes({
             let Some(item) = conversation.get(3) else {
                 panic!("expected item 3: {conversation:?}");
             };
             item
-        })
-        .unwrap(),
+        }),
         serde_json::to_vec(&reminder).unwrap()
     );
     assert!(matches!(
@@ -759,9 +778,7 @@ async fn assistant_response_push_does_not_bump_estimated_delta() {
 async fn provider_counted_model_output_persists_without_bumping_estimate() {
     let h = TestHarness::new();
     h.handle.record_token_usage(100_000);
-    h.handle.push_model_output(ConversationItem::Reasoning(
-        xai_grok_sampling_types::synthesized_reasoning_item("r".repeat(4_000)),
-    ));
+    h.handle.push_model_output(ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("r".repeat(4_000)).into()));
 
     assert!(matches!(
         h.handle.get_conversation().await.as_slice(),
@@ -1710,7 +1727,7 @@ async fn build_request_projects_agent_message_for_model_without_mutating_history
     let Some(persisted0) = persisted.first() else {
         panic!("expected persisted item: {persisted:?}");
     };
-    assert_eq!(serde_json::to_vec(persisted0).unwrap(), raw_bytes);
+    assert_eq!(payload_bytes(persisted0), raw_bytes);
 }
 
 #[tokio::test]
@@ -1811,11 +1828,11 @@ async fn build_request_records_persisted_synthetic_bodies_from_the_final_view() 
         (SyntheticReason::ParentHumanMessage, "Parent human body"),
     ] {
         assert!(built.injected_records.iter().any(|record| matches!(record,
-            crate::types::InjectedRequestRecord::Synthetic { reason: actual, text }
+            crate::types::InjectedRequestRecord::Synthetic { reason: actual, text, .. }
                 if *actual == reason && text == expected)));
     }
     assert!(built.injected_records.iter().any(|record| matches!(record,
-        crate::types::InjectedRequestRecord::Synthetic { reason: SyntheticReason::AgentMessage, text }
+        crate::types::InjectedRequestRecord::Synthetic { reason: SyntheticReason::AgentMessage, text, .. }
             if text.contains(crate::compaction_utils::AGENT_MESSAGE_MODEL_LABEL)
                 && text.contains("Agent-authored body"))));
     assert!(!built.injected_records.iter().any(|record| record.text() == "Human control"));
@@ -1860,6 +1877,7 @@ async fn build_request_non_persist_memory_reminder_yields_injected_record() {
     assert_eq!(
         built.injected_records,
         vec![crate::types::InjectedRequestRecord::MemoryReminder {
+            source: Default::default(),
             text: "Remember: user prefers Rust".to_string()
         }],
         "the request-only splice must be recorded"
@@ -1881,6 +1899,7 @@ async fn build_request_persisted_memory_reminder_yields_visible_record() {
         ConversationItem::system("You are helpful."),
         ConversationItem::user("hi"),
     ]);
+    let head_source = h.handle.get_conversation().await[0].source();
     let built = h
         .handle
         .build_request(
@@ -1896,6 +1915,7 @@ async fn build_request_persisted_memory_reminder_yields_visible_record() {
     assert_eq!(
         built.injected_records,
         vec![crate::types::InjectedRequestRecord::MemoryReminder {
+            source: head_source,
             text: "<memory-context>\nRemember this\n</memory-context>".to_string(),
         }],
         "a system-head mutation also needs a visible scrollback record"
@@ -2190,6 +2210,8 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     // In production this is built from the stream and pushed via `push_assistant_response`.
     let assistant_with_tools =
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "I'll read the file, fix it, and run tests.".into(),
             tool_calls: vec![
                 ToolCall {
@@ -2473,6 +2495,8 @@ async fn dangling_tool_calls_after_crash_are_repaired_on_load() {
         ConversationItem::system("You are a helpful assistant."),
         ConversationItem::user("Read, edit, and test"),
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: std::sync::Arc::<str>::from(""),
             tool_calls: vec![
                 ToolCall {
@@ -3579,18 +3603,14 @@ async fn get_trailing_assistant_report_joins_salvaged_segments() {
 async fn get_trailing_assistant_report_skips_reasoning_between_segments() {
     let h = TestHarness::new();
     h.handle.push_user_message(ConversationItem::user("q"));
-    h.handle.push_tool_result(ConversationItem::Reasoning(
-        xai_grok_sampling_types::synthesized_reasoning_item("r1"),
-    ));
+    h.handle.push_tool_result(ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("r1").into()));
     h.handle
         .push_assistant_response(ConversationItem::assistant("seg1"));
     h.handle
         .push_user_message(ConversationItem::length_continue_reminder("continue"));
     // Reasoning models commit a reasoning sibling before each segment; the
     // turn loop pushes it via the same non-Assistant commit path used here.
-    h.handle.push_tool_result(ConversationItem::Reasoning(
-        xai_grok_sampling_types::synthesized_reasoning_item("r2"),
-    ));
+    h.handle.push_tool_result(ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("r2").into()));
     h.handle
         .push_assistant_response(ConversationItem::assistant("seg2"));
 
@@ -3866,9 +3886,7 @@ async fn get_trailing_assistant_report_joins_later_reminderless_segments() {
         .push_user_message(ConversationItem::length_continue_reminder("continue"));
     h.handle
         .push_assistant_response(ConversationItem::assistant("two, "));
-    h.handle.push_tool_result(ConversationItem::Reasoning(
-        xai_grok_sampling_types::synthesized_reasoning_item("r"),
-    ));
+    h.handle.push_tool_result(ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("r").into()));
     h.handle
         .push_assistant_response(ConversationItem::assistant("three"));
 
@@ -4735,6 +4753,8 @@ async fn get_last_model_metadata_returns_both_fields() {
         ConversationItem::system("sys"),
         ConversationItem::user("hi"),
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "hello".into(),
             tool_calls: vec![],
             model_id: Some("grok-4.5".into()),
@@ -4780,6 +4800,8 @@ async fn sampling_config_survives_compaction_replacement() {
             ConversationItem::system("You are a helpful assistant."),
             ConversationItem::user("fix the bug"),
             ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: "I'll fix it.".into(),
                 tool_calls: vec![],
                 model_id: Some("grok-4.5".into()),
@@ -4860,6 +4882,8 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
             ConversationItem::system("sys"),
             ConversationItem::user("task"),
             ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: "done".into(),
                 tool_calls: vec![],
                 model_id: Some("grok-4.5".into()),
@@ -4895,6 +4919,8 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
     h.handle
         .push_assistant_response(ConversationItem::Assistant(
             xai_grok_sampling_types::AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: "working on it".into(),
                 tool_calls: vec![],
                 model_id: Some("grok-4.5".into()),
@@ -5066,7 +5092,7 @@ fn reasoning_sibling(id: &str, encrypted: Option<&str>) -> ConversationItem {
         content: None,
         encrypted_content: encrypted.map(str::to_owned),
         status: None,
-    })
+    }.into())
 }
 
 /// Basic multi-turn prefix stability through build_request().
@@ -5515,7 +5541,7 @@ async fn build_request_budgets_tool_images_on_request_copy_only() {
     assert_eq!(body_bytes, source_bytes);
     assert_eq!(
         body_bytes_after,
-        serde_json::to_vec(&request.items).unwrap().len()
+        serde_json::to_vec(&payload_items(&request.items)).unwrap().len()
     );
     assert_eq!(inline_images, 1);
     assert!(needs_image_compaction);
@@ -5635,6 +5661,8 @@ async fn prefix_stable_with_backend_tool_calls() {
         .push_assistant_response(ConversationItem::assistant("Found info about capybaras"));
     h.handle
         .push_tool_result(ConversationItem::BackendToolCall(BackendToolCallItem {
+            evidence: Default::default(),
+            source: Default::default(),
             kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                 id: "ws_capybara".to_string(),
                 status: rs::WebSearchToolCallStatus::Completed,
@@ -5884,13 +5912,13 @@ async fn context_policy_shapes_the_request_and_not_the_history() {
     policy.set(ContextCategory::ProjectInstructions, ContextSwitch::Excluded);
     policy.set(ContextCategory::UserTurns, ContextSwitch::Excluded);
     policy.set(ContextCategory::ToolDefinitions, ContextSwitch::Excluded);
-    h.handle.set_context_policy(policy);
+    h.handle.set_context_policy(policy).await.unwrap();
 
     let restricted = request().await;
     assert_eq!(texts(&restricted), ["core", "earlier answer", "current prompt"]);
     assert!(restricted.tools.is_empty());
 
-    h.handle.set_context_policy(ContextPolicy::default());
+    h.handle.set_context_policy(ContextPolicy::default()).await.unwrap();
     let restored = request().await;
     assert_eq!(
         texts(&restored),
@@ -5940,7 +5968,7 @@ async fn memory_off_withholds_the_manifest_and_keeps_the_history() {
     ]);
     let mut policy = ContextPolicy::default();
     policy.set(ContextCategory::Memory, ContextSwitch::Excluded);
-    h.handle.set_context_policy(policy);
+    h.handle.set_context_policy(policy).await.unwrap();
     let fresh = "<memory-context>\nfresh note\n</memory-context>".to_string();
     let request = h
         .handle

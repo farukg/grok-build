@@ -1,5 +1,6 @@
 //! What the F7 sidebar does for a [`SidebarCommand`]: tree navigation, activation and bulk gestures.
 
+use super::groups::GroupId;
 use super::gesture::{Goal, SidebarCommand, Spread};
 use super::outline::{CursorTarget, Outline};
 use super::{AgentView, ContextSidebar, OpenContextSidebar, PolicyState, RowTarget, SidebarFocus};
@@ -24,8 +25,8 @@ impl Reached {
     fn of(spread: Spread, target: CursorTarget) -> Self {
         match (spread, target) {
             (Spread::Everything, _) => Self::Both,
-            (Spread::Peers, CursorTarget::Row(RowTarget::Display(_))) => Self::Kinds,
-            (Spread::Peers, CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Context(_) | RowTarget::DockPlacement)) => {
+            (Spread::Peers, CursorTarget::Row(RowTarget::Display(_) | RowTarget::Group(GroupId::Display(_)))) => Self::Kinds,
+            (Spread::Peers, CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Context(_) | RowTarget::Group(GroupId::Context(_)) | RowTarget::DockPlacement)) => {
                 Self::Sections
             }
         }
@@ -60,6 +61,8 @@ impl PolicyState {
             Self::Loading => {
                 Err("Context switches are still loading from the session; try again in a moment")
             }
+            Self::Confirming { .. } => Err("Confirm or cancel the Context change first"),
+            Self::ExpiredConfirmation(_) => Err("Dismiss the expired Context confirmation first"),
             Self::Applying { .. } => {
                 Err("The previous context change is still being applied; wait for it to finish")
             }
@@ -77,13 +80,28 @@ impl OpenContextSidebar {
     }
 
     pub(crate) fn apply_disclosure(&mut self, disclosure: super::SectionDisclosure) {
+        let target = self.sidebar.cursor.and_then(|line| CursorTarget::of(line, self.disclosure));
         self.disclosure = disclosure;
+        if let Some(target) = target {
+            self.sidebar.cursor = Outline::build(disclosure, self.todo_count).line_for_target(target);
+        }
         self.repair_cursor();
     }
 
     #[cfg(test)]
     pub(crate) fn cursor(&self) -> Option<crate::views::sidebar::SidebarLine> {
         self.sidebar.cursor
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cursor_label(&self) -> Option<&'static str> {
+        match CursorTarget::of(self.sidebar.cursor?, self.disclosure)? {
+            CursorTarget::Title(section) => Some(section.title()),
+            CursorTarget::Row(RowTarget::Group(group)) => Some(group.label()),
+            CursorTarget::Row(RowTarget::Context(category)) => Some(super::label(category)),
+            CursorTarget::Row(RowTarget::Display(kind)) => Some(kind.label()),
+            CursorTarget::Row(RowTarget::DockPlacement) => Some("Placement"),
+        }
     }
 
     /// Move the cursor off a line that a fold just hid, and scroll to it on the next draw.
@@ -116,11 +134,13 @@ impl OpenContextSidebar {
     }
 
     fn set_section(&mut self, outline: &Outline, index: usize, expanded: bool) -> InputOutcome {
-        let Some(section) = outline.section_of_title(index) else {
-            return InputOutcome::Unchanged;
-        };
-        self.disclosure.set_expanded(section, expanded);
-        self.repair_cursor();
+        let mut disclosure = self.disclosure;
+        match outline.target(index) {
+            Some(CursorTarget::Title(section)) => disclosure.set_expanded(section, expanded),
+            Some(CursorTarget::Row(RowTarget::Group(group))) => disclosure.set_group(group, expanded),
+            Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Display(_) | RowTarget::DockPlacement)) | None => return InputOutcome::Unchanged,
+        }
+        self.apply_disclosure(disclosure);
         InputOutcome::Changed
     }
 }
@@ -135,6 +155,21 @@ impl AgentView {
                 goal,
                 anchor,
             } => self.bulk_sidebar(spread, goal, anchor),
+            SidebarCommand::ToggleContextScope => self.toggle_context_scope(),
+            SidebarCommand::Inspect => {
+                let target = match &self.context_sidebar {
+                    ContextSidebar::Open(open) => open.sidebar.cursor.and_then(|line| CursorTarget::of(line, open.disclosure)),
+                    ContextSidebar::Closed => None,
+                };
+                match target {
+                    Some(CursorTarget::Row(RowTarget::Context(category))) => self.inspect_context_category(category),
+                    Some(CursorTarget::Row(RowTarget::Group(group))) => self.inspect_sidebar_group(group),
+                    Some(CursorTarget::Row(RowTarget::Display(kind))) => self.inspect_display_kinds(kind.label(), &[kind]),
+                    Some(CursorTarget::Title(super::SectionId::Context)) => self.inspect_context_categories("Context", &xai_grok_shell::sampling::all_categories()),
+                    Some(CursorTarget::Title(super::SectionId::Display)) => self.inspect_display_kinds("Message display", MessageKind::settings_kinds()),
+                    Some(CursorTarget::Title(super::SectionId::Dock | super::SectionId::Todo) | CursorTarget::Row(RowTarget::DockPlacement)) | None => self.activate_cursor(),
+                }
+            }
             SidebarCommand::ToggleDisplayScope => {
                 self.toggle_message_display_scope();
                 InputOutcome::Changed
@@ -188,7 +223,7 @@ impl AgentView {
         let Some(line) = open.sidebar.cursor else {
             return InputOutcome::Unchanged;
         };
-        match CursorTarget::of(line) {
+        match CursorTarget::of(line, open.disclosure) {
             Some(CursorTarget::Title(_)) => {
                 let outline = Outline::build(open.disclosure, open.todo_count);
                 let Some(at) = outline.index_of(line) else {
@@ -197,6 +232,7 @@ impl AgentView {
                 let step = toggle(outline.rows(), at);
                 open.apply_step(&outline, step)
             }
+            Some(CursorTarget::Row(RowTarget::Group(group))) => self.activate_sidebar_group(group, None),
             Some(CursorTarget::Row(RowTarget::DockPlacement)) => {
                 self.set_dock_placement(crate::views::dock::placement().next());
                 InputOutcome::Changed
@@ -220,6 +256,13 @@ impl AgentView {
     /// User and assistant message rows are never reached, and a modifier activation leaves the
     /// cursor line's own section and kind alone.
     fn bulk_sidebar(&mut self, spread: Spread, goal: Goal, anchor: BulkAnchor) -> InputOutcome {
+        let group = match &self.context_sidebar {
+            ContextSidebar::Open(open) => open.sidebar.cursor.and_then(|line| CursorTarget::of(line, open.disclosure)),
+            ContextSidebar::Closed => None,
+        };
+        if let Some(CursorTarget::Row(RowTarget::Group(group))) = group {
+            return self.activate_sidebar_group(group, Some(goal));
+        }
         let ContextSidebar::Open(open) = &mut self.context_sidebar else {
             return InputOutcome::Unchanged;
         };
@@ -227,7 +270,7 @@ impl AgentView {
         let Some(line) = open.sidebar.cursor else {
             return InputOutcome::Unchanged;
         };
-        let (Some(target), Some(at)) = (CursorTarget::of(line), outline.owner_title(line)) else {
+        let (Some(target), Some(at)) = (CursorTarget::of(line, open.disclosure), outline.owner_title(line)) else {
             return InputOutcome::Unchanged;
         };
         let reached = Reached::of(spread, target);
@@ -244,7 +287,7 @@ impl AgentView {
         let kinds = MessageKind::bulk_kinds()
             .iter()
             .copied()
-            .filter(|&kind| Some(kind) != anchor_kind);
+            .filter(|&kind| Some(kind) != anchor_kind && !anchor_kind.is_some_and(|anchor| anchor.parent() == Some(kind)));
         let direction = match goal {
             Goal::Set(direction) => direction,
             Goal::Toggle => {
@@ -265,12 +308,21 @@ impl AgentView {
         let mut changed = false;
         if reached.sections() {
             let expanded = direction == BulkDirection::Expand;
+            let mut disclosure = open.disclosure;
             for &index in &bulk_set(outline.rows(), at, scope, direction, anchor).indices {
-                if let Some(section) = outline.section_of_title(index) {
-                    open.disclosure.set_expanded(section, expanded);
-                    changed = true;
+                match outline.target(index) {
+                    Some(CursorTarget::Title(section)) => { disclosure.set_expanded(section, expanded); changed = true; }
+                    Some(CursorTarget::Row(RowTarget::Group(group))) => {
+                        let owns_anchor = match (anchor_kind, group) {
+                            (Some(kind), GroupId::Display(group)) => kind.group() == Some(group),
+                            (Some(_), GroupId::Context(_)) | (None, _) => false,
+                        };
+                        if !owns_anchor { disclosure.set_group(group, expanded); changed = true; }
+                    }
+                    Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Display(_) | RowTarget::DockPlacement)) | None => {}
                 }
             }
+            open.apply_disclosure(disclosure);
         }
         if reached.kinds() {
             let form = match direction {

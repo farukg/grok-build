@@ -647,6 +647,8 @@ pub(crate) mod chat_rebuild {
                 SyntheticReason::Human
             };
             let item = ConversationItem::User(UserItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content,
                 synthetic_reason,
                 cwd_generation: None,
@@ -663,6 +665,8 @@ pub(crate) mod chat_rebuild {
                 return None;
             }
             let item = ConversationItem::Assistant(AssistantItem {
+                evidence: Default::default(),
+                source: Default::default(),
                 content: std::sync::Arc::<str>::from(std::mem::take(&mut self.agent_text)),
                 tool_calls: std::mem::take(&mut self.agent_tool_calls),
                 model_id: None,

@@ -166,7 +166,10 @@ pub enum ChatStateCommand {
     UpdateSamplingConfig { config: Box<SamplingConfig> },
 
     /// Replace the context policy every following request is built under.
-    SetContextPolicy { policy: Box<xai_grok_sampling_types::ContextPolicy> },
+    SetContextPolicy {
+        policy: Box<xai_grok_sampling_types::ContextPolicy>,
+        reply: oneshot::Sender<xai_grok_sampling_types::ContextPolicy>,
+    },
 
     /// Track that the agent edited a file path.
     RecordAgentEditedPath { path: String },
@@ -255,7 +258,7 @@ pub enum ChatStateCommand {
     BuildConversationRequest {
         tool_definitions: Vec<ToolSpec>,
         memory_reminder: Option<String>,
-        persist_memory_reminder: bool,
+        preparation: crate::types::RequestPreparation,
         trace: Option<Box<dyn TraceContext>>,
         conv_id: String,
         req_id: String,
@@ -544,7 +547,7 @@ mod tests {
         let _ = ChatStateCommand::BuildConversationRequest {
             tool_definitions: vec![],
             memory_reminder: None,
-            persist_memory_reminder: false,
+            preparation: crate::types::RequestPreparation::Preview,
             trace: None,
             conv_id: String::new(),
             req_id: String::new(),

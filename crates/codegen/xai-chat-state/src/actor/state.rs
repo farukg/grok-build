@@ -128,6 +128,7 @@ pub fn estimate_messages_tokens(items: &[ConversationItem]) -> u64 {
 pub(crate) struct ChatState {
     /// The full conversation history.
     pub conversation: Vec<ConversationItem>,
+    pub(super) identity_normalization: super::source_occurrence::IdentityNormalization,
     /// Current sampling configuration (model, context window, etc.).
     pub sampling_config: SamplingConfig,
     /// Categories the session sends to the model; applied to every request.
@@ -221,6 +222,7 @@ impl ChatState {
 
         Self {
             conversation,
+            identity_normalization: super::source_occurrence::IdentityNormalization::Current,
             sampling_config,
             context_policy: Default::default(),
             prompt_index: 0,
@@ -293,7 +295,7 @@ mod tests {
         // max(4000, 4000*3/4)/4 = 1000, not the (4000+4000)/4 = 2000 double-count.
         let mut r = xai_grok_sampling_types::synthesized_reasoning_item("x".repeat(4000));
         r.encrypted_content = Some("e".repeat(4000));
-        assert_eq!(estimate_item_tokens(&ConversationItem::Reasoning(r)), 1000);
+        assert_eq!(estimate_item_tokens(&ConversationItem::Reasoning(r.into())), 1000);
     }
 
     #[test]
@@ -302,13 +304,13 @@ mod tests {
         let mut r = xai_grok_sampling_types::synthesized_reasoning_item("");
         r.summary.clear();
         r.encrypted_content = Some("e".repeat(4000));
-        assert_eq!(estimate_item_tokens(&ConversationItem::Reasoning(r)), 750);
+        assert_eq!(estimate_item_tokens(&ConversationItem::Reasoning(r.into())), 750);
     }
 
     #[test]
     fn reasoning_estimate_text_only_is_plain_bytes_per_token() {
         let r = xai_grok_sampling_types::synthesized_reasoning_item("x".repeat(4000));
-        assert_eq!(estimate_item_tokens(&ConversationItem::Reasoning(r)), 1000);
+        assert_eq!(estimate_item_tokens(&ConversationItem::Reasoning(r.into())), 1000);
     }
 
     #[test]

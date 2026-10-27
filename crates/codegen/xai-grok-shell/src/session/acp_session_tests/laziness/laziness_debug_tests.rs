@@ -23,6 +23,8 @@ fn user_text(text: &str) -> ConversationItem {
 
 fn assistant_text(text: &str) -> ConversationItem {
     ConversationItem::Assistant(AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: text.into(),
         tool_calls: vec![],
         model_id: None,
@@ -33,6 +35,8 @@ fn assistant_text(text: &str) -> ConversationItem {
 
 fn assistant_with_tool_call(text: &str, name: &str, args: &str) -> ConversationItem {
     ConversationItem::Assistant(AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: text.into(),
         tool_calls: vec![ToolCall {
             id: "call-1".into(),
@@ -55,8 +59,7 @@ fn assistant_with_reasoning_items(
 ) -> Vec<ConversationItem> {
     let mut out = Vec::new();
     if !reasoning_text.is_empty() {
-        out.push(ConversationItem::Reasoning(
-            xai_grok_sampling_types::rs::ReasoningItem {
+        out.push(ConversationItem::Reasoning(xai_grok_sampling_types::rs::ReasoningItem {
                 id: String::new(),
                 summary: vec![xai_grok_sampling_types::rs::SummaryPart::SummaryText(
                     xai_grok_sampling_types::rs::SummaryTextContent {
@@ -66,10 +69,11 @@ fn assistant_with_reasoning_items(
                 content: None,
                 encrypted_content: None,
                 status: None,
-            },
-        ));
+            }.into()));
     }
     out.push(ConversationItem::Assistant(AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: content.into(),
         tool_calls,
         model_id: None,
@@ -131,6 +135,8 @@ fn flatten_renders_tool_calls_as_lines() {
 fn flatten_truncates_long_fields() {
     let long = "a".repeat(2_000);
     let items = vec![ConversationItem::ToolResult(ToolResultItem {
+        evidence: Default::default(),
+        source: Default::default(),
         tool_call_id: "call-1".to_string(),
         content: long.into(),
         images: vec![],
@@ -190,8 +196,10 @@ fn flatten_skips_reasoning_when_encrypted_only() {
             content: None,
             encrypted_content: Some("opaque_base64".into()),
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "ok".into(),
             tool_calls: vec![],
             model_id: None,
@@ -221,8 +229,10 @@ fn flatten_skips_reasoning_when_text_is_empty() {
             content: None,
             encrypted_content: None,
             status: None,
-        }),
+        }.into()),
         ConversationItem::Assistant(AssistantItem {
+            evidence: Default::default(),
+            source: Default::default(),
             content: "ok".into(),
             tool_calls: vec![],
             model_id: None,
@@ -496,6 +506,8 @@ fn window_assistant_text_pin_skips_empty_assistant_turns() {
     // Assistant items with empty `.content` (tool-call-only routing turns) MUST NOT count toward min_assistant_turns
     // They have no prose for the classifier to interpret
     let empty_asst = ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
+        evidence: Default::default(),
+        source: Default::default(),
         content: String::new().into(),
         tool_calls: vec![xai_grok_sampling_types::ToolCall {
             id: "c".into(),

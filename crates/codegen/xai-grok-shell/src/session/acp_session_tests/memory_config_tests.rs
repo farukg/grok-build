@@ -142,6 +142,7 @@ pub(super) async fn create_test_actor_with_memory(
             |mc| mc.initial_injection.clone(),
         );
     SessionActor {
+        context_policy_binding: Default::default(),
         vcs_root: None,
         transient_retry_enabled: true,
         transient_retries_prompt_total: std::cell::Cell::new(0),

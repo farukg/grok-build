@@ -126,6 +126,7 @@ pub(crate) async fn run_request_task(
     let doom_max_retries = doom_policy.map_or(0, |p| p.max_retries);
     let mut doom_retry_count: u32 = 0;
     let output_observed = Arc::new(AtomicBool::new(false));
+    let body_cache = Arc::new(crate::request_capture::RequestBodyCache::default());
 
     loop {
         sampling_span.record(
@@ -139,8 +140,17 @@ pub(crate) async fn run_request_task(
 
         // Once the resample budget is spent, the attempt runs with the abort disarmed so it can complete and be accepted as-is
         let doom_check = doom_policy.filter(|_| doom_retry_count < doom_max_retries);
+        let capture = crate::request_capture::CaptureAttempt {
+            request_id: request_id.clone(),
+            attempt: crate::request_capture::RequestAttemptId(u64::from(retry_count) + u64::from(doom_retry_count) + 1),
+            backend: client.api_backend(),
+            membership: request.projected_membership().into(),
+            cache: Arc::clone(&body_cache),
+            events: event_tx.clone(),
+        };
+        let attempt_client = client.with_capture(capture.clone());
         let outcome = run_one_attempt(
-            &client,
+            &attempt_client,
             request.clone(),
             request_id.clone(),
             idle_timeout,
@@ -151,6 +161,16 @@ pub(crate) async fn run_request_task(
         )
         .instrument(sampling_span.clone())
         .await;
+
+        capture.emit(crate::request_capture::LocalRequestEvidence::Finished {
+            outcome: match &outcome {
+                AttemptOutcome::Completed { .. } => crate::request_capture::LocalAttemptOutcome::Completed,
+                AttemptOutcome::Empty { .. } => crate::request_capture::LocalAttemptOutcome::Empty,
+                AttemptOutcome::Failed { .. } => crate::request_capture::LocalAttemptOutcome::Failed,
+                AttemptOutcome::Cancelled => crate::request_capture::LocalAttemptOutcome::Cancelled,
+                AttemptOutcome::InitFailed { .. } => crate::request_capture::LocalAttemptOutcome::InitializationFailed,
+            },
+        });
 
         let effective_max_retries =
             if retry_policy.retry_only_before_output && output_observed.load(Ordering::Relaxed) {
