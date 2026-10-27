@@ -192,6 +192,7 @@ fn readable_tab_shows_capture_facts_without_claiming_model_consumption() {
 fn raw_tab_fetches_the_prepared_body_lazily() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = session_agent();
+    agent.prompt.set_text("unrelated current editor contents");
     let generation = open(&mut agent);
     let session_id = agent.session.session_id.clone().unwrap();
     assert!(agent.request_body_query_started().is_none(), "nothing loaded yet");
@@ -386,8 +387,16 @@ fn registered_toggle_closes_without_releasing_other_agent_shortcuts() {
     let mut definition = ActionRegistry::defaults().find(ActionId::ToggleRequestInspector).unwrap().clone();
     definition.default_key = crate::key!(F(4));
     definition.context = When::AgentScreen;
+    let mut quit = ActionRegistry::defaults().find(ActionId::Quit).unwrap().clone();
+    quit.default_key = crate::key!(F(4));
+    quit.context = When::Always;
+    let colliding = ActionRegistry::new(vec![definition.clone(), quit]);
     let registry = ActionRegistry::new(vec![definition]);
     agent.open_request_viewer().unwrap();
+    assert!(matches!(agent.handle_input(
+        &Event::Key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)), &colliding,
+    ), InputOutcome::Unchanged));
+    assert!(agent.request_viewer.is_some(), "Always bindings still bubble to their existing owner");
     assert!(matches!(agent.handle_input(
         &Event::Key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)), &registry,
     ), InputOutcome::Unchanged));
@@ -505,6 +514,33 @@ fn changed_request_attempt_or_digest_invalidates_every_raw_state_and_rejects_old
                 Some("{\"successor\":true}"));
         }
     }
+}
+
+#[test]
+fn a_new_prepared_observation_invalidates_an_inflight_body_before_the_refresh_answers() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = session_agent();
+    let generation = open(&mut agent);
+    let session_id = agent.session.session_id.clone().unwrap();
+    agent.request_snapshot_loaded(&session_id, generation, Ok(Some(wire_snapshot(4, true))));
+    press(&mut agent, KeyCode::Char('r'));
+    let (old_key, old_generation) = body_fetch(&mut agent);
+    let mut snapshot = wire_snapshot(4, true);
+    snapshot.observations[0].attempt.0 = 3;
+    let mut notification = wire_notification(SESSION);
+    notification.evidence = snapshot.observations[0].clone();
+    let (_, _, refresh_generation) = agent.request_snapshot_observed(&notification).unwrap();
+    assert!(matches!(agent.request_viewer.as_ref().unwrap().raw, RawBodyState::NotRequested));
+    apply_body(&mut agent, &old_key, old_generation, wire_body_available());
+    agent.request_body_loaded(&session_id, old_generation, &old_key,
+        Err(RequestSnapshotTransportError::UnexpectedShape));
+    assert!(matches!(agent.request_viewer.as_ref().unwrap().raw, RawBodyState::NotRequested));
+    assert!(agent.request_body_query_started().is_none(), "no read of the older displayed snapshot while refresh is active");
+    let (_, query, _) = agent.request_snapshot_loaded(
+        &session_id, refresh_generation, Ok(Some(snapshot)),
+    ).expect("the refreshed actual preparation arms its own fetch");
+    let RequestSnapshotQuery::Body { key } = query else { panic!("body query"); };
+    assert_eq!(key.0.attempt.0, 3);
 }
 
 #[test]

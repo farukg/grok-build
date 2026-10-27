@@ -42,18 +42,18 @@ const SOURCE_DURABILITY_LABEL: &str = "unconfirmed (independent history channel)
 #[derive(Debug)]
 pub(crate) enum RequestViewFailure {
     Capture(CaptureFailure),
-    Encode(serde_json::Error),
-    Decode(serde_json::Error),
-    Rpc(acp::Error),
+    Encode,
+    Decode,
+    Rpc,
     UnexpectedShape,
 }
 
 impl From<crate::app::actions::RequestSnapshotTransportError> for RequestViewFailure {
     fn from(error: crate::app::actions::RequestSnapshotTransportError) -> Self {
         match error {
-            crate::app::actions::RequestSnapshotTransportError::Encode(error) => Self::Encode(error),
-            crate::app::actions::RequestSnapshotTransportError::Decode(error) => Self::Decode(error),
-            crate::app::actions::RequestSnapshotTransportError::Rpc(error) => Self::Rpc(error),
+            crate::app::actions::RequestSnapshotTransportError::Encode(_) => Self::Encode,
+            crate::app::actions::RequestSnapshotTransportError::Decode(_) => Self::Decode,
+            crate::app::actions::RequestSnapshotTransportError::Rpc(_) => Self::Rpc,
             crate::app::actions::RequestSnapshotTransportError::Unavailable(cause) => Self::Capture(cause),
             crate::app::actions::RequestSnapshotTransportError::UnexpectedShape => Self::UnexpectedShape,
         }
@@ -64,9 +64,9 @@ impl RequestViewFailure {
     pub(crate) fn label(&self) -> String {
         match self {
             Self::Capture(cause) => capture_failure_label(*cause),
-            Self::Encode(_) => "request inspection encoding failed".to_owned(),
-            Self::Decode(_) => "capture response decoding failed".to_owned(),
-            Self::Rpc(_) => "capture RPC failed".to_owned(),
+            Self::Encode => "request inspection encoding failed".to_owned(),
+            Self::Decode => "capture response decoding failed".to_owned(),
+            Self::Rpc => "capture RPC failed".to_owned(),
             Self::UnexpectedShape => "capture store answered an unexpected state".to_owned(),
         }
     }
@@ -805,3 +805,7 @@ fn digest_prefix(digest: &[u8; 32]) -> String {
     out.push('…');
     out
 }
+
+#[cfg(test)]
+#[path = "request_viewer_tests.rs"]
+mod tests;

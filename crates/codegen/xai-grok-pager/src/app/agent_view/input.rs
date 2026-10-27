@@ -857,11 +857,11 @@ impl AgentView {
         if self.request_viewer.is_some() {
             return match ev {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    if registry.lookup(key, When::AgentScreen) == Some(ActionId::ToggleRequestInspector) {
-                        return self.handle_agent_action_with_registry(ActionId::ToggleRequestInspector, registry);
-                    }
                     if registry.lookup(key, When::Always).is_some() {
                         return InputOutcome::Unchanged;
+                    }
+                    if registry.lookup(key, When::AgentScreen) == Some(ActionId::ToggleRequestInspector) {
+                        return self.handle_agent_action_with_registry(ActionId::ToggleRequestInspector, registry);
                     }
                     self.handle_request_viewer_key(key)
                 }

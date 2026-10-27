@@ -72,16 +72,19 @@ async fn latest_uses_one_tail_read_for_empty_exact_page_and_large_histories() {
 
 #[tokio::test]
 async fn body_read_selects_the_prepared_digest_and_rejects_every_foreign_protected_reference_axis() {
+    enum Reference { Session, Request, Attempt, Digest, Matched }
     let _theme = crate::theme::cache::pin_theme();
-    for (session, request, attempt, digest) in [
-        ("33333333-3333-3333-3333-333333333333", REQUEST, 2, [7u8; 32]),
-        (SESSION, "33333333-3333-3333-3333-333333333333", 2, [7; 32]),
-        (SESSION, REQUEST, 3, [7; 32]),
-        (SESSION, REQUEST, 2, [8; 32]),
-        (SESSION, REQUEST, 2, [7; 32]),
-    ] {
+    for reference in [Reference::Session, Reference::Request, Reference::Attempt, Reference::Digest, Reference::Matched] {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let key = RequestBodyKey::from_snapshot(&snapshot(1)).unwrap();
+        let mut protected_local = key.0.clone();
+        match reference {
+            Reference::Session => protected_local.snapshot.session_id = "33333333-3333-3333-3333-333333333333".to_owned(),
+            Reference::Request => protected_local.snapshot.request = RequestSnapshotId(uuid::Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap()),
+            Reference::Attempt => protected_local.attempt.0 = 3,
+            Reference::Digest => protected_local.digest = [8; 32],
+            Reference::Matched => {}
+        }
         let read = query(AgentId(0), acp::SessionId::new(SESSION),
             RequestSnapshotQuery::Body { key: key.clone() }, 18, &tx);
         let server = async {
@@ -99,10 +102,7 @@ async fn body_read_selects_the_prepared_digest_and_rejects_every_foreign_protect
                 "body": {
                     "state": "available", "json": "{\"model\":\"grok\"}",
                     "representation": { "representation": "exact_local_json" },
-                    "protected_local": {
-                        "snapshot": { "sessionId": session, "request": request },
-                        "attempt": attempt, "digest": digest,
-                    },
+                    "protected_local": protected_local,
                 },
             })))).unwrap();
         };
@@ -110,10 +110,10 @@ async fn body_read_selects_the_prepared_digest_and_rejects_every_foreign_protect
         let TaskResult::RequestBodyLoaded { key: answered, result, .. } = result
             else { panic!("body result"); };
         assert_eq!(answered, key);
-        if session == SESSION && request == REQUEST && attempt == 2 && digest == [7; 32] {
-            assert!(matches!(result, Ok(RequestBodyContent::Available(_))));
-        } else {
-            assert!(matches!(result, Err(RequestSnapshotTransportError::UnexpectedShape)));
+        match reference {
+            Reference::Matched => assert!(matches!(result, Ok(RequestBodyContent::Available(_)))),
+            Reference::Session | Reference::Request | Reference::Attempt | Reference::Digest =>
+                assert!(matches!(result, Err(RequestSnapshotTransportError::UnexpectedShape))),
         }
         assert!(rx.try_recv().is_err());
     }
