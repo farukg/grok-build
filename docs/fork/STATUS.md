@@ -15,15 +15,38 @@ rustup, target and incremental caches on the build host. Nightly checksum
 freshness reuses unchanged content across fresh checkouts while detecting edits.
 Builds serialize cache writes and cancel superseded interruptible pipelines.
 Artifacts contain `dist/grok-x86_64-linux.tar.gz` and its SHA-256 checksum and
-expire after 30 days. Warm-build speedup remains unmeasured until two comparable
-GitLab builds complete.
+expire after 30 days. On the isolated proof commit below, Cargo took 5m 15s on
+the first successful run and 36.78s on the repeated same-source run (about 8.6x
+faster). This measures warm-cache reuse, with no claim about changed-source timing.
 
 The glue script `sigma-ops.d/stage-grok-release.sh --from gitlab` selects the
 latest successful GitLab release artifact; `--from github` selects GitHub.
 `--run-id` and `--commit` retain exact pipeline/run and source selection.
 Staging remains an explicit operation and preserves running sessions.
 
-## Last verified artifact
+## Isolated GitLab build proof
+
+The proof branch `ci/gitlab-build-proof` is based on the latest successful GitHub
+source commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` (run `40247692299`).
+Only the CI workflows/tooling and fork documentation differ from that source.
+Proof commit `809fa9a101a653a23d10693cc149273f31409f28` passed GitLab
+[pipeline 10840](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/pipelines/10840),
+job `84459`, and the warm repeat
+[pipeline 10841](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/pipelines/10841),
+job `84460`. Both jobs uploaded the release tarball and checksum. The tools-image
+layers, compiler installation and Cargo downloads were reused from persistent host
+storage. The first proof run already had dependency cache entries from earlier
+attempts. The repeat retained incremental state
+and completed Cargo in 36.78s. No local build/check/test or staging was performed.
+
+The full source snapshot `ff78ef952e395a66f883bb9bbf5404a338a648eb` was committed
+and published to GitLab before the isolated proof. Its pipeline `10833` failed.
+The preceding main attempt `10827` reached Rust compilation and failed on E0631
+in `xai-grok-sampler/src/stream/messages.rs` (`ReasoningItem` versus
+`ConversationReasoningItem`). The isolated success establishes the CI build and
+artifact-delivery path; current main still requires its own successful source build.
+
+## Last verified main artifact
 
 Source/artifact commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` passed GitHub
 Actions [linux-build run 40247692299](https://github.com/farukg/grok-build/actions/runs/40247692299).
@@ -221,8 +244,10 @@ runtime acceptance is unverified. See the
 
 The previous integration and staging are complete; the artifact/source identities
 are recorded at the top of this document and in the [owner-takeover plan](plan/owner-takeover.md).
-Only the canonical checkout remains. Subsequent F6, reasoning and F7/request-display
-changes are local source work and have no matching built/staged artifact yet.
+The F6, reasoning and F7/request-display source snapshot was committed and
+published as `ff78ef952e395a66f883bb9bbf5404a338a648eb`; it has no successful
+matching built/staged artifact. New parallel source edits continue separately.
+The isolated CI proof above uses the last successful GitHub source baseline.
 
 The CI-infrastructure instruction authorizes scoped `main` commits, GitLab project
 creation/publication and GitLab release builds. Local builds, checks, tests,
