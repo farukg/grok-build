@@ -41,12 +41,15 @@ attempts. The repeat retained incremental state and completed Cargo in 36.78s.
 The proof covers compilation and artifact delivery; product tests and runtime/PTY
 acceptance remain unverified.
 
-The full source snapshot `ff78ef952e395a66f883bb9bbf5404a338a648eb` was committed
-and published to GitLab before the isolated proof. Its pipeline `10833` failed.
-The preceding main attempt `10827` reached Rust compilation and failed on E0631
-in `xai-grok-sampler/src/stream/messages.rs` (`ReasoningItem` versus
-`ConversationReasoningItem`). The isolated success establishes the CI build and
-artifact-delivery path; current main still requires its own successful source build.
+Current `main` source `7df297304fbce8c34be194c57cb8d99806bc8654` passed GitLab
+[pipeline 10858](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/pipelines/10858),
+`linux-release` job `84561`, on 2026-10-27. The job uploaded its release artifact.
+Sampler defaults, reasoning-item conversion, Context notification return types and
+Pager API/trait integrations were repaired from the preceding CI diagnostics.
+The final trace reports no warnings in the fork's own code; Cargo retains its
+future-Rust compatibility notice for third-party `nix` versions 0.29.0, 0.30.1
+and 0.31.3. This proves release compilation and artifact delivery for that exact source;
+product tests and interactive/runtime acceptance remain open.
 
 ## Current staged artifact
 
@@ -67,27 +70,17 @@ remain available.
 
 ## Last verified main artifact
 
-Source/artifact commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` passed GitHub
-Actions [linux-build run 40247692299](https://github.com/farukg/grok-build/actions/runs/40247692299).
-The exact-run artifact was staged: checksum validation succeeded, the release binary
-was placed at `/home/fg/.cache/cargo-target/quick/release/xai-grok-pager`, and the
-Grok deployment stage reported 1 promoted, 0 skipped, with installed target
-`/home/fg/.cargo/bin/grok`. This records build and stage evidence only; no process
-restart, running-binary identity, runtime/PTY acceptance, or tests were performed.
-The earlier build attempt [run 40242190071](https://github.com/farukg/grok-build/actions/runs/40242190071)
-failed on intermediate commit `5f50af26`; it was superseded by the successful run
-above. Preserved refs `875ff73c` and `e7ceeb50` remain available.
+Source/artifact commit `7df297304fbce8c34be194c57cb8d99806bc8654` passed
+[GitLab pipeline 10858](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/pipelines/10858).
+The successful [job 84561](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/jobs/84561)
+uploaded `grok-x86_64-linux-7df29730.zip` (73,630,232 bytes), retained until
+2026-11-26. This source includes the current Request Inspector and accumulated
+Context/Display, navigation and inline-output source work. Its tests and interactive
+behavior remain unverified. Staging provenance is recorded separately above.
 
-The subsequent docs-only commit is not the source/artifact commit and has not itself
-been built. Keep artifact provenance tied to the exact successful Run/Commit record.
-
-Historical published `main` at `ba47d59ffc2538a6f4138ce61fd186376776fe21` was an
-independently source-reviewed Root/Child intermediate. GitHub Actions
-[linux-build run 40178088795](https://github.com/farukg/grok-build/actions/runs/40178088795)
-completed successfully at that exact SHA (created 2026-10-25T08:48:29Z), automatically
-triggered by the intermediate push. This is historical build-only evidence;
-same-SHA `linux-test` acceptance was unverified and it does not establish current
-main's build or acceptance.
+Docs-only commits after this source do not change the compiled artifact. Keep
+artifact provenance tied to the exact successful pipeline and source commit.
+Older GitHub/main build records are preserved in Git history before this update.
 
 **Effective policy: local builds, checks, tests, formatters, validation scripts
 and hooks remain disabled. Release-artifact builds run in GitLab; GitHub offers
@@ -107,8 +100,9 @@ stable row and exact context refs. F6 rewind requires an explicitly selected num
 Turn, always confirms its whole-tail scope with No selected initially, and rejects
 stale targets. Missing rewind points and disappearing outline rows have no replacement
 default. Contract: [F6 actions and context removal](design/f6-f7.md).
-Regression cases are authored and unexecuted; these local changes have no build or
-runtime/PTY acceptance evidence. Current instruction: local thematic commits only.
+Regression cases are authored and unexecuted. Release compilation is covered by
+GitLab pipeline `10858`; runtime/PTY acceptance remains open. Thematic commits
+and normal GitLab `main` publication are authorized.
 
 Responses reasoning now preserves summary/content section boundaries and whitespace
 deltas. The pager starts a new chronological Thinking block after tool calls and
@@ -129,7 +123,8 @@ The turn-start path no longer appends the same contract to conversation history 
 every prompt. Historical copies are preserved. The separate per-turn re-publication
 of all synthetic request records remains open; see the current
 [completion/wait map](handoff/2026-10-24/wave-b/completion-delivery-map.md). This local
-change is unbuilt and has no runtime model-request acceptance yet.
+change is included in release-build pipeline `10858`; runtime model-request
+acceptance remains open.
 
 ## Current source disposition and open gates
 
@@ -151,11 +146,11 @@ change is unbuilt and has no runtime model-request acceptance yet.
   schema/pass-through, correlated producer availability and consumer-first rollout
   acceptance are unverified. SIG delivery-outage diagnosis is separate; no shared
   restart is authorized.
-- Source closure is not test discovery, runtime, or UI acceptance. Source/artifact
-  commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` has successful release-build
-  evidence in run `40247692299` and exact-run staging evidence above. No tests,
-  process restarts, or runtime/PTY verification were performed; the currently running
-  binary is unverified. No additional checks or tests are authorized in this scope.
+- Source closure and release compilation have separate evidence. Source/artifact
+  commit `7df297304fbce8c34be194c57cb8d99806bc8654` passed GitLab pipeline `10858`.
+  Tests, process restarts and runtime/PTY verification were outside this publication
+  and CI-repair operation. The currently running binary remains unverified; local
+  execution restrictions remain in force.
 
 ## Historical fold baseline
 
