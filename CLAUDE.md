@@ -75,7 +75,7 @@ Standing rules that go with them:
 ## Build and test
 
 - Release builds run on GitLab at `org/forks/grok-build` (remote `gitlab`). Commit scoped files on `main`, push with `sig push gitlab main`, and observe the exact commit's `linux-release` job. Local builds, checks and tests are excluded. GitHub `linux-build.yml` remains available through manual dispatch.
-- For requested staging, use `/home/fg/projects/org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --from gitlab` for the latest successful GitLab artifact, or `--from github` for GitHub. Optional `--run-id <id> --commit <full-sha>` pins the pipeline/run and source. Preserve running sessions; the script prints restart instructions.
+- For requested staging, use `/home/fg/projects/org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --from gitlab` for the latest successful GitLab artifact, or `--from github` for GitHub. `--branch <branch>` selects the source branch (default `main`); `--run-id <id> --commit <full-sha>` pins the pipeline/run and source while validating that branch. Preserve running sessions; the script prints restart instructions.
 - Toolchain: pinned in `rust-toolchain.toml` (nightly); `rustup` installs it.
 - `protoc` is required. Either install DotSlash (`cargo install dotslash`) so `bin/protoc` works,
   or install protoc from the OS (`apt-get install -y protobuf-compiler`) and export

@@ -21,7 +21,8 @@ faster). This measures warm-cache reuse, with no claim about changed-source timi
 
 The glue script `sigma-ops.d/stage-grok-release.sh --from gitlab` selects the
 latest successful GitLab release artifact; `--from github` selects GitHub.
-`--run-id` and `--commit` retain exact pipeline/run and source selection.
+`--branch <branch>` selects the source branch (default `main`). `--run-id` and
+`--commit` retain exact pipeline/run and source selection within that branch.
 Staging remains an explicit operation and preserves running sessions.
 
 ## Isolated GitLab build proof
@@ -36,8 +37,9 @@ job `84459`, and the warm repeat
 job `84460`. Both jobs uploaded the release tarball and checksum. The tools-image
 layers, compiler installation and Cargo downloads were reused from persistent host
 storage. The first proof run already had dependency cache entries from earlier
-attempts. The repeat retained incremental state
-and completed Cargo in 36.78s. No local build/check/test or staging was performed.
+attempts. The repeat retained incremental state and completed Cargo in 36.78s.
+The proof covers compilation and artifact delivery; product tests and runtime/PTY
+acceptance remain unverified.
 
 The full source snapshot `ff78ef952e395a66f883bb9bbf5404a338a648eb` was committed
 and published to GitLab before the isolated proof. Its pipeline `10833` failed.
@@ -45,6 +47,23 @@ The preceding main attempt `10827` reached Rust compilation and failed on E0631
 in `xai-grok-sampler/src/stream/messages.rs` (`ReasoningItem` versus
 `ConversationReasoningItem`). The isolated success establishes the CI build and
 artifact-delivery path; current main still requires its own successful source build.
+
+## Current staged artifact
+
+The verified staging command is
+`stage-grok-release.sh --from gitlab --branch ci/gitlab-build-proof`.
+It selected pipeline `10841`, job `84460`, source
+`809fa9a101a653a23d10693cc149273f31409f28`, downloaded the release tarball and
+checksum, and passed checksum validation. `sig deploy stage grok` reported
+1 promoted, 0 unchanged, 0 skipped-not-built. The installed CLI returned
+`grok 1.0.45 (809fa9a101a6) [alpha]` from `--version`.
+Running sessions keep their existing executable until manually restarted.
+The glue script's 26 isolated regression tests passed, including both sources,
+branch selection, provenance rejection and checksum failure handling.
+
+The CI changes from the isolated proof are integrated on `main`. The completed
+proof worktree has been removed; the published proof branch and job artifacts
+remain available.
 
 ## Last verified main artifact
 
