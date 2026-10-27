@@ -52,7 +52,7 @@ pub(crate) struct ContextPolicyBinding {
 }
 
 impl ContextPolicyBinding {
-    pub fn new(authority: ContextPolicyAuthority) -> Self {
+    pub(crate) fn new(authority: ContextPolicyAuthority) -> Self {
         Self { authority, incarnation: uuid::Uuid::new_v4().to_string(), applied_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)) }
     }
 }
@@ -108,11 +108,11 @@ pub(crate) struct ContextPolicyStore {
 }
 
 impl ContextPolicyStore {
-    pub fn new(root: PathBuf) -> Self {
+    pub(crate) fn new(root: PathBuf) -> Self {
         Self { root, loaded: Loaded::Unread, inspected_legacy: BTreeSet::new() }
     }
 
-    pub fn authority() -> ContextPolicyAuthority {
+    pub(crate) fn authority() -> ContextPolicyAuthority {
         Arc::new(RwLock::new(Self::new(crate::util::grok_home::grok_home())))
     }
 
@@ -129,7 +129,7 @@ impl ContextPolicyStore {
         Ok(document)
     }
 
-    pub fn load(&mut self) -> Result<(), ContextPolicyError> {
+    pub(crate) fn load(&mut self) -> Result<(), ContextPolicyError> {
         if matches!(self.loaded, Loaded::Unread) {
             self.loaded = Loaded::Ready(self.read()?);
         }
@@ -155,7 +155,7 @@ impl ContextPolicyStore {
         Ok(())
     }
 
-    pub fn ensure_session(&mut self, id: &str, session_dir: &Path) -> Result<(), ContextPolicyError> {
+    pub(crate) fn ensure_session(&mut self, id: &str, session_dir: &Path) -> Result<(), ContextPolicyError> {
         self.load()?;
         if self.inspected_legacy.contains(id) || self.document()?.sessions.contains_key(id) {
             return Ok(());
@@ -184,7 +184,7 @@ impl ContextPolicyStore {
         Ok(())
     }
 
-    pub fn preview_snapshot(
+    pub(crate) fn preview_snapshot(
         &self, id: &str, incarnation: &str,
     ) -> Result<(ContextPolicySelection, ContextPolicy), ContextPreviewUnavailable> {
         let document = self.document().map_err(|_| ContextPreviewUnavailable::AuthorityNotLoaded)?;
@@ -198,12 +198,12 @@ impl ContextPolicyStore {
         Ok((selection, policy))
     }
 
-    pub fn effective(&self, id: &str) -> Result<ContextPolicy, ContextPolicyError> {
+    pub(crate) fn effective(&self, id: &str) -> Result<ContextPolicy, ContextPolicyError> {
         let document = self.document()?;
         Ok(document.sessions.get(id).cloned().unwrap_or_default().effective(&document.global()))
     }
 
-    pub fn selection(&self, id: &str, incarnation: &str) -> Result<ContextPolicySelection, ContextPolicyError> {
+    pub(crate) fn selection(&self, id: &str, incarnation: &str) -> Result<ContextPolicySelection, ContextPolicyError> {
         let document = self.document()?;
         Ok(ContextPolicySelection {
             version: ContextPolicyVersion { revision: document.revision, incarnation: incarnation.to_owned() },
@@ -211,7 +211,7 @@ impl ContextPolicyStore {
         })
     }
 
-    pub fn edit(&mut self, id: &str, incarnation: &str, edit: &ContextPolicyEdit) -> Result<(), ContextPolicyError> {
+    pub(crate) fn edit(&mut self, id: &str, incarnation: &str, edit: &ContextPolicyEdit) -> Result<(), ContextPolicyError> {
         if edit.expected.incarnation != incarnation {
             return Err(ContextPolicyError::OriginChanged);
         }
@@ -264,7 +264,7 @@ impl ContextPolicyStore {
         Ok(())
     }
 
-    pub fn inherited_choices_are_current(&self, source: &str, target: &str) -> bool {
+    pub(crate) fn inherited_choices_are_current(&self, source: &str, target: &str) -> bool {
         match &self.loaded {
             Loaded::Unread => false,
             Loaded::Ready(document) => {
@@ -275,7 +275,7 @@ impl ContextPolicyStore {
         }
     }
 
-    pub fn inherit(&mut self, source: &str, target: &str) -> Result<(), ContextPolicyError> {
+    pub(crate) fn inherit(&mut self, source: &str, target: &str) -> Result<(), ContextPolicyError> {
         self.load()?;
         let current = self.document()?;
         if current.sessions.get(source).cloned().unwrap_or_default() == SessionContextPolicy::default()
