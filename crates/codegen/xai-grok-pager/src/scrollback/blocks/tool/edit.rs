@@ -938,7 +938,16 @@ impl EditToolCallBlock {
             theme.muted()
         };
 
-        let prefix = self.prefix;
+        let glyph_prefix = format!("{} ", if self.prefix.starts_with("Creating ") {
+            crate::glyphs::tool_create_file()
+        } else {
+            crate::glyphs::tool_edit_file()
+        });
+        let prefix = match surface {
+            crate::render::tool_paths::ToolPathSurface::Collapsed
+            | crate::render::tool_paths::ToolPathSurface::Expanded => glyph_prefix.as_str(),
+            crate::render::tool_paths::ToolPathSurface::Fullscreen => self.prefix,
+        };
 
         // Build the suffix spans first so we can reserve space for them. The suffix (diffstat / "(N edits)") renders only
         // on the collapsed one-liner. Untrusted summaries (multi-file, title-fallback path) never show counts that would
@@ -982,12 +991,12 @@ impl EditToolCallBlock {
                 surface,
                 cwd,
                 width,
-                prefix.len() + suffix_width,
+                unicode_width::UnicodeWidthStr::width(prefix) + suffix_width,
             ),
         };
 
         let mut spans = vec![
-            Span::styled(prefix, bold_style),
+            Span::styled(prefix.to_owned(), bold_style),
             Span::styled(path, path_style),
         ];
         spans.extend(suffix_spans);
@@ -1567,7 +1576,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit src/main.rs");
+        assert_eq!(text, format!("{} src/main.rs", crate::glyphs::tool_edit_file()));
     }
 
     #[test]
@@ -1585,7 +1594,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit main.rs (3 edits)");
+        assert_eq!(text, format!("{} main.rs (3 edits)", crate::glyphs::tool_edit_file()));
     }
 
     #[test]
@@ -1602,7 +1611,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Editing workflow cc-deep-research");
+        assert_eq!(text, format!("{} cc-deep-research", crate::glyphs::tool_edit_file()));
         assert!(
             block
                 .path_link_target(Some(Path::new("/repo")))
@@ -1623,7 +1632,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Creating workflow triage");
+        assert_eq!(text, format!("{} triage", crate::glyphs::tool_create_file()));
 
         let block = EditToolCallBlock::new("scripts/build.rhai", vec![]);
         assert_eq!(block.prefix, "Edit ");
@@ -1652,7 +1661,7 @@ mod tests {
         let [s0, s1, s2, s3, s4] = header.spans.as_slice() else {
             panic!("expected 5 header spans: {:?}", header.spans);
         };
-        assert_eq!(s0.content.as_ref(), "Edit ");
+        assert_eq!(s0.content.as_ref(), format!("{} ", crate::glyphs::tool_edit_file()));
         assert_eq!(s1.content.as_ref(), "foo.rs");
         assert_eq!(s2.content.as_ref(), " +1");
         assert_eq!(s2.style.fg, Some(theme.diff_insert_fg));
@@ -1691,7 +1700,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit foo.rs");
+        assert_eq!(text, format!("{} foo.rs", crate::glyphs::tool_edit_file()));
 
         let block = block.with_edit_count(3);
         let header = block.header_line(
@@ -1704,7 +1713,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit foo.rs (3 edits)");
+        assert_eq!(text, format!("{} foo.rs (3 edits)", crate::glyphs::tool_edit_file()));
     }
 
     #[test]
@@ -1725,7 +1734,7 @@ mod tests {
         assert_eq!(output.lines.len(), 1, "collapsed shows the header only");
         // Exact suffix format is pinned by header_diffstat_spans_use_diff_colors.
         let text = line_to_string(&nth(&output.lines, 0).content);
-        assert!(text.starts_with("Edit foo.rs"), "header line: {text:?}");
+        assert!(text.starts_with(&format!("{} foo.rs", crate::glyphs::tool_edit_file())), "header line: {text:?}");
         assert!(!text.contains("let y"), "no diff body while collapsed");
     }
 
@@ -1745,7 +1754,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit src/foo.rs");
+        assert_eq!(text, format!("{} src/foo.rs", crate::glyphs::tool_edit_file()));
 
         let mut ctx = test_ctx();
         ctx.mode = DisplayMode::Expanded;

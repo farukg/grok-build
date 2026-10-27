@@ -35,3 +35,6 @@ pub use tool::{
 };
 pub use user::UserPromptBlock;
 pub use workflow::{WorkflowBlock, WorkflowBlockPhase, WorkflowBlockStatus};
+
+#[cfg(test)]
+mod history_renderer_tests;

@@ -17,9 +17,6 @@ use crate::scrollback::types::{
 use crate::syntax::get_syntect;
 use crate::theme::Theme;
 
-/// Char cap on the collapsed header's inline body preview; the full body lives behind the fold.
-const COLLAPSED_PREVIEW_CHARS: usize = 80;
-
 #[derive(Debug, Clone)]
 pub struct InjectedBlock {
     /// Short surface label ("Task completed", "Memory reminder", …), derived from the
@@ -55,7 +52,7 @@ impl InjectedBlock {
             .unwrap_or("")
     }
 
-    fn header_line(&self, theme: &Theme, muted: bool) -> Line<'static> {
+    fn header_line(&self, theme: &Theme, muted: bool, width: usize) -> Line<'static> {
         let label_style = if muted {
             theme.muted()
         } else {
@@ -64,16 +61,19 @@ impl InjectedBlock {
         let mut spans = vec![Span::styled(self.label.clone(), label_style)];
         let preview = self.first_body_line();
         if muted && !preview.is_empty() {
-            let preview = if preview.chars().count() > COLLAPSED_PREVIEW_CHARS {
-                let truncated: String = preview.chars().take(COLLAPSED_PREVIEW_CHARS).collect();
-                format!("{truncated}\u{2026}")
-            } else {
-                preview.to_string()
-            };
+            let used = unicode_width::UnicodeWidthStr::width(self.label.as_str())
+                + unicode_width::UnicodeWidthStr::width(" — ");
+            let preview = crate::render::line_utils::truncate_str(
+                preview, width.saturating_sub(used),
+            );
             spans.push(Span::styled(" \u{2014} ".to_string(), theme.muted()));
             spans.push(Span::styled(preview, theme.muted()));
         }
-        Line::from(spans)
+        if muted {
+            crate::render::line_utils::truncate_line(Line::from(spans), width)
+        } else {
+            Line::from(spans)
+        }
     }
 
     /// Expanded body rows: same grammar-less styling path Read uses for plain content.
@@ -90,7 +90,7 @@ impl InjectedBlock {
             text_style,
         );
         let body: Vec<Line<'static>> = rows.into_iter().map(Line::from).collect();
-        let (wrapped, joiners) = word_wrap_lines_with_joiners(body, ctx.content_width() as usize);
+        let (wrapped, joiners) = word_wrap_lines_with_joiners(body, ctx.width as usize);
         wrapped
             .into_iter()
             .zip(joiners)
@@ -108,13 +108,18 @@ impl BlockContent for InjectedBlock {
         let theme = Theme::current();
         match ctx.mode {
             DisplayMode::Collapsed | DisplayMode::Truncated => BlockOutput {
-                lines: vec![BlockLine::styled(self.header_line(&theme, true))
-                    .with_selection_range(Some(0))],
+                lines: vec![BlockLine::styled(self.header_line(
+                    &theme,
+                    true,
+                    ctx.width as usize,
+                ))
+                .with_selection_range(Some(0))],
             },
             DisplayMode::Expanded => {
-                let mut lines =
-                    vec![BlockLine::styled(self.header_line(&theme, false))
-                        .with_selection_range(Some(0))];
+                let mut lines: Vec<_> = super::tool::body::wrapped_lines(
+                    [self.header_line(&theme, false, ctx.width as usize)],
+                    ctx.width as usize, "",
+                ).into_iter().map(|line| line.with_selection_range(Some(0))).collect();
                 if !self.text.is_empty() {
                     lines.push(BlockLine::separator(Line::from("")));
                     lines.extend(self.body_lines(ctx, &theme));

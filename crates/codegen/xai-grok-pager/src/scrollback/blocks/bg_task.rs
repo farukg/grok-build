@@ -1,5 +1,5 @@
 //! Three kinds: Started, Completed, Failed.
-//! All render as always-collapsed, groupable blocks with dimmed colored bullets (same dimming as execute blocks).
+//! All render as compact-by-default, groupable blocks with dimmed colored bullets (same dimming as execute blocks).
 //! Enter / Ctrl-F opens the block viewer with stdout from the central store.
 
 use std::time::Duration;
@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span, Text};
 
 use crate::appearance::AppearanceConfig;
 use crate::scrollback::block::BlockContent;
-use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput, DisplayMode};
+use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode};
 use crate::theme::Theme;
 use crate::util::format_duration;
 
@@ -30,7 +30,8 @@ pub enum BgTaskKind {
     },
 }
 
-/// The block is always collapsed, not foldable, groupable, and selectable.
+/// Compact by default; expanded shows the full description and command.
+/// Canonical stdout integration is owned by the task-store projection.
 /// Enter / Ctrl-F opens the block viewer with stdout from the central store.
 #[derive(Debug, Clone)]
 pub struct BgTaskBlock {
@@ -112,6 +113,66 @@ impl BgTaskBlock {
             signal,
         };
     }
+
+    /// Description rows with runs of blank lines collapsed, followed by one blank separator.
+    /// Shared by the viewer preamble and the Expanded body so both show identical rows.
+    fn description_lines(&self, theme: &Theme) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        let description = self
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let Some(desc) = description else {
+            return lines;
+        };
+        // Trim trailing whitespace per line and collapse runs of blank lines to a single blank
+        // Multi-line descriptions can carry noisy internal blank rows that would otherwise stretch the body
+        let mut prev_blank = false;
+        for line in desc.lines() {
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() {
+                if prev_blank {
+                    continue;
+                }
+                prev_blank = true;
+            } else {
+                prev_blank = false;
+            }
+            lines.push(Line::from(Span::styled(
+                trimmed.to_string(),
+                theme.primary(),
+            )));
+        }
+        lines.push(Line::from(""));
+        lines
+    }
+
+    fn expanded_body(&self, ctx: &BlockContext, theme: &Theme) -> Vec<BlockLine> {
+        let mut lines = Vec::new();
+        if let Some(description) = self.description.as_deref().filter(|d| !d.trim().is_empty()) {
+            lines.extend(super::tool::body::wrapped_body(
+                description, theme.primary(), ctx.content_width(), "",
+            ));
+            lines.push(BlockLine::separator(Line::from("")));
+        }
+        let mut command = super::tool::body::wrapped_lines(
+            self.command.lines().map(|line| Line::from(
+                crate::views::tasks_pane::highlight_bash_command(line),
+            )),
+            ctx.content_width(), "  ",
+        );
+        if let Some(first) = command.first_mut() {
+            if let Some(prefix) = first.content.spans.first_mut() {
+                *prefix = Span::styled(
+                    crate::render::line_utils::truncate_str("$ ", ctx.content_width().saturating_sub(1)),
+                    theme.dim(),
+                );
+            }
+        }
+        lines.extend(command);
+        lines
+    }
 }
 
 impl BlockContent for BgTaskBlock {
@@ -138,12 +199,12 @@ impl BlockContent for BgTaskBlock {
         };
         let line = match &self.kind {
             BgTaskKind::Started => Line::from(vec![
-                Span::styled("Task ", bold),
+                Span::styled(format!("{} ", crate::glyphs::history_task()), bold),
                 Span::styled("started: ", muted),
                 Span::styled(display, muted),
             ]),
             BgTaskKind::Completed { elapsed } => Line::from(vec![
-                Span::styled("Task ", bold),
+                Span::styled(format!("{} ", crate::glyphs::history_task()), bold),
                 Span::styled(
                     format!("completed in {}: ", format_duration(*elapsed)),
                     muted,
@@ -170,16 +231,24 @@ impl BlockContent for BgTaskBlock {
                     }
                 };
                 Line::from(vec![
-                    Span::styled("Task ", bold),
+                    Span::styled(format!("{} ", crate::glyphs::history_task()), bold),
                     Span::styled(format!("{verb} in {}: ", format_duration(*elapsed)), muted),
                     Span::styled(format!("{}{}", display, detail), muted),
                 ])
             }
         };
 
-        BlockOutput {
-            lines: vec![line.into()],
+        if ctx.mode == DisplayMode::Collapsed {
+            let line = crate::render::line_utils::truncate_line(line, ctx.content_width());
+            return BlockOutput {
+                lines: vec![line.into()],
+            };
         }
+        let mut lines = super::tool::body::wrapped_lines(
+            [line], ctx.content_width(), "",
+        );
+        lines.extend(self.expanded_body(ctx, &theme));
+        BlockOutput { lines }
     }
 
     fn accent(&self, ctx: &BlockContext) -> Option<AccentStyle> {
@@ -217,7 +286,8 @@ impl BlockContent for BgTaskBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        true
+        self.description.as_deref().is_some_and(|d| !d.trim().is_empty())
+            || !self.command.trim().is_empty()
     }
 
     fn default_display_mode(&self) -> DisplayMode {
@@ -242,33 +312,7 @@ impl BlockContent for BgTaskBlock {
 
         // Description first (primary text), then a blank separator, then the `$ command` with bash syntax highlighting
         // When there is no description, the command stands alone with no leading blank row
-        let description = self
-            .description
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-
-        if let Some(desc) = description {
-            // Trim trailing whitespace per line and collapse runs of blank lines to a single blank
-            // Multi-line descriptions can carry noisy internal blank rows that would otherwise stretch the preamble
-            let mut prev_blank = false;
-            for line in desc.lines() {
-                let trimmed = line.trim_end();
-                if trimmed.is_empty() {
-                    if prev_blank {
-                        continue;
-                    }
-                    prev_blank = true;
-                } else {
-                    prev_blank = false;
-                }
-                lines.push(Line::from(Span::styled(
-                    trimmed.to_string(),
-                    theme.primary(),
-                )));
-            }
-            lines.push(Line::from(""));
-        }
+        lines.extend(self.description_lines(&theme));
 
         // Multi-line `$ command` must be separate ratatui Lines: a single Line drops '\n' as zero-width and smashes `cmd1\ncmd2` into `cmd1cmd2`
         // The smashed form shows when expanding a started bg task in the block viewer
@@ -553,5 +597,39 @@ mod tests {
             text.contains("a b"),
             "newlines should become spaces in failed variant, got: {text:?}"
         );
+    }
+
+    #[test]
+    fn expanded_body_shows_description_and_command() {
+        let block = BgTaskBlock::started("cargo test --release", "t1")
+            .with_description(Some("Run release tests".into()));
+        let expanded = block.output(&test_ctx_expanded());
+        let text: String = expanded
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Run release tests"), "{text}");
+        assert!(text.contains("$ cargo test --release"), "{text}");
+    }
+
+    #[test]
+    fn any_nonempty_command_offers_full_form() {
+        assert!(BgTaskBlock::started("ls", "t1").is_foldable());
+        assert!(BgTaskBlock::started("a\nb", "t2").is_foldable());
+        assert!(
+            BgTaskBlock::started("ls", "t3")
+                .with_description(Some("List files".into()))
+                .is_foldable()
+        );
+    }
+
+    fn test_ctx_expanded() -> BlockContext {
+        BlockContext {
+            mode: DisplayMode::Expanded,
+            ..test_ctx()
+        }
     }
 }

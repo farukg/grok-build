@@ -347,6 +347,96 @@ pub fn enlarge_button() -> &'static str {
     }
 }
 
+// Per-kind tool-row glyphs for compact scrollback headers. Each replaces the textual kind
+// prefix ("Read ", "List ", …) so repeated rows read as kinds, not as repeated verbs.
+// Every variant is exactly 1 column so header width budgets stay stable across platforms.
+
+/// File read. `▤` (square with horizontal fill, reads as a page of lines); CP437 `■`.
+pub fn tool_read_file() -> &'static str {
+    if is_legacy_windows_console() {
+        "\u{25A0}"
+    } else {
+        "\u{25A4}"
+    }
+}
+
+/// Directory listing. `▦` (orthogonal crosshatch square, reads as a grid of entries); CP437 `▒`.
+pub fn tool_list_dir() -> &'static str {
+    if is_legacy_windows_console() {
+        "\u{2592}"
+    } else {
+        "\u{25A6}"
+    }
+}
+
+/// Local pattern search (grep/glob). `◎` bullseye; CP437 `○`.
+pub fn tool_search() -> &'static str {
+    if is_legacy_windows_console() {
+        "\u{25CB}"
+    } else {
+        "\u{25CE}"
+    }
+}
+
+/// Web fetch. `↧` (downwards arrow from bar, a download); CP437 `↓`.
+pub fn tool_web_fetch() -> &'static str {
+    if is_legacy_windows_console() {
+        "\u{2193}"
+    } else {
+        "\u{21A7}"
+    }
+}
+
+/// Memory search. `☰` trigram (stored lines); CP437 `≡`.
+pub fn tool_memory_search() -> &'static str {
+    if is_legacy_windows_console() {
+        "\u{2261}"
+    } else {
+        "\u{2630}"
+    }
+}
+
+/// Skill invocation or skill-file read.
+pub fn tool_skill() -> &'static str {
+    diamond_hollow()
+}
+
+/// Web search, distinct from local pattern search.
+pub fn tool_web_search() -> &'static str {
+    if is_legacy_windows_console() { "?" } else { "⊕" }
+}
+
+/// Integration discovery.
+pub fn tool_integration_search() -> &'static str {
+    if is_legacy_windows_console() { "?" } else { "⌕" }
+}
+
+/// File edit; creation has a separate marker.
+pub fn tool_edit_file() -> &'static str {
+    if is_legacy_windows_console() { "/" } else { "✎" }
+}
+
+pub fn tool_create_file() -> &'static str {
+    "+"
+}
+
+/// Command label when shell-style `$` headers are disabled.
+pub fn tool_execute() -> &'static str {
+    if is_legacy_windows_console() { ">" } else { "▹" }
+}
+
+pub fn history_subagent() -> &'static str {
+    if is_legacy_windows_console() { "&" } else { "⋈" }
+}
+
+pub fn history_task() -> &'static str {
+    if is_legacy_windows_console() { "o" } else { "◷" }
+}
+
+pub fn history_workflow() -> &'static str {
+    if is_legacy_windows_console() { "=" } else { "≋" }
+}
+
 /// One funnel for toast chrome that legacy ConHost cannot render. Non-legacy platforms return the borrow unchanged.
 pub fn legacy_glyph_fallback(s: &str) -> Cow<'_, str> {
     if !is_legacy_windows_console() {
@@ -516,6 +606,33 @@ mod tests {
                 fallback.width(),
                 1,
                 "fallback {fallback:?} must be 1 column"
+            );
+        }
+    }
+
+    // Every tool-kind glyph and its fallback must be exactly one column so compact header width budgets never shift between platforms
+    #[test]
+    fn tool_kind_glyphs_are_one_column() {
+        for (fancy, fallback) in [
+            ("\u{25A4}", "\u{25A0}"), // tool_read_file
+            ("\u{25A6}", "\u{2592}"), // tool_list_dir
+            ("\u{25CE}", "\u{25CB}"), // tool_search
+            ("\u{21A7}", "\u{2193}"), // tool_web_fetch
+            ("\u{2630}", "\u{2261}"), // tool_memory_search
+            ("⊕", "?"),
+            ("⌕", "?"),
+            ("✎", "/"),
+            ("+", "+"),
+            ("▹", ">"),
+            ("⋈", "&"),
+            ("◷", "o"),
+            ("≋", "="),
+        ] {
+            assert_eq!(fancy.width(), 1, "tool glyph {fancy:?} must be 1 column");
+            assert_eq!(
+                fallback.width(),
+                1,
+                "tool fallback {fallback:?} must be 1 column"
             );
         }
     }

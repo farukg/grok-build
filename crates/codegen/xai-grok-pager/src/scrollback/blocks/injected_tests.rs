@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::scrollback::types::{BlockContext, DisplayMode};
+use unicode_width::UnicodeWidthStr;
 
 fn ctx(mode: DisplayMode, width: u16) -> BlockContext {
     BlockContext {
@@ -68,4 +69,19 @@ fn injected_labels_cover_known_reasons_and_fall_back_for_unknown() {
     assert_eq!(injected_label("memory_reminder"), "Memory reminder");
     assert_eq!(injected_label("context_view"), "Context view");
     assert_eq!(injected_label("future_thing"), "Injected (future_thing)");
+}
+
+#[test]
+fn collapsed_preview_fits_the_available_width() {
+    let block = InjectedBlock::new(
+        "Notification drain",
+        "a body line that is far longer than a narrow pane can hold without spilling",
+    );
+    let out = block.output(&ctx(DisplayMode::Collapsed, 30));
+    let text = line_text(&out, 0);
+    assert!(
+        unicode_width::UnicodeWidthStr::width(text.as_str()) <= 30,
+        "row must fit its width: {text:?}"
+    );
+    assert!(text.contains('\u{2026}'), "the cut must be marked: {text:?}");
 }

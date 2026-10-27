@@ -198,15 +198,30 @@ impl ReadToolCallBlock {
             theme.muted()
         };
 
-        // SKILL.md reads render as "Skill {skill_name}".
         if let Some(skill) = self.skill_name() {
-            return Line::from(vec![
-                Span::styled("Skill ", bold_style),
+            let line = Line::from(vec![
+                Span::styled(match surface {
+                    crate::render::tool_paths::ToolPathSurface::Fullscreen => "Skill ".to_owned(),
+                    crate::render::tool_paths::ToolPathSurface::Collapsed
+                    | crate::render::tool_paths::ToolPathSurface::Expanded => {
+                        format!("{} ", crate::glyphs::tool_skill())
+                    }
+                }, bold_style),
                 Span::styled(skill.to_owned(), path_style),
             ]);
+            return match width {
+                Some(width) => crate::render::line_utils::truncate_line(line, width),
+                None => line,
+            };
         }
 
-        let prefix = "Read ";
+        // Transcript surfaces lead with the kind glyph; the fullscreen preamble keeps the textual verb.
+        let glyph_prefix = format!("{} ", crate::glyphs::tool_read_file());
+        let prefix = match surface {
+            crate::render::tool_paths::ToolPathSurface::Collapsed
+            | crate::render::tool_paths::ToolPathSurface::Expanded => glyph_prefix.as_str(),
+            crate::render::tool_paths::ToolPathSurface::Fullscreen => "Read ",
+        };
         let range_suffix = self
             .line_range
             .map(|r| {
@@ -236,11 +251,11 @@ impl ReadToolCallBlock {
             surface,
             cwd,
             width,
-            prefix.len() + total_suffix_len,
+            unicode_width::UnicodeWidthStr::width(prefix) + total_suffix_len,
         );
 
         let mut spans = vec![
-            Span::styled(prefix, bold_style),
+            Span::styled(prefix.to_owned(), bold_style),
             Span::styled(path, path_style),
         ];
 
@@ -836,11 +851,11 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(text, "Skill deploy");
+        assert_eq!(text, format!("{} deploy", crate::glyphs::tool_skill()));
     }
 
     #[test]
-    fn regular_file_renders_as_read() {
+    fn regular_file_renders_the_read_kind_glyph() {
         let block = ReadToolCallBlock::new("src/main.rs");
         let output = block.output(&make_ctx());
         let text: String = first_line(&output)
@@ -850,8 +865,8 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect();
         assert!(
-            text.starts_with("Read "),
-            "expected 'Read ...' got '{text}'"
+            text.starts_with(&format!("{} ", crate::glyphs::tool_read_file())),
+            "expected the read kind glyph, got '{text}'"
         );
         assert!(text.contains("main.rs"));
     }
@@ -867,7 +882,10 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(text, "Read main.rs (1-10)");
+        assert_eq!(
+            text,
+            format!("{} main.rs (1-10)", crate::glyphs::tool_read_file())
+        );
     }
 
     #[test]
@@ -885,7 +903,10 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(header, "Read src/main.rs");
+        assert_eq!(
+            header,
+            format!("{} src/main.rs", crate::glyphs::tool_read_file())
+        );
 
         let preamble = block.preamble(&ctx).unwrap();
         let preamble_text: String = preamble
@@ -938,9 +959,12 @@ mod tests {
         assert_eq!(
             derive_selection_text(header),
             "main.rs",
-            "copy/highlight should match the painted path span, not 'Read …'"
+            "copy/highlight should match the painted path span, not the kind glyph row"
         );
-        assert_eq!(span_text(header, 0), "Read ");
+        assert_eq!(
+            span_text(header, 0),
+            format!("{} ", crate::glyphs::tool_read_file())
+        );
         assert!(header.selection_text.is_none());
     }
 
@@ -1000,7 +1024,7 @@ mod tests {
 
         assert!(matches!(&header.selectable, Selectable::Spans(r) if *r == (1..2)));
         assert_eq!(derive_selection_text(header), "deploy");
-        assert_eq!(span_text(header, 0), "Skill ");
+        assert_eq!(span_text(header, 0), format!("{} ", crate::glyphs::tool_skill()));
     }
 
     #[test]

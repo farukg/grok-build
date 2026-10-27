@@ -129,7 +129,9 @@ impl OtherToolCallBlock {
         };
         let bold_style = text_style.add_modifier(ratatui::style::Modifier::BOLD);
 
-        let mut spans = if let Some((label, content)) = self.name.split_once(": ") {
+        let mut spans = if self.name == "Skill" {
+            vec![Span::styled(format!("{} ", crate::glyphs::tool_skill()), bold_style)]
+        } else if let Some((label, content)) = self.name.split_once(": ") {
             vec![
                 Span::styled(format!("{} ", label), bold_style),
                 Span::styled(content.to_string(), text_style),
@@ -352,7 +354,8 @@ impl BlockContent for OtherToolCallBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        self.output.is_some() || self.error.is_some()
+        self.output.as_deref().is_some_and(|o| !o.trim().is_empty())
+            || self.error.is_some()
     }
 
     fn default_display_mode(&self) -> DisplayMode {

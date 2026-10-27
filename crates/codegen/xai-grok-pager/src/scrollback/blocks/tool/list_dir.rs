@@ -104,7 +104,7 @@ impl ListDirToolCallBlock {
             theme.fg(theme.path)
         };
 
-        let prefix = "List ";
+        let prefix = format!("{} ", crate::glyphs::tool_list_dir());
         let entry_count = self.output.lines().filter(|l| !l.trim().is_empty()).count();
         let suffix = if self.error.is_none() && entry_count > 0 {
             let s = if entry_count == 1 { "y" } else { "ies" };
@@ -112,12 +112,13 @@ impl ListDirToolCallBlock {
         } else {
             String::new()
         };
-        let suffix_fits = width.is_none_or(|w| prefix.len() + suffix.len() < w);
+        let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+        let suffix_fits = width.is_none_or(|w| prefix_width + suffix.len() < w);
         let effective_suffix = if suffix_fits { suffix.as_str() } else { "" };
 
         let path_budget = width
             .map(|w| {
-                w.saturating_sub(prefix.len())
+                w.saturating_sub(prefix_width)
                     .saturating_sub(effective_suffix.len())
             })
             .unwrap_or(usize::MAX);
@@ -269,18 +270,30 @@ mod tests {
     #[test]
     fn collapsed_header_shows_entry_count() {
         let block = ListDirToolCallBlock::new("src").with_output("a.rs\nb.rs\nsub/\n");
-        assert_eq!(header_text(&block), "List src (3 entries)");
+        assert_eq!(
+            header_text(&block),
+            format!("{} src (3 entries)", crate::glyphs::tool_list_dir())
+        );
 
         let single = ListDirToolCallBlock::new("src").with_output("lonely.rs\n");
-        assert_eq!(header_text(&single), "List src (1 entry)");
+        assert_eq!(
+            header_text(&single),
+            format!("{} src (1 entry)", crate::glyphs::tool_list_dir())
+        );
     }
 
     #[test]
     fn collapsed_header_omits_count_when_empty_or_failed() {
         let empty = ListDirToolCallBlock::new("src");
-        assert_eq!(header_text(&empty), "List src");
+        assert_eq!(
+            header_text(&empty),
+            format!("{} src", crate::glyphs::tool_list_dir())
+        );
 
         let failed = ListDirToolCallBlock::new("gone").with_error("no such directory");
-        assert_eq!(header_text(&failed), "List gone");
+        assert_eq!(
+            header_text(&failed),
+            format!("{} gone", crate::glyphs::tool_list_dir())
+        );
     }
 }

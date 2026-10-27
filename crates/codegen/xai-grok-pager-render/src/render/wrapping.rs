@@ -28,6 +28,53 @@ where
     lines
 }
 
+fn content_wrap_ranges(
+    text: &str,
+    opts: Options<'_>,
+    semantics: WrapSemantics,
+) -> Vec<Range<usize>> {
+    let width = opts.width.max(1);
+    let ranges = wrap_ranges_trim(text, opts);
+    match semantics {
+        WrapSemantics::MarkdownLayout => ranges,
+        WrapSemantics::PlainContent => {
+            let mut ranges: Vec<_> = ranges.into_iter().filter(|r| !r.is_empty()).collect();
+            let prefix_end = ranges.first().map_or(text.len(), |r| r.start);
+            let suffix_start = ranges.last().map_or(text.len(), |r| r.end);
+            let mut preserved = Vec::new();
+            append_edge_ranges(text, 0..prefix_end, width, &mut preserved);
+            preserved.append(&mut ranges);
+            append_edge_ranges(text, suffix_start..text.len(), width, &mut preserved);
+            if preserved.is_empty() {
+                preserved.push(0..0);
+            }
+            preserved
+        }
+    }
+}
+
+// textwrap omits edge whitespace; plain content must retain it in selectable rows.
+fn append_edge_ranges(text: &str, range: Range<usize>, width: usize, out: &mut Vec<Range<usize>>) {
+    let Some(edge) = text.get(range.clone()) else {
+        return;
+    };
+    let mut start = range.start;
+    let mut columns = 0;
+    for (offset, ch) in edge.char_indices() {
+        let end = range.start + offset;
+        let ch_width = ch.width().unwrap_or(0);
+        if columns > 0 && columns + ch_width > width {
+            out.push(start..end);
+            start = end;
+            columns = 0;
+        }
+        columns += ch_width;
+    }
+    if start < range.end {
+        out.push(start..range.end);
+    }
+}
+
 /// A segment of a match highlight on a single wrapped row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightSegment {
@@ -143,11 +190,21 @@ pub fn wrap_byte_ranges_matching(text: &str, width: usize) -> Vec<Range<usize>> 
     ranges
 }
 
+/// Interpretation of table and quote markers in wrapped content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapSemantics {
+    /// Keep rendered tables aligned and repeat rendered quote prefixes.
+    MarkdownLayout,
+    /// Wrap markers as source text and retain edge whitespace; explicit indents still apply.
+    PlainContent,
+}
+
 /// Wrapping options with initial/subsequent indent support.
 #[derive(Debug, Clone)]
 pub struct RtOptions<'a> {
     /// The width in columns at which the text will be wrapped.
     pub width: usize,
+    pub semantics: WrapSemantics,
     pub line_ending: textwrap::LineEnding,
     pub initial_indent: Line<'a>,
     pub subsequent_indent: Line<'a>,
@@ -170,6 +227,7 @@ impl<'a> RtOptions<'a> {
     pub fn new(width: usize) -> Self {
         RtOptions {
             width,
+            semantics: WrapSemantics::MarkdownLayout,
             line_ending: textwrap::LineEnding::LF,
             initial_indent: Line::default(),
             subsequent_indent: Line::default(),
@@ -178,6 +236,10 @@ impl<'a> RtOptions<'a> {
             wrap_algorithm: textwrap::WrapAlgorithm::FirstFit,
             word_splitter: textwrap::WordSplitter::HyphenSplitter,
         }
+    }
+
+    pub fn semantics(self, semantics: WrapSemantics) -> Self {
+        RtOptions { semantics, ..self }
     }
 
     pub fn line_ending(self, line_ending: textwrap::LineEnding) -> Self {
@@ -337,21 +399,27 @@ where
 {
     let mut rt_opts: RtOptions<'a> = width_or_options.into();
 
-    // Never wrap tables. Pad to content width: terminal clipping desyncs on wider-than-measured glyphs and strands a ghost cell.
-    if is_table_line(line) {
+    let table_layout = match rt_opts.semantics {
+        WrapSemantics::MarkdownLayout => is_table_line(line),
+        WrapSemantics::PlainContent => false,
+    };
+    // Padding prevents terminal clipping from stranding a wide-glyph ghost cell.
+    if table_layout {
         let fitted = fit_line_to_width(line.clone(), rt_opts.width);
         return (vec![fitted], vec![None]);
     }
 
     let (flat, span_bounds) = flatten_line_and_bounds(line);
 
-    // Blockquote lines start with │ (U+2502) prefix(es)
-    // Set subsequent_indent to the prefix so continuation lines repeat the quote marker
-    // Skip if the caller already set a subsequent_indent (caller intent wins).
-    let bq_len = blockquote_prefix_len(&flat);
-    if bq_len > 0 && bq_len < flat.len() && rt_opts.subsequent_indent.width() == 0 {
-        let prefix = slice_line_spans(line, &span_bounds, &(0..bq_len), &mut 0);
-        rt_opts = rt_opts.subsequent_indent(prefix);
+    match rt_opts.semantics {
+        WrapSemantics::MarkdownLayout => {
+            let bq_len = blockquote_prefix_len(&flat);
+            if bq_len > 0 && bq_len < flat.len() && rt_opts.subsequent_indent.width() == 0 {
+                let prefix = slice_line_spans(line, &span_bounds, &(0..bq_len), &mut 0);
+                rt_opts = rt_opts.subsequent_indent(prefix);
+            }
+        }
+        WrapSemantics::PlainContent => {}
     }
 
     let opts = Options::new(rt_opts.width)
@@ -369,7 +437,11 @@ where
         .width
         .saturating_sub(rt_opts.initial_indent.width())
         .max(1);
-    let initial_wrapped = wrap_ranges_trim(&flat, opts.clone().width(initial_width_available));
+    let initial_wrapped = content_wrap_ranges(
+        &flat,
+        opts.clone().width(initial_width_available),
+        rt_opts.semantics,
+    );
     let Some(first_line_range) = initial_wrapped.first() else {
         out.push(rt_opts.initial_indent.clone());
         joiners.push(None);
@@ -396,7 +468,12 @@ where
         Some(rest) => rest.chars().take_while(|c| *c == ' ').count(),
         None => 0,
     };
-    let joiner_end = base.saturating_add(skip_leading_spaces);
+    let joiner_end = match rt_opts.semantics {
+        WrapSemantics::PlainContent if base + skip_leading_spaces == flat.len() => base,
+        WrapSemantics::PlainContent | WrapSemantics::MarkdownLayout => {
+            base.saturating_add(skip_leading_spaces)
+        }
+    };
     let joiner_first = match flat.get(base..joiner_end) {
         Some(s) => s.to_string(),
         None => String::new(),
@@ -410,7 +487,11 @@ where
     let Some(remaining) = flat.get(base..) else {
         return (out, joiners);
     };
-    let remaining_wrapped = wrap_ranges_trim(remaining, opts.width(subsequent_width_available));
+    let remaining_wrapped = content_wrap_ranges(
+        remaining,
+        opts.width(subsequent_width_available),
+        rt_opts.semantics,
+    );
 
     let mut prev_end = 0usize;
     for (i, r) in remaining_wrapped.iter().enumerate() {
@@ -708,6 +789,55 @@ mod tests {
             panic!("expected line {i}, got {} lines", out.len());
         };
         line
+    }
+
+    #[test]
+    fn markdown_layout_remains_the_default() {
+        for (source, width, expected) in [
+            ("|abcdef|", 4, vec!["|abc"]),
+            ("│ abc def ghi", 7, vec!["│ abc", "│ def", "│ ghi"]),
+        ] {
+            let line = Line::from(source);
+            let default = word_wrap_line_with_joiners(&line, width);
+            let explicit = word_wrap_line_with_joiners(
+                &line,
+                RtOptions::new(width).semantics(WrapSemantics::MarkdownLayout),
+            );
+            assert_eq!(default, explicit);
+            assert_eq!(default.0.iter().map(concat_line).collect::<Vec<_>>(), expected);
+        }
+    }
+
+    #[test]
+    fn plain_content_preserves_styled_unicode_and_edge_whitespace() {
+        for source in [
+            format!("|{}|  ", "界abc_".repeat(500)),
+            format!("│ {}\t  ", "é e\u{301} ".repeat(40)),
+            format!("┌{}┐", "─".repeat(80)),
+            format!("{}tail", " ".repeat(80)),
+            " \t   ".to_owned(),
+            String::new(),
+        ] {
+            for width in [4, 13, 40] {
+                let line = Line::from(Span::styled(source.clone(), Color::Red));
+                let (rows, joiners) = word_wrap_line_with_joiners(
+                    &line,
+                    RtOptions::new(width).semantics(WrapSemantics::PlainContent),
+                );
+                assert_eq!(rows.len(), joiners.len());
+                assert_eq!(joiners.first(), Some(&None));
+                let mut copied = String::new();
+                for (index, (row, joiner)) in rows.iter().zip(&joiners).enumerate() {
+                    if index > 0 {
+                        copied.push_str(joiner.as_deref().expect("soft wrap"));
+                    }
+                    copied.push_str(&concat_line(row));
+                    assert!(row.width() <= width);
+                    assert!(row.spans.iter().all(|span| span.style.fg == Some(Color::Red)));
+                }
+                assert_eq!(copied, source);
+            }
+        }
     }
 
     #[test]

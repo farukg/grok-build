@@ -306,10 +306,9 @@ impl<'a> EntryRenderer<'a> {
     pub const CHROME_WIDTH: u16 = 1 + 2 + 1; // accent + left_pad + right_pad (legacy)
 
     /// Whether this entry should display a timestamp on the first content line.
-    /// Timestamps are shown for user and agent messages (including /btw responses and mid-turn interjections).
-    /// Thinking traces, tool calls, and system messages get none.
+    /// Compact entries share the message timestamp gutter and hover-date overlay.
     fn should_show_timestamp(&self) -> bool {
-        matches!(
+        self.entry.display_mode == DisplayMode::Collapsed || matches!(
             self.entry.block,
             RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
         )
@@ -1221,10 +1220,11 @@ mod tests {
     }
 
     #[test]
-    fn test_no_timestamp_for_thinking_block() {
+    fn test_no_timestamp_for_expanded_thinking_block() {
         crate::appearance::cache::set_show_thinking_blocks(true);
         let theme = Theme::current();
-        let entry = ScrollbackEntry::new(RenderBlock::thinking("deep thoughts"));
+        let entry = ScrollbackEntry::new(RenderBlock::thinking("deep thoughts"))
+            .with_display_mode(DisplayMode::Expanded);
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
@@ -1243,9 +1243,47 @@ mod tests {
     }
 
     #[test]
-    fn test_no_timestamp_for_tool_call() {
+    fn compact_kinds_share_timestamp_and_hover_date() {
+        use crate::scrollback::blocks::{InjectedBlock, SubagentBlock, WorkflowBlock};
+        crate::appearance::cache::set_show_thinking_blocks(true);
         let theme = Theme::current();
-        let entry = ScrollbackEntry::new(RenderBlock::tool_call("Read", "src/main.rs", true));
+        let blocks = [
+            RenderBlock::tool_call("Read", "src/main.rs", true),
+            RenderBlock::thinking("reasoning"),
+            RenderBlock::system("notice"),
+            RenderBlock::bg_task("echo output", "task"),
+            RenderBlock::Workflow(WorkflowBlock::started("run", "workflow", "objective")),
+            RenderBlock::Subagent(SubagentBlock::completed("description", "child", std::time::Duration::ZERO)),
+            RenderBlock::Injected(InjectedBlock::new("Injected", "body")),
+        ];
+        for block in blocks {
+            let entry = ScrollbackEntry::new(block).with_display_mode(DisplayMode::Collapsed);
+            let mut appearance = AppearanceConfig::default();
+            appearance.show_timestamps = true;
+            let renderer = EntryRenderer::new(&entry, &theme).with_appearance(appearance.clone());
+            assert_eq!(renderer.timestamp_reserved(), 10);
+            let width = 100;
+            let height = renderer.desired_height(width);
+            let area = Rect::new(0, 0, width, height);
+            let mut buf = Buffer::empty(area);
+            renderer.render(area, &mut buf);
+            let row = u16::from(entry.block.has_vpad_for(&appearance));
+            assert!(has_ampm_timestamp(&buf, row, width));
+            let hovered = EntryRenderer::new(&entry, &theme)
+                .with_appearance(appearance)
+                .with_mouse_pos(Some((width - 7, row)));
+            let mut buf = Buffer::empty(area);
+            hovered.render(area, &mut buf);
+            let expected = entry.created_at.unwrap().format("%H:%M:%S | %b %d").to_string();
+            assert!(collect_row_symbols(&buf, row, 0, width).contains(&expected));
+        }
+    }
+
+    #[test]
+    fn test_no_timestamp_for_expanded_tool_call() {
+        let theme = Theme::current();
+        let entry = ScrollbackEntry::new(RenderBlock::tool_call("Read", "src/main.rs", true))
+            .with_display_mode(DisplayMode::Expanded);
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
@@ -1300,7 +1338,7 @@ mod tests {
         ];
 
         for (name, block) in negative_blocks {
-            let entry = ScrollbackEntry::new(block);
+            let entry = ScrollbackEntry::new(block).with_display_mode(DisplayMode::Expanded);
             let renderer = EntryRenderer::new(&entry, &theme);
             let height = renderer.desired_height(width);
             let area = Rect::new(0, 0, width, height);

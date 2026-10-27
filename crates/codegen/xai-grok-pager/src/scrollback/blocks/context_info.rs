@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use crate::appearance::AppearanceConfig;
 use crate::render::wrapping::word_wrap_lines;
 use crate::scrollback::block::BlockContent;
-use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput};
+use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode};
 use crate::theme::{Theme, quantize};
 use xai_grok_shell::session::{ContextInfo, count_detail};
 
@@ -521,6 +521,29 @@ fn percent_of_window(part: u64, total: u64) -> String {
 impl BlockContent for ContextInfoBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
+        // The one-line form carries the header plus the at-a-glance totals instead of the
+        // bare "Context" label the generic first-line truncation would leave.
+        if ctx.mode == DisplayMode::Collapsed {
+            let snapshot = &self.snapshot;
+            let header_style = Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD);
+            return BlockOutput {
+                lines: vec![BlockLine::styled(Line::from(vec![
+                    Span::styled("Context", header_style),
+                    Span::styled(
+                        format!(
+                            " \u{00b7} {} / {} tokens ({:.2}%)",
+                            fmt_tok_big(snapshot.used),
+                            fmt_tok_big(snapshot.total),
+                            precise_usage_percent(snapshot.used, snapshot.total),
+                        ),
+                        Style::default().fg(theme.text_secondary),
+                    ),
+                ]))
+                .with_selection_range(Some(0))],
+            };
+        }
         // Responsive bar shape: narrow terminals get a 10×10 bar so it doesn't get clipped or pushed under the legend
         let bar = BarLayout::for_width(ctx.width);
         let styled_lines = self.build_lines(&theme, bar);
@@ -647,6 +670,27 @@ mod tests {
         // Percent shows 2 decimal places (36.7k / 1m = 3.67%)
         assert!(l2.contains("(3.67%)"), "got: {l2:?}");
         assert_eq!(line_text(&lines, 3), "grok-4");
+    }
+
+    #[test]
+    fn collapsed_one_liner_carries_the_at_a_glance_totals() {
+        let block = ContextInfoBlock::new(snapshot(), "grok-4");
+        let ctx = BlockContext {
+            mode: DisplayMode::Collapsed,
+            is_running: false,
+            width: 80,
+            raw: false,
+            max_lines: None,
+            appearance: Default::default(),
+            is_selected: false,
+            cwd: None,
+        };
+        let output = block.output(&ctx);
+        assert_eq!(output.lines.len(), 1);
+        let rendered: Vec<Line<'static>> = output.lines.iter().map(|bl| bl.content.clone()).collect();
+        let text = line_text(&rendered, 0);
+        assert!(text.starts_with("Context \u{00b7} "), "got: {text:?}");
+        assert!(text.contains("tokens (3.67%)"), "got: {text:?}");
     }
 
     #[test]

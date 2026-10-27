@@ -16,8 +16,8 @@ a meaningful summary (tool label + key detail), one row at every width. Design:
 the block's own policy), and the pipeline guarantee in `RenderBlock::output` that Collapsed output
 is truncated to one row. The chosen kind defaults are saved globally or per session (`streams/f6-f7-trees.md`).
 
-## State
-The per-kind renderer WIP was dropped: it mostly contained the changes `reviews/f1display.md` rejects (they change upstream
+## Historical state before the successor repair
+The earlier per-kind renderer WIP was dropped: it mostly contained the changes `reviews/f1display.md` rejects (they change upstream
 fold behavior, add `Truncated` special cases to many renderers and keys to `CachedOutput`). What remains is the real goal.
 
 ## Thinking section boundaries and chronological order (2026-10-26)
@@ -47,7 +47,74 @@ the source defects and regression fixtures establish the repair scope, while cau
 attribution for those specific runs and runtime acceptance remain open. Added sampler,
 shell and pager regression tests are unexecuted. These changes are local source work.
 
+## Pure renderer successor repair (2026-10-27; local source only)
+
+The predecessor's complete claim was refuted by source/API evidence. F1 restores borrowed
+`Option<&str>` filtering and Workflow's shared-marker phase trail. F4–F8 remove the newline-only
+expanded gates, wrap long objectives/descriptions/errors/phases, bound the whole compact Subagent
+line, use Injected's actual available width, and consolidate WebFetch/WebSearch/UseTool content
+boxes at `scrollback/blocks/tool/body.rs`. Wrapped body selection excludes presentation indentation
+and retains original source whitespace plus soft-wrap joiners. F9 extends native glyph headers to
+Skill, WebSearch/X, integration discovery, Edit/create, command labels and lifecycle rows.
+All compact entries now reach EntryRenderer's existing timestamp/date owner when enabled and
+supported by available width; full message timestamp behavior remains unchanged.
+
+Canonical BgTask stdout (F2) and Child-transcript output (F3) now have local source integration
+through their assigned state/viewer owner, including source generations and height invalidation.
+The implementation remains partial and unexecuted; the specific remaining gates are below.
+Local preambles remain context, not canonical output. The separate F7/Thinking/manual-override owners are unchanged.
+Regression sources are authored through RenderBlock output and EntryRenderer buffer rendering,
+including exact wrapped selection text, Unicode/narrow budgets, long one-line expanded text,
+glyph identity and compact timestamp/date hover. Everything is unexecuted: no build, check,
+test, formatter, Git mutation, push, restart or visual capture was performed. Large-body cache,
+PTY light/dark/three-accent and AppView live/replay acceptance remain open. Shared wrapping still
+materializes one physical source line at a time; extremely long single-line Truncated input is
+not a bounded-row wrapping proof. Full report: `/tmp/grok-build-lead-20261027/results/history-renderers-repair.md`.
+
+Additional source blocker: the existing shared `render/wrapping.rs::word_wrap_line_with_joiners`
+clips raw lines beginning with `|`/box-table markers and repeats `│ ` quote indentation as
+selectable content. Its owner is outside this task's exclusive writes. The authored
+`raw_table_and_quote_markers_are_content_not_layout` oracle retains exact source expectations;
+it is unexecuted and source-predicted red until the lead authorizes the shared wrapping owner.
+F4/F7 therefore remain partial, not accepted. The required question and exact owner evidence
+are in the successor report; no input-marker masking or parallel wrapper was introduced.
+
+## Canonical inline sources (2026-10-27; partial local source)
+
+`app/agent.rs::{set_bg_task_stdout,append_bg_task_stdout}` updates the existing canonical
+stdout and its view-owned render revision. The ACP stdout route, monitor append, demotion,
+completion/tombstone and snapshot owners feed that revision path. `session_inline_output.rs`
+resolves Subagent rows by real session identity plus the validated ChildLink; it never treats
+labels or delegation metadata as a transcript. Expanded-demand cold reads reuse native
+`replay_on_open`, outside block output, without session/load, prompt, resume or queue commands.
+Empty-running, empty-terminal, loading, unavailable and cyclic sources are distinct passive
+states. Unknown cold rows are not advertised as already having a foldable body.
+
+`scrollback/entry.rs` retains the existing rendered-output cache and shares output-tree handles.
+Child width/binding/source keys and weak revision dependencies drive dirty-leaf replacement in a
+persistent entry tree; ordinary streaming updates do not clone or walk the complete transcript.
+Initial/cold, structural and width changes still build the child index and may populate all its
+Entry caches; bounded-viewport cold work and performance are not proven. The normal AppView
+agent paint settles new source demands before publishing the frame and retains post-flush data.
+Only changed source layouts need an additional paint; stateful media/overlay acceptance is open.
+Selection paint and explicit reconstruction use the same tree, joiners, remapped ranges and
+sparse boundaries. Existing preambles, Enter paths, glyph/time chrome and Thinking modes remain.
+
+Unexecuted regression source is in `app/session_inline_output_tests.rs` and
+`app/acp_handler/background_inline_tests.rs`: canonical/wire stdout, equal-length replacement,
+empty/running/final/replay, widths, real live/cached/cold/nested Child content, passive channel
+silence, selection ranges, unavailable/loading identity and cycles. The full-tail oracle beyond
+65,535 rows is intentionally uncompromised and source-predicted red: EntryRenderer still exposes
+`u16` desired heights. Aggregate range IDs also retain their `u16` namespace. No build, check,
+test, formatter, Git mutation, push, restart, runtime or PTY acceptance was performed.
+
+Remaining partition seams: the successor-owned whole-block Subagent Copy dispatcher must consume
+`SessionViews::inline_copy_text` instead of block metadata; explicit collapse of unavailable
+Expanded rows still meets the existing input foldability gate. Dashboard/peek renderers were not
+changed. Unbounded composite virtual geometry/range identity and viewport-lazy cold projection
+need architectural continuation; F2/F3 are not marked complete. Decision and capability mapping:
+`governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-canonical-inline-sources.adr.md` (outside this repo).
+
 ## Next steps
-1. Audit each kind's collapsed first line and improve it in the block's own renderer only; keep upstream fold semantics unless
-   the design requires the change, and say why in the commit body.
+1. Close the F2/F3 copy/input seams, unbounded composite geometry and cold-projection cost; preserve native glyphs, full wrapped text, selection joiners and compact timestamp widths.
 2. Golden buffer tests (design A3): very narrow widths, all kinds, live → finished, failed subagent, manual per-entry override.

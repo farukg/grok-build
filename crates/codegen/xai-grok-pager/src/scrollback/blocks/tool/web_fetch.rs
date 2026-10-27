@@ -10,9 +10,6 @@ use crate::scrollback::types::{
 };
 use crate::theme::Theme;
 
-const MAX_INLINE_LINES: usize = 10;
-const TRUNCATED_INLINE_LINES: usize = 3;
-
 /// Web fetch tool call: fetches a URL and returns markdown content.
 #[derive(Debug, Clone)]
 pub struct WebFetchToolCallBlock {
@@ -94,7 +91,7 @@ impl WebFetchToolCallBlock {
         }
     }
 
-    /// Render the header line: **Fetch** `url`
+    /// Render the header line: kind glyph `url`.
     /// When `max_width` is `Some`, the URL is truncated with ellipsis to fit.
     /// When `None`, the full URL is rendered (for expanded view / fullscreen).
     fn header_line(&self, theme: &Theme, muted: bool, max_width: Option<usize>) -> Line<'static> {
@@ -110,9 +107,12 @@ impl WebFetchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Fetch ";
+        let prefix = format!("{} ", crate::glyphs::tool_web_fetch());
         let display_url = match max_width {
-            Some(w) => truncate_str(&self.url, w.saturating_sub(prefix.len())),
+            Some(w) => truncate_str(
+                &self.url,
+                w.saturating_sub(unicode_width::UnicodeWidthStr::width(prefix.as_str())),
+            ),
             None => self.url.clone(),
         };
 
@@ -191,8 +191,9 @@ impl BlockContent for WebFetchToolCallBlock {
                     Some(ctx.content_width()),
                 ))],
             },
-            // Fetch completes in one shot (no streaming), so Truncated is never visible in practice
-            // Treat it the same as Expanded to always show the full content the model saw
+            // Truncated is the transient pinned preview (3 rows + ellipsis); Expanded is the
+            // full fetched page, so the inline row shares the viewer's source instead of
+            // pointing at it.
             DisplayMode::Truncated | DisplayMode::Expanded => {
                 let header = self.header_line(&theme, false, None);
                 let wrapped = crate::render::wrapping::wrap_header_flush(
@@ -223,48 +224,20 @@ impl BlockContent for WebFetchToolCallBlock {
                     lines.push(BlockLine::separator(meta));
                 }
 
-                let max_inline = if ctx.mode == DisplayMode::Truncated {
-                    TRUNCATED_INLINE_LINES
-                } else {
-                    MAX_INLINE_LINES
-                };
-                if let Some(ref output) = self.output {
+                if let Some(output) = self.output.as_deref().filter(|o| !o.trim().is_empty()) {
                     lines.push(Line::from("").into());
-
-                    // Top padding inside the content box.
-                    lines
-                        .push(BlockLine::from(Line::from("")).with_panel_background(theme.bg_dark));
-
-                    let indent = "  ";
-                    let total_lines = output.lines().count();
-
-                    for (i, line) in output.lines().enumerate() {
-                        if i >= max_inline {
-                            lines.push(
-                                BlockLine::from(Line::from(Span::styled(
-                                    format!(
-                                        "{indent}... ({} more lines, press Enter to view)",
-                                        total_lines - max_inline
-                                    ),
-                                    theme.dim(),
-                                )))
-                                .with_panel_background(theme.bg_dark),
-                            );
-                            break;
-                        }
-                        lines.push(
-                            BlockLine::from(Line::from(Span::styled(
-                                format!("{indent}{line}"),
-                                theme.primary(),
-                            )))
-                            .with_panel_background(theme.bg_dark),
-                        );
-                    }
-
-                    // Bottom padding inside the content box.
-                    lines
-                        .push(BlockLine::from(Line::from("")).with_panel_background(theme.bg_dark));
-                } else if self.error.is_none() {
+                    super::body::push_content_box(
+                        &mut lines,
+                        output,
+                        &theme,
+                        ctx,
+                    );
+                } else if let Some(ref err) = self.error {
+                    lines.push(Line::from("").into());
+                    lines.extend(super::body::wrapped_body(
+                        err, theme.fg(theme.accent_error), ctx.content_width(), "  ",
+                    ));
+                } else {
                     lines.push(Line::from("").into());
                     lines.push(
                         Line::from(Span::styled("  (no content)".to_owned(), theme.muted())).into(),
@@ -313,8 +286,9 @@ impl BlockContent for WebFetchToolCallBlock {
         false
     }
 
+    // A failed fetch folds open to show its reason, matching WebSearch
     fn is_foldable(&self) -> bool {
-        self.error.is_none() && self.output.is_some()
+        self.error.is_some() || self.output.as_deref().is_some_and(|o| !o.trim().is_empty())
     }
 
     fn default_display_mode(&self) -> DisplayMode {
@@ -378,14 +352,35 @@ mod tests {
         let truncated = rendered_text(&block, DisplayMode::Truncated);
         assert!(truncated.contains("l03"), "truncated:\n{truncated}");
         assert!(!truncated.contains("l04"), "truncated:\n{truncated}");
+        assert!(truncated.contains('\u{2026}'), "truncated:\n{truncated}");
         assert!(
-            truncated.contains("(9 more lines"),
-            "truncated:\n{truncated}"
+            !truncated.contains("more lines"),
+            "no viewer-pointer prose: {truncated}"
         );
 
+        // Expanded is the whole fetched page; the viewer is no longer the only source.
         let expanded = rendered_text(&block, DisplayMode::Expanded);
-        assert!(expanded.contains("l10"), "expanded:\n{expanded}");
-        assert!(!expanded.contains("l11"), "expanded:\n{expanded}");
-        assert!(expanded.contains("(2 more lines"), "expanded:\n{expanded}");
+        for i in 1..=12 {
+            assert!(
+                expanded.contains(&format!("l{i:02} body")),
+                "expanded must contain l{i:02}: {expanded}"
+            );
+        }
+        assert!(!expanded.contains("more lines"), "expanded:\n{expanded}");
+    }
+
+    #[test]
+    fn failed_fetch_folds_open_to_show_its_reason() {
+        let block = WebFetchToolCallBlock::new("https://example.com").with_error("DNS failure");
+
+        assert!(block.is_foldable());
+        assert!(rendered_text(&block, DisplayMode::Expanded).contains("DNS failure"));
+    }
+
+    #[test]
+    fn empty_output_is_not_foldable() {
+        let empty = WebFetchToolCallBlock::new("https://example.com").with_output("   \n");
+        assert!(!empty.is_foldable());
+        assert!(rendered_text(&empty, DisplayMode::Expanded).contains("(no content)"));
     }
 }

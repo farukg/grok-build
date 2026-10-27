@@ -195,8 +195,9 @@ impl ExecuteToolCallBlock {
                 } else {
                     theme.primary().add_modifier(Modifier::BOLD)
                 };
-                let mut spans = vec![Span::styled("Run ".to_string(), label_style)];
-                let mut hang = UnicodeWidthStr::width("Run ");
+                let prefix = format!("{} ", crate::glyphs::tool_execute());
+                let mut hang = UnicodeWidthStr::width(prefix.as_str());
+                let mut spans = vec![Span::styled(prefix, label_style)];
                 if self.bash_mode {
                     spans.push(Span::styled("(user) ".to_string(), theme.muted()));
                     hang += UnicodeWidthStr::width("(user) ");
@@ -288,7 +289,7 @@ impl ExecuteToolCallBlock {
         } else {
             theme.primary().add_modifier(Modifier::BOLD)
         };
-        let mut spans = vec![Span::styled("Run ", label_style)];
+        let mut spans = vec![Span::styled(format!("{} ", crate::glyphs::tool_execute()), label_style)];
         if self.bash_mode {
             // Same style as session event messages (e.g. "Worked for 2.3s")
             spans.push(Span::styled("(user) ", theme.muted()));
@@ -821,7 +822,7 @@ mod tests {
         let title = line_text(&nth(&headers, 0).0);
         let cmd = line_text(&nth(&headers, 1).0);
         // Leading "Run " on the description is stripped (Label already has it).
-        assert_eq!(title, "Run the unit test suite");
+        assert_eq!(title, format!("{} the unit test suite", crate::glyphs::tool_execute()));
         assert!(cmd.starts_with("$ "), "cmd={cmd:?}");
         assert!(cmd.contains("cargo test --lib"), "cmd={cmd:?}");
         // Prefix span counts: "Run " only on title; "$ " on command.
@@ -836,7 +837,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, true, false);
         assert_eq!(headers.len(), 1);
-        assert_eq!(line_text(&nth(&headers, 0).0), "Run the unit test suite");
+        assert_eq!(line_text(&nth(&headers, 0).0), format!("{} the unit test suite", crate::glyphs::tool_execute()));
     }
 
     #[test]
@@ -868,7 +869,7 @@ mod tests {
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, false);
         assert_eq!(headers.len(), 1);
         let text = line_text(&nth(&headers, 0).0);
-        assert!(text.starts_with("Run "), "header={text:?}");
+        assert!(text.starts_with(&format!("{} ", crate::glyphs::tool_execute())), "header={text:?}");
         assert!(text.contains("echo hi"), "header={text:?}");
     }
 
@@ -912,7 +913,7 @@ mod tests {
         );
         let first = line_text(&nth(&lines, 0).content);
         assert!(
-            first.starts_with("Run "),
+            first.starts_with(&format!("{} ", crate::glyphs::tool_execute())),
             "Label soft-wrap first row needs Run prefix: {first:?}"
         );
         assert!(
@@ -952,7 +953,7 @@ mod tests {
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 2);
         let title = line_text(&nth(&headers, 0).0);
-        assert_eq!(title, "Run (user) List files");
+        assert_eq!(title, format!("{} (user) List files", crate::glyphs::tool_execute()));
         assert_eq!(nth(&headers, 0).1, 2); // "Run " and "(user) "
     }
 

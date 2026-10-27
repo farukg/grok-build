@@ -1,8 +1,10 @@
 # F6/F7 colored screen mockups and cell-width contracts
 
-Theme: Faruk’s Windows Terminal defaults to Color DNA; Grok `color_dna()` RGB values are used in the PNGs. Font: the Windows Terminal default `Hack NF FC Ligatured CCG` bold. The full header, bordered composer and shortcut hint are outside the transcript/sidebar columns, as in the reference screenshot. These are proposed-state renderings, not captures of an implemented UI.
+Theme: Faruk’s Windows Terminal defaults to Color DNA; Grok `color_dna()` RGB values are used in the PNGs. Font: the Windows Terminal default `Hack NF FC Ligatured CCG` bold. The full header, bordered composer and shortcut hint are outside the transcript/sidebar columns, as in the reference screenshot. These are proposed-state renderings, not captures of an implemented UI. The compact glyph contract below supersedes the older textual-prefix images; those images and their historical width results have not been regenerated.
 
 The three F7 sections are Dock, Context, Message Display. Only nonempty dock section Subagents appears. Context and Message Display use two scrollable columns under distinct headers to fit the available terminal height; all 13 categories are shown, with remaining message kinds accessible by scrolling. `◆` = `diamond_filled`; `▸`/`▾` = disclosure glyphs; `▴`/`▾` in rail = timeline chevrons; `━` = `heavy_horizontal` (one-cell, dim viewport range); `─` = `light_horizontal`; `▏` = selection bar in F6 or chat scrollbar at its right edge; `◌` = state glyph; `↻` = resumed glyph; `[↗][X]` = unchanged action buttons. Legacy-console fallbacks come from `crate::glyphs`.
+
+Compact individual history headers use `crate::glyphs` kind glyphs (for example `◆ ▤ CLAUDE.md`, `◆ ⊕ query`, `◆ ✎ file.rs`, `◆ ▹ command`), not repeated Read/Web Search/Edit/Run words. X, server/action identity, shell `$` and actual status remain data. Compact timestamps/date-hover share EntryRenderer's existing right gutter when enabled and wide enough; these historical grids do not establish timestamp acceptance. Group summaries such as `Read 3 files` retain their aggregate verbs. Expanded Subagent/BgTask preambles do not establish canonical child-transcript/stdout coverage: F2/F3 integration remains pending.
 
 Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user card, `theme.text_primary` prose, `theme.text_secondary` metadata, `theme.gray_dim` separators/sizes/idle rail, `theme.gray_bright` section labels, `theme.accent_tool` tool glyphs, `theme.accent_thinking` thinking, `theme.accent_running` subtle viewport accent, `theme.selection_overlay()` selected F6 row, `theme.hover_overlay()` hovered row, `theme.prompt_border` composer. Clipped descriptions/model are fully available in the hover/selection variant; activity/resume state, elapsed and tokens/window remain in the row.
 
@@ -14,9 +16,9 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │ ─  ▾ Read 3 files                    │ ❯ [Image #1] ich will dass dieser obere Bereich in die F7-sidebar kommt     ▏│  ▾ Subagents 3                                             │
 │ ━▏ ◆ CLAUDE.md                       │  16:14  ·  1 image                                                          ▏│  ◆ Verify cycle fix builds ◌ ↻ 5m40s 135K/872K [↗][X]      │
 │ ━    ◆ timeline_panel.rs             │                                                                             ▏│  ◆ Resume M11 after restart ◌ ↻ 5m40s 135K/872K [↗][X]     │
-│ ━    ◆ timeline.rs                   │ ◆ Read CLAUDE.md                                                            ▏│  ◆ Resume M5 after restart ◌ ↻ 5m40s 135K/872K [↗][X]      │
-│ ─· ▸ Searched 2 patterns             │ ◆ Read timeline_panel.rs                                                    ▏│                                                            │
-│    ▸ Edited 1 file                   │ ◆ Read timeline.rs                                                          ▏│▾ Context                    │▾ Message Display             │
+│ ━    ◆ timeline.rs                   │ ◆ ▤    CLAUDE.md                                                            ▏│  ◆ Resume M5 after restart ◌ ↻ 5m40s 135K/872K [↗][X]      │
+│ ─· ▸ Searched 2 patterns             │ ◆ ▤    timeline_panel.rs                                                    ▏│                                                            │
+│    ▸ Edited 1 file                   │ ◆ ▤    timeline.rs                                                          ▏│▾ Context                    │▾ Message Display             │
 │    Antwort · thinking 7.1s · 38s     │ ◆ Searched 2 patterns                                                       ▏│Core instructions    OFF~2.1k│User prompt 1 line            │
 │                                      │ ◆ Edited 1 file                                                             ▏│Project rules        ON ~6.4k│Assistant full                │
 │  ▸ Turn 20  Resume M11 after restart │ ◆ Thinking for 7.1s                                                         ▏│Environment          ON ~0.3k│Execute 1 line                │
@@ -29,7 +31,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │                                      │ ❯ Resume M11 after restart                                                  ▏│Tool exchanges       ON ~1.7k│Integration search 1 line     │
 │                                      │  16:16                                                                      ▏│Runtime notices      ON ~0.5k│UseTool 1 line                │
 │                                      │                                                                             ▏│Memory               OFF~0.7k│MemorySearch 1 line           │
-│                                      │ ◆ Run cargo test -p xai-grok-pager                                          ▏│Summary              ON ~1.2k│SentMessage 1 line            │
+│                                      │ ◆ ▹   cargo test -p xai-grok-pager                                          ▏│Summary              ON ~1.2k│SentMessage 1 line            │
 │                                      │ ◆ Thinking for 5.4s                                                         ▏│  Current request · always sent                             │
 │                                      │                                                                             ▏│  ↑↓ scroll categories / kinds                              │
 │                                      │Worked for 12s                                                               ▏│                                                            │
@@ -51,9 +53,9 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │ ─  ▾ Read 3 files              │ ❯ [Image #1] ich will dass dieser obere Bere… ▏│  ▾ Subagents 3                                         │
 │ ━▏ ◆ CLAUDE.md                 │  16:14  ·  1 image                            ▏│  ◆ Verify cycle fix builds ◌ ↻ 5m40s 135K/872K [↗][X]  │
 │ ━    ◆ timeline_panel.rs       │                                               ▏│  ◆ Resume M11 after restart ◌ ↻ 5m40s 135K/872K [↗][X] │
-│ ━    ◆ timeline.rs             │ ◆ Read CLAUDE.md                              ▏│  ◆ Resume M5 after restart ◌ ↻ 5m40s 135K/872K [↗][X]  │
-│ ─· ▸ Searched 2 patterns       │ ◆ Read timeline_panel.rs                      ▏│                                                        │
-│    ▸ Edited 1 file             │ ◆ Read timeline.rs                            ▏│▾ Context                  │▾ Message Display           │
+│ ━    ◆ timeline.rs             │ ◆ ▤    CLAUDE.md                              ▏│  ◆ Resume M5 after restart ◌ ↻ 5m40s 135K/872K [↗][X]  │
+│ ─· ▸ Searched 2 patterns       │ ◆ ▤    timeline_panel.rs                      ▏│                                                        │
+│    ▸ Edited 1 file             │ ◆ ▤    timeline.rs                            ▏│▾ Context                  │▾ Message Display           │
 │    Antwort · thinking 7.1s · 3…│ ◆ Searched 2 patterns                         ▏│Core instructions  OFF~2.1k│User prompt 1 line          │
 │                                │ ◆ Edited 1 file                               ▏│Project rules      ON ~6.4k│Assistant full              │
 │  ▸ Turn 20  Resume M11 after r…│ ◆ Thinking for 7.1s                           ▏│Environment        ON ~0.3k│Execute 1 line              │
@@ -66,7 +68,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │                                │ ❯ Resume M11 after restart                    ▏│Tool exchanges     ON ~1.7k│Integration search 1 line   │
 │                                │  16:16                                        ▏│Runtime notices    ON ~0.5k│UseTool 1 line              │
 │                                │                                               ▏│Memory             OFF~0.7k│MemorySearch 1 line         │
-│                                │ ◆ Run cargo test -p xai-grok-pager            ▏│Summary            ON ~1.2k│SentMessage 1 line          │
+│                                │ ◆ ▹   cargo test -p xai-grok-pager            ▏│Summary            ON ~1.2k│SentMessage 1 line          │
 │                                │ ◆ Thinking for 5.4s                           ▏│  Current request · always sent                         │
 │                                │                                               ▏│  ↑↓ scroll categories / kinds                          │
 │                                │Worked for 12s                                 ▏│                                                        │
@@ -88,9 +90,9 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │ ─  ▾ Read 3 files                │ ❯ [Image #1] ich will dass dieser obere Bereich in die F7-sidebar kommt          ▏│
 │ ━▏ ◆ CLAUDE.md                   │  16:14  ·  1 image                                                               ▏│
 │ ━    ◆ timeline_panel.rs         │                                                                                  ▏│
-│ ━    ◆ timeline.rs               │ ◆ Read CLAUDE.md                                                                 ▏│
-│ ─· ▸ Searched 2 patterns         │ ◆ Read timeline_panel.rs                                                         ▏│
-│    ▸ Edited 1 file               │ ◆ Read timeline.rs                                                               ▏│
+│ ━    ◆ timeline.rs               │ ◆ ▤    CLAUDE.md                                                                 ▏│
+│ ─· ▸ Searched 2 patterns         │ ◆ ▤    timeline_panel.rs                                                         ▏│
+│    ▸ Edited 1 file               │ ◆ ▤    timeline.rs                                                               ▏│
 │    Antwort · thinking 7.1s · 38s │ ◆ Searched 2 patterns                                                            ▏│
 │                                  │ ◆ Edited 1 file                                                                  ▏│
 │  ▸ Turn 20  Resume M11 after res…│ ◆ Thinking for 7.1s                                                              ▏│
@@ -103,7 +105,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │                                  │ ❯ Resume M11 after restart                                                       ▏│
 │                                  │  16:16                                                                           ▏│
 │                                  │                                                                                  ▏│
-│                                  │ ◆ Run cargo test -p xai-grok-pager                                               ▏│
+│                                  │ ◆ ▹   cargo test -p xai-grok-pager                                               ▏│
 │                                  │ ◆ Thinking for 5.4s                                                              ▏│
 │                                  │                                                                                  ▏│
 │                                  │Worked for 12s                                                                    ▏│
@@ -125,9 +127,9 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │ ─  ▾ Read 3 files                │ ❯ [Image #1] ich will dass dieser obere Bereich in die F7-sidebar kommt          ▏│
 │ ━▏ ◆ CLAUDE.md                   │  16:14  ·  1 image                                                               ▏│
 │ ━    ◆ timeline_panel.rs         │                                                                                  ▏│
-│ ━    ◆ timeline.rs               │ ◆ Read CLAUDE.md                                                                 ▏│
-│ ─· ▸ Searched 2 patterns         │ ◆ Read timeline_panel.rs                                                         ▏│
-│    ▸ Edited 1 file               │ ◆ Read timeline.rs                                                               ▏│
+│ ━    ◆ timeline.rs               │ ◆ ▤    CLAUDE.md                                                                 ▏│
+│ ─· ▸ Searched 2 patterns         │ ◆ ▤    timeline_panel.rs                                                         ▏│
+│    ▸ Edited 1 file               │ ◆ ▤    timeline.rs                                                               ▏│
 │    Antwort · thinking 7.1s · 38s │ ◆ Searched 2 patterns                                                            ▏│
 │                                  │ ◆ Edited 1 file                                                                  ▏│
 │  ▸ Turn 20  Resume M11 after res…│ ◆ Thinking for 7.1s                                                              ▏│
@@ -140,7 +142,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │                                  │ ❯ Resume M11 after restart                                                       ▏│
 │                                  │  16:16                                                                           ▏│
 │                                  │                                                                                  ▏│
-│                                  │ ◆ Run cargo test -p xai-grok-pager                                               ▏│
+│                                  │ ◆ ▹   cargo test -p xai-grok-pager                                               ▏│
 │                                  │ ◆ Thinking for 5.4s                                                              ▏│
 │                                  │                                                                                  ▏│
 │                                  │Worked for 12s                                                                    ▏│
@@ -162,9 +164,9 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │ ─│ ❯ [Image #1] ich will dass dieser obere Bereich in… ▏│  ▾ Subagents 3                                             │
 │ ━│  16:14  ·  1 image                                  ▏│  ◆ Verify cycle fix builds ◌ ↻ 5m40s 135K/872K [↗][X]      │
 │ ━│                                                     ▏│  ◆ Resume M11 after restart ◌ ↻ 5m40s 135K/872K [↗][X]     │
-│ ━│ ◆ Read CLAUDE.md                                    ▏│  ◆ Resume M5 after restart ◌ ↻ 5m40s 135K/872K [↗][X]      │
-│ ─│ ◆ Read timeline_panel.rs                            ▏│                                                            │
-│  │ ◆ Read timeline.rs                                  ▏│▾ Context                    │▾ Message Display             │
+│ ━│ ◆ ▤    CLAUDE.md                                    ▏│  ◆ Resume M5 after restart ◌ ↻ 5m40s 135K/872K [↗][X]      │
+│ ─│ ◆ ▤    timeline_panel.rs                            ▏│                                                            │
+│  │ ◆ ▤    timeline.rs                                  ▏│▾ Context                    │▾ Message Display             │
 │  │ ◆ Searched 2 patterns                               ▏│Core instructions    OFF~2.1k│User prompt 1 line            │
 │  │ ◆ Edited 1 file                                     ▏│Project rules        ON ~6.4k│Assistant full                │
 │  │ ◆ Thinking for 7.1s                                 ▏│Environment          ON ~0.3k│Execute 1 line                │
@@ -177,7 +179,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │  │ ❯ Resume M11 after restart                          ▏│Tool exchanges       ON ~1.7k│Integration search 1 line     │
 │  │  16:16                                              ▏│Runtime notices      ON ~0.5k│UseTool 1 line                │
 │  │                                                     ▏│Memory               OFF~0.7k│MemorySearch 1 line           │
-│  │ ◆ Run cargo test -p xai-grok-pager                  ▏│Summary              ON ~1.2k│SentMessage 1 line            │
+│  │ ◆ ▹   cargo test -p xai-grok-pager                  ▏│Summary              ON ~1.2k│SentMessage 1 line            │
 │  │ ◆ Thinking for 5.4s                                 ▏│  Current request · always sent                             │
 │  │                                                     ▏│  ↑↓ scroll categories / kinds                              │
 │  │Worked for 12s                                       ▏│                                                            │
@@ -199,9 +201,9 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │ ─│ ❯ [Image #1] ich will dass dieser obere Bereich in die F7-sidebar kommt                                          ▏│
 │ ━│  16:14  ·  1 image                                                                                               ▏│
 │ ━│                                                                                                                  ▏│
-│ ━│ ◆ Read CLAUDE.md                                                                                                 ▏│
-│ ─│ ◆ Read timeline_panel.rs                                                                                         ▏│
-│  │ ◆ Read timeline.rs                                                                                               ▏│
+│ ━│ ◆ ▤    CLAUDE.md                                                                                                 ▏│
+│ ─│ ◆ ▤    timeline_panel.rs                                                                                         ▏│
+│  │ ◆ ▤    timeline.rs                                                                                               ▏│
 │  │ ◆ Searched 2 patterns                                                                                            ▏│
 │  │ ◆ Edited 1 file                                                                                                  ▏│
 │  │ ◆ Thinking for 7.1s                                                                                              ▏│
@@ -214,7 +216,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 │  │ ❯ Resume M11 after restart                                                                                       ▏│
 │  │  16:16                                                                                                           ▏│
 │  │                                                                                                                  ▏│
-│  │ ◆ Run cargo test -p xai-grok-pager                                                                               ▏│
+│  │ ◆ ▹   cargo test -p xai-grok-pager                                                                               ▏│
 │  │ ◆ Thinking for 5.4s                                                                                              ▏│
 │  │                                                                                                                  ▏│
 │  │Worked for 12s                                                                                                    ▏│
@@ -238,7 +240,7 @@ Color roles: `theme.bg_base` continuous background, `theme.bg_light` raised user
 - [`120-rail.png`](mockups/120-rail.png)
 - [`180-hover.png`](mockups/180-hover.png)
 
-## Width-check output
+## Historical width-check output (before compact glyph repair)
 
 ```text
 180 columns · F6 + F7: PASS 32/32 rows = 180 cells; borders aligned

@@ -10,6 +10,9 @@ use crate::scrollback::types::{
 };
 use crate::theme::Theme;
 
+/// Non-empty snippet lines a Truncated row shows per result; Expanded wraps the whole snippet.
+const TRUNCATED_SNIPPET_LINES: usize = 3;
+
 /// A single memory search result parsed from the tool output.
 #[derive(Debug, Clone)]
 pub struct MemoryResult {
@@ -83,7 +86,7 @@ impl MemorySearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Memory Search ";
+        let prefix = format!("{} ", crate::glyphs::tool_memory_search());
         let count = self.results.len();
         let suffix = if count > 0 {
             let s = if count == 1 { "" } else { "s" };
@@ -94,15 +97,16 @@ impl MemorySearchToolCallBlock {
 
         match max_width {
             Some(w) => {
-                let suffix_fits = prefix.len() + suffix.len() < w;
+                let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+                let suffix_fits = prefix_width + suffix.len() < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
                 let query_budget = w
-                    .saturating_sub(prefix.len())
+                    .saturating_sub(prefix_width)
                     .saturating_sub(effective_suffix.len());
                 let display_query = truncate_str(&self.query, query_budget);
 
                 let mut spans = vec![
-                    Span::styled(prefix, bold_style),
+                    Span::styled(prefix.clone(), bold_style),
                     Span::styled(display_query, query_style),
                 ];
                 if !effective_suffix.is_empty() {
@@ -204,19 +208,26 @@ impl BlockContent for MemorySearchToolCallBlock {
                         idx_span, path_span, meta_span,
                     ])));
 
-                    // Snippet preview (first 3 non-empty lines, with bg_dark)
+                    // Snippet preview: Truncated keeps the first three non-empty lines behind a
+                    // quiet ellipsis; Expanded wraps the whole snippet so the full result the
+                    // model saw stays inline (the viewer is no longer the only source).
                     let snippet_lines: Vec<&str> = r
                         .snippet
                         .lines()
-                        .filter(|l| !l.trim().is_empty())
-                        .take(3)
                         .collect();
-                    for sl in &snippet_lines {
-                        let trimmed = sl.trim();
-                        let display = truncate_str(trimmed, ctx.content_width().saturating_sub(4));
+                    let shown = if ctx.mode == DisplayMode::Truncated {
+                        snippet_lines.len().min(TRUNCATED_SNIPPET_LINES)
+                    } else {
+                        snippet_lines.len()
+                    };
+                    lines.extend(super::body::wrapped_body(
+                        &snippet_lines[..shown].join("\n"),
+                        theme.muted(), ctx.content_width(), "    ",
+                    ).into_iter().map(|line| line.with_panel_background(theme.bg_dark)));
+                    if shown < snippet_lines.len() {
                         lines.push(
-                            BlockLine::from(Line::from(Span::styled(
-                                format!("    {display}"),
+                            BlockLine::separator(Line::from(Span::styled(
+                                "    \u{2026}",
                                 theme.muted(),
                             )))
                             .with_panel_background(theme.bg_dark),

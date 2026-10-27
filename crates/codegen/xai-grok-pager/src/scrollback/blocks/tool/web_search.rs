@@ -12,9 +12,6 @@ use crate::scrollback::types::{
 };
 use crate::theme::Theme;
 
-const MAX_INLINE_LINES: usize = 10;
-const TRUNCATED_INLINE_LINES: usize = 3;
-
 /// Max number of domain names shown in the sources summary line.
 const MAX_INLINE_SOURCES: usize = 3;
 
@@ -103,7 +100,8 @@ impl WebSearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = self.label.as_deref().unwrap_or("Web Search ").to_owned();
+        let provider = if self.is_x_search { "X " } else { "" };
+        let prefix = format!("{} {provider}", crate::glyphs::tool_web_search());
 
         match max_width {
             Some(w) => {
@@ -119,11 +117,11 @@ impl WebSearchToolCallBlock {
 
                 // Only show suffix if prefix + suffix fit within width.
                 // Otherwise drop it to avoid overflow on narrow terminals.
-                let suffix_fits = prefix.len() + suffix.len() < w;
+                let suffix_fits = unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix.len() < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
 
                 let query_budget = w
-                    .saturating_sub(prefix.len())
+                    .saturating_sub(unicode_width::UnicodeWidthStr::width(prefix.as_str()))
                     .saturating_sub(effective_suffix.len());
                 let display_query = truncate_str(&self.query, query_budget);
 
@@ -249,58 +247,15 @@ impl BlockContent for WebSearchToolCallBlock {
                     })
                     .collect();
 
-                let max_inline = if ctx.mode == DisplayMode::Truncated {
-                    TRUNCATED_INLINE_LINES
-                } else {
-                    MAX_INLINE_LINES
-                };
-                if let Some(ref content) = self.content {
+                if let Some(content) = self.content.as_deref().filter(|c| !c.trim().is_empty()) {
                     lines.push(BlockLine::separator(Line::from("")));
 
-                    // Top padding inside the content box.
-                    lines
-                        .push(BlockLine::from(Line::from("")).with_panel_background(theme.bg_dark));
-
-                    let indent = "  ";
-                    let content_lines: Vec<&str> = content.lines().collect();
-
-                    for (i, line) in content_lines.iter().enumerate() {
-                        if i >= max_inline {
-                            let remaining = content_lines.len() - max_inline;
-                            lines.push(
-                                BlockLine::from(Line::from(Span::styled(
-                                    format!(
-                                        "{indent}... ({remaining} more lines, press Enter to view)",
-                                    ),
-                                    theme.dim(),
-                                )))
-                                .with_panel_background(theme.bg_dark),
-                            );
-                            break;
-                        }
-                        lines.push(
-                            BlockLine::from(Line::from(Span::styled(
-                                format!("{indent}{line}"),
-                                theme.primary(),
-                            )))
-                            .with_panel_background(theme.bg_dark),
-                        );
-                    }
-
-                    // Bottom padding inside the content box.
-                    lines
-                        .push(BlockLine::from(Line::from("")).with_panel_background(theme.bg_dark));
+                    super::body::push_content_box(&mut lines, content, &theme, ctx);
                 } else if let Some(ref err) = self.error {
                     lines.push(Line::from("").into());
-                    for line in err.lines() {
-                        lines.push(
-                            Line::from(Span::styled(
-                                format!("  {line}"),
-                                theme.fg(theme.accent_error),
-                            ))
-                            .into(),
-                        );
-                    }
+                    lines.extend(super::body::wrapped_body(
+                        err, theme.fg(theme.accent_error), ctx.content_width(), "  ",
+                    ));
                 } else if !self.is_x_search {
                     lines.push(Line::from("").into());
                     lines.push(Line::from(Span::styled("  (no content)", theme.muted())).into());
@@ -356,7 +311,8 @@ impl BlockContent for WebSearchToolCallBlock {
 
     // A failed search folds open to show its reason
     fn is_foldable(&self) -> bool {
-        (self.content.is_some() || self.error.is_some()) && !self.is_x_search
+        (self.content.as_deref().is_some_and(|c| !c.trim().is_empty()) || self.error.is_some())
+            && !self.is_x_search
     }
 
     fn default_display_mode(&self) -> DisplayMode {
@@ -372,7 +328,11 @@ impl BlockContent for WebSearchToolCallBlock {
 
     fn preamble(&self, _ctx: &BlockContext) -> Option<Text<'static>> {
         let theme = Theme::current();
-        Some(Text::from(vec![self.header_line(&theme, false, None)]))
+        let mut header = self.header_line(&theme, false, None);
+        if let Some(prefix) = header.spans.first_mut() {
+            prefix.content = self.label.as_deref().unwrap_or("Web Search ").to_owned().into();
+        }
+        Some(Text::from(vec![header]))
     }
 }
 
@@ -428,14 +388,19 @@ mod tests {
         let truncated = rendered_text(&block, DisplayMode::Truncated);
         assert!(truncated.contains("l03"), "truncated:\n{truncated}");
         assert!(!truncated.contains("l04"), "truncated:\n{truncated}");
+        assert!(truncated.contains('\u{2026}'), "truncated:\n{truncated}");
         assert!(
-            truncated.contains("(9 more lines"),
-            "truncated:\n{truncated}"
+            !truncated.contains("more lines"),
+            "no viewer-pointer prose: {truncated}"
         );
 
+        // Expanded carries every result line; the viewer is no longer the only source.
         let expanded = rendered_text(&block, DisplayMode::Expanded);
-        assert!(expanded.contains("l10"), "expanded:\n{expanded}");
-        assert!(!expanded.contains("l11"), "expanded:\n{expanded}");
-        assert!(expanded.contains("(2 more lines"), "expanded:\n{expanded}");
+        for i in 1..=12 {
+            assert!(
+                expanded.contains(&format!("l{i:02} result")),
+                "expanded must contain l{i:02}: {expanded}"
+            );
+        }
     }
 }

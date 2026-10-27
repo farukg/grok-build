@@ -5,7 +5,9 @@ use ratatui::text::{Line, Span, Text};
 
 use crate::appearance::AppearanceConfig;
 use crate::scrollback::block::BlockContent;
-use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput, DisplayMode};
+use crate::scrollback::types::{
+    AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode,
+};
 use crate::theme::Theme;
 use crate::util::format_duration;
 
@@ -55,23 +57,21 @@ impl WorkflowBlock {
     }
 
     fn phase_trail(&self) -> Option<String> {
-        if self.phases.is_empty() {
-            return self.current_phase.clone();
-        }
-        Some(
-            self.phases
-                .iter()
-                .map(|p| {
-                    let mark = match p.state.as_str() {
-                        "done" => "✓",
-                        "active" => "●",
-                        _ => "○",
-                    };
-                    format!("{} {mark}", p.title)
-                })
+        (!self.phases.is_empty()).then(|| {
+            self.phases.iter()
+                .map(|phase| format!("{} {}", phase.title, phase_mark(&phase.state)))
                 .collect::<Vec<_>>()
-                .join(" · "),
-        )
+                .join(" → ")
+        })
+    }
+}
+
+/// Phase state marker shared by the one-line trail and the Expanded phase list.
+fn phase_mark(state: &str) -> &'static str {
+    match state {
+        "done" => "✓",
+        "active" => "●",
+        _ => "○",
     }
 }
 
@@ -85,7 +85,7 @@ impl BlockContent for WorkflowBlock {
         };
         let muted = theme.muted();
 
-        let mut spans = vec![Span::styled("Workflow ", bold)];
+        let mut spans = vec![Span::styled(format!("{} ", crate::glyphs::history_workflow()), bold)];
         let verb = match &self.status {
             WorkflowBlockStatus::Running => format!("{}: ", self.name),
             WorkflowBlockStatus::Done { elapsed } => {
@@ -111,7 +111,12 @@ impl BlockContent for WorkflowBlock {
             muted
         };
         spans.push(Span::styled(verb, text_style));
-        spans.push(Span::styled(self.objective.replace('\n', " "), text_style));
+        // The expanded body carries the objective under the summary; keep it out of the
+        // summary there so the row never states it twice.
+        let body_carries_objective = ctx.mode != DisplayMode::Collapsed && self.is_foldable();
+        if !body_carries_objective {
+            spans.push(Span::styled(self.objective.replace('\n', " "), text_style));
+        }
         if let Some(trail) = self.phase_trail()
             && !trail.is_empty()
         {
@@ -124,9 +129,34 @@ impl BlockContent for WorkflowBlock {
             ));
         }
 
-        BlockOutput {
-            lines: vec![Line::from(spans).into()],
+        if ctx.mode == DisplayMode::Collapsed {
+            let line =
+                crate::render::line_utils::truncate_line(Line::from(spans), ctx.content_width());
+            return BlockOutput {
+                lines: vec![line.into()],
+            };
         }
+        let mut lines = super::tool::body::wrapped_lines(
+            [Line::from(spans)], ctx.content_width(), "",
+        );
+        let width = ctx.content_width();
+        let objective = self.objective.trim();
+        if !objective.is_empty() {
+            lines.push(BlockLine::separator(Line::from("")));
+            lines.extend(super::tool::body::wrapped_body(
+                &self.objective, theme.primary(), width, "",
+            ));
+        }
+        if !self.phases.is_empty() {
+            lines.push(BlockLine::separator(Line::from("")));
+            for p in &self.phases {
+                let mark = phase_mark(&p.state);
+                lines.extend(super::tool::body::wrapped_body(
+                    &format!("{mark} {}", p.title), theme.muted(), width, "  ",
+                ));
+            }
+        }
+        BlockOutput { lines }
     }
 
     fn accent(&self, ctx: &BlockContext) -> Option<AccentStyle> {
@@ -171,7 +201,7 @@ impl BlockContent for WorkflowBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        false
+        !self.phases.is_empty() || !self.objective.trim().is_empty()
     }
 
     fn default_display_mode(&self) -> DisplayMode {
@@ -197,11 +227,7 @@ impl BlockContent for WorkflowBlock {
             Line::from(""),
         ];
         for p in &self.phases {
-            let mark = match p.state.as_str() {
-                "done" => "✓",
-                "active" => "●",
-                _ => "○",
-            };
+            let mark = phase_mark(&p.state);
             lines.push(Line::from(Span::styled(
                 format!("  {mark} {}", p.title),
                 theme.muted(),
@@ -305,5 +331,48 @@ mod tests {
         let text = line_text(&block);
         assert!(!text.contains('\n'));
         assert!(text.contains("line1 line2"));
+    }
+
+    #[test]
+    fn expanded_lists_phases_below_the_summary() {
+        let mut block = WorkflowBlock::started("wf_1", "deep-research", "compare A and B");
+        block.phases = vec![
+            WorkflowBlockPhase {
+                title: "Plan".into(),
+                state: "done".into(),
+            },
+            WorkflowBlockPhase {
+                title: "Research".into(),
+                state: "active".into(),
+            },
+        ];
+        assert!(block.is_foldable());
+
+        let expanded = block.output(&test_ctx_expanded());
+        let text: String = expanded
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("  ✓ Plan"), "{text}");
+        assert!(text.contains("  ● Research"), "{text}");
+        assert!(text.contains("compare A and B"), "{text}");
+    }
+
+    #[test]
+    fn nonempty_objective_offers_full_form() {
+        let block = WorkflowBlock::started("wf_1", "x", "short question");
+        assert!(block.is_foldable());
+        let collapsed = block.output(&test_ctx());
+        assert_eq!(collapsed.lines.len(), 1);
+    }
+
+    fn test_ctx_expanded() -> BlockContext {
+        BlockContext {
+            mode: DisplayMode::Expanded,
+            ..test_ctx()
+        }
     }
 }

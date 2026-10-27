@@ -127,18 +127,18 @@ impl SearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Search Tools ";
+        let prefix = format!("{} ", crate::glyphs::tool_integration_search());
 
         match max_width {
             Some(w) => {
                 let s = if self.result_count == 1 { "" } else { "s" };
                 let suffix = format!(" ({} result{s})", self.result_count);
 
-                let suffix_fits = prefix.len() + suffix.len() < w;
+                let suffix_fits = unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix.len() < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
 
                 let query_budget = w
-                    .saturating_sub(prefix.len())
+                    .saturating_sub(unicode_width::UnicodeWidthStr::width(prefix.as_str()))
                     .saturating_sub(effective_suffix.len());
                 let display_query = truncate_str(&self.query, query_budget);
 
@@ -309,7 +309,11 @@ impl BlockContent for SearchToolCallBlock {
 
     fn preamble(&self, _ctx: &BlockContext) -> Option<Text<'static>> {
         let theme = Theme::current();
-        Some(Text::from(vec![self.header_line(&theme, false, None)]))
+        let mut header = self.header_line(&theme, false, None);
+        if let Some(prefix) = header.spans.first_mut() {
+            prefix.content = "Search Tools ".to_owned().into();
+        }
+        Some(Text::from(vec![header]))
     }
 }
 
