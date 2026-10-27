@@ -1265,13 +1265,20 @@ impl AgentView {
         let dim = theme.dim().bg(theme.bg_base);
         let faint = theme.faint().bg(theme.bg_base);
         let mut status = AgentStatusBar::new(&theme);
+        let hover_or = |hovered: bool, resting: Style| {
+            if hovered {
+                bg.fg(theme.text_primary)
+            } else {
+                resting
+            }
+        };
         status.push(
             "auto_scroll",
             Line::from(Span::styled(
                 "[Auto-scroll]",
                 hover_or(
                     self.hit_auto_scroll.hovered,
-                    bg.fg(if self.scrollback.follow_mode() { theme.link_fg } else { theme.gray }),
+                    bg.fg(if self.scrollback.is_follow_mode() { theme.link_fg } else { theme.gray }),
                 ),
             )),
         );
@@ -1349,13 +1356,6 @@ impl AgentView {
         ) {
             status.push("context", ctx_line);
         }
-        let hover_or = |hovered: bool, resting: Style| {
-            if hovered {
-                bg.fg(theme.text_primary)
-            } else {
-                resting
-            }
-        };
         if session_nav.parent || session_nav.child {
             let mut spans = Vec::new();
             if session_nav.parent {

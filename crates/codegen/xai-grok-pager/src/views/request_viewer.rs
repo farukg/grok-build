@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block as RBlock, BorderType, Borders, Clear, Widget};
+use ratatui::widgets::{Block as RBlock, BorderType, Borders, Clear, StatefulWidget, Widget};
 use xai_grok_shell::sampling::ApiBackend;
 use xai_grok_shell::session::request_capture::{
     AttemptOutcome, BodyAvailability, CaptureFailure, NotCapturedReason,

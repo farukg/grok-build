@@ -96,10 +96,11 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
     let restored_from_replay = meta.is_replay;
 
-    let (agent_id, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
+    let agent_id = matched.agent_id();
 
     // Replay/live re-delivery of the same persisted event carries the same eventId; applying it
     // twice would overwrite a recorded terminal state or re-push a duplicate "Task started" block.
@@ -258,10 +259,11 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
         } => (task_id, description, event_text),
         _ => return false,
     };
-    let (agent_id, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
+    let agent_id = matched.agent_id();
 
     // Monitor events append stdout; an exact-id re-delivery must not append the line twice.
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
@@ -544,10 +546,11 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     // Stamps `restored_from_replay` on tombstones inserted below.
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
 
-    let (agent_id, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
+    let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
     };
+    let agent_id = matched.agent_id();
 
     // A re-delivered completion would push a second "Task completed/failed" block and re-finalize
     // the pane row; the eventId proves it is the same persisted event, not a new terminal.

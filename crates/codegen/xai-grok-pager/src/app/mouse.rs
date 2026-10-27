@@ -1378,9 +1378,9 @@ mod tests {
             modifiers: KeyModifiers::empty(),
         };
         assert!(matches!(agent.handle_mouse(&click), InputOutcome::Changed));
-        assert!(!agent.scrollback.follow_mode());
+        assert!(!agent.scrollback.is_follow_mode());
         assert!(matches!(agent.handle_mouse(&click), InputOutcome::Changed));
-        assert!(agent.scrollback.follow_mode());
+        assert!(agent.scrollback.is_follow_mode());
         assert!(!agent.hit_auto_scroll.contains(9, 5));
         assert!(!agent.hit_auto_scroll.contains(23, 5));
     }

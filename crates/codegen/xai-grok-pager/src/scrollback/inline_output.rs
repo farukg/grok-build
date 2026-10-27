@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
+use super::super::block::BlockContent;
 use super::super::types::{
     BlockLine, BlockOutput, RenderedBlockOutput, Selectable, SelectionBoundary,
 };
@@ -332,7 +333,7 @@ impl OutputTree {
             TreeData::Leaf { .. } => false,
             TreeData::Transcript { tree, .. } => tree.output().has_deferred(window),
             TreeData::Native(part) => {
-                if (part.authority.strong_count() == 0 || part.binding_lease.strong_count() == 0 || part.signal.revision() != part.revision) { return true; }
+                if part.authority.strong_count() == 0 || part.binding_lease.strong_count() == 0 || part.signal.revision() != part.revision { return true; }
                 let vpad = usize::from(part.entry.block.has_vpad_for(&part.appearance));
                 part.entry.cached_tree().has_deferred(window.start.saturating_sub(vpad)..window.end.saturating_sub(vpad))
             },
@@ -539,7 +540,7 @@ impl OutputTree {
     pub(crate) fn selection_owner(&self, range: super::super::selection_identity::RangeIdentity) -> Option<&NativePart> {
         match &self.data {
             TreeData::Native(part) => {
-                if (part.authority.strong_count() == 0 || part.binding_lease.strong_count() == 0 || part.signal.revision() != part.revision) { return None; }
+                if part.authority.strong_count() == 0 || part.binding_lease.strong_count() == 0 || part.signal.revision() != part.revision { return None; }
                 if part.entry.selection_identity() == range.source { Some(part) }
                 else { part.output.selection_owner(range) }
             }

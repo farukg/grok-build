@@ -119,7 +119,7 @@ impl AgentView {
         let form_settings: Vec<_> = forms.iter().map(|&(kind, form)| Setting::KindForm { kind, form }).collect();
         if !section_settings.is_empty() { self.save_global_panel_settings(&section_settings); }
         if !form_settings.is_empty() { self.save_display_settings(&form_settings); }
-        if self.panel_persistence.store.is_some() {
+        if self.panel_persistence.is_stored() {
             self.restore_f7_panel_settings();
         }
     }

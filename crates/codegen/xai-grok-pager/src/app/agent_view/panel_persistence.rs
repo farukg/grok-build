@@ -59,6 +59,11 @@ impl PanelPersistence {
             .unwrap_or_default()
     }
 
+    /// Whether this view keeps a settings store; until then nothing is saved or restored.
+    pub(crate) fn is_stored(&self) -> bool {
+        self.store.is_some()
+    }
+
     pub(crate) fn display_layer(&self) -> Layer {
         self.store.as_ref().and_then(PanelSettingsStore::session)
             .map(crate::app::panel_settings::LayerSettings::session_display_scope)
