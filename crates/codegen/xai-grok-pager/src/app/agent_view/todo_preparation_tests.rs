@@ -252,3 +252,88 @@ fn todo_preparation_refreshes_accepted_filter_after_same_length_data_update() {
     }
     assert_eq!(agent.todo.preparation_counts().0, prepared);
 }
+
+#[test]
+fn f7_todo_rows_wrap_within_the_column_and_respect_the_row_budget() {
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.open_panel_settings_in(root.path());
+    let long = "Wrapcheck label that is far longer than the sidebar column so it must wrap instead of truncating zz-finalwrap";
+    agent.todo.update_todos(
+        std::iter::once(item(long, TodoStatus::Pending))
+            .chain((0..6).map(|index| item(&format!("Short task {index}"), TodoStatus::InProgress)))
+            .collect(),
+    );
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    let rendered = screen(&draw(&mut agent));
+    let first = rendered.lines().find(|line| line.contains("□ Wrapcheck")).expect("the todo starts on its own row");
+    let continuation = rendered.lines().find(|line| line.contains("zz-finalwrap")).expect("the label wraps instead of truncating");
+    assert!(!continuation.contains('□') && !continuation.contains('▶'), "a continuation line carries no status glyph: {continuation:?}");
+    assert_ne!(first, continuation);
+    assert!(
+        rendered.lines().any(|line| line.contains("more") && line.contains("Ctrl+T")),
+        "the budget ends with a pointer to the todo pane"
+    );
+    assert!(rendered.contains("Context"), "the bounded Todos section keeps the later sections reachable");
+    assert!(!rendered.contains("Short task 5"), "entries beyond the budget stay in the pane");
+}
+
+#[test]
+fn f7_todo_projection_computes_once_per_draw_and_serves_its_rows_from_it() {
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.open_panel_settings_in(root.path());
+    agent.todo.update_todos(
+        (0..9)
+            .map(|index| {
+                item(
+                    &format!("Wrapcheck task {index} with a label long enough to wrap inside the sidebar column"),
+                    TodoStatus::InProgress,
+                )
+            })
+            .collect(),
+    );
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    let _ = draw(&mut agent);
+    let first = agent.todo.sidebar_projection_count();
+    let buf = draw(&mut agent);
+    let second = agent.todo.sidebar_projection_count();
+    assert_eq!(second - first, 1, "one bounded projection per draw, not one per painted row");
+    let _ = draw(&mut agent);
+    assert_eq!(agent.todo.sidebar_projection_count() - second, 1);
+    assert!(
+        screen(&buf).lines().any(|line| line.contains("more") && line.contains("Ctrl+T")),
+        "the bounded projection still paints its pointer"
+    );
+}
+
+#[test]
+fn f7_todo_wrapped_rows_focus_and_fold_without_touching_the_pane() {
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.open_panel_settings_in(root.path());
+    let long = "Foldcheck label that wraps onto a second row of the sidebar column zz-foldcheck";
+    agent.todo.update_todos(vec![item(long, TodoStatus::InProgress)]);
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    let buf = draw(&mut agent);
+    let outcome = click_row(&mut agent, &buf, "zz-foldcheck");
+    assert!(matches!(outcome, InputOutcome::Unchanged), "a wrapped row takes focus and changes nothing: {outcome:?}");
+    assert!(agent.f7_sidebar_focused(), "a wrapped continuation row takes the focus");
+    assert!(!agent.todo.overlay.visible, "the sidebar never opens the Ctrl+T pane");
+
+    let buf = draw(&mut agent);
+    let _ = click_row(&mut agent, &buf, "\u{25BE} Todos");
+    assert!(screen(&draw(&mut agent)).contains("\u{25B8} Todos"));
+    assert!(!screen(&draw(&mut agent)).contains("Foldcheck"));
+    assert!(!agent.todo.overlay.visible);
+    let buf = draw(&mut agent);
+    let _ = click_row(&mut agent, &buf, "\u{25B8} Todos");
+    assert!(screen(&draw(&mut agent)).contains("▶ Foldcheck"));
+    assert!(!agent.todo.overlay.visible);
+}

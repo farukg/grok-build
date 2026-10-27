@@ -1,11 +1,12 @@
-//! The F7 footer: the hint for the cursor line, where edits are saved, and the standing note.
+//! The F7 footer: a dim hint for the cursor line, and the scope line of its own section.
 
 use crate::app::agent_view::sidebars::SidebarHeightsCache;
+use crate::theme::Theme;
 use crate::views::sidebar::SidebarHeights;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 
-const FOOTER_ROWS: u16 = 3;
+const FOOTER_ROWS: u16 = 2;
 
 /// Border cells around the column, on each axis.
 const BORDER: u16 = 2;
@@ -13,7 +14,7 @@ const BORDER: u16 = 2;
 /// Body rows that stay in view however much the footer wants.
 const MIN_BODY_ROWS: u16 = 5;
 
-/// Header and footer heights of the F7 column: three footer lines when the column is tall enough to keep
+/// Header and footer heights of the F7 column: two footer lines when the column is tall enough to keep
 /// [`MIN_BODY_ROWS`], else the shared footer height.
 pub(super) fn heights(cache: &mut SidebarHeightsCache, column: Rect) -> SidebarHeights {
     let base = cache.heights_for(column.width);
@@ -26,12 +27,12 @@ pub(super) fn heights(cache: &mut SidebarHeightsCache, column: Rect) -> SidebarH
     }
 }
 
-/// The footer lines; with the shared two rows only the first two are shown, so the saving line is second.
-pub(super) fn lines(status: &'static str, saving: &'static str) -> [Line<'static>; 3] {
+/// The footer lines: the keyboard hint for the cursor line, and the scope line of its section.
+pub(super) fn lines(status: &'static str, scope: Option<&'static str>, theme: &Theme) -> [Line<'static>; 2] {
+    let dim = theme.muted();
     [
-        Line::from(status),
-        Line::from(saving),
-        Line::from("Your current message is always sent."),
+        Line::from(Span::styled(status, dim)),
+        scope.map_or_else(Line::default, |scope| Line::from(Span::styled(scope, dim))),
     ]
 }
 
@@ -40,12 +41,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tall_column_gets_three_footer_rows_and_a_short_one_keeps_its_body() {
+    fn a_tall_column_gets_two_footer_rows_and_a_short_one_keeps_its_body() {
         let mut cache = SidebarHeightsCache::default();
         let base = cache.heights_for(56);
 
         let tall = heights(&mut cache, Rect::new(0, 0, 56, 40));
-        assert_eq!(tall.footer, 3);
+        assert_eq!(tall.footer, 2);
         assert_eq!(tall.header, base.header);
 
         let short = heights(&mut cache, Rect::new(0, 0, 56, 9));

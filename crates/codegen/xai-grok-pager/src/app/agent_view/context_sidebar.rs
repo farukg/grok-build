@@ -30,6 +30,7 @@ mod lines;
 mod outline;
 mod persistence;
 mod policy;
+mod todo_rows;
 
 use outline::{CursorTarget, Outline};
 pub(crate) use outline::{SectionDisclosure, SectionId};
@@ -43,17 +44,18 @@ const DISPLAY_SECTION: SectionIdx = SectionIdx(4);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowTarget {
     DockPlacement,
+    Todo,
     Context(ContextCategory),
     Display(MessageKind),
     Group(groups::GroupId),
 }
 
 fn row_target(section: SectionIdx, RowIdx(index): RowIdx, disclosure: SectionDisclosure) -> Option<RowTarget> {
-    if section == DOCK_SECTION {
-        (index == 0).then_some(RowTarget::DockPlacement)
-    } else {
-        let section = SectionId::of_index(section)?;
-        outline::section_targets(disclosure, section).get(index).copied()
+    let target = SectionId::of_index(section)?;
+    match target {
+        SectionId::Dock => (index == 0).then_some(RowTarget::DockPlacement),
+        SectionId::Todo => Some(RowTarget::Todo),
+        SectionId::Context | SectionId::Display => outline::section_targets(disclosure, target).get(index).copied(),
     }
 }
 
@@ -164,6 +166,14 @@ fn form_label(form: DisplayForm) -> &'static str {
     match form {
         DisplayForm::Collapsed => "1 line",
         DisplayForm::Expanded => "full",
+    }
+}
+
+/// The Context scope line for the footer, once the shell has confirmed one.
+fn context_scope_status(report: Option<&ContextPolicyReport>) -> Option<&'static str> {
+    match report?.selection.as_ref()?.scope {
+        xai_grok_shell::sampling::ContextScope::Global => "context: global (c)",
+        xai_grok_shell::sampling::ContextScope::Session => "context: this session (c)",
     }
 }
 
@@ -322,7 +332,7 @@ impl AgentView {
                     layout: None,
                     policy: PolicyState::Loading,
                     disclosure: self.restored_section_disclosure(),
-                    todo_count: self.todo.sidebar_row_count(),
+                    todo_count: self.todo.sidebar_row_count(0),
                     reveal_pending: f7_focused,
                 });
             } else if let ContextSidebar::Open(open) = &mut self.context_sidebar {
@@ -351,7 +361,7 @@ impl AgentView {
                     layout: None,
                     policy: PolicyState::Loading,
                     disclosure: self.restored_section_disclosure(),
-                    todo_count: self.todo.sidebar_row_count(),
+                    todo_count: self.todo.sidebar_row_count(0),
                     reveal_pending: false,
                 });
                 self.clear_timeline_panel_focus();
@@ -527,7 +537,9 @@ impl AgentView {
             &theme,
         );
         self.todo.refresh_entries();
-        let todo_count = self.todo.sidebar_row_count();
+        let todo_width = todo_rows::text_width(area.width);
+        let todo_source = todo_rows::SidebarTodos::new(&self.todo, todo_width);
+        let todo_count = todo_source.count();
         if open.todo_count != todo_count {
             open.todo_count = todo_count;
             open.apply_disclosure(open.disclosure);
@@ -554,9 +566,14 @@ impl AgentView {
             },
             SidebarSection::Hosted(&dock_slot),
             SidebarSection::LazyRows {
-                title: lines::title_line(SectionId::Todo, disclosure.is_expanded(SectionId::Todo), None, &theme),
+                title: lines::title_line(
+                    SectionId::Todo,
+                    disclosure.is_expanded(SectionId::Todo),
+                    lines::todo_summary(&self.todo.counts()),
+                    &theme,
+                ),
                 count: if disclosure.is_expanded(SectionId::Todo) { todo_count } else { 0 },
-                source: &self.todo,
+                source: &todo_source,
             },
             SidebarSection::Rows {
                 title: context_title,
@@ -588,9 +605,21 @@ impl AgentView {
             PolicyState::Unavailable => "Unavailable for this session",
             PolicyState::Ready(_) => gesture::hint_for(cursor_target),
         };
+        let scope = match cursor_target {
+            Some(CursorTarget::Title(SectionId::Display))
+            | Some(CursorTarget::Row(RowTarget::Display(_) | RowTarget::Group(groups::GroupId::Display(_)))) => {
+                Some(self.panel_persistence.display_saving_status())
+            }
+            Some(CursorTarget::Title(SectionId::Context))
+            | Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Group(groups::GroupId::Context(_)))) => {
+                context_scope_status(open.policy.shown())
+            }
+            Some(CursorTarget::Title(SectionId::Dock | SectionId::Todo))
+            | Some(CursorTarget::Row(RowTarget::DockPlacement | RowTarget::Todo))
+            | None => None,
+        };
         let header = [Line::from("Session overview")];
-        let saving = self.panel_persistence.display_saving_status();
-        let footer = footer::lines(status, saving);
+        let footer = footer::lines(status, scope, &theme);
         open.layout = Some(Sidebar::render(
             SidebarRender {
                 area,

@@ -140,9 +140,15 @@ impl Outline {
             let groups: Vec<_> = GroupId::all().filter(|group| group.section() == section).collect();
             if groups.is_empty() {
                 for row in 0..section.row_count(todo_count) {
+                    // Only Dock and Todos have no groups; grouped sections take the branch below.
+                    let target = match section {
+                        SectionId::Dock => RowTarget::DockPlacement,
+                        SectionId::Todo => RowTarget::Todo,
+                        SectionId::Context | SectionId::Display => continue,
+                    };
                     rows.push(TreeRow::leaf(1));
                     lines.push(expanded.then_some(section.row_line(row)));
-                    targets.push(CursorTarget::Row(RowTarget::DockPlacement));
+                    targets.push(CursorTarget::Row(target));
                 }
             } else {
                 for group in groups {

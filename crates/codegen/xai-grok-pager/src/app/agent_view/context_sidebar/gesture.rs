@@ -103,9 +103,11 @@ pub(super) fn activation(modifiers: KeyModifiers) -> SidebarCommand {
 /// The footer hint for the line under the cursor.
 pub(super) fn hint_for(target: Option<CursorTarget>) -> &'static str {
     match target {
+        Some(CursorTarget::Title(super::SectionId::Display)) => "Space sets all · ←/→ fold · g scope",
         Some(CursorTarget::Title(_)) => "Space folds · +/- all · * everything",
         Some(CursorTarget::Row(RowTarget::Group(_))) => "Space group value · ←/→ fold · Enter details",
         Some(CursorTarget::Row(RowTarget::DockPlacement)) => "Space Off/Top/Bottom · ←/→ fold",
+        Some(CursorTarget::Row(RowTarget::Todo)) => "Ctrl+T opens the todo pane",
         Some(CursorTarget::Row(RowTarget::Context(_))) => "Space ON/OFF · Enter details · c scope · +/- all",
         Some(CursorTarget::Row(RowTarget::Display(_))) => "Space flips · +/- all · * everything",
         None => "Esc closes",

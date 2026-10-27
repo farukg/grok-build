@@ -1,7 +1,7 @@
 //! Coloured lines of the F7 tree: section titles with their disclosure glyph, and leaf labels one level below.
 
 use super::outline::SectionId;
-use crate::scrollback::block::{DisplayDefaults, MessageKind};
+use crate::scrollback::block::DisplayDefaults;
 use crate::scrollback::types::DisplayForm;
 use crate::theme::Theme;
 use crate::views::row_style::{Disclosure, SidebarRowClass, SidebarStyle, sidebar_style};
@@ -64,7 +64,13 @@ pub(super) fn context_summary(
 
 /// `N/M full`: how many message kinds show their full form.
 pub(super) fn display_summary(defaults: &DisplayDefaults) -> String {
-    let kinds: Vec<_> = MessageKind::settings_kinds().iter().copied().filter(|&kind| kind != MessageKind::Injected).collect();
+    let kinds: Vec<_> = super::groups::all_display_leaf_kinds().collect();
     let full = kinds.iter().filter(|&&kind| defaults.shown(kind) == DisplayForm::Expanded).count();
     format!("{full}/{} full", kinds.len())
+}
+
+/// `N/M active`: how many todo items are still open, completed and cancelled included in the total.
+pub(super) fn todo_summary(counts: &crate::views::todo_pane::TodoCounts) -> Option<String> {
+    let total = counts.total();
+    (total > 0).then(|| format!("{}/{} active", counts.in_progress + counts.pending, total))
 }

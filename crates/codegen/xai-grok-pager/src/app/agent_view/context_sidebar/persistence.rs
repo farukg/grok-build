@@ -70,7 +70,12 @@ impl AgentView {
                 match open.sidebar.cursor.and_then(|line| CursorTarget::of(line, open.disclosure)) {
                     Some(CursorTarget::Row(RowTarget::Group(GroupId::Display(group)))) => group.kinds().collect(),
                     Some(CursorTarget::Row(RowTarget::Display(kind))) => if matches!(command, SidebarCommand::Activate) { vec![kind] } else { Vec::new() },
-                    Some(CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Group(GroupId::Context(_)) | RowTarget::Context(_) | RowTarget::DockPlacement)) | None => Vec::new(),
+                    Some(CursorTarget::Title(super::SectionId::Display)) => if matches!(command, SidebarCommand::Activate) {
+                        super::groups::all_display_leaf_kinds().collect()
+                    } else {
+                        Vec::new()
+                    },
+                    Some(CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Group(GroupId::Context(_)) | RowTarget::Context(_) | RowTarget::DockPlacement | RowTarget::Todo)) | None => Vec::new(),
                 }
             }
             (ContextSidebar::Closed, SidebarCommand::Activate | SidebarCommand::Bulk { .. })

@@ -26,7 +26,7 @@ pub(super) fn grouped<'a>(
                 .and_then(|index| leaves.get(index)).cloned().map(indent),
             RowTarget::Display(kind) => MessageKind::settings_kinds().iter().position(|&key| key == kind)
                 .and_then(|index| leaves.get(index)).cloned().map(indent),
-            RowTarget::DockPlacement => None,
+            RowTarget::DockPlacement | RowTarget::Todo => None,
         }
     }).collect()
 }

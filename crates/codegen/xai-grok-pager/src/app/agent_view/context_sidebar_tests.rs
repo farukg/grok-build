@@ -840,6 +840,79 @@ fn f7_footer_hint_follows_the_line_under_the_cursor() {
 }
 
 #[test]
+fn f7_footer_shows_only_its_own_sections_scope_and_no_standing_note() {
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.session.session_id = Some(agent_client_protocol::SessionId::new("footer-scope"));
+    agent.open_panel_settings_in(root.path());
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    let _ = draw(&mut agent);
+
+    let on_context = screen(&draw(&mut agent));
+    assert!(on_context.contains("context: this session (c)"), "{on_context}");
+    assert!(!on_context.contains("display: "), "a Context row does not advertise the display scope");
+
+    let _ = press(&mut agent, KeyCode::End);
+    let on_display = screen(&draw(&mut agent));
+    assert!(on_display.contains("display: global (g)"), "{on_display}");
+    assert!(!on_display.contains("context: "), "a Message display row does not advertise the context scope");
+
+    let _ = press(&mut agent, KeyCode::Home);
+    let on_dock = screen(&draw(&mut agent));
+    assert!(on_dock.contains("Space folds"), "{on_dock}");
+    assert!(!on_dock.contains("display: ") && !on_dock.contains("context: "), "the Dock title needs no scope line");
+
+    for buf in [on_context, on_display, on_dock] {
+        assert!(!buf.contains("always sent"), "the standing note is gone from every footer");
+    }
+}
+
+#[test]
+fn f7_footer_survives_a_short_column_next_to_the_todo_rows() {
+    let _theme = crate::theme::cache::pin_theme();
+    let root = tempfile::tempdir().unwrap();
+    let mut agent = test_fixtures::make_agent();
+    agent.open_panel_settings_in(root.path());
+    agent.todo.update_todos((0..8).map(item_for_budget).collect());
+    let _ = press(&mut agent, KeyCode::F(7));
+    agent.context_policy_answered(Ok(ready_report()));
+    let area = Rect::new(0, 0, 160, 12);
+    let mut buf = Buffer::empty(area);
+    agent.draw(
+        area,
+        &mut buf,
+        &ActionRegistry::defaults(),
+        &mut ScratchBuffer::new(),
+        None,
+        false,
+        BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        AppRenderParams::default(),
+    );
+    let lines: Vec<&str> = screen(&buf).lines().collect();
+    let shown = lines.iter().filter(|line| line.contains("Budget task")).count();
+    assert!(shown <= 6, "the Todos section stays inside its budget: {shown} of 8 items painted");
+    let hint = lines.iter().rposition(|line| line.contains("Esc ") || line.contains("Space "));
+    let last_task = lines.iter().rposition(|line| line.contains("Budget task"));
+    assert!(
+        hint.unwrap_or(0) > last_task.unwrap_or(0),
+        "the footer paints below the body rows, never over them"
+    );
+}
+
+fn item_for_budget(index: usize) -> xai_grok_shell::tools::TodoItem {
+    xai_grok_shell::tools::TodoItem {
+        content: format!("Budget task {index}"),
+        status: xai_grok_shell::tools::TodoStatus::InProgress,
+        priority: Default::default(),
+        meta: None,
+    }
+}
+
+#[test]
 fn f7_rows_are_coloured_by_their_meaning() {
     let _theme = crate::theme::cache::pin_theme();
     let theme = Theme::current();

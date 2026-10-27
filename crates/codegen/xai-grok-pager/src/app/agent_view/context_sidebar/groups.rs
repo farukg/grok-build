@@ -3,7 +3,7 @@
 use super::outline::SectionId;
 use super::RowTarget;
 use crate::app::panel_settings::SidebarSection;
-use crate::scrollback::block::{DisplayDefaults, MessageGroup};
+use crate::scrollback::block::{DisplayDefaults, MessageGroup, MessageKind};
 use crate::scrollback::types::DisplayForm;
 use strum::IntoEnumIterator;
 use xai_grok_shell::sampling::{ContextCategory, ContextSwitch, RuntimeNotice, all_categories};
@@ -131,6 +131,11 @@ impl<T: Copy + Eq> Aggregate<T> {
 
 pub(super) fn display_value(group: MessageGroup, defaults: &DisplayDefaults) -> Aggregate<DisplayForm> {
     Aggregate::of(group.kinds().map(|kind| defaults.shown(kind)))
+}
+
+/// Every Message display leaf the tree shows, in tree order: all groups' kinds, folded groups included.
+pub(super) fn all_display_leaf_kinds() -> impl Iterator<Item = MessageKind> {
+    MessageGroup::iter().flat_map(|group| group.kinds())
 }
 
 pub(super) fn next_display(value: Aggregate<DisplayForm>) -> DisplayForm {

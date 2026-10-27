@@ -26,7 +26,7 @@ impl Reached {
         match (spread, target) {
             (Spread::Everything, _) => Self::Both,
             (Spread::Peers, CursorTarget::Row(RowTarget::Display(_) | RowTarget::Group(GroupId::Display(_)))) => Self::Kinds,
-            (Spread::Peers, CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Context(_) | RowTarget::Group(GroupId::Context(_)) | RowTarget::DockPlacement)) => {
+            (Spread::Peers, CursorTarget::Title(_) | CursorTarget::Row(RowTarget::Context(_) | RowTarget::Group(GroupId::Context(_)) | RowTarget::DockPlacement | RowTarget::Todo)) => {
                 Self::Sections
             }
         }
@@ -106,6 +106,7 @@ impl OpenContextSidebar {
             CursorTarget::Row(RowTarget::Context(category)) => Some(super::label(category)),
             CursorTarget::Row(RowTarget::Display(kind)) => Some(kind.label()),
             CursorTarget::Row(RowTarget::DockPlacement) => Some("Placement"),
+            CursorTarget::Row(RowTarget::Todo) => Some("Todo"),
         }
     }
 
@@ -143,7 +144,7 @@ impl OpenContextSidebar {
         match outline.target(index) {
             Some(CursorTarget::Title(section)) => disclosure.set_expanded(section, expanded),
             Some(CursorTarget::Row(RowTarget::Group(group))) => disclosure.set_group(group, expanded),
-            Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Display(_) | RowTarget::DockPlacement)) | None => return InputOutcome::Unchanged,
+            Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Display(_) | RowTarget::DockPlacement | RowTarget::Todo)) | None => return InputOutcome::Unchanged,
         }
         self.apply_disclosure(disclosure);
         InputOutcome::Changed
@@ -172,7 +173,7 @@ impl AgentView {
                     Some(CursorTarget::Row(RowTarget::Display(kind))) => self.inspect_display_kinds(kind.label(), &[kind]),
                     Some(CursorTarget::Title(super::SectionId::Context)) => self.inspect_context_categories("Context", &xai_grok_shell::sampling::all_categories()),
                     Some(CursorTarget::Title(super::SectionId::Display)) => self.inspect_display_kinds("Message display", MessageKind::settings_kinds()),
-                    Some(CursorTarget::Title(super::SectionId::Dock | super::SectionId::Todo) | CursorTarget::Row(RowTarget::DockPlacement)) | None => self.activate_cursor(),
+                    Some(CursorTarget::Title(super::SectionId::Dock | super::SectionId::Todo) | CursorTarget::Row(RowTarget::DockPlacement | RowTarget::Todo)) | None => self.activate_cursor(),
                 }
             }
             SidebarCommand::ToggleDisplayScope => {
@@ -229,6 +230,7 @@ impl AgentView {
             return InputOutcome::Unchanged;
         };
         match CursorTarget::of(line, open.disclosure) {
+            Some(CursorTarget::Title(super::SectionId::Display)) => self.activate_display_section(),
             Some(CursorTarget::Title(_)) => {
                 let outline = Outline::build(open.disclosure, open.todo_count);
                 let Some(at) = outline.index_of(line) else {
@@ -242,6 +244,7 @@ impl AgentView {
                 self.set_dock_placement(crate::views::dock::placement().next());
                 InputOutcome::Changed
             }
+            Some(CursorTarget::Row(RowTarget::Todo)) => InputOutcome::Unchanged,
             Some(CursorTarget::Row(RowTarget::Context(category))) => {
                 self.toggle_context_category(category)
             }
@@ -278,6 +281,10 @@ impl AgentView {
         let (Some(target), Some(at)) = (CursorTarget::of(line, open.disclosure), outline.owner_title(line)) else {
             return InputOutcome::Unchanged;
         };
+        // Todo rows show the pane's state; no fold or display gesture changes them.
+        if matches!(target, CursorTarget::Row(RowTarget::Todo)) {
+            return InputOutcome::Unchanged;
+        }
         let reached = Reached::of(spread, target);
         let scope = match spread {
             Spread::Peers => BulkScope::Siblings,
@@ -324,7 +331,7 @@ impl AgentView {
                         };
                         if !owns_anchor { disclosure.set_group(group, expanded); changed = true; }
                     }
-                    Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Display(_) | RowTarget::DockPlacement)) | None => {}
+                    Some(CursorTarget::Row(RowTarget::Context(_) | RowTarget::Display(_) | RowTarget::DockPlacement | RowTarget::Todo)) | None => {}
                 }
             }
             open.apply_disclosure(disclosure);

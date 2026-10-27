@@ -10,6 +10,15 @@ use crate::views::tree_nav::BulkDirection;
 use xai_grok_shell::sampling::{ContextCategory, ContextPolicyCategories, ContextPolicyMutation, ContextSwitch};
 
 impl AgentView {
+    /// Space on the Message display title: every leaf kind in every group takes one form,
+    /// folded groups included; the folds themselves stay as they are.
+    pub(super) fn activate_display_section(&mut self) -> InputOutcome {
+        let kinds: Vec<_> = super::groups::all_display_leaf_kinds().collect();
+        let value = Aggregate::of(kinds.iter().map(|&kind| self.scrollback.display_defaults().shown(kind)));
+        self.scrollback.choose_kind_defaults(&kinds, next_display(value));
+        InputOutcome::Changed
+    }
+
     pub(super) fn activate_sidebar_group(&mut self, group: GroupId, goal: Option<Goal>) -> InputOutcome {
         match group {
             GroupId::Display(group) => {

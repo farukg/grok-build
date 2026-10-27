@@ -4,9 +4,9 @@ use super::groups::{ContextGroup, GroupId};
 use super::outline::CursorTarget;
 use super::*;
 use crate::actions::ActionRegistry;
-use crate::scrollback::block::{MessageGroup, RenderBlock};
+use crate::scrollback::block::{MessageGroup, MessageKind, RenderBlock};
 use crate::scrollback::blocks::InjectedBlock;
-use crate::scrollback::types::DisplayMode;
+use crate::scrollback::types::{DisplayForm, DisplayMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use xai_grok_shell::sampling::{ContextPolicy, ContextPolicyMutation, ContextPolicySelection, ContextPolicyVersion, ContextScope};
 
@@ -126,6 +126,73 @@ fn context_parent_clicks_only_focus_and_missing_authority_never_mutates() {
     assert!(!agent.context_confirmation_pending());
     let _ = key(&mut agent, KeyCode::Enter);
     assert!(agent.block_viewer.is_some());
+}
+
+#[test]
+fn display_title_sets_every_leaf_kind_including_folded_groups_then_cycles() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut agent = open(ContextScope::Session);
+    agent.scrollback.choose_kind_default(MessageKind::AgentMessage, DisplayForm::Collapsed);
+    select(&mut agent, CursorTarget::Row(RowTarget::Group(GroupId::Display(MessageGroup::Files))));
+    let _ = key(&mut agent, KeyCode::Left);
+    let files_folded = match &agent.context_sidebar {
+        ContextSidebar::Open(open) => !open.disclosure.group_expanded(GroupId::Display(MessageGroup::Files)),
+        ContextSidebar::Closed => panic!("open"),
+    };
+    assert!(files_folded);
+    assert!(!text(&render(&mut agent)).contains("File reads"));
+
+    select(&mut agent, CursorTarget::Title(SectionId::Display));
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    for kind in super::groups::all_display_leaf_kinds() {
+        assert_eq!(agent.scrollback.display_defaults().get(kind), Some(DisplayForm::Collapsed), "{kind:?}");
+    }
+    assert_eq!(
+        agent.scrollback.display_defaults().get(MessageKind::Injected),
+        None,
+        "the legacy injected default is not a leaf and keeps its own value"
+    );
+    match &agent.context_sidebar {
+        ContextSidebar::Open(open) => {
+            assert!(!open.disclosure.group_expanded(GroupId::Display(MessageGroup::Files)), "the fold stays remembered");
+            assert!(open.disclosure.is_expanded(SectionId::Display), "the section itself stays open");
+        }
+        ContextSidebar::Closed => panic!("open"),
+    }
+
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    for kind in super::groups::all_display_leaf_kinds() {
+        assert_eq!(agent.scrollback.display_defaults().get(kind), Some(DisplayForm::Expanded), "{kind:?}");
+    }
+    let _ = key(&mut agent, KeyCode::Char(' '));
+    for kind in super::groups::all_display_leaf_kinds() {
+        assert_eq!(agent.scrollback.display_defaults().get(kind), Some(DisplayForm::Collapsed), "{kind:?}");
+    }
+}
+
+#[test]
+fn display_title_click_and_space_set_the_same_leaves_without_folding() {
+    let _theme = crate::theme::cache::pin_theme();
+    let mut keyboard = open(ContextScope::Session);
+    select(&mut keyboard, CursorTarget::Title(SectionId::Display));
+    let _ = key(&mut keyboard, KeyCode::Char(' '));
+
+    let mut mouse = open(ContextScope::Session);
+    let buf = render(&mut mouse);
+    let row = text(&buf).lines().position(|line| line.contains("Message display")).unwrap() as u16;
+    let outcome = mouse.route_context_sidebar_input(&Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: 15, row, modifiers: KeyModifiers::NONE,
+    }));
+    assert!(matches!(outcome, Some(InputOutcome::Changed)));
+    assert_eq!(
+        keyboard.scrollback.display_defaults(),
+        mouse.scrollback.display_defaults(),
+        "a plain click on the title does what Space does"
+    );
+    assert!(
+        text(&render(&mut mouse)).contains("File reads"),
+        "the title gesture changes values, not the section fold"
+    );
 }
 
 #[test]
