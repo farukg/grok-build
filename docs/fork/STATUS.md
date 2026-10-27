@@ -1,7 +1,28 @@
 # Fork status
 
-Current delivery status: 2026-10-26. The fork is `farukg/grok-build` (`origin`);
-`xai-org/grok-build` is upstream, not the push destination.
+Current delivery status: 2026-10-27. The fork is published at GitLab
+`org/forks/grok-build` (`gitlab`) and GitHub `farukg/grok-build` (`origin`);
+`xai-org/grok-build` is upstream.
+
+## Release build delivery
+
+GitLab `.gitlab-ci.yml` owns automatic Linux release builds on build-relevant
+pushes to `main`; docs-only pushes skip compilation. GitHub `linux-build.yml`
+is available through manual dispatch. GitLab runs one `linux-release` job on
+the nspawn runner, retaining a secret-free tools image and project-scoped Cargo,
+rustup, target and incremental caches on the build host. Nightly checksum
+freshness reuses unchanged content across fresh checkouts while detecting edits.
+Builds serialize cache writes and cancel superseded interruptible pipelines.
+Artifacts contain `dist/grok-x86_64-linux.tar.gz` and its SHA-256 checksum and
+expire after 30 days. Warm-build speedup remains unmeasured until two comparable
+GitLab builds complete.
+
+The glue script `sigma-ops.d/stage-grok-release.sh --from gitlab` selects the
+latest successful GitLab release artifact; `--from github` selects GitHub.
+`--run-id` and `--commit` retain exact pipeline/run and source selection.
+Staging remains an explicit operation and preserves running sessions.
+
+## Last verified artifact
 
 Source/artifact commit `479d1652cf8b73cb2decbaf8fbc12a3bacd44f7f` passed GitHub
 Actions [linux-build run 40247692299](https://github.com/farukg/grok-build/actions/runs/40247692299).
@@ -25,11 +46,11 @@ triggered by the intermediate push. This is historical build-only evidence;
 same-SHA `linux-test` acceptance was unverified and it does not establish current
 main's build or acceptance.
 
-**Effective policy: checks, tests, formatters, validation scripts and hooks remain
-disabled locally and in GitHub Actions. Required release-artifact builds run solely
-in GitHub Actions. Local builds, `sig build` and sig-orch communication remain disabled.** No force
-push is authorized on any branch. Historical local results and older handoff
-instructions do not override this policy.
+**Effective policy: local builds, checks, tests, formatters, validation scripts
+and hooks remain disabled. Release-artifact builds run in GitLab; GitHub offers
+manual release builds. This CI-infrastructure scope authorizes scoped commits on
+`main` and publication to GitLab.** No force push is authorized on any branch.
+Historical local results and older handoff instructions do not override this policy.
 
 The [owner-takeover plan](plan/owner-takeover.md) owns active delivery and acceptance
 details; its existing [handoff](handoff/2026-10-24/owner-handoff/handoff.md) and
@@ -147,7 +168,7 @@ its present local availability has not been checked.
 | M14 row colour and structure per kind, state and context presence | f4 · `views/row_style.rs` |
 | M15 F6/F7 settings saved globally and per session (`panel-settings/`, `g` target, `t` turn default), restored after restart | f4 · `app/panel_settings/` |
 | Fix: chat-state replaces the first answer when a tool call is answered twice (double `tool_result` → Anthropic 400) | f2 |
-| CI: `linux-build` builds `grok` on every push to `main`; manual `linux-test` runs pager, shell-removal, chat-state and sampling-types tests | f1 |
+| CI: GitLab `linux-release` builds `grok` on build-relevant main pushes; GitHub `linux-build` and `linux-test` remain manual | f1 |
 | LSP attach (config-driven backend, tool only with a server) + preserving file-acceleration factory install with session gate; pager-global F6/F7 chrome with focus-coloured frames (minimal sessions defer adoption), prompt PgUp/PgDn paging incl. overlays, Home/End = previous user message / bottom+follow, Ctrl+X unbound from stop/close and opens the cheatsheet, dock keyboard-focus row, `/dock` runtime toggle persisting `features.dock` | f2, f3, f4, f6 · goal session 2026-10-20, skeptic-verified from source |
 
 Pre-fold test evidence (old history, `archive/pre-fold-main`): full `xai-grok-pager`,
@@ -202,12 +223,12 @@ are recorded at the top of this document and in the [owner-takeover plan](plan/o
 Only the canonical checkout remains. Subsequent F6, reasoning and F7/request-display
 changes are local source work and have no matching built/staged artifact yet.
 
-The current instruction authorizes local thematic commits only. No push, release
-build, test execution, local check, formatter, restart or sig-orch communication is
-authorized. The active F7/request-display plan lives under the Grok workspace plan
-owner; the earlier integration plan is source/evidence reference material. Prior
-build success proves its recorded source artifact only. Current runtime acceptance
-remains open.
+The CI-infrastructure instruction authorizes scoped `main` commits, GitLab project
+creation/publication and GitLab release builds. Local builds, checks, tests,
+formatters and process restarts remain excluded. Active F7/request-display source
+work continues independently under the Grok workspace plan owner; the earlier
+integration plan is source/evidence reference material. Prior build success proves
+its recorded source artifact only. Current runtime acceptance remains open.
 
 Historical stream references and `plan/grb-001.md` remain useful capability/design
 owners, not authority to restart obsolete branch or local-verification workflows.

@@ -1,0 +1,38 @@
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+      changes:
+        - Cargo.toml
+        - Cargo.lock
+        - rust-toolchain.toml
+        - .cargo/**/*
+        - crates/**/*
+        - prod/**/*
+        - third_party/**/*
+        - bin/**/*
+        - SOURCE_REV
+        - .gitlab-ci.yml
+        - .gitlab/ci/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+stages: [build]
+
+linux-release:
+  stage: build
+  tags: [nspawn]
+  interruptible: true
+  resource_group: grok-linux-release
+  timeout: 4 hours
+  variables:
+    GIT_DEPTH: "20"
+  cache: []
+  script:
+    - bash .gitlab/ci/build.sh
+  artifacts:
+    name: grok-x86_64-linux-$CI_COMMIT_SHORT_SHA
+    paths:
+      - dist/grok-x86_64-linux.tar.gz
+      - dist/grok-x86_64-linux.tar.gz.sha256
+    expire_in: 30 days

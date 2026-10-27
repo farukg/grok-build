@@ -74,13 +74,13 @@ Standing rules that go with them:
 
 ## Build and test
 
-- Verification for this fork runs on GitHub Actions. Check the implementation statically, commit and push to `farukg/grok-build`, then observe the exact commit's `linux-build.yml` run. Fix build errors and publish the correction until that run succeeds. Local Grok CLI builds and test runs are excluded from this workflow.
-- After a successful GitHub build, use `/home/fg/projects/org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --run-id <id> --commit <full-sha>` to download, verify and stage that exact artifact when staging is requested. Preserve running sessions; the script prints restart instructions.
+- Release builds run on GitLab at `org/forks/grok-build` (remote `gitlab`). Commit scoped files on `main`, push with `sig push gitlab main`, and observe the exact commit's `linux-release` job. Local builds, checks and tests are excluded. GitHub `linux-build.yml` remains available through manual dispatch.
+- For requested staging, use `/home/fg/projects/org/glue/workspace-scripts/sigma-ops.d/stage-grok-release.sh --from gitlab` for the latest successful GitLab artifact, or `--from github` for GitHub. Optional `--run-id <id> --commit <full-sha>` pins the pipeline/run and source. Preserve running sessions; the script prints restart instructions.
 - Toolchain: pinned in `rust-toolchain.toml` (nightly); `rustup` installs it.
 - `protoc` is required. Either install DotSlash (`cargo install dotslash`) so `bin/protoc` works,
   or install protoc from the OS (`apt-get install -y protobuf-compiler`) and export
   `PROTOC=$(command -v protoc)`.
-- `linux-build.yml` builds the release artifact on pushes to `main`. Use `linux-test.yml` for explicitly requested CI tests; scope test filters to the changed behavior.
+- `.gitlab-ci.yml` builds the Linux release on build-relevant pushes to `main` and manual main pipelines. The nspawn runner retains the tools image, minimal pinned toolchain, Cargo downloads, target artifacts and incremental compiler state on the build host. Nightly checksum freshness detects content changes across fresh checkouts. `linux-build.yml` and `linux-test.yml` are manual GitHub alternatives; scope explicitly requested tests to the changed behavior.
 - Known failures that are not yours: four `doctor` tests fail on upstream too (see
   `docs/fork/STATUS.md`).
 
@@ -96,9 +96,9 @@ Standing rules that go with them:
 - Never rewrite `main`'s history and never force-push `main`. Every other branch may be
   force-pushed (use `--force-with-lease`). Never delete branches or other agents'
   work; commit work in progress before you switch context.
-- Push only to this fork (`farukg/grok-build`). **Never push to, or open a pull request against,
+- Push fork changes to GitLab `org/forks/grok-build` (`gitlab`) or GitHub `farukg/grok-build` (`origin`) as requested. **Never push to, or open a pull request against,
   `xai-org/grok-build`.** Check the target repository of every push.
-- A stream is finished when its progress is on `main` and the exact commit's GitHub build is green. Publish scoped commits as a normal fast-forward to `farukg/grok-build`, observe CI, and fix failures in follow-up commits. Update `docs/fork/STATUS.md` with the verified outcome.
+- A stream's release-build evidence is the exact commit's successful CI job. Publish scoped commits as a normal fast-forward, observe CI, and fix failures in follow-up commits. Update `docs/fork/STATUS.md` with the verified outcome.
 - If your environment only lets you push to a `claude/…` branch, push the work there and say so;
   `main` still has to receive it before the stream counts as done.
 

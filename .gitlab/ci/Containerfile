@@ -1,0 +1,24 @@
+FROM docker.io/library/ubuntu:24.04
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential ca-certificates cmake curl git libssl-dev perl \
+        pkg-config protobuf-compiler zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Keep rustup in the image; install only the selected compiler in the persistent cache.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+    && sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path \
+    && install /root/.cargo/bin/rustup /usr/local/bin/rustup \
+    && ln -s rustup /usr/local/bin/cargo \
+    && ln -s rustup /usr/local/bin/rustc \
+    && rm /tmp/rustup-init.sh
+
+ENV CARGO_TERM_COLOR=always \
+    CARGO_HOME=/cache/grok-build/cargo \
+    RUSTUP_HOME=/cache/grok-build/rustup \
+    CARGO_TARGET_DIR=/cache/grok-build/target \
+    CARGO_INCREMENTAL=1 \
+    PROTOC=/usr/bin/protoc
+
+WORKDIR /build
