@@ -171,10 +171,10 @@ fn form_label(form: DisplayForm) -> &'static str {
 
 /// The Context scope line for the footer, once the shell has confirmed one.
 fn context_scope_status(report: Option<&ContextPolicyReport>) -> Option<&'static str> {
-    match report?.selection.as_ref()?.scope {
+    Some(match report?.selection.as_ref()?.scope {
         xai_grok_shell::sampling::ContextScope::Global => "context: global (c)",
         xai_grok_shell::sampling::ContextScope::Session => "context: this session (c)",
-    }
+    })
 }
 
 fn display_rows(
