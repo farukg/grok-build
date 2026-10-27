@@ -333,7 +333,7 @@ fn latest_keeps_malformed_index_tail_errors_instead_of_serving_older_entries() {
     terminated.extend_from_slice(b"\"not-a-uuid\"\n");
     std::fs::write(&index, &terminated).unwrap();
     assert!(read(directory.path(), "stored-session", SnapshotRead::Latest).is_err(), "a malformed terminated tail must not fall back to the older entry");
-    let mut unterminated = valid;
+    let mut unterminated = valid.clone();
     unterminated.extend_from_slice(b"\"not-a-u");
     std::fs::write(&index, &unterminated).unwrap();
     assert!(read(directory.path(), "stored-session", SnapshotRead::Latest).is_err(), "a malformed unterminated tail keeps its error");
