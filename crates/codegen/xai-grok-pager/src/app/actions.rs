@@ -877,6 +877,9 @@ pub enum Action {
     DashboardSelectNext,
     /// Move selection cursor one row up.
     DashboardSelectPrev,
+    /// Move the row cursor by a page (PageUp/PageDown) or to an end (Home/End) through the
+    /// shared tree navigation and the current viewport size.
+    DashboardPage(crate::views::dashboard::PageMove),
     /// Reorder the selected row one slot up (Shift+↑).
     DashboardReorderUp,
     /// Reorder the selected row one slot down (Shift+↓).

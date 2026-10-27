@@ -15,7 +15,7 @@ use super::dashboard::{
     dispatch_dashboard_delete, dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
     dispatch_dashboard_open_location_picker, dispatch_dashboard_open_session_picker,
     dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_exit,
-    dispatch_dashboard_overlay_stop, dispatch_dashboard_peek_cycle_mode,
+    dispatch_dashboard_overlay_stop, dispatch_dashboard_page, dispatch_dashboard_peek_cycle_mode,
     dispatch_dashboard_peek_reply, dispatch_dashboard_permission_followup,
     dispatch_dashboard_permission_select, dispatch_dashboard_pick_session,
     dispatch_dashboard_question_answer, dispatch_dashboard_reorder, dispatch_dashboard_select,
@@ -1548,6 +1548,10 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::DashboardSelectPrev => {
             dispatch_dashboard_select(app, false);
+            vec![]
+        }
+        Action::DashboardPage(mv) => {
+            dispatch_dashboard_page(app, mv);
             vec![]
         }
         Action::DashboardReorderUp => dispatch_dashboard_reorder(app, true),

@@ -3944,7 +3944,7 @@ fn dashboard_dispatch_always_approve_blocked_warns_on_dashboard() {
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn dashboard_dispatch_new_agent_is_working_with_prompt_title() {
-    use crate::views::dashboard::row::{build_rows_with_roster, classify_top_level};
+    use crate::views::dashboard::row::{RowScope, build_rows_with_roster, classify_top_level};
     use crate::views::dashboard::{DashboardRowId, Filter, Grouping, RowState};
     let mut app = test_app();
     open_dashboard(&mut app);
@@ -3964,6 +3964,7 @@ fn dashboard_dispatch_new_agent_is_working_with_prompt_title() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let row = rows
         .iter()
@@ -8508,7 +8509,7 @@ fn dashboard_peek_box_grows_for_multiline_reply() {
 /// exactly the "New session" created on every pager launch.
 #[test]
 fn build_rows_hides_empty_idle_local_session() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let app = test_app_with_agent();
     let rows = build_rows_with_roster(
         &app.agents,
@@ -8519,6 +8520,7 @@ fn build_rows_hides_empty_idle_local_session() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     assert!(rows.is_empty(), "an empty idle session must not render");
 }
@@ -8526,7 +8528,7 @@ fn build_rows_hides_empty_idle_local_session() {
 /// user message may not be in scrollback yet, but it is doing real work.
 #[test]
 fn build_rows_keeps_empty_working_local_session() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let mut app = test_app_with_agent();
     app.agents.get_mut(&AgentId(0)).unwrap().session.state = AgentState::TurnRunning;
     let rows = build_rows_with_roster(
@@ -8538,13 +8540,14 @@ fn build_rows_keeps_empty_working_local_session() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     assert_eq!(rows.len(), 1, "an actively-working session stays visible");
 }
 /// A session with a generated title renders normally.
 #[test]
 fn build_rows_keeps_titled_local_session() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let mut app = test_app_with_agent();
     mark_agent_nonempty(&mut app, AgentId(0));
     let rows = build_rows_with_roster(
@@ -8556,6 +8559,7 @@ fn build_rows_keeps_titled_local_session() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     assert_eq!(rows.len(), 1, "a titled session renders");
 }
@@ -8563,7 +8567,7 @@ fn build_rows_keeps_titled_local_session() {
 /// empty-session hide).
 #[test]
 fn build_rows_keeps_pinned_empty_local_session() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let app = test_app_with_agent();
     let mut pinned = std::collections::BTreeSet::new();
     pinned.insert(crate::views::dashboard::DashboardRowId::TopLevel(AgentId(
@@ -8578,6 +8582,7 @@ fn build_rows_keeps_pinned_empty_local_session() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     assert_eq!(rows.len(), 1, "a pinned empty session is kept");
 }

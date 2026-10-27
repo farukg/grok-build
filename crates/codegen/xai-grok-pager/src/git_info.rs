@@ -1,8 +1,8 @@
 //! Git branch/worktree info: cached queries shared across views.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 use xai_grok_telemetry::region;
 use xai_grok_telemetry::region::Parent;
@@ -14,20 +14,32 @@ use crate::terminal::{TerminalName, terminal_context};
 /// directory's branch never leaks onto another's. A branch switch inside an agent thus reflects immediately instead
 /// of waiting out [`CWD_GIT_REFRESH_TTL`].
 type CwdCacheEntry = (Option<CwdGitInfo>, Instant);
-static CWD_GIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CwdCacheEntry>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+struct CwdGitCache {
+    entries: HashMap<PathBuf, CwdCacheEntry>,
+    active_scope: HashSet<PathBuf>,
+    in_flight: HashSet<PathBuf>,
+}
+static CWD_GIT_CACHE: LazyLock<Mutex<CwdGitCache>> =
+    LazyLock::new(|| Mutex::new(CwdGitCache::default()));
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RepositoryFamily {
+    Pending,
+    NonGit,
+    Failed,
+    Resolved(PathBuf),
+}
 
 /// Minimum interval between off-thread refreshes for the same cwd, so a per-frame caller can't spawn a storm of git lookups.
 const CWD_GIT_REFRESH_TTL: Duration = Duration::from_secs(5);
 
-/// Upper bound on [`CWD_GIT_CACHE`] entries. The pager only displays a handful of directories at once (the process
-/// cwd and one per live agent). A long session that navigates many locations would otherwise grow the map without
-/// bound.
+/// Inactive display entries are bounded; active scope members and running resolutions are retained.
 const CWD_GIT_CACHE_CAP: usize = 64;
 
 /// A branch switch inside an agent's session thus reflects in every view immediately instead of waiting out
-/// [`CWD_GIT_REFRESH_TTL`]. The worktree label isn't carried by the notification (and is immutable for a path), so
-/// any previously-resolved label is preserved.
+/// [`CWD_GIT_REFRESH_TTL`]. The worktree label and repo root aren't carried by the notification (and are immutable
+/// for a path), so any previously-resolved values are preserved.
 pub fn update_from_notification(
     dir: &Path,
     branch: Option<&str>,
@@ -35,16 +47,21 @@ pub fn update_from_notification(
     is_worktree: bool,
 ) {
     if let Ok(mut cache) = CWD_GIT_CACHE.lock() {
-        let worktree_label = cache
-            .get(dir)
-            .and_then(|(info, _)| info.as_ref())
-            .and_then(|i| i.worktree_label.clone());
+        let prior = cache.entries.get(dir).and_then(|(info, _)| info.clone());
+        let worktree_label = prior.as_ref().and_then(|i| i.worktree_label.clone());
+        let repo_root = prior.as_ref().and_then(|i| i.repo_root.clone());
+        let family = prior.as_ref().map_or(RepositoryFamily::Pending, |info| match &info.family {
+            RepositoryFamily::Resolved(_) => info.family.clone(),
+            RepositoryFamily::Pending | RepositoryFamily::NonGit | RepositoryFamily::Failed => RepositoryFamily::Pending,
+        });
         let is_worktree =
             is_worktree || is_cwd_worktree(main_repo.as_deref(), worktree_label.as_deref());
         let info = CwdGitInfo {
             is_worktree,
             branch: branch.map(str::to_string),
             main_repo,
+            repo_root,
+            family,
             worktree_label,
         };
         cwd_cache_insert(&mut cache, dir.to_path_buf(), (Some(info), Instant::now()));
@@ -55,10 +72,11 @@ pub fn update_from_notification(
 /// The header / top bar then show the branch and worktree on the next frame instead of waiting for the first lazy refresh.
 /// No subprocess (libgit2 is filesystem-based) and a no-op when there is no tokio runtime, so callers stay infallible.
 pub fn populate_from_cwd_async(cwd: PathBuf) {
-    spawn_cwd_git_refresh(cwd);
+    let _ = cwd_git_info_lazy(&cwd);
 }
 
 struct GitSnapshot {
+    family: RepositoryFamily,
     /// Tilde-shortened path to the repo workdir. `None` when not in a repo.
     repo_root_display: Option<String>,
     /// `None` when not in a repo. `Some("")` for detached HEAD, otherwise the branch shorthand.
@@ -78,25 +96,43 @@ pub struct CwdGitInfo {
     pub is_worktree: bool,
     /// Tilde-shortened path to the main repo when in a worktree.
     pub main_repo: Option<String>,
+    /// Tilde-shortened checkout root for display only.
+    pub repo_root: Option<String>,
+    pub(crate) family: RepositoryFamily,
     /// Human-readable worktree label from the metadata DB, if any.
     pub worktree_label: Option<String>,
+}
+
+impl CwdGitInfo {
+    pub fn family_root(&self) -> Option<&Path> {
+        match &self.family {
+            RepositoryFamily::Resolved(path) => Some(path),
+            RepositoryFamily::Pending | RepositoryFamily::NonGit | RepositoryFamily::Failed => None,
+        }
+    }
 }
 
 /// Synchronously compute fresh git context (branch and worktree info) for `cwd`. Call it off the render path, never
 /// per frame. Callers can then leave existing cached values untouched rather than clobbering them with empties.
 pub fn compute_cwd_git_info(cwd: &Path) -> Option<CwdGitInfo> {
+    let info = compute_cwd_context(cwd);
+    info.repo_root.as_ref()?;
+    Some(info)
+}
+
+fn compute_cwd_context(cwd: &Path) -> CwdGitInfo {
     let snap = compute_snapshot(cwd);
-    // `repo_root_display` is `Some` only when repo discovery succeeded; a `None` here means `cwd` is not a repo (or discovery failed)
-    snap.repo_root_display.as_ref()?;
-    Some(CwdGitInfo {
+    CwdGitInfo {
         is_worktree: is_cwd_worktree(
             snap.main_repo_display.as_deref(),
             snap.worktree_label.as_deref(),
         ),
         branch: snap.branch,
         main_repo: snap.main_repo_display,
+        repo_root: snap.repo_root_display,
+        family: snap.family,
         worktree_label: snap.worktree_label,
-    })
+    }
 }
 
 fn is_cwd_worktree(main_repo: Option<&str>, worktree_label: Option<&str>) -> bool {
@@ -108,85 +144,173 @@ fn is_cwd_worktree(main_repo: Option<&str>, worktree_label: Option<&str>) -> boo
 /// the branch/worktree of its own location rather than the process cwd's.
 pub fn cwd_git_info_lazy(cwd: &Path) -> Option<CwdGitInfo> {
     let mut cache = CWD_GIT_CACHE.lock().ok()?;
-    let (cached, needs_refresh) = match cache.get(cwd) {
-        Some((info, ts)) => (info.clone(), ts.elapsed() >= CWD_GIT_REFRESH_TTL),
-        None => (None, true),
-    };
-    if needs_refresh {
-        // Reserve the slot with a fresh timestamp before spawning
-        // This frame's other reads (and the next few frames) then don't spawn duplicate refreshes until this one lands or the TTL elapses
-        cwd_cache_insert(
-            &mut cache,
-            cwd.to_path_buf(),
-            (cached.clone(), Instant::now()),
-        );
-        drop(cache);
-        spawn_cwd_git_refresh(cwd.to_path_buf());
-    }
-    cached
+    reserve_cwd_git_refresh(&mut cache, cwd, GitRead::Display);
+    cache.entries.get(cwd).and_then(|(info, _)| info.clone())
 }
 
-/// Off-thread refresh of one cwd's entry in [`CWD_GIT_CACHE`].
-/// No-op when there is no tokio runtime (e.g. unit tests) so callers stay infallible.
-fn spawn_cwd_git_refresh(cwd: PathBuf) {
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return;
+enum GitRead {
+    Display,
+    Scope,
+}
+
+fn reserve_cwd_git_refresh(cache: &mut CwdGitCache, cwd: &Path, read: GitRead) {
+    let needs_refresh = match cache.entries.get(cwd) {
+        Some((Some(info), ts)) => match read {
+            GitRead::Display => info.family == RepositoryFamily::Pending
+                || ts.elapsed() >= CWD_GIT_REFRESH_TTL,
+            GitRead::Scope => match &info.family {
+                RepositoryFamily::Resolved(_) | RepositoryFamily::NonGit => false,
+                RepositoryFamily::Pending => true,
+                RepositoryFamily::Failed => ts.elapsed() >= CWD_GIT_REFRESH_TTL,
+            },
+        },
+        Some((None, ts)) => ts.elapsed() >= CWD_GIT_REFRESH_TTL,
+        None => true,
     };
+    if needs_refresh && !cache.in_flight.contains(cwd)
+        && let Ok(handle) = tokio::runtime::Handle::try_current()
+    {
+        let prior = cache.entries.get(cwd).and_then(|(info, _)| info.clone());
+        cache.in_flight.insert(cwd.to_path_buf());
+        cwd_cache_insert(cache, cwd.to_path_buf(), (prior, Instant::now()));
+        spawn_cwd_git_refresh(handle, cwd.to_path_buf());
+    }
+}
+
+pub(crate) struct ScopeFamilyIndex {
+    cache: MutexGuard<'static, CwdGitCache>,
+}
+
+impl ScopeFamilyIndex {
+    pub(crate) fn family_root(&self, cwd: &Path) -> Option<&Path> {
+        self.cache.entries.get(cwd)?.0.as_ref()?.family_root()
+    }
+}
+
+pub(crate) fn scope_family_index<'a>(
+    cwds: impl IntoIterator<Item = &'a Path>,
+) -> Option<ScopeFamilyIndex> {
+    let active: HashSet<&Path> = cwds.into_iter().collect();
+    let mut cache = CWD_GIT_CACHE.lock().ok()?;
+    if cache.active_scope.len() != active.len()
+        || !active.iter().all(|cwd| cache.active_scope.contains(*cwd))
+    {
+        cache.active_scope = active.iter().map(|cwd| cwd.to_path_buf()).collect();
+        trim_cwd_cache(&mut cache);
+    }
+    for cwd in active {
+        reserve_cwd_git_refresh(&mut cache, cwd, GitRead::Scope);
+    }
+    Some(ScopeFamilyIndex { cache })
+}
+
+/// Store `info` for `dir` in [`CWD_GIT_CACHE`], the synchronous stand-in for the async refresh
+/// that never runs without a tokio runtime. Lets cross-module tests exercise cache-backed
+/// consumers (e.g. the dashboard's worktree scope) with exactly the metadata they assert over.
+#[cfg(test)]
+pub(crate) fn seed_cwd_cache_for_tests(dir: &Path, info: Option<CwdGitInfo>) {
+    if let Ok(mut cache) = CWD_GIT_CACHE.lock() {
+        cwd_cache_insert(&mut cache, dir.to_path_buf(), (info, Instant::now()));
+    }
+}
+
+/// Off-thread refresh of a reserved cwd.
+fn spawn_cwd_git_refresh(handle: tokio::runtime::Handle, cwd: PathBuf) {
     let refresh_span = region!(debug, "git_info.refresh", Parent::Root);
     handle.spawn_blocking(move || {
         let _region = refresh_span;
         // Guard against panics from the vendored libgit2 C bindings.
         let info =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute_cwd_git_info(&cwd)))
-                .unwrap_or(None);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute_cwd_context(&cwd)))
+                .ok();
         if let Ok(mut cache) = CWD_GIT_CACHE.lock() {
+            cache.in_flight.remove(&cwd);
             apply_cwd_git_refresh(&mut cache, cwd, info);
         }
     });
 }
 
-/// A `None` means either "not a git repo" or a transient libgit2 discovery failure, and the two are
-/// indistinguishable here. The timestamp always advances so the throttle resets either way.
+/// A failed refresh preserves display metadata but cannot establish repository membership.
 fn apply_cwd_git_refresh(
-    cache: &mut HashMap<PathBuf, CwdCacheEntry>,
+    cache: &mut CwdGitCache,
     cwd: PathBuf,
     info: Option<CwdGitInfo>,
 ) {
     let value = match info {
-        some @ Some(_) => some,
-        None => cache.get(&cwd).and_then(|(prev, _)| prev.clone()),
+        Some(info) if info.family != RepositoryFamily::Failed => info,
+        Some(_) | None => {
+            let mut info = cache.entries.get(&cwd).and_then(|(prev, _)| prev.clone())
+                .unwrap_or_else(|| CwdGitInfo {
+                    branch: None,
+                    is_worktree: false,
+                    main_repo: None,
+                    repo_root: None,
+                    family: RepositoryFamily::Failed,
+                    worktree_label: None,
+                });
+            info.family = RepositoryFamily::Failed;
+            info
+        }
     };
-    cwd_cache_insert(cache, cwd, (value, Instant::now()));
+    cwd_cache_insert(cache, cwd, (Some(value), Instant::now()));
 }
 
-/// Insert into [`CWD_GIT_CACHE`], evicting the least-recently-refreshed entry first when the map is at [`CWD_GIT_CACHE_CAP`] and `key` is new.
-/// Keeps the map bounded across long sessions that visit many directories.
-/// Actively-rendered cwds keep fresh timestamps, so they're never the eviction target.
-fn cwd_cache_insert(
-    cache: &mut HashMap<PathBuf, CwdCacheEntry>,
-    key: PathBuf,
-    entry: CwdCacheEntry,
-) {
-    if cache.len() >= CWD_GIT_CACHE_CAP
-        && !cache.contains_key(&key)
-        && let Some(oldest) = cache
-            .iter()
-            .min_by_key(|(_, (_, ts))| *ts)
-            .map(|(k, _)| k.clone())
-    {
-        cache.remove(&oldest);
+fn cwd_cache_insert(cache: &mut CwdGitCache, key: PathBuf, entry: CwdCacheEntry) {
+    let protected = cache.active_scope.contains(&key) || cache.in_flight.contains(&key);
+    cache.entries.insert(key, entry);
+    if !protected {
+        trim_cwd_cache(cache);
     }
-    cache.insert(key, entry);
+}
+
+fn trim_cwd_cache(cache: &mut CwdGitCache) {
+    let excess = cache.entries.len().saturating_sub(CWD_GIT_CACHE_CAP);
+    if excess == 0 {
+        return;
+    }
+    if excess == 1 {
+        let oldest = cache.entries.iter()
+            .filter(|(key, _)| !cache.active_scope.contains(*key) && !cache.in_flight.contains(*key))
+            .min_by_key(|(_, (_, ts))| *ts)
+            .map(|(key, _)| key.clone());
+        if let Some(oldest) = oldest {
+            cache.entries.remove(&oldest);
+        }
+        return;
+    }
+    let mut candidates: Vec<_> = cache.entries.iter()
+        .filter(|(key, _)| !cache.active_scope.contains(*key) && !cache.in_flight.contains(*key))
+        .map(|(key, (_, ts))| (*ts, key.clone()))
+        .collect();
+    candidates.sort_unstable();
+    for (_, key) in candidates.into_iter().take(excess) {
+        cache.entries.remove(&key);
+    }
+}
+
+pub(crate) fn clear_scope_families() {
+    if let Ok(mut cache) = CWD_GIT_CACHE.lock() {
+        if !cache.active_scope.is_empty() {
+            cache.active_scope.clear();
+            trim_cwd_cache(&mut cache);
+        }
+    }
 }
 
 fn compute_snapshot(cwd: &Path) -> GitSnapshot {
-    let Ok(repo) = git2::Repository::discover(cwd) else {
-        return GitSnapshot {
+    let repo = match git2::Repository::discover(cwd) {
+        Ok(repo) => repo,
+        Err(error) => return GitSnapshot {
+            family: if error.code() == git2::ErrorCode::NotFound && cwd.is_dir() {
+                RepositoryFamily::NonGit
+            } else {
+                RepositoryFamily::Failed
+            },
             repo_root_display: None,
             branch: None,
             main_repo_display: None,
             worktree_label: None,
-        };
+        },
     };
 
     let repo_root_display = repo.workdir().map(collapse_home);
@@ -200,7 +324,7 @@ fn compute_snapshot(cwd: &Path) -> GitSnapshot {
     });
 
     let linked_main_repo = (repo.path() != repo.commondir())
-        .then(|| repo.commondir().parent().map(collapse_home))
+        .then(|| repo.commondir().parent().map(Path::to_path_buf))
         .flatten();
 
     // Standalone grok worktrees are CoW clones (`.git` is a directory), so `path != commondir` is false; the source marker is the back-pointer
@@ -211,7 +335,7 @@ fn compute_snapshot(cwd: &Path) -> GitSnapshot {
             && let trimmed = contents.trim()
             && !trimmed.is_empty()
         {
-            marker_main_repo = Some(collapse_home(Path::new(trimmed)));
+            marker_main_repo = Some(PathBuf::from(trimmed));
             break;
         }
         // Don't inherit a parent checkout's marker across a nested repo root.
@@ -221,14 +345,30 @@ fn compute_snapshot(cwd: &Path) -> GitSnapshot {
     }
 
     let (worktree_label, db_source_repo) = lookup_worktree_record(cwd);
-    let db_main_repo = db_source_repo.as_deref().map(collapse_home);
+    let db_main_repo = db_source_repo;
 
+    let main_repo = marker_main_repo.or(db_main_repo).or(linked_main_repo);
+    let family = match main_repo.as_deref() {
+        Some(source) => git2::Repository::discover(source).ok()
+            .and_then(|source| canonical_family_root(&source)),
+        None => canonical_family_root(&repo),
+    }.map_or(RepositoryFamily::Failed, RepositoryFamily::Resolved);
     GitSnapshot {
+        family,
         repo_root_display,
         branch,
-        main_repo_display: marker_main_repo.or(db_main_repo).or(linked_main_repo),
+        main_repo_display: main_repo.as_deref().map(collapse_home),
         worktree_label,
     }
+}
+
+fn canonical_family_root(repo: &git2::Repository) -> Option<PathBuf> {
+    let root = if repo.path() != repo.commondir() {
+        repo.commondir().parent()
+    } else {
+        repo.workdir()
+    }?;
+    dunce::canonicalize(root).ok()
 }
 
 /// Map of worktree root path to human label for every managed worktree that has a non-empty label. Opens the
@@ -366,24 +506,24 @@ mod tests {
     /// Drives a local map so it can't race the shared static cache.
     #[test]
     fn cwd_cache_insert_evicts_least_recently_refreshed() {
-        let mut cache: HashMap<PathBuf, CwdCacheEntry> = HashMap::new();
+        let mut cache = CwdGitCache::default();
         let base = Instant::now();
         // Fill to capacity with strictly increasing timestamps; `/d/0` is oldest.
         for i in 0..CWD_GIT_CACHE_CAP {
             let ts = base + Duration::from_secs(i as u64);
             cwd_cache_insert(&mut cache, PathBuf::from(format!("/d/{i}")), (None, ts));
         }
-        assert_eq!(cache.len(), CWD_GIT_CACHE_CAP);
+        assert_eq!(cache.entries.len(), CWD_GIT_CACHE_CAP);
         // A new key overflows: the oldest entry is evicted and len stays capped
         let newest = base + Duration::from_secs(10_000);
         cwd_cache_insert(&mut cache, PathBuf::from("/d/new"), (None, newest));
-        assert_eq!(cache.len(), CWD_GIT_CACHE_CAP);
+        assert_eq!(cache.entries.len(), CWD_GIT_CACHE_CAP);
         assert!(
-            !cache.contains_key(Path::new("/d/0")),
+            !cache.entries.contains_key(Path::new("/d/0")),
             "least-recently-refreshed entry must be evicted"
         );
         assert!(
-            cache.contains_key(Path::new("/d/new")),
+            cache.entries.contains_key(Path::new("/d/new")),
             "new entry inserted"
         );
         // Overwriting an existing key must not evict (no overflow).
@@ -392,20 +532,20 @@ mod tests {
             PathBuf::from("/d/new"),
             (None, base + Duration::from_secs(20_000)),
         );
-        assert_eq!(cache.len(), CWD_GIT_CACHE_CAP);
+        assert_eq!(cache.entries.len(), CWD_GIT_CACHE_CAP);
     }
 
-    /// A `None` refresh result must preserve a previously-resolved value (a transient libgit2 discovery failure must not blank the branch).
-    /// A fresh cwd with no prior entry still records the `None` (genuine non-repo).
-    /// Either way the timestamp advances.
+    /// Discovery failure preserves display data, not resolved scope membership.
     #[test]
     fn apply_cwd_git_refresh_preserves_last_good_on_none() {
-        let mut cache: HashMap<PathBuf, CwdCacheEntry> = HashMap::new();
+        let mut cache = CwdGitCache::default();
         let dir = PathBuf::from("/repo");
         let good = CwdGitInfo {
             branch: Some("main".into()),
             is_worktree: false,
             main_repo: None,
+            repo_root: None,
+            family: RepositoryFamily::Resolved(PathBuf::from("/repo")),
             worktree_label: None,
         };
         // Seed a resolved entry with an old timestamp.
@@ -414,7 +554,7 @@ mod tests {
 
         // A `None` refresh must keep the branch and bump the timestamp.
         apply_cwd_git_refresh(&mut cache, dir.clone(), None);
-        let (kept, ts) = cache.get(&dir).expect("entry retained");
+        let (kept, ts) = cache.entries.get(&dir).expect("entry retained");
         assert_eq!(
             kept.as_ref().and_then(|i| i.branch.as_deref()),
             Some("main"),
@@ -422,10 +562,12 @@ mod tests {
         );
         assert!(*ts > old_ts, "timestamp must advance on refresh");
 
-        // A fresh cwd that resolves to None records the miss (genuine non-repo).
+        assert_eq!(kept.as_ref().unwrap().family, RepositoryFamily::Failed);
+        // A failed first lookup is distinct from a confirmed non-repository.
         let fresh = PathBuf::from("/not-a-repo");
         apply_cwd_git_refresh(&mut cache, fresh.clone(), None);
-        assert!(matches!(cache.get(&fresh), Some((None, _))));
+        assert_eq!(cache.entries.get(&fresh).unwrap().0.as_ref().unwrap().family,
+            RepositoryFamily::Failed);
     }
 
     const POWERLINE: &str = "\u{e0a0}";
@@ -641,6 +783,8 @@ mod tests {
                         branch: Some("main".into()),
                         is_worktree: true,
                         main_repo: None,
+                        repo_root: None,
+                        family: RepositoryFamily::Pending,
                         worktree_label: Some("my-label".into()),
                     }),
                     Instant::now(),
@@ -650,7 +794,7 @@ mod tests {
         update_from_notification(&dir, Some("main"), None, /* is_worktree */ false);
         let cache = CWD_GIT_CACHE.lock().expect("cache lock");
         let info = cache
-            .get(&dir)
+            .entries.get(&dir)
             .and_then(|(info, _)| info.clone())
             .expect("cache entry");
         assert!(info.is_worktree);
@@ -684,4 +828,128 @@ mod tests {
             "main_repo={main_repo}, expected {expected} or {expected_canon}"
         );
     }
+
+    #[test]
+    fn family_root_unifies_main_checkout_subdirs_and_linked_worktrees() {
+        let main = crate::test_util::TempGitRepo::init("main-only");
+        let expected = dunce::canonicalize(&main.path).unwrap();
+        let subdir = main.path.join("crates/inner");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let wt = main.add_linked_worktree("wt", "wt-branch");
+        for cwd in [&main.path, &subdir, &wt] {
+            let info = compute_cwd_git_info(cwd).unwrap();
+            assert_eq!(info.family_root(), Some(expected.as_path()));
+        }
+    }
+
+    /// A git-head notification carries no repo root; a previously resolved one survives, so the
+    /// main checkout keeps its family identity across branch-switch notifications.
+    #[test]
+    fn update_from_notification_preserves_resolved_repo_root() {
+        let main = crate::test_util::TempGitRepo::init("main-only");
+        let dir = main.path.clone();
+        let seeded = compute_cwd_git_info(&dir).expect("main checkout is a repo");
+        seed_cwd_cache_for_tests(&dir, Some(seeded.clone()));
+        update_from_notification(&dir, Some("feature"), None, /* is_worktree */ false);
+        let cache = CWD_GIT_CACHE.lock().expect("cache lock");
+        let info = cache
+            .entries.get(&dir)
+            .and_then(|(info, _)| info.clone())
+            .expect("cache entry");
+        assert_eq!(info.branch.as_deref(), Some("feature"));
+        assert_eq!(info.repo_root, seeded.repo_root);
+        assert_eq!(info.family_root(), seeded.family_root());
+    }
+    #[test]
+    fn active_scope_and_in_flight_entries_survive_cache_pressure() {
+        let mut cache = CwdGitCache::default();
+        let active: HashSet<_> = (0..96).map(|i| PathBuf::from(format!("/scope/{i}"))).collect();
+        cache.active_scope = active.clone();
+        let pending = PathBuf::from("/pending");
+        cache.in_flight.insert(pending.clone());
+        cwd_cache_insert(&mut cache, pending.clone(), (None, Instant::now()));
+        for path in &active {
+            cwd_cache_insert(&mut cache, path.clone(), (None, Instant::now()));
+        }
+        for i in 0..128 {
+            cwd_cache_insert(&mut cache, PathBuf::from(format!("/display/{i}")), (None, Instant::now()));
+        }
+        for path in &active {
+            assert!(cache.entries.contains_key(path), "active family cannot be evicted");
+        }
+        assert!(cache.entries.contains_key(&pending));
+        if !cache.active_scope.is_empty() {
+            cache.active_scope.clear();
+            trim_cwd_cache(&mut cache);
+        }
+        assert!(cache.entries.len() <= CWD_GIT_CACHE_CAP);
+        assert!(cache.entries.contains_key(&pending));
+    }
+
+    #[test]
+    fn notification_seed_is_pending_until_discovery_establishes_family() {
+        let repo = crate::test_util::TempGitRepo::init("main");
+        update_from_notification(&repo.path, Some("notified"), None, false);
+        {
+            let cache = CWD_GIT_CACHE.lock().unwrap();
+            let seeded = cache.entries.get(&repo.path).unwrap().0.as_ref().unwrap();
+            assert_eq!(seeded.family, RepositoryFamily::Pending);
+            assert_eq!(seeded.family_root(), None);
+        }
+        let fresh = compute_cwd_context(&repo.path);
+        assert_eq!(fresh.family, RepositoryFamily::Resolved(dunce::canonicalize(&repo.path).unwrap()));
+        let mut cache = CWD_GIT_CACHE.lock().unwrap();
+        apply_cwd_git_refresh(&mut cache, repo.path.clone(), Some(fresh));
+        assert_eq!(cache.entries.get(&repo.path).unwrap().0.as_ref().unwrap().family_root(),
+            Some(dunce::canonicalize(&repo.path).unwrap().as_path()));
+    }
+
+    #[test]
+    fn non_git_discovery_is_not_pending_or_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(compute_cwd_context(dir.path()).family, RepositoryFamily::NonGit);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn family_identity_canonicalizes_aliases_and_marker_sources() {
+        let main = crate::test_util::TempGitRepo::init("main");
+        let clone = crate::test_util::TempGitRepo::init("feature");
+        let dir = tempfile::tempdir().unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&main.path, &alias).unwrap();
+        std::fs::create_dir(main.path.join("nested")).unwrap();
+        std::fs::write(clone.path.join(".git/grok-worktree-source"), alias.join("nested").to_str().unwrap()).unwrap();
+        let expected = dunce::canonicalize(&main.path).unwrap();
+        for cwd in [&main.path, &alias, &clone.path] {
+            assert_eq!(compute_cwd_git_info(cwd).unwrap().family_root(), Some(expected.as_path()));
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_scope_jobs_are_not_reserved_again_after_ttl_or_capacity_pressure() {
+        let mut cache = CwdGitCache::default();
+        let reserved_at = Instant::now() - CWD_GIT_REFRESH_TTL * 2;
+        let paths: Vec<_> = (0..96).map(|i| PathBuf::from(format!("/pending-scope/{i}"))).collect();
+        cache.active_scope.extend(paths.iter().cloned());
+        cache.in_flight.extend(paths.iter().cloned());
+        for path in &paths {
+            cwd_cache_insert(&mut cache, path.clone(), (None, reserved_at));
+        }
+        for path in &paths {
+            reserve_cwd_git_refresh(&mut cache, path, GitRead::Scope);
+            assert_eq!(cache.entries.get(path).unwrap().1, reserved_at,
+                "a running discovery cannot acquire a replacement reservation");
+        }
+        assert_eq!(cache.in_flight.len(), 96);
+        assert_eq!(cache.entries.len(), 96);
+    }
+
+    #[test]
+    fn missing_directory_is_failed_discovery_not_confirmed_non_git() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(compute_cwd_context(&temp.path().join("missing")).family,
+            RepositoryFamily::Failed);
+    }
+
 }

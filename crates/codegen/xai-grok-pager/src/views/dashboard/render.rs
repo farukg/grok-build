@@ -29,7 +29,7 @@ use crate::views::dashboard::row_title::RowTitle;
 // It is painted on every content line of a selected row so it spans the row's full visual height
 
 /// Per-row visual height in cells: a title row, a secondary row, and a one-cell breathing gap.
-const ROW_HEIGHT: u16 = 3;
+pub(crate) const ROW_HEIGHT: u16 = 3;
 /// Per-group-header visual height in cells: a label row and a one-cell breathing gap.
 const GROUP_HEADER_HEIGHT: u16 = 2;
 
@@ -62,8 +62,10 @@ pub(crate) fn render_dashboard(
     // App-level billing mirror the `/usage` modal renders its allowance from
     credit_balance: Option<&crate::views::credit_bar::CreditBalance>,
 ) -> Option<(u16, u16)> {
+    // The All lane lists workspace-store root rows next to children, so the v2 row semantics apply
+    // there too; the Subagents lane (live/roster children only) stays on the v1 surface.
     state.workspace_membership_mode = workspace_dashboard_enabled
-        && state.session_lane() == super::row::SessionLane::Main;
+        && state.session_lane() != super::row::SessionLane::Subagents;
     // Cache whether a pinned (non-dismissible) promo CTA is live so the key handler can steal Ctrl+O for it; the dispatch re-resolves the gate
     state.pinned_upgrade_cta_live = upgrade_cta.is_some_and(|cta| cta.pinned);
     state.clear_chrome_hit_areas();
@@ -96,6 +98,10 @@ pub(crate) fn render_dashboard(
             &state.pinned,
             &state.reorder,
             &state.child_rows,
+            super::row::RowScope {
+                value: state.session_scope,
+                cwd: state.cwd.as_path(),
+            },
         )
     } else {
         build_rows_with_roster(
@@ -107,6 +113,10 @@ pub(crate) fn render_dashboard(
             home,
             roster,
             state.session_lane(),
+            super::row::RowScope {
+                value: state.session_scope,
+                cwd: state.cwd.as_path(),
+            },
         )
     };
     state.painted_animations = PaintedAnimations::default();
@@ -192,8 +202,11 @@ pub(crate) fn render_dashboard(
         .and_then(|sel| rows.iter().find(|r| r.id == *sel).map(|r| r.state));
     state.selected_stop_action = workspace_dashboard_enabled
         .then(|| match state.selected.as_ref() {
+            // Child agents keep the v1 stop/delete surface even in the lanes that list workspace
+            // rows, so the footer never promises archive semantics the dispatcher won't run.
             Some(DashboardRowId::TopLevel(id)) => agents
                 .get(id)
+                .filter(|agent| matches!(agent.role, crate::app::agent_view::AgentRole::Root))
                 .map(|agent| crate::app::dashboard_stop_readiness(agent).action()),
             Some(DashboardRowId::Workspace { .. }) => Some(DashboardStopAction::Archive),
             Some(DashboardRowId::Roster { .. }) | None => None,
@@ -2692,14 +2705,18 @@ fn render_footer(
         return;
     }
 
+    // The footer's stop surface follows the selected row's actual source: workspace-store rows
+    // and root agents carry a v2 stop action; child and roster rows keep the v1 labels.
+    let selected_v2_managed =
+        state.workspace_membership_mode && state.selected_stop_action.is_some();
     let show_ctrl_x = state
         .selected
         .as_ref()
-        .is_none_or(|row| !row.is_workspace() || state.workspace_membership_mode)
+        .is_none_or(|row| !row.is_workspace() || selected_v2_managed)
         && selected_state.is_some_and(|s| {
             matches!(s, RowState::Working | RowState::NeedsInput) || s.allows_delete()
         });
-    let stop_label = if state.workspace_membership_mode {
+    let stop_label = if selected_v2_managed {
         state
             .selected_stop_action
             .map_or("stop", |action| action.label())

@@ -1,10 +1,12 @@
 # Agent Dashboard
 
-The Agent Dashboard lists every top-level session in this pager process —
-local sessions and forks — grouped by state. From one screen you can peek,
-reply, attach, pin, rename, stop, or dispatch a new agent. Subagents are not
-listed; they run under their parent, which already shows when work is in
-flight.
+The Agent Dashboard lists sessions grouped by state — by default every
+top-level session in this pager process, local sessions and forks. `Ctrl+A`
+switches lanes: the **subagents** lane lists the other running sessions
+(subagent children spawned by any session the leader hosts), and the **all**
+lane combines both sides in one list, deduplicated by session. From one
+screen you can peek, reply, attach, pin, rename, stop, or dispatch a new
+agent.
 
 Not the agents modal (`/config-agents` / `/agents` — definitions and
 personas), the session picker (`/resume` / `Ctrl+R`, past conversations on
@@ -44,9 +46,11 @@ Hidden in minimal mode. Set `GROK_AGENT_DASHBOARD=0` or
 
 The **header** shows where a new agent will run — the git branch and the
 working directory — with state-count chips on the right (the same glyph
-and colour as the rows, plus a label). Click the location
-(or press `Ctrl+L`) to **choose** another directory; `/cd <path>` does the
-same from the dispatch box.
+and colour as the rows, plus a label). While a lane or the directory scope
+deviates from the default, a `◆` chip joins the counts: `◆ subagents` /
+`◆ all` for the lane, `◆ cwd` / `◆ worktree` for the scope. Click the
+location (or press `Ctrl+L`) to **choose** another directory; `/cd <path>`
+does the same from the dispatch box.
 
 The **actions row** below it holds `+ New Agent` (the default cursor target
 when no row is selected) and, on the right, `Open Previous` (the session
@@ -62,24 +66,40 @@ same actions are always a click or `/resume` / `Ctrl+W` away. With worktree mode
 reads `+ New Agent in Worktree` / `Disable Worktree`, and the next dispatch
 creates the agent in a fresh git worktree.
 
-Each row is a top-level agent. Sort by state (Needs input → Working → Idle →
+Each row is one session. Sort by state (Needs input → Working → Idle →
 Inactive → Completed → Failed) so same-state rows sit together, or by working
 directory (`Ctrl+G` toggles). **Inactive** is roster-only sessions owned by
 other pager processes that this process has not loaded — background noise, so
 the section **starts collapsed** (expand with `→` / click).
 
-**`Ctrl+A` toggles the subagent lane**: instead of your main sessions, the
-list shows the *other* running sessions — subagent children spawned by any
-session the leader hosts — with the same sorting, view, and row actions
-(peek, reply after attach, pin, rename, stop, open). A child you open from
-the lane keeps its parent link, so sending to it still works after the
-leader restarts or reaps the child actor; a send to a reaped child without
-that link is refused with a message naming the child, its parent, and how to
-resume it. The header shows a `◆ subagents` chip while the lane is on;
-`Ctrl+A` again returns to the main sessions.
+**`Ctrl+A` cycles the lane**: main sessions → subagents → all → back to
+main. The **subagents** lane lists the *other* running sessions — subagent
+children spawned by any session the leader hosts; the **all** lane shows
+main sessions and those children together, deduplicated by session id.
+Every lane shares the same sorting, view, and row actions (peek, reply
+after attach, pin, rename, stop, open). A child you open from either lane
+keeps its parent link, so sending to it still works after the leader
+restarts or reaps the child actor; a send to a reaped child without that
+link is refused with a message naming the child, its parent, and how to
+resume it. The header shows a `◆ subagents` or `◆ all` chip while a
+non-default lane is on; `Ctrl+A` cycles back to the main sessions.
 
-Pinned rows keep their manual order in both grouping modes. Agent activity
-and recent updates do not move them; `Shift+↑` / `Shift+↓` changes their order.
+**`Ctrl+Y` cycles the directory scope**: all (the default, no filtering) →
+`cwd` → `worktree` → back to all. `cwd` keeps only rows whose working
+directory is the dashboard's current directory; `worktree` selects resolved
+members of the current directory's canonical git worktree family — the main
+checkout, its subdirectories, and every linked worktree of the same repo (the first sight
+of a directory schedules cached off-thread discovery, not filesystem I/O in
+render). Pending, failed and non-git lookups do not match, even at the same
+cwd. The scope applies to every lane, composes with the `Ctrl+/` search filter, and lives
+in memory only — a restart returns to the unscoped listing. The header
+shows a `◆ cwd` / `◆ worktree` chip while a scope is on.
+
+Pinned rows currently keep their manual order in both grouping modes. Whether
+this overrides automatic running/recency ordering is pending a user decision.
+Agent activity and recent updates do not move them; `Shift+↑` / `Shift+↓` requests
+manual reorder. In the v2 All lane, child reorder is stored but is not yet
+reflected in the combined list; that sort-input repair remains pending the same decision.
 
 To keep **Idle** scannable, only the most recent idle agents stay visible —
 the 8 freshest, plus any active within the last hour. The rest fold into a
@@ -99,8 +119,8 @@ has finished — a background task, a `monitor`, or an active scheduled
 `/loop`. The activity line says what is still running (for example
 `1 monitor · 2 loops still running`).
 
-There are no inline group headers; sort order keeps same-state rows adjacent,
-and the per-row dot + color shows the group.
+State grouping displays inline section headers; directory grouping keeps the
+per-row state dot and color.
 
 **Dashboard preview** is under **Appearance** in `/settings` (search for "preview").
 The list gains space when you turn off the preview and reply panel.
@@ -121,6 +141,8 @@ The dispatch input uses the same prompt chrome as the agent view. Press
 | Key | Action |
 | --- | --- |
 | `↑` / `↓`, `j` / `k` | Navigate rows and section titles (selecting a row opens peek) |
+| `PageUp` / `PageDown` | Move the row cursor one page up / down (works in every lane and over a confirmed filter) |
+| `Home` / `End` | Jump to the first / last visible focusable, including section titles |
 | `→` / `←` (on a section title) | Expand / collapse the section (`l` / `h` in vim mode) |
 | `Enter` (on a section title) | Toggle the section collapsed / expanded |
 | `Enter` (empty reply) | Open the selected agent full-screen (details view) |
@@ -130,7 +152,8 @@ The dispatch input uses the same prompt chrome as the agent view. Press
 | `Enter` (typed reply) | Send / queue the reply to the selected agent |
 | `/` | Literal `/` into the prompt |
 | `Ctrl+/` | Toggle search mode (live-filter rows) |
-| `Ctrl+A` | Toggle the subagent lane (other running sessions ↔ main sessions) |
+| `Ctrl+A` | Cycle the lane: main sessions → subagents → all → main |
+| `Ctrl+Y` | Cycle the directory scope: all → cwd → worktree → all |
 | `Ctrl+R` | Rename selected row |
 | `Ctrl+T` | Pin / unpin |
 | `Ctrl+G` | Toggle grouping (state ↔ directory) |
@@ -147,6 +170,13 @@ When grouping by state, each group has a **section title** (for example
 brightens. Collapse state is remembered while the dashboard stays open.
 **Inactive** starts collapsed each time the pager starts; expanding it sticks
 until you quit.
+
+`PageUp` / `PageDown` / `Home` / `End` page the row list under the same
+ownership as `↑` / `↓`: an unfocused saved reply does not block list navigation.
+A focused reply keeps the keys for its caret whenever it contains any text,
+including spaces or newlines; an empty reply permits list navigation. Search
+and open slash or `@` dropdowns retain their keys. Home and End include visible
+section titles, not only session rows.
 
 Opening a row shows the agent's conversation in the **details view**. The
 session's own header row does the work — no extra title band: the agent's
@@ -306,10 +336,13 @@ with a row selected.
 
 `Ctrl+/` toggles search mode so normal typing always dispatches. Prefix
 flips from `❯` to yellow `Search:`; every keystroke live-filters the list.
+The text filter composes with the `Ctrl+Y` directory scope: the scope picks
+the directory family, the query narrows inside it.
 
 - `Enter` — confirm: keep the filter and return to the dispatch prompt.
 - `Esc` or `Ctrl+/` — cancel: clear the filter and exit search.
-- `↑` / `↓` — navigate filtered rows.
+- `↑` / `↓` — navigate filtered rows; `PageUp` / `PageDown` / `Home` / `End`
+  page through them.
 
 Prefixes (only inside search mode):
 
@@ -334,4 +367,9 @@ reorder  = ["top:<session_id>"]
 ```
 
 Pinned/reorder entries use **session id** (not a per-process agent slot), so
-they survive restarts.
+they survive restarts. Pins follow the row's role: a pin or reorder made on
+a subagent-lane row (or a child row in the all lane) is written to the
+scoped child layout, so it never reorders your main sessions; in the
+workspace dashboard, top-level pins live in the workspace store. The lane
+and the directory scope are in-memory only — a restart opens the main lane,
+unscoped.

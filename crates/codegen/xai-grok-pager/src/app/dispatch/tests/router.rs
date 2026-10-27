@@ -2383,7 +2383,7 @@ fn classify_top_level_branches() {
 /// Building the row twice in rapid succession against a fixed `last_active_at` yields nearly-identical `elapsed()` values (within tolerance).
 #[test]
 fn build_rows_idle_anchor_is_frozen_last_active_at() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let mut app = test_app_with_agent();
     mark_agent_nonempty(&mut app, AgentId(0));
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
@@ -2400,6 +2400,7 @@ fn build_rows_idle_anchor_is_frozen_last_active_at() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let Some(row1) = rows1.first() else {
         panic!("expected an idle dashboard row: {rows1:?}");
@@ -2419,6 +2420,7 @@ fn build_rows_idle_anchor_is_frozen_last_active_at() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let Some(row2) = rows2.first() else {
         panic!("expected an idle dashboard row: {rows2:?}");
@@ -2433,7 +2435,7 @@ fn build_rows_idle_anchor_is_frozen_last_active_at() {
 /// The age column then shows the LIVE elapsed time within the current turn rather than the time since the previous turn ended.
 #[test]
 fn build_rows_working_anchor_is_turn_started_at() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let mut app = test_app_with_agent();
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
     let turn_start = std::time::Instant::now() - std::time::Duration::from_secs(5);
@@ -2450,6 +2452,7 @@ fn build_rows_working_anchor_is_turn_started_at() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let Some(row) = rows.first() else {
         panic!("expected a working dashboard row: {rows:?}");
@@ -2467,7 +2470,7 @@ fn build_rows_working_anchor_is_turn_started_at() {
 /// Two consecutive builds therefore yield stable values (within sampling jitter) rather than re-anchoring at `now` and showing "0s" every frame.
 #[test]
 fn build_rows_fallback_anchor_is_frozen_when_last_active_at_is_none() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let mut app = test_app_with_agent();
     mark_agent_nonempty(&mut app, AgentId(0));
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
@@ -2483,6 +2486,7 @@ fn build_rows_fallback_anchor_is_frozen_when_last_active_at_is_none() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let rows2 = build_rows_with_roster(
         &app.agents,
@@ -2493,6 +2497,7 @@ fn build_rows_fallback_anchor_is_frozen_when_last_active_at_is_none() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let (Some(r1), Some(r2)) = (rows1.first(), rows2.first()) else {
         panic!("expected dashboard rows: {rows1:?} {rows2:?}");
@@ -2546,7 +2551,7 @@ fn classify_top_level_question_view_some_is_needs_input() {
 /// ANSI escapes in `display_name` are stripped at row build time.
 #[test]
 fn top_level_label_strips_control_characters() {
-    use crate::views::dashboard::build_rows_with_roster;
+    use crate::views::dashboard::{RowScope, build_rows_with_roster};
     let mut app = test_app_with_agent();
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
     agent.display_name = Some("a\x1b[31mevil\x1b[0m".to_string());
@@ -2559,6 +2564,7 @@ fn top_level_label_strips_control_characters() {
         None,
         &[],
         crate::views::dashboard::SessionLane::Main,
+    RowScope::all(),
     );
     let top = rows.first().expect("top row");
     assert!(

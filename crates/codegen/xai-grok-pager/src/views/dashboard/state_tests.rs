@@ -244,10 +244,10 @@ fn grouping_toggles() {
     assert_eq!(state.grouping, Grouping::State);
 }
 
-/// The subagent lane defaults off (today's dashboard) and `Ctrl+A` flips it, mirroring the
-/// `Ctrl+/` search-mode chord.
+/// The subagent lane defaults off (today's dashboard) and `Ctrl+A` cycles Main → Subagents →
+/// All → Main, mirroring the `Ctrl+/` search-mode chord.
 #[test]
-fn subagents_lane_defaults_off_and_toggles_via_ctrl_a() {
+fn lane_defaults_main_and_cycles_via_ctrl_a() {
     let reg = crate::actions::ActionRegistry::defaults();
     let mut state = DashboardState::new();
     assert_eq!(state.session_lane(), SessionLane::Main);
@@ -256,7 +256,7 @@ fn subagents_lane_defaults_off_and_toggles_via_ctrl_a() {
     let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
     assert!(
         matches!(state.handle_key(&ctrl_a, &reg), InputOutcome::Changed),
-        "Ctrl+A must toggle the lane"
+        "Ctrl+A must cycle the lane"
     );
     assert_eq!(state.session_lane(), SessionLane::Subagents);
     assert!(state.selected.is_none(), "old-lane rows must not remain actionable");
@@ -264,8 +264,68 @@ fn subagents_lane_defaults_off_and_toggles_via_ctrl_a() {
     state.handle_key(&ctrl_a, &reg);
     assert_eq!(
         state.session_lane(),
+        SessionLane::All,
+        "a second Ctrl+A reaches the combined lane"
+    );
+
+    state.handle_key(&ctrl_a, &reg);
+    assert_eq!(
+        state.session_lane(),
         SessionLane::Main,
-        "a second Ctrl+A returns to the main lane"
+        "a third Ctrl+A returns to the main lane"
+    );
+}
+
+/// `Ctrl+Y` cycles the shared directory scope with the explicit `All` value as the way back to
+/// the unscoped listing; the default is `All` so today's dashboard is unchanged until pressed.
+#[test]
+fn session_scope_defaults_all_and_cycles_via_ctrl_y() {
+    let reg = crate::actions::ActionRegistry::defaults();
+    let mut state = DashboardState::new();
+    assert_eq!(state.session_scope, SessionScope::All);
+
+    let ctrl_y = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL);
+    assert!(matches!(state.handle_key(&ctrl_y, &reg), InputOutcome::Changed));
+    assert_eq!(state.session_scope, SessionScope::Cwd);
+    state.handle_key(&ctrl_y, &reg);
+    assert_eq!(state.session_scope, SessionScope::Worktree);
+    state.handle_key(&ctrl_y, &reg);
+    assert_eq!(
+        state.session_scope,
+        SessionScope::All,
+        "the explicit All value closes the cycle"
+    );
+}
+
+/// PageUp/PageDown/Home/End emit [`crate::app::actions::Action::DashboardPage`] while the list
+/// owns the keys, and keep editing the caret while a dispatch draft is typed.
+#[test]
+fn paging_keys_emit_dashboard_page_only_when_list_owns_them() {
+    let reg = crate::actions::ActionRegistry::defaults();
+    let mut state = DashboardState::new();
+    state.set_list_focused(true);
+
+    let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
+    assert!(matches!(
+        state.handle_key(&page_down, &reg),
+        InputOutcome::Action(crate::app::actions::Action::DashboardPage(
+            crate::views::dashboard::PageMove::Down
+        ))
+    ));
+    let home = KeyEvent::new(KeyCode::Home, KeyModifiers::NONE);
+    assert!(matches!(
+        state.handle_key(&home, &reg),
+        InputOutcome::Action(crate::app::actions::Action::DashboardPage(
+            crate::views::dashboard::PageMove::Home
+        ))
+    ));
+
+    // A typed draft hands the keys back to the caret.
+    state.set_list_focused(false);
+    state.dispatch.set_text("draft");
+    assert!(
+        !matches!(state.handle_key(&home, &reg), InputOutcome::Action(_)),
+        "Home must edit the caret while a draft is typed"
     );
 }
 
@@ -7014,4 +7074,89 @@ fn rename_keeps_flag_tags_and_drops_loose_ones() {
     let mut full = RenameDraft::new(DashboardRowId::TopLevel(AgentId(0)), "");
     handle_rename_paste(&mut full, &format!("{near_cap}{scotland}"));
     assert_eq!(format!("{near_cap}\u{1f3f4}"), full.text());
+}
+
+#[test]
+fn focused_whitespace_reply_keeps_home_end_and_page_keys() {
+    use crate::app::actions::Action;
+    let registry = crate::actions::ActionRegistry::defaults();
+    for text in [" ", "\n", "\n "] {
+        let mut state = state_with_open_peek();
+        state.peek.as_mut().unwrap().focused = true;
+        state.peek_reply.set_text(text);
+        state.peek_reply.set_cursor(text.len());
+        let outcome = state.handle_key(&KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), &registry);
+        assert!(!matches!(outcome, InputOutcome::Action(Action::DashboardPage(_))));
+        assert_eq!(state.peek_reply.cursor(), text.rfind('\n').map_or(0, |index| index + 1));
+        let outcome = state.handle_key(&KeyEvent::new(KeyCode::End, KeyModifiers::NONE), &registry);
+        assert!(!matches!(outcome, InputOutcome::Action(Action::DashboardPage(_))));
+        assert_eq!(state.peek_reply.cursor(), text.len());
+        for code in [KeyCode::PageUp, KeyCode::PageDown] {
+            assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+                InputOutcome::Action(Action::DashboardPage(_))));
+        }
+        assert_eq!(state.peek_reply.text(), text);
+    }
+}
+
+#[test]
+fn unfocused_saved_reply_and_hidden_dispatch_draft_do_not_capture_list_pages() {
+    use crate::app::actions::Action;
+    let registry = crate::actions::ActionRegistry::defaults();
+    let mut state = state_with_open_peek();
+    state.peek.as_mut().unwrap().focused = false;
+    state.dispatch.set_text("hidden dispatch");
+    state.peek_reply.set_text("saved reply");
+    for (code, expected) in [
+        (KeyCode::Home, PageMove::Home), (KeyCode::End, PageMove::End),
+        (KeyCode::PageUp, PageMove::Up), (KeyCode::PageDown, PageMove::Down),
+    ] {
+        assert!(matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(actual)) if actual == expected));
+    }
+    assert_eq!(state.peek_reply.text(), "saved reply");
+    assert_eq!(state.dispatch.text(), "hidden dispatch");
+}
+
+#[test]
+fn active_search_and_slash_picker_keep_page_keys() {
+    use crate::app::actions::Action;
+    let registry = crate::actions::ActionRegistry::defaults();
+    let mut state = DashboardState::new();
+    state.set_list_focused(true);
+    state.search_mode = true;
+    for code in [KeyCode::Home, KeyCode::End, KeyCode::PageUp, KeyCode::PageDown] {
+        assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(_))));
+    }
+    state.search_mode = false;
+    for code in [KeyCode::Home, KeyCode::End, KeyCode::PageUp, KeyCode::PageDown] {
+        state.dispatch.set_text("/");
+        state.dispatch.set_cursor(1);
+        state.dispatch.refresh_slash(&state.models);
+        assert!(state.dispatch.slash_open());
+        assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(_))));
+    }
+}
+
+#[test]
+fn active_peek_file_picker_keeps_pages_even_with_unfocused_saved_reply() {
+    use crate::app::actions::Action;
+    let registry = crate::actions::ActionRegistry::defaults();
+    for code in [KeyCode::Home, KeyCode::End, KeyCode::PageUp, KeyCode::PageDown] {
+        let mut state = state_with_open_peek();
+        state.peek.as_mut().unwrap().focused = false;
+        state.peek_reply.set_text("@src");
+        state.peek_reply.file_search.set_test_state(
+            crate::views::file_search::context::detect("@src", 4).unwrap(),
+            vec![xai_grok_workspace::file_system::FuzzyMatchResult {
+                path: nucleo::Utf32String::from("src/lib.rs"), score: 1,
+                indices: Vec::new(), is_dir: false,
+            }], 0,
+        );
+        assert!(state.peek_reply.file_search_visible());
+        assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(_))));
+    }
 }

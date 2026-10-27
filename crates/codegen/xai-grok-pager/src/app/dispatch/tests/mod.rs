@@ -3,6 +3,7 @@ mod auth;
 mod billing;
 mod cta_e2e;
 mod dashboard;
+mod dashboard_all_lane_tests;
 mod dock_toggle;
 mod jump;
 mod mid_text_btw;

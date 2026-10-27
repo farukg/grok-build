@@ -375,10 +375,14 @@ Bindings while the [Agent Dashboard](23-dashboard.md) is focused (`Ctrl+\` or `/
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓`, `j` / `k` | Navigate agent rows (selecting a row opens peek) |
+| `↑` / `↓`, `j` / `k` | Navigate agent rows and section titles (selecting a row opens peek) |
+| `PageUp` / `PageDown` | Move the row cursor one page up / down |
+| `Home` / `End` | Jump to the first / last visible focusable, including section titles |
 | `Enter` | Open the selected agent, or send a typed peek reply / dispatch prompt |
 | `Ctrl+S` | Reply or dispatch **and** attach to that agent |
 | `Ctrl+/` | Toggle search / filter mode |
+| `Ctrl+A` | Cycle the lane: main sessions → subagents → all → main |
+| `Ctrl+Y` | Cycle the directory scope: all → cwd → worktree → all |
 | `Ctrl+R` | Rename the selected agent |
 | `Ctrl+T` | Pin / unpin |
 | `Ctrl+G` | Toggle grouping (state ↔ working directory) |

@@ -47,13 +47,14 @@ pub use row::{
     DashboardRow, RowBadge, SessionLane, build_rows_with_roster, classify_top_level,
     roster_activity_to_state, sort_rows,
 };
+pub(crate) use row::RowScope;
 pub(crate) use row::{WorkspaceRowInputs, build_rows_with_workspace};
 pub(crate) use state::DashboardStopAction;
 pub use state::{
     DashboardDispatchMode, DashboardRowId, DashboardState, Filter, FilterValue, Focusable,
-    Grouping, LocationCandidate, LocationPickerState, PendingDispatchModel, PersistedDashboard,
-    PersistedRowId, RowState, SectionKey, SessionIdResolver, ShortcutsModalState, load_persisted,
-    parse_filter, parse_row_state_token,
+    Grouping, LocationCandidate, LocationPickerState, PageMove, PendingDispatchModel,
+    PersistedDashboard, PersistedRowId, RowState, SectionKey, SessionIdResolver, SessionScope,
+    ShortcutsModalState, load_persisted, parse_filter, parse_row_state_token,
 };
 
 /// Top-level agents visible in the dashboard's row list, in the exact order [`render_dashboard`]
@@ -81,7 +82,7 @@ pub(crate) fn cycle_order(
     filter: &Filter,
 ) -> Vec<crate::app::agent::AgentId> {
     let home = render::cached_home();
-    // Cycling walks root sessions only; the subagent lane never feeds it.
+    // Cycling walks root sessions only; the subagent and all lanes never feed it.
     let rows = build_rows_with_roster(
         agents,
         pinned,
@@ -91,6 +92,7 @@ pub(crate) fn cycle_order(
         home,
         &[],
         row::SessionLane::Main,
+        row::RowScope::all(),
     );
     top_level_ids(&rows)
 }

@@ -236,7 +236,17 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     if app.workspace_dashboard_enabled {
         app.dashboard_sessions_loading = app.workspace_membership.snapshot().is_none();
         crate::app::workspace_sync::activate(app);
-        return crate::app::workspace_sync::drain(app);
+        let mut effects = crate::app::workspace_sync::drain(app);
+        if app.dashboard.as_ref().is_some_and(|dashboard| {
+            dashboard.session_lane() == crate::views::dashboard::SessionLane::All
+        }) {
+            effects.push(if app.leader_mode {
+                Effect::FetchRoster
+            } else {
+                Effect::FetchDashboardSessions
+            });
+        }
+        return effects;
     }
     app.dashboard_sessions_loading = true;
     if app.leader_mode {
@@ -1000,10 +1010,10 @@ pub(crate) fn cycle_scope(app: &AppView, current: AgentId) -> Option<CycleScope>
 pub(super) fn dispatch_session_cycle(app: &mut AppView, direction: Direction) -> Vec<Effect> {
     if matches!(app.active_view, ActiveView::AgentDashboard) {
         if let Some(dashboard) = app.dashboard.as_mut() {
-            dashboard.set_session_lane(match direction {
-                Direction::Prev => crate::views::dashboard::SessionLane::Main,
-                Direction::Next => crate::views::dashboard::SessionLane::Subagents,
-            });
+            match direction {
+                Direction::Prev => dashboard.cycle_session_lane_back(),
+                Direction::Next => dashboard.cycle_session_lane(),
+            }
         }
         return vec![];
     }
@@ -1768,15 +1778,55 @@ fn refuse_workspace_layout(app: &mut AppView, refusal: impl Into<LayoutRefusal>)
     };
     app.show_toast(message);
 }
+/// Whether the current lane lists workspace-store rows (v2): true for Main and All, the two lanes
+/// whose root rows come from the membership store. The Subagents lane is roster/live-child only.
 fn workspace_lane_enabled(app: &AppView) -> bool {
     app.workspace_dashboard_enabled
         && app.dashboard.as_ref().is_none_or(|d| {
-            d.session_lane() == crate::views::dashboard::SessionLane::Main
+            d.session_lane() != crate::views::dashboard::SessionLane::Subagents
         })
 }
 
+/// Whether `row` is a subagent child by the dashboard's authoritative child membership: a
+/// locally-attached child view or a `subagent` roster row. All-lane gestures route child rows to
+/// the child-layout path, never to the workspace store, so each row keeps its own semantics.
+fn row_is_child(
+    app: &AppView,
+    row: &crate::views::dashboard::DashboardRowId,
+) -> bool {
+    use crate::views::dashboard::DashboardRowId;
+    let Some(dashboard) = app.dashboard.as_ref() else {
+        return false;
+    };
+    match row {
+        DashboardRowId::Workspace { .. } => false,
+        DashboardRowId::Roster { session_id } => {
+            dashboard.child_rows.contains_key(session_id)
+        }
+        DashboardRowId::TopLevel(agent_id) => {
+            let Some(agent) = app.agents.get(agent_id) else {
+                return false;
+            };
+            matches!(agent.role, crate::app::agent_view::AgentRole::Child(_))
+                || agent
+                    .session
+                    .session_id
+                    .as_ref()
+                    .is_some_and(|session_id| {
+                        dashboard.child_rows.contains_key(session_id.0.as_ref())
+                    })
+        }
+    }
+}
+
 pub(super) fn dispatch_dashboard_toggle_pin(app: &mut AppView) -> Vec<Effect> {
-    if workspace_lane_enabled(app) {
+    if workspace_lane_enabled(app)
+        && app
+            .dashboard
+            .as_ref()
+            .and_then(|d| d.selected.clone())
+            .is_some_and(|row| !row_is_child(app, &row))
+    {
         let Some(row) = app.dashboard.as_ref().and_then(|d| d.selected.clone()) else {
             return vec![];
         };
@@ -1912,8 +1962,22 @@ fn workspace_rows_in_lane(
         app.dashboard.as_ref().map_or(&unpinned, |d| &d.pinned),
         app.dashboard.as_ref().map_or(&[], |d| d.reorder.as_slice()),
         child_rows,
+        dashboard_row_scope(app),
     );
     (rows, inputs.grouping())
+}
+
+/// The lane-shared directory scope with the dashboard's current cwd; scopeless when no
+/// dashboard state exists (the row builders then keep today's unscoped listing).
+fn dashboard_row_scope(app: &AppView) -> crate::views::dashboard::RowScope<'_> {
+    app.dashboard
+        .as_ref()
+        .map_or(crate::views::dashboard::RowScope::all(), |d| {
+            crate::views::dashboard::RowScope {
+                value: d.session_scope,
+                cwd: d.cwd.as_path(),
+            }
+        })
 }
 pub(super) fn dashboard_focusables(app: &AppView) -> Vec<crate::views::dashboard::Focusable> {
     let Some(d) = app.dashboard.as_ref() else {
@@ -1938,6 +2002,7 @@ pub(super) fn dashboard_focusables(app: &AppView) -> Vec<crate::views::dashboard
                 home,
                 roster,
                 d.session_lane(),
+                dashboard_row_scope(app),
             ),
             d.grouping,
         )
@@ -1987,7 +2052,7 @@ pub(super) fn dispatch_dashboard_stop(app: &mut AppView) -> Vec<Effect> {
     match &sel {
         DashboardRowId::TopLevel(id) => {
             let id = *id;
-            if workspace_lane_enabled(app) {
+            if workspace_lane_enabled(app) && !row_is_child(app, &sel) {
                 let Some(readiness) = app.agents.get(&id).map(dashboard_stop_readiness) else {
                     return vec![];
                 };
@@ -2231,7 +2296,7 @@ fn delete_dashboard_row(
     if let Some(d) = app.dashboard.as_mut() {
         d.delete_confirm = None;
     }
-    if workspace_lane_enabled(app) {
+    if workspace_lane_enabled(app) && !row_is_child(app, &row) {
         return archive_dashboard_row(app, row);
     }
     match row {
@@ -2414,17 +2479,80 @@ pub(super) fn dispatch_dashboard_toggle_grouping(app: &mut AppView) -> Vec<Effec
     }
     dispatch_dashboard_persist(app)
 }
+/// Apply a focusable to the dashboard cursor, the one writer shared by row/section/overflow
+/// navigation (`dispatch_dashboard_select`) and paging (`dispatch_dashboard_page`).
+fn focus_focusable(
+    d: &mut crate::views::dashboard::DashboardState,
+    f: &crate::views::dashboard::Focusable,
+) {
+    match f {
+        crate::views::dashboard::Focusable::Section(key) => d.focus_section(*key),
+        crate::views::dashboard::Focusable::Row(id) => d.focus_row(id.clone()),
+        crate::views::dashboard::Focusable::IdleOverflow => d.focus_idle_overflow(),
+    }
+}
+
+/// The index of the dashboard's current list cursor in `focusables`; `None` when the cursor sits
+/// on the actions row (or nothing at all).
+fn focusable_cursor_index(
+    d: &crate::views::dashboard::DashboardState,
+    focusables: &[crate::views::dashboard::Focusable],
+) -> Option<usize> {
+    focusables.iter().position(|f| match f {
+        crate::views::dashboard::Focusable::Section(key) => d.selected_section == Some(*key),
+        crate::views::dashboard::Focusable::Row(id) => d.selected.as_ref() == Some(id),
+        crate::views::dashboard::Focusable::IdleOverflow => d.selected_idle_overflow,
+    })
+}
+
+/// PageUp/PageDown/Home/End: move the row cursor through the shared tree navigation, one page
+/// sized by the last rendered viewport. Works in every lane and in filtered or empty states: an
+/// empty list leaves the cursor (the `+ New Agent` button) alone.
+pub(super) fn dispatch_dashboard_page(
+    app: &mut AppView,
+    mv: crate::views::dashboard::PageMove,
+) {
+    use crate::views::dashboard::PageMove;
+    use crate::views::tree_nav::{TreeKey, TreeRow, TreeStep, navigate};
+    let focusables = dashboard_focusables(app);
+    let Some(d) = app.dashboard.as_mut() else {
+        return;
+    };
+    let Some(from) = focusable_cursor_index(d, &focusables) else {
+        // No list cursor: forward and Home enter the list at its ends, backward stays put,
+        // mirroring `dispatch_dashboard_select`'s step off the `+ New Agent` button.
+        let target = match mv {
+            PageMove::Down | PageMove::Home => focusables.first(),
+            PageMove::End => focusables.last(),
+            PageMove::Up => None,
+        };
+        if let Some(item) = target {
+            focus_focusable(d, item);
+            d.clear_manual_scroll();
+        }
+        return;
+    };
+    let rows: Vec<TreeRow> = focusables.iter().map(|_| TreeRow::leaf(0)).collect();
+    let key = match mv {
+        PageMove::Up => TreeKey::PageUp(d.page_step()),
+        PageMove::Down => TreeKey::PageDown(d.page_step()),
+        PageMove::Home => TreeKey::Home,
+        PageMove::End => TreeKey::End,
+    };
+    if let TreeStep::MoveTo(index) = navigate(&rows, from, key)
+        && let Some(item) = focusables.get(index)
+    {
+        focus_focusable(d, item);
+        d.clear_manual_scroll();
+    }
+}
+
 pub(super) fn dispatch_dashboard_select(app: &mut AppView, next: bool) {
     let focusables = dashboard_focusables(app);
     let Some(d) = app.dashboard.as_mut() else {
         return;
     };
-    let set_cursor = |d: &mut crate::views::dashboard::DashboardState,
-                      f: &crate::views::dashboard::Focusable| match f {
-        crate::views::dashboard::Focusable::Section(key) => d.focus_section(*key),
-        crate::views::dashboard::Focusable::Row(id) => d.focus_row(id.clone()),
-        crate::views::dashboard::Focusable::IdleOverflow => d.focus_idle_overflow(),
-    };
+    let set_cursor = focus_focusable;
     if d.actions_focus.is_some() {
         if next && let Some(first) = focusables.first() {
             set_cursor(d, first);
@@ -2436,14 +2564,7 @@ pub(super) fn dispatch_dashboard_select(app: &mut AppView, next: bool) {
         d.focus_new_agent_button();
         return;
     }
-    let cur = focusables
-        .iter()
-        .position(|f| match f {
-            crate::views::dashboard::Focusable::Section(key) => d.selected_section == Some(*key),
-            crate::views::dashboard::Focusable::Row(id) => d.selected.as_ref() == Some(id),
-            crate::views::dashboard::Focusable::IdleOverflow => d.selected_idle_overflow,
-        })
-        .unwrap_or(0);
+    let cur = focusable_cursor_index(d, &focusables).unwrap_or(0);
     if !next && cur == 0 {
         d.focus_new_agent_button();
         d.clear_manual_scroll();
@@ -2460,7 +2581,13 @@ pub(super) fn dispatch_dashboard_select(app: &mut AppView, next: bool) {
     d.clear_manual_scroll();
 }
 pub(super) fn dispatch_dashboard_reorder(app: &mut AppView, up: bool) -> Vec<Effect> {
-    if workspace_lane_enabled(app) {
+    if workspace_lane_enabled(app)
+        && app
+            .dashboard
+            .as_ref()
+            .and_then(|d| d.selected.clone())
+            .is_some_and(|row| !row_is_child(app, &row))
+    {
         let Some(selected) = app.dashboard.as_ref().and_then(|d| d.selected.clone()) else {
             return vec![];
         };
@@ -2527,9 +2654,17 @@ pub(super) fn dispatch_dashboard_reorder(app: &mut AppView, up: bool) -> Vec<Eff
     dispatch_dashboard_persist(app)
 }
 fn dispatch_dashboard_persist(app: &mut AppView) -> Vec<Effect> {
-    if app.dashboard.as_ref().is_some_and(|d| {
-        d.session_lane() == crate::views::dashboard::SessionLane::Subagents
-    }) {
+    // The child layout owns its own scoped write in the Subagents lane, and in the All lane
+    // under v2 (where root pins live in the workspace store, so only children reach the config).
+    let child_layout_lane = app.dashboard.as_ref().is_some_and(|d| {
+        use crate::views::dashboard::SessionLane;
+        match d.session_lane() {
+            SessionLane::Subagents => true,
+            SessionLane::All => app.workspace_dashboard_enabled,
+            SessionLane::Main => false,
+        }
+    });
+    if child_layout_lane {
         let Some(update) = child_layout::snapshot(app) else {
             return vec![];
         };

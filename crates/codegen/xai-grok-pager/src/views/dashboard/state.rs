@@ -256,6 +256,49 @@ pub enum Grouping {
     Directory,
 }
 
+/// Which working-directory family every lane lists. `All` (the default) keeps the dashboard's
+/// unscoped listing; `Cwd` and `Worktree` narrow all three lanes — the explicit `All` value is
+/// the way back out. In-memory only, like the lane toggle: it never touches what is persisted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionScope {
+    /// Sessions whose working directory is the dashboard's current directory.
+    Cwd,
+    /// Sessions in the current directory's git worktree family (main repo plus linked worktrees).
+    Worktree,
+    /// Every session, regardless of directory.
+    #[default]
+    All,
+}
+
+impl SessionScope {
+    /// The next value in the `Ctrl+Y` rotation (`All → Cwd → Worktree → All`).
+    pub fn cycled(self) -> Self {
+        match self {
+            Self::All => Self::Cwd,
+            Self::Cwd => Self::Worktree,
+            Self::Worktree => Self::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cwd => "cwd",
+            Self::Worktree => "worktree",
+            Self::All => "all",
+        }
+    }
+}
+
+/// A bulk move of the dashboard's row cursor: PageUp/PageDown/Home/End, resolved against the
+/// focusable list and the current viewport size by the dispatcher.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageMove {
+    Up,
+    Down,
+    Home,
+    End,
+}
+
 impl Grouping {
     pub fn toggled(self) -> Self {
         match self {
@@ -398,8 +441,10 @@ pub struct DashboardState {
     /// inside the freshness window, folding the rest behind the overflow row.
     /// In-memory only (resets on pager restart), like section collapse.
     pub idle_show_all: bool,
-    /// In-memory lane selection; both lanes share sorting, view, and actions.
+    /// In-memory lane selection; all lanes share sorting, view, and actions.
     pub lane: SessionLane,
+    /// In-memory directory scope every lane filters its rows by (see [`SessionScope`]).
+    pub session_scope: SessionScope,
     /// V1-only config layout; dashboard v2 derives these fields from `WorkspaceView`.
     pub pinned: BTreeSet<DashboardRowId>,
     pub reorder: Vec<DashboardRowId>,
@@ -520,6 +565,9 @@ pub struct DashboardState {
     /// Clamped so the selected row stays visible.
     /// Wheel and PgUp/PgDn adjust this.
     pub viewport_offset: usize,
+    /// The list viewport's height in terminal lines at the last render, recorded by
+    /// [`Self::clamp_viewport`]; PageUp/PageDown size their step from it.
+    pub(crate) last_viewport_h: usize,
     /// True while the user is browsing the row list via the mouse wheel (or any pure-viewport scroll affordance).
     /// When set, [`Self::clamp_viewport`] skips its snap-to-selection pull-back so the viewport can travel past the selected row.
     /// Cleared on any selection-driven nav (arrow keys, click, filter rebuild, attach) so the viewport re-engages the selection follow.
@@ -1151,6 +1199,7 @@ impl DashboardState {
             hovered_idle_overflow: false,
             idle_show_all: false,
             lane: SessionLane::Main,
+            session_scope: SessionScope::default(),
             pinned: BTreeSet::new(),
             reorder: Vec::new(),
             grouping: Grouping::default(),
@@ -1200,6 +1249,7 @@ impl DashboardState {
             peek_close_rect: None,
             dispatch_rect: None,
             viewport_offset: 0,
+            last_viewport_h: 0,
             manual_scroll_active: false,
             shortcuts_modal: None,
             pending_model: None,
@@ -1474,13 +1524,14 @@ impl DashboardState {
         self.idle_show_all = !self.idle_show_all;
     }
 
-    /// Toggle the row lane between top-level sessions (default) and the other running sessions
-    /// (subagent children). In-memory only, like section collapse.
-    pub fn toggle_subagents_lane(&mut self) {
-        self.set_session_lane(match self.lane {
-            SessionLane::Main => SessionLane::Subagents,
-            SessionLane::Subagents => SessionLane::Main,
-        });
+    /// Cycle the row lane (Main → Subagents → All → Main). In-memory only, like section collapse.
+    pub fn cycle_session_lane(&mut self) {
+        self.set_session_lane(self.lane.cycled());
+    }
+
+    /// The lane one step against the `Ctrl+A` rotation, for the header's prev/next session keys.
+    pub fn cycle_session_lane_back(&mut self) {
+        self.set_session_lane(self.lane.cycled_back());
     }
 
     pub fn set_session_lane(&mut self, lane: SessionLane) {
@@ -1500,6 +1551,16 @@ impl DashboardState {
     /// The lane the row builders list for the current toggle state.
     pub fn session_lane(&self) -> SessionLane {
         self.lane
+    }
+
+    /// Advance the shared directory scope (see [`SessionScope`]). Selection stays keyed by row
+    /// identity; the next frame's reanchor moves a cursor whose row fell outside the scope.
+    pub fn cycle_session_scope(&mut self) {
+        self.session_scope = self.session_scope.cycled();
+        if self.session_scope != SessionScope::Worktree {
+            crate::git_info::clear_scope_families();
+        }
+        self.clear_manual_scroll();
     }
 
     /// Whether `key`'s section is currently collapsed (its rows hidden).
@@ -1858,6 +1919,7 @@ impl DashboardState {
         viewport_h: usize,
         total_lines: usize,
     ) -> usize {
+        self.last_viewport_h = viewport_h;
         let mut offset = self.viewport_offset;
         if !self.manual_scroll_active
             && let Some(sel_idx) = selected_line
@@ -1875,6 +1937,12 @@ impl DashboardState {
         }
         self.viewport_offset = offset;
         offset
+    }
+
+    /// How many focusables PageUp/PageDown move: the last rendered list viewport in rows
+    /// (terminal lines divided by the painted row height), at least one.
+    pub(crate) fn page_step(&self) -> usize {
+        (self.last_viewport_h / super::render::ROW_HEIGHT as usize).max(1)
     }
 
     /// Set the peek panel, enforcing the "`peek_close_rect` is None whenever `peek` is None" invariant.
@@ -3081,6 +3149,31 @@ impl DashboardState {
             return self.handle_paste_key_deferred(clipboard_text, self.peek_owns_input());
         }
 
+        let peek_navigation = self.peek.as_ref().is_some_and(|peek| {
+            !peek.focused || self.peek_reply.text().is_empty()
+        });
+        if key.modifiers.is_empty()
+            && !self.search_mode
+            && (if self.peek_owns_input() { peek_navigation } else { self.list_keys_active() })
+            && !self.peek.as_ref().is_some_and(|peek| peek.question.is_some())
+            && (if self.peek_owns_input() {
+                !self.peek_reply.slash_open() && !self.peek_reply.file_search_visible()
+            } else {
+                !self.dispatch.slash_open() && !self.dispatch.file_search_visible()
+            })
+        {
+            let page = match key.code {
+                KeyCode::PageUp => Some(PageMove::Up),
+                KeyCode::PageDown => Some(PageMove::Down),
+                KeyCode::Home => Some(PageMove::Home),
+                KeyCode::End => Some(PageMove::End),
+                _ => None,
+            };
+            if let Some(page) = page {
+                return InputOutcome::Action(Action::DashboardPage(page));
+            }
+        }
+
         // Shift+Tab while the peek is open cycles the PEEKED agent's live mode, not the new-session staged
         // mode.
         if self.peek_owns_input()
@@ -3247,10 +3340,17 @@ impl DashboardState {
             return InputOutcome::Changed;
         }
 
-        // `Ctrl+A` toggles the subagent lane: the dashboard lists the other running sessions
-        // (subagent children) instead of the main sessions, with the same row surface.
+        // `Ctrl+A` cycles the row lane: Main sessions → subagent children → both (All) → back,
+        // with the same row surface throughout.
         if key!('a', CONTROL).matches(key) {
-            self.toggle_subagents_lane();
+            self.cycle_session_lane();
+            return InputOutcome::Changed;
+        }
+
+        // `Ctrl+Y` cycles the shared directory scope (all → cwd → worktree → all); every lane
+        // filters by it, and the explicit `All` value is the way back to the unscoped listing.
+        if key!('y', CONTROL).matches(key) {
+            self.cycle_session_scope();
             return InputOutcome::Changed;
         }
 

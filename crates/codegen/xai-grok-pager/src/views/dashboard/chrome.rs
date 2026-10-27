@@ -87,14 +87,28 @@ pub(super) fn render_header(
         ),
     ];
     let mut status = AgentStatusBar::new(theme);
-    // The lane indicator rides the status chips only while the subagent lane is on, so the
-    // default header stays byte-identical.
-    if state.session_lane() == super::row::SessionLane::Subagents {
+    // The lane and scope indicators ride the status chips only while they deviate from the
+    // default (Main lane, all directories), so the default header stays byte-identical.
+    let lane_chip = match state.session_lane() {
+        super::row::SessionLane::Main => None,
+        super::row::SessionLane::Subagents => Some("subagents"),
+        super::row::SessionLane::All => Some("all"),
+    };
+    if let Some(lane) = lane_chip {
         status.push(
-            "subagents",
+            lane,
             Line::from(Span::styled(
-                format!(" {} subagents", crate::glyphs::diamond_filled()),
+                format!(" {} {lane}", crate::glyphs::diamond_filled()),
                 bg.fg(theme.accent_running),
+            )),
+        );
+    }
+    if state.session_scope != super::state::SessionScope::All {
+        status.push(
+            "scope",
+            Line::from(Span::styled(
+                format!(" {} {}", crate::glyphs::diamond_filled(), state.session_scope.label()),
+                bg.fg(theme.gray_dim),
             )),
         );
     }

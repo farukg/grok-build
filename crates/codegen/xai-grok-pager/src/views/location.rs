@@ -63,6 +63,8 @@ mod tests {
             branch: branch.map(str::to_owned),
             is_worktree,
             main_repo: is_worktree.then(|| "~/xai".to_owned()),
+            repo_root: (!is_worktree).then(|| "~/xai".to_owned()),
+            family: git_info::RepositoryFamily::Pending,
             worktree_label: None,
         };
 

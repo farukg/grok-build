@@ -1,5 +1,5 @@
-//! Dashboard rows: classification, build, filter, sort.
-use super::state::{DashboardRowId, Filter, RowState};
+//! Dashboard rows: classification, build, filter, scope, sort.
+use super::state::{DashboardRowId, Filter, RowState, SessionScope};
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::app::roster::{RosterActivity, RosterEntry};
@@ -8,7 +8,7 @@ use crate::views::dashboard::row_activity::{
     has_live_parent_activity, live_work_badges, top_level_activity, top_level_secondary_line,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 /// Title prefix for a session that has no name / generated title / prompt yet.
 /// [`RowTitle::render_wide`](crate::views::dashboard::row_title::RowTitle::render_wide) paints the trailing ` #<id>` suffix dimly.
@@ -82,18 +82,97 @@ fn fallback_epoch() -> Instant {
 }
 /// Which sessions the dashboard lists. The default lane shows top-level sessions (today's
 /// dashboard); the subagent lane shows the other running sessions — subagent children —
-/// with the same sorting, view, and actions.
+/// with the same sorting, view, and actions; the all lane combines roots and children in
+/// one list, deduplicated by session id.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SessionLane {
     #[default]
     Main,
     Subagents,
+    All,
+}
+
+impl SessionLane {
+    /// The next lane in the `Ctrl+A` rotation (Main → Subagents → All → Main).
+    pub fn cycled(self) -> Self {
+        match self {
+            Self::Main => Self::Subagents,
+            Self::Subagents => Self::All,
+            Self::All => Self::Main,
+        }
+    }
+
+    /// The lane one step against the rotation, for the header's prev/next session keys.
+    pub fn cycled_back(self) -> Self {
+        match self {
+            Self::Main => Self::All,
+            Self::Subagents => Self::Main,
+            Self::All => Self::Subagents,
+        }
+    }
+}
+
+/// The directory scope every lane filters its rows by, paired with the dashboard's current
+/// working directory. `All` (the default) keeps today's unscoped listing.
+#[derive(Clone, Copy)]
+pub(crate) struct RowScope<'a> {
+    pub value: SessionScope,
+    pub cwd: &'a Path,
+}
+
+impl RowScope<'_> {
+    /// The scopeless default: no row is hidden by its working directory.
+    pub fn all() -> RowScope<'static> {
+        RowScope {
+            value: SessionScope::All,
+            cwd: Path::new(""),
+        }
+    }
+}
+
+/// Drop rows whose `session_id` was already listed; rows without a session id always stay.
+/// Keeps the first occurrence, so a live child view wins over a stale member/roster twin.
+pub(crate) fn dedupe_session_ids(rows: &mut Vec<DashboardRow>) {
+    if rows.len() < 2 {
+        return;
+    }
+    let mut seen = std::collections::HashSet::new();
+    rows.retain(|row| {
+        row.session_id
+            .as_deref()
+            .is_none_or(|id| seen.insert(id.to_owned()))
+    });
+}
+
+fn cwd_equal(left: &Path, right: &Path) -> bool {
+    left == right
+}
+
+/// Hide rows outside `scope`'s working-directory family. Applies to every lane and composes
+/// with [`apply_filter`]; `SessionScope::All` is a no-op, so the default listing is unchanged.
+pub(crate) fn apply_scope(rows: &mut Vec<DashboardRow>, scope: RowScope<'_>) {
+    match scope.value {
+        SessionScope::All => {}
+        SessionScope::Cwd => rows.retain(|row| cwd_equal(&row.cwd, scope.cwd)),
+        SessionScope::Worktree => {
+            let Some(families) = crate::git_info::scope_family_index(
+                std::iter::once(scope.cwd).chain(rows.iter().map(|row| row.cwd.as_path())),
+            ) else {
+                rows.clear();
+                return;
+            };
+            let dashboard = families.family_root(scope.cwd);
+            rows.retain(|row| families.family_root(&row.cwd).zip(dashboard)
+                .is_some_and(|(row, dashboard)| row == dashboard));
+        }
+    }
 }
 
 /// It appends "roster-only" rows for leader sessions this client is not locally attached to (the
 /// FleetView dashboard). Only top-level agents and roster sessions appear (see [`build_local_rows`]).
 /// `Main` lists top-level rows and filters `subagent` roster entries out; `Subagents` lists
-/// locally-attached child views plus exactly the `subagent` roster entries.
+/// locally-attached child views plus exactly the `subagent` roster entries; `All` lists both sides,
+/// deduplicated by session id.
 pub fn build_rows_with_roster(
     agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
@@ -103,9 +182,14 @@ pub fn build_rows_with_roster(
     home: Option<&str>,
     roster: &[RosterEntry],
     lane: SessionLane,
+    scope: RowScope<'_>,
 ) -> Vec<DashboardRow> {
     let mut rows = build_local_rows(agents, pinned, home, lane);
     append_roster_rows(&mut rows, roster, agents, pinned, home, lane);
+    if lane == SessionLane::All {
+        dedupe_session_ids(&mut rows);
+    }
+    apply_scope(&mut rows, scope);
     apply_filter(&mut rows, filter, home);
     sort_rows(&mut rows, grouping, reorder);
     rows
@@ -127,6 +211,9 @@ impl WorkspaceRowInputs<'_> {
     }
 }
 /// The store is authoritative for membership, layout, and sessions this process has not loaded.
+/// `Subagents` delegates to the roster build; `All` composes the store's root rows with the
+/// subagent rows (children first, deduplicated by session id) under one shared sort; `Main`
+/// lists the store's root rows alone.
 pub(crate) fn build_rows_with_workspace(
     agents: &SessionViews,
     inputs: WorkspaceRowInputs<'_>,
@@ -137,12 +224,32 @@ pub(crate) fn build_rows_with_workspace(
     pinned: &std::collections::BTreeSet<DashboardRowId>,
     lane_reorder: &[DashboardRowId],
     child_rows: &std::collections::BTreeMap<String, DashboardRowId>,
+    scope: RowScope<'_>,
 ) -> Vec<DashboardRow> {
     if lane == SessionLane::Subagents {
         return build_rows_with_roster(
-            agents, pinned, lane_reorder, inputs.grouping(), filter, home, roster, lane,
+            agents, pinned, lane_reorder, inputs.grouping(), filter, home, roster, lane, scope,
         );
     }
+    let (mut rows, reorder) = workspace_member_rows(agents, inputs, home, child_rows);
+    if lane == SessionLane::All {
+        rows.extend(subagent_rows(agents, pinned, home, roster));
+        dedupe_session_ids(&mut rows);
+    }
+    apply_scope(&mut rows, scope);
+    apply_filter(&mut rows, filter, home);
+    sort_rows(&mut rows, inputs.grouping(), &reorder);
+    rows
+}
+
+/// Live-root and store-member root rows (the `Main` lane's source set) plus the workspace
+/// manual order that sorts them.
+fn workspace_member_rows(
+    agents: &SessionViews,
+    inputs: WorkspaceRowInputs<'_>,
+    home: Option<&str>,
+    child_rows: &std::collections::BTreeMap<String, DashboardRowId>,
+) -> (Vec<DashboardRow>, Vec<DashboardRowId>) {
     let live_by_session: HashMap<&str, (AgentId, &AgentView)> = agents
         .roots()
         .filter_map(|(id, agent)| {
@@ -196,8 +303,20 @@ pub(crate) fn build_rows_with_workspace(
         }
         Some(top_level_row(*id, agent, false, home))
     }));
-    apply_filter(&mut rows, filter, home);
-    sort_rows(&mut rows, inputs.grouping(), &reorder);
+    (rows, reorder)
+}
+
+/// The subagent lane's row set before filter and sort: locally-attached child views plus
+/// exactly the `subagent` roster entries. Shared by the `Subagents` lane and
+/// the `All` lane's composition so both sides of the split stay one implementation.
+fn subagent_rows(
+    agents: &SessionViews,
+    pinned: &std::collections::BTreeSet<DashboardRowId>,
+    home: Option<&str>,
+    roster: &[RosterEntry],
+) -> Vec<DashboardRow> {
+    let mut rows = build_local_rows(agents, pinned, home, SessionLane::Subagents);
+    append_roster_rows(&mut rows, roster, agents, pinned, home, SessionLane::Subagents);
     rows
 }
 pub(crate) fn workspace_member_is_visible(
@@ -281,8 +400,8 @@ fn workspace_member_row(
     }
 }
 /// Build the local-agent rows WITHOUT applying filter or sort. [`build_rows_with_roster`] appends
-/// roster rows on top. `Main` lists root views; `Subagents` lists child views — the same row
-/// builder, so the subagent lane keeps the main lane's sorting, view, and actions.
+/// roster rows on top. `Main` lists root views; `Subagents` lists child views; `All` lists both —
+/// the same row builder, so every lane keeps the main lane's sorting, view, and actions.
 fn build_local_rows(
     agents: &SessionViews,
     pinned: &std::collections::BTreeSet<DashboardRowId>,
@@ -295,6 +414,11 @@ fn build_local_rows(
         SessionLane::Subagents => {
             matches!(agent.role, crate::app::agent_view::AgentRole::Child(_))
         }
+        SessionLane::All => matches!(
+            agent.role,
+            crate::app::agent_view::AgentRole::Root
+                | crate::app::agent_view::AgentRole::Child(_)
+        ),
     });
     for (id, agent) in local {
         let top_id = DashboardRowId::TopLevel(id);
@@ -318,7 +442,7 @@ pub fn roster_activity_to_state(activity: RosterActivity) -> RowState {
 }
 /// Append "roster-only" rows for leader sessions not represented by a local `AgentView`.
 /// Skips any roster entry whose `session_id` already matches a locally-attached agent (those carry richer data via [`build_local_rows`]).
-/// `Main` drops `subagent` entries (the leader sends them for the subagent lane only); `Subagents` keeps exactly those.
+/// `Main` drops `subagent` entries (the leader sends them for the subagent lane only); `Subagents` keeps exactly those; `All` keeps both kinds.
 fn append_roster_rows(
     rows: &mut Vec<DashboardRow>,
     roster: &[RosterEntry],
@@ -340,7 +464,7 @@ fn append_roster_rows(
         match lane {
             SessionLane::Main if is_subagent => continue,
             SessionLane::Subagents if !is_subagent => continue,
-            SessionLane::Main | SessionLane::Subagents => {}
+            SessionLane::Main | SessionLane::Subagents | SessionLane::All => {}
         }
         if local_ids.contains(entry.session_id.as_str()) {
             continue;
@@ -357,9 +481,10 @@ fn append_roster_rows(
             entry.activity,
             RosterActivity::Working | RosterActivity::NeedsInput
         );
-        // The "New session" husk rule is a main-lane concern; every subagent row is a real
-        // child by construction, so the subagent lane never folds them away.
-        if !has_title && !active && !pinned.contains(&id) && lane == SessionLane::Main {
+        // The "New session" husk rule is a root-row concern (Main and All); every subagent row
+        // is a real child by construction, so no lane ever folds them away.
+        if !has_title && !active && !pinned.contains(&id) && !is_subagent && lane != SessionLane::Subagents
+        {
             continue;
         }
         let cwd = PathBuf::from(&entry.cwd);
@@ -792,6 +917,7 @@ mod tests {
             &Default::default(),
             &[],
             &Default::default(),
+            RowScope::all(),
         )
     }
     #[test]
@@ -1296,6 +1422,7 @@ mod tests {
                     None,
                     std::slice::from_ref(&roster),
                     SessionLane::Main,
+                RowScope::all(),
                 );
                 assert_eq!(
                     vec![roster_id.clone(), local_id.clone()],
@@ -1579,6 +1706,7 @@ mod tests {
             None,
             &[subagent_entry("child-1", "root")],
             SessionLane::Subagents,
+        RowScope::all(),
         );
         assert_eq!(
             rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
@@ -1595,6 +1723,7 @@ mod tests {
             None,
             &[subagent_entry("child-1", "root")],
             SessionLane::Main,
+        RowScope::all(),
         );
         assert_eq!(
             main_rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
@@ -2014,16 +2143,19 @@ mod tests {
         let main = build_rows_with_workspace(
             &agents, inputs, &Filter::None, None, &roster, SessionLane::Main,
             &Default::default(), &[], &child_rows,
+        RowScope::all(),
         );
         assert_eq!(main.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-root")]);
         let reused = build_rows_with_workspace(
             &agents, inputs, &Filter::None, None, &[], SessionLane::Main,
             &Default::default(), &[], &child_rows,
+        RowScope::all(),
         );
         assert_eq!(reused.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-root")]);
         let children = build_rows_with_workspace(
             &agents, inputs, &Filter::None, None, &roster, SessionLane::Subagents,
             &Default::default(), &[], &child_rows,
+        RowScope::all(),
         );
         assert_eq!(children.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-child")]);
     }
@@ -2057,6 +2189,7 @@ mod tests {
             &Default::default(),
             &[],
             &Default::default(),
+        RowScope::all(),
         );
         assert_eq!(
             rows.iter()
@@ -2083,4 +2216,342 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(nth(&rows, 0).pinned);
     }
+    /// The all lane lists locally attached roots and children together; Main keeps root-only and
+    /// Subagents child-only, so the third lane is a composition of the same row sources.
+    #[test]
+    fn all_lane_lists_local_roots_and_children() {
+        let root = AgentId(0);
+        let child = AgentId(1);
+        let mut root_agent = crate::app::agent_view::test_fixtures::make_agent();
+        root_agent.session.session_id = Some(acp::SessionId::new("root"));
+        root_agent.session.enqueue_prompt("main work".into());
+        let mut child_agent = crate::app::agent_view::test_fixtures::make_agent();
+        child_agent.session.session_id = Some(acp::SessionId::new("child-1"));
+        child_agent.session.enqueue_prompt("child work".into());
+        let mut agents = SessionViews::new();
+        agents.insert(root, root_agent);
+        crate::app::session_views::test_support::link_child(
+            &mut agents,
+            root,
+            child,
+            child_agent,
+            std::time::Instant::now(),
+        );
+        let empty = std::collections::BTreeSet::new();
+        let lane_rows = |lane| {
+            build_rows_with_roster(
+                &agents,
+                &empty,
+                &[],
+                super::super::state::Grouping::State,
+                &Filter::None,
+                None,
+                &[subagent_entry("child-1", "root")],
+                lane,
+                RowScope::all(),
+            )
+        };
+        assert_eq!(
+            lane_rows(SessionLane::Main)
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            vec![DashboardRowId::TopLevel(root)]
+        );
+        assert_eq!(
+            lane_rows(SessionLane::Subagents)
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            vec![DashboardRowId::TopLevel(child)]
+        );
+        assert_eq!(
+            lane_rows(SessionLane::All)
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from([
+                DashboardRowId::TopLevel(root),
+                DashboardRowId::TopLevel(child)
+            ]),
+            "the all lane lists the root and the child exactly once each"
+        );
+    }
+
+    /// The all lane lists both roster kinds but never the same session id twice: locally attached
+    /// views win over their roster twins, whatever the twin's kind.
+    #[test]
+    fn all_lane_dedupes_roster_twins_by_session_id() {
+        let empty = std::collections::BTreeSet::new();
+        let rows = build_rows_with_roster(
+            &SessionViews::new(),
+            &empty,
+            &[],
+            super::super::state::Grouping::State,
+            &Filter::None,
+            None,
+            &[
+                roster_entry_with("root", Some("Main session"), RosterActivity::Dormant),
+                subagent_entry("child-1", "root"),
+            ],
+            SessionLane::All,
+            RowScope::all(),
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.session_id.as_deref())
+                .collect::<std::collections::HashSet<_>>(),
+            ["root", "child-1"].into_iter().collect(),
+            "every session id appears exactly once"
+        );
+    }
+
+    /// The husk rule stays a root-row concern in the all lane: an untitled dormant root hides, an
+    /// untitled subagent child stays (it is a real child by construction).
+    #[test]
+    fn all_lane_drops_untitled_root_husk_but_keeps_untitled_child() {
+        let empty = std::collections::BTreeSet::new();
+        let mut untitled_child = subagent_entry("child-2", "root");
+        untitled_child.title = None;
+        let rows = build_rows_with_roster(
+            &SessionViews::new(),
+            &empty,
+            &[],
+            super::super::state::Grouping::State,
+            &Filter::None,
+            None,
+            &[
+                roster_entry_with("husk", None, RosterActivity::Dormant),
+                untitled_child,
+            ],
+            SessionLane::All,
+            RowScope::all(),
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.session_id.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("child-2")]
+        );
+    }
+
+    #[test]
+    fn state_order_without_manual_overrides_is_running_then_recent() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let mut idle_now = make_row_with_id(DashboardRowId::TopLevel(AgentId(1)), RowState::Idle);
+        idle_now.last_change_at = now;
+        let mut idle_old = make_row_with_id(DashboardRowId::TopLevel(AgentId(2)), RowState::Idle);
+        idle_old.last_change_at = now - Duration::from_secs(3600);
+        let mut working_old = make_row_with_id(DashboardRowId::TopLevel(AgentId(3)), RowState::Working);
+        working_old.last_change_at = now - Duration::from_secs(7200);
+        let mut rows = vec![idle_old, idle_now, working_old];
+        sort_rows(&mut rows, super::super::state::Grouping::State, &[]);
+        assert_eq!(rows.into_iter().map(|row| row.id).collect::<Vec<_>>(), vec![
+            DashboardRowId::TopLevel(AgentId(3)),
+            DashboardRowId::TopLevel(AgentId(1)),
+            DashboardRowId::TopLevel(AgentId(2)),
+        ]);
+    }
+
+    /// The v2 all lane composes the workspace's root members with the subagent rows: members that
+    /// are known children render once through the child side, never as a member row.
+    #[test]
+    fn workspace_all_lane_combines_members_and_children_without_duplicates() {
+        let snapshot = workspace_snapshot(vec![workspace_member("root", "Root", None)]);
+        let workspace = crate::app::workspace_layout::WorkspaceView::from_snapshot(&snapshot);
+        let roster = [subagent_entry("child-1", "root")];
+        let mut child_rows = std::collections::BTreeMap::new();
+        child_rows.insert(
+            "child-1".to_owned(),
+            DashboardRowId::Roster {
+                session_id: "child-1".to_owned(),
+            },
+        );
+        let rows = build_rows_with_workspace(
+            &SessionViews::new(),
+            WorkspaceRowInputs {
+                workspace: Some(&workspace),
+                provisional: &[],
+            },
+            &Filter::None,
+            None,
+            &roster,
+            SessionLane::All,
+            &Default::default(),
+            &[],
+            &child_rows,
+            RowScope::all(),
+        );
+        let ids: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| row.session_id.as_deref())
+            .collect();
+        assert_eq!(ids, vec!["child-1", "root"], "one row per session id");
+    }
+
+    /// The directory scope hides rows outside its family in every lane, keeps the existing search
+    /// filter meaningful alongside it, and `All` restores the unscoped listing.
+    #[test]
+    fn scope_filters_rows_by_cwd_and_all_restores_them() {
+        let mut rows = vec![
+            DashboardRow {
+                cwd: PathBuf::from("/repo/a"),
+                cwd_display: "~/repo/a".to_owned(),
+                ..make_row("in-cwd", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/other/b"),
+                cwd_display: "~/other/b".to_owned(),
+                ..make_row("elsewhere", RowState::Idle)
+            },
+        ];
+        apply_scope(&mut rows, RowScope { value: SessionScope::Cwd, cwd: Path::new("/repo/a") });
+        assert_eq!(rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["in-cwd"]);
+
+        let mut rows = vec![
+            DashboardRow {
+                cwd: PathBuf::from("/repo/a/"),
+                ..make_row("trailing-slash", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/other"),
+                ..make_row("elsewhere", RowState::Idle)
+            },
+        ];
+        apply_scope(&mut rows, RowScope { value: SessionScope::Cwd, cwd: Path::new("/repo/a") });
+        assert_eq!(rows.len(), 1, "trailing separators must not defeat cwd equality");
+
+        let mut rows = vec![
+            make_row("in-cwd", RowState::Idle),
+            make_row("elsewhere", RowState::Idle),
+        ];
+        apply_scope(&mut rows, RowScope { value: SessionScope::All, cwd: Path::new("/repo/a") });
+        assert_eq!(rows.len(), 2, "the explicit All value is scopeless");
+    }
+
+    #[test]
+    fn worktree_scope_without_resolved_git_metadata_has_no_matches() {
+        let mut rows = vec![
+            DashboardRow {
+                cwd: PathBuf::from("/tmp/not-a-repo"),
+                ..make_row("same", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/tmp/not-a-repo/sub"),
+                ..make_row("below", RowState::Idle)
+            },
+        ];
+        apply_scope(
+            &mut rows,
+            RowScope {
+                value: SessionScope::Worktree,
+                cwd: Path::new("/tmp/not-a-repo"),
+            },
+        );
+        assert!(rows.is_empty(), "equal cwd is not evidence of repository membership");
+    }
+
+    /// The worktree scope matches from a main-checkout dashboard cwd too: its family root is
+    /// the repo root, which equals the main repo a worktree reports — the exact match that
+    /// used to silently degrade to cwd comparison on the main-checkout side. Real-repo
+    /// computation of those roots is covered in `git_info` tests.
+    #[test]
+    fn worktree_scope_matches_main_checkout_dashboard_cwd() {
+        let main_cwd = Path::new("/fam/main");
+        let repo_root = |root: Option<&str>| crate::git_info::CwdGitInfo {
+            branch: Some("main".into()),
+            is_worktree: false,
+            main_repo: None,
+            repo_root: root.map(str::to_string),
+            family: root.map_or(crate::git_info::RepositoryFamily::Pending, |path| crate::git_info::RepositoryFamily::Resolved(PathBuf::from(path))),
+            worktree_label: None,
+        };
+        let worktree = |main_repo: &str| crate::git_info::CwdGitInfo {
+            branch: Some("feature".into()),
+            is_worktree: true,
+            main_repo: Some(main_repo.to_string()),
+            family: crate::git_info::RepositoryFamily::Resolved(PathBuf::from(main_repo)),
+            repo_root: None,
+            worktree_label: None,
+        };
+        let seed = |dir: &str, info: Option<crate::git_info::CwdGitInfo>| {
+            crate::git_info::seed_cwd_cache_for_tests(Path::new(dir), info)
+        };
+        seed("/fam/main", Some(repo_root(Some("/fam/main"))));
+        seed("/fam/main/sub", Some(repo_root(Some("/fam/main"))));
+        seed("/fam/wt-a", Some(worktree("/fam/main")));
+        seed("/fam/wt-b", Some(worktree("/fam/main")));
+        seed("/other", Some(repo_root(Some("/other"))));
+
+        let mut rows = vec![
+            DashboardRow {
+                cwd: PathBuf::from("/fam/main"),
+                ..make_row("main", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/fam/main/sub"),
+                ..make_row("subdir", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/fam/wt-a"),
+                ..make_row("worktree-a", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/fam/wt-b"),
+                ..make_row("worktree-b", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/other"),
+                ..make_row("other-repo", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::from("/tmp/not-a-repo-scope-gap"),
+                ..make_row("absent", RowState::Idle)
+            },
+        ];
+        apply_scope(
+            &mut rows,
+            RowScope {
+                value: SessionScope::Worktree,
+                cwd: main_cwd,
+            },
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+            ["main", "subdir", "worktree-a", "worktree-b"],
+            "subdirs and worktrees join the main checkout's family; other repos and unknown dirs stay out"
+        );
+    }
+
+    #[test]
+    fn worktree_scope_rejects_pending_non_git_and_failed_even_at_identical_cwd() {
+        use crate::git_info::{CwdGitInfo, RepositoryFamily, seed_cwd_cache_for_tests};
+        for (suffix, family) in [
+            ("pending", RepositoryFamily::Pending),
+            ("non-git", RepositoryFamily::NonGit),
+            ("failed", RepositoryFamily::Failed),
+        ] {
+            let cwd = PathBuf::from(format!("/scope-negative-{suffix}"));
+            seed_cwd_cache_for_tests(&cwd, Some(CwdGitInfo {
+                branch: Some("notified".into()), is_worktree: true,
+                main_repo: Some("~/display-is-not-identity".into()),
+                repo_root: Some("~/display-is-not-identity".into()),
+                family, worktree_label: None,
+            }));
+            let mut rows = vec![DashboardRow { cwd: cwd.clone(), ..make_row("same-cwd", RowState::Idle) }];
+            apply_scope(&mut rows, RowScope { value: SessionScope::Worktree, cwd: &cwd });
+            assert!(rows.is_empty(), "{suffix} cannot establish a repository family");
+        }
+    }
+
+    #[test]
+    fn cwd_scope_does_not_conflate_root_with_missing_path() {
+        let mut rows = vec![
+            DashboardRow { cwd: PathBuf::from("/"), ..make_row("root", RowState::Idle) },
+            DashboardRow { cwd: PathBuf::new(), ..make_row("missing", RowState::Idle) },
+        ];
+        apply_scope(&mut rows, RowScope { value: SessionScope::Cwd, cwd: Path::new("/") });
+        assert_eq!(rows.iter().map(|row| row.label.as_str()).collect::<Vec<_>>(), ["root"]);
+    }
+
 }
