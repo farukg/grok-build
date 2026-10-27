@@ -33,6 +33,15 @@ pub struct LoadReport {
     pub warnings: Vec<LoadWarning>,
 }
 
+/// What one event-driven reload of a layer file found.
+pub struct LayerReload {
+    /// The file's usable values differ from the last-known ones, so callers reapply.
+    /// Equal values (another process rewrote the same content, or this process's own
+    /// save echoed back through the watcher) skip the reapply.
+    pub changed: bool,
+    pub warnings: Vec<LoadWarning>,
+}
+
 impl PanelSettingsStore {
     /// Where the app keeps the store.
     pub fn default_root() -> PathBuf {
@@ -63,10 +72,22 @@ impl PanelSettingsStore {
         warnings
     }
 
-    pub fn reload_global(&mut self) -> Vec<LoadWarning> {
-        let (global, warnings) = LayerFile::load(Layer::Global, self.root.join(GLOBAL_FILE));
-        self.global = global;
-        warnings
+    /// Re-reads the global layer from disk. A damaged or unreadable file keeps the
+    /// last-known values and yields its warning; an absent one is an empty layer.
+    pub fn reload_global(&mut self) -> LayerReload {
+        self.global.reload()
+    }
+
+    /// Re-reads the attached session's layer from disk; see [`Self::reload_global`].
+    /// With no session attached, nothing is read and nothing changed.
+    pub fn reload_session(&mut self) -> LayerReload {
+        match &mut self.session {
+            Some(session) => session.file.reload(),
+            None => LayerReload {
+                changed: false,
+                warnings: Vec::new(),
+            },
+        }
     }
 
     pub fn session_key(&self) -> Option<&SessionKey> {
@@ -141,3 +162,7 @@ mod tests;
 #[cfg(test)]
 #[path = "hierarchy_tests.rs"]
 mod hierarchy_tests;
+
+#[cfg(test)]
+#[path = "reload_tests.rs"]
+mod reload_tests;

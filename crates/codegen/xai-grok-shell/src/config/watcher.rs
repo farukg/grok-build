@@ -52,7 +52,7 @@ impl notify::Watcher for AccessFilteredWatcher {
 }
 
 /// `new_debouncer` equivalent that builds the debouncer on top of [`AccessFilteredWatcher`] instead of the raw `RecommendedWatcher`.
-fn new_filtered_debouncer<F: notify_debouncer_mini::DebounceEventHandler>(
+pub(crate) fn new_filtered_debouncer<F: notify_debouncer_mini::DebounceEventHandler>(
     timeout: Duration,
     event_handler: F,
 ) -> Result<Debouncer<AccessFilteredWatcher>, notify::Error> {
@@ -440,7 +440,7 @@ fn is_vendor_config_root(dir: &Path, grok_home: &Path) -> bool {
         .is_some_and(|n| VENDOR_CONFIG_ROOT_NAMES.contains(&n))
 }
 
-fn paths_equal(a: &Path, b: &Path) -> bool {
+pub(crate) fn paths_equal(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
     }
@@ -471,7 +471,7 @@ fn project_grok_refresh_dirs(project_root: &Path) -> Vec<(PathBuf, RecursiveMode
     dirs
 }
 
-fn attach_new_refresh_dirs(
+pub(crate) fn attach_new_refresh_dirs(
     debouncer: &mut Debouncer<AccessFilteredWatcher>,
     refresh_dirs: &[(PathBuf, RecursiveMode)],
     refreshed_dirs: &mut HashSet<PathBuf>,

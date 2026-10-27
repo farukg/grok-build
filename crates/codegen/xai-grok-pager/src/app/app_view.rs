@@ -2281,6 +2281,38 @@ impl AppView {
         outcome
     }
 
+    /// Applies a global panel-settings change that any process sharing this root
+    /// wrote to disk. Read/apply only: no setting is written back and nothing is
+    /// sent to the agent. Returns whether a view changed or has a warning to show.
+    pub(crate) fn reload_global_panel_settings(&mut self) -> bool {
+        let mut applied = false;
+        for (_, agent) in self.agents.all_mut() {
+            applied |= agent.reload_global_panel_settings();
+        }
+        applied
+    }
+
+    /// Applies a session panel-settings file change to the views holding exactly
+    /// that session; every other view keeps its state. See
+    /// [`Self::reload_global_panel_settings`] for the write-free contract.
+    pub(crate) fn reload_session_panel_settings(&mut self, session: &str) -> bool {
+        let mut applied = false;
+        for (_, agent) in self.agents.all_mut() {
+            applied |= agent.reload_session_panel_settings(session);
+        }
+        applied
+    }
+
+    /// The panel-settings root changed shape (created or removed): re-read every
+    /// scope the loaded views hold, global and per session.
+    pub(crate) fn reload_all_panel_settings(&mut self) -> bool {
+        let mut applied = self.reload_global_panel_settings();
+        for (_, agent) in self.agents.all_mut() {
+            applied |= agent.reload_attached_session_panel_settings();
+        }
+        applied
+    }
+
     fn handle_input_inner(
         &mut self,
         ev: &Event,
@@ -5864,6 +5896,9 @@ impl AppView {
 #[cfg(test)]
 #[path = "app_view_tests.rs"]
 pub(crate) mod tests;
+#[cfg(test)]
+#[path = "app_view_panel_sync_tests.rs"]
+pub(crate) mod panel_sync_tests;
 #[cfg(test)]
 #[path = "focused_navigation_restore_tests.rs"]
 pub(crate) mod focused_navigation_restore_tests;

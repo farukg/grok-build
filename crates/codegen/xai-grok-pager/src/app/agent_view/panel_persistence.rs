@@ -140,7 +140,8 @@ fn session_key(id: &str) -> Option<SessionKey> {
 }
 
 /// The first problem in the toast (it names the file and the cause), the rest only in the log.
-fn load_warning_text(warnings: &[LoadWarning]) -> Option<String> {
+/// `consequence` states what the view does about it, which differs between open and reload.
+fn load_warning_text(warnings: &[LoadWarning], consequence: &str) -> Option<String> {
     for warning in warnings {
         tracing::warn!(%warning, "panel settings");
     }
@@ -150,7 +151,7 @@ fn load_warning_text(warnings: &[LoadWarning]) -> Option<String> {
         count => format!(" (and {count} more)"),
     };
     Some(format!(
-        "Panel settings partly unusable, defaults apply: {first}{more}"
+        "Panel settings partly unusable, {consequence}: {first}{more}"
     ))
 }
 
@@ -170,12 +171,71 @@ impl AgentView {
         self.panel_persistence.store.as_ref().map(|store| store.global().clone())
     }
 
-    pub(crate) fn reload_global_panel_settings(&mut self) {
-        let Some(store) = self.panel_persistence.store_mut() else { return; };
-        let warnings = store.reload_global();
-        self.restore_panel_settings();
-        self.restore_global_completed_filters();
-        self.toast_load_warnings(&warnings);
+    /// Re-reads the global layer and applies it when its values changed: another
+    /// window's saved global preferences, or this window's own write echoing back
+    /// (equality then skips the reapply). A damaged file keeps the last-known state
+    /// and only surfaces its warning. Reads and applies only; never writes.
+    /// Returns whether the view changed or has something to show for it.
+    pub(crate) fn reload_global_panel_settings(&mut self) -> bool {
+        let Some(store) = self.panel_persistence.store_mut() else {
+            return false;
+        };
+        let reload = store.reload_global();
+        if reload.changed {
+            self.restore_panel_settings();
+            self.restore_global_completed_filters();
+            self.restore_global_work_visibility();
+            self.restore_dock_placement();
+        }
+        self.toast_load_warnings(&reload.warnings, "kept the last loaded values");
+        reload.changed || !reload.warnings.is_empty()
+    }
+
+    /// Re-reads this session's layer when `session` is the one this view holds, and
+    /// applies the new effective values. A flipped effective Display scope reapplies
+    /// its stored forms like a local scope switch; other changes keep manual
+    /// per-entry forms. Returns whether the view changed or has something to show.
+    pub(crate) fn reload_session_panel_settings(&mut self, session: &str) -> bool {
+        let attached = self
+            .panel_persistence
+            .store
+            .as_ref()
+            .and_then(PanelSettingsStore::session_key)
+            .is_some_and(|key| key.as_str() == session);
+        if !attached {
+            return false;
+        }
+        self.reload_attached_session_panel_settings()
+    }
+
+    /// [`Self::reload_session_panel_settings`] for whichever session this view holds.
+    pub(crate) fn reload_attached_session_panel_settings(&mut self) -> bool {
+        let scope_before = self.panel_persistence.effective().display_scope();
+        let Some(store) = self.panel_persistence.store_mut() else {
+            return false;
+        };
+        let reload = store.reload_session();
+        if reload.changed {
+            self.restore_f6_panel_settings();
+            let scope_reset = self.panel_persistence.effective().display_scope() != scope_before;
+            self.apply_f7_panel_settings(scope_reset);
+        }
+        self.toast_load_warnings(&reload.warnings, "kept the last loaded values");
+        reload.changed || !reload.warnings.is_empty()
+    }
+
+    fn restore_global_work_visibility(&mut self) {
+        use crate::app::panel_settings::SidebarSection;
+        if let Some(store) = self.panel_persistence.store.as_ref() {
+            self.tasks.overlay.visible = store
+                .global()
+                .section(SidebarSection::Tasks)
+                .map_or(false, |state| state.is_expanded());
+            self.todo.overlay.visible = store
+                .global()
+                .section(SidebarSection::Todo)
+                .map_or(false, |state| state.is_expanded());
+        }
     }
 
     fn restore_global_completed_filters(&mut self) {
@@ -257,19 +317,9 @@ impl AgentView {
         self.panel_persistence = persistence;
         self.restore_panel_settings();
         self.restore_global_completed_filters();
+        self.restore_global_work_visibility();
         self.restore_dock_placement();
-        if let Some(store) = self.panel_persistence.store_mut() {
-            use crate::app::panel_settings::SidebarSection;
-            self.tasks.overlay.visible = store
-                .global()
-                .section(SidebarSection::Tasks)
-                .map_or(false, |state| state.is_expanded());
-            self.todo.overlay.visible = store
-                .global()
-                .section(SidebarSection::Todo)
-                .map_or(false, |state| state.is_expanded());
-        }
-        self.toast_load_warnings(&warnings);
+        self.toast_load_warnings(&warnings, "defaults apply");
     }
 
     pub(crate) fn save_global_work_visibility(&mut self, tasks: Option<bool>, todo: Option<bool>) {
@@ -297,12 +347,12 @@ impl AgentView {
         let session = self.session.session_id.as_ref().map(|id| &*id.0);
         if let Some(warnings) = self.panel_persistence.sync_session(session) {
             self.restore_panel_settings();
-            self.toast_load_warnings(&warnings);
+            self.toast_load_warnings(&warnings, "defaults apply");
         }
     }
 
-    fn toast_load_warnings(&mut self, warnings: &[LoadWarning]) {
-        if let Some(text) = load_warning_text(warnings) {
+    fn toast_load_warnings(&mut self, warnings: &[LoadWarning], consequence: &str) {
+        if let Some(text) = load_warning_text(warnings, consequence) {
             self.show_toast(&text);
         }
     }
@@ -347,3 +397,7 @@ impl AgentView {
         self.restore_f6_panel_settings();
     }
 }
+
+#[cfg(test)]
+#[path = "panel_persistence_tests.rs"]
+mod tests;

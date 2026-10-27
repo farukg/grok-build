@@ -19,7 +19,7 @@ mod turn_deviation;
 mod types;
 
 pub use error::{LoadProblem, LoadWarning, SaveError, SaveOutcome};
-pub use store::{LoadReport, PanelSettingsStore};
+pub use store::{LayerReload, LoadReport, PanelSettingsStore};
 pub use types::{
     CompletedItemsPane, DisclosureState, Layer, LayerSettings, PanelSettings, PromptOrdinal, SessionKey,
     SessionKeyError, Setting, SettingKey, SidebarSection,

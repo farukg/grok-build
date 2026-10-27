@@ -14,6 +14,7 @@ use crate::app::reader_thread::ReaderThread;
 use crate::appearance::ConfigWatcher;
 use crate::client_identity::{PAGER_CLIENT_TYPE, PAGER_CLIENT_VERSION};
 use crate::render::draw::{EscapeWriter, WriterDrain, WriterEvent};
+use xai_grok_shell::config::panel_settings_watcher::{PanelSettingsChange, PanelSettingsWatcher};
 use crate::theme::system_appearance::{self, SystemAppearanceWatcher};
 use crate::theme::{Theme, ThemeKind, cache as theme_cache};
 use agent_client_protocol as acp;
@@ -1860,6 +1861,23 @@ pub(crate) async fn run(
     debug_assert_eq!(term_state.initial_theme, theme_cache::current_kind());
     let mut appearance_watcher =
         SystemAppearanceWatcher::start_if_auto(theme_cache::is_auto_mode());
+    // Live panel-preference sync across processes sharing the same settings root.
+    // Absent only when no grok home resolves or no watch installs at all; local
+    // edits then still apply locally, nothing else changes.
+    let (mut panel_settings_watcher, mut panel_settings_rx) =
+        match app.panel_settings_root.as_deref() {
+            Some(root) => match PanelSettingsWatcher::start(root, None) {
+                Some((watcher, rx)) => (Some(watcher), Some(rx)),
+                None => {
+                    tracing::warn!(
+                        root = %root.display(),
+                        "panel settings watcher failed to start; cross-window preference sync is off"
+                    );
+                    (None, None)
+                }
+            },
+            None => (None, None),
+        };
     let quit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     crate::app::signal_handler::set_quit_notify(quit_notify.clone());
     let mut stall_rollup =
@@ -2576,6 +2594,36 @@ pub(crate) async fn run(
                 // Reload the scroll settings from the pager caches (resynced when a setting changes via the settings registry)
                 app.scroll_config = crate::input::mouse::ScrollConfig::from_settings();
                 presenter.request(false);
+            }
+
+            // A panel-settings file changed under the shared root (another CLI
+            // window, or this one's own write echoing back; equality in the reload
+            // absorbs that). Read/apply only: nothing is written or sent anywhere.
+            maybe_panel_change = async {
+                match panel_settings_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending::<Option<PanelSettingsChange>>().await,
+                }
+            } => {
+                let Some(change) = maybe_panel_change else {
+                    panel_settings_rx = None;
+                    continue;
+                };
+                let applied = match change {
+                    PanelSettingsChange::Root => {
+                        if let Some(watcher) = panel_settings_watcher.as_mut() {
+                            watcher.refresh_watches();
+                        }
+                        app.reload_all_panel_settings()
+                    }
+                    PanelSettingsChange::Global => app.reload_global_panel_settings(),
+                    PanelSettingsChange::Session { session } => {
+                        app.reload_session_panel_settings(&session)
+                    }
+                };
+                if applied {
+                    presenter.request(false);
+                }
             }
 
             // System appearance changed (auto-theme mode).

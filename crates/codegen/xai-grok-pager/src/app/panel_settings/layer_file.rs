@@ -10,6 +10,7 @@ use xai_grok_config::fs_atomic::write_user_file_atomically;
 
 use super::codec;
 use super::error::{LoadProblem, LoadWarning, SaveError, SaveOutcome};
+use super::store::LayerReload;
 use super::types::{Edit, Layer, LayerSettings};
 
 /// Settings files hold session ids and view choices; keep them private to the user.
@@ -63,6 +64,42 @@ impl LayerFile {
 
     pub(super) fn settings(&self) -> &LayerSettings {
         &self.settings
+    }
+
+    /// Re-reads the file, adopting its values only when they are usable. An absent
+    /// file is an empty layer (its overrides really are gone); a damaged or
+    /// unreadable one keeps the last-known values and reports why, so another
+    /// window's broken write never resets this process's user-chosen state. A later
+    /// healthy read adopts the file again.
+    pub(super) fn reload(&mut self) -> LayerReload {
+        let (loaded, problems): (Option<LayerSettings>, Vec<LoadProblem>) = match read(&self.path) {
+            Ok(FileContent::Absent) => (Some(LayerSettings::default()), Vec::new()),
+            Ok(FileContent::Document(doc)) => {
+                let decoded = codec::decode(self.layer, &doc);
+                (Some(decoded.settings), decoded.problems)
+            }
+            Ok(FileContent::Corrupt(problem)) => (None, vec![problem]),
+            Err(err) => (None, vec![LoadProblem::Unreadable { kind: err.kind() }]),
+        };
+        let warnings = problems
+            .into_iter()
+            .map(|problem| LoadWarning {
+                layer: self.layer,
+                path: self.path.clone(),
+                problem,
+            })
+            .collect();
+        match loaded {
+            Some(settings) => {
+                let changed = settings != self.settings;
+                self.settings = settings;
+                LayerReload { changed, warnings }
+            }
+            None => LayerReload {
+                changed: false,
+                warnings,
+            },
+        }
     }
 
     /// Applies `edits` to the file as it is on disk right now. Read-modify-write: re-read it, apply only the edits that change something there,

@@ -1,3 +1,4 @@
+pub mod panel_settings_watcher;
 pub mod reloader;
 pub mod watcher;
 use crate::bundle;
