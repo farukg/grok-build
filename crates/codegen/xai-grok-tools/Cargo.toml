@@ -22,6 +22,7 @@ xai-grok-permission-rules = { workspace = true }
 xai-grok-extra-ca = { workspace = true }
 xai-grok-feedback = { workspace = true }
 xai-grok-tools-api = { path = "../xai-grok-tools-api" }
+xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-workspace-types = { path = "../xai-grok-workspace-types" }
 xai-grok-version = { workspace = true }
 xai-interjection-core = { workspace = true }

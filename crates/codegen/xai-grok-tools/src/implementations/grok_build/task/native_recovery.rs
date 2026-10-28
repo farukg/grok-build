@@ -7,8 +7,7 @@ pub use previous_completion::PreviousCompletion;
 use serde::{Deserialize, Serialize};
 
 pub fn payload_digest(payload: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(payload.as_bytes()))
+    xai_file_utils::sha256_hex(payload.as_bytes())
 }
 
 pub fn parent_message_prompt_id(message_id: &str) -> String {
