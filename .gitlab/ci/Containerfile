@@ -3,7 +3,7 @@ FROM docker.io/library/ubuntu:24.04
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential ca-certificates cmake curl git libssl-dev perl \
-        pkg-config protobuf-compiler zlib1g-dev \
+        pkg-config protobuf-compiler python3 zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Keep rustup in the image; install only the selected compiler in the persistent cache.

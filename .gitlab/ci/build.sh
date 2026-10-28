@@ -6,6 +6,47 @@ set -euo pipefail
 : "${CI_PROJECT_DIR:?GitLab checkout is required}"
 
 cd "$CI_PROJECT_DIR"
+: "${CI_COMMIT_SHA:?GitLab source SHA is required}"
+if [[ $(git rev-parse HEAD) != "$CI_COMMIT_SHA" ]] || ! git diff --quiet HEAD -- Cargo.lock; then
+    printf 'CI requires the exact source checkout and its committed Cargo.lock.\n' >&2
+    exit 1
+fi
+
+if [[ ${1:-release} == lockfile ]]; then
+    : "${CI_PIPELINE_ID:?GitLab pipeline ID is required}"
+    mkdir -p dist/lockfile
+    git show HEAD:Cargo.lock > dist/lockfile/committed.Cargo.lock
+    printf 'project_id=%s\npipeline_id=%s\njob_id=%s\ncommit_sha=%s\n' \
+        "$CI_PROJECT_ID" "$CI_PIPELINE_ID" "$CI_JOB_ID" "$CI_COMMIT_SHA" \
+        > dist/lockfile/provenance.txt
+fi
+
+if [[ ${1:-release} == format ]]; then
+    : "${CI_PIPELINE_ID:?GitLab pipeline ID is required}"
+    mkdir -p dist/format
+    printf 'project_id=%s\npipeline_id=%s\njob_id=%s\ncommit_sha=%s\n' \
+        "$CI_PROJECT_ID" "$CI_PIPELINE_ID" "$CI_JOB_ID" "$CI_COMMIT_SHA" \
+        > dist/format/provenance.txt
+    set -- format "${CI_PIPELINE_SOURCE:?GitLab pipeline source is required}" \
+        "${CI_COMMIT_BEFORE_SHA:-}" "${FORMAT_BASE_SHA:-}" "$CI_COMMIT_SHA"
+fi
+
+if [[ ${1:-release} == regression ]]; then
+    : "${CI_PIPELINE_ID:?GitLab pipeline ID is required}"
+    mkdir -p dist/regression
+    printf 'project_id=%s\npipeline_id=%s\njob_id=%s\ncommit_sha=%s\n' \
+        "$CI_PROJECT_ID" "$CI_PIPELINE_ID" "$CI_JOB_ID" "$CI_COMMIT_SHA" \
+        > dist/regression/provenance.txt
+fi
+
+if [[ ${1:-release} == tokio-checked-deadline ]]; then
+    : "${CI_PIPELINE_ID:?GitLab pipeline ID is required}"
+    mkdir -p dist/tokio-checked-deadline
+    printf 'project_id=%s\npipeline_id=%s\njob_id=%s\ncommit_sha=%s\n' \
+        "$CI_PROJECT_ID" "$CI_PIPELINE_ID" "$CI_JOB_ID" "$CI_COMMIT_SHA" \
+        > dist/tokio-checked-deadline/provenance.txt
+fi
+
 image="localhost/grok-build-ci:${CI_PROJECT_ID}"
 container="grok-build-${CI_PROJECT_ID}-${CI_JOB_ID}"
 cache_root="/cache/grok-build/${CI_PROJECT_ID}"
@@ -20,4 +61,4 @@ trap 'buildah rm "$container"' EXIT
 buildah run --network=host \
     --volume "$CI_PROJECT_DIR:/build:rw" \
     --volume "$cache_root:/cache/grok-build:rw" \
-    "$container" -- bash .gitlab/ci/build-linux.sh
+    "$container" -- bash .gitlab/ci/build-linux.sh "$@"

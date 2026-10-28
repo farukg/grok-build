@@ -7,6 +7,8 @@ workflow:
         - Cargo.toml
         - Cargo.lock
         - rust-toolchain.toml
+        - rustfmt.toml
+        - .rustfmt.toml
         - .cargo/**/*
         - crates/**/*
         - prod/**/*
@@ -17,10 +19,90 @@ workflow:
         - .gitlab/ci/**/*
     - if: '$CI_COMMIT_BRANCH && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
 
-stages: [build]
+stages: [validate, build]
+
+linux-lockfile:
+  stage: validate
+  needs: []
+  when: always
+  tags: [nspawn]
+  interruptible: true
+  resource_group: grok-linux-release
+  timeout: 4 hours
+  variables:
+    GIT_DEPTH: "20"
+  cache: []
+  script:
+    - bash .gitlab/ci/build.sh lockfile
+  artifacts:
+    when: always
+    name: cargo-lock-$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID-$CI_JOB_ID
+    paths:
+      - dist/lockfile/
+    expire_in: 30 days
+
+linux-format:
+  stage: validate
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
+      when: never
+    - when: always
+  tags: [nspawn]
+  interruptible: true
+  resource_group: grok-linux-release
+  timeout: 1 hour
+  variables:
+    GIT_DEPTH: "0"
+  cache: []
+  script:
+    - bash .gitlab/ci/build.sh format
+  artifacts:
+    when: always
+    name: format-$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID-$CI_JOB_ID
+    paths:
+      - dist/format/
+    expire_in: 30 days
+
+linux-tokio-checked-deadline:
+  stage: validate
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
+      when: never
+    - exists:
+        - third_party/tokio/src/time/checked_deadline.rs
+      when: always
+  tags: [nspawn]
+  interruptible: true
+  resource_group: grok-linux-release
+  timeout: 2 hours
+  variables:
+    GIT_DEPTH: "20"
+  cache: []
+  script:
+    - bash .gitlab/ci/build.sh tokio-checked-deadline
+  artifacts:
+    when: always
+    name: tokio-checked-deadline-$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID-$CI_JOB_ID
+    paths:
+      - dist/tokio-checked-deadline/
+    expire_in: 30 days
 
 linux-release:
   stage: build
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
+      when: never
+    - when: on_success
+  needs:
+    - job: linux-format
+      artifacts: false
+    - job: linux-lockfile
+      artifacts: false
+    - job: linux-tokio-checked-deadline
+      optional: true
+      artifacts: false
   tags: [nspawn]
   interruptible: true
   resource_group: grok-linux-release
@@ -35,4 +117,35 @@ linux-release:
     paths:
       - dist/grok-x86_64-linux.tar.gz
       - dist/grok-x86_64-linux.tar.gz.sha256
+    expire_in: 30 days
+
+linux-regression:
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
+      when: never
+    - when: on_success
+  needs:
+    - job: linux-format
+      artifacts: false
+    - job: linux-lockfile
+      artifacts: false
+    - job: linux-tokio-checked-deadline
+      optional: true
+      artifacts: false
+  tags: [nspawn]
+  interruptible: true
+  # Both jobs write the shared tools image, Cargo downloads and rustup cache.
+  resource_group: grok-linux-release
+  timeout: 4 hours
+  variables:
+    GIT_DEPTH: "20"
+  cache: []
+  script:
+    - bash .gitlab/ci/build.sh regression
+  artifacts:
+    when: always
+    name: regression-$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID-$CI_JOB_ID
+    paths:
+      - dist/regression/
     expire_in: 30 days
