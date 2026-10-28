@@ -151,7 +151,10 @@ pub(crate) fn fit_location_path(path: &str, budget: usize) -> Cow<'_, str> {
     if shortened.width() <= budget {
         return shortened;
     }
-    crate::util::truncate_to_width(shortened.as_ref(), budget)
+    match shortened {
+        Cow::Borrowed(value) => crate::util::truncate_to_width(value, budget),
+        Cow::Owned(value) => Cow::Owned(crate::util::truncate_to_width(&value, budget).into_owned()),
+    }
 }
 
 #[cfg(test)]
