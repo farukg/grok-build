@@ -207,6 +207,21 @@ run_tests xai-grok-pager-bin session_audit || status=$?
 run_tests xai-grok-sampling-types lib \
     'upgrade_legacy_reasoning' || status=$?
 
+run_tests xai-grok-sampling-types lib --all-executed \
+    'error::retry_schedule_cause_tests::instant_range_wire_and_readback' \
+    'error::retry_schedule_cause_tests::deadline_missing_runtime_wire_and_readback' \
+    'error::retry_schedule_cause_tests::deadline_time_disabled_wire_and_readback' \
+    'error::retry_schedule_cause_tests::deadline_rounding_overflow_wire_and_readback' \
+    'error::retry_schedule_cause_tests::deadline_tick_out_of_range_wire_and_readback' \
+    'error::retry_schedule_cause_tests::timer_shutdown_wire_and_readback' \
+    'error::retry_schedule_cause_tests::timer_at_capacity_wire_and_readback' \
+    'error::retry_schedule_cause_tests::timer_invalid_wire_and_readback' \
+    'error::retry_schedule_cause_tests::missing_detail_is_rejected_without_a_runtime_cause' \
+    'error::retry_schedule_cause_tests::wrong_detail_is_rejected_without_a_runtime_cause' \
+    'error::retry_schedule_cause_tests::unknown_variants_are_rejected_without_a_runtime_cause' \
+    'error::retry_schedule_cause_tests::existing_content_first_and_unit_map_forms_remain_readable' \
+    -- --exact || status=$?
+
 run_tests xai-grok-sampler lib \
     'retry::tests::' \
     'retry_deadline::tests::' \

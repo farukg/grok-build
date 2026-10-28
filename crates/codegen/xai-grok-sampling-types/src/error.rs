@@ -139,17 +139,11 @@ pub enum RetryScheduleCause {
     #[error("requested delay overflows Instant")]
     InstantRange,
     #[error("{0}")]
-    Deadline(
-        #[source]
-        #[serde(with = "DeadlineErrorWire")]
-        tokio::time::error::DeadlineError,
-    ),
+    #[serde(with = "DeadlineErrorWire")]
+    Deadline(#[source] tokio::time::error::DeadlineError),
     #[error("{0}")]
-    Wait(
-        #[source]
-        #[serde(with = "timer_error_wire")]
-        tokio::time::error::Error,
-    ),
+    #[serde(with = "timer_error_wire")]
+    Wait(#[source] tokio::time::error::Error),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -848,6 +842,10 @@ fn message_looks_overloaded(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     m.contains("overloaded") || m.contains("service_unavailable_error")
 }
+
+#[cfg(test)]
+#[path = "retry_schedule_cause_tests.rs"]
+mod retry_schedule_cause_tests;
 
 #[cfg(test)]
 mod tests {
