@@ -1930,12 +1930,9 @@ fn commit_compact_lifecycle(
                 CompactInvocationSettlement::AwaitingRpc
                 | CompactInvocationSettlement::Queued
                 | CompactInvocationSettlement::Executing => {
-                    invocation.settlement = if let XaiSessionUpdate::AutoCompactStarted {
-                        phase,
-                        ..
-                    } = update
-                    {
-                        match phase {
+                    invocation.settlement =
+                        if let XaiSessionUpdate::AutoCompactStarted { phase, .. } = update {
+                            match phase {
                             xai_grok_shell::extensions::notification::CompactPhase::Queued => {
                                 match invocation.settlement {
                                     CompactInvocationSettlement::Executing => {
@@ -1953,9 +1950,9 @@ fn commit_compact_lifecycle(
                                 CompactInvocationSettlement::Executing
                             }
                         }
-                    } else {
-                        CompactInvocationSettlement::LifecycleObserved
-                    };
+                        } else {
+                            CompactInvocationSettlement::LifecycleObserved
+                        };
                 }
                 CompactInvocationSettlement::LifecycleObserved
                 | CompactInvocationSettlement::RpcSettled => {}

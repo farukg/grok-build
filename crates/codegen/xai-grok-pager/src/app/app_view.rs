@@ -4813,8 +4813,12 @@ impl AppView {
                                     dash_upgrade_cta,
                                     self.credit_balance.as_ref(),
                                 );
-                                let peek_output_owner = dashboard.peek_viewport.as_ref().and_then(
-                                    |lease| match &lease.row {
+                                let peek_output_owner =
+                                    dashboard
+                                        .peek_viewport
+                                        .as_ref()
+                                        .and_then(|lease| {
+                                            match &lease.row {
                                         crate::views::dashboard::DashboardRowId::TopLevel(id) => {
                                             Some(*id)
                                         }
@@ -4824,8 +4828,8 @@ impl AppView {
                                         | crate::views::dashboard::DashboardRowId::Workspace {
                                             ..
                                         } => None,
-                                    },
-                                );
+                                    }
+                                        });
                                 if let Some(owner) = peek_output_owner {
                                     agents.prepare_inline_output(owner);
                                 }
