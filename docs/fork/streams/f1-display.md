@@ -2,6 +2,20 @@
 
 The F7 Message Display section is on `main`; the branch `grb/f1display` is history.
 
+## Native image opening without terminal graphics (2026-10-28; local source)
+
+Enter on an image-only transcript block now reaches the existing OS-native file
+opener independently of terminal graphics support. Text blocks containing image
+references retain their normal fullscreen text viewer. The graphics capability
+check belongs to `AgentView::start_inline_video_playback`, shared by keyboard and
+mouse playback entry points. Prompt-chip inline previews retain their existing
+terminal graphics requirement.
+
+Regression cases cover native image opening with `GraphicsProtocol::None`, a
+text viewer containing an image reference, and inline video remaining idle without
+terminal graphics. These tests are authored and unexecuted. Release compilation,
+installation and interactive Grok verification remain pending.
+
 ## Goal
 Every message kind can be shown as a one-liner (collapsed) or fully open (expanded), chosen per
 kind in the F7 "Message Display" section (default per kind) and per entry. The one-liner must be

@@ -272,14 +272,6 @@ pub(super) fn dispatch_open_block_viewer(app: &mut AppView) {
             return;
         };
 
-        // Block has images/media but the terminal can't render pixels: toast and bail
-        let has_media =
-            !entry.block.image_references().is_empty() || entry.block.inline_media().is_some();
-        if has_media && !crate::terminal::image::detect_graphics_protocol().supports_images() {
-            agent.guard_image_support();
-            return;
-        }
-
         if !entry.block.has_normal_fullscreen_viewer() {
             // Video: Enter starts inline playback (no modal).
             if let Some(first_ref) = entry.block.video_references().first() {

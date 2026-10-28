@@ -398,7 +398,7 @@ fn open_block_viewer_pins_tail_when_follow_ids_remap() {
 }
 
 #[test]
-fn open_block_viewer_opens_image_only_blocks_natively() {
+fn open_block_viewer_opens_image_only_blocks_natively_without_terminal_graphics() {
     use crate::terminal::image::{GraphicsProtocol, set_protocol_for_test};
 
     let mut app = test_app_with_agent();
@@ -420,16 +420,64 @@ fn open_block_viewer_opens_image_only_blocks_natively() {
     assert!(entry.block.supports_fullscreen());
     assert!(!entry.block.has_normal_fullscreen_viewer());
 
-    // Pretend the host terminal speaks Kitty graphics so `guard_image_support` doesn't return early
-    // The dispatch then reaches the image branch, which opens the file natively rather than in an in-app viewer
-    let _guard = set_protocol_for_test(GraphicsProtocol::Kitty);
+    let _guard = set_protocol_for_test(GraphicsProtocol::None);
     let effects = dispatch(Action::OpenBlockViewer, &mut app);
 
-    // Generated media now opens in the OS-native viewer without being tracked, so neither the in-app block viewer nor the image viewer is shown
     assert!(effects.is_empty());
     let agent = app.agents.get(&id).unwrap();
     assert!(agent.block_viewer.is_none());
     assert!(agent.image_viewer.is_none());
+    assert_eq!(
+        agent.toast.as_ref().map(|(message, _)| message.as_str()),
+        Some("Opening in default app\u{2026}")
+    );
+}
+
+#[test]
+fn open_block_viewer_opens_text_with_images_without_terminal_graphics() {
+    use crate::terminal::image::{GraphicsProtocol, set_protocol_for_test};
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let dir = tempfile::tempdir().unwrap();
+    let image_path = dir.path().join("referenced.png");
+    std::fs::write(&image_path, make_test_png(20, 10)).unwrap();
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.scrollback.push_block(RenderBlock::agent_message(format!(
+        "Image details: ![example]({})",
+        image_path.display()
+    )));
+    agent.scrollback.set_selected(Some(0));
+    assert!(
+        !agent
+            .scrollback
+            .entry(0)
+            .unwrap()
+            .block
+            .image_references()
+            .is_empty()
+    );
+
+    let _guard = set_protocol_for_test(GraphicsProtocol::None);
+    dispatch(Action::OpenBlockViewer, &mut app);
+
+    let agent = app.agents.get(&id).unwrap();
+    assert!(agent.block_viewer.is_some());
+    assert!(agent.image_viewer.is_none());
+}
+
+#[test]
+fn inline_video_without_terminal_graphics_stays_idle() {
+    use crate::terminal::image::{GraphicsProtocol, set_protocol_for_test};
+
+    let mut app = test_app_with_agent();
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+    let _guard = set_protocol_for_test(GraphicsProtocol::None);
+    agent.start_inline_video_playback(std::path::Path::new("video.mp4"));
+
+    assert!(agent.inline_video.is_none());
+    assert!(agent.video_load_rx.is_none());
+    assert!(agent.toast.is_some());
 }
 
 fn plugins_list_response() -> xai_hooks_plugins_types::PluginsListResponse {

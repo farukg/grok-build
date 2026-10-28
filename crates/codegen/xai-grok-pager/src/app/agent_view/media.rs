@@ -415,6 +415,9 @@ impl AgentView {
     /// If already playing for this path, playback restarts from the beginning.
     /// Frames are extracted via ffmpeg in a background thread so the UI never blocks.
     pub(crate) fn start_inline_video_playback(&mut self, path: &std::path::Path) {
+        if !self.guard_image_support() {
+            return;
+        }
         // If already loaded for this path, restart
         if let Some(ref mut video) = self.inline_video
             && video.path == path
