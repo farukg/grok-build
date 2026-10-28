@@ -20,10 +20,12 @@ use crate::implementations::grok_build::task::coordinator::{
     ActiveChildGeneration, ActiveMessageAdmission,
 };
 use crate::implementations::grok_build::task::coordinator_state::PendingDisposition;
-use crate::implementations::grok_build::task::coordinator_state::{InternalEvent, StartedChild, MAX_ACTIVE_MESSAGE_ADMISSIONS};
+use crate::implementations::grok_build::task::coordinator_state::{
+    InternalEvent, MAX_ACTIVE_MESSAGE_ADMISSIONS, StartedChild,
+};
 use crate::implementations::grok_build::task::types::{
-    ActiveAgentMessageOperation, ActiveAgentMessageRequest, ChildCancellation, SubagentActiveMessageRequest,
-    SubagentCancelOutcome, SubagentOwner, SubagentResult,
+    ActiveAgentMessageOperation, ActiveAgentMessageRequest, ChildCancellation,
+    SubagentActiveMessageRequest, SubagentCancelOutcome, SubagentOwner, SubagentResult,
 };
 use crate::implementations::grok_build::task::types::{InterruptionCause, SubagentActor};
 

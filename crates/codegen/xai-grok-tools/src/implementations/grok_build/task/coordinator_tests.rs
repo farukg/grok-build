@@ -3488,7 +3488,10 @@ async fn buffered_completion_ids(harness: &Harness, session: Option<&str>) -> Ve
         .collect()
 }
 
-pub(in crate::implementations::grok_build::task::coordinator) async fn peeked_completion_ids(harness: &Harness, session: Option<&str>) -> Vec<String> {
+pub(in crate::implementations::grok_build::task::coordinator) async fn peeked_completion_ids(
+    harness: &Harness,
+    session: Option<&str>,
+) -> Vec<String> {
     completion_ids_via(harness, session, SubagentEvent::PeekCompletions).await
 }
 
