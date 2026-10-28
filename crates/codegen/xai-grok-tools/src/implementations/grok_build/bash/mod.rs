@@ -1895,7 +1895,11 @@ impl xai_tool_runtime::Tool for BashTool {
         let notification_handle = match ctx.extensions.get::<PerCallNotificationSink>() {
             Some(sink) => ToolNotificationHandle::tee(vec![notification_handle, sink.0.clone()]),
             None => notification_handle,
-        }.with_tool_ownership(ctx.get::<xai_tool_protocol::tool_execution::ToolCallOwnership>().unwrap_or_default());
+        }
+        .with_tool_ownership(
+            ctx.get::<xai_tool_protocol::tool_execution::ToolCallOwnership>()
+                .unwrap_or_default(),
+        );
 
         // Read params
         let params = resources
@@ -2145,8 +2149,13 @@ impl xai_tool_runtime::Tool for BashTool {
             drop(command_wait_span);
 
             // ─── Backgrounded (user Ctrl+G or auto-timeout): return BackgroundTaskStarted ───
-            if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } = &result.disposition {
-                let auto_backgrounded = matches!(reason, crate::computer::types::BackgroundReason::ForegroundBudget);
+            if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } =
+                &result.disposition
+            {
+                let auto_backgrounded = matches!(
+                    reason,
+                    crate::computer::types::BackgroundReason::ForegroundBudget
+                );
                 let base = BashNotificationBase {
                     start_time: handle.start_time,
                     tool_call_id: tool_call_id.as_str().to_owned(),
@@ -2655,33 +2664,61 @@ mod tests {
         resources.insert(Terminal(backend.clone()));
         resources.insert(SessionFolder(directory.path().to_path_buf()));
         resources.insert(NotificationHandle(notifications));
-        let ctx = crate::types::tool_metadata::test_ctx_with_call_id(resources.into_shared(), "model-call");
+        let ctx = crate::types::tool_metadata::test_ctx_with_call_id(
+            resources.into_shared(),
+            "model-call",
+        );
         let mut input = make_input("sleep 60");
         input.block_until_ms = Some(200);
-        let result = tokio::time::timeout(Duration::from_secs(5), xai_tool_runtime::Tool::run(&BashTool, ctx, input))
-            .await.unwrap().unwrap();
-        let BashToolOutput::Background(started) = result else { panic!("background result"); };
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            xai_tool_runtime::Tool::run(&BashTool, ctx, input),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let BashToolOutput::Background(started) = result else {
+            panic!("background result");
+        };
         assert_ne!(started.task_id, "model-call");
         assert!(uuid::Uuid::parse_str(&started.task_id).is_ok());
         assert!(started.summary.contains(&started.task_id));
         assert!(started.retrieval_hint.contains(&started.task_id));
         let notification = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                if let Some(crate::notification::ToolNotification::BashExecutionBackgrounded(notification)) = events.recv().await {
+                if let Some(crate::notification::ToolNotification::BashExecutionBackgrounded(
+                    notification,
+                )) = events.recv().await
+                {
                     break notification;
                 }
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(notification.base.tool_call_id, "model-call");
         assert_eq!(notification.task_id, started.task_id);
-        assert_eq!(notification.output_file.to_string_lossy(), started.output_file);
+        assert_eq!(
+            notification.output_file.to_string_lossy(),
+            started.output_file
+        );
         let snapshot = backend.get_task(&started.task_id).await.unwrap();
         assert_eq!(snapshot.task_id, started.task_id);
         assert!(snapshot.is_backgrounded);
         assert!(!snapshot.completed);
         assert_eq!(snapshot.output_file.to_string_lossy(), started.output_file);
-        assert_eq!(backend.kill_task(&started.task_id).await, KillOutcome::Killed);
-        assert_eq!(backend.wait_for_completion(&started.task_id, Some(Duration::from_secs(2))).await.unwrap().task_id, started.task_id);
+        assert_eq!(
+            backend.kill_task(&started.task_id).await,
+            KillOutcome::Killed
+        );
+        assert_eq!(
+            backend
+                .wait_for_completion(&started.task_id, Some(Duration::from_secs(2)))
+                .await
+                .unwrap()
+                .task_id,
+            started.task_id
+        );
     }
 
     fn make_bg_input(command: &str) -> BashToolInput {

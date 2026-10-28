@@ -7,7 +7,9 @@ use futures::{Stream, StreamExt};
 use tokio::time::Instant;
 
 use crate::{Tool, ToolCallContext, ToolStream, ToolStreamItem};
-use xai_tool_protocol::tool_execution::{ToolExecutionId, ToolExecutionTermination, ToolExecutionTiming};
+use xai_tool_protocol::tool_execution::{
+    ToolExecutionId, ToolExecutionTermination, ToolExecutionTiming,
+};
 
 /// Publications retain the projection captured at actual dispatch.
 #[derive(Clone)]
@@ -30,15 +32,33 @@ impl ExecutionGuard {
         let execution_id = ToolExecutionId::generate();
         let started = Instant::now();
         let started_at = xai_monotonic_clock::MonotonicPoint::at(started);
-        (observation.0)(ToolExecutionTiming::Started { execution_id, started_at });
-        Self(ExecutionState::Running { observation, execution_id, started, started_at })
+        (observation.0)(ToolExecutionTiming::Started {
+            execution_id,
+            started_at,
+        });
+        Self(ExecutionState::Running {
+            observation,
+            execution_id,
+            started,
+            started_at,
+        })
     }
 
     fn finish(&mut self, termination: ToolExecutionTermination) {
         match std::mem::replace(&mut self.0, ExecutionState::Settled) {
-            ExecutionState::Running { observation, execution_id, started, started_at } => {
+            ExecutionState::Running {
+                observation,
+                execution_id,
+                started,
+                started_at,
+            } => {
                 let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                (observation.0)(ToolExecutionTiming::Finished { execution_id, started_at, duration_ms, termination });
+                (observation.0)(ToolExecutionTiming::Finished {
+                    execution_id,
+                    started_at,
+                    duration_ms,
+                    termination,
+                });
             }
             ExecutionState::Settled => {}
         }
@@ -66,7 +86,9 @@ impl<T> Stream for ObservedStream<T> {
             Poll::Ready(Some(ToolStreamItem::Terminal(_))) => {
                 this.guard.finish(ToolExecutionTermination::Returned);
             }
-            Poll::Ready(None) => this.guard.finish(ToolExecutionTermination::StreamEndedWithoutTerminal),
+            Poll::Ready(None) => this
+                .guard
+                .finish(ToolExecutionTermination::StreamEndedWithoutTerminal),
             Poll::Ready(Some(ToolStreamItem::Progress(_))) | Poll::Pending => {}
         }
         next
@@ -80,7 +102,9 @@ pub async fn execute_observed<T: Tool>(
     ctx: ToolCallContext,
     args: T::Args,
 ) -> ToolStream<T::Output> {
-    let guard = ctx.get::<ToolExecutionObservation>().map(ExecutionGuard::start);
+    let guard = ctx
+        .get::<ToolExecutionObservation>()
+        .map(ExecutionGuard::start);
     let inner = tool.execute(ctx, args).await;
     match guard {
         Some(guard) => Box::pin(ObservedStream { inner, guard }),

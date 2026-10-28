@@ -1245,10 +1245,14 @@ impl SessionActor {
             self.log_terminal_failure(error.kind.as_ref(), None, &error.message);
             self.send_xai_notification(XaiSessionUpdate::RetryState(
                 crate::extensions::notification::RetryState::Failed {
-                    error_type: error.kind.as_ref().to_owned(), message: error.message.clone(),
+                    error_type: error.kind.as_ref().to_owned(),
+                    message: error.message.clone(),
                 },
-            )).await;
-            return Err(crate::sampling::error::map_retry_schedule_info_to_acp(error));
+            ))
+            .await;
+            return Err(crate::sampling::error::map_retry_schedule_info_to_acp(
+                error,
+            ));
         }
 
         // On an in-flight salvage continuation, a max-tokens failure or a probable context overflow is not terminal.
@@ -1525,9 +1529,7 @@ impl SessionActor {
                 if matches!(error.kind, SamplingErrorKind::IdleTimeout) {
                     self.signals_handle().record_idle_timeout();
                 }
-                return Ok(SamplerFailureRecovery::RetryTransient {
-                    error,
-                });
+                return Ok(SamplerFailureRecovery::RetryTransient { error });
             }
             xai_grok_telemetry::unified_log::error(
                 "shell.turn.transient_retry_exhausted",
@@ -1819,12 +1821,23 @@ impl SessionActor {
                     request_id = RequestSnapshotId::random();
                     let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(backoff)
                         .map_err(|cause| self.retry_schedule_error(None, &info, backoff, cause))?;
-                    self.notify_rate_limit_wait(attempt, budget, backoff, &request_id.into(), &deadline).await;
+                    self.notify_rate_limit_wait(
+                        attempt,
+                        budget,
+                        backoff,
+                        &request_id.into(),
+                        &deadline,
+                    )
+                    .await;
                     // Esc cancels a turn by aborting its task, so this await point is itself the cancellation point; no select needed
-                    deadline.wait().await.map_err(|cause| self.retry_schedule_error(
-                        Some(&request_id.into()), &info, backoff,
-                        xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
-                    ))?;
+                    deadline.wait().await.map_err(|cause| {
+                        self.retry_schedule_error(
+                            Some(&request_id.into()),
+                            &info,
+                            backoff,
+                            xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                        )
+                    })?;
                     // A token can expire across minutes of accumulated waits
                     // (parked turns skip it — see `run_turn_via_sampler`).
                     if !park.is_parked() {
@@ -1953,7 +1966,10 @@ impl SessionActor {
                 // A queued terminal event already released ownership when it was acknowledged above
                 // Without one, release ownership after authoritative metadata accounting
                 if !terminal_event_queued {
-                    self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Completed);
+                    self.finish_sampling_request(
+                        &request_id,
+                        crate::extensions::sampling_lifecycle::SamplingOutcome::Completed,
+                    );
                     self.turn_stream_drained.lock().remove(&request_id);
                 }
                 Ok(SamplerTurnOutcome::Response(
@@ -1975,7 +1991,12 @@ impl SessionActor {
                     .await
                 } else {
                     self.discard_failed_sampling_request(&request_id);
-                    if self.turn_stream_drained.lock().remove(&request_id).is_some() {
+                    if self
+                        .turn_stream_drained
+                        .lock()
+                        .remove(&request_id)
+                        .is_some()
+                    {
                         StreamDrainOutcome::Acknowledged
                     } else {
                         StreamDrainOutcome::Revoked
@@ -2047,7 +2068,9 @@ impl SessionActor {
         );
         // Whole seconds with a one-second floor: a sub-second jittered wait would otherwise render as "waiting 0s"
         let announced = Duration::from_secs(backoff.as_secs_f64().round().max(1.0) as u64);
-        self.schedule_sampling_retry(request_id, deadline,
+        self.schedule_sampling_retry(
+            request_id,
+            deadline,
             crate::extensions::notification::RetryState::Retrying {
                 attempt,
                 max_retries: budget.max_attempts(),
@@ -2323,17 +2346,34 @@ impl SessionActor {
             let channel = match &item {
                 ConversationItem::Assistant(_) => Some(OutputChannel::Text),
                 ConversationItem::Reasoning(_) => Some(OutputChannel::Reasoning),
-                ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::ToolResult(_) | ConversationItem::BackendToolCall(_) => None,
+                ConversationItem::System(_)
+                | ConversationItem::User(_)
+                | ConversationItem::ToolResult(_)
+                | ConversationItem::BackendToolCall(_) => None,
             };
             let result = match item {
-                ConversationItem::Assistant(_) => self.record_assistant_response(item, usage_reported).await,
-                ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::ToolResult(_) | ConversationItem::BackendToolCall(_) | ConversationItem::Reasoning(_) => {
-                    if usage_reported { self.chat_state_handle.push_model_output_and_ack(item).await }
-                    else { self.chat_state_handle.push_tool_result_and_ack(item).await }
+                ConversationItem::Assistant(_) => {
+                    self.record_assistant_response(item, usage_reported).await
+                }
+                ConversationItem::System(_)
+                | ConversationItem::User(_)
+                | ConversationItem::ToolResult(_)
+                | ConversationItem::BackendToolCall(_)
+                | ConversationItem::Reasoning(_) => {
+                    if usage_reported {
+                        self.chat_state_handle.push_model_output_and_ack(item).await
+                    } else {
+                        self.chat_state_handle.push_tool_result_and_ack(item).await
+                    }
                 }
             };
             let binding = Self::mutation_source_binding(&result);
-            if !matches!(reference, OutputOrigin::Unknown | OutputOrigin::ChannelAggregate { .. } | OutputOrigin::MessageChannelAggregate { .. }) {
+            if !matches!(
+                reference,
+                OutputOrigin::Unknown
+                    | OutputOrigin::ChannelAggregate { .. }
+                    | OutputOrigin::MessageChannelAggregate { .. }
+            ) {
                 self.observe_output_sources(request_id, reference, vec![binding.clone()]);
             }
             match channel {
@@ -2342,18 +2382,36 @@ impl SessionActor {
                 None => {}
             }
         }
-        for (channel, bindings) in [(OutputChannel::Text, text_bindings), (OutputChannel::Reasoning, reasoning_bindings)] {
-            if !bindings.is_empty() { self.observe_output_sources(request_id, OutputOrigin::channel_aggregate(channel, message_id), bindings); }
+        for (channel, bindings) in [
+            (OutputChannel::Text, text_bindings),
+            (OutputChannel::Reasoning, reasoning_bindings),
+        ] {
+            if !bindings.is_empty() {
+                self.observe_output_sources(
+                    request_id,
+                    OutputOrigin::channel_aggregate(channel, message_id),
+                    bindings,
+                );
+            }
         }
     }
 
-    fn observe_output_sources(&self, request_id: &xai_grok_sampler::RequestId, reference: xai_grok_sampling_types::OutputOrigin, bindings: Vec<crate::session::request_capture::InputSourceBinding>) {
-        self.publish_source_observation(crate::session::source_binding::SourceBindingObservation::Output {
-            identity: crate::session::source_binding::OutputSourceOrigin {
-                session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(), reference,
+    fn observe_output_sources(
+        &self,
+        request_id: &xai_grok_sampler::RequestId,
+        reference: xai_grok_sampling_types::OutputOrigin,
+        bindings: Vec<crate::session::request_capture::InputSourceBinding>,
+    ) {
+        self.publish_source_observation(
+            crate::session::source_binding::SourceBindingObservation::Output {
+                identity: crate::session::source_binding::OutputSourceOrigin {
+                    session_id: self.session_id_string(),
+                    request_id: request_id.as_str().to_owned(),
+                    reference,
+                },
+                bindings,
             },
-            bindings,
-        });
+        );
     }
 
     pub(super) async fn record_assistant_response(
@@ -2379,10 +2437,12 @@ impl SessionActor {
         }
         if usage_reported {
             self.chat_state_handle
-                .push_assistant_response_and_ack(assistant_item).await
+                .push_assistant_response_and_ack(assistant_item)
+                .await
         } else {
             self.chat_state_handle
-                .push_unreported_model_output_and_ack(assistant_item).await
+                .push_unreported_model_output_and_ack(assistant_item)
+                .await
         }
     }
 }

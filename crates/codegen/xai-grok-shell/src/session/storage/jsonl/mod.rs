@@ -1,7 +1,7 @@
 use super::{PersistedData, SessionUpdateEnvelope, StorageAdapter};
-use crate::sampling::ConversationItem;
 #[cfg(test)]
 use crate::sampling::ContentPart;
+use crate::sampling::ConversationItem;
 use crate::session::info::Info;
 use crate::session::persistence::{CHAT_FORMAT_VERSION, Summary};
 use crate::tools::todo::TodoState;
@@ -18,9 +18,9 @@ mod copy;
 mod delivery_receiver;
 pub mod history_decoder;
 mod history_images;
-pub(crate) use history_images::strip_invalid_images;
 #[cfg(test)]
 use history_images::MAX_LOADED_IMAGE_BYTES;
+pub(crate) use history_images::strip_invalid_images;
 #[derive(Clone)]
 enum SessionDirMode {
     FromRoot(PathBuf),
@@ -314,7 +314,8 @@ impl JsonlStorageAdapter {
     }
     /// Both `list_sessions` (full scan) and `list_sessions_recent` (mtime-based tail) share this.
     fn scan_session_dirs(&self, cwd: Option<&str>) -> io::Result<Vec<PathBuf>> {
-        self.session_dirs_with_required(cwd, &[]).map(|(dirs, _)| dirs)
+        self.session_dirs_with_required(cwd, &[])
+            .map(|(dirs, _)| dirs)
     }
     fn session_dirs_with_required(
         &self,
@@ -330,7 +331,10 @@ impl JsonlStorageAdapter {
         let dirs = view.session_dirs(cwd).map_err(io::Error::other)?;
         let mut required_dirs = std::collections::HashSet::new();
         for id in required {
-            if let Some(dir) = view.find_persisted_session_dir(&id.0).map_err(io::Error::other)? {
+            if let Some(dir) = view
+                .find_persisted_session_dir(&id.0)
+                .map_err(io::Error::other)?
+            {
                 required_dirs.insert(dir);
             }
         }
@@ -401,9 +405,11 @@ impl JsonlStorageAdapter {
         visibility: super::SessionListVisibility,
     ) -> io::Result<Vec<Summary>> {
         let adapter = self.clone();
-        tokio::task::spawn_blocking(move || adapter.list_sessions_recent_sync(limit, visibility, &[]))
-            .await
-            .map_err(io::Error::other)?
+        tokio::task::spawn_blocking(move || {
+            adapter.list_sessions_recent_sync(limit, visibility, &[])
+        })
+        .await
+        .map_err(io::Error::other)?
     }
     /// Required resident summaries include exclusion evidence for the roster merge.
     pub(crate) async fn roster_summaries(
@@ -413,7 +419,11 @@ impl JsonlStorageAdapter {
     ) -> io::Result<Vec<Summary>> {
         let adapter = self.clone();
         tokio::task::spawn_blocking(move || {
-            adapter.list_sessions_recent_sync(limit, super::SessionListVisibility::Roster, &required)
+            adapter.list_sessions_recent_sync(
+                limit,
+                super::SessionListVisibility::Roster,
+                &required,
+            )
         })
         .await
         .map_err(io::Error::other)?
@@ -442,7 +452,9 @@ impl JsonlStorageAdapter {
         let mut summaries = Vec::with_capacity(limit.min(candidates.len()));
         let mut recent_count = 0;
         for (reads, (summary_path, _)) in candidates.into_iter().enumerate() {
-            let is_required = summary_path.parent().is_some_and(|dir| required_dirs.remove(dir));
+            let is_required = summary_path
+                .parent()
+                .is_some_and(|dir| required_dirs.remove(dir));
             let within_recent = recent_count < limit && reads < max_reads;
             if !is_required && !within_recent {
                 if required_dirs.is_empty() {
@@ -463,7 +475,10 @@ impl JsonlStorageAdapter {
                             &lock_path,
                         );
                         if is_required || !summary.is_unused_optimistic_husk() {
-                            if within_recent && visibility.admits(&summary) && !summary.is_headless() {
+                            if within_recent
+                                && visibility.admits(&summary)
+                                && !summary.is_headless()
+                            {
                                 recent_count += 1;
                             }
                             summaries.push(summary);
@@ -621,9 +636,10 @@ impl JsonlStorageAdapter {
         self.apply_summary_patch(
             info,
             super::summary_write::SummaryPatch {
-                activity: super::summary_write::SummaryActivity::from_recorded(
-                    matches!(&disposition, StrictAppendAck::Appended),
-                ),
+                activity: super::summary_write::SummaryActivity::from_recorded(matches!(
+                    &disposition,
+                    StrictAppendAck::Appended
+                )),
                 chat_messages: matches!(&disposition, StrictAppendAck::Appended)
                     .then_some(super::summary_write::CounterOp::Increment(1)),
                 chat_format_version: Some(CHAT_FORMAT_VERSION),
@@ -1128,13 +1144,15 @@ impl JsonlStorageAdapter {
                 format!("chat history exceeds the {max_bytes}-byte read limit"),
             ));
         }
-        let mut decoded = history_decoder::decode_history(&contents, chat_format_version, max_items)
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("chat history exceeds the {max_items}-item limit"),
-                )
-            })?;
+        let mut decoded =
+            history_decoder::decode_history(&contents, chat_format_version, max_items).map_err(
+                |_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("chat history exceeds the {max_items}-item limit"),
+                    )
+                },
+            )?;
         let stripped = decoded.normalize_images();
         let skipped_lines = decoded.skipped_lines();
         let first_skipped = decoded.first_skipped();
@@ -1445,7 +1463,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         authority: crate::session::delivery_receiver::ParentAdmissionAuthority,
         access: crate::session::receiver_execution::ReceiverAccess<'_>,
     ) -> io::Result<crate::session::delivery_receiver::ParentAdmissionAck> {
-        self.admit_parent_message_owned(info, admission, authority, access).await
+        self.admit_parent_message_owned(info, admission, authority, access)
+            .await
     }
     async fn cancel_parent_messages(
         &self,
@@ -1453,7 +1472,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         message_ids: &[String],
         access: crate::session::receiver_execution::ReceiverAccess<'_>,
     ) -> io::Result<()> {
-        self.cancel_parent_messages_owned(info, message_ids, access).await
+        self.cancel_parent_messages_owned(info, message_ids, access)
+            .await
     }
     async fn receive_delivery(
         &self,
@@ -1541,7 +1561,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         ids: Vec<xai_chat_state::completion::CompletionIdentity>,
         reason: crate::session::completion_delivery::CompletionSuppression,
     ) -> io::Result<()> {
-        self.suppress_terminal_completions_inner(info, ids, reason).await
+        self.suppress_terminal_completions_inner(info, ids, reason)
+            .await
     }
 
     async fn enroll_terminal_completion(
@@ -1551,7 +1572,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         text: String,
         policy: crate::session::completion_delivery::CompletionEventPolicy,
     ) -> io::Result<()> {
-        self.enroll_terminal_completion_inner(info, source, text, policy).await
+        self.enroll_terminal_completion_inner(info, source, text, policy)
+            .await
     }
 
     async fn prepare_subagent_completion(
@@ -1593,7 +1615,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         info: &Info,
         projection: &xai_chat_state::input_projection::NotificationProjection,
         admission: &xai_chat_state::InputAdmission,
-    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError> {
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError>
+    {
         self.append_notification(info, projection, admission).await
     }
 
@@ -1807,7 +1830,8 @@ impl StorageAdapter for JsonlStorageAdapter {
             return Ok(());
         }
         tokio::task::spawn_blocking(move || super::write_bytes_atomic(&target, &json))
-            .await.map_err(io::Error::other)?
+            .await
+            .map_err(io::Error::other)?
     }
     async fn delete_workflow_run_state(&self, info: &Info, run_id: &str) -> io::Result<()> {
         let target = self.workflow_run_state_file(info, run_id)?;
@@ -2223,11 +2247,11 @@ impl StorageAdapter for JsonlStorageAdapter {
 #[cfg(test)]
 mod durable_tests;
 #[cfg(test)]
+mod roster_visibility_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod worktree_heal_tests;
-#[cfg(test)]
-mod roster_visibility_tests;
 
 #[cfg(test)]
 mod history_decoder_tests;

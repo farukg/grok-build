@@ -259,7 +259,10 @@ fn fit_location_path_falls_back_to_the_bounded_final_truncation() {
         fit_location_path("alpha/beta/gamma/delta/file.rs", 10).as_ref(),
         "a/b/g/del\u{2026}"
     );
-    assert_eq!(fit_location_path("src/main.rs", 7).as_ref(), "src/ma\u{2026}");
+    assert_eq!(
+        fit_location_path("src/main.rs", 7).as_ref(),
+        "src/ma\u{2026}"
+    );
     assert_eq!(fit_location_path("src/main.rs", 1).as_ref(), "\u{2026}");
     assert_eq!(fit_location_path("src/main.rs", 0).as_ref(), "");
 }

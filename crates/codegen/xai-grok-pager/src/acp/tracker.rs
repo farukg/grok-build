@@ -3,7 +3,9 @@
 //! This is a stateful streaming machine.
 //! It tracks which entries are currently being streamed to (agent message, thinking) and which tool calls are pending.
 //! Each `handle_update()` call processes one event and mutates the scrollback.
-use crate::acp::meta::{NotificationMeta, WritingDeltaStream, user_message_chunk_meta, user_prompt_meta};
+use crate::acp::meta::{
+    NotificationMeta, WritingDeltaStream, user_message_chunk_meta, user_prompt_meta,
+};
 use crate::acp::subagent_label_registry::SubagentLabelRegistry;
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::blocks::SessionEvent;
@@ -19,8 +21,8 @@ use crate::scrollback::blocks::tool::{
 };
 use crate::scrollback::entry::{EntryId, ScrollbackEntry};
 use crate::scrollback::state::ScrollbackState;
-use crate::scrollback::types::ToolCompletion;
 use crate::scrollback::state::verb_group::verb_group_kind_changed;
+use crate::scrollback::types::ToolCompletion;
 use agent_client_protocol as acp;
 use chrono::{DateTime, Local, TimeZone};
 use std::borrow::Cow;
@@ -29,8 +31,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use tracing::debug;
-use xai_grok_shell::session::storage::chunk_meta_flag;
 use xai_grok_shell::extensions::sampling_lifecycle::{RequestId, SamplingOwner};
+use xai_grok_shell::session::storage::chunk_meta_flag;
 use xai_grok_tools::types::output::{BashOutput, ToolOutput};
 use xai_grok_tools::types::output::{ReadFileOutput, SearchToolOutput, WebFetchOutput};
 use xai_grok_tools::util::strip_redundant_session_cd;
@@ -40,11 +42,11 @@ mod sampling;
 use sampling::{RetryActivity, SamplingRequest};
 #[path = "tracker_tools.rs"]
 mod tools;
+pub(crate) use tools::{CurrentToolProjection, ToolAdmission};
 use tools::{ToolInstances, ToolKey, ToolProjection, ToolProjectionAdmission};
-pub(crate) use tools::{ToolAdmission, CurrentToolProjection};
 #[path = "tracker_transcript.rs"]
 mod transcript;
-use transcript::{TranscriptUpdate, UserProjection, LiveStreamReconstruction};
+use transcript::{LiveStreamReconstruction, TranscriptUpdate, UserProjection};
 /// Convert a UTC millisecond timestamp to local time.
 fn utc_ms_to_local(ms: i64) -> DateTime<Local> {
     chrono::Utc
@@ -63,7 +65,9 @@ pub enum WaitingReason {
     Model,
     /// Blocked on a running foreground subagent (`task` / `spawn_subagent`).
     /// Only the view sets `display`, to `Waiting for subagent` or `Waiting for N subagents`.
-    Subagent { display: Option<String> },
+    Subagent {
+        display: Option<String>,
+    },
     /// Blocked polling/awaiting a background task's output (`get_command_or_subagent_output` / `get_task_output`). The
     /// tracker itself always leaves it `None`.
     TaskOutput {
@@ -78,7 +82,10 @@ pub enum WaitingReason {
     /// Explicit sleep / await (`Await` / `Sleep …`).
     Sleep,
     /// Blocked on an awaited hook batch; shown only once it outlives [`HOOK_REVEAL_DELAY`], so a fast hook never flashes.
-    Hooks { event_name: String, count: usize },
+    Hooks {
+        event_name: String,
+        count: usize,
+    },
     /// The sent prompt has not been acknowledged by the agent yet (past the soft notice, see `app::prompt_ack`).
     /// View-only like `Model`; the tracker never stores it.
     PromptAck,
@@ -95,7 +102,9 @@ pub enum WaitingReason {
     ToolSettlement,
     UserInput,
     ActionSourceUnavailable,
-    RetryBackoff { due_at: Option<std::time::Instant> },
+    RetryBackoff {
+        due_at: Option<std::time::Instant>,
+    },
 }
 /// Batches younger than this stay hidden: most hooks finish well under it.
 pub const HOOK_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
@@ -422,16 +431,24 @@ enum CompactionActivity {
         invocation: xai_grok_shell::session::acp_types::AutomaticCompactInvocation,
         sequence: Option<u64>,
     },
-    Settled { sequence: Option<u64> },
+    Settled {
+        sequence: Option<u64>,
+    },
 }
 
 #[derive(Debug, Default)]
 enum ModelActivity {
     #[default]
     AwaitingOutput,
-    Dispatched { owner: SamplingOwner },
-    Thinking { owner: Option<SamplingOwner> },
-    Responding { owner: Option<SamplingOwner> },
+    Dispatched {
+        owner: SamplingOwner,
+    },
+    Thinking {
+        owner: Option<SamplingOwner>,
+    },
+    Responding {
+        owner: Option<SamplingOwner>,
+    },
 }
 /// Tracks in-flight streaming state for one agent's turn.
 /// Converts ACP `SessionUpdate` variants into scrollback entry mutations.
@@ -654,25 +671,25 @@ impl AcpUpdateTracker {
         None
     }
     fn pending_tool_activity(&self, tool: &PendingTool) -> TurnActivity {
-            let description = tool
-                .base
-                .raw_input
-                .as_ref()
-                .and_then(|v| v.get("description"))
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(clamp_activity_subject);
-            let title = tool
-                .base
-                .raw_input
-                .as_ref()
-                .and_then(|v| v.get("command"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| tool.base.title.clone());
-            let title = peeled_if_changed(&title, self.session_cwd.as_deref()).unwrap_or(title);
-            TurnActivity::ToolRunning { title, description }
+        let description = tool
+            .base
+            .raw_input
+            .as_ref()
+            .and_then(|v| v.get("description"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(clamp_activity_subject);
+        let title = tool
+            .base
+            .raw_input
+            .as_ref()
+            .and_then(|v| v.get("command"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| tool.base.title.clone());
+        let title = peeled_if_changed(&title, self.session_cwd.as_deref()).unwrap_or(title);
+        TurnActivity::ToolRunning { title, description }
     }
     /// Spinner activity for a suppressed blocking tool, or `None`.
     /// Instant task-output polls (`timeout_ms` 0/missing) are excluded.
@@ -694,12 +711,23 @@ impl AcpUpdateTracker {
                 WaitingReason::TasksComplete => 1,
                 WaitingReason::Sleep => 2,
                 WaitingReason::Subagent { .. } => 3,
-                WaitingReason::Model | WaitingReason::PromptAck | WaitingReason::Hooks { .. }
-                | WaitingReason::CompactionAdmission | WaitingReason::CompactionQueued
-                | WaitingReason::CompactionSettlement | WaitingReason::BackendResponse
-                | WaitingReason::TaskStart | WaitingReason::ModelAdmission | WaitingReason::ResponseDelivery
-                | WaitingReason::ToolPreparation | WaitingReason::ToolExecution | WaitingReason::HookBatch | WaitingReason::ToolSettlement
-                | WaitingReason::UserInput | WaitingReason::ActionSourceUnavailable | WaitingReason::RetryBackoff { .. } => 4,
+                WaitingReason::Model
+                | WaitingReason::PromptAck
+                | WaitingReason::Hooks { .. }
+                | WaitingReason::CompactionAdmission
+                | WaitingReason::CompactionQueued
+                | WaitingReason::CompactionSettlement
+                | WaitingReason::BackendResponse
+                | WaitingReason::TaskStart
+                | WaitingReason::ModelAdmission
+                | WaitingReason::ResponseDelivery
+                | WaitingReason::ToolPreparation
+                | WaitingReason::ToolExecution
+                | WaitingReason::HookBatch
+                | WaitingReason::ToolSettlement
+                | WaitingReason::UserInput
+                | WaitingReason::ActionSourceUnavailable
+                | WaitingReason::RetryBackoff { .. } => 4,
             })
             .map(|w| w.reason.clone())
     }
@@ -759,10 +787,16 @@ impl AcpUpdateTracker {
         match (&self.compaction_activity, activity) {
             (CompactionActivity::Correlated { .. }, Some(_)) => {}
             (CompactionActivity::Correlated { sequence, .. }, None) => {
-                self.compaction_activity = CompactionActivity::Settled { sequence: *sequence };
+                self.compaction_activity = CompactionActivity::Settled {
+                    sequence: *sequence,
+                };
             }
-            (CompactionActivity::Inactive | CompactionActivity::Uncorrelated(_)
-            | CompactionActivity::Settled { .. }, Some(activity)) => {
+            (
+                CompactionActivity::Inactive
+                | CompactionActivity::Uncorrelated(_)
+                | CompactionActivity::Settled { .. },
+                Some(activity),
+            ) => {
                 self.compaction_activity = CompactionActivity::Uncorrelated(activity);
             }
             (CompactionActivity::Inactive | CompactionActivity::Uncorrelated(_), None) => {
@@ -772,17 +806,37 @@ impl AcpUpdateTracker {
         }
     }
     pub(crate) fn has_correlated_compaction(&self) -> bool {
-        matches!(self.compaction_activity, CompactionActivity::Correlated { .. })
+        matches!(
+            self.compaction_activity,
+            CompactionActivity::Correlated { .. }
+        )
     }
-    pub(crate) fn accepts_auto_compaction_start(&self, invocation: &xai_grok_shell::session::acp_types::AutomaticCompactInvocation, sequence: Option<u64>) -> bool {
-        !self.compaction_sequence_is_stale(sequence) && match &self.compaction_activity {
-            CompactionActivity::Correlated { invocation: active, sequence: previous } => active == invocation
-                || sequence.is_some_and(|sequence| previous.is_none_or(|last| sequence > last)),
-            CompactionActivity::Inactive | CompactionActivity::Uncorrelated(_) | CompactionActivity::Settled { .. } => true,
-        }
+    pub(crate) fn accepts_auto_compaction_start(
+        &self,
+        invocation: &xai_grok_shell::session::acp_types::AutomaticCompactInvocation,
+        sequence: Option<u64>,
+    ) -> bool {
+        !self.compaction_sequence_is_stale(sequence)
+            && match &self.compaction_activity {
+                CompactionActivity::Correlated {
+                    invocation: active,
+                    sequence: previous,
+                } => {
+                    active == invocation
+                        || sequence
+                            .is_some_and(|sequence| previous.is_none_or(|last| sequence > last))
+                }
+                CompactionActivity::Inactive
+                | CompactionActivity::Uncorrelated(_)
+                | CompactionActivity::Settled { .. } => true,
+            }
     }
 
-    pub(crate) fn accepts_auto_compaction_terminal(&self, invocation: &xai_grok_shell::session::acp_types::AutomaticCompactInvocation, sequence: Option<u64>) -> bool {
+    pub(crate) fn accepts_auto_compaction_terminal(
+        &self,
+        invocation: &xai_grok_shell::session::acp_types::AutomaticCompactInvocation,
+        sequence: Option<u64>,
+    ) -> bool {
         !self.compaction_sequence_is_stale(sequence)
             && matches!(&self.compaction_activity, CompactionActivity::Correlated { invocation: active, .. } if active == invocation)
     }
@@ -792,8 +846,13 @@ impl AcpUpdateTracker {
         invocation: xai_grok_shell::session::acp_types::AutomaticCompactInvocation,
         sequence: Option<u64>,
     ) -> bool {
-        if !self.accepts_auto_compaction_start(&invocation, sequence) { return false; }
-        self.compaction_activity = CompactionActivity::Correlated { invocation, sequence };
+        if !self.accepts_auto_compaction_start(&invocation, sequence) {
+            return false;
+        }
+        self.compaction_activity = CompactionActivity::Correlated {
+            invocation,
+            sequence,
+        };
         true
     }
     pub(crate) fn admit_auto_compaction_terminal(
@@ -801,19 +860,27 @@ impl AcpUpdateTracker {
         invocation: &xai_grok_shell::session::acp_types::AutomaticCompactInvocation,
         sequence: Option<u64>,
     ) -> bool {
-        if !self.accepts_auto_compaction_terminal(invocation, sequence) { return false; }
+        if !self.accepts_auto_compaction_terminal(invocation, sequence) {
+            return false;
+        }
         match &mut self.compaction_activity {
-            CompactionActivity::Correlated { invocation: active, sequence: last } if active == invocation => {
+            CompactionActivity::Correlated {
+                invocation: active,
+                sequence: last,
+            } if active == invocation => {
                 *last = sequence;
                 true
             }
-            CompactionActivity::Inactive | CompactionActivity::Uncorrelated(_)
-            | CompactionActivity::Correlated { .. } | CompactionActivity::Settled { .. } => false,
+            CompactionActivity::Inactive
+            | CompactionActivity::Uncorrelated(_)
+            | CompactionActivity::Correlated { .. }
+            | CompactionActivity::Settled { .. } => false,
         }
     }
     fn compaction_sequence_is_stale(&self, sequence: Option<u64>) -> bool {
         let last = match &self.compaction_activity {
-            CompactionActivity::Correlated { sequence, .. } | CompactionActivity::Settled { sequence } => *sequence,
+            CompactionActivity::Correlated { sequence, .. }
+            | CompactionActivity::Settled { sequence } => *sequence,
             CompactionActivity::Inactive | CompactionActivity::Uncorrelated(_) => None,
         };
         matches!((sequence, last), (Some(sequence), Some(last)) if sequence <= last)
@@ -851,7 +918,9 @@ impl AcpUpdateTracker {
     pub fn retry_activity(&self) -> Option<&TurnActivity> {
         match &self.retry_activity {
             RetryActivity::Inactive => None,
-            RetryActivity::Legacy(activity) | RetryActivity::Scheduled { activity, .. } => Some(activity),
+            RetryActivity::Legacy(activity) | RetryActivity::Scheduled { activity, .. } => {
+                Some(activity)
+            }
         }
     }
     /// Record the awaited batch from `HookRunStarted`; the spinner shows it after [`HOOK_REVEAL_DELAY`].
@@ -928,14 +997,24 @@ impl AcpUpdateTracker {
     pub(crate) fn accepts_tool_arguments_stream(&self, stream: &WritingDeltaStream) -> bool {
         match stream {
             WritingDeltaStream::Owned(owner) => self.accepts_sampling_owner(owner),
-            WritingDeltaStream::Legacy { request_id, stream_epoch } => {
-                if request_id.as_ref().is_some_and(|id| self.retired_writing_requests.contains(id)) {
+            WritingDeltaStream::Legacy {
+                request_id,
+                stream_epoch,
+            } => {
+                if request_id
+                    .as_ref()
+                    .is_some_and(|id| self.retired_writing_requests.contains(id))
+                {
                     return false;
                 }
                 match &self.writing_stream {
                     WritingDeltaStream::Owned(_) => true,
-                    WritingDeltaStream::Legacy { request_id: current, stream_epoch: epoch } => {
-                        !(current == request_id && matches!((epoch, stream_epoch),
+                    WritingDeltaStream::Legacy {
+                        request_id: current,
+                        stream_epoch: epoch,
+                    } => {
+                        !(current == request_id
+                            && matches!((epoch, stream_epoch),
                             (Some(current), Some(incoming)) if incoming < current))
                     }
                 }
@@ -958,8 +1037,15 @@ impl AcpUpdateTracker {
             self.note_sampling_output(owner);
         }
         if self.writing_stream != stream {
-            if let (WritingDeltaStream::Legacy { request_id: previous, .. }, WritingDeltaStream::Legacy { request_id: next, .. }) =
-                (&mut self.writing_stream, &stream)
+            if let (
+                WritingDeltaStream::Legacy {
+                    request_id: previous,
+                    ..
+                },
+                WritingDeltaStream::Legacy {
+                    request_id: next, ..
+                },
+            ) = (&mut self.writing_stream, &stream)
                 && previous.as_ref() != next.as_ref()
                 && let Some(previous) = previous.take()
             {
@@ -1075,7 +1161,8 @@ impl AcpUpdateTracker {
     /// The Edit block of `entry` if it qualifies for coalescing with an adjacent same-file Edit.
     /// Qualifying means: completed successfully with hunks and a trustworthy one-liner summary.
     fn coalescable_edit(entry: &ScrollbackEntry) -> Option<&EditToolCallBlock> {
-        if entry.is_running || entry.is_pending_user_input
+        if entry.is_running
+            || entry.is_pending_user_input
             || entry.tool_completion() != ToolCompletion::Completed
         {
             return None;
@@ -1170,9 +1257,11 @@ impl AcpUpdateTracker {
     ) {
         let (removed_hunks, removed_edit_count, removed_clock) =
             match scrollback.get_by_id(removed).map(|e| &e.block) {
-                Some(RenderBlock::ToolCall(ToolCallBlock::Edit(edit))) => {
-                    (edit.hunks.clone(), edit.edit_count, edit.execution_clock.clone())
-                }
+                Some(RenderBlock::ToolCall(ToolCallBlock::Edit(edit))) => (
+                    edit.hunks.clone(),
+                    edit.edit_count,
+                    edit.execution_clock.clone(),
+                ),
                 _ => return,
             };
         if let Some(entry) = scrollback.get_by_id_mut(survivor) {
@@ -1202,9 +1291,12 @@ impl AcpUpdateTracker {
         scrollback: &ScrollbackState,
     ) -> Option<EntryId> {
         let tool_id = update.tool_call_id.0.as_ref();
-        if self.has_registered_provider(tool_id) { return None; }
+        if self.has_registered_provider(tool_id) {
+            return None;
+        }
         let key = ToolKey::Legacy(tool_id.to_owned());
-        if self.pending_tools.contains_key(&key) || self.suppressed_tools.contains_key(&key)
+        if self.pending_tools.contains_key(&key)
+            || self.suppressed_tools.contains_key(&key)
             || self.bg_deferred_tools.contains_key(tool_id)
         {
             return None;
@@ -1213,12 +1305,15 @@ impl AcpUpdateTracker {
             ToolCompletion::Unconfirmed => return None,
             ToolCompletion::Completed | ToolCompletion::Failed | ToolCompletion::Cancelled => {}
         }
-        self.tool_context_ids.iter().find_map(|(entry_id, context_id)| {
-            (context_id.as_str() == tool_id
-                && scrollback.get_by_id(*entry_id).is_some_and(|entry|
-                    matches!(entry.block, RenderBlock::ToolCall(_))))
+        self.tool_context_ids
+            .iter()
+            .find_map(|(entry_id, context_id)| {
+                (context_id.as_str() == tool_id
+                    && scrollback
+                        .get_by_id(*entry_id)
+                        .is_some_and(|entry| matches!(entry.block, RenderBlock::ToolCall(_))))
                 .then_some(*entry_id)
-        })
+            })
     }
     fn settle_drained_tool_terminal(
         &mut self,
@@ -1228,12 +1323,15 @@ impl AcpUpdateTracker {
         let entry_id = self.drained_tool_entry(update, scrollback)?;
         match scrollback.get_by_id(entry_id)?.tool_completion() {
             ToolCompletion::Unconfirmed => {
-                let completion = super::meta::tool_completion(update.fields.status?, update.meta.as_ref());
+                let completion =
+                    super::meta::tool_completion(update.fields.status?, update.meta.as_ref());
                 let changed = scrollback.set_tool_completion(entry_id, completion);
                 scrollback.finish_running(entry_id);
                 Some(changed)
             }
-            ToolCompletion::Completed | ToolCompletion::Failed | ToolCompletion::Cancelled => Some(false),
+            ToolCompletion::Completed | ToolCompletion::Failed | ToolCompletion::Cancelled => {
+                Some(false)
+            }
         }
     }
     /// Process a single SessionUpdate, mutating the scrollback.
@@ -1247,20 +1345,34 @@ impl AcpUpdateTracker {
     ) -> bool {
         let parsed;
         let meta = if matches!(meta.tool, super::tool_meta::ToolMetadata::NotTool)
-            && matches!(&update, acp::SessionUpdate::ToolCall(_) | acp::SessionUpdate::ToolCallUpdate(_))
-        {
+            && matches!(
+                &update,
+                acp::SessionUpdate::ToolCall(_) | acp::SessionUpdate::ToolCallUpdate(_)
+            ) {
             parsed = meta.clone().with_tool(&update);
             &parsed
-        } else { meta };
+        } else {
+            meta
+        };
         if !self.accepts_sampling_acp(&update, meta)
-            || matches!(self.tool_admission(&update, meta, meta.prompt_id.as_deref()), ToolAdmission::Reject)
+            || matches!(
+                self.tool_admission(&update, meta, meta.prompt_id.as_deref()),
+                ToolAdmission::Reject
+            )
         {
             return false;
         }
-        if matches!(&update, acp::SessionUpdate::ToolCall(_) | acp::SessionUpdate::ToolCallUpdate(_))
-            && self.is_registered_tool_update(&update, meta)
+        if matches!(
+            &update,
+            acp::SessionUpdate::ToolCall(_) | acp::SessionUpdate::ToolCallUpdate(_)
+        ) && self.is_registered_tool_update(&update, meta)
         {
-            return self.handle_tool_observation(update, meta, scrollback, meta.prompt_id.as_deref());
+            return self.handle_tool_observation(
+                update,
+                meta,
+                scrollback,
+                meta.prompt_id.as_deref(),
+            );
         }
         if !meta.is_replay {
             debug!(
@@ -1277,7 +1389,10 @@ impl AcpUpdateTracker {
             return changed;
         }
         if !meta.is_replay
-            && matches!(&update, acp::SessionUpdate::AgentMessageChunk(_) | acp::SessionUpdate::AgentThoughtChunk(_))
+            && matches!(
+                &update,
+                acp::SessionUpdate::AgentMessageChunk(_) | acp::SessionUpdate::AgentThoughtChunk(_)
+            )
             && let Some(owner) = meta.sampling_owner()
         {
             self.note_sampling_output(owner);
@@ -1307,7 +1422,9 @@ impl AcpUpdateTracker {
             self.writing_tool_call = None;
             self.writing_tool_names.clear();
         }
-        if is_agent_output && let Some(prompt) = &meta.prompt_id { self.bind_user_projection(prompt); }
+        if is_agent_output && let Some(prompt) = &meta.prompt_id {
+            self.bind_user_projection(prompt);
+        }
         let projection = TranscriptUpdate::classify(&update);
         let previous_floor = scrollback.id_floor();
         let changed = match update {
@@ -1321,12 +1438,28 @@ impl AcpUpdateTracker {
             }
             acp::SessionUpdate::ToolCall(tc) => {
                 let key = ToolKey::Legacy(tc.tool_call_id.0.to_string());
-                self.handle_tool_call(tc, scrollback, meta.is_replay, key, Default::default(),
-                    if meta.is_replay { ToolProjectionAdmission::Detached } else { ToolProjectionAdmission::Current })
+                self.handle_tool_call(
+                    tc,
+                    scrollback,
+                    meta.is_replay,
+                    key,
+                    Default::default(),
+                    if meta.is_replay {
+                        ToolProjectionAdmission::Detached
+                    } else {
+                        ToolProjectionAdmission::Current
+                    },
+                )
             }
             acp::SessionUpdate::ToolCallUpdate(tcu) => {
                 let key = ToolKey::Legacy(tcu.tool_call_id.0.to_string());
-                self.handle_tool_call_update(tcu, scrollback, meta.is_replay, key, Default::default())
+                self.handle_tool_call_update(
+                    tcu,
+                    scrollback,
+                    meta.is_replay,
+                    key,
+                    Default::default(),
+                )
             }
             acp::SessionUpdate::UserMessageChunk(chunk) => {
                 self.handle_user_message(chunk, meta, scrollback)
@@ -1385,7 +1518,8 @@ impl AcpUpdateTracker {
         self.writing_tool_names.clear();
         self.suppressed_tools.clear();
         self.blocking_waits.clear();
-        self.orphan_updates.retain(|key, _| matches!(key, ToolKey::Registered(_)));
+        self.orphan_updates
+            .retain(|key, _| matches!(key, ToolKey::Registered(_)));
         self.skip_next_skill_body = false;
         self.user_projection = UserProjection::Absent;
     }
@@ -1457,8 +1591,11 @@ impl AcpUpdateTracker {
             );
             return false;
         }
-        if !matches!(&self.model_activity, ModelActivity::Responding { owner } if owner.as_ref() == meta.sampling_owner()) {
-            self.model_activity = ModelActivity::Responding { owner: meta.sampling_owner().cloned() };
+        if !matches!(&self.model_activity, ModelActivity::Responding { owner } if owner.as_ref() == meta.sampling_owner())
+        {
+            self.model_activity = ModelActivity::Responding {
+                owner: meta.sampling_owner().cloned(),
+            };
         }
         let is_new = self.current_agent_msg.is_none();
         let id = *self.current_agent_msg.get_or_insert_with(|| {
@@ -1473,9 +1610,14 @@ impl AcpUpdateTracker {
             entry.created_at = Some(utc_ms_to_local(ts_ms));
         }
         let offset = scrollback.stream_source_len(id);
-        let changed = if meta.is_replay { scrollback.push_chunk_to_agent_deferred(id, &text) }
-            else { scrollback.push_chunk_to_agent(id, &text) };
-        if changed { self.note_stream_append(id, meta, offset); }
+        let changed = if meta.is_replay {
+            scrollback.push_chunk_to_agent_deferred(id, &text)
+        } else {
+            scrollback.push_chunk_to_agent(id, &text)
+        };
+        if changed {
+            self.note_stream_append(id, meta, offset);
+        }
         changed
     }
     /// Handle an agent thought chunk (streaming thinking).
@@ -1492,8 +1634,11 @@ impl AcpUpdateTracker {
         if text.is_empty() {
             return false;
         }
-        if !matches!(&self.model_activity, ModelActivity::Thinking { owner } if owner.as_ref() == meta.sampling_owner()) {
-            self.model_activity = ModelActivity::Thinking { owner: meta.sampling_owner().cloned() };
+        if !matches!(&self.model_activity, ModelActivity::Thinking { owner } if owner.as_ref() == meta.sampling_owner())
+        {
+            self.model_activity = ModelActivity::Thinking {
+                owner: meta.sampling_owner().cloned(),
+            };
         }
         if !crate::appearance::cache::load_show_thinking_blocks() {
             return false;
@@ -1530,9 +1675,14 @@ impl AcpUpdateTracker {
             self.thinking_last_timestamp_ms = Some(agent_ts);
         }
         let offset = scrollback.stream_source_len(id);
-        let changed = if meta.is_replay { scrollback.push_chunk_to_thinking_deferred(id, text) }
-            else { scrollback.push_chunk_to_thinking(id, text) };
-        if changed { self.note_stream_append(id, meta, offset); }
+        let changed = if meta.is_replay {
+            scrollback.push_chunk_to_thinking_deferred(id, text)
+        } else {
+            scrollback.push_chunk_to_thinking(id, text)
+        };
+        if changed {
+            self.note_stream_append(id, meta, offset);
+        }
         changed
     }
     /// Handle a tool call start.
@@ -1595,8 +1745,7 @@ impl AcpUpdateTracker {
                         },
                     );
                 }
-                self.suppressed_tools
-                    .insert(key.clone(), tc);
+                self.suppressed_tools.insert(key.clone(), tc);
                 self.note_tool_projection(&key, ToolProjection::Hidden);
                 return false;
             }
@@ -1618,11 +1767,15 @@ impl AcpUpdateTracker {
                 &execution_clock,
             );
             let entry_id = self.finish_completed_tool(
-                block, super::meta::tool_completion(tc.status, tc.meta.as_ref()), scrollback, is_replay,
+                block,
+                super::meta::tool_completion(tc.status, tc.meta.as_ref()),
+                scrollback,
+                is_replay,
             );
             self.note_tool_projection(&key, ToolProjection::Entry(entry_id));
-            self.tool_context_ids.entry(entry_id).or_insert_with(||
-                xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
+            self.tool_context_ids
+                .entry(entry_id)
+                .or_insert_with(|| xai_grok_shell::session::ToolCallId::new(tc_id.as_str()));
         } else {
             let block = tool_call_with_clock(
                 &tc,
@@ -1686,10 +1839,7 @@ impl AcpUpdateTracker {
                 }
                 if let Some(WaitingReason::TaskOutput {
                     task_ids, waits, ..
-                }) = self
-                    .blocking_waits
-                    .get_mut(&key)
-                    .map(|w| &mut w.reason)
+                }) = self.blocking_waits.get_mut(&key).map(|w| &mut w.reason)
                 {
                     let extracted = task_ids_from_raw_input(raw_input);
                     if !extracted.is_empty() {
@@ -1716,8 +1866,10 @@ impl AcpUpdateTracker {
                             &execution_clock,
                         );
                         let entry_id = self.finish_completed_tool(
-                            block, super::meta::tool_completion(base.status, base.meta.as_ref()),
-                            scrollback, is_replay,
+                            block,
+                            super::meta::tool_completion(base.status, base.meta.as_ref()),
+                            scrollback,
+                            is_replay,
                         );
                         self.note_tool_projection(&key, ToolProjection::Entry(entry_id));
                         self.tool_context_ids.insert(
@@ -1796,7 +1948,11 @@ impl AcpUpdateTracker {
                             &self.subagent_labels.borrow(),
                             &pending.execution_clock,
                         );
-                        scrollback.replace_tool_block(entry_id, block, Some(pending.execution_clock.clone()));
+                        scrollback.replace_tool_block(
+                            entry_id,
+                            block,
+                            Some(pending.execution_clock.clone()),
+                        );
                         entry_id
                     } else {
                         let block = tool_call_with_clock(
@@ -1852,20 +2008,26 @@ impl AcpUpdateTracker {
             );
             if let Some(entry_id) = pending.entry_id {
                 self.tool_context_ids.insert(entry_id, context_id);
-                if scrollback.replace_tool_block(entry_id, block, Some(pending.execution_clock.clone()))
-                    && let Some(entry) = scrollback.get_by_id(entry_id)
+                if scrollback.replace_tool_block(
+                    entry_id,
+                    block,
+                    Some(pending.execution_clock.clone()),
+                ) && let Some(entry) = scrollback.get_by_id(entry_id)
                 {
                     self.queue_edit_hl_if_needed(entry_id, &entry.block, is_replay);
                 }
                 scrollback.set_tool_completion(
-                    entry_id, super::meta::tool_completion(merged.status, merged.meta.as_ref()),
+                    entry_id,
+                    super::meta::tool_completion(merged.status, merged.meta.as_ref()),
                 );
                 scrollback.finish_running(entry_id);
                 self.try_coalesce_edit(entry_id, scrollback, is_replay);
             } else {
                 let entry_id = self.finish_completed_tool(
-                    block, super::meta::tool_completion(merged.status, merged.meta.as_ref()),
-                    scrollback, is_replay,
+                    block,
+                    super::meta::tool_completion(merged.status, merged.meta.as_ref()),
+                    scrollback,
+                    is_replay,
                 );
                 self.note_tool_projection(&key, ToolProjection::Entry(entry_id));
                 self.tool_context_ids.entry(entry_id).or_insert(context_id);
@@ -1910,7 +2072,8 @@ impl AcpUpdateTracker {
         }
         let combined = combined_display_texts_from_chunk(&chunk);
         if !chunk_meta_flag(&chunk, user_message_chunk_meta::INTERJECTION)
-            && (synthetic_reason.is_none() || chunk_prompt_index(&chunk).is_some()) {
+            && (synthetic_reason.is_none() || chunk_prompt_index(&chunk).is_some())
+        {
             self.user_projection = UserProjection::Absent;
         }
         self.finish_thinking(scrollback);
@@ -1929,11 +2092,8 @@ impl AcpUpdateTracker {
         // defaults own the fold), never as a plain user prompt and never hidden.
         if let Some(reason) = synthetic_reason {
             let prompt_index = chunk_prompt_index(&chunk);
-            let block = crate::scrollback::blocks::InjectedBlock::from_reason(
-                reason,
-                text,
-            )
-            .with_starts_turn(prompt_index.is_some());
+            let block = crate::scrollback::blocks::InjectedBlock::from_reason(reason, text)
+                .with_starts_turn(prompt_index.is_some());
             let entry_id = scrollback.push_block(RenderBlock::Injected(block));
             let ts_ms = meta.turn_start_ms.or(meta.agent_timestamp_ms);
             if let Some(entry) = scrollback.get_by_id_mut(entry_id) {
@@ -2180,8 +2340,10 @@ fn merged_tool_status(
     incoming: acp::ToolCallStatus,
 ) -> acp::ToolCallStatus {
     match (current, incoming) {
-        (acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed,
-            acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress) => current,
+        (
+            acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed,
+            acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress,
+        ) => current,
         (_, incoming) => incoming,
     }
 }
@@ -2201,7 +2363,9 @@ fn merge_tool_call_update(mut base: acp::ToolCall, update: acp::ToolCallUpdate) 
         update.fields.title.unwrap_or(base.title),
     )
     .kind(update.fields.kind.unwrap_or(base.kind))
-    .status(update.fields.status.map_or(base.status, |status| merged_tool_status(base.status, status)))
+    .status(update.fields.status.map_or(base.status, |status| {
+        merged_tool_status(base.status, status)
+    }))
     .content(update.fields.content.unwrap_or(base.content))
     .raw_input(update.fields.raw_input.or(base.raw_input))
     .raw_output(update.fields.raw_output.or(base.raw_output))
@@ -2218,7 +2382,10 @@ fn merge_tool_call_update_fields(
         base.kind = newer.kind;
     }
     if let Some(status) = newer.status {
-        base.status = Some(base.status.map_or(status, |current| merged_tool_status(current, status)));
+        base.status = Some(
+            base.status
+                .map_or(status, |current| merged_tool_status(current, status)),
+        );
     }
     if newer.title.is_some() {
         base.title = newer.title;
@@ -2296,7 +2463,9 @@ fn tool_call_with_clock(
     clock: &super::tool_clock::ToolExecutionClock,
 ) -> RenderBlock {
     let mut block = tool_call_to_block(tc, session_cwd, labels);
-    if let RenderBlock::ToolCall(tool) = &mut block { tool.set_execution_clock(clock.clone()); }
+    if let RenderBlock::ToolCall(tool) = &mut block {
+        tool.set_execution_clock(clock.clone());
+    }
     block
 }
 /// Convert an ACP ToolCall to a RenderBlock.

@@ -441,7 +441,12 @@ pub fn render_btw_panel(
                     .map(|(idx, bl)| {
                         let visible_offset = (idx - content_skip) as u16;
                         let screen_row = body_y + visible_offset;
-                        (screen_row, &bl.content, bl.joiner.as_deref(), bl.chrome_prefix_width)
+                        (
+                            screen_row,
+                            &bl.content,
+                            bl.joiner.as_deref(),
+                            bl.chrome_prefix_width,
+                        )
                     })
                     .take_while(|(screen_row, _, _, _)| *screen_row < max_screen_y);
                 scan_lines_for_url_overlays(visible_lines, content_x, media_paths, overlay);
@@ -761,16 +766,26 @@ mod tests {
         let full_model = state.full_selection_model(40);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
-                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 2, column: 0 },
+                position: crate::scrollback::selection_position::SourcePosition::Overlay {
+                    row: 2,
+                    column: 0,
+                },
                 entry_idx: BTW_OVERLAY_ENTRY_IDX,
-                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(BTW_OVERLAY_RANGE_ID),
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(
+                    BTW_OVERLAY_RANGE_ID,
+                ),
                 block_line_idx: 2,
                 col_within_range: 0,
             },
             head: RangeHit {
-                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: 14, column: 5 },
+                position: crate::scrollback::selection_position::SourcePosition::Overlay {
+                    row: 14,
+                    column: 5,
+                },
                 entry_idx: BTW_OVERLAY_ENTRY_IDX,
-                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(BTW_OVERLAY_RANGE_ID),
+                range_id: crate::scrollback::selection_identity::RangeIdentity::overlay(
+                    BTW_OVERLAY_RANGE_ID,
+                ),
                 block_line_idx: 14,
                 col_within_range: 5,
             },

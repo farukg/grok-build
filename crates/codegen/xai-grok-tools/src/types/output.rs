@@ -637,7 +637,8 @@ impl ToolOutput {
             ToolOutput::TaskOutput(TaskOutputOutput::TaskNotFound(_)) => true,
             ToolOutput::KillTask(KillTaskOutput::TaskNotFound(_)) => true,
             ToolOutput::KillTask(KillTaskOutput::Result(r)) => match r.outcome {
-                xai_tool_types::KillOutcome::Killed | xai_tool_types::KillOutcome::AlreadyExited => false,
+                xai_tool_types::KillOutcome::Killed
+                | xai_tool_types::KillOutcome::AlreadyExited => false,
                 xai_tool_types::KillOutcome::NotFound
                 | xai_tool_types::KillOutcome::Indeterminate { .. }
                 | xai_tool_types::KillOutcome::Failed { .. } => true,

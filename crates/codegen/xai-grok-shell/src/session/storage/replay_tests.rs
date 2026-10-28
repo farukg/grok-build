@@ -1038,11 +1038,15 @@ fn stream_replay_preserves_compact_invocation_metadata() {
     let notification = crate::extensions::notification::SessionNotification {
         session_id: acp::SessionId::new(sid),
         update: crate::extensions::notification::SessionUpdate::AutoCompactCompleted {
-            tokens_before: Some(1000), tokens_after: 100, elapsed_ms: None, summary_preview: None,
+            tokens_before: Some(1000),
+            tokens_after: 100,
+            elapsed_ms: None,
+            summary_preview: None,
         },
         meta: Some(metadata.clone()),
     };
-    let envelope = SessionUpdateEnvelope::from_update(&SessionUpdate::Xai(Box::new(notification))).unwrap();
+    let envelope =
+        SessionUpdateEnvelope::from_update(&SessionUpdate::Xai(Box::new(notification))).unwrap();
     let line = serde_json::to_string(&envelope).unwrap();
     let SessionUpdate::Xai(decoded) = SessionUpdateEnvelope::from_str(&line).unwrap() else {
         panic!("expected persisted xAI notification");
@@ -1050,14 +1054,23 @@ fn stream_replay_preserves_compact_invocation_metadata() {
     assert_eq!(decoded.meta, Some(metadata.clone()));
     std::fs::write(dir.join(UPDATES_FILE), format!("{line}\n")).unwrap();
     let mut replayed = Vec::new();
-    let emission = stream_replay_updates_at_hinted(sid, home.path(), ReplayPathHint::default(), |update| {
-        if let ReplayedUpdate::Xai(update, meta) = update {
-            assert!(matches!(update, crate::extensions::notification::SessionUpdate::AutoCompactCompleted { .. }));
-            replayed.push(meta);
-        }
-    }).unwrap();
+    let emission =
+        stream_replay_updates_at_hinted(sid, home.path(), ReplayPathHint::default(), |update| {
+            if let ReplayedUpdate::Xai(update, meta) = update {
+                assert!(matches!(
+                    update,
+                    crate::extensions::notification::SessionUpdate::AutoCompactCompleted { .. }
+                ));
+                replayed.push(meta);
+            }
+        })
+        .unwrap();
     assert_eq!(replayed, vec![Some(metadata)]);
-    assert_eq!(emission, ReplayEmission::Empty, "metadata cannot change replay emission authority");
+    assert_eq!(
+        emission,
+        ReplayEmission::Empty,
+        "metadata cannot change replay emission authority"
+    );
 }
 
 /// The stream forwards each persisted line's `_meta` alongside the ACP update.
@@ -1401,22 +1414,34 @@ fn passive_budget(bytes: usize, records: usize, emits: usize) -> super::ReplayBu
 fn passive_open(path: &std::path::Path, limit: usize) -> super::PassiveReplayCursor {
     super::PassiveReplayCursor::open(
         path,
-        super::PassiveReplayLimits { max_record_bytes: std::num::NonZeroUsize::new(limit).unwrap() },
+        super::PassiveReplayLimits {
+            max_record_bytes: std::num::NonZeroUsize::new(limit).unwrap(),
+        },
         super::ReplayCorruptionPolicy::SkipMalformed,
         super::ReplayFinalRecordPolicy::Parse,
         None,
-    ).unwrap()
+    )
+    .unwrap()
 }
 
-fn passive_collect(cursor: &mut super::PassiveReplayCursor, budget: super::ReplayBudget) -> Vec<ReplayedUpdate> {
+fn passive_collect(
+    cursor: &mut super::PassiveReplayCursor,
+    budget: super::ReplayBudget,
+) -> Vec<ReplayedUpdate> {
     let mut updates = Vec::new();
     while cursor.phase() != super::PassiveReplayPhase::Finished {
         let batch = cursor.next_batch(budget).unwrap();
         assert!(batch.bytes_used <= budget.bytes.get());
         assert!(batch.records_used <= budget.records.get());
         assert!(batch.updates.len() <= budget.emits.get());
-        if matches!(batch.phase, super::PassiveReplayPhase::Planning | super::PassiveReplayPhase::Selecting) {
-            assert!(batch.updates.is_empty(), "no dead prefix may escape planning");
+        if matches!(
+            batch.phase,
+            super::PassiveReplayPhase::Planning | super::PassiveReplayPhase::Selecting
+        ) {
+            assert!(
+                batch.updates.is_empty(),
+                "no dead prefix may escape planning"
+            );
         }
         updates.extend(batch.updates);
     }
@@ -1435,51 +1460,106 @@ fn passive_json(update: ReplayedUpdate) -> (serde_json::Value, Option<serde_json
 
 #[test]
 fn passive_cursor_exact_survivors_reused_indices_tombstones_tools_meta_and_catalog() {
-    let user = |text: &str, index: usize| acp_envelope(&format!(
-        r#"{{"sessionUpdate":"user_message_chunk","content":{{"type":"text","text":"{text}"}},"_meta":{{"promptIndex":{index}}}}}"#,
-    ));
+    let user = |text: &str, index: usize| {
+        acp_envelope(&format!(
+            r#"{{"sessionUpdate":"user_message_chunk","content":{{"type":"text","text":"{text}"}},"_meta":{{"promptIndex":{index}}}}}"#,
+        ))
+    };
     let lines = vec![
         user("first", 0),
-        acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}"#),
+        acp_envelope(
+            r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}"#,
+        ),
         user("discard", 1),
         acp_envelope(r#"{"sessionUpdate":"tool_call","toolCallId":"dead","title":"dead"}"#),
-        xai_envelope(r#"{"sessionUpdate":"rewind_marker","target_prompt_index":1,"created_at":"2024-01-01"}"#),
+        xai_envelope(
+            r#"{"sessionUpdate":"rewind_marker","target_prompt_index":1,"created_at":"2024-01-01"}"#,
+        ),
         user("replacement", 1),
         acp_envelope(r#"{"sessionUpdate":"tool_call","toolCallId":"removed","title":"removed"}"#),
-        acp_envelope(r#"{"sessionUpdate":"tool_call_update","toolCallId":"removed","status":"in_progress"}"#),
-        acp_envelope(r#"{"sessionUpdate":"tool_call_update","toolCallId":"removed","status":"completed"}"#),
+        acp_envelope(
+            r#"{"sessionUpdate":"tool_call_update","toolCallId":"removed","status":"in_progress"}"#,
+        ),
+        acp_envelope(
+            r#"{"sessionUpdate":"tool_call_update","toolCallId":"removed","status":"completed"}"#,
+        ),
         user("removed-turn", 2),
-        acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"removed-answer"}}"#),
-        xai_envelope(r#"{"sessionUpdate":"context_items_removed","items":[{"kind":"turn","promptIndex":2},{"kind":"tool_exchange","toolCallId":"removed"}],"created_at":"2024-01-01"}"#),
+        acp_envelope(
+            r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"removed-answer"}}"#,
+        ),
+        xai_envelope(
+            r#"{"sessionUpdate":"context_items_removed","items":[{"kind":"turn","promptIndex":2},{"kind":"tool_exchange","toolCallId":"removed"}],"created_at":"2024-01-01"}"#,
+        ),
         user("discard-again", 3),
-        xai_envelope(r#"{"sessionUpdate":"rewind_marker","target_prompt_index":3,"created_at":"2024-01-01"}"#),
+        xai_envelope(
+            r#"{"sessionUpdate":"rewind_marker","target_prompt_index":3,"created_at":"2024-01-01"}"#,
+        ),
         user("last", 3),
-        acp_envelope(r#"{"sessionUpdate":"tool_call","toolCallId":"kept","title":"base","status":"pending"}"#),
-        acp_envelope(r#"{"sessionUpdate":"tool_call_update","toolCallId":"kept","title":"renamed"}"#),
-        acp_envelope(r#"{"sessionUpdate":"tool_call_update","toolCallId":"kept","status":"in_progress","rawOutput":{"ignored":true}}"#),
+        acp_envelope(
+            r#"{"sessionUpdate":"tool_call","toolCallId":"kept","title":"base","status":"pending"}"#,
+        ),
+        acp_envelope(
+            r#"{"sessionUpdate":"tool_call_update","toolCallId":"kept","title":"renamed"}"#,
+        ),
+        acp_envelope(
+            r#"{"sessionUpdate":"tool_call_update","toolCallId":"kept","status":"in_progress","rawOutput":{"ignored":true}}"#,
+        ),
         acp_envelope_with_meta(
             r#"{"sessionUpdate":"tool_call_update","toolCallId":"kept","status":"completed","rawOutput":{"exact":"✓"}}"#,
             r#"{"agentTimestampMs":7,"turnStartMs":3,"future":{"retained":true}}"#,
         ),
         acp_envelope(r#"{"sessionUpdate":"available_commands_update","availableCommands":[]}"#),
-        persist_xai_update(crate::extensions::notification::SessionUpdate::AutoCompactCompleted {
-            tokens_before: Some(100), tokens_after: 20, elapsed_ms: None, summary_preview: None,
-        }),
-        acp_envelope(r#"{"sessionUpdate":"tool_call","toolCallId":"pending","title":"unfinished"}"#),
+        persist_xai_update(
+            crate::extensions::notification::SessionUpdate::AutoCompactCompleted {
+                tokens_before: Some(100),
+                tokens_after: 20,
+                elapsed_ms: None,
+                summary_preview: None,
+            },
+        ),
+        acp_envelope(
+            r#"{"sessionUpdate":"tool_call","toolCallId":"pending","title":"unfinished"}"#,
+        ),
     ];
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
     std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
     let mut cursor = passive_open(&path, 4096);
-    let actual: Vec<_> = passive_collect(&mut cursor, passive_budget(3, 1, 1)).into_iter().map(passive_json).collect();
+    let actual: Vec<_> = passive_collect(&mut cursor, passive_budget(3, 1, 1))
+        .into_iter()
+        .map(passive_json)
+        .collect();
     let expected: Vec<(serde_json::Value, Option<serde_json::Value>)> = vec![
-        (serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"first"},"_meta":{"promptIndex":0}}), None),
-        (serde_json::json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}), None),
-        (serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"replacement"},"_meta":{"promptIndex":1}}), None),
-        (serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"last"},"_meta":{"promptIndex":3}}), None),
-        (serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"kept","title":"renamed","status":"completed","rawOutput":{"exact":"✓"}}), Some(serde_json::json!({"agentTimestampMs":7,"turnStartMs":3,"future":{"retained":true}}))),
-        (serde_json::json!({"sessionUpdate":"auto_compact_completed","tokens_before":100,"tokens_after":20,"summary_preview":null}), None),
-        (serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"pending","title":"unfinished"}), None),
+        (
+            serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"first"},"_meta":{"promptIndex":0}}),
+            None,
+        ),
+        (
+            serde_json::json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}),
+            None,
+        ),
+        (
+            serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"replacement"},"_meta":{"promptIndex":1}}),
+            None,
+        ),
+        (
+            serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"last"},"_meta":{"promptIndex":3}}),
+            None,
+        ),
+        (
+            serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"kept","title":"renamed","status":"completed","rawOutput":{"exact":"✓"}}),
+            Some(
+                serde_json::json!({"agentTimestampMs":7,"turnStartMs":3,"future":{"retained":true}}),
+            ),
+        ),
+        (
+            serde_json::json!({"sessionUpdate":"auto_compact_completed","tokens_before":100,"tokens_after":20,"summary_preview":null}),
+            None,
+        ),
+        (
+            serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"pending","title":"unfinished"}),
+            None,
+        ),
     ];
     assert_eq!(actual, expected);
     assert_eq!(cursor.finish().unwrap().emission, ReplayEmission::Emitted);
@@ -1489,12 +1569,17 @@ fn passive_cursor_exact_survivors_reused_indices_tombstones_tools_meta_and_catal
 fn passive_cursor_split_utf8_exact_limit_oversize_and_redacted_errors() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let line = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"λ🙂"}}"#);
+    let line = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"λ🙂"}}"#,
+    );
     std::fs::write(&path, format!("{line}\n")).unwrap();
     let mut cursor = passive_open(&path, line.len());
     let actual = passive_collect(&mut cursor, passive_budget(1, 1, 1));
     assert_eq!(actual.len(), 1);
-    assert_eq!(passive_json(actual.into_iter().next().unwrap()).0["content"]["text"], "λ🙂");
+    assert_eq!(
+        passive_json(actual.into_iter().next().unwrap()).0["content"]["text"],
+        "λ🙂"
+    );
     let mut cursor = passive_open(&path, line.len() - 1);
     loop {
         match cursor.next_batch(passive_budget(7, 1, 1)) {
@@ -1508,7 +1593,10 @@ fn passive_cursor_split_utf8_exact_limit_oversize_and_redacted_errors() {
     }
     std::fs::write(&path, [0xff, b'\n']).unwrap();
     let mut cursor = passive_open(&path, 100);
-    assert_eq!(cursor.next_batch(passive_budget(100, 1, 1)).unwrap_err(), super::PassiveReplayError::InvalidUtf8);
+    assert_eq!(
+        cursor.next_batch(passive_budget(100, 1, 1)).unwrap_err(),
+        super::PassiveReplayError::InvalidUtf8
+    );
 }
 
 #[test]
@@ -1517,9 +1605,15 @@ fn passive_cursor_planning_control_work_empty_finish_drop_and_send() {
     assert_send::<super::PassiveReplayCursor>();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let user = acp_envelope(r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"gone"}}"#);
-    let answer = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"gone"}}"#);
-    let rewind = xai_envelope(r#"{"sessionUpdate":"rewind_marker","target_prompt_index":0,"created_at":"2024-01-01"}"#);
+    let user = acp_envelope(
+        r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"gone"}}"#,
+    );
+    let answer = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"gone"}}"#,
+    );
+    let rewind = xai_envelope(
+        r#"{"sessionUpdate":"rewind_marker","target_prompt_index":0,"created_at":"2024-01-01"}"#,
+    );
     let mut lines = vec![user];
     lines.extend(std::iter::repeat_n(answer, 100));
     lines.push(rewind);
@@ -1529,18 +1623,33 @@ fn passive_cursor_planning_control_work_empty_finish_drop_and_send() {
     assert_eq!(cursor.finish(), Err(super::PassiveReplayError::NotFinished));
     let mut planning_calls = 0;
     while cursor.phase() == super::PassiveReplayPhase::Planning {
-        let batch = cursor.next_batch(passive_budget(raw.len() * 2, 1, 1)).unwrap();
+        let batch = cursor
+            .next_batch(passive_budget(raw.len() * 2, 1, 1))
+            .unwrap();
         assert!(batch.records_used <= 1);
         assert!(batch.updates.is_empty());
         planning_calls += 1;
     }
-    assert!(planning_calls > 200, "rewind must yield while removing its tail");
+    assert!(
+        planning_calls > 200,
+        "rewind must yield while removing its tail"
+    );
     assert!(passive_collect(&mut cursor, passive_budget(100, 1, 1)).is_empty());
     assert_eq!(cursor.finish().unwrap().emission, ReplayEmission::Empty);
-    assert!(cursor.next_batch(passive_budget(1, 1, 1)).unwrap().updates.is_empty());
+    assert!(
+        cursor
+            .next_batch(passive_budget(1, 1, 1))
+            .unwrap()
+            .updates
+            .is_empty()
+    );
     let cursor = passive_open(&path, 4096);
     drop(cursor);
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), raw, "passive cancellation never writes");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        raw,
+        "passive cancellation never writes"
+    );
 }
 
 #[test]
@@ -1548,11 +1657,18 @@ fn passive_cursor_active_writer_completes_fixed_prefix_then_later_open_sees_tail
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let first = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"prefix"}}"#);
-    let later = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"later"}}"#);
+    let first = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"prefix"}}"#,
+    );
+    let later = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"later"}}"#,
+    );
     std::fs::write(&path, format!("{first}\n")).unwrap();
     let mut cursor = passive_open(&path, 4096);
-    let mut writer = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
     let mut updates = Vec::new();
     let mut appended = 0;
     while cursor.phase() != super::PassiveReplayPhase::Finished {
@@ -1564,16 +1680,26 @@ fn passive_cursor_active_writer_completes_fixed_prefix_then_later_open_sees_tail
         assert!(batch.records_used <= 1);
         assert!(batch.updates.len() <= 1);
         updates.extend(batch.updates);
-        assert!(appended < 1000, "growth outside the fence cannot restart progress");
+        assert!(
+            appended < 1000,
+            "growth outside the fence cannot restart progress"
+        );
     }
     writeln!(writer, "{later}").unwrap();
     appended += 1;
     assert_eq!(cursor.finish().unwrap().emission, ReplayEmission::Emitted);
-    let actual: Vec<_> = updates.into_iter().map(passive_json).map(|(update, _)| update["content"]["text"].clone()).collect();
+    let actual: Vec<_> = updates
+        .into_iter()
+        .map(passive_json)
+        .map(|(update, _)| update["content"]["text"].clone())
+        .collect();
     assert_eq!(actual, vec![serde_json::json!("prefix")]);
     let mut reopened = passive_open(&path, 4096);
     let actual: Vec<_> = passive_collect(&mut reopened, passive_budget(4096, 3, 2))
-        .into_iter().map(passive_json).map(|(update, _)| update["content"]["text"].clone()).collect();
+        .into_iter()
+        .map(passive_json)
+        .map(|(update, _)| update["content"]["text"].clone())
+        .collect();
     assert_eq!(actual[0], "prefix");
     assert_eq!(actual.len(), appended + 1);
     assert!(actual[1..].iter().all(|text| text == "later"));
@@ -1584,18 +1710,44 @@ fn passive_cursor_append_does_not_complete_a_record_beyond_the_fence() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let first = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"prefix"}}"#);
-    let tail = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}"#);
+    let first = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"prefix"}}"#,
+    );
+    let tail = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}"#,
+    );
     let split = tail.len() / 2;
     std::fs::write(&path, format!("{first}\n{}", &tail[..split])).unwrap();
-    let limits = super::PassiveReplayLimits { max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap() };
-    let mut ignore = super::PassiveReplayCursor::open(&path, limits, super::ReplayCorruptionPolicy::RejectMalformed, super::ReplayFinalRecordPolicy::IgnoreUnterminated, None).unwrap();
-    let mut parse = super::PassiveReplayCursor::open(&path, limits, super::ReplayCorruptionPolicy::RejectMalformed, super::ReplayFinalRecordPolicy::Parse, None).unwrap();
-    let mut writer = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let limits = super::PassiveReplayLimits {
+        max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap(),
+    };
+    let mut ignore = super::PassiveReplayCursor::open(
+        &path,
+        limits,
+        super::ReplayCorruptionPolicy::RejectMalformed,
+        super::ReplayFinalRecordPolicy::IgnoreUnterminated,
+        None,
+    )
+    .unwrap();
+    let mut parse = super::PassiveReplayCursor::open(
+        &path,
+        limits,
+        super::ReplayCorruptionPolicy::RejectMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
+    )
+    .unwrap();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
     writeln!(writer, "{}", &tail[split..]).unwrap();
     let actual = passive_collect(&mut ignore, passive_budget(5, 1, 1));
     assert_eq!(actual.len(), 1);
-    assert_eq!(passive_json(actual.into_iter().next().unwrap()).0["content"]["text"], "prefix");
+    assert_eq!(
+        passive_json(actual.into_iter().next().unwrap()).0["content"]["text"],
+        "prefix"
+    );
     ignore.finish().unwrap();
     loop {
         if let Err(error) = parse.next_batch(passive_budget(5, 1, 1)) {
@@ -1606,7 +1758,10 @@ fn passive_cursor_append_does_not_complete_a_record_beyond_the_fence() {
     let mut reopened = passive_open(&path, 4096);
     let actual = passive_collect(&mut reopened, passive_budget(11, 1, 1));
     assert_eq!(actual.len(), 2);
-    assert_eq!(passive_json(actual.into_iter().nth(1).unwrap()).0["content"]["text"], "tail");
+    assert_eq!(
+        passive_json(actual.into_iter().nth(1).unwrap()).0["content"]["text"],
+        "tail"
+    );
 }
 
 #[test]
@@ -1622,18 +1777,29 @@ fn passive_cursor_rejects_truncate_and_same_length_rewrite() {
             file.set_len(1).unwrap();
         } else {
             file.write_all(b"[]\n").unwrap();
-            file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(42)).unwrap();
+            file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(42))
+                .unwrap();
         }
-        assert_eq!(cursor.next_batch(passive_budget(100, 1, 1)).unwrap_err(), super::PassiveReplayError::SnapshotChanged);
+        assert_eq!(
+            cursor.next_batch(passive_budget(100, 1, 1)).unwrap_err(),
+            super::PassiveReplayError::SnapshotChanged
+        );
         assert_eq!(cursor.phase(), super::PassiveReplayPhase::Failed);
-        assert_eq!(cursor.next_batch(passive_budget(1, 1, 1)).unwrap_err(), super::PassiveReplayError::SnapshotChanged);
+        assert_eq!(
+            cursor.next_batch(passive_budget(1, 1, 1)).unwrap_err(),
+            super::PassiveReplayError::SnapshotChanged
+        );
     }
     std::fs::write(&path, "").unwrap();
     let mut cursor = passive_open(&path, 4096);
     assert!(passive_collect(&mut cursor, passive_budget(1, 1, 1)).is_empty());
     let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(42)).unwrap();
-    assert_eq!(cursor.finish(), Err(super::PassiveReplayError::SnapshotChanged));
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(42))
+        .unwrap();
+    assert_eq!(
+        cursor.finish(),
+        Err(super::PassiveReplayError::SnapshotChanged)
+    );
 }
 
 #[test]
@@ -1641,12 +1807,22 @@ fn passive_cursor_growth_cannot_hide_a_rewritten_removed_prefix() {
     use std::io::{Seek, Write};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let user = acp_envelope(r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"gone"}}"#);
-    let rewind = xai_envelope(r#"{"sessionUpdate":"rewind_marker","target_prompt_index":0,"created_at":"2024-01-01"}"#);
+    let user = acp_envelope(
+        r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"gone"}}"#,
+    );
+    let rewind = xai_envelope(
+        r#"{"sessionUpdate":"rewind_marker","target_prompt_index":0,"created_at":"2024-01-01"}"#,
+    );
     std::fs::write(&path, format!("{user}\n{rewind}\n")).unwrap();
     let mut cursor = passive_open(&path, 4096);
     while cursor.phase() == super::PassiveReplayPhase::Planning {
-        assert!(cursor.next_batch(passive_budget(17, 1, 1)).unwrap().updates.is_empty());
+        assert!(
+            cursor
+                .next_batch(passive_budget(17, 1, 1))
+                .unwrap()
+                .updates
+                .is_empty()
+        );
     }
     let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
     let offset = user.find("gone").unwrap();
@@ -1673,21 +1849,33 @@ fn passive_cursor_growth_cannot_hide_a_rewritten_retained_record() {
     use std::io::{Seek, Write};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let line = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"safe"}}"#);
+    let line = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"safe"}}"#,
+    );
     std::fs::write(&path, format!("{line}\n")).unwrap();
     let mut cursor = passive_open(&path, 4096);
     while cursor.phase() == super::PassiveReplayPhase::Planning {
-        assert!(cursor.next_batch(passive_budget(7, 1, 1)).unwrap().updates.is_empty());
+        assert!(
+            cursor
+                .next_batch(passive_budget(7, 1, 1))
+                .unwrap()
+                .updates
+                .is_empty()
+        );
     }
     let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-    file.seek(std::io::SeekFrom::Start(line.find("safe").unwrap() as u64)).unwrap();
+    file.seek(std::io::SeekFrom::Start(line.find("safe").unwrap() as u64))
+        .unwrap();
     file.write_all(b"evil").unwrap();
     file.seek(std::io::SeekFrom::End(0)).unwrap();
     file.write_all(b"{}\n").unwrap();
     loop {
         match cursor.next_batch(passive_budget(7, 1, 1)) {
             Ok(batch) => {
-                assert!(batch.updates.is_empty(), "rewritten payload must not escape");
+                assert!(
+                    batch.updates.is_empty(),
+                    "rewritten payload must not escape"
+                );
                 assert_ne!(batch.phase, super::PassiveReplayPhase::Finished);
             }
             Err(error) => {
@@ -1703,10 +1891,17 @@ fn passive_cursor_open_error_keeps_only_io_kind() {
     let dir = tempfile::tempdir().unwrap();
     let result = super::PassiveReplayCursor::open(
         &dir.path().join("private-missing-transcript"),
-        super::PassiveReplayLimits { max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap() },
-        super::ReplayCorruptionPolicy::SkipMalformed, super::ReplayFinalRecordPolicy::Parse, None,
+        super::PassiveReplayLimits {
+            max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap(),
+        },
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
     );
-    assert!(matches!(result, Err(super::PassiveReplayError::Io(std::io::ErrorKind::NotFound))));
+    assert!(matches!(
+        result,
+        Err(super::PassiveReplayError::Io(std::io::ErrorKind::NotFound))
+    ));
     let error = super::PassiveReplayError::Io(std::io::ErrorKind::NotFound);
     assert_eq!(format!("{error:?}"), "Io(NotFound)");
 }
@@ -1715,16 +1910,40 @@ fn passive_cursor_open_error_keeps_only_io_kind() {
 fn passive_cursor_explicit_corruption_and_unterminated_record_policies() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let line = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"final"}}"#);
+    let line = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"final"}}"#,
+    );
     std::fs::write(&path, &line).unwrap();
-    let limits = super::PassiveReplayLimits { max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap() };
+    let limits = super::PassiveReplayLimits {
+        max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap(),
+    };
     let mut parse = passive_open(&path, 4096);
-    assert_eq!(passive_collect(&mut parse, passive_budget(13, 2, 1)).len(), 1);
-    let mut ignore = super::PassiveReplayCursor::open(&path, limits, super::ReplayCorruptionPolicy::RejectMalformed, super::ReplayFinalRecordPolicy::IgnoreUnterminated, None).unwrap();
+    assert_eq!(
+        passive_collect(&mut parse, passive_budget(13, 2, 1)).len(),
+        1
+    );
+    let mut ignore = super::PassiveReplayCursor::open(
+        &path,
+        limits,
+        super::ReplayCorruptionPolicy::RejectMalformed,
+        super::ReplayFinalRecordPolicy::IgnoreUnterminated,
+        None,
+    )
+    .unwrap();
     assert!(passive_collect(&mut ignore, passive_budget(13, 2, 1)).is_empty());
     std::fs::write(&path, "private malformed payload\n").unwrap();
-    let mut reject = super::PassiveReplayCursor::open(&path, limits, super::ReplayCorruptionPolicy::RejectMalformed, super::ReplayFinalRecordPolicy::Parse, None).unwrap();
-    assert_eq!(reject.next_batch(passive_budget(100, 1, 1)).unwrap_err(), super::PassiveReplayError::MalformedRecord);
+    let mut reject = super::PassiveReplayCursor::open(
+        &path,
+        limits,
+        super::ReplayCorruptionPolicy::RejectMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        reject.next_batch(passive_budget(100, 1, 1)).unwrap_err(),
+        super::PassiveReplayError::MalformedRecord
+    );
     let mut skip = passive_open(&path, 4096);
     assert!(passive_collect(&mut skip, passive_budget(13, 2, 1)).is_empty());
 }
@@ -1733,20 +1952,56 @@ fn passive_cursor_explicit_corruption_and_unterminated_record_policies() {
 fn passive_cursor_start_cursor_catalog_inclusive_and_unbounded_tail_fallback() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(UPDATES_FILE);
-    let old = acp_envelope_with_meta(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old"}}"#, r#"{"eventId":"one"}"#);
-    let catalog = acp_envelope_with_meta(r#"{"sessionUpdate":"available_commands_update","availableCommands":[]}"#, r#"{"eventId":"catalog"}"#);
-    let tail = acp_envelope_with_meta(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}"#, r#"{"eventId":"tail"}"#);
-    let limits = super::PassiveReplayLimits { max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap() };
+    let old = acp_envelope_with_meta(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old"}}"#,
+        r#"{"eventId":"one"}"#,
+    );
+    let catalog = acp_envelope_with_meta(
+        r#"{"sessionUpdate":"available_commands_update","availableCommands":[]}"#,
+        r#"{"eventId":"catalog"}"#,
+    );
+    let tail = acp_envelope_with_meta(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}"#,
+        r#"{"eventId":"tail"}"#,
+    );
+    let limits = super::PassiveReplayLimits {
+        max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap(),
+    };
     std::fs::write(&path, format!("{old}\n{catalog}\n{tail}\n")).unwrap();
-    let mut cursor = super::PassiveReplayCursor::open(&path, limits, super::ReplayCorruptionPolicy::SkipMalformed, super::ReplayFinalRecordPolicy::Parse, Some("catalog".into())).unwrap();
+    let mut cursor = super::PassiveReplayCursor::open(
+        &path,
+        limits,
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        Some("catalog".into()),
+    )
+    .unwrap();
     let actual = passive_collect(&mut cursor, passive_budget(5, 1, 1));
     assert_eq!(actual.len(), 1);
-    assert_eq!(passive_json(actual.into_iter().next().unwrap()).0["content"]["text"], "tail");
-    assert_eq!(cursor.finish().unwrap().start, super::ReplayStart::AfterCursor);
-    let tail = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}"#);
+    assert_eq!(
+        passive_json(actual.into_iter().next().unwrap()).0["content"]["text"],
+        "tail"
+    );
+    assert_eq!(
+        cursor.finish().unwrap().start,
+        super::ReplayStart::AfterCursor
+    );
+    let tail = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"tail"}}"#,
+    );
     std::fs::write(&path, format!("{old}\n{catalog}\n{tail}\n")).unwrap();
-    let mut cursor = super::PassiveReplayCursor::open(&path, limits, super::ReplayCorruptionPolicy::SkipMalformed, super::ReplayFinalRecordPolicy::Parse, Some("catalog".into())).unwrap();
-    assert_eq!(passive_collect(&mut cursor, passive_budget(5, 1, 1)).len(), 2);
+    let mut cursor = super::PassiveReplayCursor::open(
+        &path,
+        limits,
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        Some("catalog".into()),
+    )
+    .unwrap();
+    assert_eq!(
+        passive_collect(&mut cursor, passive_budget(5, 1, 1)).len(),
+        2
+    );
     assert_eq!(cursor.finish().unwrap().start, super::ReplayStart::Full);
 }
 
@@ -1754,46 +2009,100 @@ fn passive_cursor_start_cursor_catalog_inclusive_and_unbounded_tail_fallback() {
 fn passive_cursor_public_lookup_hinted_relocated_missing_and_ambiguous() {
     let home = tempfile::tempdir().unwrap();
     let cwd = std::path::Path::new("/tmp/passive-cursor");
-    let dir = home.path().join("sessions")
+    let dir = home
+        .path()
+        .join("sessions")
         .join(xai_grok_config::encode_cwd_dirname(&cwd.to_string_lossy()))
         .join("child");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(SUMMARY_FILE), "{}").unwrap();
-    let line = acp_envelope(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"stored"}}"#);
+    let line = acp_envelope(
+        r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"stored"}}"#,
+    );
     std::fs::write(dir.join(UPDATES_FILE), format!("{line}\n")).unwrap();
-    let limits = super::PassiveReplayLimits { max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap() };
-    let hint = ReplayPathHint { parent_cwd: Some(cwd), child_cwd: None, fallback: ReplayLookupFallback::HintedOnly };
+    let limits = super::PassiveReplayLimits {
+        max_record_bytes: std::num::NonZeroUsize::new(4096).unwrap(),
+    };
+    let hint = ReplayPathHint {
+        parent_cwd: Some(cwd),
+        child_cwd: None,
+        fallback: ReplayLookupFallback::HintedOnly,
+    };
     let mut cursor = super::PassiveReplayCursor::open_at(
-        "child", home.path(), hint, limits, super::ReplayCorruptionPolicy::SkipMalformed,
-        super::ReplayFinalRecordPolicy::Parse, None,
-    ).unwrap();
-    assert_eq!(passive_collect(&mut cursor, passive_budget(11, 1, 1)).len(), 1);
-    assert_eq!(std::fs::read_to_string(dir.join(UPDATES_FILE)).unwrap(), format!("{line}\n"));
-    assert!(super::PassiveReplayCursor::open_at(
-        "../child", home.path(), hint, limits, super::ReplayCorruptionPolicy::SkipMalformed,
-        super::ReplayFinalRecordPolicy::Parse, None,
-    ).is_err());
+        "child",
+        home.path(),
+        hint,
+        limits,
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        passive_collect(&mut cursor, passive_budget(11, 1, 1)).len(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join(UPDATES_FILE)).unwrap(),
+        format!("{line}\n")
+    );
+    assert!(
+        super::PassiveReplayCursor::open_at(
+            "../child",
+            home.path(),
+            hint,
+            limits,
+            super::ReplayCorruptionPolicy::SkipMalformed,
+            super::ReplayFinalRecordPolicy::Parse,
+            None,
+        )
+        .is_err()
+    );
     let result = super::PassiveReplayCursor::open_at(
-        "child", home.path(), ReplayPathHint::default(), limits,
-        super::ReplayCorruptionPolicy::SkipMalformed, super::ReplayFinalRecordPolicy::Parse, None,
+        "child",
+        home.path(),
+        ReplayPathHint::default(),
+        limits,
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
     );
     let mut relocated = result.unwrap();
     let actual = passive_collect(&mut relocated, passive_budget(11, 1, 1));
     assert_eq!(actual.len(), 1);
-    assert_eq!(passive_json(actual.into_iter().next().unwrap()).0["content"]["text"], "stored");
+    assert_eq!(
+        passive_json(actual.into_iter().next().unwrap()).0["content"]["text"],
+        "stored"
+    );
     relocated.finish().unwrap();
     let result = super::PassiveReplayCursor::open_at(
-        "missing", home.path(), ReplayPathHint::default(), limits,
-        super::ReplayCorruptionPolicy::SkipMalformed, super::ReplayFinalRecordPolicy::Parse, None,
+        "missing",
+        home.path(),
+        ReplayPathHint::default(),
+        limits,
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
     );
-    assert!(matches!(result, Err(super::PassiveReplayError::MissingOrAmbiguous)));
+    assert!(matches!(
+        result,
+        Err(super::PassiveReplayError::MissingOrAmbiguous)
+    ));
     let duplicate = home.path().join("sessions").join("other-cwd").join("child");
     std::fs::create_dir_all(&duplicate).unwrap();
     std::fs::write(duplicate.join(SUMMARY_FILE), "{}").unwrap();
     std::fs::write(duplicate.join(UPDATES_FILE), format!("{line}\n")).unwrap();
     let result = super::PassiveReplayCursor::open_at(
-        "child", home.path(), ReplayPathHint::default(), limits,
-        super::ReplayCorruptionPolicy::SkipMalformed, super::ReplayFinalRecordPolicy::Parse, None,
+        "child",
+        home.path(),
+        ReplayPathHint::default(),
+        limits,
+        super::ReplayCorruptionPolicy::SkipMalformed,
+        super::ReplayFinalRecordPolicy::Parse,
+        None,
     );
-    assert!(matches!(result, Err(super::PassiveReplayError::MissingOrAmbiguous)));
+    assert!(matches!(
+        result,
+        Err(super::PassiveReplayError::MissingOrAmbiguous)
+    ));
 }

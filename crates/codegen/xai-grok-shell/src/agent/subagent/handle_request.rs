@@ -267,24 +267,47 @@ enum WakePersistenceContext {
     },
 }
 impl WakePersistenceContext {
-    fn from_wake(current: crate::session::persistence::WakeSummaryState, origin: &grok_build::task::coordinator::WakeOrigin) -> std::io::Result<Self> {
+    fn from_wake(
+        current: crate::session::persistence::WakeSummaryState,
+        origin: &grok_build::task::coordinator::WakeOrigin,
+    ) -> std::io::Result<Self> {
         match &origin.mode {
             NativeWakeMode::Admit => Ok(Self::Wake { prior: current }),
-            NativeWakeMode::Adopt { custody, publication, .. } => {
-                let id = crate::session::delivery_receiver::parent_message_delivery_id(&origin.delivery.message().message_id);
-                let checkpoint = super::native_recovery::publication_checkpoint(&current, &id, custody)?;
+            NativeWakeMode::Adopt {
+                custody,
+                publication,
+                ..
+            } => {
+                let id = crate::session::delivery_receiver::parent_message_delivery_id(
+                    &origin.delivery.message().message_id,
+                );
+                let checkpoint =
+                    super::native_recovery::publication_checkpoint(&current, &id, custody)?;
                 match publication {
-                    RecoveryPublication::Unpublished { .. } => Ok(Self::Wake { prior: checkpoint.prior_state(&current)? }),
-                    RecoveryPublication::Published => Ok(Self::Published { launch: Box::new(custody.launch.clone()), checkpoint }),
+                    RecoveryPublication::Unpublished { .. } => Ok(Self::Wake {
+                        prior: checkpoint.prior_state(&current)?,
+                    }),
+                    RecoveryPublication::Published => Ok(Self::Published {
+                        launch: Box::new(custody.launch.clone()),
+                        checkpoint,
+                    }),
                 }
             }
         }
     }
 
-    fn checkpoint(&self) -> std::io::Result<Box<crate::session::delivery_receiver::ParentMessagePublication>> {
+    fn checkpoint(
+        &self,
+    ) -> std::io::Result<Box<crate::session::delivery_receiver::ParentMessagePublication>> {
         match self {
-            Self::Ordinary => Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "ordinary input has no native publication checkpoint")),
-            Self::Wake { prior } => crate::session::delivery_receiver::ParentMessagePublication::capture(prior).map(Box::new),
+            Self::Ordinary => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "ordinary input has no native publication checkpoint",
+            )),
+            Self::Wake { prior } => {
+                crate::session::delivery_receiver::ParentMessagePublication::capture(prior)
+                    .map(Box::new)
+            }
             Self::Published { checkpoint, .. } => Ok(checkpoint.clone()),
         }
     }
@@ -314,7 +337,11 @@ impl WakePersistenceContext {
             })
             .is_err()
         {
-            tracing::warn!(subagent_id, turn_number, "wake abort recovery unconfirmed: persistence owner closed");
+            tracing::warn!(
+                subagent_id,
+                turn_number,
+                "wake abort recovery unconfirmed: persistence owner closed"
+            );
             return;
         }
         let response = async move {
@@ -454,14 +481,32 @@ pub(crate) async fn run_shell_child(
         );
     }
     let resume_source = match wake_origin.as_ref().map(|origin| &origin.mode) {
-        Some(NativeWakeMode::Adopt { custody, publication: RecoveryPublication::Published, .. }) => {
-            match super::native_recovery::published_resume_source(&custody.launch, &request.id, &request.prompt) {
+        Some(NativeWakeMode::Adopt {
+            custody,
+            publication: RecoveryPublication::Published,
+            ..
+        }) => {
+            match super::native_recovery::published_resume_source(
+                &custody.launch,
+                &request.id,
+                &request.prompt,
+            ) {
                 Ok(source) => Some(source),
-                Err(error) => return child_run_output(failure_result(&request, &error.to_string()), completion_data, None),
+                Err(error) => {
+                    return child_run_output(
+                        failure_result(&request, &error.to_string()),
+                        completion_data,
+                        None,
+                    );
+                }
             }
         }
         Some(NativeWakeMode::Admit)
-        | Some(NativeWakeMode::Adopt { publication: RecoveryPublication::Unpublished { .. }, .. }) | None => {
+        | Some(NativeWakeMode::Adopt {
+            publication: RecoveryPublication::Unpublished { .. },
+            ..
+        })
+        | None => {
             if is_wake {
                 #[cfg(test)]
                 {
@@ -480,7 +525,11 @@ pub(crate) async fn run_shell_child(
                             )
                         })
                         .or_else(|| {
-                            durable_resume_source_for(&request.id, &ctx.parent_session_id, &ctx.parent_cwd)
+                            durable_resume_source_for(
+                                &request.id,
+                                &ctx.parent_session_id,
+                                &ctx.parent_cwd,
+                            )
                         })
                 }
                 #[cfg(not(test))]
@@ -508,7 +557,11 @@ pub(crate) async fn run_shell_child(
                     }
                     SubagentResumeLookup::Completed(info) => Some(ResumeSourceData::from(*info)),
                     SubagentResumeLookup::Missing => {
-                        match durable_resume_source(resume_id, &ctx.parent_session_id, &ctx.parent_cwd) {
+                        match durable_resume_source(
+                            resume_id,
+                            &ctx.parent_session_id,
+                            &ctx.parent_cwd,
+                        ) {
                             Ok(info) => Some(info),
                             Err(error) => {
                                 return child_run_output(
@@ -1031,9 +1084,14 @@ pub(crate) async fn run_shell_child(
         }
     };
     context_bootstrap_span.close();
-    if let Err(error) = inherit_context_policy(&ctx, resume_source.as_ref(), &child_session_info).await {
+    if let Err(error) =
+        inherit_context_policy(&ctx, resume_source.as_ref(), &child_session_info).await
+    {
         return child_run_output(
-            failure_result(&request, &format!("Could not inherit context policy: {error}")),
+            failure_result(
+                &request,
+                &format!("Could not inherit context policy: {error}"),
+            ),
             completion_data,
             None,
         );
@@ -1067,9 +1125,14 @@ pub(crate) async fn run_shell_child(
             || saved.capability_mode != effective_runtime.capability_mode
             || saved.isolation != Some(effective_runtime.isolation)
             || custody.launch.publication_agent_name != definition.name
-            || custody.launch.publication_reasoning_effort != effective_sampling_config.reasoning_effort
+            || custody.launch.publication_reasoning_effort
+                != effective_sampling_config.reasoning_effort
         {
-            return child_run_output(failure_result(&request, "original native launch capabilities unavailable"), completion_data, None);
+            return child_run_output(
+                failure_result(&request, "original native launch capabilities unavailable"),
+                completion_data,
+                None,
+            );
         }
     }
     if let Some(custody) = &recovered_custody {
@@ -1083,7 +1146,11 @@ pub(crate) async fn run_shell_child(
         subagent_type: request.subagent_type.clone(),
         description: request.description.clone(),
         prompt: request.prompt.clone(),
-        started_at: recovered_custody.as_ref().map_or_else(chrono::Utc::now, |custody| custody.launch.publication_started_at),
+        started_at: recovered_custody
+            .as_ref()
+            .map_or_else(chrono::Utc::now, |custody| {
+                custody.launch.publication_started_at
+            }),
         completed_at: None,
         duration_ms: None,
         tool_calls: None,
@@ -1166,9 +1233,13 @@ pub(crate) async fn run_shell_child(
         &ctx,
         completion_data.clone(),
     );
-    if matches!(wake_origin.as_ref().map(|origin| &origin.mode),
-        Some(NativeWakeMode::Adopt { publication: RecoveryPublication::Published, .. }))
-    {
+    if matches!(
+        wake_origin.as_ref().map(|origin| &origin.mode),
+        Some(NativeWakeMode::Adopt {
+            publication: RecoveryPublication::Published,
+            ..
+        })
+    ) {
         start_artifacts.restore_existing_start();
     }
     start_artifacts.publish_at(PublicationBoundary::Prepared);
@@ -1229,10 +1300,25 @@ pub(crate) async fn run_shell_child(
     let wake_persistence = if is_wake {
         match session::persistence::read_wake_summary_state_from_dir(persistence_dir.clone()).await
         {
-            Ok(current) => match wake_origin.as_ref().map(|origin| WakePersistenceContext::from_wake(current, origin)) {
+            Ok(current) => match wake_origin
+                .as_ref()
+                .map(|origin| WakePersistenceContext::from_wake(current, origin))
+            {
                 Some(Ok(context)) => context,
-                Some(Err(error)) => return child_run_output(failure_result(&request, &error.to_string()), completion_data, None),
-                None => return child_run_output(failure_result(&request, "native wake origin unavailable"), completion_data, None),
+                Some(Err(error)) => {
+                    return child_run_output(
+                        failure_result(&request, &error.to_string()),
+                        completion_data,
+                        None,
+                    );
+                }
+                None => {
+                    return child_run_output(
+                        failure_result(&request, "native wake origin unavailable"),
+                        completion_data,
+                        None,
+                    );
+                }
             },
             Err(error) => {
                 let msg = format!("Persistence error: {error}");
@@ -1254,12 +1340,21 @@ pub(crate) async fn run_shell_child(
     if recovered_custody.as_ref().is_some_and(|custody| {
         let prior_matches = match &wake_persistence {
             WakePersistenceContext::Ordinary => false,
-            WakePersistenceContext::Wake { prior } => prior.attempt_id.as_deref() == Some(custody.launch.previous_completion.attempt_id.as_str()),
-            WakePersistenceContext::Published { launch, .. } => launch.attempt_id == custody.launch.attempt_id,
+            WakePersistenceContext::Wake { prior } => {
+                prior.attempt_id.as_deref()
+                    == Some(custody.launch.previous_completion.attempt_id.as_str())
+            }
+            WakePersistenceContext::Published { launch, .. } => {
+                launch.attempt_id == custody.launch.attempt_id
+            }
         };
         custody.launch.turn_number != turn_number || !prior_matches
     }) {
-        return child_run_output(failure_result(&request, "original wake publication context changed"), completion_data, None);
+        return child_run_output(
+            failure_result(&request, "original wake publication context changed"),
+            completion_data,
+            None,
+        );
     }
     completion_data.turn_number = Some(turn_number);
     let persistence = match session::persistence::new_with_explicit_dir(
@@ -1270,10 +1365,15 @@ pub(crate) async fn run_shell_child(
         effective_sampling_config.model.clone(),
         if is_wake {
             #[cfg(test)]
-            let fault = ctx.run_shell_child_harness.as_ref().and_then(|harness| harness.parent_input_fault.clone());
+            let fault = ctx
+                .run_shell_child_harness
+                .as_ref()
+                .and_then(|harness| harness.parent_input_fault.clone());
             #[cfg(test)]
             let open = match fault {
-                Some(fault) => crate::session::persistence::ExplicitSessionOpen::WakeWithFault(fault),
+                Some(fault) => {
+                    crate::session::persistence::ExplicitSessionOpen::WakeWithFault(fault)
+                }
                 None => crate::session::persistence::ExplicitSessionOpen::Wake,
             };
             #[cfg(not(test))]
@@ -1494,8 +1594,18 @@ pub(crate) async fn run_shell_child(
         &ctx.parent_mcp_configs,
         &ctx.parent_cwd,
     );
-    if recovered_custody.as_ref().is_some_and(|custody| custody.launch.owned_mcp_servers != super::native_recovery::owned_mcp_references(&agent_mcp_servers)) {
-        return child_run_output(failure_result(&request, "original owned MCP capability references unavailable"), completion_data, None);
+    if recovered_custody.as_ref().is_some_and(|custody| {
+        custody.launch.owned_mcp_servers
+            != super::native_recovery::owned_mcp_references(&agent_mcp_servers)
+    }) {
+        return child_run_output(
+            failure_result(
+                &request,
+                "original owned MCP capability references unavailable",
+            ),
+            completion_data,
+            None,
+        );
     }
     let mut parent_mcp_pool =
         resolve_inherited_mcp_pool(ctx.parent_mcp_pool.take(), &definition.mcp_inheritance);
@@ -1528,7 +1638,16 @@ pub(crate) async fn run_shell_child(
             };
             match recipe.binding() {
                 Ok(binding) if binding == custody.launch.management_recipe_binding => Some(recipe),
-                Ok(_) | Err(_) => return child_run_output(failure_result(&request, "original management recipe capability unavailable"), completion_data, None),
+                Ok(_) | Err(_) => {
+                    return child_run_output(
+                        failure_result(
+                            &request,
+                            "original management recipe capability unavailable",
+                        ),
+                        completion_data,
+                        None,
+                    );
+                }
             }
         }
         (None, recipe) => recipe,
@@ -1539,11 +1658,30 @@ pub(crate) async fn run_shell_child(
         effective_runtime.persona_instructions = recipe.persona_instructions.clone();
     }
     if is_wake {
-        let available = parent_mcp_pool.as_ref().map(|pool| pool.server_names().map(str::to_owned).collect::<std::collections::BTreeSet<_>>()).unwrap_or_default();
-        if prior_management_recipe.as_ref().is_some_and(|recipe| available != recipe.inherited_mcp_servers.iter().cloned().collect())
-            || recovered_custody.as_ref().is_some_and(|custody| available != custody.launch.inherited_mcp_servers.iter().cloned().collect())
-        {
-            return child_run_output(failure_result(&request, "original inherited MCP capability unavailable"), completion_data, None);
+        let available = parent_mcp_pool
+            .as_ref()
+            .map(|pool| {
+                pool.server_names()
+                    .map(str::to_owned)
+                    .collect::<std::collections::BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        if prior_management_recipe.as_ref().is_some_and(|recipe| {
+            available != recipe.inherited_mcp_servers.iter().cloned().collect()
+        }) || recovered_custody.as_ref().is_some_and(|custody| {
+            available
+                != custody
+                    .launch
+                    .inherited_mcp_servers
+                    .iter()
+                    .cloned()
+                    .collect()
+        }) {
+            return child_run_output(
+                failure_result(&request, "original inherited MCP capability unavailable"),
+                completion_data,
+                None,
+            );
         }
     }
     let mcp_inherited_count = parent_mcp_pool
@@ -1558,7 +1696,10 @@ pub(crate) async fn run_shell_child(
         );
     }
     let inherit_skills = definition.inherit_skills;
-    let definition_background = recovered_custody.as_ref().map_or_else(|| definition.background.unwrap_or(false), |custody| custody.launch.publication_background);
+    let definition_background = recovered_custody.as_ref().map_or_else(
+        || definition.background.unwrap_or(false),
+        |custody| custody.launch.publication_background,
+    );
     if inherit_skills && ctx.parent_skills.is_none() {
         let parent_cwd_str = ctx.parent_cwd.to_string_lossy().to_string();
         ctx.parent_skills = Some(
@@ -1663,30 +1804,62 @@ pub(crate) async fn run_shell_child(
         Some(origin) => {
             let artifact_admission = match &origin.mode {
                 NativeWakeMode::Admit => super::native_recovery::ArtifactAdmission::New,
-                NativeWakeMode::Adopt { custody, .. } => super::native_recovery::ArtifactAdmission::Recovery(&custody.launch.artifacts),
+                NativeWakeMode::Adopt { custody, .. } => {
+                    super::native_recovery::ArtifactAdmission::Recovery(&custody.launch.artifacts)
+                }
             };
             let Some(artifacts) = super::native_recovery::InitialArtifactGrant::bind(
-                ctx.gcs_bucket_url.as_deref(), ctx.gcs_upload_method.as_ref(), Some(&ctx.auth_manager),
-                super::attempt_runner::subagent_trace_prefix(&request.id, turn_number), artifact_admission,
+                ctx.gcs_bucket_url.as_deref(),
+                ctx.gcs_upload_method.as_ref(),
+                Some(&ctx.auth_manager),
+                super::attempt_runner::subagent_trace_prefix(&request.id, turn_number),
+                artifact_admission,
             ) else {
-                return child_run_output(failure_result(&request, "original artifact capability unavailable; observe the same recovery reference"), completion_data, None);
+                return child_run_output(
+                    failure_result(
+                        &request,
+                        "original artifact capability unavailable; observe the same recovery reference",
+                    ),
+                    completion_data,
+                    None,
+                );
             };
             let publication = match wake_persistence.checkpoint() {
                 Ok(publication) => publication,
-                Err(error) => return child_run_output(failure_result(&request, &error.to_string()), completion_data, None),
+                Err(error) => {
+                    return child_run_output(
+                        failure_result(&request, &error.to_string()),
+                        completion_data,
+                        None,
+                    );
+                }
             };
             let custody = match origin.mode {
                 NativeWakeMode::Adopt { custody, .. } => custody,
                 NativeWakeMode::Admit => {
                     let Some(receiver) = origin.delivery.receiver().cloned() else {
-                        return child_run_output(failure_result(&request, "wake receiver identity unavailable"), completion_data, None);
+                        return child_run_output(
+                            failure_result(&request, "wake receiver identity unavailable"),
+                            completion_data,
+                            None,
+                        );
                     };
                     let Some(original_address) = agent_address.as_ref() else {
-                        return child_run_output(failure_result(&request, "wake publication address unavailable"), completion_data, None);
+                        return child_run_output(
+                            failure_result(&request, "wake publication address unavailable"),
+                            completion_data,
+                            None,
+                        );
                     };
                     let management_recipe_binding = match recipe.binding() {
                         Ok(binding) => binding,
-                        Err(_) => return child_run_output(failure_result(&request, "management recipe binding unavailable"), completion_data, None),
+                        Err(_) => {
+                            return child_run_output(
+                                failure_result(&request, "management recipe binding unavailable"),
+                                completion_data,
+                                None,
+                            );
+                        }
                     };
                     let mut runtime_overrides = request.runtime_overrides.clone();
                     runtime_overrides.model = Some(tracker_model_id.clone());
@@ -1695,25 +1868,45 @@ pub(crate) async fn run_shell_child(
                     runtime_overrides.capability_mode = effective_runtime.capability_mode;
                     runtime_overrides.isolation = Some(effective_runtime.isolation);
                     #[cfg(test)]
-                    let initial_traceparent = ctx.run_shell_child_harness.as_ref()
-                        .and_then(|harness| harness.initial_traceparent.clone()).or_else(xai_grok_otel::current_traceparent);
+                    let initial_traceparent = ctx
+                        .run_shell_child_harness
+                        .as_ref()
+                        .and_then(|harness| harness.initial_traceparent.clone())
+                        .or_else(xai_grok_otel::current_traceparent);
                     #[cfg(not(test))]
                     let initial_traceparent = xai_grok_otel::current_traceparent();
                     Box::new(NativeWakeCustody {
-                        receiver, operation: origin.delivery.operation(), route: origin.delivery.route(),
+                        receiver,
+                        operation: origin.delivery.operation(),
+                        route: origin.delivery.route(),
                         launch: NativeWakeLaunch {
-                            parent_session_id: request.parent_session_id.clone(), description: request.description.clone(),
-                            subagent_type: request.subagent_type.clone(), cwd: child_session_info.cwd.clone(), runtime_overrides,
-                            surface_completion: request.surface_completion, tool_call_id: request.tool_call_id.clone(),
-                            attempt_id: attempt_identity.to_string(), turn_number, publication_started_at,
+                            parent_session_id: request.parent_session_id.clone(),
+                            description: request.description.clone(),
+                            subagent_type: request.subagent_type.clone(),
+                            cwd: child_session_info.cwd.clone(),
+                            runtime_overrides,
+                            surface_completion: request.surface_completion,
+                            tool_call_id: request.tool_call_id.clone(),
+                            attempt_id: attempt_identity.to_string(),
+                            turn_number,
+                            publication_started_at,
                             previous_completion: origin.previous_completion,
                             agent_address: original_address.to_string(),
-                            spawner_session_id: spawner_session_id.clone(), traceparent: initial_traceparent, artifacts: artifacts.reference().clone(),
-                            parent_prompt_index: ctx.active_message_parent_prompt_index.load(std::sync::atomic::Ordering::Acquire),
-                            publication_agent_name: wake_agent_name.clone(), publication_reasoning_effort: wake_reasoning_effort,
-                            publication_role_name: effective_runtime.role_name.clone(), publication_background: definition_background,
+                            spawner_session_id: spawner_session_id.clone(),
+                            traceparent: initial_traceparent,
+                            artifacts: artifacts.reference().clone(),
+                            parent_prompt_index: ctx
+                                .active_message_parent_prompt_index
+                                .load(std::sync::atomic::Ordering::Acquire),
+                            publication_agent_name: wake_agent_name.clone(),
+                            publication_reasoning_effort: wake_reasoning_effort,
+                            publication_role_name: effective_runtime.role_name.clone(),
+                            publication_background: definition_background,
                             management_recipe_binding,
-                            inherited_mcp_servers: recipe.inherited_mcp_servers.clone(), owned_mcp_servers: super::native_recovery::owned_mcp_references(&agent_mcp_servers),
+                            inherited_mcp_servers: recipe.inherited_mcp_servers.clone(),
+                            owned_mcp_servers: super::native_recovery::owned_mcp_references(
+                                &agent_mcp_servers,
+                            ),
                             tool_overrides: ctx.inherited_tool_overrides.clone(),
                         },
                     })
@@ -1724,8 +1917,15 @@ pub(crate) async fn run_shell_child(
                 std::sync::Arc::new(tokio::sync::Mutex::new(custody.launch.parent_prompt_index)),
             );
             InitialChildInput::ParentMessage {
-                delivery: origin.delivery, custody, recipe, publication, artifacts,
-                receiver: ActiveMessageReceiver { session_id: request.id.clone(), generation: target_generation },
+                delivery: origin.delivery,
+                custody,
+                recipe,
+                publication,
+                artifacts,
+                receiver: ActiveMessageReceiver {
+                    session_id: request.id.clone(),
+                    generation: target_generation,
+                },
                 parent_telemetry_ctx,
             }
         }
@@ -1996,14 +2196,23 @@ pub(crate) async fn run_shell_child(
     let unpromoted_disposition = readiness.unpromoted_disposition();
     let mut completed_before_ack = None;
     let mut restore_wake_after_teardown = false;
-    let mut parent_publication_contract = crate::session::receiver_execution::ParentMessagePublicationContract::Admission;
+    let mut parent_publication_contract =
+        crate::session::receiver_execution::ParentMessagePublicationContract::Admission;
     let promoted = match readiness {
         InitialChildPromptReadiness::Admitted(publication) => {
             let (release, initial_parent_reservation) = match publication {
-                super::attempt_runner::InitialChildPublication::Prompt(release) => (crate::session::message_delivery::InitialChildStartGate::Prompt(release), None),
+                super::attempt_runner::InitialChildPublication::Prompt(release) => (
+                    crate::session::message_delivery::InitialChildStartGate::Prompt(release),
+                    None,
+                ),
                 super::attempt_runner::InitialChildPublication::ParentMessage(ready) => {
                     parent_publication_contract = ready.reservation.publication_contract();
-                    (crate::session::message_delivery::InitialChildStartGate::ParentMessage(ready.release), Some(ready.reservation))
+                    (
+                        crate::session::message_delivery::InitialChildStartGate::ParentMessage(
+                            ready.release,
+                        ),
+                        Some(ready.reservation),
+                    )
                 }
             };
             let reconfirm_reservation = initial_parent_reservation.clone();
@@ -2098,16 +2307,27 @@ pub(crate) async fn run_shell_child(
                             }
                         }
                     }
-                    (Some(tx), WakePersistenceContext::Published { launch, .. }) => match reconfirm_reservation.as_ref() {
-                        Some(reservation) => match tokio::time::timeout(WAKE_START_FLUSH_TIMEOUT, super::native_recovery::confirm_published(tx, launch, reservation)).await {
-                            Ok(confirmed) => confirmed,
-                            Err(_) => false,
-                        },
-                        None => false,
-                    },
+                    (Some(tx), WakePersistenceContext::Published { launch, .. }) => {
+                        match reconfirm_reservation.as_ref() {
+                            Some(reservation) => match tokio::time::timeout(
+                                WAKE_START_FLUSH_TIMEOUT,
+                                super::native_recovery::confirm_published(tx, launch, reservation),
+                            )
+                            .await
+                            {
+                                Ok(confirmed) => confirmed,
+                                Err(_) => false,
+                            },
+                            None => false,
+                        }
+                    }
                     (None, WakePersistenceContext::Ordinary) => true,
                     (Some(_), WakePersistenceContext::Ordinary)
-                    | (None, WakePersistenceContext::Wake { .. } | WakePersistenceContext::Published { .. }) => false,
+                    | (
+                        None,
+                        WakePersistenceContext::Wake { .. }
+                        | WakePersistenceContext::Published { .. },
+                    ) => false,
                 };
                 if !persisted {
                     tracing::warn!(
@@ -2258,7 +2478,9 @@ pub(crate) async fn run_shell_child(
     let initial_terminal_ownership = parent_publication_contract.finish_attempt();
     match initial_terminal_ownership {
         grok_build::task::coordinator::InitialMessageTerminalOwnership::Message => {}
-        grok_build::task::coordinator::InitialMessageTerminalOwnership::AdoptionAttempt => start_artifacts.forbid_terminal_persistence(),
+        grok_build::task::coordinator::InitialMessageTerminalOwnership::AdoptionAttempt => {
+            start_artifacts.forbid_terminal_persistence()
+        }
     }
     #[cfg(test)]
     if let Some(crate::session::persistence::native_wake_tests_support::ParentInputFault::ReleasedAttemptEnd { terminal, .. }) = ctx.run_shell_child_harness.as_ref().and_then(|harness| harness.parent_input_fault.as_ref()) {
@@ -2366,11 +2588,13 @@ pub(crate) async fn run_shell_child(
     result.turns = turns;
     result.duration_ms = start.elapsed().as_millis() as u64;
     let trace_upload_method = match initial_terminal_ownership {
-        grok_build::task::coordinator::InitialMessageTerminalOwnership::Message => gcs_upload_ctx.upload_method.as_ref(),
+        grok_build::task::coordinator::InitialMessageTerminalOwnership::Message => {
+            gcs_upload_ctx.upload_method.as_ref()
+        }
         grok_build::task::coordinator::InitialMessageTerminalOwnership::AdoptionAttempt => None,
     };
-    if let Some(trace_gcs_config) = trace_upload_method.map(|method| {
-        crate::session::repo_changes::TraceExportConfig {
+    if let Some(trace_gcs_config) =
+        trace_upload_method.map(|method| crate::session::repo_changes::TraceExportConfig {
             bucket_url: gcs_upload_ctx.bucket_url.clone(),
             service_account_key: None,
             prefix_dir: None,
@@ -2381,8 +2605,8 @@ pub(crate) async fn run_shell_child(
             absolute_paths: false,
             archive_name_override: None,
             upload_method: method.clone(),
-        }
-    }) {
+        })
+    {
         let upload_deadline =
             tokio::time::Instant::now() + crate::util::config::load_upload_wait_config_sync().1;
         let upload_wait = crate::upload::turn::UploadWait::Defer {

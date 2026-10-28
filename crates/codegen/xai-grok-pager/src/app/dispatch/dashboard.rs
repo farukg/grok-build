@@ -997,11 +997,9 @@ pub(crate) enum CycleScope {
 pub(crate) fn cycle_scope(app: &AppView, current: AgentId) -> Option<CycleScope> {
     match app.agents.get(&current).map(|view| &view.role) {
         Some(crate::app::agent_view::AgentRole::Root) => Some(CycleScope::Roots),
-        Some(crate::app::agent_view::AgentRole::Child(link)) => {
-            Some(CycleScope::Siblings(
-                app.agents.children_of_session(&link.parent_session_id),
-            ))
-        }
+        Some(crate::app::agent_view::AgentRole::Child(link)) => Some(CycleScope::Siblings(
+            app.agents.children_of_session(&link.parent_session_id),
+        )),
         None => None,
     }
 }
@@ -1782,39 +1780,31 @@ fn refuse_workspace_layout(app: &mut AppView, refusal: impl Into<LayoutRefusal>)
 /// whose root rows come from the membership store. The Subagents lane is roster/live-child only.
 fn workspace_lane_enabled(app: &AppView) -> bool {
     app.workspace_dashboard_enabled
-        && app.dashboard.as_ref().is_none_or(|d| {
-            d.session_lane() != crate::views::dashboard::SessionLane::Subagents
-        })
+        && app
+            .dashboard
+            .as_ref()
+            .is_none_or(|d| d.session_lane() != crate::views::dashboard::SessionLane::Subagents)
 }
 
 /// Whether `row` is a subagent child by the dashboard's authoritative child membership: a
 /// locally-attached child view or a `subagent` roster row. All-lane gestures route child rows to
 /// the child-layout path, never to the workspace store, so each row keeps its own semantics.
-fn row_is_child(
-    app: &AppView,
-    row: &crate::views::dashboard::DashboardRowId,
-) -> bool {
+fn row_is_child(app: &AppView, row: &crate::views::dashboard::DashboardRowId) -> bool {
     use crate::views::dashboard::DashboardRowId;
     let Some(dashboard) = app.dashboard.as_ref() else {
         return false;
     };
     match row {
         DashboardRowId::Workspace { .. } => false,
-        DashboardRowId::Roster { session_id } => {
-            dashboard.child_rows.contains_key(session_id)
-        }
+        DashboardRowId::Roster { session_id } => dashboard.child_rows.contains_key(session_id),
         DashboardRowId::TopLevel(agent_id) => {
             let Some(agent) = app.agents.get(agent_id) else {
                 return false;
             };
             matches!(agent.role, crate::app::agent_view::AgentRole::Child(_))
-                || agent
-                    .session
-                    .session_id
-                    .as_ref()
-                    .is_some_and(|session_id| {
-                        dashboard.child_rows.contains_key(session_id.0.as_ref())
-                    })
+                || agent.session.session_id.as_ref().is_some_and(|session_id| {
+                    dashboard.child_rows.contains_key(session_id.0.as_ref())
+                })
         }
     }
 }
@@ -1918,9 +1908,12 @@ pub(super) fn workspace_rows(
     Vec<crate::views::dashboard::DashboardRow>,
     crate::views::dashboard::Grouping,
 ) {
-    let lane = app.dashboard
+    let lane = app
+        .dashboard
         .as_ref()
-        .map_or(crate::views::dashboard::SessionLane::Main, |d| d.session_lane());
+        .map_or(crate::views::dashboard::SessionLane::Main, |d| {
+            d.session_lane()
+        });
     workspace_rows_in_lane(app, filter, lane)
 }
 
@@ -2508,10 +2501,7 @@ fn focusable_cursor_index(
 /// PageUp/PageDown/Home/End: move the row cursor through the shared tree navigation, one page
 /// sized by the last rendered viewport. Works in every lane and in filtered or empty states: an
 /// empty list leaves the cursor (the `+ New Agent` button) alone.
-pub(super) fn dispatch_dashboard_page(
-    app: &mut AppView,
-    mv: crate::views::dashboard::PageMove,
-) {
+pub(super) fn dispatch_dashboard_page(app: &mut AppView, mv: crate::views::dashboard::PageMove) {
     use crate::views::dashboard::PageMove;
     use crate::views::tree_nav::{TreeKey, TreeRow, TreeStep, navigate};
     let focusables = dashboard_focusables(app);
@@ -2617,18 +2607,23 @@ fn dispatch_dashboard_persist(app: &mut AppView) -> Vec<Effect> {
     };
     let resolver = crate::views::dashboard::SessionIdResolver::from_agents(&app.agents);
     let current = d.to_persisted(persisted.enabled, &resolver);
-    let scope = app.agents.roots().filter_map(|(id, agent)| {
-        let session_id = agent.session.session_id.as_ref()?;
-        if d.child_rows.contains_key(session_id.0.as_ref()) {
-            return None;
-        }
-        resolver.to_persisted(&crate::views::dashboard::DashboardRowId::TopLevel(id))
-    }).collect();
+    let scope = app
+        .agents
+        .roots()
+        .filter_map(|(id, agent)| {
+            let session_id = agent.session.session_id.as_ref()?;
+            if d.child_rows.contains_key(session_id.0.as_ref()) {
+                return None;
+            }
+            resolver.to_persisted(&crate::views::dashboard::DashboardRowId::TopLevel(id))
+        })
+        .collect();
     crate::views::dashboard::child_layout::ChildLayoutUpdate {
         scope,
         pinned: current.pinned,
         reorder: current.reorder,
-    }.apply(&mut persisted);
+    }
+    .apply(&mut persisted);
     persisted.grouping = current.grouping;
     if let Some(update) = child_layout::snapshot(app) {
         update.apply(&mut persisted);

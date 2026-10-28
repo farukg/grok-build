@@ -37,7 +37,10 @@ fn resume_starts_from_the_paused_backend_accumulation_not_the_old_floor() {
     resumed.received_at = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
     resumed.retain_active_elapsed_floor(Some(&paused));
     assert_eq!(resumed.elapsed_ms, 6_000);
-    assert_eq!(resumed.active_elapsed_ms_at(resumed.received_at + Duration::from_secs(2)), 8_000);
+    assert_eq!(
+        resumed.active_elapsed_ms_at(resumed.received_at + Duration::from_secs(2)),
+        8_000
+    );
 }
 
 #[test]

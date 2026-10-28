@@ -1,6 +1,6 @@
 use std::cell::{Cell, Ref, RefCell};
-use std::rc::Rc;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use chrono::{DateTime, Local};
 
@@ -11,7 +11,7 @@ use crate::theme::{ThemeKind, cache as theme_cache};
 
 #[path = "inline_output.rs"]
 pub(crate) mod inline_output;
-use inline_output::{InlineProjection, OutputTree, SourceBody, SourceKey, RevisionSignal};
+use inline_output::{InlineProjection, OutputTree, RevisionSignal, SourceBody, SourceKey};
 
 #[derive(Debug, Clone)]
 struct CachedOutput {
@@ -51,7 +51,11 @@ impl EntryId {
 
 fn wrapped_lines_from_widths(widths: &[usize], content_width: u16) -> usize {
     let cw = usize::from(content_width.max(1));
-    widths.iter().map(|&width| width.max(1).div_ceil(cw)).sum::<usize>().max(1)
+    widths
+        .iter()
+        .map(|&width| width.max(1).div_ceil(cw))
+        .sum::<usize>()
+        .max(1)
 }
 
 /// A scrollback entry: block content and display state.
@@ -149,8 +153,11 @@ static NEXT_SELECTION_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic
 
 impl ScrollbackEntry {
     pub(crate) fn selection_identity(&self) -> super::selection_identity::EntryIdentity {
-        super::selection_identity::EntryIdentity { binding: self.selection_binding.get(),
-            entry: self.id, instance: self.selection_instance }
+        super::selection_identity::EntryIdentity {
+            binding: self.selection_binding.get(),
+            entry: self.id,
+            instance: self.selection_instance,
+        }
     }
 
     pub(crate) fn bind_selection_source(&self, binding: super::selection_identity::SourceBinding) {
@@ -192,7 +199,8 @@ impl ScrollbackEntry {
             inline_width: Cell::new(None),
             output_revision: Rc::default(),
             output_authority: Rc::new(()),
-            selection_instance: NEXT_SELECTION_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            selection_instance: NEXT_SELECTION_INSTANCE
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             selection_binding: Cell::new(super::selection_identity::SourceBinding::Detached),
         }
     }
@@ -230,7 +238,8 @@ impl ScrollbackEntry {
             inline_width: Cell::new(None),
             output_revision: Rc::default(),
             output_authority: Rc::new(()),
-            selection_instance: NEXT_SELECTION_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            selection_instance: NEXT_SELECTION_INSTANCE
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             selection_binding: Cell::new(super::selection_identity::SourceBinding::Detached),
         }
     }
@@ -300,14 +309,16 @@ impl ScrollbackEntry {
     }
 
     pub(crate) fn copy_visible_text_in_state(&self, ctx: &BlockContext) -> Option<String> {
-        self.block.copy_visible_text_with_completion(ctx, self.tool_completion)
+        self.block
+            .copy_visible_text_with_completion(ctx, self.tool_completion)
     }
 
     pub(crate) fn message_symbol(
         &self,
         ctx: &BlockContext,
     ) -> Option<super::blocks::message_symbol::MessageSymbol> {
-        self.block.message_symbol_with_completion(ctx, self.tool_completion)
+        self.block
+            .message_symbol_with_completion(ctx, self.tool_completion)
     }
 
     /// Invalidate cached output after a content change.
@@ -433,15 +444,26 @@ impl ScrollbackEntry {
             is_selected: effective_selected,
             cwd: cwd_key.clone(),
         };
-        let rendered = Rc::new(self.block.rendered_output_with_completion(&ctx, self.tool_completion));
-        let header = OutputTree::identified(Rc::clone(&rendered), self.selection_identity(),
-            super::selection_identity::SelectablePart::Block);
+        let rendered = Rc::new(
+            self.block
+                .rendered_output_with_completion(&ctx, self.tool_completion),
+        );
+        let header = OutputTree::identified(
+            Rc::clone(&rendered),
+            self.selection_identity(),
+            super::selection_identity::SelectablePart::Block,
+        );
         let tree = if self.display_mode != DisplayMode::Collapsed
             && (self.block.is_bg_task() || self.block.is_subagent())
         {
             let projection = self.inline_projection.borrow();
-            let body = projection.as_ref().filter(|source| source.width == width && source.expanded)
-                .map_or_else(|| SourceBody::Loading.output(), |source| source.body.output());
+            let body = projection
+                .as_ref()
+                .filter(|source| source.width == width && source.expanded)
+                .map_or_else(
+                    || SourceBody::Loading.output(),
+                    |source| source.body.output(),
+                );
             OutputTree::branch([header, body])
         } else {
             header
@@ -474,7 +496,8 @@ impl ScrollbackEntry {
         Ref::map(self.cached_output.borrow(), |opt| {
             opt.as_ref()
                 .expect("ensure_cached must be called first")
-                .rendered.as_ref()
+                .rendered
+                .as_ref()
         })
     }
 
@@ -504,7 +527,10 @@ impl ScrollbackEntry {
 
         // Force Truncated for sticky-header height; include cwd (header wrap).
         let ctx = self.context_with_mode(content_width, DisplayMode::Truncated, appearance, cwd);
-        let output = self.block.rendered_output_with_completion(&ctx, self.tool_completion).output;
+        let output = self
+            .block
+            .rendered_output_with_completion(&ctx, self.tool_completion)
+            .output;
         let has_vpad = self.block.has_vpad(&ctx);
         let content_height = output.len() as u16;
         let vpad = if has_vpad { 2 } else { 0 };
@@ -577,7 +603,10 @@ impl ScrollbackEntry {
 
     pub fn is_foldable(&self) -> bool {
         if self.block.is_bg_task() || self.block.is_subagent() {
-            return self.inline_projection.borrow().as_ref()
+            return self
+                .inline_projection
+                .borrow()
+                .as_ref()
                 .is_some_and(|source| source.body.is_foldable());
         }
         self.block.is_foldable()
@@ -592,12 +621,18 @@ impl ScrollbackEntry {
 
     pub(crate) fn can_expand(&self) -> bool {
         if self.block.is_bg_task() || self.block.is_subagent() {
-            return self.inline_projection.borrow().as_ref().is_none_or(|source| match &source.body {
-                SourceBody::Content(tree) => !tree.is_empty(),
-                SourceBody::Available | SourceBody::Waiting | SourceBody::Loading
-                | SourceBody::Unavailable => true,
-                SourceBody::Empty | SourceBody::Cycle => false,
-            });
+            return self
+                .inline_projection
+                .borrow()
+                .as_ref()
+                .is_none_or(|source| match &source.body {
+                    SourceBody::Content(tree) => !tree.is_empty(),
+                    SourceBody::Available
+                    | SourceBody::Waiting
+                    | SourceBody::Loading
+                    | SourceBody::Unavailable => true,
+                    SourceBody::Empty | SourceBody::Cycle => false,
+                });
         }
         self.is_foldable()
     }
@@ -607,35 +642,57 @@ impl ScrollbackEntry {
     }
 
     pub(crate) fn inline_source_matches(&self, key: &SourceKey, width: u16) -> bool {
-        self.inline_projection.borrow().as_ref().is_some_and(|source| {
-            source.key == *key && source.width == width
-                && source.expanded == (self.display_mode != DisplayMode::Collapsed)
-                && !(source.expanded && matches!(source.body, SourceBody::Available))
-        })
+        self.inline_projection
+            .borrow()
+            .as_ref()
+            .is_some_and(|source| {
+                source.key == *key
+                    && source.width == width
+                    && source.expanded == (self.display_mode != DisplayMode::Collapsed)
+                    && !(source.expanded && matches!(source.body, SourceBody::Available))
+            })
     }
 
-    pub(crate) fn inline_body_window(&self, window: std::ops::Range<usize>) -> std::ops::Range<usize> {
-        let header = self.cached_output.borrow().as_ref().map_or(0, |cache| cache.rendered.output.len());
+    pub(crate) fn inline_body_window(
+        &self,
+        window: std::ops::Range<usize>,
+    ) -> std::ops::Range<usize> {
+        let header = self
+            .cached_output
+            .borrow()
+            .as_ref()
+            .map_or(0, |cache| cache.rendered.output.len());
         let before = header;
         window.start.saturating_sub(before)..window.end.saturating_sub(before)
     }
 
     pub(crate) fn inline_width_pending(&self) -> bool {
-        self.inline_projection.borrow().as_ref().is_some_and(|projection| Some(projection.width) != self.inline_width.get())
+        self.inline_projection
+            .borrow()
+            .as_ref()
+            .is_some_and(|projection| Some(projection.width) != self.inline_width.get())
     }
 
     pub(crate) fn inline_window_pending(&self, window: std::ops::Range<usize>) -> bool {
         let window = self.inline_body_window(window);
-        self.inline_projection.borrow().as_ref().is_some_and(|projection| match &projection.body {
-            SourceBody::Content(output) => output.has_deferred(window),
-            SourceBody::Available | SourceBody::Empty | SourceBody::Waiting | SourceBody::Loading
-            | SourceBody::Unavailable | SourceBody::Cycle => false,
-        })
+        self.inline_projection
+            .borrow()
+            .as_ref()
+            .is_some_and(|projection| match &projection.body {
+                SourceBody::Content(output) => output.has_deferred(window),
+                SourceBody::Available
+                | SourceBody::Empty
+                | SourceBody::Waiting
+                | SourceBody::Loading
+                | SourceBody::Unavailable
+                | SourceBody::Cycle => false,
+            })
     }
 
     pub(crate) fn set_inline_source(&self, projection: InlineProjection) {
         *self.inline_projection.borrow_mut() = Some(projection);
-        self.inline_revision.set(self.inline_revision.get().wrapping_add(1));
+        self.inline_revision
+            .set(self.inline_revision.get().wrapping_add(1));
         *self.cached_estimate_lines.borrow_mut() = None;
         *self.cached_truncated_height.borrow_mut() = None;
     }
@@ -646,22 +703,32 @@ impl ScrollbackEntry {
         snapshot
     }
 
-    pub(crate) fn output_authority(&self) -> std::rc::Weak<()> { Rc::downgrade(&self.output_authority) }
+    pub(crate) fn output_authority(&self) -> std::rc::Weak<()> {
+        Rc::downgrade(&self.output_authority)
+    }
 
-    pub(crate) fn note_paint_changed(&self) { self.output_revision.bump(); }
+    pub(crate) fn note_paint_changed(&self) {
+        self.output_revision.bump();
+    }
 
-    pub(crate) fn output_signal(&self) -> Rc<RevisionSignal> { Rc::clone(&self.output_revision) }
+    pub(crate) fn output_signal(&self) -> Rc<RevisionSignal> {
+        Rc::clone(&self.output_revision)
+    }
 
-    pub(crate) fn subscribe_output_changes(&self, signal: &Rc<RevisionSignal>,
-        dirty: &Rc<RefCell<std::collections::HashSet<EntryId>>>)
-    {
+    pub(crate) fn subscribe_output_changes(
+        &self,
+        signal: &Rc<RevisionSignal>,
+        dirty: &Rc<RefCell<std::collections::HashSet<EntryId>>>,
+    ) {
         self.output_revision.subscribe(signal);
         self.output_revision.subscribe_entry(self.id, dirty);
     }
 
     pub(crate) fn cached_tree(&self) -> Rc<OutputTree> {
         self.cached_output.borrow().as_ref().map_or_else(
-            || OutputTree::notice("Loading output"), |cache| Rc::clone(&cache.tree))
+            || OutputTree::notice("Loading output"),
+            |cache| Rc::clone(&cache.tree),
+        )
     }
 
     /// True for a thinking block hidden by the Appearance toggle. Takes the flag as a param so hot layout loops can hoist the cache read.
@@ -675,15 +742,33 @@ impl ScrollbackEntry {
             self.ensure_cached(ctx.width, &ctx.appearance, false, ctx.cwd.as_deref());
             return self.cached_tree();
         }
-        let header = OutputTree::identified(Rc::new(self.block.rendered_output_with_completion(ctx, self.tool_completion)), self.selection_identity(),
-            super::selection_identity::SelectablePart::Block);
-        if !self.block.is_bg_task() && !self.block.is_subagent() { return header; }
+        let header = OutputTree::identified(
+            Rc::new(
+                self.block
+                    .rendered_output_with_completion(ctx, self.tool_completion),
+            ),
+            self.selection_identity(),
+            super::selection_identity::SelectablePart::Block,
+        );
+        if !self.block.is_bg_task() && !self.block.is_subagent() {
+            return header;
+        }
         self.inline_width.set(Some(ctx.width));
-        if ctx.mode == DisplayMode::Collapsed { return header; }
+        if ctx.mode == DisplayMode::Collapsed {
+            return header;
+        }
         let projection = self.inline_projection.borrow();
-        let body = projection.as_ref().filter(|source| source.width == ctx.width && source.expanded)
-            .map_or_else(|| SourceBody::Loading.output(), |source| source.body.output());
-        OutputTree::rooted(OutputTree::branch([header, body]), self.selection_identity())
+        let body = projection
+            .as_ref()
+            .filter(|source| source.width == ctx.width && source.expanded)
+            .map_or_else(
+                || SourceBody::Loading.output(),
+                |source| source.body.output(),
+            );
+        OutputTree::rooted(
+            OutputTree::branch([header, body]),
+            self.selection_identity(),
+        )
     }
 
     pub fn output_uncached(&self, ctx: &BlockContext) -> BlockOutput {

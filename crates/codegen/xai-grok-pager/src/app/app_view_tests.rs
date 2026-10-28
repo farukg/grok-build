@@ -7760,12 +7760,16 @@ fn overlay_ctrl_x_does_not_stop_or_close() {
 
 #[test]
 fn session_navigation_preserves_the_visible_focus_owner() {
-    use crate::app::agent_view::{AgentPane, VisibleFocus};
     use crate::app::actions::{Action, TreeStep};
+    use crate::app::agent_view::{AgentPane, VisibleFocus};
     for focus in [
         VisibleFocus::Pane(AgentPane::Prompt),
         VisibleFocus::Pane(AgentPane::Todo),
-        VisibleFocus::Pane(if crate::views::dock::enabled() { AgentPane::Dock } else { AgentPane::Tasks }),
+        VisibleFocus::Pane(if crate::views::dock::enabled() {
+            AgentPane::Dock
+        } else {
+            AgentPane::Tasks
+        }),
         VisibleFocus::Timeline,
         VisibleFocus::Context,
     ] {
@@ -7774,7 +7778,11 @@ fn session_navigation_preserves_the_visible_focus_owner() {
         let child_id = super::super::agent::AgentId(1);
         let child = idle_child_view(&app, 1, "focus-child");
         crate::app::session_views::test_support::link_child(
-            &mut app.agents, root, child_id, *child, std::time::Instant::now(),
+            &mut app.agents,
+            root,
+            child_id,
+            *child,
+            std::time::Instant::now(),
         );
         let agent = app.agents.get_mut(&root).unwrap();
         agent.tasks.overlay.visible = true;
@@ -7783,7 +7791,8 @@ fn session_navigation_preserves_the_visible_focus_owner() {
         agent.restore_visible_focus(focus);
         app.reconcile_sidebar_chrome();
         app.capture_sidebar_chrome();
-        let _ = crate::app::dispatch::dispatch(Action::NavigateTree(TreeStep::LatestChild), &mut app);
+        let _ =
+            crate::app::dispatch::dispatch(Action::NavigateTree(TreeStep::LatestChild), &mut app);
         assert_eq!(app.active_view, ActiveView::Agent(child_id));
         app.reconcile_sidebar_chrome();
         assert_eq!(app.agents.get(&child_id).unwrap().visible_focus(), focus);
@@ -7797,15 +7806,22 @@ fn session_navigation_preserves_the_visible_focus_owner() {
         let second = idle_child_view(&app, 2, "focus-second-root");
         app.agents.insert(second_root, *second);
         app.agents.get_mut(&root).unwrap().generated_session_title = Some("first root".into());
-        app.agents.get_mut(&second_root).unwrap().generated_session_title = Some("second root".into());
+        app.agents
+            .get_mut(&second_root)
+            .unwrap()
+            .generated_session_title = Some("second root".into());
         app.capture_sidebar_chrome();
-        let _ = crate::app::dispatch::dispatch(Action::OpenSession("focus-second-root".into()), &mut app);
+        let _ = crate::app::dispatch::dispatch(
+            Action::OpenSession("focus-second-root".into()),
+            &mut app,
+        );
         app.reconcile_sidebar_chrome();
         assert_eq!(app.active_view, ActiveView::Agent(second_root));
         assert_eq!(app.agents.get(&second_root).unwrap().visible_focus(), focus);
         app.capture_sidebar_chrome();
         let _ = crate::app::dispatch::dispatch(
-            Action::CycleSessions(crate::app::actions::Direction::Next), &mut app,
+            Action::CycleSessions(crate::app::actions::Direction::Next),
+            &mut app,
         );
         app.reconcile_sidebar_chrome();
         assert_eq!(app.active_view, ActiveView::Agent(root));

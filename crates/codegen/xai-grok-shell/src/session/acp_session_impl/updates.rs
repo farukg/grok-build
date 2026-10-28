@@ -161,14 +161,20 @@ pub(super) enum SubagentUsageApply {
 }
 impl SessionActor {
     pub(crate) fn current_actions_reader(&self) -> crate::session::current_actions::Reader {
-        self.current_actions.reader(self.pending_interactions.clone(), self.session_info.id.0.to_string())
+        self.current_actions.reader(
+            self.pending_interactions.clone(),
+            self.session_info.id.0.to_string(),
+        )
     }
 
     pub(super) fn stamp_current_actions_version(&self, meta: &mut acp::Meta) {
         if let Some(version) = self.current_actions.version()
             && let Ok(value) = serde_json::to_value(version)
         {
-            meta.insert(crate::session::current_actions::VERSION_META_KEY.into(), value);
+            meta.insert(
+                crate::session::current_actions::VERSION_META_KEY.into(),
+                value,
+            );
         }
     }
 
@@ -279,9 +285,17 @@ impl SessionActor {
         self.send_update_full(update, chunk_index, None, false, None)
             .await;
     }
-    pub(super) async fn send_sampling_update(&self, update: acp::SessionUpdate, chunk_index: Option<u64>, request_id: &xai_grok_sampler::RequestId) {
-        let Some(owner) = self.sampling_owner(request_id) else { return; };
-        self.send_update_full(update, chunk_index, None, false, Some(owner)).await;
+    pub(super) async fn send_sampling_update(
+        &self,
+        update: acp::SessionUpdate,
+        chunk_index: Option<u64>,
+        request_id: &xai_grok_sampler::RequestId,
+    ) {
+        let Some(owner) = self.sampling_owner(request_id) else {
+            return;
+        };
+        self.send_update_full(update, chunk_index, None, false, Some(owner))
+            .await;
     }
     async fn send_update_full(
         &self,
@@ -293,13 +307,20 @@ impl SessionActor {
     ) {
         let mut publication = self.notifications.gateway.begin_publication();
         publication.require_delivery();
-        if !is_replay && let Err(error) = crate::session::current_actions::observe_tool_publication(&mut update) {
+        if !is_replay
+            && let Err(error) =
+                crate::session::current_actions::observe_tool_publication(&mut update)
+        {
             tracing::error!(%error, "tool ownership publication failed");
             return;
         }
         let tool_ownership = match &update {
-            acp::SessionUpdate::ToolCall(call) => crate::extensions::tool_timing::ownership_from_meta(call.meta.as_ref()),
-            acp::SessionUpdate::ToolCallUpdate(update) => crate::extensions::tool_timing::ownership_from_meta(update.meta.as_ref()),
+            acp::SessionUpdate::ToolCall(call) => {
+                crate::extensions::tool_timing::ownership_from_meta(call.meta.as_ref())
+            }
+            acp::SessionUpdate::ToolCallUpdate(update) => {
+                crate::extensions::tool_timing::ownership_from_meta(update.meta.as_ref())
+            }
             _ => Ok(crate::extensions::tool_timing::ToolCallOwnership::Unknown),
         };
         let tool_ownership = match tool_ownership {
@@ -309,8 +330,12 @@ impl SessionActor {
                 return;
             }
         };
-        if !is_replay && let acp::SessionUpdate::ToolCallUpdate(update) = &update
-            && matches!(update.fields.status, Some(acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed))
+        if !is_replay
+            && let acp::SessionUpdate::ToolCallUpdate(update) = &update
+            && matches!(
+                update.fields.status,
+                Some(acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed)
+            )
         {
             self.events.tool_terminal(&tool_ownership);
         }
@@ -343,8 +368,12 @@ impl SessionActor {
         }
         let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
         let (stream_start_ms, turn_start_ms) = match &tool_ownership {
-            crate::extensions::tool_timing::ToolCallOwnership::Unknown => self.chat_state_handle.get_notification_meta().await
-                .map(|m| (m.stream_start_ms, m.turn_start_ms)).unwrap_or((None, None)),
+            crate::extensions::tool_timing::ToolCallOwnership::Unknown => self
+                .chat_state_handle
+                .get_notification_meta()
+                .await
+                .map(|m| (m.stream_start_ms, m.turn_start_ms))
+                .unwrap_or((None, None)),
             crate::extensions::tool_timing::ToolCallOwnership::Registered { .. } => (None, None),
         };
         let event_id = self.generate_event_id();
@@ -392,18 +421,29 @@ impl SessionActor {
                 publication.rejected();
                 return;
             }
-            if matches!(tool_ownership, crate::extensions::tool_timing::ToolCallOwnership::Unknown) {
+            if matches!(
+                tool_ownership,
+                crate::extensions::tool_timing::ToolCallOwnership::Unknown
+            ) {
                 Self::stamp_sampling_owner(obj, &owner);
             }
         }
-        if !is_replay && let Some(version) = source_version
+        if !is_replay
+            && let Some(version) = source_version
             && let Ok(version) = serde_json::to_value(version)
         {
-            obj.insert(crate::session::current_actions::VERSION_META_KEY.into(), version);
+            obj.insert(
+                crate::session::current_actions::VERSION_META_KEY.into(),
+                version,
+            );
         }
         let notification = acp::SessionNotification::new(self.session_info.id.clone(), update)
             .meta(meta.as_object().cloned());
-        if self.event_tx.send(SessionEvent::Notification(notification.into())).is_ok() {
+        if self
+            .event_tx
+            .send(SessionEvent::Notification(notification.into()))
+            .is_ok()
+        {
             publication.enqueued();
         }
     }
@@ -421,7 +461,9 @@ impl SessionActor {
         let _publication = self.notifications.gateway.begin_publication();
         let owner = match request_id {
             Some(request_id) => {
-                let Some(owner) = self.sampling_owner(request_id) else { return; };
+                let Some(owner) = self.sampling_owner(request_id) else {
+                    return;
+                };
                 Some(owner)
             }
             None => None,
@@ -431,7 +473,9 @@ impl SessionActor {
         let mut meta = serde_json::Map::new();
         meta.insert("promptId".to_string(), json!(prompt_id));
         if let Some(owner) = owner {
-            if !self.accepts_sampling_owner(&owner) { return; }
+            if !self.accepts_sampling_owner(&owner) {
+                return;
+            }
             Self::stamp_sampling_owner(&mut meta, &owner);
         }
         self.stamp_current_actions_version(&mut meta);
@@ -467,13 +511,17 @@ impl SessionActor {
                 xai_acp_lib::ReceiverSettlement::TransportOnly => {}
                 xai_acp_lib::ReceiverSettlement::AppliedOrDiscarded => {
                     let discarded = crate::extensions::current_actions::DiscardedRecord {
-                        role: self.current_actions.delivery_role(), notification,
+                        role: self.current_actions.delivery_role(),
+                        notification,
                     };
                     match serde_json::value::to_raw_value(&discarded) {
                         Ok(params) => {
-                            self.notifications.gateway.forward_fire_and_forget(acp::ExtNotification::new(
-                                crate::extensions::current_actions::DISCARD_METHOD, params.into(),
-                            ));
+                            self.notifications.gateway.forward_fire_and_forget(
+                                acp::ExtNotification::new(
+                                    crate::extensions::current_actions::DISCARD_METHOD,
+                                    params.into(),
+                                ),
+                            );
                         }
                         Err(_) => self.notifications.gateway.fail_publication(),
                     }
@@ -492,11 +540,19 @@ impl SessionActor {
                 if let XaiSessionUpdate::SamplingLifecycle { lifecycle } = &n.update {
                     self.settle_sampling_delivery(lifecycle);
                 }
-                if matches!(n.update, XaiSessionUpdate::RetryState(_) | XaiSessionUpdate::SamplingLifecycle { .. }) {
+                if matches!(
+                    n.update,
+                    XaiSessionUpdate::RetryState(_) | XaiSessionUpdate::SamplingLifecycle { .. }
+                ) {
                     let extra_meta = n.meta.and_then(|meta| meta.as_object().cloned());
-                    if let Err(error) = self.send_xai_notification_with_extra_meta(
-                        n.update, extra_meta, crate::session::storage::jsonl::AppendDurability::Buffered,
-                    ).await {
+                    if let Err(error) = self
+                        .send_xai_notification_with_extra_meta(
+                            n.update,
+                            extra_meta,
+                            crate::session::storage::jsonl::AppendDurability::Buffered,
+                        )
+                        .await
+                    {
                         tracing::error!(?error, "sampling lifecycle persistence unavailable");
                     }
                     return;
@@ -507,11 +563,16 @@ impl SessionActor {
                     .gateway_enabled
                     .load(std::sync::atomic::Ordering::Relaxed)
                 {
-                    match serde_json::to_value(&*n).and_then(|value| serde_json::value::to_raw_value(&value)) {
+                    match serde_json::to_value(&*n)
+                        .and_then(|value| serde_json::value::to_raw_value(&value))
+                    {
                         Ok(params) => {
-                            self.notifications.gateway.forward_fire_and_forget(acp::ExtNotification::new(
-                                "x.ai/session_notification", params.into(),
-                            ));
+                            self.notifications.gateway.forward_fire_and_forget(
+                                acp::ExtNotification::new(
+                                    "x.ai/session_notification",
+                                    params.into(),
+                                ),
+                            );
                         }
                         Err(_) => self.notifications.gateway.fail_publication(),
                     }
@@ -569,7 +630,8 @@ impl SessionActor {
         mut notification: acp::SessionNotification,
     ) {
         let _publication = self.notifications.gateway.begin_publication();
-        self.current_actions.stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new));
+        self.current_actions
+            .stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new));
         crate::util::event_id::ensure_event_id_meta(
             &self.session_info.id.0,
             &mut notification.meta,
@@ -610,7 +672,8 @@ impl SessionActor {
     /// Use this for cosmetic/transient UI updates that should NOT be replayed on session reload.
     /// The underlying resource state is the source of truth; this only adjusts what the live client sees right now.
     pub(super) fn emit_transient_notification(&self, mut notification: acp::SessionNotification) {
-        self.current_actions.stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new));
+        self.current_actions
+            .stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new));
         self.log_outbound_notification(&notification);
         if self
             .notifications
@@ -627,11 +690,15 @@ impl SessionActor {
     /// Timestamp-only meta keeps the client clock without advancing the cursor.
     pub(super) fn send_xai_notification_transient(&self, update: XaiSessionUpdate) {
         let mut meta = acp::Meta::new();
-        meta.insert("agentTimestampMs".into(), chrono::Utc::now().timestamp_millis().into());
+        meta.insert(
+            "agentTimestampMs".into(),
+            chrono::Utc::now().timestamp_millis().into(),
+        );
         self.stamp_current_actions_version(&mut meta);
         self.current_actions.stamp_delivery(&mut meta);
         let notification = XaiSessionNotification {
-            session_id: self.session_info.id.clone(), update,
+            session_id: self.session_info.id.clone(),
+            update,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let params = serde_json::to_value(&notification)
@@ -777,7 +844,9 @@ impl SessionActor {
             "eventId": event_id,
             "agentTimestampMs": agent_timestamp_ms,
         });
-        if let Some(object) = meta.as_object_mut() { self.stamp_current_actions_version(object); }
+        if let Some(object) = meta.as_object_mut() {
+            self.stamp_current_actions_version(object);
+        }
         meta
     }
     /// Handle xAI session notifications: store them in persistence.
@@ -1163,23 +1232,40 @@ impl SessionActor {
         let restored = self.restore_request_source_publications().await;
         let changed: Vec<_> = {
             let mut publications = self.notifications.source_publications.lock();
-            built.injected_records.iter().filter(|record| match record {
-                xai_chat_state::InjectedRequestRecord::MemoryReminder { source, .. }
-                | xai_chat_state::InjectedRequestRecord::Synthetic { source, .. } => publications.claim(*source),
-                xai_chat_state::InjectedRequestRecord::ContextView { .. } => false,
-            }).collect()
+            built
+                .injected_records
+                .iter()
+                .filter(|record| match record {
+                    xai_chat_state::InjectedRequestRecord::MemoryReminder { source, .. }
+                    | xai_chat_state::InjectedRequestRecord::Synthetic { source, .. } => {
+                        publications.claim(*source)
+                    }
+                    xai_chat_state::InjectedRequestRecord::ContextView { .. } => false,
+                })
+                .collect()
         };
         let published = match restored {
             Ok(()) => self.send_injected_request_records(&changed).await,
-            Err(cause) => Err(crate::session::request_capture::PublicationFailure::not_submitted(cause)),
+            Err(cause) => {
+                Err(crate::session::request_capture::PublicationFailure::not_submitted(cause))
+            }
         };
         if let Err(failure) = published {
-            let records = if restored.is_ok() { changed } else { built.injected_records.iter().collect() };
-            let sources: Vec<_> = records.iter().filter_map(|record| match record {
-                xai_chat_state::InjectedRequestRecord::MemoryReminder { source, .. }
-                | xai_chat_state::InjectedRequestRecord::Synthetic { source, .. } => Some(*source),
-                xai_chat_state::InjectedRequestRecord::ContextView { .. } => None,
-            }).collect();
+            let records = if restored.is_ok() {
+                changed
+            } else {
+                built.injected_records.iter().collect()
+            };
+            let sources: Vec<_> = records
+                .iter()
+                .filter_map(|record| match record {
+                    xai_chat_state::InjectedRequestRecord::MemoryReminder { source, .. }
+                    | xai_chat_state::InjectedRequestRecord::Synthetic { source, .. } => {
+                        Some(*source)
+                    }
+                    xai_chat_state::InjectedRequestRecord::ContextView { .. } => None,
+                })
+                .collect();
             let notify = {
                 let mut publications = self.notifications.source_publications.lock();
                 if restored.is_ok() {
@@ -1191,14 +1277,22 @@ impl SessionActor {
             };
             if notify {
                 let notification = crate::session::request_capture::SourcePublicationFailure {
-                    session_id: self.session_info.id.to_string(), sources,
-                    cause: failure.cause, progress: failure.progress,
+                    session_id: self.session_info.id.to_string(),
+                    sources,
+                    cause: failure.cause,
+                    progress: failure.progress,
                 };
-                self.forward_request_diagnostic("x.ai/session/request_sources/unconfirmed", &notification);
+                self.forward_request_diagnostic(
+                    "x.ai/session/request_sources/unconfirmed",
+                    &notification,
+                );
             }
         }
         let mut request = built.request;
-        if built.context_policy.includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions) {
+        if built
+            .context_policy
+            .includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions)
+        {
             request.hosted_tools = self.hosted_tools_for_turn();
             request.json_schema = native_json_schema;
         }
@@ -1209,9 +1303,14 @@ impl SessionActor {
         &self,
         records: &[&xai_chat_state::InjectedRequestRecord],
     ) -> Result<(), crate::session::request_capture::PublicationFailure> {
-        use crate::session::request_capture::{CaptureFailure, PublicationFailure, PublicationProgress, PublicationDurability, SourcePublication, SourceDurability, SOURCE_PUBLICATION_META};
+        use crate::session::request_capture::{
+            CaptureFailure, PublicationDurability, PublicationFailure, PublicationProgress,
+            SOURCE_PUBLICATION_META, SourceDurability, SourcePublication,
+        };
         let mut publication = self.notifications.gateway.begin_publication();
-        if records.is_empty() { return Ok(()); }
+        if records.is_empty() {
+            return Ok(());
+        }
         publication.require_delivery();
         let mut updates = Vec::with_capacity(records.len());
         let mut notifications = Vec::with_capacity(records.len());
@@ -1220,12 +1319,22 @@ impl SessionActor {
             let source = match record {
                 xai_chat_state::InjectedRequestRecord::MemoryReminder { source, .. }
                 | xai_chat_state::InjectedRequestRecord::Synthetic { source, .. } => *source,
-                xai_chat_state::InjectedRequestRecord::ContextView { .. } => xai_grok_sampling_types::SourceOccurrence::Unadmitted,
+                xai_chat_state::InjectedRequestRecord::ContextView { .. } => {
+                    xai_grok_sampling_types::SourceOccurrence::Unadmitted
+                }
             };
             if let Some(object) = meta.as_object_mut() {
-                object.insert(SOURCE_PUBLICATION_META.to_owned(), serde_json::to_value(SourcePublication {
-                    source, evidence: Default::default(), durability: SourceDurability::UnconfirmedIndependentHistoryChannel,
-                }).map_err(|_| PublicationFailure::not_submitted(CaptureFailure::InvalidEvidence))?);
+                object.insert(
+                    SOURCE_PUBLICATION_META.to_owned(),
+                    serde_json::to_value(SourcePublication {
+                        source,
+                        evidence: Default::default(),
+                        durability: SourceDurability::UnconfirmedIndependentHistoryChannel,
+                    })
+                    .map_err(|_| {
+                        PublicationFailure::not_submitted(CaptureFailure::InvalidEvidence)
+                    })?,
+                );
             }
             let notification = XaiSessionNotification {
                 session_id: self.session_info.id.clone(),
@@ -1235,31 +1344,55 @@ impl SessionActor {
                 },
                 meta: Some(meta),
             };
-            notifications.push(serde_json::value::to_raw_value(&notification)
-                .map_err(|_| PublicationFailure::not_submitted(CaptureFailure::InvalidEvidence))?);
-            updates.push(crate::session::storage::SessionUpdate::Xai(Box::new(notification)));
+            notifications.push(
+                serde_json::value::to_raw_value(&notification).map_err(|_| {
+                    PublicationFailure::not_submitted(CaptureFailure::InvalidEvidence)
+                })?,
+            );
+            updates.push(crate::session::storage::SessionUpdate::Xai(Box::new(
+                notification,
+            )));
         }
         let (respond_to, response) = tokio::sync::oneshot::channel();
-        self.notifications.persistence_tx.send(PersistenceMsg::AppendUpdatesAndAck {
-            updates, respond_to,
-        }).map_err(|_| PublicationFailure::not_submitted(CaptureFailure::MailboxClosed))?;
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::AppendUpdatesAndAck {
+                updates,
+                respond_to,
+            })
+            .map_err(|_| PublicationFailure::not_submitted(CaptureFailure::MailboxClosed))?;
         let result = match response.await {
             Ok(result) => result,
-            Err(_) => Err(PublicationFailure { cause: CaptureFailure::ReplyLost, progress: PublicationProgress::ReplyLost }),
+            Err(_) => Err(PublicationFailure {
+                cause: CaptureFailure::ReplyLost,
+                progress: PublicationProgress::ReplyLost,
+            }),
         };
         let deliver = match &result {
             Ok(()) => notifications.len(),
             Err(failure) => match failure.progress {
-                PublicationProgress::JournalPrefix { committed, durability: PublicationDurability::Synced } => committed,
-                PublicationProgress::JournalPrefix { durability: PublicationDurability::Unconfirmed, .. }
-                | PublicationProgress::Unknown | PublicationProgress::AmbiguousSuffix { .. } | PublicationProgress::NotSubmitted
-                | PublicationProgress::NotCommitted | PublicationProgress::ReplyLost => 0,
+                PublicationProgress::JournalPrefix {
+                    committed,
+                    durability: PublicationDurability::Synced,
+                } => committed,
+                PublicationProgress::JournalPrefix {
+                    durability: PublicationDurability::Unconfirmed,
+                    ..
+                }
+                | PublicationProgress::Unknown
+                | PublicationProgress::AmbiguousSuffix { .. }
+                | PublicationProgress::NotSubmitted
+                | PublicationProgress::NotCommitted
+                | PublicationProgress::ReplyLost => 0,
             },
         };
         for params in notifications.into_iter().take(deliver) {
-            self.notifications.gateway.forward_fire_and_forget(acp::ExtNotification::new(
-                "x.ai/session_notification", params.into(),
-            ));
+            self.notifications
+                .gateway
+                .forward_fire_and_forget(acp::ExtNotification::new(
+                    "x.ai/session_notification",
+                    params.into(),
+                ));
         }
         if result.is_ok() {
             publication.enqueued();
@@ -1270,11 +1403,13 @@ impl SessionActor {
     #[tracing::instrument(skip_all)]
     pub(super) async fn send_xai_notification(&self, update: XaiSessionUpdate) {
         let mut extra_meta = None;
-        if matches!(update, XaiSessionUpdate::AutoCompactStarted { .. }
-            | XaiSessionUpdate::AutoCompactCompleted { .. }
-            | XaiSessionUpdate::AutoCompactFailed { .. }
-            | XaiSessionUpdate::AutoCompactCancelled { .. })
-            && let Some(invocation) = self.compaction.cancel.activity_invocation()
+        if matches!(
+            update,
+            XaiSessionUpdate::AutoCompactStarted { .. }
+                | XaiSessionUpdate::AutoCompactCompleted { .. }
+                | XaiSessionUpdate::AutoCompactFailed { .. }
+                | XaiSessionUpdate::AutoCompactCancelled { .. }
+        ) && let Some(invocation) = self.compaction.cancel.activity_invocation()
         {
             let invocation = match serde_json::to_value(invocation) {
                 Ok(invocation) => invocation,
@@ -1284,24 +1419,33 @@ impl SessionActor {
                 }
             };
             let mut meta = serde_json::Map::new();
-            meta.insert(crate::session::acp_types::AUTOMATIC_COMPACT_META_KEY.into(), invocation);
+            meta.insert(
+                crate::session::acp_types::AUTOMATIC_COMPACT_META_KEY.into(),
+                invocation,
+            );
             extra_meta = Some(meta);
-            if matches!(update, XaiSessionUpdate::AutoCompactCompleted { .. }
-                | XaiSessionUpdate::AutoCompactFailed { .. }
-                | XaiSessionUpdate::AutoCompactCancelled { .. })
-            {
+            if matches!(
+                update,
+                XaiSessionUpdate::AutoCompactCompleted { .. }
+                    | XaiSessionUpdate::AutoCompactFailed { .. }
+                    | XaiSessionUpdate::AutoCompactCancelled { .. }
+            ) {
                 if let Some(invocation) = self.compaction.cancel.activity_invocation() {
-                    self.current_actions.finish_compact(crate::session::current_actions::CompactKey::Automatic(invocation.id.0));
+                    self.current_actions.finish_compact(
+                        crate::session::current_actions::CompactKey::Automatic(invocation.id.0),
+                    );
                 }
                 self.compaction.cancel.settle_activity();
             }
         }
-        if let Err(error) = self.send_xai_notification_with_extra_meta(
-            update,
-            extra_meta,
-            crate::session::storage::jsonl::AppendDurability::Buffered,
-        )
-        .await {
+        if let Err(error) = self
+            .send_xai_notification_with_extra_meta(
+                update,
+                extra_meta,
+                crate::session::storage::jsonl::AppendDurability::Buffered,
+            )
+            .await
+        {
             tracing::error!(?error, "session notification persistence unavailable");
         }
     }
@@ -1368,28 +1512,40 @@ impl SessionActor {
             }
             crate::session::storage::jsonl::AppendDurability::Durable => {
                 let (respond_to, response) = tokio::sync::oneshot::channel();
-                self.notifications.persistence_tx.send(
-                    PersistenceMsg::AppendUpdateDurablyAndAck {
+                self.notifications
+                    .persistence_tx
+                    .send(PersistenceMsg::AppendUpdateDurablyAndAck {
                         update: persisted_update,
                         respond_to,
-                    },
-                ).map_err(|_| acp::Error::internal_error().data("terminal persistence unavailable"))?;
+                    })
+                    .map_err(|_| {
+                        acp::Error::internal_error().data("terminal persistence unavailable")
+                    })?;
                 match response.await {
                     Ok(Ok(())) => {}
-                    Ok(Err(crate::session::storage::AppendUpdateError::NotCommitted(error)
-                        | crate::session::storage::AppendUpdateError::Committed(error))) => {
+                    Ok(Err(
+                        crate::session::storage::AppendUpdateError::NotCommitted(error)
+                        | crate::session::storage::AppendUpdateError::Committed(error),
+                    )) => {
                         return Err(crate::session::persistence::io_error_to_acp(&error));
                     }
-                    Err(_) => return Err(acp::Error::internal_error().data("terminal persistence acknowledgement lost")),
+                    Err(_) => {
+                        return Err(acp::Error::internal_error()
+                            .data("terminal persistence acknowledgement lost"));
+                    }
                 }
             }
         }
         let params = serde_json::to_value(&notification)
             .and_then(|v| serde_json::value::to_raw_value(&v))
-            .map_err(|_| acp::Error::internal_error().data("session notification serialization failed"))?;
+            .map_err(|_| {
+                acp::Error::internal_error().data("session notification serialization failed")
+            })?;
         let ext_notification =
             acp::ExtNotification::new("x.ai/session_notification", params.into());
-        self.notifications.gateway.forward_fire_and_forget(ext_notification);
+        self.notifications
+            .gateway
+            .forward_fire_and_forget(ext_notification);
         publication.enqueued();
         if let Some((notification_type, message, title, level)) =
             notification_hook_for_update(&notification.update)

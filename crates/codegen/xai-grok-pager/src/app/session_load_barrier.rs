@@ -54,7 +54,8 @@ pub(super) fn session_load_agent_id(result: &TaskResult) -> Option<AgentId> {
     match result {
         TaskResult::SessionLoaded { agent_id, .. }
         | TaskResult::SessionLoadFailed { agent_id, .. } => Some(*agent_id),
-        TaskResult::WithPinnedMemoryMode { result, .. } | TaskResult::WithCurrentActions { result, .. }
+        TaskResult::WithPinnedMemoryMode { result, .. }
+        | TaskResult::WithCurrentActions { result, .. }
         | TaskResult::WithPublication { result, .. } => session_load_agent_id(result),
         _ => None,
     }
@@ -63,7 +64,8 @@ fn session_load_session_id(result: &TaskResult) -> Option<&acp::SessionId> {
     match result {
         TaskResult::SessionLoaded { session_id, .. }
         | TaskResult::SessionLoadFailed { session_id, .. } => Some(session_id),
-        TaskResult::WithPinnedMemoryMode { result, .. } | TaskResult::WithCurrentActions { result, .. }
+        TaskResult::WithPinnedMemoryMode { result, .. }
+        | TaskResult::WithCurrentActions { result, .. }
         | TaskResult::WithPublication { result, .. } => session_load_session_id(result),
         _ => None,
     }

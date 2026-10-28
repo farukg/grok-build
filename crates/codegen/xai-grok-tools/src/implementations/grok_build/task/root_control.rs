@@ -26,7 +26,17 @@ impl RootReceiptSink for NoRootReceiptSink {
     }
 }
 /// One host-minted agent incarnation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct AgentMessageGeneration(#[schemars(with = "String")] uuid::Uuid);
 impl AgentMessageGeneration {
     #[must_use]

@@ -64,10 +64,20 @@ fn owned_dir(parent: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(parent.join("subagents").join(id))
 }
 
-pub(super) fn read_owned(parent: &Path, id: &str, parent_session: &str) -> io::Result<SubagentMeta> {
+pub(super) fn read_owned(
+    parent: &Path,
+    id: &str,
+    parent_session: &str,
+) -> io::Result<SubagentMeta> {
     let meta = read_meta(&owned_dir(parent, id)?)?;
-    if meta.subagent_id != id || meta.child_session_id != id || meta.parent_session_id != parent_session {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "child metadata audience mismatch"));
+    if meta.subagent_id != id
+        || meta.child_session_id != id
+        || meta.parent_session_id != parent_session
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "child metadata audience mismatch",
+        ));
     }
     Ok(meta)
 }

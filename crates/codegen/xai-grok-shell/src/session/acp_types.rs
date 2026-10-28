@@ -87,7 +87,11 @@ pub struct AutomaticCompactInvocation {
 pub struct CompactConversationRequest {
     #[serde(alias = "sessionId")]
     pub session_id: String,
-    #[serde(default, alias = "invocationId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "invocationId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub invocation_id: Option<CompactInvocationId>,
 }
 
@@ -101,11 +105,16 @@ mod compact_request_tests {
     #[test]
     fn compact_request_boundary_spelling_defaults_types_and_duplicates() {
         let id = CompactInvocationId(uuid::Uuid::from_u128(17));
-        assert_eq!(serde_json::to_value(CompactConversationRequest {
-            session_id: "session".into(), invocation_id: Some(id),
-        }).unwrap(), serde_json::json!({
-            "session_id": "session", "invocation_id": "00000000-0000-0000-0000-000000000011",
-        }));
+        assert_eq!(
+            serde_json::to_value(CompactConversationRequest {
+                session_id: "session".into(),
+                invocation_id: Some(id),
+            })
+            .unwrap(),
+            serde_json::json!({
+                "session_id": "session", "invocation_id": "00000000-0000-0000-0000-000000000011",
+            })
+        );
         for params in [
             serde_json::json!({"sessionId": "session"}),
             serde_json::json!({"session_id": "session", "invocation_id": null}),
@@ -113,25 +122,42 @@ mod compact_request_tests {
         ] {
             let decoded: CompactConversationRequest = serde_json::from_value(params).unwrap();
             assert_eq!(decoded.invocation_id, None);
-            assert_eq!(serde_json::to_value(decoded).unwrap(), serde_json::json!({"session_id": "session"}));
+            assert_eq!(
+                serde_json::to_value(decoded).unwrap(),
+                serde_json::json!({"session_id": "session"})
+            );
         }
         let decoded: CompactConversationRequest = serde_json::from_value(serde_json::json!({
             "sessionId": "session", "invocationId": id, "future": [false],
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(decoded.invocation_id, Some(id));
-        for invalid in [serde_json::json!(false), serde_json::json!(17), serde_json::json!([]),
-            serde_json::json!({}), serde_json::json!("invalid")] {
+        for invalid in [
+            serde_json::json!(false),
+            serde_json::json!(17),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!("invalid"),
+        ] {
             for key in ["invocation_id", "invocationId"] {
                 let mut params = serde_json::json!({"sessionId": "session"});
                 params[key] = invalid.clone();
                 assert!(serde_json::from_value::<CompactConversationRequest>(params).is_err());
             }
         }
-        for invalid in [serde_json::Value::Null, serde_json::json!(false), serde_json::json!(17),
-            serde_json::json!([]), serde_json::json!({})] {
-            assert!(serde_json::from_value::<CompactConversationRequest>(serde_json::json!({
-                "sessionId": invalid,
-            })).is_err());
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!(false),
+            serde_json::json!(17),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            assert!(
+                serde_json::from_value::<CompactConversationRequest>(serde_json::json!({
+                    "sessionId": invalid,
+                }))
+                .is_err()
+            );
         }
         for params in [
             r#"{"session_id":"session","sessionId":"session"}"#,
@@ -139,7 +165,10 @@ mod compact_request_tests {
             r#"{"sessionId":"session","invocationId":null,"invocation_id":null}"#,
             r#"{"sessionId":"session","invocationId":null,"invocationId":null}"#,
         ] {
-            assert!(serde_json::from_str::<CompactConversationRequest>(params).is_err(), "duplicate fields must not pick an owner: {params}");
+            assert!(
+                serde_json::from_str::<CompactConversationRequest>(params).is_err(),
+                "duplicate fields must not pick an owner: {params}"
+            );
         }
     }
 
@@ -148,18 +177,26 @@ mod compact_request_tests {
         for session_key in ["session_id", "sessionId"] {
             let mut params = serde_json::Map::new();
             params.insert(session_key.into(), serde_json::json!("session"));
-            let legacy: CompactConversationRequest = serde_json::from_value(params.clone().into()).unwrap();
+            let legacy: CompactConversationRequest =
+                serde_json::from_value(params.clone().into()).unwrap();
             assert_eq!(legacy.session_id, "session");
             assert_eq!(legacy.invocation_id, None);
-            assert!(serde_json::to_value(legacy).unwrap().get("invocation_id").is_none());
+            assert!(
+                serde_json::to_value(legacy)
+                    .unwrap()
+                    .get("invocation_id")
+                    .is_none()
+            );
             let id = CompactInvocationId(uuid::Uuid::new_v4());
             assert!(serde_json::to_value(id).unwrap().is_string());
             for id_key in ["invocation_id", "invocationId"] {
                 let mut correlated = params.clone();
                 correlated.insert(id_key.into(), serde_json::json!(id));
-                let request: CompactConversationRequest = serde_json::from_value(correlated.into()).unwrap();
+                let request: CompactConversationRequest =
+                    serde_json::from_value(correlated.into()).unwrap();
                 assert_eq!(request.invocation_id, Some(id));
-                let roundtrip: CompactConversationRequest = serde_json::from_value(serde_json::to_value(request).unwrap()).unwrap();
+                let roundtrip: CompactConversationRequest =
+                    serde_json::from_value(serde_json::to_value(request).unwrap()).unwrap();
                 assert_eq!(roundtrip.invocation_id, Some(id));
             }
             params.insert("invocationId".into(), serde_json::json!("not-a-uuid"));

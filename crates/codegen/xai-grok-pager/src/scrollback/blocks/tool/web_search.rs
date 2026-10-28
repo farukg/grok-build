@@ -101,7 +101,8 @@ impl WebSearchToolCallBlock {
 
                 // Only show suffix if prefix + suffix fit within width.
                 // Otherwise drop it to avoid overflow on narrow terminals.
-                let suffix_fits = unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix.len() < w;
+                let suffix_fits =
+                    unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix.len() < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
 
                 let query_budget = w
@@ -238,7 +239,10 @@ impl BlockContent for WebSearchToolCallBlock {
                 } else if let Some(ref err) = self.error {
                     lines.push(Line::from("").into());
                     lines.extend(super::body::wrapped_body(
-                        err, theme.fg(theme.accent_error), ctx.content_width(), "  ",
+                        err,
+                        theme.fg(theme.accent_error),
+                        ctx.content_width(),
+                        "  ",
                     ));
                 } else if !self.is_x_search {
                     lines.push(Line::from("").into());
@@ -284,7 +288,11 @@ impl BlockContent for WebSearchToolCallBlock {
 
     // A failed search folds open to show its reason
     fn is_foldable(&self) -> bool {
-        (self.content.as_deref().is_some_and(|c| !c.trim().is_empty()) || self.error.is_some())
+        (self
+            .content
+            .as_deref()
+            .is_some_and(|c| !c.trim().is_empty())
+            || self.error.is_some())
             && !self.is_x_search
     }
 
@@ -303,7 +311,12 @@ impl BlockContent for WebSearchToolCallBlock {
         let theme = Theme::current();
         let mut header = self.header_line(&theme, false, None);
         if let Some(prefix) = header.spans.first_mut() {
-            prefix.content = self.label.as_deref().unwrap_or("Web Search ").to_owned().into();
+            prefix.content = self
+                .label
+                .as_deref()
+                .unwrap_or("Web Search ")
+                .to_owned()
+                .into();
         }
         Some(Text::from(vec![header]))
     }

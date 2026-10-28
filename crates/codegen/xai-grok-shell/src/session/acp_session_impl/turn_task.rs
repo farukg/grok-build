@@ -254,7 +254,8 @@ pub(crate) struct AgentTask {
     pub(super) epoch: TurnEpoch,
     pub(super) identity: TaskIdentity,
     pub(super) admission: tokio_util::sync::CancellationToken,
-    pub(super) initial_parent_reservation: Option<Arc<crate::session::persistence::ReservedParentMessageTurn>>,
+    pub(super) initial_parent_reservation:
+        Option<Arc<crate::session::persistence::ReservedParentMessageTurn>>,
     pub(super) input_origin: InputOrigin,
     pub(crate) handle: tokio::task::AbortHandle,
     /// Monotonic start of this running turn; complete and cancel both read it.
@@ -407,20 +408,36 @@ impl AgentTask {
         let admission = tokio_util::sync::CancellationToken::new();
         let current_actions = session.current_actions.clone();
         let owner = match request.input_origin.policy().analytics {
-            crate::session::AnalyticsClass::HumanPrompt | crate::session::AnalyticsClass::AgentMessage => {
+            crate::session::AnalyticsClass::HumanPrompt
+            | crate::session::AnalyticsClass::AgentMessage => {
                 if session.startup_hints.is_subagent {
-                    crate::session::current_actions::FrozenOwner::Child { prompt_id: request.prompt_id.clone(), task_id: identity.to_string() }
+                    crate::session::current_actions::FrozenOwner::Child {
+                        prompt_id: request.prompt_id.clone(),
+                        task_id: identity.to_string(),
+                    }
                 } else {
-                    crate::session::current_actions::FrozenOwner::Root { prompt_id: request.prompt_id.clone(), task_id: identity.to_string() }
+                    crate::session::current_actions::FrozenOwner::Root {
+                        prompt_id: request.prompt_id.clone(),
+                        task_id: identity.to_string(),
+                    }
                 }
             }
             crate::session::AnalyticsClass::RuntimeWake => {
-                crate::session::current_actions::FrozenOwner::Wake { prompt_id: request.prompt_id.clone(), task_id: identity.to_string() }
+                crate::session::current_actions::FrozenOwner::Wake {
+                    prompt_id: request.prompt_id.clone(),
+                    task_id: identity.to_string(),
+                }
             }
         };
         current_actions.start_turn(owner, xai_monotonic_clock::MonotonicPoint::default());
-        let source_guard = crate::session::current_actions::TurnRegistration::new(current_actions.clone(), identity.to_string());
-        let current_action = crate::session::current_actions::TurnOwnership::new(current_actions, identity.to_string());
+        let source_guard = crate::session::current_actions::TurnRegistration::new(
+            current_actions.clone(),
+            identity.to_string(),
+        );
+        let current_action = crate::session::current_actions::TurnOwnership::new(
+            current_actions,
+            identity.to_string(),
+        );
         Self {
             prompt_id: request.prompt_id.clone(),
             epoch,
@@ -635,7 +652,10 @@ mod start_gate_tests {
                     tokio_util::sync::CancellationToken::new(),
                     completion_tx,
                     std::time::Instant::now(),
-                    crate::session::current_actions::TurnRegistration::new(Default::default(), "unadmitted".into()),
+                    crate::session::current_actions::TurnRegistration::new(
+                        Default::default(),
+                        "unadmitted".into(),
+                    ),
                 )
                 .await;
                 let completion = completion_rx.recv().await.expect("turn completion");

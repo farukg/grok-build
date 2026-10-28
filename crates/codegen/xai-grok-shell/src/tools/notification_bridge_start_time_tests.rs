@@ -29,17 +29,29 @@ async fn backgrounded_start_survives_delayed_delivery_and_legacy_wire() {
             &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
             notification,
             &mut HashMap::new(),
-        ).await;
+        )
+        .await;
         let PersistenceMsg::Update(crate::session::storage::SessionUpdate::Xai(saved)) =
-            persistence_rx.try_recv().expect("backgrounded persisted before registry response")
-        else { panic!("expected backgrounded update") };
+            persistence_rx
+                .try_recv()
+                .expect("backgrounded persisted before registry response")
+        else {
+            panic!("expected backgrounded update")
+        };
         let crate::extensions::notification::SessionUpdate::TaskBackgrounded {
-            start_time: saved_start, ..
-        } = &saved.update else { panic!("expected backgrounded variant") };
+            start_time: saved_start,
+            ..
+        } = &saved.update
+        else {
+            panic!("expected backgrounded variant")
+        };
         assert_eq!(*saved_start, start_time);
         let wire = serde_json::to_value(&*saved).unwrap();
         match start_time {
-            Some(start) => assert_eq!(wire["update"]["start_time"], serde_json::to_value(start).unwrap()),
+            Some(start) => assert_eq!(
+                wire["update"]["start_time"],
+                serde_json::to_value(start).unwrap()
+            ),
             None => assert!(wire["update"].get("start_time").is_none()),
         }
         let mut delivered = None;
@@ -47,14 +59,21 @@ async fn backgrounded_start_survives_delayed_delivery_and_legacy_wire() {
             if let xai_acp_lib::AcpClientMessage::ExtNotification(args) = message
                 && args.request.method.as_ref() == "x.ai/task_backgrounded"
             {
-                delivered = Some(serde_json::from_str::<serde_json::Value>(args.request.params.get()).unwrap());
+                delivered = Some(
+                    serde_json::from_str::<serde_json::Value>(args.request.params.get()).unwrap(),
+                );
             }
         }
         assert_eq!(delivered, Some(wire.clone()));
-        let decoded: crate::extensions::notification::SessionNotification = serde_json::from_value(wire).unwrap();
+        let decoded: crate::extensions::notification::SessionNotification =
+            serde_json::from_value(wire).unwrap();
         let crate::extensions::notification::SessionUpdate::TaskBackgrounded {
-            start_time: decoded_start, ..
-        } = decoded.update else { panic!("expected backgrounded variant") };
+            start_time: decoded_start,
+            ..
+        } = decoded.update
+        else {
+            panic!("expected backgrounded variant")
+        };
         assert_eq!(decoded_start, start_time);
     }
 }

@@ -6,13 +6,22 @@ use crate::session::compaction_config::{ManualCompactWorker, PendingCompact};
 impl SessionActor {
     fn compact_predecessors(&self, state: &State) -> std::collections::HashSet<String> {
         let wake = CompletionWakeAdmission::classify(
-            self.tool_context.task_wake_suppressed.as_ref().is_some_and(|gate| gate.get()),
+            self.tool_context
+                .task_wake_suppressed
+                .as_ref()
+                .is_some_and(|gate| gate.get()),
             state.notifications_suppressed,
         );
-        state.pending_inputs.iter().filter(|input| {
-            !input.input_origin.is_boundary_completion()
-                && (!wake.is_parked() || input.input_origin.policy().authority.is_human_intent())
-        }).map(|input| input.prompt_id.clone()).collect()
+        state
+            .pending_inputs
+            .iter()
+            .filter(|input| {
+                !input.input_origin.is_boundary_completion()
+                    && (!wake.is_parked()
+                        || input.input_origin.policy().authority.is_human_intent())
+            })
+            .map(|input| input.prompt_id.clone())
+            .collect()
     }
 
     pub(in crate::session::acp_session) async fn enqueue_manual_compact(
@@ -22,7 +31,9 @@ impl SessionActor {
         respond_to: oneshot::Sender<acp::Result<()>>,
     ) {
         if self.compaction.cancel.manual_is_sealed() {
-            let _ = respond_to.send(Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error()));
+            let _ = respond_to.send(Err(
+                crate::session::helpers::session_compact::CompactFailure::cancelled_error(),
+            ));
             return;
         }
         let admitted_at = xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now());
@@ -34,21 +45,33 @@ impl SessionActor {
             || !state.pending_inputs.is_empty()
             || !self.compaction.cancel.pending_manual.borrow().is_empty();
         let current_action = crate::session::current_actions::CompactRegistration::new(
-            self.current_actions.clone(), crate::session::current_actions::CompactOwner::Manual { request_id: id, invocation_id },
-            crate::session::current_actions::CompactStage::Queued, admitted_at,
+            self.current_actions.clone(),
+            crate::session::current_actions::CompactOwner::Manual {
+                request_id: id,
+                invocation_id,
+            },
+            crate::session::current_actions::CompactStage::Queued,
+            admitted_at,
         );
-        self.compaction.cancel.pending_manual.borrow_mut().push_back(PendingCompact {
-            id,
-            current_action,
-            invocation_id,
-            predecessors,
-            cancellation,
-            respond_to,
-        });
+        self.compaction
+            .cancel
+            .pending_manual
+            .borrow_mut()
+            .push_back(PendingCompact {
+                id,
+                current_action,
+                invocation_id,
+                predecessors,
+                cancellation,
+                respond_to,
+            });
         drop(state);
         if queued {
             let tokens_used = self.chat_state_handle.get_total_tokens().await;
-            let context_window = self.chat_state_handle.get_sampling_config().await
+            let context_window = self
+                .chat_state_handle
+                .get_sampling_config()
+                .await
                 .map(|config| config.context_window.get())
                 .unwrap_or(crate::remote::DEFAULT_CONTEXT_WINDOW);
             self.send_manual_compact_notification(invocation_id, crate::extensions::notification::SessionUpdate::AutoCompactStarted {
@@ -61,8 +84,15 @@ impl SessionActor {
         }
     }
 
-    pub(in crate::session::acp_session) fn pending_compact_allows_input(&self, prompt_id: &str) -> bool {
-        self.compaction.cancel.pending_manual.borrow().front()
+    pub(in crate::session::acp_session) fn pending_compact_allows_input(
+        &self,
+        prompt_id: &str,
+    ) -> bool {
+        self.compaction
+            .cancel
+            .pending_manual
+            .borrow()
+            .front()
             .is_none_or(|request| request.predecessors.contains(prompt_id))
     }
 
@@ -82,9 +112,13 @@ impl SessionActor {
             return false;
         }
         let predecessors = self.compact_predecessors(state);
-        let ready = self.compaction.cancel.pending_manual.borrow().front().is_some_and(|request| {
-            request.predecessors.is_disjoint(&predecessors)
-        });
+        let ready = self
+            .compaction
+            .cancel
+            .pending_manual
+            .borrow()
+            .front()
+            .is_some_and(|request| request.predecessors.is_disjoint(&predecessors));
         if !ready {
             return false;
         }
@@ -92,7 +126,14 @@ impl SessionActor {
             return false;
         };
         // Keep the reserved request cancellable until its execution task takes the token scope.
-        let Some(id) = self.compaction.cancel.pending_manual.borrow().front().map(|request| request.id) else {
+        let Some(id) = self
+            .compaction
+            .cancel
+            .pending_manual
+            .borrow()
+            .front()
+            .map(|request| request.id)
+        else {
             state.finish_finalization(&mut finalization);
             return false;
         };
@@ -100,18 +141,29 @@ impl SessionActor {
         let worker = tokio::task::spawn_local(async move {
             #[cfg(test)]
             {
-                let pause = session.compaction.cancel.manual_reservation_pause.borrow_mut().take();
+                let pause = session
+                    .compaction
+                    .cancel
+                    .manual_reservation_pause
+                    .borrow_mut()
+                    .take();
                 if let Some((reached, release)) = pause {
                     let _ = reached.send(());
                     let _ = release.await;
                 }
             }
             let Some(request) = session.remove_pending_compact(id) else {
-                session.state.lock().await.finish_finalization(&mut finalization);
+                session
+                    .state
+                    .lock()
+                    .await
+                    .finish_finalization(&mut finalization);
                 session.compaction.cancel.manual_finished.notify_one();
                 return;
             };
-            request.current_action.stage(crate::session::current_actions::CompactStage::Executing);
+            request
+                .current_action
+                .stage(crate::session::current_actions::CompactStage::Executing);
             let (_cancel, scope) = session.compaction.cancel.enter();
             let result = {
                 let compact = session.run_compact_with_invocation(request.invocation_id);
@@ -131,21 +183,34 @@ impl SessionActor {
             };
             let result = match result {
                 Ok(()) => {
-                    request.current_action.stage(crate::session::current_actions::CompactStage::AwaitingPersistence);
+                    request
+                        .current_action
+                        .stage(crate::session::current_actions::CompactStage::AwaitingPersistence);
                     session.acknowledge_compaction_persistence().await
-                },
+                }
                 Err(error) => Err(error),
             };
             if let Err(error) = &result {
-                request.current_action.stage(crate::session::current_actions::CompactStage::AwaitingResponse);
-                session.emit_manual_compact_failure(request.invocation_id, error).await;
+                request
+                    .current_action
+                    .stage(crate::session::current_actions::CompactStage::AwaitingResponse);
+                session
+                    .emit_manual_compact_failure(request.invocation_id, error)
+                    .await;
             }
-            session.state.lock().await.finish_finalization(&mut finalization);
+            session
+                .state
+                .lock()
+                .await
+                .finish_finalization(&mut finalization);
             request.current_action.respond(request.respond_to, result);
             drop(scope);
             session.compaction.cancel.manual_finished.notify_one();
         });
-        self.compaction.cancel.manual_worker.replace(ManualCompactWorker::Running(worker));
+        self.compaction
+            .cancel
+            .manual_worker
+            .replace(ManualCompactWorker::Running(worker));
         true
     }
 
@@ -169,7 +234,12 @@ impl SessionActor {
     }
 
     pub(in crate::session::acp_session) async fn pending_compact_cancellation(&self) -> uuid::Uuid {
-        let cancellations: Vec<_> = self.compaction.cancel.pending_manual.borrow().iter()
+        let cancellations: Vec<_> = self
+            .compaction
+            .cancel
+            .pending_manual
+            .borrow()
+            .iter()
             .map(|request| {
                 let id = request.id;
                 let cancellation = request.cancellation.clone();
@@ -177,7 +247,8 @@ impl SessionActor {
                     cancellation.cancelled().await;
                     id
                 })
-            }).collect();
+            })
+            .collect();
         if cancellations.is_empty() {
             std::future::pending().await
         } else {
@@ -193,20 +264,36 @@ impl SessionActor {
 
     pub(in crate::session::acp_session) async fn cancel_pending_compact(&self, id: uuid::Uuid) {
         if let Some(request) = self.remove_pending_compact(id) {
-            request.current_action.stage(crate::session::current_actions::CompactStage::AwaitingResponse);
+            request
+                .current_action
+                .stage(crate::session::current_actions::CompactStage::AwaitingResponse);
             let error = crate::session::helpers::session_compact::CompactFailure::cancelled_error();
-            self.emit_manual_compact_failure(request.invocation_id, &error).await;
-            request.current_action.respond(request.respond_to, Err(error));
+            self.emit_manual_compact_failure(request.invocation_id, &error)
+                .await;
+            request
+                .current_action
+                .respond(request.respond_to, Err(error));
         }
     }
 
     pub(in crate::session::acp_session) async fn cancel_pending_compactions(&self) {
-        let requests: Vec<_> = self.compaction.cancel.pending_manual.borrow_mut().drain(..).collect();
+        let requests: Vec<_> = self
+            .compaction
+            .cancel
+            .pending_manual
+            .borrow_mut()
+            .drain(..)
+            .collect();
         for request in requests {
-            request.current_action.stage(crate::session::current_actions::CompactStage::AwaitingResponse);
+            request
+                .current_action
+                .stage(crate::session::current_actions::CompactStage::AwaitingResponse);
             let error = crate::session::helpers::session_compact::CompactFailure::cancelled_error();
-            self.emit_manual_compact_failure(request.invocation_id, &error).await;
-            request.current_action.respond(request.respond_to, Err(error));
+            self.emit_manual_compact_failure(request.invocation_id, &error)
+                .await;
+            request
+                .current_action
+                .respond(request.respond_to, Err(error));
         }
     }
 }

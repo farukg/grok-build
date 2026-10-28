@@ -1,10 +1,10 @@
 //! Executes the existing single-prompt child attempt while its session actor is live.
 use super::*;
 use crate::session::commands::PromptTurnResult as SubagentPromptTurnResult;
-use crate::session::message_delivery::{InitialParentMessageAdmission, ParentMessageHandoff};
-use xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission;
-use std::future::Future;
 pub(super) use crate::session::message_delivery::InitialChildPublication;
+use crate::session::message_delivery::{InitialParentMessageAdmission, ParentMessageHandoff};
+use std::future::Future;
+use xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission;
 
 #[derive(Debug)]
 pub(super) enum InitialChildPromptReadiness<T> {
@@ -46,7 +46,9 @@ pub(super) fn subagent_trace_prefix(session_id: &str, turn_number: u64) -> Strin
     format!("{session_id}/turn_{turn_number}")
 }
 pub(super) fn artifact_upload_context(
-    bucket: Option<&str>, method: Option<&crate::session::repo_changes::UploadMethod>, prefix: String,
+    bucket: Option<&str>,
+    method: Option<&crate::session::repo_changes::UploadMethod>,
+    prefix: String,
 ) -> Option<crate::upload::manifest::ArtifactUploadContext> {
     bucket.and_then(|_| {
         method.map(|method| crate::upload::manifest::ArtifactUploadContext {
@@ -69,7 +71,9 @@ pub(super) enum InitialChildInput {
     ParentMessage {
         recipe: super::management_recipe::ChildManagementRecipe,
         publication: Box<crate::session::delivery_receiver::ParentMessagePublication>,
-        custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
+        custody: Box<
+            xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody,
+        >,
         artifacts: super::native_recovery::InitialArtifactGrant,
         delivery: ActiveAgentMessageDelivery,
         parent_telemetry_ctx: xai_grok_telemetry::TelemetryCtx,
@@ -82,7 +86,9 @@ impl InitialChildInput {
         match self {
             Self::Prompt(prompt_id) => prompt_id.clone(),
             Self::ParentMessage { delivery, .. } => {
-                crate::session::delivery_receiver::parent_message_prompt_id(&delivery.message().message_id)
+                crate::session::delivery_receiver::parent_message_prompt_id(
+                    &delivery.message().message_id,
+                )
             }
         }
     }
@@ -163,63 +169,80 @@ pub(super) async fn run_one_turn_attempt(
     let child_prompt_id = input.initial_input.prompt_id();
     let turn_started_at = chrono::Utc::now().to_rfc3339();
     let dispatch = match input.initial_input {
-        InitialChildInput::Prompt(_) => input.child_handle.cmd_tx
-            .send(
-                SessionCommand::Prompt {
-                    prompt_id: child_prompt_id.clone(),
-                    prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
-                        input.task_prompt_text.to_owned(),
-                    ))],
-                    prompt_mode: crate::session::plan_mode::PromptMode::Agent,
-                    artifact_upload_ctx: artifact_upload_context(input.gcs_bucket_url, input.gcs_upload_method,
-                        subagent_trace_prefix(&input.request.id, input.turn_number)),
-                    client_identifier: None,
-                    screen_mode: None,
-                    verbatim: true,
-                    traceparent: xai_grok_otel::current_traceparent(),
-                    json_schema: input.request.runtime_overrides.output_schema.clone(),
-                    send_now: false,
-                    admission: None,
-                    tool_overrides_update: None,
-                    respond_to: prompt_tx,
-                    prompt_admitted: Some(input.prompt_admitted),
-                    persist_ack: None,
-                    parsed_prompt_tx: None,
-                },
-            )
+        InitialChildInput::Prompt(_) => input
+            .child_handle
+            .cmd_tx
+            .send(SessionCommand::Prompt {
+                prompt_id: child_prompt_id.clone(),
+                prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    input.task_prompt_text.to_owned(),
+                ))],
+                prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+                artifact_upload_ctx: artifact_upload_context(
+                    input.gcs_bucket_url,
+                    input.gcs_upload_method,
+                    subagent_trace_prefix(&input.request.id, input.turn_number),
+                ),
+                client_identifier: None,
+                screen_mode: None,
+                verbatim: true,
+                traceparent: xai_grok_otel::current_traceparent(),
+                json_schema: input.request.runtime_overrides.output_schema.clone(),
+                send_now: false,
+                admission: None,
+                tool_overrides_update: None,
+                respond_to: prompt_tx,
+                prompt_admitted: Some(input.prompt_admitted),
+                persist_ack: None,
+                parsed_prompt_tx: None,
+            })
             .map_err(|_| "initial prompt owner closed"),
         InitialChildInput::ParentMessage {
-            custody, recipe, publication, artifacts, delivery,
+            custody,
+            recipe,
+            publication,
+            artifacts,
+            delivery,
             parent_telemetry_ctx,
             receiver,
         } => {
             let (respond_to, admitted) = oneshot::channel();
             let (reservation_tx, reservation_rx) = oneshot::channel();
             let expected_delivery = delivery.clone();
-            let sent = input.child_handle.cmd_tx.send(SessionCommand::ParentAgentMessage {
-                delivery,
-                receipt_sink: ParentMessageHandoff::Initial(
-                    InitialParentMessageAdmission {
-                        publication, recipe, receiver,
+            let sent = input
+                .child_handle
+                .cmd_tx
+                .send(SessionCommand::ParentAgentMessage {
+                    delivery,
+                    receipt_sink: ParentMessageHandoff::Initial(InitialParentMessageAdmission {
+                        publication,
+                        recipe,
+                        receiver,
                         respond_to: prompt_tx,
                         prompt_admitted: reservation_tx,
                         artifacts,
                         json_schema: custody.launch.runtime_overrides.output_schema.clone(),
                         traceparent: custody.launch.traceparent.clone(),
                         custody,
-                    },
-                ),
-                parent_telemetry_ctx,
-                respond_to,
-            });
+                    }),
+                    parent_telemetry_ctx,
+                    respond_to,
+                });
             match sent {
                 Err(_) => Err("initial parent-message owner closed"),
                 Ok(()) => match admitted.await {
                     Ok(ActiveMessageAdmission::Admitted) => match reservation_rx.await {
-                        Ok(ready) if ready.reservation.matches_delivery(
-                            input.child_handle.info.id.0.as_ref(), &expected_delivery,
-                        ) => input.prompt_admitted.send(InitialChildPublication::ParentMessage(ready))
-                            .map_err(|_| "initial parent-message publication owner closed"),
+                        Ok(ready)
+                            if ready.reservation.matches_delivery(
+                                input.child_handle.info.id.0.as_ref(),
+                                &expected_delivery,
+                            ) =>
+                        {
+                            input
+                                .prompt_admitted
+                                .send(InitialChildPublication::ParentMessage(ready))
+                                .map_err(|_| "initial parent-message publication owner closed")
+                        }
                         Ok(_) => Err("initial parent-message reservation identity mismatch"),
                         Err(_) => Err("initial parent-message reservation unconfirmed"),
                     },
@@ -573,8 +596,10 @@ mod initial_child_prompt_readiness_tests {
             UnpromotedChildDisposition::Cancelled
         );
         assert_eq!(
-            InitialChildPromptReadiness::<()>::Admitted(super::InitialChildPublication::Prompt(oneshot::channel().0))
-                .unpromoted_disposition(),
+            InitialChildPromptReadiness::<()>::Admitted(super::InitialChildPublication::Prompt(
+                oneshot::channel().0
+            ))
+            .unpromoted_disposition(),
             UnpromotedChildDisposition::Cancelled
         );
         assert_eq!(

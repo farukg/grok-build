@@ -151,7 +151,11 @@ impl SessionActor {
         let mut batch = HookBatch::from_envelope(envelope);
         let count = xai_grok_hooks::dispatcher::runnable_count(registry, envelope, ctx);
         if count > 0 {
-            batch.current_action = crate::session::current_actions::HookRegistration::new(self.current_actions.clone(), batch.prompt_id.as_deref(), xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()));
+            batch.current_action = crate::session::current_actions::HookRegistration::new(
+                self.current_actions.clone(),
+                batch.prompt_id.as_deref(),
+                xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
+            );
             self.send_xai_notification_transient(XaiSessionUpdate::HookRunStarted {
                 event_name: batch.event_name.clone(),
                 tool_name: batch.tool_name.clone(),

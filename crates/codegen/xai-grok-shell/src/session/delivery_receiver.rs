@@ -2,8 +2,10 @@
 mod parent_message_publication;
 pub use parent_message_publication::ParentMessagePublication;
 use serde::{Deserialize, Serialize};
-pub use xai_grok_tools::implementations::grok_build::task::native_recovery::{payload_digest, parent_message_delivery_id, parent_message_prompt_id};
 use std::collections::BTreeMap;
+pub use xai_grok_tools::implementations::grok_build::task::native_recovery::{
+    parent_message_delivery_id, parent_message_prompt_id, payload_digest,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,7 +132,9 @@ pub enum DeliveryResult {
 pub enum ReceiverTurnOrigin {
     #[default]
     Other,
-    ParentMessage { message_id: String },
+    ParentMessage {
+        message_id: String,
+    },
     Delivery {
         delivery_id: String,
         payload_digest: String,
@@ -147,7 +151,9 @@ impl ReceiverTurnOrigin {
                 payload_digest: payload_digest.clone(),
             },
             super::PromptOrigin::ParentAgentMessage { message_id, .. }
-            | super::PromptOrigin::ParentHumanMessage { message_id, .. } => Self::ParentMessage { message_id: message_id.clone() },
+            | super::PromptOrigin::ParentHumanMessage { message_id, .. } => Self::ParentMessage {
+                message_id: message_id.clone(),
+            },
             super::PromptOrigin::User
             | super::PromptOrigin::TaskCompleted { .. }
             | super::PromptOrigin::SubagentCompleted { .. }
@@ -198,14 +204,23 @@ pub(crate) enum DeliveryExecution {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ParentMessageSource { Agent, Human }
+pub enum ParentMessageSource {
+    Agent,
+    Human,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ParentMessageOperation {
     Queue,
-    Steer { prompt_id: String, parent_task: xai_chat_state::ParentTask },
-    Interject { prompt_id: String, parent_task: xai_chat_state::ParentTask },
+    Steer {
+        prompt_id: String,
+        parent_task: xai_chat_state::ParentTask,
+    },
+    Interject {
+        prompt_id: String,
+        parent_task: xai_chat_state::ParentTask,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,10 +242,16 @@ pub enum ParentMessageCustody {
     Legacy,
     Live {
         receiver: xai_grok_tools::implementations::grok_build::task::types::ActiveMessageReceiver,
-        operation: xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation,
+        operation:
+            xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation,
         route: xai_grok_tools::implementations::grok_build::task::types::ActiveMessageRoute,
     },
-    Initial { custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>, publication: Box<ParentMessagePublication> },
+    Initial {
+        custody: Box<
+            xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody,
+        >,
+        publication: Box<ParentMessagePublication>,
+    },
 }
 
 #[derive(Debug)]
@@ -248,16 +269,24 @@ pub struct NativeParentAdmission {
 
 impl std::fmt::Debug for NativeParentAdmission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("NativeParentAdmission").finish_non_exhaustive()
+        formatter
+            .debug_struct("NativeParentAdmission")
+            .finish_non_exhaustive()
     }
 }
 
 impl ParentAdmissionAuthority {
-    pub(crate) fn native(claim: xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim, recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe) -> Self {
+    pub(crate) fn native(
+        claim: xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim,
+        recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe,
+    ) -> Self {
         Self::Native(NativeParentAdmission { claim, recipe })
     }
 
-    pub(crate) fn claim(&self) -> Option<&xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim> {
+    pub(crate) fn claim(
+        &self,
+    ) -> Option<&xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim>
+    {
         match self {
             Self::Coordinator(claim) => Some(claim),
             Self::Native(native) => Some(&native.claim),
@@ -265,8 +294,13 @@ impl ParentAdmissionAuthority {
         }
     }
 
-    pub(crate) fn native_recipe(&self) -> Option<&crate::agent::subagent::management_recipe::ChildManagementRecipe> {
-        match self { Self::Native(native) => Some(&native.recipe), Self::Coordinator(_) | Self::DirectLocal => None }
+    pub(crate) fn native_recipe(
+        &self,
+    ) -> Option<&crate::agent::subagent::management_recipe::ChildManagementRecipe> {
+        match self {
+            Self::Native(native) => Some(&native.recipe),
+            Self::Coordinator(_) | Self::DirectLocal => None,
+        }
     }
 
     pub(crate) fn committed(self) -> ParentAdmissionAck {
@@ -286,7 +320,9 @@ pub enum ParentAdmissionAck {
 }
 
 impl ParentMessageAdmission {
-    pub(crate) fn delivery_id(&self) -> String { parent_message_delivery_id(&self.message_id) }
+    pub(crate) fn delivery_id(&self) -> String {
+        parent_message_delivery_id(&self.message_id)
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -294,7 +330,9 @@ impl ParentMessageAdmission {
 pub(crate) enum DeliveryProvenance {
     #[default]
     External,
-    ParentMessage { admission: ParentMessageAdmission },
+    ParentMessage {
+        admission: ParentMessageAdmission,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -307,11 +345,21 @@ pub(crate) struct DeliveryRecord {
 }
 
 impl DeliveryRecord {
-    pub(crate) fn parent_recovery_ref(&self) -> Option<xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef> {
-        let DeliveryProvenance::ParentMessage { admission } = &self.provenance else { return None; };
+    pub(crate) fn parent_recovery_ref(
+        &self,
+    ) -> Option<
+        xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef,
+    > {
+        let DeliveryProvenance::ParentMessage { admission } = &self.provenance else {
+            return None;
+        };
         let (receiver, operation) = match &admission.custody {
             ParentMessageCustody::Legacy => return None,
-            ParentMessageCustody::Live { receiver, operation, .. } => (receiver, *operation),
+            ParentMessageCustody::Live {
+                receiver,
+                operation,
+                ..
+            } => (receiver, *operation),
             ParentMessageCustody::Initial { custody, .. } => (&custody.receiver, custody.operation),
         };
         Some(xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
@@ -321,13 +369,18 @@ impl DeliveryRecord {
         })
     }
 
-    pub(crate) fn record_projection(&mut self, binding: &xai_chat_state::DeliveryBinding) -> Result<(), &'static str> {
+    pub(crate) fn record_projection(
+        &mut self,
+        binding: &xai_chat_state::DeliveryBinding,
+    ) -> Result<(), &'static str> {
         if self.digest != binding.payload_digest {
             return Err("delivery history conflicts with durable admission");
         }
         if let DeliveryExecution::Queued { payload, .. } = &self.execution {
             self.execution = DeliveryExecution::Processing {
-                turn_id: binding.turn_id.clone(), parent_task: binding.parent_task.clone(), payload: payload.clone(),
+                turn_id: binding.turn_id.clone(),
+                parent_task: binding.parent_task.clone(),
+                payload: payload.clone(),
             };
             self.revision = 2;
         }
@@ -475,9 +528,11 @@ impl DeliveryReceiverState {
                             && delivery_id == id
                             && payload_digest == &record.digest
                     }
-                    ReceiverTurnOrigin::ParentMessage { message_id } => prompt_id == turn_id
-                        && id == &parent_message_delivery_id(message_id)
-                        && matches!(&record.provenance, DeliveryProvenance::ParentMessage { admission } if &admission.message_id == message_id),
+                    ReceiverTurnOrigin::ParentMessage { message_id } => {
+                        prompt_id == turn_id
+                            && id == &parent_message_delivery_id(message_id)
+                            && matches!(&record.provenance, DeliveryProvenance::ParentMessage { admission } if &admission.message_id == message_id)
+                    }
                     ReceiverTurnOrigin::Other => false,
                 },
                 DeliveryExecution::Succeeded

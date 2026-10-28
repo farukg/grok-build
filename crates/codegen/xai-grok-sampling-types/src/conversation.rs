@@ -90,7 +90,10 @@ pub enum ConversationItem {
 /// System message content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemItem {
-    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceOccurrence::is_unadmitted"
+    )]
     pub source: crate::SourceOccurrence,
     #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
     pub evidence: crate::ContentEvidence,
@@ -302,7 +305,10 @@ pub enum PriorTurnInterrupt {
 /// User message with text and optional images
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserItem {
-    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceOccurrence::is_unadmitted"
+    )]
     pub source: crate::SourceOccurrence,
     #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
     pub evidence: crate::ContentEvidence,
@@ -335,7 +341,10 @@ pub struct UserItem {
 pub struct AssistantItem {
     #[serde(skip)]
     pub output_origin: crate::OutputOrigin,
-    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceOccurrence::is_unadmitted"
+    )]
     pub source: crate::SourceOccurrence,
     #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
     pub evidence: crate::ContentEvidence,
@@ -364,7 +373,10 @@ pub struct AssistantItem {
 /// Tool result message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultItem {
-    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceOccurrence::is_unadmitted"
+    )]
     pub source: crate::SourceOccurrence,
     #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
     pub evidence: crate::ContentEvidence,
@@ -383,7 +395,10 @@ pub struct ToolResultItem {
 /// Wraps the typed Responses API output items so they can be round-tripped back to the server and rendered by the pager.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendToolCallItem {
-    #[serde(default, skip_serializing_if = "crate::SourceOccurrence::is_unadmitted")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceOccurrence::is_unadmitted"
+    )]
     pub source: crate::SourceOccurrence,
     #[serde(default, skip_serializing_if = "crate::ContentEvidence::is_unknown")]
     pub evidence: crate::ContentEvidence,
@@ -1795,7 +1810,8 @@ pub fn upgrade_legacy_reasoning_reporting(
     // Expand each entry as `rs::OutputItem` and lift Reasoning / backend-tool items to siblings
     // `Message` / `FunctionCall` are already on the assistant row (content / tool_calls), so skip them
     if let Some(value) = obj.get("raw_output")
-        && !value.is_null() && !value.is_array()
+        && !value.is_null()
+        && !value.is_array()
     {
         report(LegacyReasoningIssue::InvalidRawOutput);
     }
@@ -1846,16 +1862,24 @@ pub fn upgrade_legacy_reasoning_reporting(
         let invalid = match value {
             serde_json::Value::Null => false,
             serde_json::Value::Object(reasoning) => ["text", "encrypted", "id"].iter().any(|key| {
-                reasoning.get(*key).is_some_and(|value| !value.is_null() && !value.is_string())
+                reasoning
+                    .get(*key)
+                    .is_some_and(|value| !value.is_null() && !value.is_string())
             }),
-            serde_json::Value::Bool(_) | serde_json::Value::Number(_)
-            | serde_json::Value::String(_) | serde_json::Value::Array(_) => true,
+            serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_)
+            | serde_json::Value::Array(_) => true,
         };
         if invalid {
             report(LegacyReasoningIssue::InvalidReasoning);
         }
     }
-    if is_v0_assistant && obj.get("reasoning_content").is_some_and(|value| !value.is_null() && !value.is_string()) {
+    if is_v0_assistant
+        && obj
+            .get("reasoning_content")
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
         report(LegacyReasoningIssue::InvalidReasoningContent);
     }
 
@@ -2480,9 +2504,9 @@ mod compaction_item_bridge_tests {
         );
         // BackendToolCall / Reasoning are part of the assistant turn; they must map to Assistant, never Tool
         assert_eq!(
-            CompactionItem::role(&ConversationItem::Reasoning(synthesized_reasoning_item(
-                "t"
-            ).into())),
+            CompactionItem::role(&ConversationItem::Reasoning(
+                synthesized_reasoning_item("t").into()
+            )),
             CompactionRole::Assistant
         );
     }
@@ -2727,7 +2751,12 @@ mod tests {
         ] {
             let serde_wire = serde_json::to_string(&variant).expect("synthetic reason serializes");
             let expected = format!("\"{}\"", variant.wire_name());
-            assert_eq!(serde_wire, expected, "{} must match its wire_name", variant.wire_name());
+            assert_eq!(
+                serde_wire,
+                expected,
+                "{} must match its wire_name",
+                variant.wire_name()
+            );
             let back: SyntheticReason = serde_json::from_str(&expected).expect("wire name parses");
             assert_eq!(back, variant);
         }
@@ -2747,7 +2776,10 @@ mod tests {
                 ..
             })
         );
-        assert!(item.synthetic_reason().is_some_and(|r| r.starts_prompt_turn()));
+        assert!(
+            item.synthetic_reason()
+                .is_some_and(|r| r.starts_prompt_turn())
+        );
     }
 
     #[test]
@@ -4934,24 +4966,30 @@ mod tests {
     fn conversation_to_chat_messages_folds_reasoning_into_following_assistant() {
         let items = vec![
             ConversationItem::user("hi"),
-            ConversationItem::Reasoning(rs::ReasoningItem {
-                id: "r1".to_string(),
-                summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
-                    text: "thinking step 1".to_string(),
-                })],
-                content: None,
-                encrypted_content: None,
-                status: None,
-            }.into()),
-            ConversationItem::Reasoning(rs::ReasoningItem {
-                id: "r2".to_string(),
-                summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
-                    text: "thinking step 2".to_string(),
-                })],
-                content: None,
-                encrypted_content: None,
-                status: None,
-            }.into()),
+            ConversationItem::Reasoning(
+                rs::ReasoningItem {
+                    id: "r1".to_string(),
+                    summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
+                        text: "thinking step 1".to_string(),
+                    })],
+                    content: None,
+                    encrypted_content: None,
+                    status: None,
+                }
+                .into(),
+            ),
+            ConversationItem::Reasoning(
+                rs::ReasoningItem {
+                    id: "r2".to_string(),
+                    summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
+                        text: "thinking step 2".to_string(),
+                    })],
+                    content: None,
+                    encrypted_content: None,
+                    status: None,
+                }
+                .into(),
+            ),
             ConversationItem::assistant("answer"),
         ];
 
@@ -4973,15 +5011,18 @@ mod tests {
     fn conversation_to_chat_messages_drops_trailing_reasoning() {
         let items = vec![
             ConversationItem::user("hi"),
-            ConversationItem::Reasoning(rs::ReasoningItem {
-                id: "r1".to_string(),
-                summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
-                    text: "abandoned thinking".to_string(),
-                })],
-                content: None,
-                encrypted_content: None,
-                status: None,
-            }.into()),
+            ConversationItem::Reasoning(
+                rs::ReasoningItem {
+                    id: "r1".to_string(),
+                    summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
+                        text: "abandoned thinking".to_string(),
+                    })],
+                    content: None,
+                    encrypted_content: None,
+                    status: None,
+                }
+                .into(),
+            ),
         ];
         let msgs = conversation_to_chat_messages(items);
         assert_eq!(

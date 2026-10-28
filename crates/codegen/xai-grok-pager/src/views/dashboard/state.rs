@@ -3134,13 +3134,21 @@ impl DashboardState {
             return self.handle_paste_key_deferred(clipboard_text, self.peek_owns_input());
         }
 
-        let peek_navigation = self.peek.as_ref().is_some_and(|peek| {
-            !peek.focused || self.peek_reply.text().is_empty()
-        });
+        let peek_navigation = self
+            .peek
+            .as_ref()
+            .is_some_and(|peek| !peek.focused || self.peek_reply.text().is_empty());
         if key.modifiers.is_empty()
             && !self.search_mode
-            && (if self.peek_owns_input() { peek_navigation } else { self.list_keys_active() })
-            && !self.peek.as_ref().is_some_and(|peek| peek.question.is_some())
+            && (if self.peek_owns_input() {
+                peek_navigation
+            } else {
+                self.list_keys_active()
+            })
+            && !self
+                .peek
+                .as_ref()
+                .is_some_and(|peek| peek.question.is_some())
             && (if self.peek_owns_input() {
                 !self.peek_reply.slash_open() && !self.peek_reply.file_search_visible()
             } else {

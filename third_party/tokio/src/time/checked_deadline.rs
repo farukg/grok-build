@@ -26,7 +26,10 @@ impl CheckedDeadline {
             let handle = crate::runtime::Handle::try_current()
                 .map_err(|_| DeadlineError::MissingRuntime)?
                 .inner;
-            let time = handle.driver().try_time().ok_or(DeadlineError::TimeDisabled)?;
+            let time = handle
+                .driver()
+                .try_time()
+                .ok_or(DeadlineError::TimeDisabled)?;
             time.time_source().checked_deadline_to_tick(deadline)?;
             Ok(Self { handle, deadline })
         }

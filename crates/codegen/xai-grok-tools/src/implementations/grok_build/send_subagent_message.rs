@@ -76,12 +76,17 @@ pub enum AdmissionCorrelation {
 
 impl AdmissionCorrelation {
     fn is_historical(&self) -> bool {
-        match self { Self::Known(_) => false, Self::HistoricalUnavailable => true }
+        match self {
+            Self::Known(_) => false,
+            Self::HistoricalUnavailable => true,
+        }
     }
 }
 
 impl From<super::task::native_recovery::MessageRecoveryRef> for AdmissionCorrelation {
-    fn from(reference: super::task::native_recovery::MessageRecoveryRef) -> Self { Self::Known(reference) }
+    fn from(reference: super::task::native_recovery::MessageRecoveryRef) -> Self {
+        Self::Known(reference)
+    }
 }
 
 impl serde::Serialize for AdmissionCorrelation {
@@ -95,7 +100,10 @@ impl serde::Serialize for AdmissionCorrelation {
 
 impl<'de> serde::Deserialize<'de> for AdmissionCorrelation {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        <super::task::native_recovery::MessageRecoveryRef as serde::Deserialize<'de>>::deserialize(deserializer).map(Self::Known)
+        <super::task::native_recovery::MessageRecoveryRef as serde::Deserialize<'de>>::deserialize(
+            deserializer,
+        )
+        .map(Self::Known)
     }
 }
 
@@ -118,11 +126,19 @@ pub enum SendSubagentMessageOutput {
         limit: usize,
     },
     AdmissionUncertain {
-        #[serde(default, rename = "recoveryRef", skip_serializing_if = "AdmissionCorrelation::is_historical")]
+        #[serde(
+            default,
+            rename = "recoveryRef",
+            skip_serializing_if = "AdmissionCorrelation::is_historical"
+        )]
         #[schemars(with = "super::task::native_recovery::MessageRecoveryRef")]
         recovery_ref: AdmissionCorrelation,
     },
-    RecoveryObserved { #[serde(rename = "recoveryRef")] recovery_ref: super::task::native_recovery::MessageRecoveryRef, state: super::task::native_recovery::MessageRecoveryState },
+    RecoveryObserved {
+        #[serde(rename = "recoveryRef")]
+        recovery_ref: super::task::native_recovery::MessageRecoveryRef,
+        state: super::task::native_recovery::MessageRecoveryState,
+    },
     NotAcceptedBeforeDeadline,
     Unsupported,
     Limit {
@@ -148,7 +164,9 @@ impl SendSubagentMessageOutput {
     pub fn disposition(&self) -> SendSubagentMessageDisposition {
         match self {
             Self::Accepted { .. } => SendSubagentMessageDisposition::Accepted,
-            Self::AdmissionUncertain { .. } | Self::RecoveryObserved { .. } => SendSubagentMessageDisposition::Unconfirmed,
+            Self::AdmissionUncertain { .. } | Self::RecoveryObserved { .. } => {
+                SendSubagentMessageDisposition::Unconfirmed
+            }
             Self::NotFoundOrNotOwned
             | Self::NotActiveOrFinalizing
             | Self::Saturated { .. }
@@ -173,8 +191,18 @@ impl From<ActiveAgentMessageOutcome> for SendSubagentMessageOutput {
             ActiveAgentMessageOutcome::QuotaExceeded { kind, limit } => {
                 Self::QuotaExceeded { kind, limit }
             }
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } => Self::AdmissionUncertain { recovery_ref: recovery_ref.into() },
-            ActiveAgentMessageOutcome::RecoveryObserved { recovery_ref, state } => Self::RecoveryObserved { recovery_ref, state },
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } => {
+                Self::AdmissionUncertain {
+                    recovery_ref: recovery_ref.into(),
+                }
+            }
+            ActiveAgentMessageOutcome::RecoveryObserved {
+                recovery_ref,
+                state,
+            } => Self::RecoveryObserved {
+                recovery_ref,
+                state,
+            },
             ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline => Self::NotAcceptedBeforeDeadline,
             ActiveAgentMessageOutcome::Unsupported => Self::Unsupported,
             ActiveAgentMessageOutcome::Limit {

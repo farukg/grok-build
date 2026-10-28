@@ -285,7 +285,9 @@ impl CancelTrigger {
         match self {
             Self::Esc | Self::CtrlC | Self::Client(_) => CancelKind::StopGesture,
             Self::SendNow => CancelKind::Replace,
-            Self::Shutdown | Self::Coordinator | Self::SessionClose | Self::SessionDelete => CancelKind::Teardown,
+            Self::Shutdown | Self::Coordinator | Self::SessionClose | Self::SessionDelete => {
+                CancelKind::Teardown
+            }
         }
     }
     pub fn as_str(&self) -> &str {
@@ -457,7 +459,8 @@ pub enum SessionCommand {
         respond_to: oneshot::Sender<PromptTurnResult>,
         /// Optional initial-child readiness signal.
         /// Carried onto the queued item and resolved only when that exact row is promoted, or closed on removal.
-        prompt_admitted: Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
+        prompt_admitted:
+            Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
         /// Optional oneshot fired once the prompt's persistence is settled, before LLM inference begins.
         /// When a `UserPromptSubmit` hook blocked the prompt it fires immediately: nothing was stored, so there is nothing to flush.
         /// Used by callers that need `chat_history.jsonl` settled before trace snapshots or `session/load`; a blocked prompt never appears there.
@@ -584,7 +587,12 @@ pub enum SessionCommand {
         respond_to: oneshot::Sender<crate::extensions::request_preview::RequestPreview>,
     },
     GetContextPolicy {
-        respond_to: oneshot::Sender<Result<crate::extensions::context_policy::ContextPolicyReport, crate::session::helpers::context_policy_store::ContextPolicyError>>,
+        respond_to: oneshot::Sender<
+            Result<
+                crate::extensions::context_policy::ContextPolicyReport,
+                crate::session::helpers::context_policy_store::ContextPolicyError,
+            >,
+        >,
     },
     /// Out-of-band history repair (`x.ai/session/repair`): fix tool-pairing violations that would otherwise 400 on every request.
     /// The violations: orphaned or displaced `ToolResult`s, duplicates, and unanswered calls.

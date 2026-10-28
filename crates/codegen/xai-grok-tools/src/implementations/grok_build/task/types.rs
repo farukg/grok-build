@@ -31,11 +31,12 @@ pub use xai_tool_types::{InterruptionCause, SubagentActor, SubagentState};
 use crate::register_resource;
 
 pub use super::active_message::{
-    ActiveAgentMessage, ActiveAgentMessageClaim, ActiveAgentMessageCommittedAdmission, ActiveMessageAdmissionOrigin,
-    ActiveAgentMessageDelivery, ActiveAgentMessageOperation,
-    ActiveAgentMessageOutcome, ActiveAgentMessageQuotaKind, ActiveAgentMessageRequest,
-    ActiveAgentMessageSource, ActiveMessageReceiver, ActiveMessageRoute, ActiveMessageSenderContext, ActiveMessageTarget,
-    AgentAddress, MAX_ACTIVE_AGENT_MESSAGE_BYTES, SubagentActiveMessageRequest,
+    ActiveAgentMessage, ActiveAgentMessageClaim, ActiveAgentMessageCommittedAdmission,
+    ActiveAgentMessageDelivery, ActiveAgentMessageOperation, ActiveAgentMessageOutcome,
+    ActiveAgentMessageQuotaKind, ActiveAgentMessageRequest, ActiveAgentMessageSource,
+    ActiveMessageAdmissionOrigin, ActiveMessageReceiver, ActiveMessageRoute,
+    ActiveMessageSenderContext, ActiveMessageTarget, AgentAddress, MAX_ACTIVE_AGENT_MESSAGE_BYTES,
+    SubagentActiveMessageRequest,
 };
 pub use super::agent_message_sender::{
     AgentMessageHolder, AgentMessageSender, AgentMessageSenderResource,
@@ -129,7 +130,10 @@ impl Clone for SpawnRootSpan {
 
 impl SpawnRootSpan {
     pub fn from_traceparent(traceparent: Option<String>) -> Self {
-        Self { span: None, traceparent }
+        Self {
+            span: None,
+            traceparent,
+        }
     }
 
     pub fn new(span: tracing::Span) -> Self {

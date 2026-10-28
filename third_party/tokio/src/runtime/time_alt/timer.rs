@@ -66,51 +66,53 @@ impl Timer {
         let this = self.get_mut();
 
         let deadline = deadline_to_tick(&this.sched_handle, this.deadline);
-        let result = with_current_temp_local_context(&this.sched_handle, |maybe_time_cx| {
-            match maybe_time_cx {
-                Some(TempLocalContext::Running {
-                    registration_queue,
-                    elapsed,
-                }) => {
-                    let mut register = || {
-                        if deadline <= elapsed {
-                            return Poll::Ready(Ok(()));
-                        }
-                        let hdl = EntryHandle::new(deadline, cx.waker().clone());
-                        this.entry = Some(hdl.clone());
-                        unsafe {
-                            registration_queue.push_front(hdl);
-                        }
-                        Poll::Pending
-                    };
-                    match mode {
-                        TimerPoll::Legacy => register(),
-                        TimerPoll::Checked => {
-                            match this.sched_handle.with_local_timer_registration(register) {
-                                Ok(result) => result,
-                                Err(error) => Poll::Ready(Err(error)),
+        let result =
+            with_current_temp_local_context(
+                &this.sched_handle,
+                |maybe_time_cx| match maybe_time_cx {
+                    Some(TempLocalContext::Running {
+                        registration_queue,
+                        elapsed,
+                    }) => {
+                        let mut register = || {
+                            if deadline <= elapsed {
+                                return Poll::Ready(Ok(()));
+                            }
+                            let hdl = EntryHandle::new(deadline, cx.waker().clone());
+                            this.entry = Some(hdl.clone());
+                            unsafe {
+                                registration_queue.push_front(hdl);
+                            }
+                            Poll::Pending
+                        };
+                        match mode {
+                            TimerPoll::Legacy => register(),
+                            TimerPoll::Checked => {
+                                match this.sched_handle.with_local_timer_registration(register) {
+                                    Ok(result) => result,
+                                    Err(error) => Poll::Ready(Err(error)),
+                                }
                             }
                         }
                     }
-                }
-                #[cfg(feature = "rt-multi-thread")]
-                Some(TempLocalContext::Shutdown) => Poll::Ready(Err(Error::shutdown())),
+                    #[cfg(feature = "rt-multi-thread")]
+                    Some(TempLocalContext::Shutdown) => Poll::Ready(Err(Error::shutdown())),
 
-                None => {
-                    let hdl = EntryHandle::new(deadline, cx.waker().clone());
-                    this.entry = Some(hdl.clone());
-                    match push_from_remote(&this.sched_handle, hdl, mode) {
-                        Ok(()) => Poll::Pending,
-                        Err(error) => Poll::Ready(Err(error)),
+                    None => {
+                        let hdl = EntryHandle::new(deadline, cx.waker().clone());
+                        this.entry = Some(hdl.clone());
+                        match push_from_remote(&this.sched_handle, hdl, mode) {
+                            Ok(()) => Poll::Pending,
+                            Err(error) => Poll::Ready(Err(error)),
+                        }
                     }
-                }
-            }
-        });
+                },
+            );
         match result {
             Poll::Ready(Err(error)) => {
-                let entry = this.entry.get_or_insert_with(|| {
-                    EntryHandle::new(deadline, cx.waker().clone())
-                });
+                let entry = this
+                    .entry
+                    .get_or_insert_with(|| EntryHandle::new(deadline, cx.waker().clone()));
                 entry.complete(Err(error));
                 entry.poll_result(cx.waker())
             }
@@ -125,10 +127,12 @@ impl Timer {
         mode: TimerPoll,
     ) -> Poll<Result<(), Error>> {
         match self.entry.as_ref() {
-            Some(entry) => entry.poll_result(cx.waker()).map(|result| match (mode, result) {
-                (TimerPoll::Legacy, Err(error)) if error.is_shutdown() => Ok(()),
-                (TimerPoll::Legacy, result) | (TimerPoll::Checked, result) => result,
-            }),
+            Some(entry) => entry
+                .poll_result(cx.waker())
+                .map(|result| match (mode, result) {
+                    (TimerPoll::Legacy, Err(error)) if error.is_shutdown() => Ok(()),
+                    (TimerPoll::Legacy, result) | (TimerPoll::Checked, result) => result,
+                }),
             None => self.register(cx, mode).map(|result| match (mode, result) {
                 (TimerPoll::Legacy, Err(error)) if error.is_shutdown() => {
                     panic!("{RUNTIME_SHUTTING_DOWN_ERROR}")

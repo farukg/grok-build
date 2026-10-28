@@ -154,7 +154,10 @@ impl SubagentBlock {
         if !description.is_empty() {
             lines.push(BlockLine::separator(Line::from("")));
             lines.extend(super::tool::body::wrapped_body(
-                &self.description, theme.primary(), width, "",
+                &self.description,
+                theme.primary(),
+                width,
+                "",
             ));
         }
 
@@ -171,22 +174,33 @@ impl SubagentBlock {
         if !meta.is_empty() {
             lines.push(BlockLine::separator(Line::from("")));
             lines.extend(super::tool::body::wrapped_body(
-                &meta, theme.muted(), width, "  ",
+                &meta,
+                theme.muted(),
+                width,
+                "  ",
             ));
         }
 
         if let Some(activity) = self.activity_label.as_deref().filter(|s| !s.is_empty()) {
             lines.extend(super::tool::body::wrapped_body(
-                activity, theme.muted(), width, "  ",
+                activity,
+                theme.muted(),
+                width,
+                "  ",
             ));
         }
 
-        if let SubagentBlockKind::Failed { error: Some(err), .. } = &self.kind
+        if let SubagentBlockKind::Failed {
+            error: Some(err), ..
+        } = &self.kind
             && !err.trim().is_empty()
         {
             lines.push(BlockLine::separator(Line::from("")));
             lines.extend(super::tool::body::wrapped_body(
-                err, theme.fg(theme.accent_error), width, "",
+                err,
+                theme.fg(theme.accent_error),
+                width,
+                "",
             ));
         }
 
@@ -226,13 +240,9 @@ impl BlockContent for SubagentBlock {
                     self.role.as_deref(),
                     self.model.as_deref(),
                 );
-                let overhead = verb.width()
-                    + meta.width() + activity_suffix.width();
+                let overhead = verb.width() + meta.width() + activity_suffix.width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(overhead));
-                let mut spans = vec![
-                    Span::styled(verb, muted),
-                    Span::styled(desc, muted),
-                ];
+                let mut spans = vec![Span::styled(verb, muted), Span::styled(desc, muted)];
                 if !activity_suffix.is_empty() {
                     spans.push(Span::styled(activity_suffix, muted));
                 }
@@ -275,12 +285,17 @@ impl BlockContent for SubagentBlock {
             }
         };
 
-        let line = Line::from(line.spans.into_iter().map(|span| {
-            Span::styled(span.content.replace('\n', " "), span.style)
-        }).collect::<Vec<_>>());
+        let line = Line::from(
+            line.spans
+                .into_iter()
+                .map(|span| Span::styled(span.content.replace('\n', " "), span.style))
+                .collect::<Vec<_>>(),
+        );
         let line = crate::render::line_utils::truncate_line(line, w);
         if ctx.mode == DisplayMode::Collapsed {
-            return BlockOutput { lines: vec![line.into()] };
+            return BlockOutput {
+                lines: vec![line.into()],
+            };
         }
         let mut lines = vec![line.into()];
         lines.extend(self.expanded_body(ctx, &theme));
@@ -309,7 +324,10 @@ impl BlockContent for SubagentBlock {
         // The fold reveals the untruncated description, the delegation metadata or the
         // failure reason; a row with none of those offers no fake expand.
         !self.description.trim().is_empty()
-            || self.activity_label.as_deref().is_some_and(|a| !a.is_empty())
+            || self
+                .activity_label
+                .as_deref()
+                .is_some_and(|a| !a.is_empty())
             || !self.subagent_type.is_empty()
             || self.persona.as_deref().is_some_and(|p| !p.is_empty())
             || self.role.as_deref().is_some_and(|r| !r.is_empty())
@@ -329,7 +347,6 @@ impl BlockContent for SubagentBlock {
         true
     }
 }
-
 
 #[cfg(test)]
 mod tests {

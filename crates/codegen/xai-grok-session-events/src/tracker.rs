@@ -103,7 +103,13 @@ impl EventTracker {
 
     /// Marks a tool as active so a cancel can report it.
     /// `dispatch_duration_ms` was measured when the call was dispatched, so a cancel reports it instead of timing the call again.
-    pub fn tool_started(&self, tool_name: String, tool_call_id: String, dispatch_duration_ms: u64, owner: xai_tool_protocol::tool_execution::ToolCallOwnership) {
+    pub fn tool_started(
+        &self,
+        tool_name: String,
+        tool_call_id: String,
+        dispatch_duration_ms: u64,
+        owner: xai_tool_protocol::tool_execution::ToolCallOwnership,
+    ) {
         let is_new = self.active_tool.borrow().is_none();
         *self.active_tool.borrow_mut() = Some(ActiveTool {
             tool_name,

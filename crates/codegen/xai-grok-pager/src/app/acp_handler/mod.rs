@@ -31,9 +31,9 @@ mod admission;
 mod background;
 mod background_delivery;
 pub(crate) use background::route_bg_task_stdout;
+mod child_observation;
 mod context_policy;
 pub(crate) mod current_actions;
-mod child_observation;
 mod delivery;
 mod follow_ups;
 mod interactions;
@@ -53,9 +53,9 @@ mod workflow_ingest;
 #[allow(unused_imports)]
 use background::*;
 use background::{
-    apply_background_tasks_snapshot, derive_child_cwd, handle_git_head_changed, handle_monitor_event,
-    handle_scheduled_task_created, handle_scheduled_task_deleted, handle_scheduled_task_fired,
-    handle_task_backgrounded, handle_task_completed,
+    apply_background_tasks_snapshot, derive_child_cwd, handle_git_head_changed,
+    handle_monitor_event, handle_scheduled_task_created, handle_scheduled_task_deleted,
+    handle_scheduled_task_fired, handle_task_backgrounded, handle_task_completed,
 };
 use child_observation::{
     ChildObservation, apply_child_acp_update, apply_child_xai_update, complete_child_prompt,
@@ -108,7 +108,6 @@ use routing::{
     SessionMatch, find_session_match, interaction_target_agent, is_matched_agent_active,
     mcp_target_agent, resolve_notif_agent, setup_phase_target_agent,
 };
-pub(crate) use session_notification::{admit_compact_lifecycle, apply_child_view_session_event};
 #[cfg(test)]
 pub(crate) use session_notification::apply_session_event_for_test;
 pub(crate) use session_notification::detect_plan_mode_change_replayed;
@@ -120,6 +119,7 @@ use session_notification::{
     PlanModeTransition, advance_reconnect_cursor, confirm_context_used,
     handle_session_notification, handle_session_notification_with_origin,
 };
+pub(crate) use session_notification::{admit_compact_lifecycle, apply_child_view_session_event};
 #[cfg(test)]
 #[allow(unused_imports)]
 use settings::*;
@@ -191,7 +191,8 @@ fn is_streaming_output(msg: &AcpClientMessage) -> bool {
 fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
-            let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref()).with_tool(&notif.request.update);
+            let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref())
+                .with_tool(&notif.request.update);
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch(id)) if is_child_view(app, id) => {
                     apply_child_acp_update(app, id, notif.request.update, &meta)
@@ -206,14 +207,28 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         notif.response_tx.send(Ok(())).ok();
                         return false;
                     };
-                    if !agent.accepts_current_source(&meta) { notif.response_tx.send(Ok(())).ok(); return false; }
-                    if meta.is_replay && !agent.live_admission_tracker().accepts_known_tool_identity(&meta) { notif.response_tx.send(Ok(())).ok(); return false; }
+                    if !agent.accepts_current_source(&meta) {
+                        notif.response_tx.send(Ok(())).ok();
+                        return false;
+                    }
+                    if meta.is_replay
+                        && !agent
+                            .live_admission_tracker()
+                            .accepts_known_tool_identity(&meta)
+                    {
+                        notif.response_tx.send(Ok(())).ok();
+                        return false;
+                    }
                     let authority = agent.admission_tracker(&meta);
                     if !authority.accepts_sampling_acp(&notif.request.update, &meta) {
                         notif.response_tx.send(Ok(())).ok();
                         return false;
                     }
-                    match authority.tool_admission(&notif.request.update, &meta, agent.session.current_prompt_id.as_deref()) {
+                    match authority.tool_admission(
+                        &notif.request.update,
+                        &meta,
+                        agent.session.current_prompt_id.as_deref(),
+                    ) {
                         crate::acp::tracker::ToolAdmission::Reject => {
                             notif.response_tx.send(Ok(())).ok();
                             return false;
@@ -224,16 +239,29 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                                 return false;
                             }
                             let current = agent.session.current_prompt_id.clone();
-                            let current_tool = authority.tool_observation_is_current(&notif.request.update, &meta, current.as_deref());
+                            let current_tool = authority.tool_observation_is_current(
+                                &notif.request.update,
+                                &meta,
+                                current.as_deref(),
+                            );
                             if agent.has_stashed_tool_observation(&notif.request.update, &meta) {
-                                let Some(agent) = app.agents.get_mut(&id) else { return false; };
-                                let changed = agent.apply_stashed_tool_observation(notif.request.update, &meta);
+                                let Some(agent) = app.agents.get_mut(&id) else {
+                                    return false;
+                                };
+                                let changed = agent
+                                    .apply_stashed_tool_observation(notif.request.update, &meta);
                                 notif.response_tx.send(Ok(())).ok();
                                 return changed && is_active;
                             }
                             if !meta.is_replay && !current_tool {
-                                let Some(agent) = app.agents.get_mut(&id) else { return false; };
-                                let changed = agent.handle_admitted_tool_observation(notif.request.update, &meta, current.as_deref());
+                                let Some(agent) = app.agents.get_mut(&id) else {
+                                    return false;
+                                };
+                                let changed = agent.handle_admitted_tool_observation(
+                                    notif.request.update,
+                                    &meta,
+                                    current.as_deref(),
+                                );
                                 notif.response_tx.send(Ok(())).ok();
                                 return changed && is_active;
                             }
@@ -242,10 +270,21 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             } else {
                                 super::agent_view::load_continuation::LoadDelivery::Live
                             };
-                            let changed = super::agent_view::load_continuation::with_load_delivery(app, id, delivery, |app| {
-                                let Some(agent) = app.agents.get_mut(&id) else { return false; };
-                                agent.handle_admitted_tool_observation(notif.request.update, &meta, current.as_deref())
-                            });
+                            let changed = super::agent_view::load_continuation::with_load_delivery(
+                                app,
+                                id,
+                                delivery,
+                                |app| {
+                                    let Some(agent) = app.agents.get_mut(&id) else {
+                                        return false;
+                                    };
+                                    agent.handle_admitted_tool_observation(
+                                        notif.request.update,
+                                        &meta,
+                                        current.as_deref(),
+                                    )
+                                },
+                            );
                             notif.response_tx.send(Ok(())).ok();
                             return changed && is_active;
                         }
@@ -256,14 +295,24 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         return false;
                     }
                     if agent.has_stashed_tool_observation(&notif.request.update, &meta) {
-                        let Some(agent) = app.agents.get_mut(&id) else { return false; };
-                        let changed = agent.apply_stashed_tool_observation(notif.request.update, &meta);
+                        let Some(agent) = app.agents.get_mut(&id) else {
+                            return false;
+                        };
+                        let changed =
+                            agent.apply_stashed_tool_observation(notif.request.update, &meta);
                         notif.response_tx.send(Ok(())).ok();
                         return changed && is_active;
                     }
-                    let Some(agent) = app.agents.get(&id) else { return false; };
+                    let Some(agent) = app.agents.get(&id) else {
+                        return false;
+                    };
                     let scope = admission::update_scope(agent, &notif.request.update);
-                    let admission = admission::root_admission(agent, &meta, stashed_adoption_pid.as_deref(), scope);
+                    let admission = admission::root_admission(
+                        agent,
+                        &meta,
+                        stashed_adoption_pid.as_deref(),
+                        scope,
+                    );
                     match admission {
                         admission::RootAdmission::Drop => {
                             notif.response_tx.send(Ok(())).ok();
@@ -278,12 +327,17 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                                 && agent.pending_adoption_updates.len()
                                     < super::agent_view::MAX_PENDING_ADOPTION_UPDATES
                             {
-                                agent.pending_adoption_updates.push((pid.clone(), notif.request.update, meta));
+                                agent.pending_adoption_updates.push((
+                                    pid.clone(),
+                                    notif.request.update,
+                                    meta,
+                                ));
                             }
                             notif.response_tx.send(Ok(())).ok();
                             return false;
                         }
-                        admission::RootAdmission::AdoptViewer | admission::RootAdmission::Apply => {}
+                        admission::RootAdmission::AdoptViewer | admission::RootAdmission::Apply => {
+                        }
                     }
                     if matches!(scope, admission::UpdateScope::DrainedTool) {
                         let Some(agent) = app.agents.get_mut(&id) else {
@@ -625,16 +679,26 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         return handle_session_notification(notif, app);
     }
     match method {
-        xai_grok_shell::session::current_actions::TRANSITION_METHOD => current_actions::handle_transition(notif, app),
-        xai_grok_shell::extensions::current_actions::GENERATION_END_METHOD => current_actions::handle_generation_end(notif, app),
-        xai_grok_shell::extensions::current_actions::DISCARD_METHOD => current_actions::handle_discard(notif, app),
+        xai_grok_shell::session::current_actions::TRANSITION_METHOD => {
+            current_actions::handle_transition(notif, app)
+        }
+        xai_grok_shell::extensions::current_actions::GENERATION_END_METHOD => {
+            current_actions::handle_generation_end(notif, app)
+        }
+        xai_grok_shell::extensions::current_actions::DISCARD_METHOD => {
+            current_actions::handle_discard(notif, app)
+        }
         "x.ai/follow_ups" => handle_follow_ups(notif, app),
         "x.ai/task_backgrounded" => handle_task_backgrounded(notif, app),
         "x.ai/task_completed" => handle_task_completed(notif, app),
         "x.ai/models/update" => handle_models_update(notif, app),
         "x.ai/settings/update" => handle_settings_update(notif, app),
-        "x.ai/session/context_policy/changed" => context_policy::handle_context_policy_changed(notif, app),
-        "x.ai/session/request_snapshot/observed" => request_snapshot::handle_request_snapshot_observed(notif, app),
+        "x.ai/session/context_policy/changed" => {
+            context_policy::handle_context_policy_changed(notif, app)
+        }
+        "x.ai/session/request_snapshot/observed" => {
+            request_snapshot::handle_request_snapshot_observed(notif, app)
+        }
         "x.ai/sessions/changed" => handle_sessions_changed(notif, app),
         "x.ai/queue/changed" => handle_queue_changed(notif, app),
         "x.ai/session/prompt_complete" => handle_prompt_complete(notif, app),

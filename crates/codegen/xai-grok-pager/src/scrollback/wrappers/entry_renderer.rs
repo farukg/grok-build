@@ -86,7 +86,9 @@ impl<'a> EntryRenderer<'a> {
         self
     }
 
-    pub(crate) fn chrome_width_for_inline(&self) -> u16 { self.chrome_width() + self.timestamp_reserved() }
+    pub(crate) fn chrome_width_for_inline(&self) -> u16 {
+        self.chrome_width() + self.timestamp_reserved()
+    }
 
     pub fn with_cwd(mut self, cwd: Option<&'a Path>) -> Self {
         self.cwd = cwd;
@@ -243,7 +245,10 @@ impl<'a> EntryRenderer<'a> {
             } else if vg.running {
                 let brightness = theme::wave_brightness(
                     self.tick,
-                    u16::try_from(self.skip_rows % usize::from(self.appearance().animation.wave_rows.max(1))).unwrap_or(0),
+                    u16::try_from(
+                        self.skip_rows % usize::from(self.appearance().animation.wave_rows.max(1)),
+                    )
+                    .unwrap_or(0),
                     self.appearance().animation.wave_rows,
                     WAVE_SPEED,
                 );
@@ -317,10 +322,11 @@ impl<'a> EntryRenderer<'a> {
     /// Whether this entry should display a timestamp on the first content line.
     /// Compact entries share the message timestamp gutter and hover-date overlay.
     fn should_show_timestamp(&self) -> bool {
-        self.entry.display_mode == DisplayMode::Collapsed || matches!(
-            self.entry.block,
-            RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-        )
+        self.entry.display_mode == DisplayMode::Collapsed
+            || matches!(
+                self.entry.block,
+                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
+            )
     }
 
     /// Width reserved for the timestamp on the right side of content lines.
@@ -447,9 +453,7 @@ impl<'a> EntryRenderer<'a> {
             })
             .map(|(idx, _)| vpad_top.saturating_add(idx))
             .collect();
-        let last_content_row = vpad_top.saturating_add(
-            output.len().saturating_sub(1),
-        );
+        let last_content_row = vpad_top.saturating_add(output.len().saturating_sub(1));
         (starts, last_content_row)
     }
 
@@ -479,9 +483,13 @@ impl<'a> EntryRenderer<'a> {
         let start_y = header_rows.saturating_add(u16::from(vpad_top_visible));
 
         for screen_y in start_y..height {
-            let Some(next) = content_skip.checked_add(usize::from(screen_y - start_y))
-                .and_then(|index| index.checked_add(1)).and_then(|index| output.line(index))
-            else { break };
+            let Some(next) = content_skip
+                .checked_add(usize::from(screen_y - start_y))
+                .and_then(|index| index.checked_add(1))
+                .and_then(|index| output.line(index))
+            else {
+                break;
+            };
             if let Some(flag) = flags.get_mut(usize::from(screen_y)) {
                 *flag = next.line.joiner.as_deref().is_some_and(str::is_empty);
             }
@@ -718,8 +726,15 @@ impl Renderable for EntryRenderer<'_> {
 
                 for row in 0..accent_area.height {
                     let y = accent_area.y + row;
-                    let brightness =
-                        theme::wave_brightness(self.tick, u16::try_from((skip_rows + usize::from(row)) % usize::from(wave_rows.max(1))).unwrap_or(0), wave_rows, WAVE_SPEED);
+                    let brightness = theme::wave_brightness(
+                        self.tick,
+                        u16::try_from(
+                            (skip_rows + usize::from(row)) % usize::from(wave_rows.max(1)),
+                        )
+                        .unwrap_or(0),
+                        wave_rows,
+                        WAVE_SPEED,
+                    );
                     let animated_color = blend_color(bg, color, brightness).unwrap_or(color);
                     let style = self.accent_paint_style(animated_color);
                     buf.set_string_safe(accent_area.x, y, crate::glyphs::accent_bar(), style);
@@ -769,9 +784,17 @@ impl Renderable for EntryRenderer<'_> {
 
         // Content lines: skip the first `content_skip` lines
         for index in content_skip..output.len() {
-            if row >= max_row { break; }
-            let Some(source) = output.line(index) else { row += 1; continue };
-            if source.native { row += 1; continue; }
+            if row >= max_row {
+                break;
+            }
+            let Some(source) = output.line(index) else {
+                row += 1;
+                continue;
+            };
+            if source.native {
+                row += 1;
+                continue;
+            }
             let line = source.line;
 
             // Apply line-specific background if set
@@ -803,20 +826,42 @@ impl Renderable for EntryRenderer<'_> {
 
         if self.native_paint {
             let visible = usize::from(content_area.height);
-            output.visit_native(content_skip..content_skip.saturating_add(visible), 0, &mut |offset, part| {
-                let start = offset.max(content_skip);
-                let end = (offset + part.layout.height).min(content_skip + visible);
-                if start >= end { return; }
-                let Ok(y_offset) = u16::try_from(start - content_skip) else { return };
-                let Ok(height) = u16::try_from(end - start) else { return };
-                EntryRenderer::new(&part.entry, self.theme).with_appearance_ref(&part.appearance)
-                    .with_cwd(part.cwd.as_deref()).with_tick(part.clock.get()).with_mouse_pos(self.mouse_pos)
-                    .with_groupable(part.entry.block.is_groupable()).with_skip_rows(start - offset)
-                    .with_group_header_label(part.header_label.as_ref())
-                    .with_group_header_count(part.layout.group_header_count)
-                    .with_group_collapse_header(part.layout.group_collapse_header)
-                    .render(Rect::new(content_area.x, content_area.y + y_offset, part.width, height), buf);
-            });
+            output.visit_native(
+                content_skip..content_skip.saturating_add(visible),
+                0,
+                &mut |offset, part| {
+                    let start = offset.max(content_skip);
+                    let end = (offset + part.layout.height).min(content_skip + visible);
+                    if start >= end {
+                        return;
+                    }
+                    let Ok(y_offset) = u16::try_from(start - content_skip) else {
+                        return;
+                    };
+                    let Ok(height) = u16::try_from(end - start) else {
+                        return;
+                    };
+                    EntryRenderer::new(&part.entry, self.theme)
+                        .with_appearance_ref(&part.appearance)
+                        .with_cwd(part.cwd.as_deref())
+                        .with_tick(part.clock.get())
+                        .with_mouse_pos(self.mouse_pos)
+                        .with_groupable(part.entry.block.is_groupable())
+                        .with_skip_rows(start - offset)
+                        .with_group_header_label(part.header_label.as_ref())
+                        .with_group_header_count(part.layout.group_header_count)
+                        .with_group_collapse_header(part.layout.group_collapse_header)
+                        .render(
+                            Rect::new(
+                                content_area.x,
+                                content_area.y + y_offset,
+                                part.width,
+                                height,
+                            ),
+                            buf,
+                        );
+                },
+            );
         }
 
         // Overlay timestamp on the first content line for message blocks.
@@ -851,7 +896,10 @@ impl Renderable for EntryRenderer<'_> {
         // Post-pass: adjust bullet color based on block state. The running wave is skipped so the entry reads as "paused
         // on you", not "loading".
         if skip_rows == 0
-            && let Some(symbol) = self.entry.message_symbol(&ctx).filter(|symbol| symbol.is_visible(&ctx))
+            && let Some(symbol) = self
+                .entry
+                .message_symbol(&ctx)
+                .filter(|symbol| symbol.is_visible(&ctx))
         {
             let bullet_style = symbol.style(&ctx);
             let bullet_y = content_area.y + if has_vpad { 1 } else { 0 };
@@ -1091,7 +1139,10 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme).with_tick(7);
         renderer.render(area, &mut buf);
 
-        assert_eq!(buf.cell((3, 0)).unwrap().symbol(), crate::glyphs::history_tool());
+        assert_eq!(
+            buf.cell((3, 0)).unwrap().symbol(),
+            crate::glyphs::history_tool()
+        );
     }
 
     /// Collect the symbols from a row range in the buffer into a String.
@@ -1269,7 +1320,11 @@ mod tests {
             RenderBlock::system("notice"),
             RenderBlock::bg_task("echo output", "task"),
             RenderBlock::Workflow(WorkflowBlock::started("run", "workflow", "objective")),
-            RenderBlock::Subagent(SubagentBlock::completed("description", "child", std::time::Duration::ZERO)),
+            RenderBlock::Subagent(SubagentBlock::completed(
+                "description",
+                "child",
+                std::time::Duration::ZERO,
+            )),
             RenderBlock::Injected(InjectedBlock::new("Injected", "body")),
         ];
         for block in blocks {
@@ -1290,7 +1345,11 @@ mod tests {
                 .with_mouse_pos(Some((width - 7, row)));
             let mut buf = Buffer::empty(area);
             hovered.render(area, &mut buf);
-            let expected = entry.created_at.unwrap().format("%H:%M:%S | %b %d").to_string();
+            let expected = entry
+                .created_at
+                .unwrap()
+                .format("%H:%M:%S | %b %d")
+                .to_string();
             assert!(collect_row_symbols(&buf, row, 0, width).contains(&expected));
         }
     }

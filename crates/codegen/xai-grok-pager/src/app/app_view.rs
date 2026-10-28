@@ -2118,11 +2118,13 @@ impl AppView {
                 .map(|agent| (id, agent.tasks.overlay.visible, agent.todo.overlay.visible))
         });
         let preferences_before = self.active_view.agent_id().and_then(|id| {
-            self.agents.get(&id).map(|agent| (
-                id,
-                (agent.tasks.show_done(), agent.todo.show_done()),
-                agent.global_panel_settings(),
-            ))
+            self.agents.get(&id).map(|agent| {
+                (
+                    id,
+                    (agent.tasks.show_done(), agent.todo.show_done()),
+                    agent.global_panel_settings(),
+                )
+            })
         });
         let minimal_todo_before = self.minimal_state.show_todos;
         let outcome = self.handle_input_inner(ev, arrived_at, paste_provenance);
@@ -2153,7 +2155,9 @@ impl AppView {
         if let Some((id, old_filters, old_preferences)) = preferences_before {
             let filters = self.agents.get_mut(&id).and_then(|agent| {
                 let current = (agent.tasks.show_done(), agent.todo.show_done());
-                if current == old_filters { return None; }
+                if current == old_filters {
+                    return None;
+                }
                 agent.save_global_completed_filters(
                     (current.0 != old_filters.0).then_some(current.0),
                     (current.1 != old_filters.1).then_some(current.1),
@@ -2166,7 +2170,9 @@ impl AppView {
                     agent.todo.set_show_done(todos);
                 }
             }
-            let global_changed = self.agents.get(&id)
+            let global_changed = self
+                .agents
+                .get(&id)
                 .is_some_and(|agent| agent.global_panel_settings() != old_preferences);
             if global_changed {
                 for (_, agent) in self.agents.all_mut() {
@@ -4699,7 +4705,8 @@ impl AppView {
                                     },
                                 );
                                 if agents.prepare_inline_output(id) {
-                                    inline_post_flush = Self::merge_post_flush(inline_post_flush, result.1);
+                                    inline_post_flush =
+                                        Self::merge_post_flush(inline_post_flush, result.1);
                                     link_spans.clear();
                                     f.buffer_mut().reset();
                                     continue;
@@ -4744,7 +4751,8 @@ impl AppView {
                                     } else {
                                         cursor_pos
                                     };
-                                let post_flush = Self::merge_post_flush(inline_post_flush, post_flush);
+                                let post_flush =
+                                    Self::merge_post_flush(inline_post_flush, post_flush);
                                 return (cursor, Self::merge_escapes(notif_escapes, post_flush));
                             }
                             break;
@@ -4805,12 +4813,22 @@ impl AppView {
                                     dash_upgrade_cta,
                                     self.credit_balance.as_ref(),
                                 );
-                                let peek_output_owner = dashboard.peek_viewport.as_ref().and_then(|lease| match &lease.row {
-                                    crate::views::dashboard::DashboardRowId::TopLevel(id) => Some(*id),
-                                    crate::views::dashboard::DashboardRowId::Roster { .. }
-                                    | crate::views::dashboard::DashboardRowId::Workspace { .. } => None,
-                                });
-                                if let Some(owner) = peek_output_owner { agents.prepare_inline_output(owner); }
+                                let peek_output_owner = dashboard.peek_viewport.as_ref().and_then(
+                                    |lease| match &lease.row {
+                                        crate::views::dashboard::DashboardRowId::TopLevel(id) => {
+                                            Some(*id)
+                                        }
+                                        crate::views::dashboard::DashboardRowId::Roster {
+                                            ..
+                                        }
+                                        | crate::views::dashboard::DashboardRowId::Workspace {
+                                            ..
+                                        } => None,
+                                    },
+                                );
+                                if let Some(owner) = peek_output_owner {
+                                    agents.prepare_inline_output(owner);
+                                }
                                 let (popup_cursor, popup_post_flush, drawn_popup_agent) =
                                     if let Some(agent_id) = dashboard.attached_agent {
                                         let theme = crate::theme::Theme::current();
@@ -5806,11 +5824,11 @@ impl AppView {
 }
 
 #[cfg(test)]
-#[path = "app_view_tests.rs"]
-pub(crate) mod tests;
+#[path = "focused_navigation_restore_tests.rs"]
+pub(crate) mod focused_navigation_restore_tests;
 #[cfg(test)]
 #[path = "app_view_panel_sync_tests.rs"]
 pub(crate) mod panel_sync_tests;
 #[cfg(test)]
-#[path = "focused_navigation_restore_tests.rs"]
-pub(crate) mod focused_navigation_restore_tests;
+#[path = "app_view_tests.rs"]
+pub(crate) mod tests;

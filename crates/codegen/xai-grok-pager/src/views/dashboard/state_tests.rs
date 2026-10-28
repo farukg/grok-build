@@ -251,7 +251,10 @@ fn lane_defaults_main_and_cycles_via_ctrl_a() {
         "Ctrl+A must cycle the lane"
     );
     assert_eq!(state.session_lane(), SessionLane::Subagents);
-    assert!(state.selected.is_none(), "old-lane rows must not remain actionable");
+    assert!(
+        state.selected.is_none(),
+        "old-lane rows must not remain actionable"
+    );
 
     state.handle_key(&ctrl_a, &reg);
     assert_eq!(
@@ -277,7 +280,10 @@ fn session_scope_defaults_all_and_cycles_via_ctrl_y() {
     assert_eq!(state.session_scope, SessionScope::All);
 
     let ctrl_y = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL);
-    assert!(matches!(state.handle_key(&ctrl_y, &reg), InputOutcome::Changed));
+    assert!(matches!(
+        state.handle_key(&ctrl_y, &reg),
+        InputOutcome::Changed
+    ));
     assert_eq!(state.session_scope, SessionScope::Cwd);
     state.handle_key(&ctrl_y, &reg);
     assert_eq!(state.session_scope, SessionScope::Worktree);
@@ -7077,15 +7083,27 @@ fn focused_whitespace_reply_keeps_home_end_and_page_keys() {
         state.peek.as_mut().unwrap().focused = true;
         state.peek_reply.set_text(text);
         state.peek_reply.set_cursor(text.len());
-        let outcome = state.handle_key(&KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), &registry);
-        assert!(!matches!(outcome, InputOutcome::Action(Action::DashboardPage(_))));
-        assert_eq!(state.peek_reply.cursor(), text.rfind('\n').map_or(0, |index| index + 1));
+        let outcome =
+            state.handle_key(&KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), &registry);
+        assert!(!matches!(
+            outcome,
+            InputOutcome::Action(Action::DashboardPage(_))
+        ));
+        assert_eq!(
+            state.peek_reply.cursor(),
+            text.rfind('\n').map_or(0, |index| index + 1)
+        );
         let outcome = state.handle_key(&KeyEvent::new(KeyCode::End, KeyModifiers::NONE), &registry);
-        assert!(!matches!(outcome, InputOutcome::Action(Action::DashboardPage(_))));
+        assert!(!matches!(
+            outcome,
+            InputOutcome::Action(Action::DashboardPage(_))
+        ));
         assert_eq!(state.peek_reply.cursor(), text.len());
         for code in [KeyCode::PageUp, KeyCode::PageDown] {
-            assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
-                InputOutcome::Action(Action::DashboardPage(_))));
+            assert!(!matches!(
+                state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+                InputOutcome::Action(Action::DashboardPage(_))
+            ));
         }
         assert_eq!(state.peek_reply.text(), text);
     }
@@ -7100,11 +7118,15 @@ fn unfocused_saved_reply_and_hidden_dispatch_draft_do_not_capture_list_pages() {
     state.dispatch.set_text("hidden dispatch");
     state.peek_reply.set_text("saved reply");
     for (code, expected) in [
-        (KeyCode::Home, PageMove::Home), (KeyCode::End, PageMove::End),
-        (KeyCode::PageUp, PageMove::Up), (KeyCode::PageDown, PageMove::Down),
+        (KeyCode::Home, PageMove::Home),
+        (KeyCode::End, PageMove::End),
+        (KeyCode::PageUp, PageMove::Up),
+        (KeyCode::PageDown, PageMove::Down),
     ] {
-        assert!(matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
-            InputOutcome::Action(Action::DashboardPage(actual)) if actual == expected));
+        assert!(
+            matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(actual)) if actual == expected)
+        );
     }
     assert_eq!(state.peek_reply.text(), "saved reply");
     assert_eq!(state.dispatch.text(), "hidden dispatch");
@@ -7117,18 +7139,32 @@ fn active_search_and_slash_picker_keep_page_keys() {
     let mut state = DashboardState::new();
     state.set_list_focused(true);
     state.search_mode = true;
-    for code in [KeyCode::Home, KeyCode::End, KeyCode::PageUp, KeyCode::PageDown] {
-        assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
-            InputOutcome::Action(Action::DashboardPage(_))));
+    for code in [
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+    ] {
+        assert!(!matches!(
+            state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(_))
+        ));
     }
     state.search_mode = false;
-    for code in [KeyCode::Home, KeyCode::End, KeyCode::PageUp, KeyCode::PageDown] {
+    for code in [
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+    ] {
         state.dispatch.set_text("/");
         state.dispatch.set_cursor(1);
         state.dispatch.refresh_slash(&state.models);
         assert!(state.dispatch.slash_open());
-        assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
-            InputOutcome::Action(Action::DashboardPage(_))));
+        assert!(!matches!(
+            state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(_))
+        ));
     }
 }
 
@@ -7136,19 +7172,29 @@ fn active_search_and_slash_picker_keep_page_keys() {
 fn active_peek_file_picker_keeps_pages_even_with_unfocused_saved_reply() {
     use crate::app::actions::Action;
     let registry = crate::actions::ActionRegistry::defaults();
-    for code in [KeyCode::Home, KeyCode::End, KeyCode::PageUp, KeyCode::PageDown] {
+    for code in [
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+    ] {
         let mut state = state_with_open_peek();
         state.peek.as_mut().unwrap().focused = false;
         state.peek_reply.set_text("@src");
         state.peek_reply.file_search.set_test_state(
             crate::views::file_search::context::detect("@src", 4).unwrap(),
             vec![xai_grok_workspace::file_system::FuzzyMatchResult {
-                path: nucleo::Utf32String::from("src/lib.rs"), score: 1,
-                indices: Vec::new(), is_dir: false,
-            }], 0,
+                path: nucleo::Utf32String::from("src/lib.rs"),
+                score: 1,
+                indices: Vec::new(),
+                is_dir: false,
+            }],
+            0,
         );
         assert!(state.peek_reply.file_search_visible());
-        assert!(!matches!(state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
-            InputOutcome::Action(Action::DashboardPage(_))));
+        assert!(!matches!(
+            state.handle_key(&KeyEvent::new(code, KeyModifiers::NONE), &registry),
+            InputOutcome::Action(Action::DashboardPage(_))
+        ));
     }
 }

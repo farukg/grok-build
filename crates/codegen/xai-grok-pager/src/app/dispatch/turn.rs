@@ -777,7 +777,11 @@ pub(super) fn dispatch_context_policy(
     else {
         return vec![];
     };
-    let Some(generation) = app.agents.get_mut(&agent_id).and_then(AgentView::context_policy_request_started) else {
+    let Some(generation) = app
+        .agents
+        .get_mut(&agent_id)
+        .and_then(AgentView::context_policy_request_started)
+    else {
         return vec![];
     };
     vec![Effect::ContextPolicy {
@@ -838,7 +842,9 @@ pub(super) fn handle_bg_task_killed(
             }
             Some(outcome @ (KillOutcome::Indeterminate { .. } | KillOutcome::Failed { .. })) => {
                 clear_pending_kill(session, &task_id);
-                app.show_toast(&format!("{task_id}: {outcome}. Check task output before retrying."));
+                app.show_toast(&format!(
+                    "{task_id}: {outcome}. Check task output before retrying."
+                ));
             }
             Some(KillOutcome::NotFound) => {
                 tracing::info!(task_id = %task_id, "Task not found, removing");

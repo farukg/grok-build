@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use xai_grok_sampler::request_capture::{LocalAttemptOutcome, RequestAttemptId};
-use xai_grok_sampling_types::{ApiBackend, ContentEvidence, ProjectedRequestMember, SourceOccurrence, SourceOccurrenceId};
+use xai_grok_sampling_types::{
+    ApiBackend, ContentEvidence, ProjectedRequestMember, SourceOccurrence, SourceOccurrenceId,
+};
 
 pub const REQUEST_SNAPSHOT_NOTIFICATION: &str = "x.ai/session/request_snapshot/observed";
 pub const SOURCE_PUBLICATION_META: &str = "requestSource";
@@ -30,8 +32,12 @@ pub struct AppliedSourceMeta {
 pub enum InputSourceUnknown {
     StrictReceiptSourceUnavailable,
     NotApplied,
-    NotCommitted { cause: CaptureFailure },
-    Indeterminate { cause: CaptureFailure },
+    NotCommitted {
+        cause: CaptureFailure,
+    },
+    Indeterminate {
+        cause: CaptureFailure,
+    },
     MailboxClosed,
     /// The append may already have applied.
     ReplyLost,
@@ -40,8 +46,13 @@ pub enum InputSourceUnknown {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "binding", rename_all = "snake_case")]
 pub enum InputSourceBinding {
-    Applied { #[serde(rename = "_meta")] meta: AppliedSourceMeta },
-    Unknown { cause: InputSourceUnknown },
+    Applied {
+        #[serde(rename = "_meta")]
+        meta: AppliedSourceMeta,
+    },
+    Unknown {
+        cause: InputSourceUnknown,
+    },
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -101,10 +112,17 @@ pub struct SourcePublication {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum BodyAvailability {
-    Captured { publication_digest: [u8; 32], representation: xai_grok_sampler::request_capture::PayloadRepresentation },
+    Captured {
+        publication_digest: [u8; 32],
+        representation: xai_grok_sampler::request_capture::PayloadRepresentation,
+    },
     Expired,
-    NotCaptured { reason: NotCapturedReason },
-    Failed { cause: CaptureFailure },
+    NotCaptured {
+        reason: NotCapturedReason,
+    },
+    Failed {
+        cause: CaptureFailure,
+    },
     Unknown,
 }
 
@@ -117,13 +135,18 @@ pub struct PreparedBody {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum NotCapturedReason { Oversize }
+pub enum NotCapturedReason {
+    Oversize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureFailure {
     Storage,
-    Io { kind: crate::extensions::context_policy::ContextIoKind, os_code: Option<i32> },
+    Io {
+        kind: crate::extensions::context_policy::ContextIoKind,
+        os_code: Option<i32>,
+    },
     ReplyLost,
     MailboxClosed,
     OriginUnavailable,
@@ -133,14 +156,26 @@ pub enum CaptureFailure {
 
 impl CaptureFailure {
     pub(crate) fn io(error: &std::io::Error) -> Self {
-        if error.kind() == std::io::ErrorKind::InvalidData { Self::InvalidEvidence }
-        else { Self::Io { kind: error.kind().into(), os_code: error.raw_os_error() } }
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            Self::InvalidEvidence
+        } else {
+            Self::Io {
+                kind: error.kind().into(),
+                os_code: error.raw_os_error(),
+            }
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AttemptOutcome { Completed, Empty, Failed, Cancelled, InitializationFailed }
+pub enum AttemptOutcome {
+    Completed,
+    Empty,
+    Failed,
+    Cancelled,
+    InitializationFailed,
+}
 
 impl From<LocalAttemptOutcome> for AttemptOutcome {
     fn from(value: LocalAttemptOutcome) -> Self {
@@ -164,8 +199,12 @@ pub enum RequestObservation {
         source_durability: SourceDurability,
     },
     DispatchStarted,
-    ResponseHeaders { status: u16 },
-    Finished { outcome: AttemptOutcome },
+    ResponseHeaders {
+        status: u16,
+    },
+    Finished {
+        outcome: AttemptOutcome,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,21 +216,45 @@ pub struct AttemptObservation {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnobservedRequestPurpose {
-    Compaction, Title, Recap, Summary, MemoryDreamV1, MemoryDreamV2,
-    MemoryDreamBatch, Goal, Laziness, ImageDescribe, PermissionClassifier,
+    Compaction,
+    Title,
+    Recap,
+    Summary,
+    MemoryDreamV1,
+    MemoryDreamV2,
+    MemoryDreamBatch,
+    Goal,
+    Laziness,
+    ImageDescribe,
+    PermissionClassifier,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "coverage", rename_all = "snake_case")]
 pub enum RequestCaptureScope {
-    MainTurnOnly { unobserved: Vec<UnobservedRequestPurpose> },
+    MainTurnOnly {
+        unobserved: Vec<UnobservedRequestPurpose>,
+    },
 }
 
 impl Default for RequestCaptureScope {
     fn default() -> Self {
         use UnobservedRequestPurpose::*;
-        Self::MainTurnOnly { unobserved: vec![Compaction, Title, Recap, Summary, MemoryDreamV1,
-            MemoryDreamV2, MemoryDreamBatch, Goal, Laziness, ImageDescribe, PermissionClassifier] }
+        Self::MainTurnOnly {
+            unobserved: vec![
+                Compaction,
+                Title,
+                Recap,
+                Summary,
+                MemoryDreamV1,
+                MemoryDreamV2,
+                MemoryDreamBatch,
+                Goal,
+                Laziness,
+                ImageDescribe,
+                PermissionClassifier,
+            ],
+        }
     }
 }
 
@@ -227,7 +290,10 @@ pub struct RequestSnapshotNotification {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PublicationDurability { Synced, Unconfirmed }
+pub enum PublicationDurability {
+    Synced,
+    Unconfirmed,
+}
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(tag = "stage", rename_all = "snake_case")]
@@ -236,8 +302,13 @@ pub enum PublicationProgress {
     Unknown,
     NotSubmitted,
     NotCommitted,
-    JournalPrefix { committed: usize, durability: PublicationDurability },
-    AmbiguousSuffix { committed: usize },
+    JournalPrefix {
+        committed: usize,
+        durability: PublicationDurability,
+    },
+    AmbiguousSuffix {
+        committed: usize,
+    },
     ReplyLost,
 }
 
@@ -249,7 +320,10 @@ pub struct PublicationFailure {
 
 impl PublicationFailure {
     pub(crate) fn not_submitted(cause: CaptureFailure) -> Self {
-        Self { cause, progress: PublicationProgress::NotSubmitted }
+        Self {
+            cause,
+            progress: PublicationProgress::NotSubmitted,
+        }
     }
 }
 
@@ -278,34 +352,63 @@ pub enum RequestBodyRead {
         representation: xai_grok_sampler::request_capture::PayloadRepresentation,
         protected_local: ProtectedBodyRef,
     },
-    Unavailable { availability: BodyAvailability },
+    Unavailable {
+        availability: BodyAvailability,
+    },
 }
 
 impl std::fmt::Debug for RequestBodyRead {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Available { representation, protected_local, .. } => f.debug_struct("Available")
-                .field("representation", representation).field("protected_local", protected_local).finish_non_exhaustive(),
-            Self::Unavailable { availability } => f.debug_struct("Unavailable").field("availability", availability).finish(),
+            Self::Available {
+                representation,
+                protected_local,
+                ..
+            } => f
+                .debug_struct("Available")
+                .field("representation", representation)
+                .field("protected_local", protected_local)
+                .finish_non_exhaustive(),
+            Self::Unavailable { availability } => f
+                .debug_struct("Unavailable")
+                .field("availability", availability)
+                .finish(),
         }
     }
 }
 
 pub(crate) enum SourcePublications {
-    RestorePending { known: HashSet<SourceOccurrenceId> },
-    Ready { known: HashSet<SourceOccurrenceId> },
-    Unavailable { known: HashSet<SourceOccurrenceId>, cause: CaptureFailure, notice: FailureNotice },
+    RestorePending {
+        known: HashSet<SourceOccurrenceId>,
+    },
+    Ready {
+        known: HashSet<SourceOccurrenceId>,
+    },
+    Unavailable {
+        known: HashSet<SourceOccurrenceId>,
+        cause: CaptureFailure,
+        notice: FailureNotice,
+    },
 }
 
-pub(crate) enum FailureNotice { Pending, Sent }
+pub(crate) enum FailureNotice {
+    Pending,
+    Sent,
+}
 
 impl Default for SourcePublications {
-    fn default() -> Self { Self::Ready { known: HashSet::new() } }
+    fn default() -> Self {
+        Self::Ready {
+            known: HashSet::new(),
+        }
+    }
 }
 
 impl SourcePublications {
     pub(crate) fn restored() -> Self {
-        Self::RestorePending { known: HashSet::new() }
+        Self::RestorePending {
+            known: HashSet::new(),
+        }
     }
 
     pub(crate) fn needs_restore(&self) -> bool {
@@ -314,8 +417,12 @@ impl SourcePublications {
             Self::Ready { .. } => false,
             Self::Unavailable { cause, .. } => match cause {
                 CaptureFailure::InvalidEvidence => false,
-                CaptureFailure::Storage | CaptureFailure::Io { .. } | CaptureFailure::ReplyLost
-                | CaptureFailure::MailboxClosed | CaptureFailure::OriginUnavailable | CaptureFailure::WorkerLost => true,
+                CaptureFailure::Storage
+                | CaptureFailure::Io { .. }
+                | CaptureFailure::ReplyLost
+                | CaptureFailure::MailboxClosed
+                | CaptureFailure::OriginUnavailable
+                | CaptureFailure::WorkerLost => true,
             },
         }
     }
@@ -324,18 +431,32 @@ impl SourcePublications {
         match result {
             Ok(ids) => {
                 let known = match self {
-                    Self::RestorePending { known } | Self::Ready { known } | Self::Unavailable { known, .. } => known,
+                    Self::RestorePending { known }
+                    | Self::Ready { known }
+                    | Self::Unavailable { known, .. } => known,
                 };
                 known.extend(ids);
-                *self = Self::Ready { known: std::mem::take(known) };
+                *self = Self::Ready {
+                    known: std::mem::take(known),
+                };
             }
             Err(cause) => match self {
                 Self::Ready { .. } => {}
                 Self::RestorePending { known } => {
-                    *self = Self::Unavailable { known: std::mem::take(known), cause, notice: FailureNotice::Pending };
+                    *self = Self::Unavailable {
+                        known: std::mem::take(known),
+                        cause,
+                        notice: FailureNotice::Pending,
+                    };
                 }
-                Self::Unavailable { cause: previous, notice, .. } => {
-                    if *previous != cause { *notice = FailureNotice::Pending; }
+                Self::Unavailable {
+                    cause: previous,
+                    notice,
+                    ..
+                } => {
+                    if *previous != cause {
+                        *notice = FailureNotice::Pending;
+                    }
                     *previous = cause;
                 }
             },
@@ -352,33 +473,51 @@ impl SourcePublications {
 
     pub(crate) fn take_failure_notice(&mut self) -> Option<CaptureFailure> {
         match self {
-            Self::Unavailable { cause, notice, .. } => {
-                match notice {
-                    FailureNotice::Pending => { *notice = FailureNotice::Sent; Some(*cause) }
-                    FailureNotice::Sent => None,
+            Self::Unavailable { cause, notice, .. } => match notice {
+                FailureNotice::Pending => {
+                    *notice = FailureNotice::Sent;
+                    Some(*cause)
                 }
-            }
+                FailureNotice::Sent => None,
+            },
             Self::Ready { .. } | Self::RestorePending { .. } => None,
         }
     }
 
-    pub(crate) fn settle_failure(&mut self, sources: &[SourceOccurrence], progress: PublicationProgress) {
+    pub(crate) fn settle_failure(
+        &mut self,
+        sources: &[SourceOccurrence],
+        progress: PublicationProgress,
+    ) {
         let known = match self {
-            Self::Ready { known } | Self::RestorePending { known } | Self::Unavailable { known, .. } => known,
+            Self::Ready { known }
+            | Self::RestorePending { known }
+            | Self::Unavailable { known, .. } => known,
         };
         let retained = match progress {
-            PublicationProgress::JournalPrefix { committed, .. } | PublicationProgress::AmbiguousSuffix { committed } => committed,
-            PublicationProgress::Unknown | PublicationProgress::NotSubmitted | PublicationProgress::NotCommitted | PublicationProgress::ReplyLost => 0,
+            PublicationProgress::JournalPrefix { committed, .. }
+            | PublicationProgress::AmbiguousSuffix { committed } => committed,
+            PublicationProgress::Unknown
+            | PublicationProgress::NotSubmitted
+            | PublicationProgress::NotCommitted
+            | PublicationProgress::ReplyLost => 0,
         };
         for source in sources.iter().skip(retained) {
-            if let Some(id) = source.id() { known.remove(&id); }
+            if let Some(id) = source.id() {
+                known.remove(&id);
+            }
         }
         match progress {
-            PublicationProgress::Unknown | PublicationProgress::ReplyLost | PublicationProgress::AmbiguousSuffix { .. }
+            PublicationProgress::Unknown
+            | PublicationProgress::ReplyLost
+            | PublicationProgress::AmbiguousSuffix { .. }
             | PublicationProgress::JournalPrefix { committed: 1.., .. } => {
-                *self = Self::RestorePending { known: std::mem::take(known) };
+                *self = Self::RestorePending {
+                    known: std::mem::take(known),
+                };
             }
-            PublicationProgress::NotSubmitted | PublicationProgress::NotCommitted
+            PublicationProgress::NotSubmitted
+            | PublicationProgress::NotCommitted
             | PublicationProgress::JournalPrefix { committed: 0, .. } => {}
         }
     }
@@ -395,21 +534,31 @@ impl SourcePublications {
 }
 
 impl std::fmt::Debug for PromptInputRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("PromptInputRef(<opaque>)") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PromptInputRef(<opaque>)")
+    }
 }
 
 impl std::fmt::Debug for AppliedSourceMeta {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("AppliedSourceMeta(<opaque>)") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AppliedSourceMeta(<opaque>)")
+    }
 }
 
 impl std::fmt::Debug for InputSourceBinding {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("InputSourceBinding(<opaque>)") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InputSourceBinding(<opaque>)")
+    }
 }
 
 impl std::fmt::Debug for InputSourceNotification {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("InputSourceNotification(<opaque>)") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InputSourceNotification(<opaque>)")
+    }
 }
 
 impl std::fmt::Debug for SourcePublication {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("SourcePublication(<opaque>)") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SourcePublication(<opaque>)")
+    }
 }

@@ -1,14 +1,27 @@
 use super::*;
-use acp::Agent as _;
 use crate::agent::subagent::completion_test_support::auto_wake_test_request;
-use crate::session::delivery_receiver::{DeliveryExecution, DeliveryProvenance, ParentMessageCustody};
+use crate::session::delivery_receiver::{
+    DeliveryExecution, DeliveryProvenance, ParentMessageCustody,
+};
 use crate::session::persistence::native_wake_tests_support::ParentInputFault;
 use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
-use xai_grok_test_support::{InferenceEndpoint, InferenceRequestMatcher, MockInferenceServer, ScriptedResponse};
-use xai_grok_tools::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend, SubagentCoordinatorSender};
-use xai_grok_tools::implementations::grok_build::task::coordinator::{CoordinatorConfig, SubagentCoordinator};
-use xai_grok_tools::implementations::grok_build::task::native_recovery::{MessageRecoveryAction, MessageRecoveryRef, MessageRecoveryState};
-use xai_grok_tools::implementations::grok_build::task::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext, SubagentSnapshotStatus};
+use acp::Agent as _;
+use xai_grok_test_support::{
+    InferenceEndpoint, InferenceRequestMatcher, MockInferenceServer, ScriptedResponse,
+};
+use xai_grok_tools::implementations::grok_build::task::backend::{
+    ChannelBackend, SubagentBackend, SubagentCoordinatorSender,
+};
+use xai_grok_tools::implementations::grok_build::task::coordinator::{
+    CoordinatorConfig, SubagentCoordinator,
+};
+use xai_grok_tools::implementations::grok_build::task::native_recovery::{
+    MessageRecoveryAction, MessageRecoveryRef, MessageRecoveryState,
+};
+use xai_grok_tools::implementations::grok_build::task::types::{
+    ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
+    SubagentSnapshotStatus,
+};
 
 #[path = "native_adoption_attempt_teardown.rs"]
 mod adoption_attempt_teardown;
@@ -21,23 +34,37 @@ fn original_schema() -> serde_json::Value {
     serde_json::json!({"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false})
 }
 
-enum TestArtifacts { Disabled, UnnamedDirect, AuthenticatedProxy }
+enum TestArtifacts {
+    Disabled,
+    UnnamedDirect,
+    AuthenticatedProxy,
+}
 
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(45), future).await.unwrap()
+    tokio::time::timeout(std::time::Duration::from_secs(45), future)
+        .await
+        .unwrap()
 }
 
 fn coordinator(
-    agent: &MvpAgent, fault: Option<ParentInputFault>,
+    agent: &MvpAgent,
+    fault: Option<ParentInputFault>,
     artifacts: Option<(String, crate::session::repo_changes::UploadMethod)>,
-) -> (SubagentCoordinatorSender, tokio_util::task::AbortOnDropHandle<()>) {
+) -> (
+    SubagentCoordinatorSender,
+    tokio_util::task::AbortOnDropHandle<()>,
+) {
     let (sender, receiver) = SubagentCoordinator::<ShellChildRunner>::channel();
     let runner = ShellChildRunner {
-        agent_ref: LocalRef::new(agent), presentations: Default::default(),
-        native_wake_fault: std::cell::RefCell::new(fault), native_wake_artifacts: artifacts,
+        agent_ref: LocalRef::new(agent),
+        presentations: Default::default(),
+        native_wake_fault: std::cell::RefCell::new(fault),
+        native_wake_artifacts: artifacts,
         native_coordinator_tx: Some(sender.event_sender().0),
     };
-    let task = tokio::task::spawn_local(SubagentCoordinator::from_channel(receiver, runner, CoordinatorConfig::default()).run());
+    let task = tokio::task::spawn_local(
+        SubagentCoordinator::from_channel(receiver, runner, CoordinatorConfig::default()).run(),
+    );
     (sender, tokio_util::task::AbortOnDropHandle::new(task))
 }
 
@@ -67,22 +94,28 @@ async fn lost_owner(fault: ParentInputFault) -> Fixture {
     lost_owner_with_artifacts(fault, TestArtifacts::Disabled).await
 }
 
-async fn lost_owner_with_artifacts(
-    fault: ParentInputFault,
-    artifacts: TestArtifacts,
-) -> Fixture {
-    lost_owner_from(fault, artifacts, crate::agent::subagent::ActiveAgentMessageSource::Agent).await
+async fn lost_owner_with_artifacts(fault: ParentInputFault, artifacts: TestArtifacts) -> Fixture {
+    lost_owner_from(
+        fault,
+        artifacts,
+        crate::agent::subagent::ActiveAgentMessageSource::Agent,
+    )
+    .await
 }
 
 async fn lost_owner_from(
-    fault: ParentInputFault, artifacts: TestArtifacts, source: crate::agent::subagent::ActiveAgentMessageSource,
+    fault: ParentInputFault,
+    artifacts: TestArtifacts,
+    source: crate::agent::subagent::ActiveAgentMessageSource,
 ) -> Fixture {
     let server = MockInferenceServer::start().await.unwrap();
     server.set_keep_requests(true);
     let auth_directory = tempfile::tempdir().unwrap();
     let mut config = crate::agent::config::Config::default();
     config.telemetry.trace_upload = Some(false);
-    config.feature_values.insert(crate::agent::config::Feature::ActiveAgentMessages, true);
+    config
+        .feature_values
+        .insert(crate::agent::config::Feature::ActiveAgentMessages, true);
     config.endpoints.cli_chat_proxy_base_url = Some(server.url());
     config.endpoints.xai_api_base_url = server.url();
     config.endpoints.models_base_url = Some(server.url());
@@ -94,16 +127,41 @@ async fn lost_owner_from(
     config.grok_com_config.grok_ws_url = format!("{}/ws", server.url().replacen("http", "ws", 1));
     config.grok_com_config.oidc = None;
     config.grok_com_config.oauth2 = None;
-    let auth_manager = std::sync::Arc::new(crate::auth::AuthManager::new(auth_directory.path(), config.grok_com_config.clone()));
+    let auth_manager = std::sync::Arc::new(crate::auth::AuthManager::new(
+        auth_directory.path(),
+        config.grok_com_config.clone(),
+    ));
     let (gateway_tx, mut gateway) = mpsc::unbounded_channel();
-    let agent = Box::new(MvpAgent::new(GatewaySender::new(gateway_tx), &config, auth_manager, None, None).unwrap());
-    agent.auth_manager.hot_swap(xai_grok_login::GrokAuth::test_default());
+    let agent = Box::new(
+        MvpAgent::new(
+            GatewaySender::new(gateway_tx),
+            &config,
+            auth_manager,
+            None,
+            None,
+        )
+        .unwrap(),
+    );
+    agent
+        .auth_manager
+        .hot_swap(xai_grok_login::GrokAuth::test_default());
     let artifacts = match artifacts {
         TestArtifacts::Disabled => None,
-        TestArtifacts::UnnamedDirect => Some(("gs://native-recovery-artifacts".into(), crate::session::repo_changes::UploadMethod::Direct { service_account_key: None })),
-        TestArtifacts::AuthenticatedProxy => Some(("gs://native-recovery-artifacts".into(), crate::session::repo_changes::UploadMethod::Proxy {
-            proxy_base_url: server.url(), user_token: String::new(), deployment_key: None, alpha_test_key: None,
-        })),
+        TestArtifacts::UnnamedDirect => Some((
+            "gs://native-recovery-artifacts".into(),
+            crate::session::repo_changes::UploadMethod::Direct {
+                service_account_key: None,
+            },
+        )),
+        TestArtifacts::AuthenticatedProxy => Some((
+            "gs://native-recovery-artifacts".into(),
+            crate::session::repo_changes::UploadMethod::Proxy {
+                proxy_base_url: server.url(),
+                user_token: String::new(),
+                deployment_key: None,
+                alpha_test_key: None,
+            },
+        )),
     };
     let artifact_binding = artifacts.clone();
     let mut model = crate::agent::config::ModelEntry::fallback("test-model", &Default::default());
@@ -111,9 +169,22 @@ async fn lost_owner_from(
     model.info.api_backend = crate::sampling::ApiBackend::Responses;
     model.api_key = Some("native-fixture-only".into());
     agent.models_manager.insert_test_entry("test-model", model);
-    agent.auth_method_id.store(Some(std::sync::Arc::new(acp::AuthMethodId::new("cached_token"))));
-    bounded(agent.initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-        .client_capabilities(acp::ClientCapabilities::new().fs(acp::FileSystemCapabilities::new()).terminal(false)))).await.unwrap();
+    agent
+        .auth_method_id
+        .store(Some(std::sync::Arc::new(acp::AuthMethodId::new(
+            "cached_token",
+        ))));
+    bounded(
+        agent.initialize(
+            acp::InitializeRequest::new(acp::ProtocolVersion::V1).client_capabilities(
+                acp::ClientCapabilities::new()
+                    .fs(acp::FileSystemCapabilities::new())
+                    .terminal(false),
+            ),
+        ),
+    )
+    .await
+    .unwrap();
     let repo = tempfile::tempdir().unwrap();
     let (repository, _remote) = xai_test_utils::git::seed_repo_with_remote(repo.path());
     let parent = bounded(agent.new_session(acp::NewSessionRequest::new(repository.clone()).meta(
@@ -128,17 +199,31 @@ async fn lost_owner_from(
     request.run_in_background = false;
     request.await_to_completion = true;
     request.runtime_overrides.output_schema = Some(original_schema());
-    let original = server.expect_response("original native result", InferenceRequestMatcher::foreground_containing(
-        InferenceEndpoint::Responses, "complete-before-native-recovery"), ScriptedResponse::sse(
-            xai_grok_test_support::sse::responses_api_script_exact(r#"{"value":"old-completed-native-result"}"#, "test-model")));
+    let original = server.expect_response(
+        "original native result",
+        InferenceRequestMatcher::foreground_containing(
+            InferenceEndpoint::Responses,
+            "complete-before-native-recovery",
+        ),
+        ScriptedResponse::sse(xai_grok_test_support::sse::responses_api_script_exact(
+            r#"{"value":"old-completed-native-result"}"#,
+            "test-model",
+        )),
+    );
     let prior = bounded(backend.spawn(request, None, None)).await.unwrap();
     assert!(prior.success(), "{prior:?}");
     original.assert_satisfied();
-    let persisted_source = crate::agent::subagent::durable_resume_source(&id, parent.0.as_ref(), &repository).unwrap();
-    let info = crate::session::info::Info { id: acp::SessionId::new(id.clone()), cwd: persisted_source.child_cwd };
+    let persisted_source =
+        crate::agent::subagent::durable_resume_source(&id, parent.0.as_ref(), &repository).unwrap();
+    let info = crate::session::info::Info {
+        id: acp::SessionId::new(id.clone()),
+        cwd: persisted_source.child_cwd,
+    };
     let directory = crate::session::persistence::session_dir(&info);
     let parent_info = agent.resident_handle(&parent).unwrap().info;
-    let artifacts = crate::session::persistence::session_dir(&parent_info).join("subagents").join(&id);
+    let artifacts = crate::session::persistence::session_dir(&parent_info)
+        .join("subagents")
+        .join(&id);
     let prior_meta = std::fs::read(artifacts.join("meta.json")).unwrap();
     let prior_output = std::fs::read(artifacts.join("output.json")).unwrap();
     let prior_history = std::fs::read(directory.join("chat_history.jsonl")).unwrap();
@@ -146,12 +231,24 @@ async fn lost_owner_from(
     let storage = JsonlStorageAdapter::with_root(crate::util::grok_home::grok_home());
     let before = storage.load_summary(&info).await.unwrap();
     let sampled = server.request_count();
-    agent.try_build_subagent_spawn_context(parent.0.as_ref()).unwrap().active_message_parent_prompt_index.store(1729, std::sync::atomic::Ordering::Release);
+    agent
+        .try_build_subagent_spawn_context(parent.0.as_ref())
+        .unwrap()
+        .active_message_parent_prompt_index
+        .store(1729, std::sync::atomic::Ordering::Release);
     let message = match source {
-        crate::agent::subagent::ActiveAgentMessageSource::Agent => ActiveAgentMessageRequest::try_new(&id, TEXT).unwrap(),
+        crate::agent::subagent::ActiveAgentMessageSource::Agent => {
+            ActiveAgentMessageRequest::try_new(&id, TEXT).unwrap()
+        }
         crate::agent::subagent::ActiveAgentMessageSource::Human => {
-            use crate::agent::mvp_agent::{SessionHost, ChildHost, ChildReach};
-            let Some(SessionHost::Child(ChildHost { reach: ChildReach::Addressed { address, .. }, .. })) = agent.session_host(&info.id) else { panic!("original human route"); };
+            use crate::agent::mvp_agent::{ChildHost, ChildReach, SessionHost};
+            let Some(SessionHost::Child(ChildHost {
+                reach: ChildReach::Addressed { address, .. },
+                ..
+            })) = agent.session_host(&info.id)
+            else {
+                panic!("original human route");
+            };
             ActiveAgentMessageRequest::try_new_from_human(address.as_str(), TEXT,
                 xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation::Queue).unwrap()
         }
@@ -159,9 +256,15 @@ async fn lost_owner_from(
     while gateway.try_recv().is_ok() {}
     let outcome = bounded(backend.send_active_message(message)).await;
     let reference = match fault {
-        ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } => panic!("initial-owner fixture requires an initial-owner cut"),
+        ParentInputFault::BeforeAdoptedProjection { .. }
+        | ParentInputFault::ReleasedAttemptEnd { .. }
+        | ParentInputFault::PublishedReconfirm { .. } => {
+            panic!("initial-owner fixture requires an initial-owner cut")
+        }
         ParentInputFault::ShutdownBeforeProjection => {
-            let ActiveAgentMessageOutcome::Accepted { message_id } = outcome else { panic!("published cut must follow real acceptance: {outcome:?}"); };
+            let ActiveAgentMessageOutcome::Accepted { message_id } = outcome else {
+                panic!("published cut must follow real acceptance: {outcome:?}");
+            };
             bounded(async {
                 loop {
                     let message = gateway.recv().await.unwrap();
@@ -177,60 +280,141 @@ async fn lost_owner_from(
             bounded(handle.cmd_tx.closed()).await;
             agent.drain_old_session_thread(&info.id).await;
             let summary = storage.load_summary(&info).await.unwrap();
-            summary.completion_delivery.receiver.records[&format!("parent-message/{message_id}")].parent_recovery_ref().unwrap()
+            summary.completion_delivery.receiver.records[&format!("parent-message/{message_id}")]
+                .parent_recovery_ref()
+                .unwrap()
         }
-        ParentInputFault::AtomicWrite(_) | ParentInputFault::LoseAdmissionAck | ParentInputFault::LoseReservationAck
-        | ParentInputFault::ReservationDigestConflict | ParentInputFault::ShutdownAfterAdmission
-        | ParentInputFault::ShutdownAfterProjection | ParentInputFault::ShutdownAfterWakeStart => {
-            let ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } = outcome else { panic!("lost owner must retain recovery identity: {outcome:?}"); };
+        ParentInputFault::AtomicWrite(_)
+        | ParentInputFault::LoseAdmissionAck
+        | ParentInputFault::LoseReservationAck
+        | ParentInputFault::ReservationDigestConflict
+        | ParentInputFault::ShutdownAfterAdmission
+        | ParentInputFault::ShutdownAfterProjection
+        | ParentInputFault::ShutdownAfterWakeStart => {
+            let ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } = outcome else {
+                panic!("lost owner must retain recovery identity: {outcome:?}");
+            };
             recovery_ref
         }
     };
     assert_eq!(reference.receiver.session_id, id);
-    assert_eq!(reference.prompt_id, format!("parent-message-{}", reference.message_id));
-    assert_eq!(reference.delivery_id, format!("parent-message/{}", reference.message_id));
+    assert_eq!(
+        reference.prompt_id,
+        format!("parent-message-{}", reference.message_id)
+    );
+    assert_eq!(
+        reference.delivery_id,
+        format!("parent-message/{}", reference.message_id)
+    );
     use sha2::{Digest, Sha256};
-    assert_eq!(reference.payload_digest, format!("{:x}", Sha256::digest(TEXT.as_bytes())));
+    assert_eq!(
+        reference.payload_digest,
+        format!("{:x}", Sha256::digest(TEXT.as_bytes()))
+    );
     match fault {
-        ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } => panic!("initial-owner fixture requires an initial-owner cut"),
+        ParentInputFault::BeforeAdoptedProjection { .. }
+        | ParentInputFault::ReleasedAttemptEnd { .. }
+        | ParentInputFault::PublishedReconfirm { .. } => {
+            panic!("initial-owner fixture requires an initial-owner cut")
+        }
         ParentInputFault::ShutdownBeforeProjection => {
-            let meta: crate::agent::subagent::SubagentMeta = serde_json::from_slice(&std::fs::read(artifacts.join("meta.json")).unwrap()).unwrap();
-            assert_eq!(meta.status, crate::agent::subagent::SubagentMetaStatus::Running);
+            let meta: crate::agent::subagent::SubagentMeta =
+                serde_json::from_slice(&std::fs::read(artifacts.join("meta.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                meta.status,
+                crate::agent::subagent::SubagentMetaStatus::Running
+            );
             assert_ne!(meta.attempt_id, before.attempt_id);
         }
-        ParentInputFault::AtomicWrite(_) | ParentInputFault::LoseAdmissionAck | ParentInputFault::LoseReservationAck
-        | ParentInputFault::ReservationDigestConflict | ParentInputFault::ShutdownAfterAdmission
-        | ParentInputFault::ShutdownAfterProjection | ParentInputFault::ShutdownAfterWakeStart => {
-            let restored = bounded(backend.query(&id, true, Some(30_000), None)).await.unwrap();
-            assert!(matches!(restored.status, SubagentSnapshotStatus::Completed { .. }));
-            assert_eq!(std::fs::read(artifacts.join("meta.json")).unwrap(), prior_meta);
+        ParentInputFault::AtomicWrite(_)
+        | ParentInputFault::LoseAdmissionAck
+        | ParentInputFault::LoseReservationAck
+        | ParentInputFault::ReservationDigestConflict
+        | ParentInputFault::ShutdownAfterAdmission
+        | ParentInputFault::ShutdownAfterProjection
+        | ParentInputFault::ShutdownAfterWakeStart => {
+            let restored = bounded(backend.query(&id, true, Some(30_000), None))
+                .await
+                .unwrap();
+            assert!(matches!(
+                restored.status,
+                SubagentSnapshotStatus::Completed { .. }
+            ));
+            assert_eq!(
+                std::fs::read(artifacts.join("meta.json")).unwrap(),
+                prior_meta
+            );
         }
     }
     assert_eq!(sampled, server.request_count());
-    assert_eq!(std::fs::read(artifacts.join("output.json")).unwrap(), prior_output);
-    assert_eq!(std::fs::read(directory.join("chat_history.jsonl")).unwrap(), prior_history);
-    assert_eq!(std::fs::read(directory.join("child_management.json")).unwrap(), prior_recipe);
+    assert_eq!(
+        std::fs::read(artifacts.join("output.json")).unwrap(),
+        prior_output
+    );
+    assert_eq!(
+        std::fs::read(directory.join("chat_history.jsonl")).unwrap(),
+        prior_history
+    );
+    assert_eq!(
+        std::fs::read(directory.join("child_management.json")).unwrap(),
+        prior_recipe
+    );
     let durable = storage.load_summary(&info).await.unwrap();
     let record = &durable.completion_delivery.receiver.records[&reference.delivery_id];
     assert!(matches!(record.execution, DeliveryExecution::Queued { .. }));
     match fault {
-        ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } => panic!("initial-owner fixture requires an initial-owner cut"),
+        ParentInputFault::BeforeAdoptedProjection { .. }
+        | ParentInputFault::ReleasedAttemptEnd { .. }
+        | ParentInputFault::PublishedReconfirm { .. } => {
+            panic!("initial-owner fixture requires an initial-owner cut")
+        }
         ParentInputFault::ShutdownAfterWakeStart | ParentInputFault::ShutdownBeforeProjection => {
-            let DeliveryProvenance::ParentMessage { admission } = &record.provenance else { panic!("native admission"); };
-            let ParentMessageCustody::Initial { custody, .. } = &admission.custody else { panic!("native custody"); };
-            assert_eq!(durable.attempt_id.as_deref(), Some(custody.launch.attempt_id.as_str()));
+            let DeliveryProvenance::ParentMessage { admission } = &record.provenance else {
+                panic!("native admission");
+            };
+            let ParentMessageCustody::Initial { custody, .. } = &admission.custody else {
+                panic!("native custody");
+            };
+            assert_eq!(
+                durable.attempt_id.as_deref(),
+                Some(custody.launch.attempt_id.as_str())
+            );
             assert_eq!(durable.next_trace_turn, before.next_trace_turn + 1);
         }
-        ParentInputFault::AtomicWrite(_) | ParentInputFault::LoseAdmissionAck | ParentInputFault::LoseReservationAck
-        | ParentInputFault::ReservationDigestConflict | ParentInputFault::ShutdownAfterAdmission | ParentInputFault::ShutdownAfterProjection => {
+        ParentInputFault::AtomicWrite(_)
+        | ParentInputFault::LoseAdmissionAck
+        | ParentInputFault::LoseReservationAck
+        | ParentInputFault::ReservationDigestConflict
+        | ParentInputFault::ShutdownAfterAdmission
+        | ParentInputFault::ShutdownAfterProjection => {
             assert_eq!(before.attempt_id, durable.attempt_id);
             assert_eq!(before.next_trace_turn, durable.next_trace_turn);
         }
     }
     drop(backend);
     drop(owner);
-    Fixture { agent, server, parent, info, storage, directory, artifacts, prior_meta, prior_output, prior_history, prior_recipe,
-        prior_attempt: before.attempt_id, prior_next_turn: before.next_trace_turn, prior_result: prior, reference, artifact_binding, _repo: repo, _auth: auth_directory, gateway }
+    Fixture {
+        agent,
+        server,
+        parent,
+        info,
+        storage,
+        directory,
+        artifacts,
+        prior_meta,
+        prior_output,
+        prior_history,
+        prior_recipe,
+        prior_attempt: before.attempt_id,
+        prior_next_turn: before.next_trace_turn,
+        prior_result: prior,
+        reference,
+        artifact_binding,
+        _repo: repo,
+        _auth: auth_directory,
+        gateway,
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -325,7 +509,8 @@ async fn native_lost_owner_adopts_durable_initial_input_once_with_original_schem
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn native_lost_ack_recovery_refuses_wrong_audience_generation_and_digest_without_touching_old_completion() {
+async fn native_lost_ack_recovery_refuses_wrong_audience_generation_and_digest_without_touching_old_completion()
+ {
     xai_test_utils::require_git!();
     tokio::task::LocalSet::new().run_until(async {
         let f = lost_owner(ParentInputFault::LoseAdmissionAck).await;
@@ -360,7 +545,8 @@ async fn native_lost_ack_recovery_refuses_wrong_audience_generation_and_digest_w
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn native_unavailable_original_artifact_binding_is_correlated_uncertainty_not_default_substitution() {
+async fn native_unavailable_original_artifact_binding_is_correlated_uncertainty_not_default_substitution()
+ {
     xai_test_utils::require_git!();
     tokio::task::LocalSet::new().run_until(async {
         let f = lost_owner_with_artifacts(ParentInputFault::ShutdownAfterAdmission, TestArtifacts::UnnamedDirect).await;
@@ -403,66 +589,118 @@ async fn native_unavailable_original_artifact_binding_is_correlated_uncertainty_
 #[tokio::test(flavor = "current_thread")]
 async fn native_projected_owner_loss_is_observed_interrupted_and_never_replayed() {
     xai_test_utils::require_git!();
-    tokio::task::LocalSet::new().run_until(async {
-        let f = lost_owner(ParentInputFault::ShutdownAfterAdmission).await;
-        let sampled = f.server.request_count();
-        let (sender, owner) = coordinator(&f.agent, Some(ParentInputFault::ShutdownAfterProjection), None);
-        let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
-        assert_eq!(bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt)).await,
-            ActiveAgentMessageOutcome::Accepted { message_id: f.reference.message_id.clone() });
-        let done = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
-        assert!(!matches!(done.status, SubagentSnapshotStatus::Running { .. }));
-        assert_eq!(sampled, f.server.request_count(), "lost strict projection ack never reaches inference");
-        drop(backend);
-        drop(owner);
-        let (lease, interrupted) = f.storage.claim_receiver(&f.info).await.unwrap();
-        assert!(matches!(interrupted.completion_delivery.receiver.records[&f.reference.delivery_id].execution, DeliveryExecution::Interrupted { .. }));
-        drop(lease);
-        let history = std::fs::read(f.directory.join("chat_history.jsonl")).unwrap();
-        let (sender, owner) = coordinator(&f.agent, None, None);
-        let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
-        for action in [MessageRecoveryAction::Observe, MessageRecoveryAction::Adopt] {
-            assert_eq!(bounded(backend.recover_message(f.reference.clone(), action)).await,
-                ActiveAgentMessageOutcome::RecoveryObserved { recovery_ref: f.reference.clone(), state: MessageRecoveryState::Interrupted });
-        }
-        assert_eq!(history, std::fs::read(f.directory.join("chat_history.jsonl")).unwrap());
-        assert_eq!(sampled, f.server.request_count());
-        drop(owner);
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let f = lost_owner(ParentInputFault::ShutdownAfterAdmission).await;
+            let sampled = f.server.request_count();
+            let (sender, owner) = coordinator(
+                &f.agent,
+                Some(ParentInputFault::ShutdownAfterProjection),
+                None,
+            );
+            let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
+            assert_eq!(
+                bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt))
+                    .await,
+                ActiveAgentMessageOutcome::Accepted {
+                    message_id: f.reference.message_id.clone()
+                }
+            );
+            let done =
+                bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None))
+                    .await
+                    .unwrap();
+            assert!(!matches!(
+                done.status,
+                SubagentSnapshotStatus::Running { .. }
+            ));
+            assert_eq!(
+                sampled,
+                f.server.request_count(),
+                "lost strict projection ack never reaches inference"
+            );
+            drop(backend);
+            drop(owner);
+            let (lease, interrupted) = f.storage.claim_receiver(&f.info).await.unwrap();
+            assert!(matches!(
+                interrupted.completion_delivery.receiver.records[&f.reference.delivery_id]
+                    .execution,
+                DeliveryExecution::Interrupted { .. }
+            ));
+            drop(lease);
+            let history = std::fs::read(f.directory.join("chat_history.jsonl")).unwrap();
+            let (sender, owner) = coordinator(&f.agent, None, None);
+            let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
+            for action in [MessageRecoveryAction::Observe, MessageRecoveryAction::Adopt] {
+                assert_eq!(
+                    bounded(backend.recover_message(f.reference.clone(), action)).await,
+                    ActiveAgentMessageOutcome::RecoveryObserved {
+                        recovery_ref: f.reference.clone(),
+                        state: MessageRecoveryState::Interrupted
+                    }
+                );
+            }
+            assert_eq!(
+                history,
+                std::fs::read(f.directory.join("chat_history.jsonl")).unwrap()
+            );
+            assert_eq!(sampled, f.server.request_count());
+            drop(owner);
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn native_startup_observes_same_queued_identity_without_inference_or_completed_artifact_changes() {
+async fn native_startup_observes_same_queued_identity_without_inference_or_completed_artifact_changes()
+ {
     xai_test_utils::require_git!();
-    tokio::task::LocalSet::new().run_until(async {
-        let mut f = lost_owner(ParentInputFault::ShutdownAfterAdmission).await;
-        while f.gateway.try_recv().is_ok() {}
-        let sampled = f.server.request_count();
-        let reopened = bounded(f.agent.management_session(&f.info.id)).await.unwrap();
-        let conversation = reopened.handle.chat_state_handle.get_conversation().await;
-        assert!(!serde_json::to_string(&conversation).unwrap().contains(TEXT));
-        let expected = serde_json::to_value(&f.reference).unwrap();
-        bounded(async {
-            loop {
-                let message = f.gateway.recv().await.unwrap();
-                if let xai_acp_lib::AcpClientMessage::ExtNotification(notification) = message {
-                    let payload: serde_json::Value = serde_json::from_str(notification.request.params.get()).unwrap();
-                    if payload.get("recoveryRef") == Some(&expected) {
-                        assert_eq!(payload["sessionId"], f.reference.receiver.session_id);
-                        break;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut f = lost_owner(ParentInputFault::ShutdownAfterAdmission).await;
+            while f.gateway.try_recv().is_ok() {}
+            let sampled = f.server.request_count();
+            let reopened = bounded(f.agent.management_session(&f.info.id))
+                .await
+                .unwrap();
+            let conversation = reopened.handle.chat_state_handle.get_conversation().await;
+            assert!(!serde_json::to_string(&conversation).unwrap().contains(TEXT));
+            let expected = serde_json::to_value(&f.reference).unwrap();
+            bounded(async {
+                loop {
+                    let message = f.gateway.recv().await.unwrap();
+                    if let xai_acp_lib::AcpClientMessage::ExtNotification(notification) = message {
+                        let payload: serde_json::Value =
+                            serde_json::from_str(notification.request.params.get()).unwrap();
+                        if payload.get("recoveryRef") == Some(&expected) {
+                            assert_eq!(payload["sessionId"], f.reference.receiver.session_id);
+                            break;
+                        }
                     }
                 }
-            }
-        }).await;
-        assert_eq!(sampled, f.server.request_count());
-        assert_eq!(std::fs::read(f.artifacts.join("meta.json")).unwrap(), f.prior_meta);
-        assert_eq!(std::fs::read(f.artifacts.join("output.json")).unwrap(), f.prior_output);
-        assert_eq!(std::fs::read(f.directory.join("chat_history.jsonl")).unwrap(), f.prior_history);
-        let unchanged = f.storage.load_summary(&f.info).await.unwrap();
-        assert!(matches!(unchanged.completion_delivery.receiver.records[&f.reference.delivery_id].execution, DeliveryExecution::Queued { .. }));
-        assert_eq!(unchanged.attempt_id, f.prior_attempt);
-        assert_eq!(unchanged.next_trace_turn, f.prior_next_turn);
-    }).await;
+            })
+            .await;
+            assert_eq!(sampled, f.server.request_count());
+            assert_eq!(
+                std::fs::read(f.artifacts.join("meta.json")).unwrap(),
+                f.prior_meta
+            );
+            assert_eq!(
+                std::fs::read(f.artifacts.join("output.json")).unwrap(),
+                f.prior_output
+            );
+            assert_eq!(
+                std::fs::read(f.directory.join("chat_history.jsonl")).unwrap(),
+                f.prior_history
+            );
+            let unchanged = f.storage.load_summary(&f.info).await.unwrap();
+            assert!(matches!(
+                unchanged.completion_delivery.receiver.records[&f.reference.delivery_id].execution,
+                DeliveryExecution::Queued { .. }
+            ));
+            assert_eq!(unchanged.attempt_id, f.prior_attempt);
+            assert_eq!(unchanged.next_trace_turn, f.prior_next_turn);
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

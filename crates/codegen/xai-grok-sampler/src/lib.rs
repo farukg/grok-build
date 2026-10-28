@@ -23,9 +23,9 @@ pub mod events;
 pub mod handle;
 pub mod metrics;
 mod prewarm;
-mod request_compression;
-pub mod request_capture;
 mod request_body;
+pub mod request_capture;
+mod request_compression;
 pub mod request_preview;
 #[cfg(test)]
 mod request_preview_tests;

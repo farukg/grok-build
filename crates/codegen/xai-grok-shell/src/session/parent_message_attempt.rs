@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
@@ -31,7 +31,9 @@ impl ParentMessageAdoption {
                     Err(())
                 }
             }
-            AdoptionPublication::Released | AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized
+            AdoptionPublication::Released
+            | AdoptionPublication::Projected
+            | AdoptionPublication::CancelAuthorized
             | AdoptionPublication::Abandoned => Err(()),
         }
     }
@@ -40,12 +42,16 @@ impl ParentMessageAdoption {
         let mut state = self.0.lock();
         match &*state {
             AdoptionPublication::Reserved => *state = AdoptionPublication::Abandoned,
-            AdoptionPublication::Released | AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized
+            AdoptionPublication::Released
+            | AdoptionPublication::Projected
+            | AdoptionPublication::CancelAuthorized
             | AdoptionPublication::Abandoned => {}
         }
     }
 
-    pub(crate) fn authorize_cancel(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::ChildCancelOutcome {
+    pub(crate) fn authorize_cancel(
+        &self,
+    ) -> xai_grok_tools::implementations::grok_build::task::coordinator::ChildCancelOutcome {
         use xai_grok_tools::implementations::grok_build::task::coordinator::ChildCancelOutcome;
         let mut state = self.0.lock();
         match &*state {
@@ -53,7 +59,9 @@ impl ParentMessageAdoption {
                 *state = AdoptionPublication::CancelAuthorized;
                 ChildCancelOutcome::Accepted
             }
-            AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized => ChildCancelOutcome::Accepted,
+            AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized => {
+                ChildCancelOutcome::Accepted
+            }
             AdoptionPublication::Abandoned => ChildCancelOutcome::AttemptEnded,
         }
     }
@@ -61,7 +69,9 @@ impl ParentMessageAdoption {
     pub(crate) fn can_project(&self) -> bool {
         match &*self.0.lock() {
             AdoptionPublication::Released | AdoptionPublication::Projected => true,
-            AdoptionPublication::Reserved | AdoptionPublication::CancelAuthorized | AdoptionPublication::Abandoned => false,
+            AdoptionPublication::Reserved
+            | AdoptionPublication::CancelAuthorized
+            | AdoptionPublication::Abandoned => false,
         }
     }
 
@@ -69,13 +79,15 @@ impl ParentMessageAdoption {
         let mut state = self.0.lock();
         match &*state {
             AdoptionPublication::Released => *state = AdoptionPublication::Projected,
-            AdoptionPublication::Reserved | AdoptionPublication::Projected
-            | AdoptionPublication::CancelAuthorized | AdoptionPublication::Abandoned => {}
+            AdoptionPublication::Reserved
+            | AdoptionPublication::Projected
+            | AdoptionPublication::CancelAuthorized
+            | AdoptionPublication::Abandoned => {}
         }
     }
 
     // Retention retires cancellation authority before the terminal owner leaves.
-    pub(crate) fn finish_attempt(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership {
+    pub(crate) fn finish_attempt(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership{
         use xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership;
         let mut state = self.0.lock();
         match &*state {
@@ -84,13 +96,17 @@ impl ParentMessageAdoption {
                 InitialMessageTerminalOwnership::AdoptionAttempt
             }
             AdoptionPublication::Abandoned => InitialMessageTerminalOwnership::AdoptionAttempt,
-            AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized => InitialMessageTerminalOwnership::Message,
+            AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized => {
+                InitialMessageTerminalOwnership::Message
+            }
         }
     }
 
     pub(crate) fn retains_admission(&self) -> bool {
         match &*self.0.lock() {
-            AdoptionPublication::Reserved | AdoptionPublication::Released | AdoptionPublication::Abandoned => true,
+            AdoptionPublication::Reserved
+            | AdoptionPublication::Released
+            | AdoptionPublication::Abandoned => true,
             AdoptionPublication::Projected | AdoptionPublication::CancelAuthorized => false,
         }
     }
@@ -103,16 +119,18 @@ pub(crate) enum ParentMessagePublicationContract {
 }
 
 impl ParentMessagePublicationContract {
-    pub(crate) fn terminal_ownership(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership {
+    pub(crate) fn terminal_ownership(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership{
         use xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership;
         match self {
             Self::Admission => InitialMessageTerminalOwnership::Message,
-            Self::Adoption(adoption) if adoption.retains_admission() => InitialMessageTerminalOwnership::AdoptionAttempt,
+            Self::Adoption(adoption) if adoption.retains_admission() => {
+                InitialMessageTerminalOwnership::AdoptionAttempt
+            }
             Self::Adoption(_) => InitialMessageTerminalOwnership::Message,
         }
     }
 
-    pub(crate) fn finish_attempt(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership {
+    pub(crate) fn finish_attempt(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership{
         use xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership;
         match self {
             Self::Admission => InitialMessageTerminalOwnership::Message,

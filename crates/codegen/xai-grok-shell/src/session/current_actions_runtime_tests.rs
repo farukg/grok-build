@@ -1,20 +1,32 @@
 use super::*;
-use crate::session::current_actions::{CompactOwner, CompactStage, CurrentActions, CurrentActionsSnapshot, CurrentSamplingPhase, CurrentTurnPhase, FrozenOwner, SnapshotBinding};
+use crate::session::current_actions::{
+    CompactOwner, CompactStage, CurrentActions, CurrentActionsSnapshot, CurrentSamplingPhase,
+    CurrentTurnPhase, FrozenOwner, SnapshotBinding,
+};
 use std::time::Duration;
 
 fn tag(actor: &SessionActor) -> SnapshotBinding {
-    SnapshotBinding { session_id: actor.session_info.id.0.to_string(), binding_epoch: 11, load_generation: 4 }
+    SnapshotBinding {
+        session_id: actor.session_info.id.0.to_string(),
+        binding_epoch: 11,
+        load_generation: 4,
+    }
 }
 
 fn capture(actor: &SessionActor) -> CurrentActions {
-    let CurrentActionsSnapshot::Current(mut snapshot) = actor.current_actions_reader().snapshot(tag(actor)) else { panic!("resident source"); };
+    let CurrentActionsSnapshot::Current(mut snapshot) =
+        actor.current_actions_reader().snapshot(tag(actor))
+    else {
+        panic!("resident source");
+    };
     // The native cursor is process-wide; unrelated sessions may allocate between reads.
     snapshot.event_frontier = 0;
     snapshot
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn readonly_snapshot_during_delayed_real_inference_neither_waits_for_actor_nor_acknowledges_work() {
+async fn readonly_snapshot_during_delayed_real_inference_neither_waits_for_actor_nor_acknowledges_work()
+ {
     tokio::task::LocalSet::new().run_until(async {
         let mut fixture = fixture().await;
         let server = route_to_mock(&fixture.actor).await;
@@ -117,7 +129,8 @@ async fn actual_compaction_registration_execution_and_original_rpc_have_distinct
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn genuine_root_child_and_wake_task_registrations_retain_anchors_and_cancel_before_start_without_resurrection() {
+async fn genuine_root_child_and_wake_task_registrations_retain_anchors_and_cancel_before_start_without_resurrection()
+ {
     tokio::task::LocalSet::new().run_until(async {
         for (child, origin) in [
             (false, PromptOrigin::User),
@@ -164,20 +177,37 @@ async fn genuine_root_child_and_wake_task_registrations_retain_anchors_and_cance
 
 #[tokio::test(flavor = "current_thread")]
 async fn actual_queued_compact_cancellation_is_terminal_before_any_load_or_dispatch() {
-    tokio::task::LocalSet::new().run_until(async {
-        let fixture = fixture().await;
-        fixture.actor.state.lock().await.running_task = Some(running_task_stub("preceding-task"));
-        let cancellation = tokio_util::sync::CancellationToken::new();
-        let (respond_to, response) = oneshot::channel();
-        fixture.sender.send(SessionCommand::CompactSession {
-            invocation_id: None, cancellation: cancellation.clone(), respond_to,
-        }).unwrap();
-        command_boundary(&fixture).await;
-        let queued = capture(&fixture.actor);
-        assert_eq!(queued.compactions[0].stage, CompactStage::Queued);
-        assert!(matches!(queued.compactions[0].owner, CompactOwner::Manual { invocation_id: None, .. }), "legacy callers keep the real internal admission identity, not a forged invocation");
-        cancellation.cancel();
-        response.await.unwrap().unwrap_err();
-        assert!(capture(&fixture.actor).compactions.is_empty());
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let fixture = fixture().await;
+            fixture.actor.state.lock().await.running_task =
+                Some(running_task_stub("preceding-task"));
+            let cancellation = tokio_util::sync::CancellationToken::new();
+            let (respond_to, response) = oneshot::channel();
+            fixture
+                .sender
+                .send(SessionCommand::CompactSession {
+                    invocation_id: None,
+                    cancellation: cancellation.clone(),
+                    respond_to,
+                })
+                .unwrap();
+            command_boundary(&fixture).await;
+            let queued = capture(&fixture.actor);
+            assert_eq!(queued.compactions[0].stage, CompactStage::Queued);
+            assert!(
+                matches!(
+                    queued.compactions[0].owner,
+                    CompactOwner::Manual {
+                        invocation_id: None,
+                        ..
+                    }
+                ),
+                "legacy callers keep the real internal admission identity, not a forged invocation"
+            );
+            cancellation.cancel();
+            response.await.unwrap().unwrap_err();
+            assert!(capture(&fixture.actor).compactions.is_empty());
+        })
+        .await;
 }

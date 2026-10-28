@@ -1,5 +1,7 @@
 use super::*;
-use crate::session::persistence::{PersistenceMsg, native_wake_tests_support::NativeAdoptionFaultProbe};
+use crate::session::persistence::{
+    PersistenceMsg, native_wake_tests_support::NativeAdoptionFaultProbe,
+};
 
 #[derive(Clone, Copy)]
 enum FailedAdoption {
@@ -10,25 +12,36 @@ enum FailedAdoption {
 
 async fn flush_live_owner(owner: &mpsc::UnboundedSender<PersistenceMsg>) {
     let (respond_to, response) = oneshot::channel();
-    owner.send(PersistenceMsg::FlushAndAck { respond_to }).unwrap();
+    owner
+        .send(PersistenceMsg::FlushAndAck { respond_to })
+        .unwrap();
     bounded(response).await.unwrap().unwrap();
 }
 
-async fn await_failed_attempt_teardown(backend: &impl SubagentBackend, actor: &SessionHandle, id: &str) {
+async fn await_failed_attempt_teardown(
+    backend: &impl SubagentBackend,
+    actor: &SessionHandle,
+    id: &str,
+) {
     bounded(actor.cmd_tx.closed()).await;
     bounded(async {
         loop {
             match backend.query(id, false, None, None).await {
                 None => break,
                 Some(snapshot) => match snapshot.status {
-                    SubagentSnapshotStatus::Initializing | SubagentSnapshotStatus::Running { .. }
+                    SubagentSnapshotStatus::Initializing
+                    | SubagentSnapshotStatus::Running { .. }
                     | SubagentSnapshotStatus::Finalizing { .. } => tokio::task::yield_now().await,
-                    SubagentSnapshotStatus::Completed { .. } | SubagentSnapshotStatus::Failed { .. }
-                    | SubagentSnapshotStatus::Cancelled { .. } => panic!("failed published adopter manufactured a terminal result"),
-                }
+                    SubagentSnapshotStatus::Completed { .. }
+                    | SubagentSnapshotStatus::Failed { .. }
+                    | SubagentSnapshotStatus::Cancelled { .. } => {
+                        panic!("failed published adopter manufactured a terminal result")
+                    }
+                },
             }
         }
-    }).await;
+    })
+    .await;
 }
 
 async fn failed_adopter_retains_original(cut: FailedAdoption) {
@@ -288,32 +301,69 @@ async fn native_reserved_adoption_explicit_cancel_authorizes_original_terminal()
 #[tokio::test(flavor = "current_thread")]
 async fn native_published_adoption_processing_explicit_cancel_is_terminal() {
     xai_test_utils::require_git!();
-    tokio::task::LocalSet::new().run_until(async {
-        let f = lost_owner(ParentInputFault::ShutdownBeforeProjection).await;
-        let (sender, owner) = coordinator(&f.agent, None, None);
-        let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
-        let mut response = f.server.expect_response_blocked("cancel real adopted processing", InferenceRequestMatcher::foreground_containing(
-            InferenceEndpoint::Responses, TEXT), ScriptedResponse::sse(
-                xai_grok_test_support::sse::responses_api_script_exact(r#"{"value":"cancelled-native-result"}"#, "test-model")));
-        assert_eq!(bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt)).await,
-            ActiveAgentMessageOutcome::Accepted { message_id: f.reference.message_id.clone() });
-        bounded(response.wait_blocked()).await;
-        let processing = f.storage.load_summary(&f.info).await.unwrap();
-        assert!(matches!(processing.completion_delivery.receiver.records[&f.reference.delivery_id].execution, DeliveryExecution::Processing { .. }));
-        let live = bounded(f.agent.management_session(&f.info.id)).await.unwrap();
-        live.handle.cmd_tx.send(SessionCommand::Cancel(crate::session::CancelOptions {
-            trigger: Some(crate::session::CancelTrigger::Esc),
-            ..Default::default()
-        })).unwrap();
-        drop(live);
-        let result = bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None)).await.unwrap();
-        assert!(matches!(result.status, SubagentSnapshotStatus::Cancelled { .. }));
-        response.release();
-        response.assert_satisfied();
-        let cancelled = f.storage.load_summary(&f.info).await.unwrap();
-        assert!(matches!(cancelled.completion_delivery.receiver.records[&f.reference.delivery_id].execution, DeliveryExecution::Cancelled { .. }));
-        assert_eq!(bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Observe)).await,
-            ActiveAgentMessageOutcome::RecoveryObserved { recovery_ref: f.reference.clone(), state: MessageRecoveryState::Cancelled });
-        drop(owner);
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let f = lost_owner(ParentInputFault::ShutdownBeforeProjection).await;
+            let (sender, owner) = coordinator(&f.agent, None, None);
+            let backend = ChannelBackend::for_coordinator_session(sender, f.parent.0.to_string());
+            let mut response = f.server.expect_response_blocked(
+                "cancel real adopted processing",
+                InferenceRequestMatcher::foreground_containing(InferenceEndpoint::Responses, TEXT),
+                ScriptedResponse::sse(xai_grok_test_support::sse::responses_api_script_exact(
+                    r#"{"value":"cancelled-native-result"}"#,
+                    "test-model",
+                )),
+            );
+            assert_eq!(
+                bounded(backend.recover_message(f.reference.clone(), MessageRecoveryAction::Adopt))
+                    .await,
+                ActiveAgentMessageOutcome::Accepted {
+                    message_id: f.reference.message_id.clone()
+                }
+            );
+            bounded(response.wait_blocked()).await;
+            let processing = f.storage.load_summary(&f.info).await.unwrap();
+            assert!(matches!(
+                processing.completion_delivery.receiver.records[&f.reference.delivery_id].execution,
+                DeliveryExecution::Processing { .. }
+            ));
+            let live = bounded(f.agent.management_session(&f.info.id))
+                .await
+                .unwrap();
+            live.handle
+                .cmd_tx
+                .send(SessionCommand::Cancel(crate::session::CancelOptions {
+                    trigger: Some(crate::session::CancelTrigger::Esc),
+                    ..Default::default()
+                }))
+                .unwrap();
+            drop(live);
+            let result =
+                bounded(backend.query(&f.reference.receiver.session_id, true, Some(30_000), None))
+                    .await
+                    .unwrap();
+            assert!(matches!(
+                result.status,
+                SubagentSnapshotStatus::Cancelled { .. }
+            ));
+            response.release();
+            response.assert_satisfied();
+            let cancelled = f.storage.load_summary(&f.info).await.unwrap();
+            assert!(matches!(
+                cancelled.completion_delivery.receiver.records[&f.reference.delivery_id].execution,
+                DeliveryExecution::Cancelled { .. }
+            ));
+            assert_eq!(
+                bounded(
+                    backend.recover_message(f.reference.clone(), MessageRecoveryAction::Observe)
+                )
+                .await,
+                ActiveAgentMessageOutcome::RecoveryObserved {
+                    recovery_ref: f.reference.clone(),
+                    state: MessageRecoveryState::Cancelled
+                }
+            );
+            drop(owner);
+        })
+        .await;
 }

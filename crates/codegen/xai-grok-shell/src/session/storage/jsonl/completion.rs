@@ -34,14 +34,27 @@ impl JsonlStorageAdapter {
             if !receipts.is_empty() {
                 Self::sync_file_durable(&OpenOptions::new().read(true).open(&path)?)?;
                 Self::sync_parent_directory(&path)?;
-                apply_patch_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), &SummaryPatch {
-                    completion_mutation: Some(CompletionMutation::RetainReceipts(receipts)), ..Default::default()
-                })?;
+                apply_patch_locked(
+                    &storage.summary_file(&info),
+                    &storage.summary_lock_file(&info),
+                    &SummaryPatch {
+                        completion_mutation: Some(CompletionMutation::RetainReceipts(receipts)),
+                        ..Default::default()
+                    },
+                )?;
             }
-            apply_patch_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), &SummaryPatch {
-                completion_mutation: Some(CompletionMutation::Suppress { ids, reason }), ..Default::default()
-            }).map(|_| ())
-        }).await.map_err(io::Error::other)?
+            apply_patch_locked(
+                &storage.summary_file(&info),
+                &storage.summary_lock_file(&info),
+                &SummaryPatch {
+                    completion_mutation: Some(CompletionMutation::Suppress { ids, reason }),
+                    ..Default::default()
+                },
+            )
+            .map(|_| ())
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 
     pub(super) async fn enroll_terminal_completion_inner(
@@ -54,30 +67,62 @@ impl JsonlStorageAdapter {
         use crate::session::completion_delivery::{CompletionPayload, CompletionPayloadSource};
         use xai_chat_state::completion::{CompletionTaskKind, TerminalCompletionId};
         let id = match &source {
-            CompletionPayloadSource::Legacy => return Err(io::Error::new(io::ErrorKind::InvalidInput, "terminal enrollment requires source identity")),
+            CompletionPayloadSource::Legacy => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "terminal enrollment requires source identity",
+                ));
+            }
             CompletionPayloadSource::Task(snapshot) => {
-                if !snapshot.completed || snapshot.owner_session_id.as_deref() != Some(info.id.to_string().as_str()) {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "terminal snapshot is not owned and complete"));
+                if !snapshot.completed
+                    || snapshot.owner_session_id.as_deref() != Some(info.id.to_string().as_str())
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "terminal snapshot is not owned and complete",
+                    ));
                 }
                 TerminalCompletionId::Task {
-                    owner_session_id: info.id.to_string(), task_id: snapshot.task_id.clone(),
+                    owner_session_id: info.id.to_string(),
+                    task_id: snapshot.task_id.clone(),
                     task_kind: match snapshot.kind {
                         xai_grok_tools::computer::types::TaskKind::Bash => CompletionTaskKind::Bash,
-                        xai_grok_tools::computer::types::TaskKind::Monitor => CompletionTaskKind::Monitor,
+                        xai_grok_tools::computer::types::TaskKind::Monitor => {
+                            CompletionTaskKind::Monitor
+                        }
                     },
                 }
             }
             CompletionPayloadSource::Workflow(run) => {
                 if !run.status.is_completion_reportable() {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "workflow revision is not reportable"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "workflow revision is not reportable",
+                    ));
                 }
-                TerminalCompletionId::Workflow { run_id: run.run_id.clone(), revision: run.revision }
+                TerminalCompletionId::Workflow {
+                    run_id: run.run_id.clone(),
+                    revision: run.revision,
+                }
             }
-        }.into();
-        self.apply_summary_patch(info, SummaryPatch {
-            completion_mutation: Some(CompletionMutation::Enrolled { id, payload: CompletionPayload { source, text, policy, reference: None } }),
-            ..Default::default()
-        }).await
+        }
+        .into();
+        self.apply_summary_patch(
+            info,
+            SummaryPatch {
+                completion_mutation: Some(CompletionMutation::Enrolled {
+                    id,
+                    payload: CompletionPayload {
+                        source,
+                        text,
+                        policy,
+                        reference: None,
+                    },
+                }),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     pub(super) async fn prepare_completion(
@@ -245,7 +290,9 @@ impl JsonlStorageAdapter {
                     }),
                     messages: newly_published
                         .then_some(super::super::summary_write::CounterOp::Increment(1)),
-                    activity: super::super::summary_write::SummaryActivity::from_recorded(newly_published),
+                    activity: super::super::summary_write::SummaryActivity::from_recorded(
+                        newly_published,
+                    ),
                     ..Default::default()
                 },
             )?;
@@ -263,13 +310,21 @@ impl JsonlStorageAdapter {
         for restored in self.load_workflow_runs_sync(info)? {
             let run = restored.manifest.state;
             if run.status.is_completion_reportable() {
-                let text = crate::session::acp_session::reminders::format_workflow_completion_reminder(
-                    std::slice::from_ref(&run), &self.session_dir(info), None,
-                );
-                self.enroll_terminal_completion_inner(info,
-                    crate::session::completion_delivery::CompletionPayloadSource::Workflow(Box::new(run)),
-                    text, crate::session::completion_delivery::CompletionEventPolicy::Automatic,
-                ).await?;
+                let text =
+                    crate::session::acp_session::reminders::format_workflow_completion_reminder(
+                        std::slice::from_ref(&run),
+                        &self.session_dir(info),
+                        None,
+                    );
+                self.enroll_terminal_completion_inner(
+                    info,
+                    crate::session::completion_delivery::CompletionPayloadSource::Workflow(
+                        Box::new(run),
+                    ),
+                    text,
+                    crate::session::completion_delivery::CompletionEventPolicy::Automatic,
+                )
+                .await?;
             }
         }
         let summary = self.read_summary_sync(info)?;
@@ -311,7 +366,9 @@ impl JsonlStorageAdapter {
     }
 
     fn completion_receipts(path: &Path) -> io::Result<Vec<CompletionReceipt>> {
-        Ok(Self::projection_receipts(&Self::read_completion_projections(path)?))
+        Ok(Self::projection_receipts(
+            &Self::read_completion_projections(path)?,
+        ))
     }
 
     pub(super) fn read_completion_state_sync(
@@ -382,7 +439,8 @@ impl JsonlStorageAdapter {
         let mut summary = self
             .read_summary_sync(info)
             .map_err(StrictAppendError::NotCommitted)?;
-        let retained_projections = Self::read_completion_projections(&path).map_err(StrictAppendError::NotCommitted)?;
+        let retained_projections =
+            Self::read_completion_projections(&path).map_err(StrictAppendError::NotCommitted)?;
         let receipts = Self::projection_receipts(&retained_projections);
         if matches!(projection.item, ConversationItem::User(_)) && projection.receipts().any(|receipt| {
             summary.completion_delivery.obligations.iter().any(|obligation| matches!(obligation,
@@ -426,11 +484,17 @@ impl JsonlStorageAdapter {
             .iter()
             .chain(&summary.completion_delivery.receipts)
             .find(|receipt| receipt.completion == projection.receipt.completion);
-        let indexed = |expected: &CompletionReceipt| receipts.iter().chain(&summary.completion_delivery.receipts)
-            .any(|actual| actual.completion == expected.completion);
+        let indexed = |expected: &CompletionReceipt| {
+            receipts
+                .iter()
+                .chain(&summary.completion_delivery.receipts)
+                .any(|actual| actual.completion == expected.completion)
+        };
         if projection.receipts().any(indexed) && !projection.receipts().all(indexed) {
-            return Err(StrictAppendError::NotCommitted(io::Error::new(io::ErrorKind::AlreadyExists,
-                "completion batch partially overlaps committed receipts")));
+            return Err(StrictAppendError::NotCommitted(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "completion batch partially overlaps committed receipts",
+            )));
         }
         let tool_history = if let ConversationItem::ToolResult(candidate) = &projection.item {
             let history = self
@@ -531,7 +595,10 @@ impl JsonlStorageAdapter {
             let history = self
                 .read_chat_history_sync(path.clone(), CHAT_FORMAT_VERSION)
                 .map_err(StrictAppendError::Indeterminate)?;
-            let sources = Self::retained_completion_sources(&retained_projections, projection.receipt_identity());
+            let sources = Self::retained_completion_sources(
+                &retained_projections,
+                projection.receipt_identity(),
+            );
             match &continuation {
                 Some(_) => CompletionProjectionAck::Continue { history, sources },
                 None => CompletionProjectionAck::AlreadyPresent { history, sources },

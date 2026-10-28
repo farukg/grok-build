@@ -227,7 +227,12 @@ macro_rules! merge_text_chunks {
                             acp::TextContent::new(format!("{}{}", $prev_text.text, $new_text.text))
                                 .meta($prev_text.meta),
                         ))
-                        .meta(crate::session::source_binding::merge_output_meta($prev_chunk_meta, $new_chunk_meta)),
+                        .meta(
+                            crate::session::source_binding::merge_output_meta(
+                                $prev_chunk_meta,
+                                $new_chunk_meta,
+                            ),
+                        ),
                     ),
                 )
                 .meta(merge_meta($prev_meta, $new_meta)),
@@ -362,7 +367,10 @@ fn merge_acp_chunks(
     if stream_provenance(prev.meta.as_ref()) != stream_provenance(new.meta.as_ref()) {
         return (true, prev, Some(new));
     }
-    let previous_stream = prev.meta.as_ref().and_then(|meta| meta.get("streamStartMs"));
+    let previous_stream = prev
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("streamStartMs"));
     let incoming_stream = new.meta.as_ref().and_then(|meta| meta.get("streamStartMs"));
     if previous_stream != incoming_stream {
         return (true, prev, Some(new));
@@ -442,7 +450,9 @@ fn merge_xai_chunks(
     if previous_prompt != incoming_prompt {
         return (true, prev, Some(new));
     }
-    if stream_provenance(prev.meta.as_ref().and_then(|meta| meta.as_object())) != stream_provenance(new.meta.as_ref().and_then(|meta| meta.as_object())) {
+    if stream_provenance(prev.meta.as_ref().and_then(|meta| meta.as_object()))
+        != stream_provenance(new.meta.as_ref().and_then(|meta| meta.as_object()))
+    {
         return (true, prev, Some(new));
     }
     let prev_session_id = prev.session_id.clone();
@@ -515,7 +525,11 @@ fn same_tool_call(
 /// Prompt, request, and cumulative attempt must all match before concatenation.
 fn stream_provenance(
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
-) -> (Option<&serde_json::Value>, Option<&serde_json::Value>, Option<&serde_json::Value>) {
+) -> (
+    Option<&serde_json::Value>,
+    Option<&serde_json::Value>,
+    Option<&serde_json::Value>,
+) {
     (
         meta.and_then(|meta| meta.get("promptId")),
         meta.and_then(|meta| meta.get("requestId")),
@@ -600,7 +614,12 @@ mod tests {
                 acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
                     acp::ContentBlock::Text(acp::TextContent::new(text)),
                 )),
-            ).meta(json!({ "streamStartMs": stream_start }).as_object().cloned())
+            )
+            .meta(
+                json!({ "streamStartMs": stream_start })
+                    .as_object()
+                    .cloned(),
+            )
         };
         let mut buffer = ReplayBuffer::new(Some(settings(100, 1_000_000)));
         assert!(buffer.consume_chunk(thought(1000, "first")).is_none());
@@ -619,7 +638,10 @@ mod tests {
                 panic!("expected text");
             };
             assert_eq!(text.text, expected_text);
-            assert_eq!(notification.meta.as_ref().unwrap().get("streamStartMs"), Some(&json!(expected_start)));
+            assert_eq!(
+                notification.meta.as_ref().unwrap().get("streamStartMs"),
+                Some(&json!(expected_start))
+            );
         }
     }
 

@@ -68,7 +68,9 @@ impl ChildControl for TestControl {
             let admission = delivery
                 .claim_admission()
                 .map(|claim| {
-                    claim.commit().try_handoff(|| admitted_messages.send((operation, text)))
+                    claim
+                        .commit()
+                        .try_handoff(|| admitted_messages.send((operation, text)))
                 })
                 .is_some_and(|result| result.is_ok());
             return Box::pin(std::future::ready(if admission {
@@ -143,7 +145,9 @@ async fn recording_handoff_requires_a_live_transfer_before_positive_settlement()
         coordinator.finish_active_message(completion);
         assert_eq!(
             if closed {
-                ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref }
+                ActiveAgentMessageOutcome::AdmissionUncertain {
+                    recovery_ref: expected_recovery_ref,
+                }
             } else {
                 ActiveAgentMessageOutcome::Accepted {
                     message_id: held.message_id,
@@ -362,7 +366,11 @@ impl ChildRunner for TestRunner {
                 && request.prompt == "first wake";
             if !rejects_deferred_start {
                 if let Some(delivery) = wake_delivery {
-                    delivery.claim_admission().expect("mock bootstrap claim").commit().handoff(|| ());
+                    delivery
+                        .claim_admission()
+                        .expect("mock bootstrap claim")
+                        .commit()
+                        .handoff(|| ());
                 }
             }
             let promoted = if rejects_deferred_start {
@@ -1269,7 +1277,13 @@ async fn finishing_parent_turn_drain_keeps_independent_background_child_running(
         final_state.status,
         SubagentSnapshotStatus::Completed { .. }
     ));
-    assert!(spawn.await.expect("spawn task").expect("child result").success());
+    assert!(
+        spawn
+            .await
+            .expect("spawn task")
+            .expect("child result")
+            .success()
+    );
     h.actor.abort();
 }
 
@@ -1390,7 +1404,13 @@ async fn caller_observation_keeps_surviving_query_and_clears_on_last_receiver_dr
         .expect("last query abandonment wakes actor");
     assert_eq!(tokio::time::Instant::now(), before);
     h.finish.send(()).expect("finish observed child");
-    assert!(spawn.await.expect("spawn task").expect("child result").success());
+    assert!(
+        spawn
+            .await
+            .expect("spawn task")
+            .expect("child result")
+            .success()
+    );
     h.actor.abort();
 }
 

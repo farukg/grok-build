@@ -5,12 +5,12 @@ use crate::session::commands::{NotificationPriority, NotificationSource};
 use crate::session::persistence::{DurableAppendError, PersistenceHandle, PersistenceMsg};
 #[path = "task_completion_publication.rs"]
 mod task_publication;
-use task_publication::handle_task_completions;
 use agent_client_protocol::{self as acp, Client as _};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use task_publication::handle_task_completions;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
 use xai_grok_tools::notification::types::{ToolNotification, ToolNotificationHandle};
@@ -26,10 +26,17 @@ enum BashStreamKey {
 }
 
 impl BashStreamKey {
-    fn new(provider_call_id: &str, owner: &crate::extensions::tool_timing::ToolCallOwnership) -> Self {
+    fn new(
+        provider_call_id: &str,
+        owner: &crate::extensions::tool_timing::ToolCallOwnership,
+    ) -> Self {
         match owner {
-            crate::extensions::tool_timing::ToolCallOwnership::Unknown => Self::Legacy(provider_call_id.to_owned()),
-            crate::extensions::tool_timing::ToolCallOwnership::Registered { invocation_id, .. } => Self::Registered(invocation_id.clone()),
+            crate::extensions::tool_timing::ToolCallOwnership::Unknown => {
+                Self::Legacy(provider_call_id.to_owned())
+            }
+            crate::extensions::tool_timing::ToolCallOwnership::Registered {
+                invocation_id, ..
+            } => Self::Registered(invocation_id.clone()),
         }
     }
 }
@@ -112,7 +119,9 @@ pub(crate) fn resolved_tool_name(slot: &std::sync::OnceLock<Option<String>>) -> 
 /// Stamp a bridge-emitted notification's meta before it forks into persistence and broadcast; see `util::event_id::ensure_event_id_meta`.
 fn stamp_event_id(config: &NotificationBridgeConfig, meta: &mut Option<acp::Meta>) {
     crate::util::event_id::ensure_event_id_meta(&config.session_id.0, meta);
-    config.current_actions.stamp_delivery(meta.get_or_insert_with(acp::Meta::new));
+    config
+        .current_actions
+        .stamp_delivery(meta.get_or_insert_with(acp::Meta::new));
 }
 fn request_background_tasks_snapshot(
     config: &NotificationBridgeConfig,
@@ -218,14 +227,24 @@ async fn handle_scheduled_task_removed(
         }
     }
 }
-fn terminal_completion_text(config: &NotificationBridgeConfig, snapshot: &xai_grok_tools::computer::types::TaskSnapshot) -> String {
+fn terminal_completion_text(
+    config: &NotificationBridgeConfig,
+    snapshot: &xai_grok_tools::computer::types::TaskSnapshot,
+) -> String {
     match snapshot.kind {
-        xai_grok_tools::computer::types::TaskKind::Bash => xai_grok_tools::reminders::task_completion::format_bash_completion(
-            snapshot, resolved_tool_name(&config.task_output_tool_name), resolved_tool_name(&config.read_tool_name),
-        ),
-        xai_grok_tools::computer::types::TaskKind::Monitor => xai_grok_tools::reminders::task_completion::format_monitor_completion(
-            snapshot, resolved_tool_name(&config.task_output_tool_name),
-        ),
+        xai_grok_tools::computer::types::TaskKind::Bash => {
+            xai_grok_tools::reminders::task_completion::format_bash_completion(
+                snapshot,
+                resolved_tool_name(&config.task_output_tool_name),
+                resolved_tool_name(&config.read_tool_name),
+            )
+        }
+        xai_grok_tools::computer::types::TaskKind::Monitor => {
+            xai_grok_tools::reminders::task_completion::format_monitor_completion(
+                snapshot,
+                resolved_tool_name(&config.task_output_tool_name),
+            )
+        }
     }
 }
 
@@ -234,9 +253,16 @@ async fn classify_terminal_goal_policy(
     notification: crate::session::commands::TaskWakeFallback,
 ) -> Result<crate::session::commands::TerminalNotificationDecision, String> {
     let (respond_to, response) = tokio::sync::oneshot::channel();
-    config.session_cmd_tx.send(SessionCommand::ClassifyTerminalNotification { notification, respond_to })
+    config
+        .session_cmd_tx
+        .send(SessionCommand::ClassifyTerminalNotification {
+            notification,
+            respond_to,
+        })
         .map_err(|_| "terminal goal policy owner closed".to_string())?;
-    response.await.map_err(|_| "terminal goal policy acknowledgement lost".to_string())?
+    response
+        .await
+        .map_err(|_| "terminal goal policy acknowledgement lost".to_string())?
         .map_err(|error| format!("terminal goal policy failed: {error}"))
 }
 
@@ -258,16 +284,35 @@ async fn enroll_task_completion(
             prompt_id: format!("task-completed-{}", snapshot.task_id),
             prompt_blocks: vec![acp::ContentBlock::from(text.clone())],
             source: match snapshot.kind {
-                xai_grok_tools::computer::types::TaskKind::Bash => NotificationSource::BashTaskCompleted { task_id: snapshot.task_id.clone() },
-                xai_grok_tools::computer::types::TaskKind::Monitor => NotificationSource::MonitorCompleted { task_id: snapshot.task_id.clone() },
+                xai_grok_tools::computer::types::TaskKind::Bash => {
+                    NotificationSource::BashTaskCompleted {
+                        task_id: snapshot.task_id.clone(),
+                    }
+                }
+                xai_grok_tools::computer::types::TaskKind::Monitor => {
+                    NotificationSource::MonitorCompleted {
+                        task_id: snapshot.task_id.clone(),
+                    }
+                }
             },
         })
-    } else { None };
+    } else {
+        None
+    };
     let (respond_to, response) = tokio::sync::oneshot::channel();
-    config.persistence.tx.send(PersistenceMsg::EnrollTerminalCompletion {
-        source: CompletionPayloadSource::Task(Box::new(snapshot)), text, policy, respond_to,
-    }).map_err(|_| "terminal enrollment owner closed".to_string())?;
-    response.await.map_err(|_| "terminal enrollment acknowledgement lost".to_string())?
+    config
+        .persistence
+        .tx
+        .send(PersistenceMsg::EnrollTerminalCompletion {
+            source: CompletionPayloadSource::Task(Box::new(snapshot)),
+            text,
+            policy,
+            respond_to,
+        })
+        .map_err(|_| "terminal enrollment owner closed".to_string())?;
+    response
+        .await
+        .map_err(|_| "terminal enrollment acknowledgement lost".to_string())?
         .map_err(|error| format!("terminal enrollment failed: {error}"))?;
     if let Some(notification) = policy_notification {
         classify_terminal_goal_policy(config, notification).await?;
@@ -285,17 +330,31 @@ pub(crate) fn spawn_notification_bridge(
             let mut deliveries = Vec::with_capacity(rx.len() + 1);
             deliveries.push(delivery);
             for _ in 0..rx.len() {
-                if let Ok(delivery) = rx.try_recv() { deliveries.push(delivery); }
+                if let Ok(delivery) = rx.try_recv() {
+                    deliveries.push(delivery);
+                }
             }
-            let cohort_ids: Vec<_> = deliveries.iter().filter_map(|delivery| {
-                if delivery.acknowledgement.is_some() { return None; }
-                if let ToolNotification::TaskCompleted(snapshot) = &delivery.notification
-                    && xai_grok_tools::reminders::task_completion::task_owned_by_session(snapshot, Some(config.session_id.0.as_ref()))
-                {
-                    config.task_completion_reservations.reserve(snapshot.task_id.clone());
-                    Some(snapshot.task_id.clone())
-                } else { None }
-            }).collect();
+            let cohort_ids: Vec<_> = deliveries
+                .iter()
+                .filter_map(|delivery| {
+                    if delivery.acknowledgement.is_some() {
+                        return None;
+                    }
+                    if let ToolNotification::TaskCompleted(snapshot) = &delivery.notification
+                        && xai_grok_tools::reminders::task_completion::task_owned_by_session(
+                            snapshot,
+                            Some(config.session_id.0.as_ref()),
+                        )
+                    {
+                        config
+                            .task_completion_reservations
+                            .reserve(snapshot.task_id.clone());
+                        Some(snapshot.task_id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             let mut completions = Vec::new();
             for delivery in deliveries {
                 let acknowledgement = delivery.acknowledgement;
@@ -315,15 +374,25 @@ pub(crate) fn spawn_notification_bridge(
                         }
                     }
                     notification => {
-                        handle_notification(&config, &delivery.tool_ownership, notification, &mut offsets).await;
+                        handle_notification(
+                            &config,
+                            &delivery.tool_ownership,
+                            notification,
+                            &mut offsets,
+                        )
+                        .await;
                         if let Some(acknowledgement) = acknowledgement {
                             let _ = acknowledgement.send(Ok(()));
                         }
                     }
                 }
             }
-            if !completions.is_empty() { handle_task_completions(&config, completions).await; }
-            for task_id in cohort_ids { config.task_completion_reservations.release(&task_id); }
+            if !completions.is_empty() {
+                handle_task_completions(&config, completions).await;
+            }
+            for task_id in cohort_ids {
+                config.task_completion_reservations.release(&task_id);
+            }
         }
         tracing::debug!("Notification bridge task exiting (sender dropped)");
     });
@@ -387,26 +456,34 @@ async fn handle_notification(
                 was_bare_echo: false,
             });
             let mut tool_meta = acp::Meta::new();
-            if let Err(error) = crate::extensions::tool_timing::stamp_ownership(&mut tool_meta, owner) {
+            if let Err(error) =
+                crate::extensions::tool_timing::stamp_ownership(&mut tool_meta, owner)
+            {
                 tracing::error!(%error, "invalid streaming tool ownership");
                 return;
             }
-            let update = acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-                acp::ToolCallId::new(chunk.base.tool_call_id.clone()),
-                acp::ToolCallUpdateFields::new()
-                    .status(Some(acp::ToolCallStatus::InProgress))
-                    .content(Some(vec![acp::ToolCallContent::from(
-                        acp::ContentBlock::Text(acp::TextContent::new(
-                            String::from_utf8_lossy(&chunk.base.output).into_owned(),
-                        )),
-                    )]))
-                    .raw_output(serde_json::to_value(&bash_output).ok()),
-            ).meta(Some(tool_meta)));
+            let update = acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new(
+                    acp::ToolCallId::new(chunk.base.tool_call_id.clone()),
+                    acp::ToolCallUpdateFields::new()
+                        .status(Some(acp::ToolCallStatus::InProgress))
+                        .content(Some(vec![acp::ToolCallContent::from(
+                            acp::ContentBlock::Text(acp::TextContent::new(
+                                String::from_utf8_lossy(&chunk.base.output).into_owned(),
+                            )),
+                        )]))
+                        .raw_output(serde_json::to_value(&bash_output).ok()),
+                )
+                .meta(Some(tool_meta)),
+            );
             let mut notification = acp::SessionNotification::new(config.session_id.clone(), update);
             crate::extensions::tool_timing::stamp_original_source(
-                notification.meta.get_or_insert_with(acp::Meta::new), owner,
+                notification.meta.get_or_insert_with(acp::Meta::new),
+                owner,
             );
-            config.current_actions.stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new));
+            config
+                .current_actions
+                .stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new));
             if config
                 .gateway_enabled
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -460,7 +537,9 @@ async fn handle_notification(
             };
             {
                 let mut meta = acp::Meta::new();
-                if let Err(error) = crate::extensions::tool_timing::stamp_ownership(&mut meta, owner) {
+                if let Err(error) =
+                    crate::extensions::tool_timing::stamp_ownership(&mut meta, owner)
+                {
                     tracing::error!(%error, "invalid backgrounded tool ownership");
                     return;
                 }

@@ -141,7 +141,10 @@ fn running_child_prompt_runs_on_child_and_settles_the_parent_receipt() {
                         if reason == "receiver requires a root session; child ingress retains its own receipt and Held policy"
                 ));
                 assert_eq!(*delivery_rx.borrow(), SubagentDelivery::Held);
-                assert!(matches!(receipts.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)));
+                assert!(matches!(
+                    receipts.try_recv(),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                ));
             }
         }
         assert_eq!(deliver(&agent).await, json!({ "kind": "delivered" }));
@@ -285,8 +288,13 @@ fn compact_extension_returns_its_actor_receipt_without_a_turn_flush() {
             .expect("the actor acknowledged durable compaction");
         receipt.await.unwrap();
         let mut commands = actor.await.unwrap();
-        assert!(matches!(commands.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)),
-            "the extension must not append a broad FlushComplete after the compact receipt");
+        assert!(
+            matches!(
+                commands.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ),
+            "the extension must not append a broad FlushComplete after the compact receipt"
+        );
     });
 }
 
@@ -352,12 +360,26 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             xai_grok_sampling_types::ContextCategory::Reasoning,
             xai_grok_sampling_types::ContextSwitch::Excluded,
         );
-        let expected = agent.context_policy_authority.read().await
-            .selection(child.0.as_ref(), &handle.context_policy_binding.incarnation).unwrap().version;
-        agent.edit_context_policy(&child, &handle, &xai_grok_sampling_types::ContextPolicyEdit {
-            expected,
-            mutation: xai_grok_sampling_types::ContextPolicyMutation::ReplaceSession { policy },
-        }).await.unwrap();
+        let expected = agent
+            .context_policy_authority
+            .read()
+            .await
+            .selection(child.0.as_ref(), &handle.context_policy_binding.incarnation)
+            .unwrap()
+            .version;
+        agent
+            .edit_context_policy(
+                &child,
+                &handle,
+                &xai_grok_sampling_types::ContextPolicyEdit {
+                    expected,
+                    mutation: xai_grok_sampling_types::ContextPolicyMutation::ReplaceSession {
+                        policy,
+                    },
+                },
+            )
+            .await
+            .unwrap();
         use crate::session::storage::StorageAdapter as _;
         let storage = crate::session::storage::JsonlStorageAdapter::with_root(
             crate::util::grok_home::grok_home(),
@@ -450,7 +472,11 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
                 serde_json::to_value(&conversation).unwrap()
             );
             assert_eq!(
-                restored.chat_state_handle.get_context_policy().await.unwrap(),
+                restored
+                    .chat_state_handle
+                    .get_context_policy()
+                    .await
+                    .unwrap(),
                 policy
             );
             assert_eq!(restored.model_id, saved_model);
@@ -477,7 +503,12 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
             .expect("a cancelled preparation remains restorable");
         assert_eq!(reloaded.handle.info.id, child);
         assert_eq!(
-            reloaded.handle.chat_state_handle.get_context_policy().await.unwrap(),
+            reloaded
+                .handle
+                .chat_state_handle
+                .get_context_policy()
+                .await
+                .unwrap(),
             policy
         );
         assert_eq!(
@@ -632,7 +663,12 @@ fn finished_coordinator_child_compacts_persisted_checkpoint_without_parent_deliv
             "administrative reload must preserve the original child tool schemas exactly"
         );
         assert_eq!(
-            restored.handle.chat_state_handle.get_context_policy().await.unwrap(),
+            restored
+                .handle
+                .chat_state_handle
+                .get_context_policy()
+                .await
+                .unwrap(),
             original_policy
         );
         assert!(recipe.inherited_mcp_servers.is_empty());
@@ -780,13 +816,15 @@ fn compact_running_child_cancel_finishes_while_actor_reply_is_pending() {
                 })),
             }),
         );
-        let expected_invocation = crate::session::acp_types::CompactInvocationId(uuid::Uuid::new_v4());
+        let expected_invocation =
+            crate::session::acp_types::CompactInvocationId(uuid::Uuid::new_v4());
         let request = acp::ExtRequest::new(
             "x.ai/compact_conversation",
             std::sync::Arc::from(
                 serde_json::value::to_raw_value(&json!({
                     "sessionId": CHILD, "invocationId": expected_invocation,
-                })).unwrap(),
+                }))
+                .unwrap(),
             ),
         );
         let actor = async {
@@ -1068,9 +1106,7 @@ mod unknown_target_tests {
     use serial_test::serial;
 
     use super::super::{build_minimal_agent_for_tests, run_local_for_bridge_test};
-    use crate::agent::mvp_agent::child_prompt::{
-        UnknownPromptTarget, unknown_prompt_target_error,
-    };
+    use crate::agent::mvp_agent::child_prompt::{UnknownPromptTarget, unknown_prompt_target_error};
 
     #[test]
     fn reaped_child_payload_names_child_parent_and_recovery() {
@@ -1152,8 +1188,10 @@ mod unknown_target_tests {
         let reaped = unknown_prompt_target_error(child_id).await;
         assert_eq!(reaped.code, acp::ErrorCode::InvalidParams);
         assert!(
-            reaped.data.as_ref().is_some_and(|data| data.get("kind")
-                == Some(&serde_json::json!("reapedChild"))),
+            reaped
+                .data
+                .as_ref()
+                .is_some_and(|data| data.get("kind") == Some(&serde_json::json!("reapedChild"))),
             "a durable subagent record yields the reaped-child error: {:?}",
             reaped.data
         );
@@ -1161,7 +1199,10 @@ mod unknown_target_tests {
         let unknown = unknown_prompt_target_error("never-existed").await;
         assert_eq!(unknown.code, acp::ErrorCode::InvalidParams);
         assert!(
-            unknown.data.as_ref().is_some_and(|data| data.get("kind").is_none()),
+            unknown
+                .data
+                .as_ref()
+                .is_some_and(|data| data.get("kind").is_none()),
             "an id with no record stays the plain unknown error: {:?}",
             unknown.data
         );

@@ -11,16 +11,26 @@ pub(crate) enum SummaryActivity {
 
 impl SummaryActivity {
     pub(crate) fn from_recorded(recorded: bool) -> Self {
-        if recorded { Self::Occurred } else { Self::Metadata }
+        if recorded {
+            Self::Occurred
+        } else {
+            Self::Metadata
+        }
     }
 
     pub(crate) fn for_update(update: &SessionUpdate) -> Self {
         let replay = match update {
-            SessionUpdate::Acp(notification) => notification.meta.as_ref()
+            SessionUpdate::Acp(notification) => notification
+                .meta
+                .as_ref()
                 .and_then(|meta| meta.get("isReplay")),
-            SessionUpdate::Xai(notification) => notification.meta.as_ref()
+            SessionUpdate::Xai(notification) => notification
+                .meta
+                .as_ref()
                 .and_then(|meta| meta.get("isReplay")),
-        }.and_then(serde_json::Value::as_bool).unwrap_or(false);
+        }
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
         if replay {
             return Self::Observation;
         }
@@ -34,12 +44,18 @@ impl SummaryActivity {
                 _ => Self::Observation,
             },
             SessionUpdate::Xai(notification) => match &notification.update {
-                XaiUpdate::BackgroundTasks { .. } => match
-                    crate::session::acp_types::SessionActivityProvenance::from_snapshot_meta(notification.meta.as_ref())
-                {
-                    crate::session::acp_types::SessionActivityProvenance::Live => Self::Occurred,
-                    crate::session::acp_types::SessionActivityProvenance::Observation => Self::Observation,
-                },
+                XaiUpdate::BackgroundTasks { .. } => {
+                    match crate::session::acp_types::SessionActivityProvenance::from_snapshot_meta(
+                        notification.meta.as_ref(),
+                    ) {
+                        crate::session::acp_types::SessionActivityProvenance::Live => {
+                            Self::Occurred
+                        }
+                        crate::session::acp_types::SessionActivityProvenance::Observation => {
+                            Self::Observation
+                        }
+                    }
+                }
                 XaiUpdate::RequestSourceObserved { .. }
                 | XaiUpdate::RelaySyncStatus(_)
                 | XaiUpdate::HooksChanged { .. }

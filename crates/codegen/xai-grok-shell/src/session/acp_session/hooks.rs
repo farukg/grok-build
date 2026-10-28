@@ -291,7 +291,8 @@ impl SessionActor {
                 async move {
                     let started = tokio::time::Instant::now();
                     let _current_action = crate::session::current_actions::HookRegistration::new(
-                        self.current_actions.clone(), envelope.prompt_id.as_deref(),
+                        self.current_actions.clone(),
+                        envelope.prompt_id.as_deref(),
                         xai_monotonic_clock::MonotonicPoint::at(started),
                     );
                     let (response, gate_outcome) =

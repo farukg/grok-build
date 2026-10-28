@@ -1039,10 +1039,7 @@ impl<C> ChildRecord<C> {
         }
     }
 
-    pub(super) fn take_failed_pre_start_wake(
-        &mut self,
-        success: bool,
-    ) -> Option<PreStartWake> {
+    pub(super) fn take_failed_pre_start_wake(&mut self, success: bool) -> Option<PreStartWake> {
         if success {
             return None;
         }
@@ -1437,13 +1434,17 @@ pub(super) fn completed_snapshot(
         TerminalPublicationState::Committing => SubagentSnapshotStatus::Finalizing {
             publication: super::types::SubagentFinalization::Writing,
         },
-        TerminalPublicationState::Publishing | TerminalPublicationState::Published => snapshot.status,
+        TerminalPublicationState::Publishing | TerminalPublicationState::Published => {
+            snapshot.status
+        }
         TerminalPublicationState::Rejected { error }
-        | TerminalPublicationState::HistoryBlocked { error } => SubagentSnapshotStatus::Finalizing {
-            publication: super::types::SubagentFinalization::Blocked {
-                error: error.clone(),
-            },
-        },
+        | TerminalPublicationState::HistoryBlocked { error } => {
+            SubagentSnapshotStatus::Finalizing {
+                publication: super::types::SubagentFinalization::Blocked {
+                    error: error.clone(),
+                },
+            }
+        }
     };
     snapshot
 }

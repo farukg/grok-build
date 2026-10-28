@@ -255,14 +255,14 @@ mod stop_gate;
 pub use stop_gate::MAX_STOP_HOOK_CONTINUATIONS_PER_TURN;
 #[path = "acp_session_impl/context_policy.rs"]
 mod context_policy;
-#[path = "acp_session_impl/request_preview.rs"]
-mod request_preview;
 #[path = "acp_session_impl/context_snapshot.rs"]
 mod context_snapshot;
 #[path = "acp_session_impl/recap.rs"]
 mod recap;
 #[path = "acp_session_impl/remove_items.rs"]
 mod remove_items;
+#[path = "acp_session_impl/request_preview.rs"]
+mod request_preview;
 #[path = "acp_session_impl/rewind.rs"]
 mod rewind;
 #[path = "acp_session_impl/session_setup.rs"]
@@ -321,7 +321,8 @@ pub(crate) struct InputItem {
     pub(crate) parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
     /// Fires when this exact row is promoted to the running turn.
     /// Dropped on removal so a queued-but-never-started initial child prompt cannot ack.
-    pub(crate) initial_child_prompt_ready: Option<crate::session::message_delivery::InitialChildPromptSink>,
+    pub(crate) initial_child_prompt_ready:
+        Option<crate::session::message_delivery::InitialChildPromptSink>,
     /// Server-authoritative prompt-queue metadata.
     /// `Some` for user-originated prompts (they appear in the shared queue).
     /// `None` for synthetic / system inputs (auto-wake, nudges, notification drains).
@@ -989,8 +990,7 @@ pub(crate) struct SessionActor {
     pub(crate) goal_blocked_streak: std::sync::atomic::AtomicU32,
     /// The wait set the finished turn's stop gate declared over live background work (gb-wake-2).
     /// Recorded on every AllowStop; read by the goal continuation gate; cleared by new user input.
-    pub(crate) turn_wait_declaration:
-        std::cell::RefCell<stop_gate::TurnWaitState>,
+    pub(crate) turn_wait_declaration: std::cell::RefCell<stop_gate::TurnWaitState>,
     pub(crate) goal_update_rx: std::cell::RefCell<
         Option<
             tokio::sync::mpsc::UnboundedReceiver<

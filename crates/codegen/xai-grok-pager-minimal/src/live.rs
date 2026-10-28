@@ -490,7 +490,11 @@ fn draw_tail(
         let entry_skip = slot_skip.min(content_h);
         let visible_content = content_h.saturating_sub(entry_skip);
         if visible_content > 0 {
-            let Ok(draw_h) = u16::try_from(visible_content.min(usize::from(bottom.saturating_sub(y)))) else { break };
+            let Ok(draw_h) =
+                u16::try_from(visible_content.min(usize::from(bottom.saturating_sub(y))))
+            else {
+                break;
+            };
             if draw_h == 0 {
                 break;
             }
@@ -507,8 +511,12 @@ fn draw_tail(
             }
         }
         let gap_skipped = slot_skip.saturating_sub(entry_skip);
-        let Ok(gap_visible) = u16::try_from(gap.saturating_sub(gap_skipped)
-            .min(usize::from(bottom.saturating_sub(y)))) else { break };
+        let Ok(gap_visible) = u16::try_from(
+            gap.saturating_sub(gap_skipped)
+                .min(usize::from(bottom.saturating_sub(y))),
+        ) else {
+            break;
+        };
         y += gap_visible;
         if y >= bottom {
             break;

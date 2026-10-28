@@ -1,8 +1,8 @@
-use super::*;
 use super::super::AutoCompactTriggerInfo;
+use super::*;
+use crate::extensions::notification::{CompactPhase, SessionNotification, SessionUpdate};
 use crate::session::acp_session::support;
 use crate::session::acp_types::{AUTOMATIC_COMPACT_META_KEY, AutomaticCompactInvocation};
-use crate::extensions::notification::{CompactPhase, SessionNotification, SessionUpdate};
 
 fn enable_two_pass(actor: &SessionActor) {
     let mut slot = actor.agent.borrow_mut();
@@ -10,8 +10,14 @@ fn enable_two_pass(actor: &SessionActor) {
     let mut policy = agent.compaction_policy().clone();
     policy.two_pass_enabled = true;
     *slot = xai_grok_agent::Agent::new(
-        agent.definition().clone(), agent.prompt_context().clone(), agent.system_prompt().to_string(),
-        Arc::clone(agent.tool_bridge()), agent.reminder_policy().clone(), policy, vec![], false,
+        agent.definition().clone(),
+        agent.prompt_context().clone(),
+        agent.system_prompt().to_string(),
+        Arc::clone(agent.tool_bridge()),
+        agent.reminder_policy().clone(),
+        policy,
+        vec![],
+        false,
     );
 }
 
@@ -20,7 +26,9 @@ fn seed_prefire(actor: &SessionActor) {
         ConversationItem::system("sys"),
         ConversationItem::user("repair file"),
         ConversationItem::assistant_tool_calls(vec![xai_grok_sampling_types::ToolCall {
-            id: "prefix-edit".into(), name: "edit_file".into(), arguments: "{\"path\":\"before.rs\"}".into(),
+            id: "prefix-edit".into(),
+            name: "edit_file".into(),
+            arguments: "{\"path\":\"before.rs\"}".into(),
         }]),
         ConversationItem::tool_result("prefix-edit", "edited"),
         ConversationItem::assistant("Completed original work. ".repeat(2_000)),
@@ -30,46 +38,85 @@ fn seed_prefire(actor: &SessionActor) {
 
 #[tokio::test(flavor = "current_thread")]
 async fn prefire_allows_concurrent_tail_append_but_rejects_changed_prefix_tool_arguments() {
-    tokio::task::LocalSet::new().run_until(async {
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            for change_prefix in [false, true] {
-                let fixture = fixture().await;
-                let server = route_to_mock(&fixture.actor).await;
-                enable_two_pass(&fixture.actor);
-                seed_prefire(&fixture.actor);
-                server.set_auxiliary_hold();
-                assert!(fixture.actor.compaction.prefire.try_begin());
-                let actor = fixture.actor.clone();
-                let prefire = tokio::task::spawn_local(async move { actor.run_prefire_pass1().await });
-                server.wait_until_parked_replies(1).await;
-                fixture.actor.chat_state_handle.push_user_message(ConversationItem::user("concurrent-tail-marker"));
-                if change_prefix {
-                    let mut conversation = fixture.actor.chat_state_handle.get_conversation().await;
-                    let ConversationItem::Assistant(assistant) = &mut conversation[2] else {
-                        panic!("seeded tool call");
-                    };
-                    assistant.tool_calls[0].arguments = "{\"path\":\"after.rs\"}".into();
-                    fixture.actor.chat_state_handle.replace_conversation(conversation);
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                for change_prefix in [false, true] {
+                    let fixture = fixture().await;
+                    let server = route_to_mock(&fixture.actor).await;
+                    enable_two_pass(&fixture.actor);
+                    seed_prefire(&fixture.actor);
+                    server.set_auxiliary_hold();
+                    assert!(fixture.actor.compaction.prefire.try_begin());
+                    let actor = fixture.actor.clone();
+                    let prefire =
+                        tokio::task::spawn_local(async move { actor.run_prefire_pass1().await });
+                    server.wait_until_parked_replies(1).await;
+                    fixture
+                        .actor
+                        .chat_state_handle
+                        .push_user_message(ConversationItem::user("concurrent-tail-marker"));
+                    if change_prefix {
+                        let mut conversation =
+                            fixture.actor.chat_state_handle.get_conversation().await;
+                        let ConversationItem::Assistant(assistant) = &mut conversation[2] else {
+                            panic!("seeded tool call");
+                        };
+                        assistant.tool_calls[0].arguments = "{\"path\":\"after.rs\"}".into();
+                        fixture
+                            .actor
+                            .chat_state_handle
+                            .replace_conversation(conversation);
+                    }
+                    server.release_parked_replies();
+                    prefire.await.unwrap();
+                    assert!(
+                        fixture.actor.compaction.prefire.has_cache(),
+                        "pass-1 must have actually completed"
+                    );
+                    let before = server.request_count();
+                    let output = fixture.actor.try_two_pass_pass2_apply(None, false).await;
+                    if change_prefix {
+                        assert!(
+                            output.is_none(),
+                            "NOTE1 for different tool arguments cannot be applied"
+                        );
+                        assert_eq!(
+                            server.request_count(),
+                            before,
+                            "stale NOTE1 must be rejected before a pass-2 request"
+                        );
+                    } else {
+                        assert!(
+                            output.is_some(),
+                            "an append-only tail must not invalidate NOTE1"
+                        );
+                        assert_eq!(server.request_count(), before + 1);
+                        assert!(
+                            server
+                                .request_bodies()
+                                .last()
+                                .unwrap()
+                                .to_string()
+                                .contains("concurrent-tail-marker"),
+                            "the actual pass-2 request must contain the concurrent append"
+                        );
+                    }
+                    assert!(
+                        fixture
+                            .actor
+                            .chat_state_handle
+                            .get_conversation()
+                            .await
+                            .iter()
+                            .any(|item| item.text_content() == "concurrent-tail-marker")
+                    );
                 }
-                server.release_parked_replies();
-                prefire.await.unwrap();
-                assert!(fixture.actor.compaction.prefire.has_cache(), "pass-1 must have actually completed");
-                let before = server.request_count();
-                let output = fixture.actor.try_two_pass_pass2_apply(None, false).await;
-                if change_prefix {
-                    assert!(output.is_none(), "NOTE1 for different tool arguments cannot be applied");
-                    assert_eq!(server.request_count(), before, "stale NOTE1 must be rejected before a pass-2 request");
-                } else {
-                    assert!(output.is_some(), "an append-only tail must not invalidate NOTE1");
-                    assert_eq!(server.request_count(), before + 1);
-                    assert!(server.request_bodies().last().unwrap().to_string().contains("concurrent-tail-marker"),
-                        "the actual pass-2 request must contain the concurrent append");
-                }
-                assert!(fixture.actor.chat_state_handle.get_conversation().await.iter()
-                    .any(|item| item.text_content() == "concurrent-tail-marker"));
-            }
-        }).await.expect("isolated prefire fixture must settle");
-    }).await;
+            })
+            .await
+            .expect("isolated prefire fixture must settle");
+        })
+        .await;
 }
 
 #[derive(Clone, Copy)]

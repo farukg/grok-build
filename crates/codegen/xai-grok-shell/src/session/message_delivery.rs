@@ -91,7 +91,9 @@ pub(crate) type AgentDeliveryIdentity = DeliveryIdentity<AgentMessageId, AgentPr
 pub(crate) fn agent_delivery_identity(message_id: String) -> AgentDeliveryIdentity {
     DeliveryIdentity::new(
         AgentMessageId(message_id.clone()),
-        AgentPromptId(super::delivery_receiver::parent_message_prompt_id(&message_id)),
+        AgentPromptId(super::delivery_receiver::parent_message_prompt_id(
+            &message_id,
+        )),
     )
 }
 
@@ -137,7 +139,8 @@ pub(crate) struct InitialParentMessageReady {
 pub(crate) struct InitialParentMessageAdmission {
     pub(crate) recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe,
     pub(crate) publication: Box<super::delivery_receiver::ParentMessagePublication>,
-    pub(crate) custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
+    pub(crate) custody:
+        Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
     pub(crate) receiver: ActiveMessageReceiver,
     pub(crate) respond_to: oneshot::Sender<crate::session::commands::PromptTurnResult>,
     pub(crate) prompt_admitted: oneshot::Sender<InitialParentMessageReady>,

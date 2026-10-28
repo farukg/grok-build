@@ -1990,7 +1990,8 @@ impl FinalizedToolset {
                 .get::<crate::types::resources::SystemRemindersEnabled>()
                 .is_none_or(|e| e.0);
         }
-        let observations = crate::types::completion_observation::SubagentCompletionObservations::default();
+        let observations =
+            crate::types::completion_observation::SubagentCompletionObservations::default();
         observations.extend(completed_subagents);
         let reminders = if reminders_enabled {
             let mut r = Vec::new();

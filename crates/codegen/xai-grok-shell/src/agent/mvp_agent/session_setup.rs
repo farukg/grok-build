@@ -944,8 +944,10 @@ impl MvpAgent {
         arguments: acp::LoadSessionRequest,
         op: AttachOperation,
     ) -> Result<acp::LoadSessionResponse, acp::Error> {
-        let current_actions_binding = crate::extensions::current_actions::load_binding(arguments.meta.as_ref())
-            .map_err(|_| acp::Error::invalid_params().data("invalid current-actions load binding"))?;
+        let current_actions_binding = crate::extensions::current_actions::load_binding(
+            arguments.meta.as_ref(),
+        )
+        .map_err(|_| acp::Error::invalid_params().data("invalid current-actions load binding"))?;
         if let Some(binding) = &current_actions_binding
             && binding.session_id != arguments.session_id.0.as_ref()
         {
@@ -954,8 +956,11 @@ impl MvpAgent {
         let attach_started_at = std::time::Instant::now();
         let load_guard = self.begin_session_load(&arguments.session_id);
         let publication_context = current_actions_binding.as_ref().and_then(|binding| {
-            self.resident_handle(&arguments.session_id)?.current_actions.as_ref()?
-                .bind_publication(binding.clone()).ok()
+            self.resident_handle(&arguments.session_id)?
+                .current_actions
+                .as_ref()?
+                .bind_publication(binding.clone())
+                .ok()
         });
         reject_chat_kind_without_feature(arguments.meta.as_ref())?;
         let live_cwd = AbsPathBuf::new(arguments.cwd.clone())
@@ -1104,7 +1109,9 @@ impl MvpAgent {
         } = persistence_info;
         let summary = if !self.is_resident(&session_id)
             && (!summary.completion_delivery.obligations.is_empty()
-                || persisted_workflow_runs.iter().any(|run| run.manifest.state.status.is_completion_reportable()))
+                || persisted_workflow_runs
+                    .iter()
+                    .any(|run| run.manifest.state.status.is_completion_reportable()))
         {
             let (respond_to, receive) = tokio::sync::oneshot::channel();
             persistence
@@ -1457,8 +1464,12 @@ impl MvpAgent {
             })??;
             let mut meta = None;
             self.stamp_ordered_current_actions_load(
-                &mut meta, current_actions_binding, publication_context, &load_guard.rx,
-            ).await?;
+                &mut meta,
+                current_actions_binding,
+                publication_context,
+                &load_guard.rx,
+            )
+            .await?;
             return Ok(acp::LoadSessionResponse::new().meta(meta));
         }
         if gateway_backed {
@@ -1531,7 +1542,8 @@ impl MvpAgent {
                     CompletionEventPolicy, CompletionObligation,
                 };
                 let (id, text, policy) = match obligation {
-                    CompletionObligation::Preparing { .. } | CompletionObligation::Suppressed { .. } => continue,
+                    CompletionObligation::Preparing { .. }
+                    | CompletionObligation::Suppressed { .. } => continue,
                     CompletionObligation::Pending { id, payload } => {
                         (id, payload.model_text(id), payload.policy)
                     }
@@ -1562,7 +1574,13 @@ impl MvpAgent {
                         );
                     }
                     xai_chat_state::completion::CompletionIdentity::V2 { .. } => {
-                        let _ = handle.cmd_tx.send(SessionCommand::ResumeTerminalCompletion { id: id.clone(), text, policy });
+                        let _ = handle
+                            .cmd_tx
+                            .send(SessionCommand::ResumeTerminalCompletion {
+                                id: id.clone(),
+                                text,
+                                policy,
+                            });
                     }
                 }
             }
@@ -1574,8 +1592,12 @@ impl MvpAgent {
         let config_options = self.acp_config_options(Some(&session_id), &model_state);
         let mut response_meta = response_meta.as_object().cloned();
         self.stamp_ordered_current_actions_load(
-            &mut response_meta, current_actions_binding, publication_context, &load_guard.rx,
-        ).await?;
+            &mut response_meta,
+            current_actions_binding,
+            publication_context,
+            &load_guard.rx,
+        )
+        .await?;
         let response = acp::LoadSessionResponse::new()
             .models(Some(model_state))
             .config_options(Some(config_options))

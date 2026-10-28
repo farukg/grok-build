@@ -117,7 +117,11 @@ async fn handle_one_job(
         session_id.clone(),
         tool_call_id,
         PendingKind::McpElicitation,
-        Some((current_actions.clone(), super::current_actions::FrozenOwner::Unavailable, started_at)),
+        Some((
+            current_actions.clone(),
+            super::current_actions::FrozenOwner::Unavailable,
+            started_at,
+        )),
     );
 
     // Race the user's answer against the MCP side abandoning the job:

@@ -17,7 +17,10 @@ const CHILD_SID: &str = "child-sid";
 
 fn uncertain_output() -> SendSubagentMessageOutput {
     use xai_grok_tools::implementations::grok_build::task::{
-        native_recovery::{MessageRecoveryRef, payload_digest, parent_message_delivery_id, parent_message_prompt_id},
+        native_recovery::{
+            MessageRecoveryRef, parent_message_delivery_id, parent_message_prompt_id,
+            payload_digest,
+        },
         root_control::AgentMessageGeneration,
         types::{ActiveAgentMessageOperation, ActiveMessageReceiver},
     };
@@ -33,7 +36,8 @@ fn uncertain_output() -> SendSubagentMessageOutput {
             },
             operation: ActiveAgentMessageOperation::Steer,
             payload_digest: payload_digest("follow up"),
-        }.into(),
+        }
+        .into(),
     }
 }
 

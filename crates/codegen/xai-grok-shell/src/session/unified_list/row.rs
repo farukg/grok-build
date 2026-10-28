@@ -176,8 +176,10 @@ impl TryFrom<SessionInfo> for acp::SessionInfo {
         } = info;
         let mut meta = super::to_meta(serde_json::to_value(&meta));
         if let Some(last_active_at) = last_active_at {
-            meta.get_or_insert_with(Default::default)
-                .insert("lastActiveAt".into(), serde_json::Value::String(last_active_at));
+            meta.get_or_insert_with(Default::default).insert(
+                "lastActiveAt".into(),
+                serde_json::Value::String(last_active_at),
+            );
         }
         Ok(
             acp::SessionInfo::new(acp::SessionId::new(session_id), PathBuf::from(cwd))
@@ -254,9 +256,20 @@ mod tests {
             let info = row.into_session_info();
             let dto = serde_json::to_value(&info).unwrap();
             let acp = serde_json::to_value(acp::SessionInfo::try_from(info).unwrap()).unwrap();
-            assert_eq!(ext.get("lastActiveAt").and_then(serde_json::Value::as_str), active.as_deref());
-            assert_eq!(dto.get("lastActiveAt").and_then(serde_json::Value::as_str), active.as_deref());
-            assert_eq!(acp["_meta"].get("lastActiveAt").and_then(serde_json::Value::as_str), active.as_deref());
+            assert_eq!(
+                ext.get("lastActiveAt").and_then(serde_json::Value::as_str),
+                active.as_deref()
+            );
+            assert_eq!(
+                dto.get("lastActiveAt").and_then(serde_json::Value::as_str),
+                active.as_deref()
+            );
+            assert_eq!(
+                acp["_meta"]
+                    .get("lastActiveAt")
+                    .and_then(serde_json::Value::as_str),
+                active.as_deref()
+            );
             let expected_updated = match active {
                 Some(_) => "2026-01-01T00:00:00.123+00:00",
                 None => "2026-10-01T00:00:00+00:00",

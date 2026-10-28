@@ -61,16 +61,23 @@ impl AgentMessageBlock {
         self.content.text()
     }
 
-    pub(crate) fn source_len(&self) -> usize { self.content.with_source(str::len) }
+    pub(crate) fn source_len(&self) -> usize {
+        self.content.with_source(str::len)
+    }
 
     pub(crate) fn source_tail(&self, offset: usize) -> Option<String> {
-        self.content.with_source(|source| source.get(offset..).map(str::to_owned))
+        self.content
+            .with_source(|source| source.get(offset..).map(str::to_owned))
     }
 
     pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
-        let Some(tail) = self.source_tail(offset) else { return false; };
+        let Some(tail) = self.source_tail(offset) else {
+            return false;
+        };
         *self = historical.clone();
-        if !tail.is_empty() { self.push_chunk_deferred(&tail); }
+        if !tail.is_empty() {
+            self.push_chunk_deferred(&tail);
+        }
         true
     }
 
@@ -168,10 +175,13 @@ impl BlockContent for AgentMessageBlock {
                 .content
                 .with_source(crate::scrollback::state::prompt_preview);
             return BlockOutput {
-                lines: vec![crate::scrollback::types::BlockLine::styled(Line::from(
-                    Span::styled(summary, theme.muted()),
-                ))
-                .with_selection_range(Some(0))],
+                lines: vec![
+                    crate::scrollback::types::BlockLine::styled(Line::from(Span::styled(
+                        summary,
+                        theme.muted(),
+                    )))
+                    .with_selection_range(Some(0)),
+                ],
             };
         }
         // Common path: no diagrams (or raw mode) renders plain markdown, with no affordance machinery and no extra output rebuild

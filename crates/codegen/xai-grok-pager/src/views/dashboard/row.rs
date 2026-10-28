@@ -77,7 +77,9 @@ impl RowBadge {
 fn activity_time_from_unix_ms(unix_ms: i64) -> SystemTime {
     u64::try_from(unix_ms)
         .ok()
-        .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis)))
+        .and_then(|millis| {
+            SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis))
+        })
         .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 /// Which sessions the dashboard lists. The default lane shows top-level sessions (today's
@@ -162,8 +164,12 @@ pub(crate) fn apply_scope(rows: &mut Vec<DashboardRow>, scope: RowScope<'_>) {
                 return;
             };
             let dashboard = families.family_root(scope.cwd);
-            rows.retain(|row| families.family_root(&row.cwd).zip(dashboard)
-                .is_some_and(|(row, dashboard)| row == dashboard));
+            rows.retain(|row| {
+                families
+                    .family_root(&row.cwd)
+                    .zip(dashboard)
+                    .is_some_and(|(row, dashboard)| row == dashboard)
+            });
         }
     }
 }
@@ -228,7 +234,15 @@ pub(crate) fn build_rows_with_workspace(
 ) -> Vec<DashboardRow> {
     if lane == SessionLane::Subagents {
         return build_rows_with_roster(
-            agents, pinned, lane_reorder, inputs.grouping(), filter, home, roster, lane, scope,
+            agents,
+            pinned,
+            lane_reorder,
+            inputs.grouping(),
+            filter,
+            home,
+            roster,
+            lane,
+            scope,
         );
     }
     let mut rows = workspace_member_rows(agents, inputs, home, child_rows, roster);
@@ -302,9 +316,11 @@ fn workspace_member_rows(
     rows.extend(inputs.provisional.iter().filter_map(|id| {
         let agent = agents.get(id)?;
         if is_empty_idle_top_level(agent)
-            || agent.session.session_id.as_ref().is_some_and(|id| {
-                child_rows.contains_key(id.0.as_ref())
-            })
+            || agent
+                .session
+                .session_id
+                .as_ref()
+                .is_some_and(|id| child_rows.contains_key(id.0.as_ref()))
         {
             return None;
         }
@@ -323,7 +339,14 @@ fn subagent_rows(
     roster: &[RosterEntry],
 ) -> Vec<DashboardRow> {
     let mut rows = build_local_rows(agents, pinned, home, SessionLane::Subagents);
-    append_roster_rows(&mut rows, roster, agents, pinned, home, SessionLane::Subagents);
+    append_roster_rows(
+        &mut rows,
+        roster,
+        agents,
+        pinned,
+        home,
+        SessionLane::Subagents,
+    );
     rows
 }
 pub(crate) fn workspace_member_is_visible(
@@ -423,8 +446,7 @@ fn build_local_rows(
         }
         SessionLane::All => matches!(
             agent.role,
-            crate::app::agent_view::AgentRole::Root
-                | crate::app::agent_view::AgentRole::Child(_)
+            crate::app::agent_view::AgentRole::Root | crate::app::agent_view::AgentRole::Child(_)
         ),
     });
     for (id, agent) in local {
@@ -497,7 +519,11 @@ fn append_roster_rows(
         );
         // The "New session" husk rule is a root-row concern (Main and All); every subagent row
         // is a real child by construction, so no lane ever folds them away.
-        if !has_title && !active && !pinned.contains(&id) && !is_subagent && lane != SessionLane::Subagents
+        if !has_title
+            && !active
+            && !pinned.contains(&id)
+            && !is_subagent
+            && lane != SessionLane::Subagents
         {
             continue;
         }
@@ -784,8 +810,8 @@ pub fn sort_rows(
 }
 
 fn sort_row_key(left: &DashboardRow, right: &DashboardRow) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
     use RowState::{Completed, Failed, Idle, Inactive, NeedsInput, Working};
+    use std::cmp::Ordering;
     let activity = match (left.state, right.state) {
         (Working, Working) => Ordering::Equal,
         (Working, NeedsInput | Idle | Inactive | Completed | Failed) => Ordering::Less,
@@ -1268,7 +1294,11 @@ mod tests {
             .filter(|r| r.state == RowState::Idle)
             .map(|r| r.id.clone())
             .collect();
-        assert_eq!(idle_order, vec![i2, i1], "newer activity wins over saved order");
+        assert_eq!(
+            idle_order,
+            vec![i2, i1],
+            "newer activity wins over saved order"
+        );
     }
     #[test]
     fn pinned_manual_order_cannot_override_activity_changes() {
@@ -1299,7 +1329,10 @@ mod tests {
                 RowState::NeedsInput,
                 RowState::Idle,
             ] {
-                let row = rows.iter_mut().find(|row| row.id == reorder[1]).expect("second pinned row");
+                let row = rows
+                    .iter_mut()
+                    .find(|row| row.id == reorder[1])
+                    .expect("second pinned row");
                 row.state = state;
                 row.last_change_at += Duration::from_secs(60);
                 sort_rows(&mut rows, grouping, &reorder);
@@ -1374,14 +1407,16 @@ mod tests {
                     None,
                     std::slice::from_ref(&roster),
                     SessionLane::Main,
-                RowScope::all(),
+                    RowScope::all(),
                 );
                 assert_eq!(
                     match activity {
                         RosterActivity::Working => vec![roster_id.clone(), local_id.clone()],
                         RosterActivity::Dormant => vec![local_id.clone(), roster_id.clone()],
-                        RosterActivity::Idle | RosterActivity::NeedsInput
-                        | RosterActivity::Completed | RosterActivity::Dead => unreachable!(),
+                        RosterActivity::Idle
+                        | RosterActivity::NeedsInput
+                        | RosterActivity::Completed
+                        | RosterActivity::Dead => unreachable!(),
                     },
                     rows.into_iter().map(|row| row.id).collect::<Vec<_>>(),
                 );
@@ -1420,7 +1455,11 @@ mod tests {
                     }
                     let rows = workspace_rows(&agents, &snapshot);
                     assert_eq!(
-                        if loaded { vec!["z", "a"] } else { vec!["a", "z"] },
+                        if loaded {
+                            vec!["z", "a"]
+                        } else {
+                            vec!["a", "z"]
+                        },
                         rows.iter()
                             .map(|row| row.session_id.as_deref().expect("saved session"))
                             .collect::<Vec<_>>(),
@@ -1603,10 +1642,7 @@ mod tests {
             None,
             SessionLane::Subagents,
         );
-        let ids = rows
-            .iter()
-            .map(|row| row.id.clone())
-            .collect::<Vec<_>>();
+        let ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
         assert_eq!(
             ids,
             vec![
@@ -1658,7 +1694,7 @@ mod tests {
             None,
             &[subagent_entry("child-1", "root")],
             SessionLane::Subagents,
-        RowScope::all(),
+            RowScope::all(),
         );
         assert_eq!(
             rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
@@ -1675,10 +1711,13 @@ mod tests {
             None,
             &[subagent_entry("child-1", "root")],
             SessionLane::Main,
-        RowScope::all(),
+            RowScope::all(),
         );
         assert_eq!(
-            main_rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
+            main_rows
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
             vec![DashboardRowId::TopLevel(root)],
             "the main lane keeps listing only the root"
         );
@@ -2088,29 +2127,72 @@ mod tests {
         let workspace = crate::app::workspace_layout::WorkspaceView::from_snapshot(&snapshot);
         let roster = [subagent_entry("saved-child", "parent")];
         let agents = SessionViews::new();
-        let inputs = WorkspaceRowInputs { workspace: Some(&workspace), provisional: &[] };
+        let inputs = WorkspaceRowInputs {
+            workspace: Some(&workspace),
+            provisional: &[],
+        };
         let child_rows = std::collections::BTreeMap::from([(
             "saved-child".to_owned(),
-            DashboardRowId::Roster { session_id: "saved-child".to_owned() },
+            DashboardRowId::Roster {
+                session_id: "saved-child".to_owned(),
+            },
         )]);
         let main = build_rows_with_workspace(
-            &agents, inputs, &Filter::None, None, &roster, SessionLane::Main,
-            &Default::default(), &[], &child_rows,
-        RowScope::all(),
+            &agents,
+            inputs,
+            &Filter::None,
+            None,
+            &roster,
+            SessionLane::Main,
+            &Default::default(),
+            &[],
+            &child_rows,
+            RowScope::all(),
         );
-        assert_eq!(main.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-root")]);
+        assert_eq!(
+            main.iter()
+                .map(|row| row.session_id.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("saved-root")]
+        );
         let reused = build_rows_with_workspace(
-            &agents, inputs, &Filter::None, None, &[], SessionLane::Main,
-            &Default::default(), &[], &child_rows,
-        RowScope::all(),
+            &agents,
+            inputs,
+            &Filter::None,
+            None,
+            &[],
+            SessionLane::Main,
+            &Default::default(),
+            &[],
+            &child_rows,
+            RowScope::all(),
         );
-        assert_eq!(reused.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-root")]);
+        assert_eq!(
+            reused
+                .iter()
+                .map(|row| row.session_id.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("saved-root")]
+        );
         let children = build_rows_with_workspace(
-            &agents, inputs, &Filter::None, None, &roster, SessionLane::Subagents,
-            &Default::default(), &[], &child_rows,
-        RowScope::all(),
+            &agents,
+            inputs,
+            &Filter::None,
+            None,
+            &roster,
+            SessionLane::Subagents,
+            &Default::default(),
+            &[],
+            &child_rows,
+            RowScope::all(),
         );
-        assert_eq!(children.iter().map(|row| row.session_id.as_deref()).collect::<Vec<_>>(), vec![Some("saved-child")]);
+        assert_eq!(
+            children
+                .iter()
+                .map(|row| row.session_id.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("saved-child")]
+        );
     }
 
     #[test]
@@ -2142,7 +2224,7 @@ mod tests {
             &Default::default(),
             &[],
             &Default::default(),
-        RowScope::all(),
+            RowScope::all(),
         );
         assert_eq!(
             rows.iter()
@@ -2295,15 +2377,19 @@ mod tests {
         idle_now.last_change_at = now;
         let mut idle_old = make_row_with_id(DashboardRowId::TopLevel(AgentId(2)), RowState::Idle);
         idle_old.last_change_at = now - Duration::from_secs(3600);
-        let mut working_old = make_row_with_id(DashboardRowId::TopLevel(AgentId(3)), RowState::Working);
+        let mut working_old =
+            make_row_with_id(DashboardRowId::TopLevel(AgentId(3)), RowState::Working);
         working_old.last_change_at = now - Duration::from_secs(7200);
         let mut rows = vec![idle_old, idle_now, working_old];
         sort_rows(&mut rows, super::super::state::Grouping::State, &[]);
-        assert_eq!(rows.into_iter().map(|row| row.id).collect::<Vec<_>>(), vec![
-            DashboardRowId::TopLevel(AgentId(3)),
-            DashboardRowId::TopLevel(AgentId(1)),
-            DashboardRowId::TopLevel(AgentId(2)),
-        ]);
+        assert_eq!(
+            rows.into_iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![
+                DashboardRowId::TopLevel(AgentId(3)),
+                DashboardRowId::TopLevel(AgentId(1)),
+                DashboardRowId::TopLevel(AgentId(2)),
+            ]
+        );
     }
 
     /// The v2 all lane composes the workspace's root members with the subagent rows: members that
@@ -2358,8 +2444,17 @@ mod tests {
                 ..make_row("elsewhere", RowState::Idle)
             },
         ];
-        apply_scope(&mut rows, RowScope { value: SessionScope::Cwd, cwd: Path::new("/repo/a") });
-        assert_eq!(rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["in-cwd"]);
+        apply_scope(
+            &mut rows,
+            RowScope {
+                value: SessionScope::Cwd,
+                cwd: Path::new("/repo/a"),
+            },
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+            ["in-cwd"]
+        );
 
         let mut rows = vec![
             DashboardRow {
@@ -2371,14 +2466,30 @@ mod tests {
                 ..make_row("elsewhere", RowState::Idle)
             },
         ];
-        apply_scope(&mut rows, RowScope { value: SessionScope::Cwd, cwd: Path::new("/repo/a") });
-        assert_eq!(rows.len(), 1, "trailing separators must not defeat cwd equality");
+        apply_scope(
+            &mut rows,
+            RowScope {
+                value: SessionScope::Cwd,
+                cwd: Path::new("/repo/a"),
+            },
+        );
+        assert_eq!(
+            rows.len(),
+            1,
+            "trailing separators must not defeat cwd equality"
+        );
 
         let mut rows = vec![
             make_row("in-cwd", RowState::Idle),
             make_row("elsewhere", RowState::Idle),
         ];
-        apply_scope(&mut rows, RowScope { value: SessionScope::All, cwd: Path::new("/repo/a") });
+        apply_scope(
+            &mut rows,
+            RowScope {
+                value: SessionScope::All,
+                cwd: Path::new("/repo/a"),
+            },
+        );
         assert_eq!(rows.len(), 2, "the explicit All value is scopeless");
     }
 
@@ -2401,7 +2512,10 @@ mod tests {
                 cwd: Path::new("/tmp/not-a-repo"),
             },
         );
-        assert!(rows.is_empty(), "equal cwd is not evidence of repository membership");
+        assert!(
+            rows.is_empty(),
+            "equal cwd is not evidence of repository membership"
+        );
     }
 
     /// The worktree scope matches from a main-checkout dashboard cwd too: its family root is
@@ -2416,7 +2530,9 @@ mod tests {
             is_worktree: false,
             main_repo: None,
             repo_root: root.map(str::to_string),
-            family: root.map_or(crate::git_info::RepositoryFamily::Pending, |path| crate::git_info::RepositoryFamily::Resolved(PathBuf::from(path))),
+            family: root.map_or(crate::git_info::RepositoryFamily::Pending, |path| {
+                crate::git_info::RepositoryFamily::Resolved(PathBuf::from(path))
+            }),
             worktree_label: None,
         };
         let worktree = |main_repo: &str| crate::git_info::CwdGitInfo {
@@ -2485,26 +2601,59 @@ mod tests {
             ("failed", RepositoryFamily::Failed),
         ] {
             let cwd = PathBuf::from(format!("/scope-negative-{suffix}"));
-            seed_cwd_cache_for_tests(&cwd, Some(CwdGitInfo {
-                branch: Some("notified".into()), is_worktree: true,
-                main_repo: Some("~/display-is-not-identity".into()),
-                repo_root: Some("~/display-is-not-identity".into()),
-                family, worktree_label: None,
-            }));
-            let mut rows = vec![DashboardRow { cwd: cwd.clone(), ..make_row("same-cwd", RowState::Idle) }];
-            apply_scope(&mut rows, RowScope { value: SessionScope::Worktree, cwd: &cwd });
-            assert!(rows.is_empty(), "{suffix} cannot establish a repository family");
+            seed_cwd_cache_for_tests(
+                &cwd,
+                Some(CwdGitInfo {
+                    branch: Some("notified".into()),
+                    is_worktree: true,
+                    main_repo: Some("~/display-is-not-identity".into()),
+                    repo_root: Some("~/display-is-not-identity".into()),
+                    family,
+                    worktree_label: None,
+                }),
+            );
+            let mut rows = vec![DashboardRow {
+                cwd: cwd.clone(),
+                ..make_row("same-cwd", RowState::Idle)
+            }];
+            apply_scope(
+                &mut rows,
+                RowScope {
+                    value: SessionScope::Worktree,
+                    cwd: &cwd,
+                },
+            );
+            assert!(
+                rows.is_empty(),
+                "{suffix} cannot establish a repository family"
+            );
         }
     }
 
     #[test]
     fn cwd_scope_does_not_conflate_root_with_missing_path() {
         let mut rows = vec![
-            DashboardRow { cwd: PathBuf::from("/"), ..make_row("root", RowState::Idle) },
-            DashboardRow { cwd: PathBuf::new(), ..make_row("missing", RowState::Idle) },
+            DashboardRow {
+                cwd: PathBuf::from("/"),
+                ..make_row("root", RowState::Idle)
+            },
+            DashboardRow {
+                cwd: PathBuf::new(),
+                ..make_row("missing", RowState::Idle)
+            },
         ];
-        apply_scope(&mut rows, RowScope { value: SessionScope::Cwd, cwd: Path::new("/") });
-        assert_eq!(rows.iter().map(|row| row.label.as_str()).collect::<Vec<_>>(), ["root"]);
+        apply_scope(
+            &mut rows,
+            RowScope {
+                value: SessionScope::Cwd,
+                cwd: Path::new("/"),
+            },
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.label.as_str())
+                .collect::<Vec<_>>(),
+            ["root"]
+        );
     }
-
 }

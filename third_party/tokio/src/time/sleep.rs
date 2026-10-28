@@ -489,7 +489,10 @@ impl Future for Sleep {
     // "logic errors", so we just panic in this case. A user couldn't
     // really do much better if we passed the error onwards.
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match ready!(self.as_mut().poll_with_mode(cx, crate::runtime::TimerPoll::Legacy)) {
+        match ready!(self
+            .as_mut()
+            .poll_with_mode(cx, crate::runtime::TimerPoll::Legacy))
+        {
             Ok(()) => Poll::Ready(()),
             Err(e) => panic!("timer error: {e}"),
         }

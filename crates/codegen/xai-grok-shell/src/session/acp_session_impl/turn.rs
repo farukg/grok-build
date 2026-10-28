@@ -1,7 +1,7 @@
 //! Turn execution for `SessionActor`: `handle_prompt`, the sampling loop, and turn-end handling.
 use super::*;
-use crate::session::{InputAuthority, SlashAuthority};
 use crate::session::request_capture::RequestSnapshotId;
+use crate::session::{InputAuthority, SlashAuthority};
 use crate::util::dual_clock::DualClock;
 use tracing::Instrument;
 use xai_grok_tools::implementations::grok_build::task::types::{
@@ -615,11 +615,24 @@ impl SessionActor {
                     }
                 }
             }
-            _ => match self.project_terminal_input(&input_origin, prompt_id, Self::queue_text_from_blocks(&prompt_blocks)).await {
-                Ok(TerminalInputProjection::Applied { origin }) => { strict_source_origin = Some(origin); true }
+            _ => match self
+                .project_terminal_input(
+                    &input_origin,
+                    prompt_id,
+                    Self::queue_text_from_blocks(&prompt_blocks),
+                )
+                .await
+            {
+                Ok(TerminalInputProjection::Applied { origin }) => {
+                    strict_source_origin = Some(origin);
+                    true
+                }
                 Ok(TerminalInputProjection::AlreadyPresent { .. }) => return ok_end_turn(0, None),
                 Ok(TerminalInputProjection::NotApplicable) => false,
-                Err(error) => return Err(acp::Error::internal_error().data(format!("terminal completion persistence: {error}"))),
+                Err(error) => {
+                    return Err(acp::Error::internal_error()
+                        .data(format!("terminal completion persistence: {error}")));
+                }
             },
         };
         let commit_ids: Vec<String> = input_origin
@@ -951,7 +964,10 @@ impl SessionActor {
         let mut chunk_meta = serde_json::Map::new();
         chunk_meta.insert("modelId".into(), serde_json::json!(model_id));
         if let Some(origin) = strict_source_origin {
-            chunk_meta.insert(crate::session::source_binding::STRICT_ORIGIN_META.into(), serde_json::json!(origin));
+            chunk_meta.insert(
+                crate::session::source_binding::STRICT_ORIGIN_META.into(),
+                serde_json::json!(origin),
+            );
         }
         if !preprojected_subagent {
             chunk_meta.insert(
@@ -963,10 +979,7 @@ impl SessionActor {
             "promptIndex".into(),
             serde_json::json!(current_prompt_index),
         );
-        if let Some(reason) = input_origin
-            .as_prompt_origin()
-            .injected_reason_wire()
-        {
+        if let Some(reason) = input_origin.as_prompt_origin().injected_reason_wire() {
             chunk_meta.insert(
                 crate::session::storage::SYNTHETIC_REASON_META_KEY.into(),
                 serde_json::json!(reason),
@@ -3024,7 +3037,9 @@ impl SessionActor {
                     build_request_ms = tracing::field::Empty,
                     item_count = tracing::field::Empty,
                 ));
-            let context_policy_guard = self.admit_context_policy_for_request().await
+            let context_policy_guard = self
+                .admit_context_policy_for_request()
+                .await
                 .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
             let request = self
                 .chat_state_handle
@@ -3044,7 +3059,9 @@ impl SessionActor {
                     req_id.to_owned(),
                 )
                 .await
-                .ok_or_else(|| acp::Error::internal_error().data("chat state actor failed to build request"))?;
+                .ok_or_else(|| {
+                    acp::Error::internal_error().data("chat state actor failed to build request")
+                })?;
             drop(context_policy_guard);
             build_request_span.span().record(
                 "build_request_ms",
@@ -3062,15 +3079,21 @@ impl SessionActor {
                     "loop_index": loop_index,
                 })),
             );
-            let structured_output_validator = request.context_policy
+            let structured_output_validator = request
+                .context_policy
                 .includes(xai_grok_sampling_types::ContextCategory::ToolDefinitions)
                 .then_some(&structured_output_validator)
                 .and_then(Option::as_ref);
-            let structured_output_tool = structured_output_tool && structured_output_validator.is_some();
-            let native_json_schema = if structured_output_native { json_schema.clone() } else { None };
-            let mut request = self.prepare_request_for_sampling(
-                request, native_json_schema,
-            ).await;
+            let structured_output_tool =
+                structured_output_tool && structured_output_validator.is_some();
+            let native_json_schema = if structured_output_native {
+                json_schema.clone()
+            } else {
+                None
+            };
+            let mut request = self
+                .prepare_request_for_sampling(request, native_json_schema)
+                .await;
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());
@@ -3226,7 +3249,9 @@ impl SessionActor {
                     };
                     let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
                         .map_err(|cause| self.retry_schedule_error(None, &error, delay, cause))?;
-                    self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
+                    self.schedule_sampling_retry(
+                        &next_sampling_request.into(),
+                        &deadline,
                         crate::extensions::notification::RetryState::Retrying {
                             attempt: transient_retry_attempts,
                             max_retries: display_max,
@@ -3235,10 +3260,14 @@ impl SessionActor {
                             next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                         },
                     );
-                    deadline.wait().await.map_err(|cause| self.retry_schedule_error(
-                        Some(&next_sampling_request.into()), &error, delay,
-                        xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
-                    ))?;
+                    deadline.wait().await.map_err(|cause| {
+                        self.retry_schedule_error(
+                            Some(&next_sampling_request.into()),
+                            &error,
+                            delay,
+                            xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                        )
+                    })?;
                     turn_phases.record_sampling_retries(1);
                     continue;
                 }
@@ -3275,9 +3304,14 @@ impl SessionActor {
                                     "delay_ms": delay.as_millis() as u64,
                                 })),
                             );
-                            let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
-                                .map_err(|cause| self.retry_schedule_error(None, &error, delay, cause))?;
-                            self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
+                            let deadline =
+                                xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
+                                    .map_err(|cause| {
+                                        self.retry_schedule_error(None, &error, delay, cause)
+                                    })?;
+                            self.schedule_sampling_retry(
+                                &next_sampling_request.into(),
+                                &deadline,
                                 crate::extensions::notification::RetryState::Retrying {
                                     attempt: resubmit,
                                     max_retries: AuthRetrySchedule::MAX_UNCHARGED_RESUBMITS,
@@ -3289,10 +3323,17 @@ impl SessionActor {
                                 },
                             );
                             pace_uncharged_resubmit(store, self.auth_manager.as_deref(), &deadline)
-                                .await.map_err(|cause| self.retry_schedule_error(
-                                    Some(&next_sampling_request.into()), &error, delay,
-                                    xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
-                                ))?;
+                                .await
+                                .map_err(|cause| {
+                                    self.retry_schedule_error(
+                                        Some(&next_sampling_request.into()),
+                                        &error,
+                                        delay,
+                                        xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(
+                                            cause,
+                                        ),
+                                    )
+                                })?;
                             turn_phases.record_sampling_retries(1);
                             continue;
                         }
@@ -3313,9 +3354,14 @@ impl SessionActor {
                                     "delay_ms": delay_ms,
                                 })),
                             );
-                            let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
-                                .map_err(|cause| self.retry_schedule_error(None, &error, delay, cause))?;
-                            self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
+                            let deadline =
+                                xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
+                                    .map_err(|cause| {
+                                        self.retry_schedule_error(None, &error, delay, cause)
+                                    })?;
+                            self.schedule_sampling_retry(
+                                &next_sampling_request.into(),
+                                &deadline,
                                 crate::extensions::notification::RetryState::Retrying {
                                     attempt,
                                     max_retries: AuthRetrySchedule::MAX_RETRIES,
@@ -3325,10 +3371,16 @@ impl SessionActor {
                                     next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                                 },
                             );
-                            deadline.wait().await.map_err(|cause| self.retry_schedule_error(
-                                Some(&next_sampling_request.into()), &error, delay,
-                                xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
-                            ))?;
+                            deadline.wait().await.map_err(|cause| {
+                                self.retry_schedule_error(
+                                    Some(&next_sampling_request.into()),
+                                    &error,
+                                    delay,
+                                    xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(
+                                        cause,
+                                    ),
+                                )
+                            })?;
                             turn_phases.record_sampling_retries(1);
                             continue;
                         }
@@ -3539,9 +3591,16 @@ impl SessionActor {
                         "max_retries": MAX_MEDIA_GEN_OVER_CAP_RESAMPLES,
                     })),
                 );
-                let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(std::time::Duration::ZERO)
-                    .map_err(|cause| acp::Error::internal_error().data(serde_json::json!({ "retry_schedule": cause })))?;
-                self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
+                let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(
+                    std::time::Duration::ZERO,
+                )
+                .map_err(|cause| {
+                    acp::Error::internal_error()
+                        .data(serde_json::json!({ "retry_schedule": cause }))
+                })?;
+                self.schedule_sampling_retry(
+                    &next_sampling_request.into(),
+                    &deadline,
                     crate::extensions::notification::RetryState::Retrying {
                         attempt: media_gen_resamples,
                         max_retries: MAX_MEDIA_GEN_OVER_CAP_RESAMPLES,
@@ -3574,8 +3633,16 @@ impl SessionActor {
                 self.signals_handle().record_model_fingerprint(fp);
             }
             let fallback_text = response.fallback_text().map(|text| {
-                let reference = response.assistant().map(|item| item.output_origin.clone()).filter(|origin| !origin.is_unknown())
-                    .unwrap_or_else(|| xai_grok_sampling_types::OutputOrigin::channel_aggregate(xai_grok_sampling_types::OutputChannel::Text, response.message_id.as_deref()));
+                let reference = response
+                    .assistant()
+                    .map(|item| item.output_origin.clone())
+                    .filter(|origin| !origin.is_unknown())
+                    .unwrap_or_else(|| {
+                        xai_grok_sampling_types::OutputOrigin::channel_aggregate(
+                            xai_grok_sampling_types::OutputChannel::Text,
+                            response.message_id.as_deref(),
+                        )
+                    });
                 (text, reference)
             });
             let stop_reason = response.stop_reason;
@@ -3610,8 +3677,13 @@ impl SessionActor {
                 tracing::info_span!("turn.record_response", item_count = response_item_count),
             );
             let output_message_id = response.message_id.clone();
-            self.record_response_items(&output_request_id, output_message_id.as_deref(), response.items, usage_reported)
-                .await;
+            self.record_response_items(
+                &output_request_id,
+                output_message_id.as_deref(),
+                response.items,
+                usage_reported,
+            )
+            .await;
             record_response_span.close();
             if let Some((text, reference)) = fallback_text {
                 tracing::warn!(
@@ -3621,13 +3693,17 @@ impl SessionActor {
                 self.record_turn_first_token(None);
                 self.record_turn_first_meaningful_output(None);
                 let origin = crate::session::source_binding::OutputSourceOrigin {
-                    session_id: self.session_id_string(), request_id: output_request_id.as_str().to_owned(),
+                    session_id: self.session_id_string(),
+                    request_id: output_request_id.as_str().to_owned(),
                     reference,
                 };
                 self.send_update(
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                        acp::ContentBlock::Text(acp::TextContent::new(text)),
-                    ).meta(Some(origin.into_meta()))),
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                            text,
+                        )))
+                        .meta(Some(origin.into_meta())),
+                    ),
                     None,
                 )
                 .await;
@@ -3652,7 +3728,8 @@ impl SessionActor {
                 )
                 .await;
             }
-            self.send_buffered_xai_update(response_completed, None).await;
+            self.send_buffered_xai_update(response_completed, None)
+                .await;
             let schema_complete_at_cap = if stop_reason
                 == Some(xai_grok_sampling_types::StopReason::Length)
                 && tool_calls.is_empty()
@@ -3731,7 +3808,8 @@ impl SessionActor {
                         req_id,
                         std::mem::take(&mut turn_span_totals),
                         turn_sampling,
-                    ).await;
+                    )
+                    .await;
                     return Ok(TurnOutcome::Completed {
                         tools_called: turn_tools_called,
                         structured_output: None,
@@ -3939,8 +4017,12 @@ impl SessionActor {
                 .await;
             let execute_tool_calls_result = {
                 let _tool_phase = turn_phases.begin_tool_blocking();
-                self.execute_tool_calls(tool_call_responses, requested_model, self.sampling_owner(&output_request_id).as_ref())
-                    .await
+                self.execute_tool_calls(
+                    tool_call_responses,
+                    requested_model,
+                    self.sampling_owner(&output_request_id).as_ref(),
+                )
+                .await
             };
             match execute_tool_calls_result {
                 Ok(ToolLoop::PermissionReject { tool_name, reason }) => {

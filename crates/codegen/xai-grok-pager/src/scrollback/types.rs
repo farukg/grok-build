@@ -155,12 +155,7 @@ pub struct BlockContext {
 impl BlockContext {
     /// Width of the bullet prefix (the char plus its trailing space), or 0 if disabled.
     pub fn bullet_indent(&self) -> usize {
-        self.appearance
-            .scrollback
-            .blocks
-            .tool
-            .bullet
-            .prefix_width()
+        self.appearance.scrollback.blocks.tool.bullet.prefix_width()
     }
 
     /// Effective content width after subtracting the bullet prefix (if enabled).
@@ -486,8 +481,12 @@ pub(crate) struct SelectionBoundary {
 }
 
 impl SelectionBoundary {
-    pub(crate) fn prefix_len(&self) -> usize { self.prefix.len() }
-    pub(crate) fn suffix_len(&self) -> usize { self.suffix.len() }
+    pub(crate) fn prefix_len(&self) -> usize {
+        self.prefix.len()
+    }
+    pub(crate) fn suffix_len(&self) -> usize {
+        self.suffix.len()
+    }
 
     pub(crate) fn new(prefix: String, suffix: String) -> Self {
         Self {

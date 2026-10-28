@@ -28,14 +28,14 @@ use crate::doom_loop_recovery::{FailedResponseCapture, append_recovery_context};
 use crate::events::{SamplingErrorInfo, SamplingErrorKind, SamplingEvent, StripReason};
 use crate::handle::CollectedSamplingResult;
 use crate::metrics::InferenceLatencyStats;
+use crate::request_capture::RequestAttemptId;
 use crate::retry::{
     self as retry_mod, RetryDecision, classify_error, clone_error, resolve_max_retries,
 };
+use crate::retry_deadline::RetryDeadline;
 use crate::stream::responses::stream_responses_tracked;
 use crate::stream::{stream_chat_completions, stream_messages};
 use crate::types::RequestId;
-use crate::request_capture::RequestAttemptId;
-use crate::retry_deadline::RetryDeadline;
 
 /// Default per-chunk idle timeout when neither config nor caller supplies one.
 /// Matches the shell's session-level default of 5 minutes.
@@ -137,7 +137,12 @@ pub(crate) async fn run_request_task(
             (retry_count + doom_retry_count + 1) as i64,
         );
         if cancel_token.is_cancelled() {
-            handle_cancellation(&event_tx, &request_id, &mut completion, CancellationEvidence::Unobserved(attempt));
+            handle_cancellation(
+                &event_tx,
+                &request_id,
+                &mut completion,
+                CancellationEvidence::Unobserved(attempt),
+            );
             return request_id;
         }
 
@@ -167,11 +172,17 @@ pub(crate) async fn run_request_task(
 
         capture.emit(crate::request_capture::LocalRequestEvidence::Finished {
             outcome: match &outcome {
-                AttemptOutcome::Completed { .. } => crate::request_capture::LocalAttemptOutcome::Completed,
+                AttemptOutcome::Completed { .. } => {
+                    crate::request_capture::LocalAttemptOutcome::Completed
+                }
                 AttemptOutcome::Empty { .. } => crate::request_capture::LocalAttemptOutcome::Empty,
-                AttemptOutcome::Failed { .. } => crate::request_capture::LocalAttemptOutcome::Failed,
+                AttemptOutcome::Failed { .. } => {
+                    crate::request_capture::LocalAttemptOutcome::Failed
+                }
                 AttemptOutcome::Cancelled => crate::request_capture::LocalAttemptOutcome::Cancelled,
-                AttemptOutcome::InitFailed { .. } => crate::request_capture::LocalAttemptOutcome::InitializationFailed,
+                AttemptOutcome::InitFailed { .. } => {
+                    crate::request_capture::LocalAttemptOutcome::InitializationFailed
+                }
             },
         });
 
@@ -309,10 +320,19 @@ pub(crate) async fn run_request_task(
                         "doom-loop recovery: retaining the failed response and retrying with guidance"
                     );
                     if wait_for_retry(
-                        Arc::new(error), backoff, RequestAttemptId(capture.attempt.0 + 1),
-                        doom_retry_count, doom_max_retries, &event_tx, &request_id,
-                        &cancel_token, &mut completion, &sampling_span,
-                    ).await {
+                        Arc::new(error),
+                        backoff,
+                        RequestAttemptId(capture.attempt.0 + 1),
+                        doom_retry_count,
+                        doom_max_retries,
+                        &event_tx,
+                        &request_id,
+                        &cancel_token,
+                        &mut completion,
+                        &sampling_span,
+                    )
+                    .await
+                    {
                         continue;
                     }
                     return request_id;
@@ -338,7 +358,12 @@ pub(crate) async fn run_request_task(
                 }
             }
             AttemptOutcome::Cancelled => {
-                handle_cancellation(&event_tx, &request_id, &mut completion, CancellationEvidence::Observed);
+                handle_cancellation(
+                    &event_tx,
+                    &request_id,
+                    &mut completion,
+                    CancellationEvidence::Observed,
+                );
                 return request_id;
             }
             AttemptOutcome::InitFailed { error } => {
@@ -421,9 +446,18 @@ async fn apply_retry_decision(
         RetryDecision::Retry { backoff } | RetryDecision::RetryWithBackoff { backoff, .. } => {
             *retry_count += 1;
             wait_for_retry(
-                Arc::clone(&original), backoff, RequestAttemptId(current_attempt.0 + 1),
-                *retry_count, max_retries, event_tx, request_id, cancel_token, completion, parent,
-            ).await
+                Arc::clone(&original),
+                backoff,
+                RequestAttemptId(current_attempt.0 + 1),
+                *retry_count,
+                max_retries,
+                event_tx,
+                request_id,
+                cancel_token,
+                completion,
+                parent,
+            )
+            .await
         }
         RetryDecision::RetryWithImageStrip => {
             let stripped_urls = request.strip_images();
@@ -444,16 +478,35 @@ async fn apply_retry_decision(
             emit_images_stripped(event_tx, request_id, stripped_urls, reason);
             *retry_count += 1;
             wait_for_retry(
-                Arc::clone(&original), Duration::ZERO, RequestAttemptId(current_attempt.0 + 1),
-                *retry_count, max_retries, event_tx, request_id, cancel_token, completion, parent,
-            ).await
+                Arc::clone(&original),
+                Duration::ZERO,
+                RequestAttemptId(current_attempt.0 + 1),
+                *retry_count,
+                max_retries,
+                event_tx,
+                request_id,
+                cancel_token,
+                completion,
+                parent,
+            )
+            .await
         }
         RetryDecision::RetryWithClientRebuild { backoff } => {
             *retry_count += 1;
             if !wait_for_retry(
-                Arc::clone(&original), backoff, RequestAttemptId(current_attempt.0 + 1),
-                *retry_count, max_retries, event_tx, request_id, cancel_token, completion, parent,
-            ).await {
+                Arc::clone(&original),
+                backoff,
+                RequestAttemptId(current_attempt.0 + 1),
+                *retry_count,
+                max_retries,
+                event_tx,
+                request_id,
+                cancel_token,
+                completion,
+                parent,
+            )
+            .await
+            {
                 return false;
             }
 
@@ -535,9 +588,18 @@ async fn wait_for_retry(
             return false;
         }
     };
-    emit_retrying(event_tx, request_id, &original, RetryNotice {
-        next_attempt, attempt, max_retries, backoff, deadline: &deadline,
-    });
+    emit_retrying(
+        event_tx,
+        request_id,
+        &original,
+        RetryNotice {
+            next_attempt,
+            attempt,
+            max_retries,
+            backoff,
+            deadline: &deadline,
+        },
+    );
     let _backoff = crate::span_timing::Region::from_span(tracing::info_span!(
         parent: parent,
         "sampling.retry_backoff",
@@ -568,7 +630,11 @@ fn fail_retry_schedule(
     request_id: &RequestId,
     completion: &mut CompletionState,
 ) {
-    let error = SamplingError::RetrySchedule { original, requested_backoff, cause };
+    let error = SamplingError::RetrySchedule {
+        original,
+        requested_backoff,
+        cause,
+    };
     let terminal_event_queued = emit_failed(event_tx, request_id, &error);
     send_completion(completion, Err(error), terminal_event_queued);
 }
@@ -914,7 +980,13 @@ fn emit_retrying(
     err: &SamplingError,
     notice: RetryNotice<'_>,
 ) {
-    let RetryNotice { next_attempt, attempt, max_retries, backoff, deadline } = notice;
+    let RetryNotice {
+        next_attempt,
+        attempt,
+        max_retries,
+        backoff,
+        deadline,
+    } = notice;
     let info = SamplingErrorInfo::from(err);
     let _ = event_tx.send(SamplingEvent::Retrying {
         request_id: request_id.clone(),
@@ -987,7 +1059,8 @@ fn handle_cancellation(
         CancellationEvidence::Observed => {}
         CancellationEvidence::Unobserved(attempt) => {
             let _ = event_tx.send(SamplingEvent::LocalRequest {
-                request_id: request_id.clone(), attempt,
+                request_id: request_id.clone(),
+                attempt,
                 evidence: crate::request_capture::LocalRequestEvidence::Finished {
                     outcome: crate::request_capture::LocalAttemptOutcome::Cancelled,
                 },
@@ -1104,8 +1177,11 @@ mod tests {
             &RequestId::from("retry-deadline"),
             &error,
             RetryNotice {
-                next_attempt: RequestAttemptId(4), attempt: 2, max_retries: 5,
-                backoff: Duration::from_millis(2500), deadline: &scheduler_deadline,
+                next_attempt: RequestAttemptId(4),
+                attempt: 2,
+                max_retries: 5,
+                backoff: Duration::from_millis(2500),
+                deadline: &scheduler_deadline,
             },
         );
         let after_ms = chrono::Utc::now().timestamp_millis();
@@ -1122,7 +1198,10 @@ mod tests {
         };
         assert_eq!(attempt, 2);
         assert_eq!(backoff_ms, 2500);
-        assert!((before_ms..=after_ms).contains(&(deadline.projection().wall_deadline_ms.unwrap() - 2500)));
+        assert!(
+            (before_ms..=after_ms)
+                .contains(&(deadline.projection().wall_deadline_ms.unwrap() - 2500))
+        );
         assert_eq!(next_attempt, RequestAttemptId(4));
         assert_eq!(deadline.projection(), scheduler_deadline.projection());
     }
@@ -1586,7 +1665,8 @@ mod tests {
                 attempt: RequestAttemptId(2),
                 evidence: crate::request_capture::LocalRequestEvidence::Finished {
                     outcome: crate::request_capture::LocalAttemptOutcome::Cancelled,
-                }, ..
+                },
+                ..
             })
         ));
         assert!(matches!(

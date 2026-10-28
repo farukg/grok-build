@@ -14,12 +14,11 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
-    ChildCancellation,
-    HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest, SubagentActor,
-    SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget,
-    SubagentDescribeOutcome, SubagentDescribeRequest, SubagentEvent, SubagentEventSender,
-    SubagentHandOffForegroundRequest, SubagentInspectRequest, SubagentInspection,
-    SubagentListRunningRequest, SubagentQueryRequest, SubagentRegistryCounts,
+    ChildCancellation, HandedOffForegroundSubagent, SpawnedSubagentRef,
+    SubagentActiveMessageRequest, SubagentActor, SubagentCancelDisposition, SubagentCancelOutcome,
+    SubagentCancelRequest, SubagentCancelTarget, SubagentDescribeOutcome, SubagentDescribeRequest,
+    SubagentEvent, SubagentEventSender, SubagentHandOffForegroundRequest, SubagentInspectRequest,
+    SubagentInspection, SubagentListRunningRequest, SubagentQueryRequest, SubagentRegistryCounts,
     SubagentRegistryCountsRequest, SubagentRequest, SubagentResolveResumeRequest, SubagentResult,
     SubagentResumeError, SubagentResumeTarget, SubagentSnapshot, SubagentSpawnRequest,
     SubagentSpawnedRefsRequest, SubagentValidateTypeOutcome, SubagentValidateTypeRequest,
@@ -175,7 +174,14 @@ impl SubagentCoordinatorSender {
             Ok(permit) => permit,
             Err(max_in_flight) => return ActiveAgentMessageOutcome::Saturated { max_in_flight },
         };
-        super::native_recovery::dispatch_recovery(&self.tx, permit, reference, action, sender_context).await
+        super::native_recovery::dispatch_recovery(
+            &self.tx,
+            permit,
+            reference,
+            action,
+            sender_context,
+        )
+        .await
     }
 
     fn try_acquire_active_message(&self) -> Result<tokio::sync::OwnedSemaphorePermit, usize> {
@@ -620,10 +626,20 @@ impl SubagentBackend for ChannelBackend {
         reference: super::native_recovery::MessageRecoveryRef,
         action: super::native_recovery::MessageRecoveryAction,
     ) -> ActiveAgentMessageOutcome {
-        let (ChannelBackendSender::Coordinator(sender), Some(parent)) = (&self.tx, self.parent_session_id()) else {
+        let (ChannelBackendSender::Coordinator(sender), Some(parent)) =
+            (&self.tx, self.parent_session_id())
+        else {
             return ActiveAgentMessageOutcome::Unsupported;
         };
-        sender.recover_message(reference, action, ActiveMessageSenderContext::RootSession { session_id: Arc::from(parent) }).await
+        sender
+            .recover_message(
+                reference,
+                action,
+                ActiveMessageSenderContext::RootSession {
+                    session_id: Arc::from(parent),
+                },
+            )
+            .await
     }
 
     async fn send_active_message(

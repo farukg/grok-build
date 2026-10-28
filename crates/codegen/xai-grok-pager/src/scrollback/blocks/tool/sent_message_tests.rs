@@ -84,13 +84,17 @@ fn unconfirmed(input: Option<SentMessageInput>) -> SentMessageToolCallBlock {
 }
 
 fn with_elapsed(mut block: SentMessageToolCallBlock, elapsed_ms: i64) -> SentMessageToolCallBlock {
-    block.execution_clock = crate::acp::tool_clock::ToolExecutionClock::new(uuid::Uuid::from_u128(1));
+    block.execution_clock =
+        crate::acp::tool_clock::ToolExecutionClock::new(uuid::Uuid::from_u128(1));
     block.execution_clock.apply(
         xai_grok_shell::extensions::tool_timing::ToolExecutionTiming::Finished {
             execution_id: xai_grok_shell::extensions::tool_timing::ToolExecutionId::generate(),
-            started_at: Default::default(), duration_ms: elapsed_ms.try_into().unwrap(),
-            termination: xai_grok_shell::extensions::tool_timing::ToolExecutionTermination::Returned,
-        }, crate::acp::tool_clock::ToolClockAdmission::Unconfirmed,
+            started_at: Default::default(),
+            duration_ms: elapsed_ms.try_into().unwrap(),
+            termination:
+                xai_grok_shell::extensions::tool_timing::ToolExecutionTermination::Returned,
+        },
+        crate::acp::tool_clock::ToolClockAdmission::Unconfirmed,
     );
     block
 }
@@ -512,7 +516,8 @@ fn wrapped_message_joiners_reconstruct_word_midword_and_trailing_newline_exactly
         model
             .range_local(0, SENT_MESSAGE_ID_RANGE)
             .expect("destination selection range")
-            .range_id.local,
+            .range_id
+            .local,
         SENT_MESSAGE_ID_RANGE
     );
 }

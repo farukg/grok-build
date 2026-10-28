@@ -201,9 +201,10 @@ async fn teardown_before_prepared_retires_direct_and_nested_completion_recipient
         );
         let spawner = if nested {
             let backend = harness.backend.clone();
-            let spawn = tokio::spawn(async move {
-                backend.spawn(request("spawner", true), None, None).await
-            });
+            let spawn =
+                tokio::spawn(
+                    async move { backend.spawn(request("spawner", true), None, None).await },
+                );
             assert_eq!(harness.started.recv().await.as_deref(), Some("spawner"));
             Some(spawn)
         } else {
@@ -214,34 +215,81 @@ async fn teardown_before_prepared_retires_direct_and_nested_completion_recipient
         child.parent_session_id = recipient.into();
         let backend = harness.backend.clone();
         let spawn = tokio::spawn(async move { backend.spawn(child, None, None).await });
-        assert_eq!(harness.started.recv().await.as_deref(), Some("late-prepared"));
+        assert_eq!(
+            harness.started.recv().await.as_deref(),
+            Some("late-prepared")
+        );
         harness.finish_one.send("late-prepared".into()).unwrap();
         let commit = tokio::time::timeout(wait, harness.terminal_publications.recv())
-            .await.expect("producer preparation reached").unwrap();
-        assert!(!spawn.is_finished(), "terminal caller waits for producer commit");
+            .await
+            .expect("producer preparation reached")
+            .unwrap();
+        assert!(
+            !spawn.is_finished(),
+            "terminal caller waits for producer commit"
+        );
         let (respond_to, mut drain) = oneshot::channel();
-        harness.backend.sender().send(SubagentEvent::TeardownSession {
-            parent_session_id: recipient.into(),
-            respond_to: Some(respond_to),
-        }).unwrap();
-        assert!(peeked_completion_ids(&harness, Some(recipient)).await.is_empty());
-        assert!(matches!(drain.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        harness
+            .backend
+            .sender()
+            .send(SubagentEvent::TeardownSession {
+                parent_session_id: recipient.into(),
+                respond_to: Some(respond_to),
+            })
+            .unwrap();
+        assert!(
+            peeked_completion_ids(&harness, Some(recipient))
+                .await
+                .is_empty()
+        );
+        assert!(matches!(
+            drain.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
         commit();
         let result = tokio::time::timeout(wait, spawn)
-            .await.expect("committed caller settles").unwrap().unwrap();
-        assert!(result.success(), "teardown must not reject an admitted producer result");
+            .await
+            .expect("committed caller settles")
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.success(),
+            "teardown must not reject an admitted producer result"
+        );
         assert_eq!(result.output.as_ref(), "work");
         let visible = tokio::time::timeout(wait, harness.terminal_publications.recv())
-            .await.expect("visibility callback reached").unwrap();
-        assert_eq!(harness.completions.recv().await.unwrap().reporting, CompletionReporting::Silent);
-        assert!(peeked_completion_ids(&harness, Some(recipient)).await.is_empty());
-        assert!(matches!(drain.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
-            "commit alone cannot drain a real visibility obligation");
+            .await
+            .expect("visibility callback reached")
+            .unwrap();
+        assert_eq!(
+            harness.completions.recv().await.unwrap().reporting,
+            CompletionReporting::Silent
+        );
+        assert!(
+            peeked_completion_ids(&harness, Some(recipient))
+                .await
+                .is_empty()
+        );
+        assert!(
+            matches!(drain.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "commit alone cannot drain a real visibility obligation"
+        );
         visible();
-        tokio::time::timeout(wait, drain).await.expect("visibility drains teardown").unwrap();
-        assert!(peeked_completion_ids(&harness, Some(recipient)).await.is_empty(),
-            "late Prepared and Visible cannot resurrect a retired recipient");
-        assert!(peeked_completion_ids(&harness, Some("parent")).await.is_empty());
+        tokio::time::timeout(wait, drain)
+            .await
+            .expect("visibility drains teardown")
+            .unwrap();
+        assert!(
+            peeked_completion_ids(&harness, Some(recipient))
+                .await
+                .is_empty(),
+            "late Prepared and Visible cannot resurrect a retired recipient"
+        );
+        assert!(
+            peeked_completion_ids(&harness, Some("parent"))
+                .await
+                .is_empty()
+        );
         harness.actor.abort();
         if let Some(spawner) = spawner {
             spawner.abort();

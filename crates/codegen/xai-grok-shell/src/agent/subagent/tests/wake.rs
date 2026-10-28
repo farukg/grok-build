@@ -112,10 +112,13 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
     ) {
         terminal_published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalCommitResult::Committed);
     }
-    fn on_published(&self, completion: ChildCompletion<Self::CompletionData>, published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>) {
+    fn on_published(
+        &self,
+        completion: ChildCompletion<Self::CompletionData>,
+        published: Box<dyn FnOnce(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult) + Send>,
+    ) {
         present_child_completion(completion, &self.gateway, false);
-        
-        
+
         published(xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published);
     }
 }
@@ -704,7 +707,10 @@ async fn ordinary_spawn_with_failed_metadata_write_persists_output_and_disposes_
             let mut request = auto_wake_test_request(&id);
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
-            let result = backend.spawn(request, None, None).await.expect("ordinary spawn");
+            let result = backend
+                .spawn(request, None, None)
+                .await
+                .expect("ordinary spawn");
             assert!(result.success());
             let output = result.output.to_string();
             assert_eq!(
@@ -778,7 +784,10 @@ async fn ordinary_spawn_disposes_worktree_when_only_remote_settings_enable_snaps
             let mut request = auto_wake_test_request(&id);
             request.runtime_overrides.isolation =
                 Some(xai_tool_types::SubagentIsolationMode::Worktree);
-            let result = backend.spawn(request, None, None).await.expect("ordinary spawn");
+            let result = backend
+                .spawn(request, None, None)
+                .await
+                .expect("ordinary spawn");
             assert!(result.success());
             let persisted: SubagentMeta = serde_json::from_str(
                 &std::fs::read_to_string(meta_dir.join("meta.json")).expect("completion meta"),
@@ -1270,22 +1279,38 @@ fn assert_aborted_wake_admission(
     prior: &crate::session::persistence::Summary,
     restored: &crate::session::persistence::Summary,
 ) {
-    use crate::session::delivery_receiver::{DeliveryExecution, DeliveryProvenance, ParentMessageSource};
+    use crate::session::delivery_receiver::{
+        DeliveryExecution, DeliveryProvenance, ParentMessageSource,
+    };
     let previous = &prior.completion_delivery.receiver.records;
     let current = &restored.completion_delivery.receiver.records;
-    let added = current.iter().filter(|(id, _)| !previous.contains_key(*id)).collect::<Vec<_>>();
-    let [(id, record)] = added.as_slice() else { panic!("one aborted bootstrap retains one durable identity"); };
+    let added = current
+        .iter()
+        .filter(|(id, _)| !previous.contains_key(*id))
+        .collect::<Vec<_>>();
+    let [(id, record)] = added.as_slice() else {
+        panic!("one aborted bootstrap retains one durable identity");
+    };
     let DeliveryProvenance::ParentMessage { admission } = &record.provenance else {
         panic!("aborted bootstrap must retain its authenticated provenance");
     };
-    assert_eq!(id.as_str(), format!("parent-message/{}", admission.message_id));
-    assert_eq!(admission.prompt_id, format!("parent-message-{}", admission.message_id));
+    assert_eq!(
+        id.as_str(),
+        format!("parent-message/{}", admission.message_id)
+    );
+    assert_eq!(
+        admission.prompt_id,
+        format!("parent-message-{}", admission.message_id)
+    );
     assert_eq!(admission.sender_session_id, "setup-parent");
     assert_eq!(admission.source, ParentMessageSource::Agent);
     assert_eq!(admission.text, "continue");
     use sha2::{Digest, Sha256};
     assert_eq!(record.digest, format!("{:x}", Sha256::digest(b"continue")));
-    assert!(matches!(record.execution, DeliveryExecution::Cancelled { .. }));
+    assert!(matches!(
+        record.execution,
+        DeliveryExecution::Cancelled { .. }
+    ));
     let mut expected = serde_json::to_value(prior).unwrap();
     let mut actual = serde_json::to_value(restored).unwrap();
     let expected = expected.as_object_mut().unwrap();
@@ -1294,8 +1319,14 @@ fn assert_aborted_wake_admission(
     actual.remove("completion_delivery");
     expected.remove("updated_at");
     actual.remove("updated_at");
-    assert_eq!(actual, expected, "all prior non-delivery summary state is preserved");
+    assert_eq!(
+        actual, expected,
+        "all prior non-delivery summary state is preserved"
+    );
     let mut retained = restored.completion_delivery.clone();
     retained.receiver.records.remove(id.as_str());
-    assert_eq!(serde_json::to_value(retained).unwrap(), serde_json::to_value(&prior.completion_delivery).unwrap());
+    assert_eq!(
+        serde_json::to_value(retained).unwrap(),
+        serde_json::to_value(&prior.completion_delivery).unwrap()
+    );
 }

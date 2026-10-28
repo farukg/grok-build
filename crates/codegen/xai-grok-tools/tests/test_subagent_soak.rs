@@ -25,9 +25,9 @@ use xai_grok_test_support::resources::{ResourceGrowth, ResourceSnapshot};
 use xai_grok_tools::implementations::grok_build::task::admission::SubagentLimits;
 use xai_grok_tools::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
-    ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest, ChildRunner, CoordinatorConfig,
-    LocalBoxFuture, MAX_COMPLETED_ENTRIES, StartedChild, SubagentCoordinator, SubagentProgress,
-    ChildCancellation, ChildCancelOutcome,
+    ChildCancelOutcome, ChildCancellation, ChildCompletion, ChildControl, ChildRunOutput,
+    ChildRunRequest, ChildRunner, CoordinatorConfig, LocalBoxFuture, MAX_COMPLETED_ENTRIES,
+    StartedChild, SubagentCoordinator, SubagentProgress,
 };
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentDescribeOutcome, SubagentOwner, SubagentRegistryCounts, SubagentRequest,

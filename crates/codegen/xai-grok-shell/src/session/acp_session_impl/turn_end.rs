@@ -356,24 +356,25 @@ impl SessionActor {
                 .as_ref()
                 .ok()
                 .and_then(|ok| ok.completion_kind.cancellation_context_meta());
-            let terminal_result = self.emit_turn_completed(
-                prompt_id.clone(),
-                &mapped,
-                usage,
-                result
-                    .as_ref()
-                    .ok()
-                    .and_then(|ok| ok.completion_kind.cancel_trigger()),
-                cancellation_category.as_deref(),
-                cancellation_context,
-                elapsed_ms,
-                result
-                    .as_ref()
-                    .ok()
-                    .and_then(|ok| ok.turn_snapshot.as_ref()),
-                self.input_turn_binding(&prompt_id).await,
-            )
-            .await;
+            let terminal_result = self
+                .emit_turn_completed(
+                    prompt_id.clone(),
+                    &mapped,
+                    usage,
+                    result
+                        .as_ref()
+                        .ok()
+                        .and_then(|ok| ok.completion_kind.cancel_trigger()),
+                    cancellation_category.as_deref(),
+                    cancellation_context,
+                    elapsed_ms,
+                    result
+                        .as_ref()
+                        .ok()
+                        .and_then(|ok| ok.turn_snapshot.as_ref()),
+                    self.input_turn_binding(&prompt_id).await,
+                )
+                .await;
             if let Err(error) = terminal_result {
                 result = Err(error);
             }
@@ -418,11 +419,22 @@ impl SessionActor {
             parent_task,
             receiver_origin,
         } = binding;
-        if matches!(&receiver_origin, crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { .. }) {
+        if matches!(
+            &receiver_origin,
+            crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { .. }
+        ) {
             let (respond_to, receive) = oneshot::channel();
-            self.notifications.persistence_tx.send(PersistenceMsg::ResolveParentMessageTerminal {
-                turn_id: prompt_id.clone(), parent_task: parent_task.clone(), origin: receiver_origin.clone(), respond_to,
-            }).map_err(|_| acp::Error::internal_error().data("parent terminal authority owner closed"))?;
+            self.notifications
+                .persistence_tx
+                .send(PersistenceMsg::ResolveParentMessageTerminal {
+                    turn_id: prompt_id.clone(),
+                    parent_task: parent_task.clone(),
+                    origin: receiver_origin.clone(),
+                    respond_to,
+                })
+                .map_err(|_| {
+                    acp::Error::internal_error().data("parent terminal authority owner closed")
+                })?;
             match receive.await.map_err(|_| acp::Error::internal_error().data("parent terminal authority acknowledgement lost"))? {
                 crate::session::receiver_execution::InitialMessageTerminalOwnership::AdoptionAttempt => return Ok(()),
                 crate::session::receiver_execution::InitialMessageTerminalOwnership::Message => {}
@@ -461,7 +473,8 @@ impl SessionActor {
             parent_task,
             receiver_origin,
             delivery_progress,
-        ).await?;
+        )
+        .await?;
 
         // Behind the finalization lease, so a turn posts exactly one delta whichever path settles it.
         let turn_outcome = match mapped {

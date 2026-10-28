@@ -18,12 +18,14 @@ enum RosterSource {
 }
 
 fn children() -> Vec<crate::app::roster::RosterEntry> {
-    ["child-a", "child-b"].map(|id| {
-        let mut child = idle_roster_entry(id, id);
-        child.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
-        child.parent_session_id = Some("detached-parent".into());
-        child
-    }).into()
+    ["child-a", "child-b"]
+        .map(|id| {
+            let mut child = idle_roster_entry(id, id);
+            child.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
+            child.parent_session_id = Some("detached-parent".into());
+            child
+        })
+        .into()
 }
 
 fn roster_result(source: RosterSource, sessions: Vec<crate::app::roster::RosterEntry>) -> Action {
@@ -34,34 +36,78 @@ fn roster_result(source: RosterSource, sessions: Vec<crate::app::roster::RosterE
 }
 
 fn roster_row(id: &str) -> DashboardRowId {
-    DashboardRowId::Roster { session_id: id.into() }
+    DashboardRowId::Roster {
+        session_id: id.into(),
+    }
 }
 
 fn assert_child_layout(app: &AppView) {
     let dashboard = app.dashboard.as_ref().unwrap();
-    assert_eq!(dashboard.pinned, BTreeSet::from([roster_row("child-a"), roster_row("child-b")]));
-    assert_eq!(dashboard.reorder, vec![roster_row("child-b"), roster_row("child-a")]);
-    assert_eq!(dashboard.child_rows, BTreeMap::from([
-        ("child-a".into(), roster_row("child-a")),
-        ("child-b".into(), roster_row("child-b")),
-    ]));
+    assert_eq!(
+        dashboard.pinned,
+        BTreeSet::from([roster_row("child-a"), roster_row("child-b")])
+    );
+    assert_eq!(
+        dashboard.reorder,
+        vec![roster_row("child-b"), roster_row("child-a")]
+    );
+    assert_eq!(
+        dashboard.child_rows,
+        BTreeMap::from([
+            ("child-a".into(), roster_row("child-a")),
+            ("child-b".into(), roster_row("child-b")),
+        ])
+    );
     let saved = app.dashboard_persisted.as_ref().unwrap();
-    assert_eq!(saved.pinned.iter().map(PersistedRowId::to_key).collect::<Vec<_>>(),
-        vec!["top:child-a", "top:child-b"]);
-    assert_eq!(saved.reorder.iter().map(PersistedRowId::to_key).collect::<Vec<_>>(),
-        vec!["top:child-b", "top:child-a"]);
+    assert_eq!(
+        saved
+            .pinned
+            .iter()
+            .map(PersistedRowId::to_key)
+            .collect::<Vec<_>>(),
+        vec!["top:child-a", "top:child-b"]
+    );
+    assert_eq!(
+        saved
+            .reorder
+            .iter()
+            .map(PersistedRowId::to_key)
+            .collect::<Vec<_>>(),
+        vec!["top:child-b", "top:child-a"]
+    );
 }
 
 fn assert_disk(config: &Path, pins: &[&str], order: &[&str]) {
     let doc: toml_edit::DocumentMut = std::fs::read_to_string(config).unwrap().parse().unwrap();
     assert_eq!(doc["preferences"]["keep"].as_str(), Some("untouched"));
     for (field, expected) in [("pinned", pins), ("reorder", order)] {
-        assert_eq!(doc["dashboard"][field].as_array().unwrap().iter()
-            .map(|value| value.as_str().unwrap()).collect::<Vec<_>>(), expected);
+        assert_eq!(
+            doc["dashboard"][field]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
     let saved = load_persisted_from_path(config).unwrap();
-    assert_eq!(saved.pinned.iter().map(PersistedRowId::to_key).collect::<Vec<_>>(), pins);
-    assert_eq!(saved.reorder.iter().map(PersistedRowId::to_key).collect::<Vec<_>>(), order);
+    assert_eq!(
+        saved
+            .pinned
+            .iter()
+            .map(PersistedRowId::to_key)
+            .collect::<Vec<_>>(),
+        pins
+    );
+    assert_eq!(
+        saved
+            .reorder
+            .iter()
+            .map(PersistedRowId::to_key)
+            .collect::<Vec<_>>(),
+        order
+    );
 }
 
 fn persist(effects: Vec<Effect>, lane: SessionLane) {
@@ -76,10 +122,17 @@ fn persist(effects: Vec<Effect>, lane: SessionLane) {
             let [Effect::PersistDashboardChildLayout(update)] = effects.as_slice() else {
                 panic!("Subagents must emit its scoped layout: {effects:?}");
             };
-            assert_eq!(update.scope, BTreeSet::from([
-                PersistedRowId::TopLevel { session_id: "child-a".into() },
-                PersistedRowId::TopLevel { session_id: "child-b".into() },
-            ]));
+            assert_eq!(
+                update.scope,
+                BTreeSet::from([
+                    PersistedRowId::TopLevel {
+                        session_id: "child-a".into()
+                    },
+                    PersistedRowId::TopLevel {
+                        session_id: "child-b".into()
+                    },
+                ])
+            );
             DashboardWrite::Child(update.clone())
         }
     };
@@ -93,10 +146,12 @@ fn allocated_reopen(mode: LayoutMode, source: RosterSource) {
     let mut app = test_app_with_agent();
     app.workspace_dashboard_enabled = matches!(mode, LayoutMode::Workspace);
     app.leader_mode = matches!(source, RosterSource::Leader);
-    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id = Some(acp::SessionId::new("root-a"));
+    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id =
+        Some(acp::SessionId::new("root-a"));
     mark_agent_nonempty(&mut app, AgentId(0));
     if matches!(mode, LayoutMode::Workspace) {
-        app.workspace_membership.set_snapshot_for_test(workspace_snapshot(vec![member("root-a", "Root A")]));
+        app.workspace_membership
+            .set_snapshot_for_test(workspace_snapshot(vec![member("root-a", "Root A")]));
     }
     app.dashboard_persisted = load_persisted_from_path(&config);
     assert!(app.dashboard.is_none());
@@ -106,10 +161,20 @@ fn allocated_reopen(mode: LayoutMode, source: RosterSource) {
     assert_eq!(app.active_view, ActiveView::AgentDashboard);
     assert_child_layout(&app);
     press(&mut app, KeyCode::Right, chord);
-    assert_eq!(app.dashboard.as_ref().unwrap().session_lane(), SessionLane::Subagents);
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().session_lane(),
+        SessionLane::Subagents
+    );
     let allocation = std::ptr::from_ref(app.dashboard.as_ref().unwrap());
-    let membership_key = app.dashboard.as_ref().unwrap().child_rows
-        .get_key_value("child-b").unwrap().0.as_ptr();
+    let membership_key = app
+        .dashboard
+        .as_ref()
+        .unwrap()
+        .child_rows
+        .get_key_value("child-b")
+        .unwrap()
+        .0
+        .as_ptr();
     let roster_before = app.dashboard_roster().as_ptr();
     let workspace_before = app.workspace_membership.snapshot().cloned();
     let workspace_order = app.workspace_membership.effective_manual_order();
@@ -118,56 +183,133 @@ fn allocated_reopen(mode: LayoutMode, source: RosterSource) {
     assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
     press(&mut app, KeyCode::Up, chord);
     assert_eq!(app.active_view, ActiveView::AgentDashboard);
-    assert_eq!(std::ptr::from_ref(app.dashboard.as_ref().unwrap()), allocation);
-    assert_eq!(app.dashboard.as_ref().unwrap().child_rows
-        .get_key_value("child-b").unwrap().0.as_ptr(), membership_key);
+    assert_eq!(
+        std::ptr::from_ref(app.dashboard.as_ref().unwrap()),
+        allocation
+    );
+    assert_eq!(
+        app.dashboard
+            .as_ref()
+            .unwrap()
+            .child_rows
+            .get_key_value("child-b")
+            .unwrap()
+            .0
+            .as_ptr(),
+        membership_key
+    );
     assert_eq!(app.dashboard_roster().as_ptr(), roster_before);
-    assert_eq!(app.dashboard_roster().iter().map(|entry| entry.session_id.as_str())
-        .collect::<Vec<_>>(), vec!["child-a", "child-b"]);
+    assert_eq!(
+        app.dashboard_roster()
+            .iter()
+            .map(|entry| entry.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["child-a", "child-b"]
+    );
     assert_child_layout(&app);
 
-    with_test_writer(config.clone(), |_| {}, || {
-        if matches!(mode, LayoutMode::V1) {
-            press(&mut app, KeyCode::Left, chord);
-            assert_eq!(app.dashboard.as_ref().unwrap().session_lane(), SessionLane::Main);
-            app.dashboard.as_mut().unwrap().focus_row(DashboardRowId::TopLevel(AgentId(0)));
-            persist(dispatch(Action::DashboardTogglePin, &mut app), SessionLane::Main);
-            assert_disk(&config, &["top:child-a", "top:child-b", "top:root-a"],
-                &["top:child-b", "top:child-a"]);
-        }
-        if matches!(mode, LayoutMode::Workspace) {
-            press(&mut app, KeyCode::Left, chord);
-            assert_eq!(app.dashboard.as_ref().unwrap().session_lane(), SessionLane::Main);
-        }
-        press(&mut app, KeyCode::Right, chord);
-        assert_eq!(app.dashboard.as_ref().unwrap().session_lane(), SessionLane::Subagents);
-        app.dashboard.as_mut().unwrap().focus_row(roster_row("child-a"));
-        persist(dispatch(Action::DashboardTogglePin, &mut app), SessionLane::Subagents);
-        match mode {
-            LayoutMode::Workspace => assert_disk(&config, &["top:child-b"], &["top:child-b", "top:child-a"]),
-            LayoutMode::V1 => assert_disk(&config, &["top:child-b", "top:root-a"], &["top:child-b", "top:child-a"]),
-        }
-        assert_eq!(app.dashboard.as_ref().unwrap().reorder, vec![roster_row("child-b"), roster_row("child-a")]);
-        assert!(dispatch(Action::DashboardReorderUp, &mut app).is_empty());
-        assert_eq!(app.dashboard.as_ref().unwrap().error_toast.as_deref(),
-            Some("Sessions are ordered by running state and last activity"));
-        match mode {
-            LayoutMode::Workspace => assert_disk(&config, &["top:child-b"], &["top:child-b", "top:child-a"]),
-            LayoutMode::V1 => assert_disk(&config, &["top:child-b", "top:root-a"], &["top:child-b", "top:child-a"]),
-        }
-    }).unwrap();
-    assert_eq!(app.workspace_membership.snapshot(), workspace_before.as_ref());
-    assert_eq!(app.workspace_membership.effective_manual_order(), workspace_order);
+    with_test_writer(
+        config.clone(),
+        |_| {},
+        || {
+            if matches!(mode, LayoutMode::V1) {
+                press(&mut app, KeyCode::Left, chord);
+                assert_eq!(
+                    app.dashboard.as_ref().unwrap().session_lane(),
+                    SessionLane::Main
+                );
+                app.dashboard
+                    .as_mut()
+                    .unwrap()
+                    .focus_row(DashboardRowId::TopLevel(AgentId(0)));
+                persist(
+                    dispatch(Action::DashboardTogglePin, &mut app),
+                    SessionLane::Main,
+                );
+                assert_disk(
+                    &config,
+                    &["top:child-a", "top:child-b", "top:root-a"],
+                    &["top:child-b", "top:child-a"],
+                );
+            }
+            if matches!(mode, LayoutMode::Workspace) {
+                press(&mut app, KeyCode::Left, chord);
+                assert_eq!(
+                    app.dashboard.as_ref().unwrap().session_lane(),
+                    SessionLane::Main
+                );
+            }
+            press(&mut app, KeyCode::Right, chord);
+            assert_eq!(
+                app.dashboard.as_ref().unwrap().session_lane(),
+                SessionLane::Subagents
+            );
+            app.dashboard
+                .as_mut()
+                .unwrap()
+                .focus_row(roster_row("child-a"));
+            persist(
+                dispatch(Action::DashboardTogglePin, &mut app),
+                SessionLane::Subagents,
+            );
+            match mode {
+                LayoutMode::Workspace => {
+                    assert_disk(&config, &["top:child-b"], &["top:child-b", "top:child-a"])
+                }
+                LayoutMode::V1 => assert_disk(
+                    &config,
+                    &["top:child-b", "top:root-a"],
+                    &["top:child-b", "top:child-a"],
+                ),
+            }
+            assert_eq!(
+                app.dashboard.as_ref().unwrap().reorder,
+                vec![roster_row("child-b"), roster_row("child-a")]
+            );
+            assert!(dispatch(Action::DashboardReorderUp, &mut app).is_empty());
+            assert_eq!(
+                app.dashboard.as_ref().unwrap().error_toast.as_deref(),
+                Some("Sessions are ordered by running state and last activity")
+            );
+            match mode {
+                LayoutMode::Workspace => {
+                    assert_disk(&config, &["top:child-b"], &["top:child-b", "top:child-a"])
+                }
+                LayoutMode::V1 => assert_disk(
+                    &config,
+                    &["top:child-b", "top:root-a"],
+                    &["top:child-b", "top:child-a"],
+                ),
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        app.workspace_membership.snapshot(),
+        workspace_before.as_ref()
+    );
+    assert_eq!(
+        app.workspace_membership.effective_manual_order(),
+        workspace_order
+    );
     assert_eq!(app.dashboard_roster().as_ptr(), roster_before);
-    assert_eq!(app.dashboard_roster().iter().map(|entry| entry.session_id.as_str())
-        .collect::<Vec<_>>(), vec!["child-a", "child-b"]);
+    assert_eq!(
+        app.dashboard_roster()
+            .iter()
+            .map(|entry| entry.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["child-a", "child-b"]
+    );
 
     // The delayed fetch must not be needed to preserve the reopened layout.
     let _ = dispatch(roster_result(source, children()), &mut app);
     let dashboard = app.dashboard.as_ref().unwrap();
     assert!(!dashboard.pinned.contains(&roster_row("child-a")));
     assert!(dashboard.pinned.contains(&roster_row("child-b")));
-    assert_eq!(dashboard.reorder, vec![roster_row("child-b"), roster_row("child-a")]);
+    assert_eq!(
+        dashboard.reorder,
+        vec![roster_row("child-b"), roster_row("child-a")]
+    );
 }
 
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
@@ -195,7 +337,13 @@ fn allocated_dashboard_gc_uses_roster_liveness_for_unattached_main_rows() {
         app.leader_mode = matches!(source, RosterSource::Leader);
         app.dashboard_persisted = Some(crate::views::dashboard::PersistedDashboard::defaults());
         mark_agent_nonempty(&mut app, AgentId(0));
-        let _ = dispatch(roster_result(source, vec![idle_roster_entry("roster-root", "Roster root")]), &mut app);
+        let _ = dispatch(
+            roster_result(
+                source,
+                vec![idle_roster_entry("roster-root", "Roster root")],
+            ),
+            &mut app,
+        );
         let chord = KeyModifiers::CONTROL | KeyModifiers::ALT;
         press(&mut app, KeyCode::Up, chord);
         let row = roster_row("roster-root");
@@ -208,7 +356,10 @@ fn allocated_dashboard_gc_uses_roster_liveness_for_unattached_main_rows() {
         assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
         press(&mut app, KeyCode::Up, chord);
         assert_eq!(app.active_view, ActiveView::AgentDashboard);
-        assert_eq!(app.dashboard.as_ref().unwrap().pinned, BTreeSet::from([row.clone()]));
+        assert_eq!(
+            app.dashboard.as_ref().unwrap().pinned,
+            BTreeSet::from([row.clone()])
+        );
         assert!(app.dashboard.as_ref().unwrap().reorder.is_empty());
         let _ = dispatch(roster_result(source, vec![]), &mut app);
         press(&mut app, KeyCode::Down, chord);

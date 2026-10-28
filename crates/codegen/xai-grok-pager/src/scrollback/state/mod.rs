@@ -12,8 +12,8 @@ mod timeline;
 mod types;
 pub mod verb_group;
 
-pub(crate) use layout::{ScrollAnchor, gap_after_between};
 pub use layout::compute_paint_window;
+pub(crate) use layout::{ScrollAnchor, gap_after_between};
 pub(crate) use timeline::prompt_preview;
 pub use timeline::{TimelineEntry, TimelineRow, TimelineRowKey, TimelineRowKind};
 pub use types::*;
@@ -169,7 +169,8 @@ pub struct ScrollbackState {
     structural_scroll_anchor: Option<StructuralScrollAnchor>,
     pending_inline_anchor: Option<ScrollAnchor>,
     selection_binding: std::cell::Cell<super::selection_identity::SourceBinding>,
-    inline_output_demands: std::cell::RefCell<std::collections::HashMap<EntryId, (u16, Range<usize>)>>,
+    inline_output_demands:
+        std::cell::RefCell<std::collections::HashMap<EntryId, (u16, Range<usize>)>>,
 
     // Sticky modes. Display mode applied to thinking blocks when they finish running. Defaults to `Collapsed`
     // (auto-collapse on finish). Toggled by `expand_all_thinking()` (Ctrl+E) between `Expanded` and `Collapsed`.
@@ -237,7 +238,8 @@ impl Default for ScrollbackState {
 
 impl ScrollbackState {
     pub(crate) fn bind_selection_source(&self, agent: usize, epoch: u32) {
-        self.selection_binding.set(super::selection_identity::SourceBinding::Session { agent, epoch });
+        self.selection_binding
+            .set(super::selection_identity::SourceBinding::Session { agent, epoch });
     }
 
     fn scoped_entry<'a>(&self, entry: &'a ScrollbackEntry) -> &'a ScrollbackEntry {
@@ -278,7 +280,9 @@ impl ScrollbackState {
             structural_scroll_anchor: None,
             inline_output_demands: Default::default(),
             pending_inline_anchor: None,
-            selection_binding: std::cell::Cell::new(super::selection_identity::SourceBinding::Detached),
+            selection_binding: std::cell::Cell::new(
+                super::selection_identity::SourceBinding::Detached,
+            ),
             thinking_display_mode: DisplayMode::Collapsed,
             tick: std::rc::Rc::new(std::cell::Cell::new(0)),
             appearance: AppearanceConfig::default(),
@@ -396,36 +400,82 @@ impl ScrollbackState {
         match &self.get_by_id(entry)?.block {
             RenderBlock::AgentMessage(block) => Some(block.source_len()),
             RenderBlock::Thinking(block) => Some(block.source_len()),
-            RenderBlock::Stub(_) | RenderBlock::UserPrompt(_) | RenderBlock::ToolCall(_) | RenderBlock::System(_)
-            | RenderBlock::SessionEvent(_) | RenderBlock::BgTask(_) | RenderBlock::Subagent(_) | RenderBlock::Workflow(_)
-            | RenderBlock::Btw(_) | RenderBlock::ContextInfo(_) | RenderBlock::MemoryCapture(_) | RenderBlock::Injected(_) => None,
+            RenderBlock::Stub(_)
+            | RenderBlock::UserPrompt(_)
+            | RenderBlock::ToolCall(_)
+            | RenderBlock::System(_)
+            | RenderBlock::SessionEvent(_)
+            | RenderBlock::BgTask(_)
+            | RenderBlock::Subagent(_)
+            | RenderBlock::Workflow(_)
+            | RenderBlock::Btw(_)
+            | RenderBlock::ContextInfo(_)
+            | RenderBlock::MemoryCapture(_)
+            | RenderBlock::Injected(_) => None,
         }
     }
 
-    pub(crate) fn merge_live_streams(&self, live: &mut ScrollbackState, replacements: &std::collections::HashMap<EntryId, Vec<EntryId>>, tails: &std::collections::HashMap<EntryId, usize>) {
+    pub(crate) fn merge_live_streams(
+        &self,
+        live: &mut ScrollbackState,
+        replacements: &std::collections::HashMap<EntryId, Vec<EntryId>>,
+        tails: &std::collections::HashMap<EntryId, usize>,
+    ) {
         for (history, current) in replacements {
-            let Some(historical) = self.get_by_id(*history) else { continue; };
+            let Some(historical) = self.get_by_id(*history) else {
+                continue;
+            };
             for current in current {
-                let Some(offset) = tails.get(current) else { continue; };
-                let Some(entry) = live.get_by_id_mut(*current) else { continue; };
-                let merged = match &mut entry.block {
-                    RenderBlock::AgentMessage(current) => if let RenderBlock::AgentMessage(historical) = &historical.block {
-                        current.merge_replayed_source(historical, *offset)
-                    } else { false },
-                    RenderBlock::Thinking(current) => if let RenderBlock::Thinking(historical) = &historical.block {
-                        current.merge_replayed_source(historical, *offset)
-                    } else { false },
-                    RenderBlock::Stub(_) | RenderBlock::UserPrompt(_) | RenderBlock::ToolCall(_) | RenderBlock::System(_)
-                    | RenderBlock::SessionEvent(_) | RenderBlock::BgTask(_) | RenderBlock::Subagent(_) | RenderBlock::Workflow(_)
-                    | RenderBlock::Btw(_) | RenderBlock::ContextInfo(_) | RenderBlock::MemoryCapture(_) | RenderBlock::Injected(_) => false,
+                let Some(offset) = tails.get(current) else {
+                    continue;
                 };
-                if merged { entry.invalidate_cache(); live.mark_structurally_dirty(*current); }
+                let Some(entry) = live.get_by_id_mut(*current) else {
+                    continue;
+                };
+                let merged = match &mut entry.block {
+                    RenderBlock::AgentMessage(current) => {
+                        if let RenderBlock::AgentMessage(historical) = &historical.block {
+                            current.merge_replayed_source(historical, *offset)
+                        } else {
+                            false
+                        }
+                    }
+                    RenderBlock::Thinking(current) => {
+                        if let RenderBlock::Thinking(historical) = &historical.block {
+                            current.merge_replayed_source(historical, *offset)
+                        } else {
+                            false
+                        }
+                    }
+                    RenderBlock::Stub(_)
+                    | RenderBlock::UserPrompt(_)
+                    | RenderBlock::ToolCall(_)
+                    | RenderBlock::System(_)
+                    | RenderBlock::SessionEvent(_)
+                    | RenderBlock::BgTask(_)
+                    | RenderBlock::Subagent(_)
+                    | RenderBlock::Workflow(_)
+                    | RenderBlock::Btw(_)
+                    | RenderBlock::ContextInfo(_)
+                    | RenderBlock::MemoryCapture(_)
+                    | RenderBlock::Injected(_) => false,
+                };
+                if merged {
+                    entry.invalidate_cache();
+                    live.mark_structurally_dirty(*current);
+                }
             }
         }
     }
 
     pub(crate) fn entry_ids_since(&self, floor: u64) -> Vec<EntryId> {
-        let mut entries: Vec<_> = self.entries.keys().rev().take_while(|id| id.value() >= floor).copied().collect();
+        let mut entries: Vec<_> = self
+            .entries
+            .keys()
+            .rev()
+            .take_while(|id| id.value() >= floor)
+            .copied()
+            .collect();
         entries.reverse();
         entries
     }
@@ -437,12 +487,25 @@ impl ScrollbackState {
         original_floor: u64,
         retained: HashSet<EntryId>,
     ) {
-        let background: std::collections::HashMap<_, _> = live.entries.iter().filter_map(|(id, entry)| if let RenderBlock::BgTask(task) = &entry.block {
-            Some(((task.task_id.clone(), std::mem::discriminant(&task.kind)), *id))
-        } else { None }).collect();
+        let background: std::collections::HashMap<_, _> = live
+            .entries
+            .iter()
+            .filter_map(|(id, entry)| {
+                if let RenderBlock::BgTask(task) = &entry.block {
+                    Some((
+                        (task.task_id.clone(), std::mem::discriminant(&task.kind)),
+                        *id,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
         for (id, entry) in &self.entries {
             if let RenderBlock::BgTask(task) = &entry.block
-                && let Some(current) = background.get(&(task.task_id.clone(), std::mem::discriminant(&task.kind))) {
+                && let Some(current) =
+                    background.get(&(task.task_id.clone(), std::mem::discriminant(&task.kind)))
+            {
                 replacements.entry(*id).or_default().push(*current);
             }
         }
@@ -455,13 +518,16 @@ impl ScrollbackState {
         for (id, historical) in std::mem::take(&mut self.entries) {
             if let Some(current) = replacements.get(&id) {
                 for current in current {
-                    if let Some(entry) = live.entries.shift_remove(current) { entries.insert(*current, entry); }
+                    if let Some(entry) = live.entries.shift_remove(current) {
+                        entries.insert(*current, entry);
+                    }
                 }
             } else {
                 entries.insert(id, historical);
             }
         }
-        live.entries.retain(|id, _| id.value() >= original_floor || retained.contains(id));
+        live.entries
+            .retain(|id, _| id.value() >= original_floor || retained.contains(id));
         entries.extend(std::mem::take(&mut live.entries));
         let floor = self.next_id.max(live.next_id);
         let generations = self.invalidation_generations();
@@ -469,7 +535,11 @@ impl ScrollbackState {
         let permission_opened = std::mem::take(&mut self.permission_opened);
         *self = live;
         self.entries = entries;
-        self.running = self.entries.iter().filter_map(|(id, entry)| entry.is_running.then_some(*id)).collect();
+        self.running = self
+            .entries
+            .iter()
+            .filter_map(|(id, entry)| entry.is_running.then_some(*id))
+            .collect();
         self.raise_invalidation_floor(generations);
         self.committed.extend(committed);
         self.permission_opened.extend(permission_opened);
@@ -535,7 +605,9 @@ impl ScrollbackState {
     }
 
     /// Current animation tick value (for spinner frame selection, etc.).
-    pub(crate) fn animation_clock(&self) -> std::rc::Rc<std::cell::Cell<u64>> { std::rc::Rc::clone(&self.tick) }
+    pub(crate) fn animation_clock(&self) -> std::rc::Rc<std::cell::Cell<u64>> {
+        std::rc::Rc::clone(&self.tick)
+    }
 
     pub fn animation_tick(&self) -> u64 {
         self.tick.get()
@@ -764,9 +836,11 @@ impl ScrollbackState {
         kind_default::resolve_mode(
             block,
             self.display_defaults.get(MessageKind::from(block)),
-            self.appearance.scrollback.blocks.edit.effective_expanded(
-                crate::appearance::cache::load_collapsed_edit_blocks(),
-            ),
+            self.appearance
+                .scrollback
+                .blocks
+                .edit
+                .effective_expanded(crate::appearance::cache::load_collapsed_edit_blocks()),
         )
     }
 
@@ -1044,13 +1118,18 @@ impl ScrollbackState {
 
     /// Get entry by index.
     pub fn get(&self, index: usize) -> Option<&ScrollbackEntry> {
-        self.entries.get_index(index).map(|(_, v)| self.scoped_entry(v))
+        self.entries
+            .get_index(index)
+            .map(|(_, v)| self.scoped_entry(v))
     }
 
     /// Get entry by index mutably.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut ScrollbackEntry> {
         let binding = self.selection_binding.get();
-        self.entries.get_index_mut(index).map(|(_, entry)| { entry.bind_selection_source(binding); entry })
+        self.entries.get_index_mut(index).map(|(_, entry)| {
+            entry.bind_selection_source(binding);
+            entry
+        })
     }
 
     /// Get the last entry.
@@ -1107,7 +1186,10 @@ impl ScrollbackState {
     /// Returns None if the entry doesn't exist (was removed or ID is invalid).
     pub fn get_by_id_mut(&mut self, id: EntryId) -> Option<&mut ScrollbackEntry> {
         let binding = self.selection_binding.get();
-        self.entries.get_mut(&id).map(|entry| { entry.bind_selection_source(binding); entry })
+        self.entries.get_mut(&id).map(|entry| {
+            entry.bind_selection_source(binding);
+            entry
+        })
     }
 
     /// Store an actual tool outcome; stopping an entry alone does not confirm completion.
@@ -1116,7 +1198,8 @@ impl ScrollbackState {
         id: EntryId,
         completion: super::types::ToolCompletion,
     ) -> bool {
-        let changed = self.get_by_id_mut(id)
+        let changed = self
+            .get_by_id_mut(id)
             .is_some_and(|entry| entry.set_tool_completion(completion));
         if changed {
             self.dirty_heights.insert(id);
@@ -1138,7 +1221,10 @@ impl ScrollbackState {
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
         // Resolved before the mutable borrow: the mode the NEW block's kind resolves to.
         let resolved_mode = self.resolve_kind_mode(&block);
-        let has_kind_setting = self.display_defaults.get(MessageKind::from(&block)).is_some();
+        let has_kind_setting = self
+            .display_defaults
+            .get(MessageKind::from(&block))
+            .is_some();
         let Some(entry) = self.entries.get_mut(&entry_id) else {
             return false;
         };
@@ -1164,7 +1250,10 @@ impl ScrollbackState {
         };
         entry.block = block;
         if is_same_kind {
-            if untrusted_rising && !has_kind_setting && !(respect_manual_folds && entry.display_mode_pinned) {
+            if untrusted_rising
+                && !has_kind_setting
+                && !(respect_manual_folds && entry.display_mode_pinned)
+            {
                 entry.display_mode = DisplayMode::Expanded;
             }
         } else if respect_manual_folds && entry.display_mode_pinned {
@@ -1457,7 +1546,9 @@ impl ScrollbackState {
 
     /// Get an entry by index (immutable).
     pub fn entry(&self, index: usize) -> Option<&ScrollbackEntry> {
-        self.entries.get_index(index).map(|(_, v)| self.scoped_entry(v))
+        self.entries
+            .get_index(index)
+            .map(|(_, v)| self.scoped_entry(v))
     }
 
     /// Iterate over all entries mutably.

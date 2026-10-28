@@ -42,10 +42,20 @@ impl Payload<'_> {
     }
 }
 
-fn decode_payload(method: UpdateMethod, payload: Payload<'_>) -> Result<SessionUpdate, serde_json::Error> {
+fn decode_payload(
+    method: UpdateMethod,
+    payload: Payload<'_>,
+) -> Result<SessionUpdate, serde_json::Error> {
     match method {
-        UpdateMethod::Xai => payload.decode::<SessionNotification>().map(|notification| SessionUpdate::Xai(Box::new(notification))),
-        UpdateMethod::Legacy | UpdateMethod::Acp | UpdateMethod::Unknown | UpdateMethod::Invalid => payload.decode::<agent_client_protocol::SessionNotification>().map(|notification| SessionUpdate::Acp(Box::new(notification))),
+        UpdateMethod::Xai => payload
+            .decode::<SessionNotification>()
+            .map(|notification| SessionUpdate::Xai(Box::new(notification))),
+        UpdateMethod::Legacy
+        | UpdateMethod::Acp
+        | UpdateMethod::Unknown
+        | UpdateMethod::Invalid => payload
+            .decode::<agent_client_protocol::SessionNotification>()
+            .map(|notification| SessionUpdate::Acp(Box::new(notification))),
     }
 }
 
@@ -58,8 +68,13 @@ pub(super) fn decode_value(value: serde_json::Value) -> Result<SessionUpdate, se
     }
 }
 
-pub(super) fn decode_envelope(envelope: super::SessionUpdateEnvelope) -> Result<SessionUpdate, serde_json::Error> {
-    decode_payload(UpdateMethod::classify(Some(&envelope.method)), Payload::Value(envelope.params))
+pub(super) fn decode_envelope(
+    envelope: super::SessionUpdateEnvelope,
+) -> Result<SessionUpdate, serde_json::Error> {
+    decode_payload(
+        UpdateMethod::classify(Some(&envelope.method)),
+        Payload::Value(envelope.params),
+    )
 }
 
 pub fn decode_update(line: &str) -> Result<DecodedUpdate, serde_json::Error> {
@@ -70,7 +85,9 @@ pub(super) fn decode_for_load(line: &str) -> Result<SessionUpdate, serde_json::E
     decode_line::<false>(line).map(|decoded| decoded.update)
 }
 
-fn present_raw<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<&'de serde_json::value::RawValue>, D::Error> {
+fn present_raw<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<&'de serde_json::value::RawValue>, D::Error> {
     <&serde_json::value::RawValue as serde::Deserialize>::deserialize(deserializer).map(Some)
 }
 
@@ -97,17 +114,29 @@ fn decode_line<const REPORT: bool>(line: &str) -> Result<DecodedUpdate, serde_js
                     let method = if params.is_none() {
                         match method {
                             UpdateMethod::Acp | UpdateMethod::Xai => UpdateMethod::Invalid,
-                            UpdateMethod::Legacy | UpdateMethod::Unknown | UpdateMethod::Invalid => method,
+                            UpdateMethod::Legacy
+                            | UpdateMethod::Unknown
+                            | UpdateMethod::Invalid => method,
                         }
-                    } else { method };
+                    } else {
+                        method
+                    };
                     (method, params.unwrap_or(line))
                 }
                 Ok(None) => (UpdateMethod::Invalid, params.unwrap_or(line)),
                 Err(_) => (UpdateMethod::Invalid, line),
             },
         };
-        let timestamp_valid = !REPORT || (envelope.method.is_none() && params.is_none()) || envelope.timestamp.is_none_or(|raw| serde_json::from_str::<u64>(raw.get()).is_ok());
-        return Ok(DecodedUpdate { update: decode_payload(method, Payload::Raw(payload))?, method, timestamp_valid });
+        let timestamp_valid = !REPORT
+            || (envelope.method.is_none() && params.is_none())
+            || envelope
+                .timestamp
+                .is_none_or(|raw| serde_json::from_str::<u64>(raw.get()).is_ok());
+        return Ok(DecodedUpdate {
+            update: decode_payload(method, Payload::Raw(payload))?,
+            method,
+            timestamp_valid,
+        });
     }
     Ok(DecodedUpdate {
         update: decode_payload(UpdateMethod::Legacy, Payload::Raw(line))?,

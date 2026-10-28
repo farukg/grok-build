@@ -189,7 +189,9 @@ fn protocol_outcome_from_completion(
     recovery_ref: &super::super::native_recovery::MessageRecoveryRef,
 ) -> ActiveAgentMessageOutcome {
     if !is_settled {
-        return ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() };
+        return ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: recovery_ref.clone(),
+        };
     }
     match outcome {
         ActiveMessageCompletionOutcome::Admission(ActiveMessageAdmission::Admitted) => {
@@ -222,10 +224,17 @@ fn lost_completion_outcome(
 ) -> ActiveAgentMessageOutcome {
     match outcome {
         ActiveMessageCompletionOutcome::Admission(ActiveMessageAdmission::Admitted) => {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() }
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: recovery_ref.clone(),
+            }
         }
-        ActiveMessageCompletionOutcome::Admission(ActiveMessageAdmission::Unsupported | ActiveMessageAdmission::ChannelClosed | ActiveMessageAdmission::Rejected)
-        | ActiveMessageCompletionOutcome::Cancelled | ActiveMessageCompletionOutcome::DeadlineElapsed => {
+        ActiveMessageCompletionOutcome::Admission(
+            ActiveMessageAdmission::Unsupported
+            | ActiveMessageAdmission::ChannelClosed
+            | ActiveMessageAdmission::Rejected,
+        )
+        | ActiveMessageCompletionOutcome::Cancelled
+        | ActiveMessageCompletionOutcome::DeadlineElapsed => {
             protocol_outcome_from_completion(outcome, is_settled, recovery_ref)
         }
     }
@@ -234,7 +243,11 @@ fn lost_completion_outcome(
 impl Drop for ActiveMessageCompletion {
     fn drop(&mut self) {
         if let Some(respond_to) = self.respond_to.take() {
-            let _ = respond_to.send(lost_completion_outcome(self.outcome, self.is_settled, &self.recovery_ref));
+            let _ = respond_to.send(lost_completion_outcome(
+                self.outcome,
+                self.is_settled,
+                &self.recovery_ref,
+            ));
         }
     }
 }
@@ -303,7 +316,9 @@ impl Drop for ActiveMessageFuture {
         let outcome = if self.lease.revoke() {
             ActiveAgentMessageOutcome::ChannelClosed
         } else {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: self.recovery_ref.clone() }
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: self.recovery_ref.clone(),
+            }
         };
         if let Some(respond_to) = self.respond_to.take() {
             let _ = respond_to.send(outcome);
@@ -392,15 +407,23 @@ impl SpawnReadyMessages {
     }
 
     pub(super) fn deadlines(&self) -> impl Iterator<Item = tokio::time::Instant> + '_ {
-        self.parked.iter().filter_map(|parked| parked.input.deadline())
+        self.parked
+            .iter()
+            .filter_map(|parked| parked.input.deadline())
     }
 
     pub(super) fn push(&mut self, parked: ParkedSpawnReadyMessage) {
         self.parked.push(parked);
     }
 
-    pub(super) fn initial_admission_reserved(&self, subagent_id: &str, control: &impl ChildControl) -> bool {
-        let mut initial = self.parked.iter()
+    pub(super) fn initial_admission_reserved(
+        &self,
+        subagent_id: &str,
+        control: &impl ChildControl,
+    ) -> bool {
+        let mut initial = self
+            .parked
+            .iter()
             .filter(|parked| parked.subagent_id == subagent_id)
             .filter_map(|parked| parked.input.initial_delivery());
         matches!(initial.next(), Some(delivery) if delivery.admission_is_committed() && control.has_initial_message_reservation(delivery))
@@ -429,7 +452,13 @@ impl SpawnReadyMessages {
             if parked.acknowledge_initial() {
                 continue;
             }
-            let Some(SpawnReadyRequest { route, request, permit, quota_admission }) = parked.into_request() else {
+            let Some(SpawnReadyRequest {
+                route,
+                request,
+                permit,
+                quota_admission,
+            }) = parked.into_request()
+            else {
                 continue;
             };
             let Some(permit) = permit.or_else(|| self.try_acquire().ok()) else {
@@ -466,9 +495,15 @@ impl SpawnReadyMessages {
     }
 
     pub(super) fn expire(&mut self, now: tokio::time::Instant) {
-        let (due, live): (Vec<_>, Vec<_>) = std::mem::take(&mut self.parked)
-            .into_iter()
-            .partition(|parked| parked.input.deadline().is_some_and(|deadline| deadline <= now));
+        let (due, live): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.parked)
+                .into_iter()
+                .partition(|parked| {
+                    parked
+                        .input
+                        .deadline()
+                        .is_some_and(|deadline| deadline <= now)
+                });
         self.parked = live;
         for parked in due {
             parked.reply(ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline);
@@ -525,9 +560,7 @@ impl ParkedSpawnReadyMessage {
 
     fn failure_outcome(&self, outcome: ActiveAgentMessageOutcome) -> ActiveAgentMessageOutcome {
         match self.input.initial_delivery() {
-            Some(delivery) if !delivery.revoke_admission() => {
-                delivery.uncertain_outcome()
-            }
+            Some(delivery) if !delivery.revoke_admission() => delivery.uncertain_outcome(),
             Some(_) | None => outcome,
         }
     }
@@ -1004,7 +1037,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             let _ = respond_to.send(ActiveAgentMessageOutcome::NotFoundOrNotOwned);
             return;
         }
-        if child.request.owner.is_workflow() || child.cancellation.is_cancelled()
+        if child.request.owner.is_workflow()
+            || child.cancellation.is_cancelled()
             || child.active_messages.is_finalizing()
         {
             let _ = respond_to.send(refused_active_outcome(source));
@@ -1020,7 +1054,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 route,
                 quota_admission,
                 ActiveMessageIngress {
-                    request: SubagentActiveMessageRequest { request, sender_context, respond_to },
+                    request: SubagentActiveMessageRequest {
+                        request,
+                        sender_context,
+                        respond_to,
+                    },
                     permit,
                 },
             );
@@ -1047,10 +1085,16 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 message_id: message_id.clone(),
                 sender_session_id: Self::message_sender_session(&sender_context).to_owned(),
                 text: request.text().clone(),
-            }, request.operation(), source, route, Arc::clone(&lease),
+            },
+            request.operation(),
+            source,
+            route,
+            Arc::clone(&lease),
         );
         delivery.bind_receiver(&child.child_session_id, child.generation);
-        let Some(recovery_ref) = delivery.recovery_ref() else { return; };
+        let Some(recovery_ref) = delivery.recovery_ref() else {
+            return;
+        };
         let admission = child.control.send_active_message(delivery);
         self.active_messages.push(ActiveMessageFuture {
             target: ActiveMessageCompletionTarget::Child(canonical_subagent_id, child.generation),
@@ -1099,7 +1143,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         super::super::coordinator_state::TerminalOutput::Finishing(output) => {
                             self.finish_terminalized_child(subagent_id, output, is_clean)
                         }
-                        output @ super::super::coordinator_state::TerminalOutput::Committing { .. } => {
+                        output @ super::super::coordinator_state::TerminalOutput::Committing {
+                            ..
+                        } => {
                             self.terminal_outputs.insert(subagent_id.to_owned(), output);
                         }
                         output @ super::super::coordinator_state::TerminalOutput::Publishing {

@@ -4,9 +4,9 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::coordinator::{
-    ActiveMessageAdmission, ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest,
-    ChildRunner, SendBoxFuture, StartedChild, SubagentCoordinator, SubagentCoordinatorReceiver,
-    SubagentProgress, ChildCancellation, ChildCancelOutcome,
+    ActiveMessageAdmission, ChildCancelOutcome, ChildCancellation, ChildCompletion, ChildControl,
+    ChildRunOutput, ChildRunRequest, ChildRunner, SendBoxFuture, StartedChild, SubagentCoordinator,
+    SubagentCoordinatorReceiver, SubagentProgress,
 };
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageDelivery, ActiveAgentMessageOutcome, ActiveMessageRoute, AgentMessageSender,
@@ -573,7 +573,11 @@ async fn tool_handoff_preserves_closed_live_and_absent_route_semantics() {
             let child_id = child_id.clone();
             async move {
                 backend
-                    .spawn(request(&child_id, "trusted-parent", SubagentOwner::Task), None, None)
+                    .spawn(
+                        request(&child_id, "trusted-parent", SubagentOwner::Task),
+                        None,
+                        None,
+                    )
                     .await
             }
         });
@@ -586,7 +590,9 @@ async fn tool_handoff_preserves_closed_live_and_absent_route_semantics() {
         .await;
         match sink {
             Sink::Closed => {
-                assert!(matches!(output, SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: AdmissionCorrelation::Known(recovery_ref) } if recovery_ref.receiver.session_id == child_id));
+                assert!(
+                    matches!(output, SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: AdmissionCorrelation::Known(recovery_ref) } if recovery_ref.receiver.session_id == child_id)
+                );
                 assert!(route_rx.try_recv().is_err());
             }
             Sink::Live => {
@@ -800,7 +806,9 @@ fn disposition_classification_is_closed() {
             Disposition::Rejected,
         ),
         (
-            SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: reference_fixture().into() },
+            SendSubagentMessageOutput::AdmissionUncertain {
+                recovery_ref: reference_fixture().into(),
+            },
             Disposition::Unconfirmed,
         ),
         (
@@ -814,9 +822,11 @@ fn disposition_classification_is_closed() {
 
 #[test]
 fn uncertain_display_string_does_not_claim_failure_or_success() {
-    let display = SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: reference_fixture().into() }
-        .to_string()
-        .to_ascii_lowercase();
+    let display = SendSubagentMessageOutput::AdmissionUncertain {
+        recovery_ref: reference_fixture().into(),
+    }
+    .to_string()
+    .to_ascii_lowercase();
     assert!(display.contains("could not be confirmed"));
     assert!(display.contains("may or may not have been accepted"));
     assert!(!display.contains("failed"));
@@ -851,25 +861,59 @@ async fn closed_coordinator_ingress_maps_to_channel_closed() {
     );
 }
 
-
 #[test]
 fn uncertain_output_retains_the_exact_observable_wire_reference() {
     let reference = reference_fixture();
-    let output = SendSubagentMessageOutput::from(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference.clone() });
+    let output = SendSubagentMessageOutput::from(ActiveAgentMessageOutcome::AdmissionUncertain {
+        recovery_ref: reference.clone(),
+    });
     let wire = serde_json::to_value(&output).unwrap();
-    assert_eq!(wire["recoveryRef"], serde_json::to_value(&reference).unwrap());
-    assert_eq!(serde_json::from_value::<SendSubagentMessageOutput>(wire).unwrap(), output);
-    assert!(output.to_string().contains(&serde_json::to_string(&reference).unwrap()));
+    assert_eq!(
+        wire["recoveryRef"],
+        serde_json::to_value(&reference).unwrap()
+    );
+    assert_eq!(
+        serde_json::from_value::<SendSubagentMessageOutput>(wire).unwrap(),
+        output
+    );
+    assert!(
+        output
+            .to_string()
+            .contains(&serde_json::to_string(&reference).unwrap())
+    );
     assert!(!output.to_string().to_lowercase().contains("resend"));
 }
 
 #[test]
 fn stored_uncorrelated_history_remains_unconfirmed_without_inventing_a_reference() {
-    let output: SendSubagentMessageOutput = serde_json::from_value(serde_json::json!({"outcome":"admission_uncertain"})).unwrap();
-    assert!(matches!(&output, SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: AdmissionCorrelation::HistoricalUnavailable }));
-    assert_eq!(output.disposition(), SendSubagentMessageDisposition::Unconfirmed);
-    assert!(output.to_string().contains("no recovery reference was recorded"));
+    let output: SendSubagentMessageOutput =
+        serde_json::from_value(serde_json::json!({"outcome":"admission_uncertain"})).unwrap();
+    assert!(matches!(
+        &output,
+        SendSubagentMessageOutput::AdmissionUncertain {
+            recovery_ref: AdmissionCorrelation::HistoricalUnavailable
+        }
+    ));
+    assert_eq!(
+        output.disposition(),
+        SendSubagentMessageDisposition::Unconfirmed
+    );
+    assert!(
+        output
+            .to_string()
+            .contains("no recovery reference was recorded")
+    );
     assert!(!output.to_string().to_lowercase().contains("resend"));
-    assert!(serde_json::to_value(output).unwrap().get("recoveryRef").is_none());
-    assert!(serde_json::from_value::<SendSubagentMessageOutput>(serde_json::json!({"outcome":"admission_uncertain","recoveryRef":null})).is_err());
+    assert!(
+        serde_json::to_value(output)
+            .unwrap()
+            .get("recoveryRef")
+            .is_none()
+    );
+    assert!(
+        serde_json::from_value::<SendSubagentMessageOutput>(
+            serde_json::json!({"outcome":"admission_uncertain","recoveryRef":null})
+        )
+        .is_err()
+    );
 }

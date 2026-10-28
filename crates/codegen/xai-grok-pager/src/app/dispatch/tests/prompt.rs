@@ -4781,10 +4781,17 @@ fn queue_interject_shared_stays_pending_while_running() {
     let id = AgentId(0);
     dispatch(Action::SendPrompt("first".into()), &mut app);
     app.agents.get_mut(&id).unwrap().front_message_committed = true;
-    app.agents.get_mut(&id).unwrap().shared_queue = vec![crate::app::prompt_queue::QueueEntryWire {
-        id: "srv-row-1".into(), version: 1, owner: None, last_editor: None,
-        kind: "prompt".into(), text: "held".into(), position: 0, combined_texts: None,
-    }];
+    app.agents.get_mut(&id).unwrap().shared_queue =
+        vec![crate::app::prompt_queue::QueueEntryWire {
+            id: "srv-row-1".into(),
+            version: 1,
+            owner: None,
+            last_editor: None,
+            kind: "prompt".into(),
+            text: "held".into(),
+            position: 0,
+            combined_texts: None,
+        }];
 
     let effects = dispatch(
         Action::QueueInterjectShared {
@@ -4800,7 +4807,11 @@ fn queue_interject_shared_stays_pending_while_running() {
     ));
     assert!(agent_ref(&app, id).expect_send_now_cancel.is_none());
     assert_eq!(agent_ref(&app, id).shared_queue[0].id, "srv-row-1");
-    assert!(agent_ref(&app, id).queue_operations.contains_key("srv-row-1"));
+    assert!(
+        agent_ref(&app, id)
+            .queue_operations
+            .contains_key("srv-row-1")
+    );
 }
 
 /// During an active goal the shell promotes a send-now WITHOUT cancelling.
@@ -4831,10 +4842,17 @@ fn send_now_during_active_goal_does_not_arm_expectation() {
     );
     assert_eq!(agent_ref(&app, id).send_now_painted_blocks.len(), 1);
 
-    app.agents.get_mut(&id).unwrap().shared_queue = vec![crate::app::prompt_queue::QueueEntryWire {
-        id: "srv-row-goal".into(), version: 1, owner: None, last_editor: None,
-        kind: "prompt".into(), text: "goal queued steer".into(), position: 0, combined_texts: None,
-    }];
+    app.agents.get_mut(&id).unwrap().shared_queue =
+        vec![crate::app::prompt_queue::QueueEntryWire {
+            id: "srv-row-goal".into(),
+            version: 1,
+            owner: None,
+            last_editor: None,
+            kind: "prompt".into(),
+            text: "goal queued steer".into(),
+            position: 0,
+            combined_texts: None,
+        }];
     let effects = dispatch(
         Action::QueueInterjectShared {
             id: "srv-row-goal".into(),

@@ -888,13 +888,16 @@ async fn family_switch_compacts_lossy_with_new_model() {
             actor.chat_state_handle.replace_conversation(vec![
                 ConversationItem::system("sys"),
                 ConversationItem::user("hello"),
-                ConversationItem::Reasoning(xai_grok_sampling_types::rs::ReasoningItem {
-                    id: "tco_res-uuid_call-uuid-0".to_string(),
-                    summary: vec![],
-                    content: None,
-                    encrypted_content: Some("tco_SEALEDCIPHERTEXT".to_string()),
-                    status: None,
-                }.into()),
+                ConversationItem::Reasoning(
+                    xai_grok_sampling_types::rs::ReasoningItem {
+                        id: "tco_res-uuid_call-uuid-0".to_string(),
+                        summary: vec![],
+                        content: None,
+                        encrypted_content: Some("tco_SEALEDCIPHERTEXT".to_string()),
+                        status: None,
+                    }
+                    .into(),
+                ),
                 ConversationItem::assistant_tool_calls(vec![xai_grok_sampling_types::ToolCall {
                     id: std::sync::Arc::<str>::from("call_xai_minted_id"),
                     name: "run_terminal_command".to_string(),

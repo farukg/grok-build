@@ -14,7 +14,10 @@ pub use super::handle::{PerCallNotificationSink, ToolNotificationHandle};
 #[derive(Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BashNotificationBase {
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub start_time: Option<std::time::SystemTime>,
     /// The tool call ID (used to correlate with the tool call in TUI)
     pub tool_call_id: String,

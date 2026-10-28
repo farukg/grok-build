@@ -120,7 +120,9 @@ where
         ev.emit(Event::GoalRoleModelFailOpen {
             role: role.into(),
             skeptic_idx,
-            reason: GoalRoleModelFailOpenReason::SpawnFailed.as_const_str().into(),
+            reason: GoalRoleModelFailOpenReason::SpawnFailed
+                .as_const_str()
+                .into(),
         });
     }
     // Retry on the session harness, using the matching `fallback` render so the prompt names the toolset the retry actually runs on

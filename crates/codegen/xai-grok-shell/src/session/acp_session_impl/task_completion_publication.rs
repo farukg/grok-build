@@ -5,7 +5,12 @@ impl SessionActor {
         &self,
         batch: crate::session::commands::TaskCompletionBatch,
     ) {
-        let crate::session::commands::TaskCompletionBatch { prompt_id, automatic, admissions, respond_to } = batch;
+        let crate::session::commands::TaskCompletionBatch {
+            prompt_id,
+            automatic,
+            admissions,
+            respond_to,
+        } = batch;
         let persisted = match self.persisted_completion_state().await {
             Ok(persisted) => persisted,
             Err(error) => {
@@ -13,8 +18,13 @@ impl SessionActor {
                 let mut state = self.state.lock().await;
                 for admission in admissions {
                     let task_id = admission.fallback.source.task_id();
-                    if state.pending_notifications.iter().any(|row| row.source.task_id() == task_id) {
-                        if let Some(reservations) = &self.tool_context.task_completion_reservations {
+                    if state
+                        .pending_notifications
+                        .iter()
+                        .any(|row| row.source.task_id() == task_id)
+                    {
+                        if let Some(reservations) = &self.tool_context.task_completion_reservations
+                        {
                             reservations.release(task_id);
                         }
                     } else {
@@ -37,17 +47,29 @@ impl SessionActor {
             };
             let ids = self.notification_completion_ids(std::slice::from_ref(&notification));
             let consumed = ids.iter().any(|id| {
-                persisted.receipts.iter().any(|receipt| &receipt.completion == id)
-                    || persisted.obligations.iter().any(|obligation| matches!(obligation,
-                        CompletionObligation::Suppressed { id: suppressed, .. } if suppressed == id))
+                persisted
+                    .receipts
+                    .iter()
+                    .any(|receipt| &receipt.completion == id)
+                    || persisted.obligations.iter().any(|obligation| {
+                        matches!(obligation,
+                        CompletionObligation::Suppressed { id: suppressed, .. } if suppressed == id)
+                    })
             });
             let task_id = admission.fallback.source.task_id().to_owned();
             let duplicate = {
                 let state = self.state.lock().await;
-                state.pending_notifications.iter().any(|row| row.source.task_id() == task_id)
+                state
+                    .pending_notifications
+                    .iter()
+                    .any(|row| row.source.task_id() == task_id)
                     || state.pending_inputs.iter().any(|input| {
                         input.input_origin.completion_id() == Some(task_id.as_str())
-                            || input.input_origin.completions().iter().any(|id| ids.contains(id))
+                            || input
+                                .input_origin
+                                .completions()
+                                .iter()
+                                .any(|id| ids.contains(id))
                     })
                     || !seen.insert(task_id.clone())
             };

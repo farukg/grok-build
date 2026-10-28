@@ -511,8 +511,14 @@ fn replay_inherited_updates(
                 // (family-switch compact) or defer compact outcomes to a turn that never comes.
                 let was_loading = child_view.session.loading_replay;
                 child_view.session.loading_replay = true;
-                if crate::app::acp_handler::admit_compact_lifecycle(child_view, &update, meta.as_ref()) {
-                    crate::app::acp_handler::apply_child_view_session_event(child_view, &update, false);
+                if crate::app::acp_handler::admit_compact_lifecycle(
+                    child_view,
+                    &update,
+                    meta.as_ref(),
+                ) {
+                    crate::app::acp_handler::apply_child_view_session_event(
+                        child_view, &update, false,
+                    );
                 }
                 child_view.session.loading_replay = was_loading;
             }

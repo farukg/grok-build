@@ -1,15 +1,22 @@
 mod previous_completion;
+use super::types::{
+    ActiveAgentMessageOperation, ActiveAgentMessageSource, ActiveMessageReceiver,
+    ActiveMessageRoute, SubagentRequest, SubagentRuntimeOverrides,
+};
 pub use previous_completion::PreviousCompletion;
 use serde::{Deserialize, Serialize};
-use super::types::{ActiveAgentMessageOperation, ActiveAgentMessageSource, ActiveMessageReceiver, ActiveMessageRoute, SubagentRequest, SubagentRuntimeOverrides};
 
 pub fn payload_digest(payload: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
-pub fn parent_message_prompt_id(message_id: &str) -> String { format!("parent-message-{message_id}") }
-pub fn parent_message_delivery_id(message_id: &str) -> String { format!("parent-message/{message_id}") }
+pub fn parent_message_prompt_id(message_id: &str) -> String {
+    format!("parent-message-{message_id}")
+}
+pub fn parent_message_delivery_id(message_id: &str) -> String {
+    format!("parent-message/{message_id}")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -35,36 +42,68 @@ impl std::fmt::Display for MessageRecoveryRef {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ArtifactCapabilityRef {
     Disabled,
-    Direct { bucket_url: String, principal: ArtifactDirectPrincipal },
-    Proxy { destination: ArtifactProxyDestination, endpoint_binding: String, principal: ArtifactProxyPrincipal },
-    S3 { bucket_url: String, bucket: String, region: String, endpoint_binding: Option<String>, principal: ArtifactS3Principal },
+    Direct {
+        bucket_url: String,
+        principal: ArtifactDirectPrincipal,
+    },
+    Proxy {
+        destination: ArtifactProxyDestination,
+        endpoint_binding: String,
+        principal: ArtifactProxyPrincipal,
+    },
+    S3 {
+        bucket_url: String,
+        bucket: String,
+        region: String,
+        endpoint_binding: Option<String>,
+        principal: ArtifactS3Principal,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ArtifactDirectPrincipal {
     Unavailable,
-    ServiceAccount { client_email: String, project_id: Option<String>, token_audience_binding: String },
+    ServiceAccount {
+        client_email: String,
+        project_id: Option<String>,
+        token_audience_binding: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ArtifactS3Principal { Unavailable, CredentialFile { binding: String } }
+pub enum ArtifactS3Principal {
+    Unavailable,
+    CredentialFile { binding: String },
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ArtifactProxyDestination { Managed, Bucket { url: String } }
+pub enum ArtifactProxyDestination {
+    Managed,
+    Bucket { url: String },
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ArtifactProxyPrincipal {
     Unavailable,
-    Login { user_id: String, principal_id: Option<String>, team_id: Option<String>, organization_id: Option<String>, scope: ArtifactProxyScope },
+    Login {
+        user_id: String,
+        principal_id: Option<String>,
+        team_id: Option<String>,
+        organization_id: Option<String>,
+        scope: ArtifactProxyScope,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ArtifactProxyScope { Standard, Staging }
+pub enum ArtifactProxyScope {
+    Standard,
+    Staging,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeWakeLaunch {
@@ -97,13 +136,22 @@ pub struct NativeWakeLaunch {
 impl NativeWakeLaunch {
     pub fn request(&self, reference: &MessageRecoveryRef, text: String) -> SubagentRequest {
         SubagentRequest {
-            id: reference.receiver.session_id.clone(), prompt: text,
-            description: self.description.clone(), subagent_type: self.subagent_type.clone(),
-            parent_session_id: self.parent_session_id.clone(), parent_prompt_id: None,
-            resume_from: None, cwd: Some(self.cwd.clone()), runtime_overrides: self.runtime_overrides.clone(),
-            run_in_background: true, surface_completion: self.surface_completion,
-            await_to_completion: false, fork_context: false, owner: super::types::SubagentOwner::Task,
-            cancel_token: tokio_util::sync::CancellationToken::new(), spawn_root: super::types::SpawnRootSpan::from_traceparent(self.traceparent.clone()),
+            id: reference.receiver.session_id.clone(),
+            prompt: text,
+            description: self.description.clone(),
+            subagent_type: self.subagent_type.clone(),
+            parent_session_id: self.parent_session_id.clone(),
+            parent_prompt_id: None,
+            resume_from: None,
+            cwd: Some(self.cwd.clone()),
+            runtime_overrides: self.runtime_overrides.clone(),
+            run_in_background: true,
+            surface_completion: self.surface_completion,
+            await_to_completion: false,
+            fork_context: false,
+            owner: super::types::SubagentOwner::Task,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            spawn_root: super::types::SpawnRootSpan::from_traceparent(self.traceparent.clone()),
             tool_call_id: self.tool_call_id.clone(),
         }
     }
@@ -119,7 +167,10 @@ pub struct NativeWakeCustody {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum MessageRecoveryAction { Observe, Adopt }
+pub enum MessageRecoveryAction {
+    Observe,
+    Adopt,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -134,30 +185,58 @@ pub enum MessageRecoveryState {
 
 #[derive(Clone, Debug)]
 pub enum PreparedMessageRecovery {
-    Observed { reference: MessageRecoveryRef, state: MessageRecoveryState },
-    Initial { custody: Box<NativeWakeCustody>, message: super::types::ActiveAgentMessage, source: ActiveAgentMessageSource, publication: RecoveryPublication },
-    Unavailable { reference: MessageRecoveryRef },
+    Observed {
+        reference: MessageRecoveryRef,
+        state: MessageRecoveryState,
+    },
+    Initial {
+        custody: Box<NativeWakeCustody>,
+        message: super::types::ActiveAgentMessage,
+        source: ActiveAgentMessageSource,
+        publication: RecoveryPublication,
+    },
+    Unavailable {
+        reference: MessageRecoveryRef,
+    },
     Refused,
 }
 
 #[derive(Clone, Debug)]
-pub struct MessageRecoveryAudience { parent_session_id: String, actor: RecoveryActor }
+pub struct MessageRecoveryAudience {
+    parent_session_id: String,
+    actor: RecoveryActor,
+}
 
 #[derive(Clone, Debug)]
-enum RecoveryActor { Parent, Sender { session_id: String } }
+enum RecoveryActor {
+    Parent,
+    Sender { session_id: String },
+}
 
 impl MessageRecoveryAudience {
     pub(crate) fn parent(parent: &str) -> Self {
-        Self { parent_session_id: parent.to_owned(), actor: RecoveryActor::Parent }
+        Self {
+            parent_session_id: parent.to_owned(),
+            actor: RecoveryActor::Parent,
+        }
     }
     pub(crate) fn sender(parent: &str, sender: &str) -> Self {
-        Self { parent_session_id: parent.to_owned(), actor: RecoveryActor::Sender { session_id: sender.to_owned() } }
+        Self {
+            parent_session_id: parent.to_owned(),
+            actor: RecoveryActor::Sender {
+                session_id: sender.to_owned(),
+            },
+        }
     }
-    pub fn parent_session_id(&self) -> &str { &self.parent_session_id }
+    pub fn parent_session_id(&self) -> &str {
+        &self.parent_session_id
+    }
     pub fn permits_sender(&self, original_sender: &str, source: ActiveAgentMessageSource) -> bool {
         match &self.actor {
             RecoveryActor::Parent => true,
-            RecoveryActor::Sender { session_id } => session_id == original_sender && source == ActiveAgentMessageSource::Agent,
+            RecoveryActor::Sender { session_id } => {
+                session_id == original_sender && source == ActiveAgentMessageSource::Agent
+            }
         }
     }
 }
@@ -174,46 +253,77 @@ pub struct SubagentMessageRecoveryRequest {
 pub(crate) async fn dispatch_recovery(
     tx: &tokio::sync::mpsc::UnboundedSender<super::types::SubagentEvent>,
     permit: tokio::sync::OwnedSemaphorePermit,
-    reference: MessageRecoveryRef, action: MessageRecoveryAction,
+    reference: MessageRecoveryRef,
+    action: MessageRecoveryAction,
     sender_context: super::types::ActiveMessageSenderContext,
 ) -> super::types::ActiveAgentMessageOutcome {
     use super::types::{ActiveAgentMessageOutcome, SubagentEvent};
     let (respond_to, response) = tokio::sync::oneshot::channel();
-    let command = SubagentMessageRecoveryRequest { permit: Some(permit), reference: reference.clone(), action, sender_context, respond_to };
+    let command = SubagentMessageRecoveryRequest {
+        permit: Some(permit),
+        reference: reference.clone(),
+        action,
+        sender_context,
+        respond_to,
+    };
     if tx.send(SubagentEvent::RecoverMessage(command)).is_err() {
-        return ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference };
+        return ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: reference,
+        };
     }
-    response.await.unwrap_or(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference })
+    response
+        .await
+        .unwrap_or(ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: reference,
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InitialPublication { Unpublished, Published }
+pub enum InitialPublication {
+    Unpublished,
+    Published,
+}
 
 #[derive(Clone, Debug)]
-pub enum RecoveryPublication { Unpublished { previous_prompt: String }, Published }
+pub enum RecoveryPublication {
+    Unpublished { previous_prompt: String },
+    Published,
+}
 
 impl RecoveryPublication {
     pub fn kind(&self) -> InitialPublication {
-        match self { Self::Unpublished { .. } => InitialPublication::Unpublished, Self::Published => InitialPublication::Published }
+        match self {
+            Self::Unpublished { .. } => InitialPublication::Unpublished,
+            Self::Published => InitialPublication::Published,
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum NativeWakeMode {
     Admit,
-    Adopt { custody: Box<NativeWakeCustody>, attempt_id: xai_message_delivery_core::AttemptId, publication: RecoveryPublication },
+    Adopt {
+        custody: Box<NativeWakeCustody>,
+        attempt_id: xai_message_delivery_core::AttemptId,
+        publication: RecoveryPublication,
+    },
 }
 
 #[cfg(test)]
-pub(crate) fn wire_reference_fixture() -> crate::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
+pub(crate) fn wire_reference_fixture()
+-> crate::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
     crate::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
-        delivery_id: "parent-message/message".into(), message_id: "message".into(),
+        delivery_id: "parent-message/message".into(),
+        message_id: "message".into(),
         prompt_id: "parent-message-message".into(),
         receiver: crate::implementations::grok_build::task::types::ActiveMessageReceiver {
-            session_id: "receiver".into(), generation: crate::implementations::grok_build::task::root_control::AgentMessageGeneration::mint(42),
+            session_id: "receiver".into(),
+            generation:
+                crate::implementations::grok_build::task::root_control::AgentMessageGeneration::mint(
+                    42,
+                ),
         },
         operation: ActiveAgentMessageOperation::Queue,
         payload_digest: "00".repeat(32),
     }
 }
-

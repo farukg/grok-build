@@ -21,19 +21,28 @@ pub struct LocalRequestBody {
 
 impl fmt::Debug for LocalRequestBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LocalRequestBody").field("byte_len", &self.bytes.len()).finish_non_exhaustive()
+        f.debug_struct("LocalRequestBody")
+            .field("byte_len", &self.bytes.len())
+            .finish_non_exhaustive()
     }
 }
 
 impl LocalRequestBody {
     pub(crate) fn from_serialized(bytes: Vec<u8>) -> Self {
-        Self { digest: blake3::hash(&bytes), bytes: bytes.into() }
+        Self {
+            digest: blake3::hash(&bytes),
+            bytes: bytes.into(),
+        }
     }
 
-    pub fn digest(&self) -> blake3::Hash { self.digest }
+    pub fn digest(&self) -> blake3::Hash {
+        self.digest
+    }
 
     /// Sensitive local-only bytes. Publication must use the scrubbed representation instead.
-    pub fn sensitive_local_bytes(&self) -> &[u8] { &self.bytes }
+    pub fn sensitive_local_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 
     pub fn publication_view(&self) -> Result<PublicationBody, serde_json::Error> {
         let mut value: serde_json::Value = serde_json::from_slice(&self.bytes)?;
@@ -47,12 +56,21 @@ impl LocalRequestBody {
             }
         });
         let representation = if changed {
-            PayloadRepresentation::Redacted { original_digest: *self.digest.as_bytes() }
+            PayloadRepresentation::Redacted {
+                original_digest: *self.digest.as_bytes(),
+            }
         } else {
             PayloadRepresentation::ExactLocalJson
         };
-        let bytes = if changed { serde_json::to_vec(&value)?.into() } else { Arc::clone(&self.bytes) };
-        Ok(PublicationBody { bytes, representation })
+        let bytes = if changed {
+            serde_json::to_vec(&value)?.into()
+        } else {
+            Arc::clone(&self.bytes)
+        };
+        Ok(PublicationBody {
+            bytes,
+            representation,
+        })
     }
 }
 
@@ -61,7 +79,9 @@ impl LocalRequestBody {
 pub enum PayloadRepresentation {
     /// Unchanged by the existing scrubber; not a guarantee that arbitrary secrets can be detected.
     ExactLocalJson,
-    Redacted { original_digest: [u8; 32] },
+    Redacted {
+        original_digest: [u8; 32],
+    },
 }
 
 #[derive(Clone)]
@@ -72,8 +92,10 @@ pub struct PublicationBody {
 
 impl fmt::Debug for PublicationBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PublicationBody").field("byte_len", &self.bytes.len())
-            .field("representation", &self.representation).finish_non_exhaustive()
+        f.debug_struct("PublicationBody")
+            .field("byte_len", &self.bytes.len())
+            .field("representation", &self.representation)
+            .finish_non_exhaustive()
     }
 }
 
@@ -85,10 +107,16 @@ pub enum LocalRequestEvidence {
         membership: Arc<[ProjectedRequestMember]>,
     },
     /// A local HTTP execution was initiated. Delivery is not confirmed.
-    DispatchStarted { started_at: xai_monotonic_clock::MonotonicPoint },
+    DispatchStarted {
+        started_at: xai_monotonic_clock::MonotonicPoint,
+    },
     /// HTTP response headers arrived; even a 2xx does not prove model consumption.
-    ResponseHeaders { status: u16 },
-    Finished { outcome: LocalAttemptOutcome },
+    ResponseHeaders {
+        status: u16,
+    },
+    Finished {
+        outcome: LocalAttemptOutcome,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +145,9 @@ pub(crate) struct CaptureAttempt {
 impl CaptureAttempt {
     pub fn emit(&self, evidence: LocalRequestEvidence) {
         let _ = self.events.send(SamplingEvent::LocalRequest {
-            request_id: self.request_id.clone(), attempt: self.attempt, evidence,
+            request_id: self.request_id.clone(),
+            attempt: self.attempt,
+            evidence,
         });
     }
 
@@ -128,16 +158,23 @@ impl CaptureAttempt {
             Err(poisoned) => poisoned.into_inner(),
         };
         let body = match cache.as_ref() {
-            Some(previous) if previous.digest == digest && previous.bytes.as_ref() == bytes => Arc::clone(previous),
+            Some(previous) if previous.digest == digest && previous.bytes.as_ref() == bytes => {
+                Arc::clone(previous)
+            }
             Some(_) | None => {
-                let body = Arc::new(LocalRequestBody { bytes: bytes.into(), digest });
+                let body = Arc::new(LocalRequestBody {
+                    bytes: bytes.into(),
+                    digest,
+                });
                 *cache = Some(Arc::clone(&body));
                 body
             }
         };
         drop(cache);
         self.emit(LocalRequestEvidence::Prepared {
-            backend: self.backend.clone(), body, membership: Arc::clone(&self.membership),
+            backend: self.backend.clone(),
+            body,
+            membership: Arc::clone(&self.membership),
         });
     }
 }

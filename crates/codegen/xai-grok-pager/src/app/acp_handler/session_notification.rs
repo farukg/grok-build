@@ -47,7 +47,8 @@ pub(super) fn compaction_context_refresh(update: &XaiSessionUpdate) -> Option<u6
     match update {
         XaiSessionUpdate::AutoCompactStarted {
             phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
-            tokens_used, ..
+            tokens_used,
+            ..
         } => Some(*tokens_used),
         XaiSessionUpdate::AutoCompactCompleted { tokens_after, .. } => Some(*tokens_after),
         _ => None,
@@ -212,30 +213,70 @@ pub(super) fn handle_session_notification_with_origin(
         }
         _ => {}
     }
-    let Some(matched) = find_session_match(app, &session_notif.session_id) else { return false; };
+    let Some(matched) = find_session_match(app, &session_notif.session_id) else {
+        return false;
+    };
     let id = matched.agent_id();
-    let Some(view) = app.agents.get(&id) else { return false; };
-    if !view.accepts_current_source(&meta) || (meta.is_replay && !view.accepts_replayed_update()) { return false; }
-    if !meta.is_replay && is_child_turn_update(&session_notif.update)
-        && meta.event_seq.is_some_and(|seq| view.last_applied_xai_event_seq.is_some_and(|last| seq <= last)) { return false; }
-    if let XaiSessionUpdate::HookRunStarted { prompt_id, .. } | XaiSessionUpdate::HookExecution { prompt_id, .. } = &session_notif.update
-        && !meta.is_replay && is_foreign_hook_batch(view, prompt_id.as_deref()) { return false; }
-    let compact = probe_compact_lifecycle(view, &session_notif.update, session_notif.meta.as_ref(), &meta);
-    if matches!(compact, CompactAdmission::Reject) { return false; }
-    let delivery = if meta.is_replay { Some(super::super::agent_view::load_continuation::LoadDelivery::Historical) }
-        else if is_child_turn_update(&session_notif.update) || matches!(&session_notif.update,
-            XaiSessionUpdate::HookRunStarted { .. } | XaiSessionUpdate::HookExecution { .. }) {
-            Some(super::super::agent_view::load_continuation::LoadDelivery::Live)
-        } else { None };
-    let apply = |app: &mut AppView| handle_admitted_session_notification(notif, app, origin, session_notif, meta, compact);
+    let Some(view) = app.agents.get(&id) else {
+        return false;
+    };
+    if !view.accepts_current_source(&meta) || (meta.is_replay && !view.accepts_replayed_update()) {
+        return false;
+    }
+    if !meta.is_replay
+        && is_child_turn_update(&session_notif.update)
+        && meta.event_seq.is_some_and(|seq| {
+            view.last_applied_xai_event_seq
+                .is_some_and(|last| seq <= last)
+        })
+    {
+        return false;
+    }
+    if let XaiSessionUpdate::HookRunStarted { prompt_id, .. }
+    | XaiSessionUpdate::HookExecution { prompt_id, .. } = &session_notif.update
+        && !meta.is_replay
+        && is_foreign_hook_batch(view, prompt_id.as_deref())
+    {
+        return false;
+    }
+    let compact = probe_compact_lifecycle(
+        view,
+        &session_notif.update,
+        session_notif.meta.as_ref(),
+        &meta,
+    );
+    if matches!(compact, CompactAdmission::Reject) {
+        return false;
+    }
+    let delivery = if meta.is_replay {
+        Some(super::super::agent_view::load_continuation::LoadDelivery::Historical)
+    } else if is_child_turn_update(&session_notif.update)
+        || matches!(
+            &session_notif.update,
+            XaiSessionUpdate::HookRunStarted { .. } | XaiSessionUpdate::HookExecution { .. }
+        )
+    {
+        Some(super::super::agent_view::load_continuation::LoadDelivery::Live)
+    } else {
+        None
+    };
+    let apply = |app: &mut AppView| {
+        handle_admitted_session_notification(notif, app, origin, session_notif, meta, compact)
+    };
     if let Some(delivery) = delivery {
         super::super::agent_view::load_continuation::with_load_delivery(app, id, delivery, apply)
-    } else { apply(app) }
+    } else {
+        apply(app)
+    }
 }
 
 fn handle_admitted_session_notification(
-    notif: &acp::ExtNotification, app: &mut AppView, origin: LifecycleOrigin,
-    session_notif: SessionNotification, meta: NotificationMeta, compact: CompactAdmission,
+    notif: &acp::ExtNotification,
+    app: &mut AppView,
+    origin: LifecycleOrigin,
+    session_notif: SessionNotification,
+    meta: NotificationMeta,
+    compact: CompactAdmission,
 ) -> bool {
     let is_api_key_auth = app.is_api_key_auth;
     let matched = match find_session_match(app, &session_notif.session_id) {
@@ -251,21 +292,21 @@ fn handle_admitted_session_notification(
     };
     let parent_id = matched.agent_id();
     if !matches!(compact, CompactAdmission::Unrelated)
-        && let Some(agent) = app.agents.get_mut(&parent_id) { agent.observe_current_source(&meta); }
+        && let Some(agent) = app.agents.get_mut(&parent_id)
+    {
+        agent.observe_current_source(&meta);
+    }
     if let Some(agent) = app.agents.get_mut(&parent_id)
         && !commit_compact_lifecycle(agent, &session_notif.update, &meta, compact)
     {
         return is_matched_agent_active(app, parent_id);
     }
     if is_child_view(app, parent_id) && is_child_turn_update(&session_notif.update) {
-        return apply_child_xai_update(
-            app,
-            parent_id,
-            session_notif,
-            &meta,
-        );
+        return apply_child_xai_update(app, parent_id, session_notif, &meta);
     }
-    if let Some(changed) = sampling::handle_sampling_update(app, parent_id, &session_notif.update, &meta) {
+    if let Some(changed) =
+        sampling::handle_sampling_update(app, parent_id, &session_notif.update, &meta)
+    {
         return changed;
     }
     let lifecycle_child_session = lifecycle_child_session_id(&session_notif.update);
@@ -357,7 +398,8 @@ fn handle_admitted_session_notification(
         | XaiSessionUpdate::MemoryCaptureActivity { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }) => {
-            let changed = apply_compaction_or_retry_update(agent, update, is_api_key_auth, meta.is_replay);
+            let changed =
+                apply_compaction_or_retry_update(agent, update, is_api_key_auth, meta.is_replay);
             if let XaiSessionUpdate::AutoCompactCompleted { .. } = update {
                 agent.todo.update_todos(Vec::new());
             }
@@ -376,8 +418,13 @@ fn handle_admitted_session_notification(
             ..
         } => {
             let error_kind = crate::app::error_display::wire_error_kind(error_kind.as_deref());
-            if !meta.is_replay && (agent.session.current_prompt_id.as_deref() == Some(prompt_id.as_str())
-                || agent.running_wake_turn.as_ref().is_some_and(|wake| wake.prompt_id == prompt_id)) {
+            if !meta.is_replay
+                && (agent.session.current_prompt_id.as_deref() == Some(prompt_id.as_str())
+                    || agent
+                        .running_wake_turn
+                        .as_ref()
+                        .is_some_and(|wake| wake.prompt_id == prompt_id))
+            {
                 agent.settle_current_actions_prompt(&prompt_id);
             }
             if meta.is_replay {
@@ -959,7 +1006,9 @@ fn handle_admitted_session_notification(
             count,
             prompt_id,
         } => {
-            if meta.is_replay || app.appearance.disable_plugins || is_foreign_hook_batch(agent, prompt_id.as_deref())
+            if meta.is_replay
+                || app.appearance.disable_plugins
+                || is_foreign_hook_batch(agent, prompt_id.as_deref())
             {
                 return false;
             }
@@ -983,7 +1032,8 @@ fn handle_admitted_session_notification(
                 event_name: event_name.clone(),
                 tool_name,
             };
-            let mut redraw = !meta.is_replay && !is_foreign_hook_batch(agent, prompt_id.as_deref())
+            let mut redraw = !meta.is_replay
+                && !is_foreign_hook_batch(agent, prompt_id.as_deref())
                 && agent.session.tracker.clear_hooks_running(&batch);
             if app.appearance.disable_plugins {
                 return redraw;
@@ -1222,7 +1272,9 @@ fn handle_admitted_session_notification(
             actually_changed
         }
         XaiSessionUpdate::ModelServed { route } => {
-            if meta.is_replay { return false; }
+            if meta.is_replay {
+                return false;
+            }
             agent.session.models.served_route = Some(route);
             true
         }
@@ -1344,7 +1396,11 @@ fn handle_admitted_session_notification(
                     received_at: std::time::Instant::now(),
                     elapsed_floor_ms: elapsed_ms,
                 };
-                next.retain_active_elapsed_floor(if meta.is_replay { None } else { agent.goal_state.as_ref() });
+                next.retain_active_elapsed_floor(if meta.is_replay {
+                    None
+                } else {
+                    agent.goal_state.as_ref()
+                });
                 agent.goal_state = Some(next);
                 true
             }
@@ -1415,7 +1471,8 @@ fn handle_admitted_session_notification(
                 } else {
                     SessionActivityProvenance::from_snapshot_meta(session_notif.meta.as_ref())
                 };
-                let changed = apply_background_tasks_snapshot(agent, tasks, truncated, meta.is_replay);
+                let changed =
+                    apply_background_tasks_snapshot(agent, tasks, truncated, meta.is_replay);
                 match provenance {
                     SessionActivityProvenance::Live => {
                         agent.last_active_at = Some(std::time::Instant::now());
@@ -1425,10 +1482,7 @@ fn handle_admitted_session_notification(
                 }
             }
         }
-        XaiSessionUpdate::InjectedContextRecord {
-            ref kind,
-            ref text,
-        } => {
+        XaiSessionUpdate::InjectedContextRecord { ref kind, ref text } => {
             // Request-only content the model saw (memory-reminder splice, view transforms):
             // one collapsed injected entry; the event-seq dedup above drops replay re-delivery.
             let block = crate::scrollback::blocks::InjectedBlock::from_reason(kind, text);
@@ -1446,9 +1500,15 @@ fn handle_admitted_session_notification(
     };
     let mut changed = changed;
     if let Some(follow_up) = child_follow_up {
-        apply_child_view_follow_up(app, follow_up, if meta.is_replay {
-            super::super::agent_view::load_continuation::LoadDelivery::Historical
-        } else { super::super::agent_view::load_continuation::LoadDelivery::Live });
+        apply_child_view_follow_up(
+            app,
+            follow_up,
+            if meta.is_replay {
+                super::super::agent_view::load_continuation::LoadDelivery::Historical
+            } else {
+                super::super::agent_view::load_continuation::LoadDelivery::Live
+            },
+        );
     }
     if status_snapshot_applied && is_active {
         app.refresh_status_line_now();
@@ -1635,14 +1695,28 @@ enum ChildViewFollowUp {
         resuming: bool,
     },
 }
-fn apply_child_view_follow_up(app: &mut AppView, follow_up: ChildViewFollowUp, delivery: super::super::agent_view::load_continuation::LoadDelivery) {
+fn apply_child_view_follow_up(
+    app: &mut AppView,
+    follow_up: ChildViewFollowUp,
+    delivery: super::super::agent_view::load_continuation::LoadDelivery,
+) {
     let follow_up = match (delivery, follow_up) {
-        (super::super::agent_view::load_continuation::LoadDelivery::Historical, ChildViewFollowUp::Spawned { mut view, resumed_from }) => {
+        (
+            super::super::agent_view::load_continuation::LoadDelivery::Historical,
+            ChildViewFollowUp::Spawned {
+                mut view,
+                resumed_from,
+            },
+        ) => {
             view.session.state = AgentState::Idle;
             ChildViewFollowUp::Spawned { view, resumed_from }
         }
-        (super::super::agent_view::load_continuation::LoadDelivery::Historical,
-            ChildViewFollowUp::Restarted { .. } | ChildViewFollowUp::Progressed { .. } | ChildViewFollowUp::Finished { .. }) => return,
+        (
+            super::super::agent_view::load_continuation::LoadDelivery::Historical,
+            ChildViewFollowUp::Restarted { .. }
+            | ChildViewFollowUp::Progressed { .. }
+            | ChildViewFollowUp::Finished { .. },
+        ) => return,
         (super::super::agent_view::load_continuation::LoadDelivery::Live, follow_up) => follow_up,
     };
     match follow_up {
@@ -1723,72 +1797,176 @@ enum CompactAdmission {
     Automatic(xai_grok_shell::session::acp_types::AutomaticCompactInvocation),
 }
 
-fn probe_compact_lifecycle(agent: &AgentView, update: &XaiSessionUpdate, raw: Option<&serde_json::Value>, meta: &NotificationMeta) -> CompactAdmission {
-    use xai_grok_shell::session::acp_types::{AUTOMATIC_COMPACT_META_KEY, COMPACT_INVOCATION_META_KEY};
-    if !matches!(update, XaiSessionUpdate::AutoCompactStarted { .. } | XaiSessionUpdate::AutoCompactCompleted { .. }
-        | XaiSessionUpdate::AutoCompactFailed { .. } | XaiSessionUpdate::AutoCompactCancelled { .. }) { return CompactAdmission::Unrelated; }
-    if let Some(raw) = raw.and_then(|raw| raw.get(COMPACT_INVOCATION_META_KEY)) {
-        let Ok(id) = serde_json::from_value(raw.clone()) else { return CompactAdmission::Reject; };
-        if meta.is_replay { return CompactAdmission::Reject; }
-        return if agent.compact_invocations.get(&id).is_some_and(|invocation|
-            invocation.binding_epoch == agent.session_binding_epoch
-                && !matches!(invocation.settlement, crate::app::agent::CompactInvocationSettlement::RpcSettled)) {
-            CompactAdmission::Manual(id)
-        } else { CompactAdmission::Reject };
-    }
-    let tracker = if meta.is_replay { &agent.session.tracker } else { agent.live_admission_tracker() };
-    let Some(raw) = raw.and_then(|raw| raw.get(AUTOMATIC_COMPACT_META_KEY)) else {
-        return if tracker.has_correlated_compaction() { CompactAdmission::Reject } else { CompactAdmission::Legacy };
+fn probe_compact_lifecycle(
+    agent: &AgentView,
+    update: &XaiSessionUpdate,
+    raw: Option<&serde_json::Value>,
+    meta: &NotificationMeta,
+) -> CompactAdmission {
+    use xai_grok_shell::session::acp_types::{
+        AUTOMATIC_COMPACT_META_KEY, COMPACT_INVOCATION_META_KEY,
     };
-    let Ok(invocation) = serde_json::from_value::<xai_grok_shell::session::acp_types::AutomaticCompactInvocation>(raw.clone()) else { return CompactAdmission::Reject; };
-    if meta.is_replay { return CompactAdmission::History; }
-    if meta.event_seq.is_some_and(|sequence| agent.last_applied_xai_event_seq.is_some_and(|last| sequence <= last))
-        || (invocation.prompt_id.is_some() && invocation.prompt_id != agent.session.current_prompt_id && !agent.attached_as_viewer) { return CompactAdmission::Reject; }
+    if !matches!(
+        update,
+        XaiSessionUpdate::AutoCompactStarted { .. }
+            | XaiSessionUpdate::AutoCompactCompleted { .. }
+            | XaiSessionUpdate::AutoCompactFailed { .. }
+            | XaiSessionUpdate::AutoCompactCancelled { .. }
+    ) {
+        return CompactAdmission::Unrelated;
+    }
+    if let Some(raw) = raw.and_then(|raw| raw.get(COMPACT_INVOCATION_META_KEY)) {
+        let Ok(id) = serde_json::from_value(raw.clone()) else {
+            return CompactAdmission::Reject;
+        };
+        if meta.is_replay {
+            return CompactAdmission::Reject;
+        }
+        return if agent
+            .compact_invocations
+            .get(&id)
+            .is_some_and(|invocation| {
+                invocation.binding_epoch == agent.session_binding_epoch
+                    && !matches!(
+                        invocation.settlement,
+                        crate::app::agent::CompactInvocationSettlement::RpcSettled
+                    )
+            }) {
+            CompactAdmission::Manual(id)
+        } else {
+            CompactAdmission::Reject
+        };
+    }
+    let tracker = if meta.is_replay {
+        &agent.session.tracker
+    } else {
+        agent.live_admission_tracker()
+    };
+    let Some(raw) = raw.and_then(|raw| raw.get(AUTOMATIC_COMPACT_META_KEY)) else {
+        return if tracker.has_correlated_compaction() {
+            CompactAdmission::Reject
+        } else {
+            CompactAdmission::Legacy
+        };
+    };
+    let Ok(invocation) = serde_json::from_value::<
+        xai_grok_shell::session::acp_types::AutomaticCompactInvocation,
+    >(raw.clone()) else {
+        return CompactAdmission::Reject;
+    };
+    if meta.is_replay {
+        return CompactAdmission::History;
+    }
+    if meta.event_seq.is_some_and(|sequence| {
+        agent
+            .last_applied_xai_event_seq
+            .is_some_and(|last| sequence <= last)
+    }) || (invocation.prompt_id.is_some()
+        && invocation.prompt_id != agent.session.current_prompt_id
+        && !agent.attached_as_viewer)
+    {
+        return CompactAdmission::Reject;
+    }
     let accepted = if let XaiSessionUpdate::AutoCompactStarted { phase, .. } = update {
         match phase {
             xai_grok_shell::extensions::notification::CompactPhase::Queued => false,
-            xai_grok_shell::extensions::notification::CompactPhase::Executing => tracker.accepts_auto_compaction_start(&invocation, meta.event_seq),
+            xai_grok_shell::extensions::notification::CompactPhase::Executing => {
+                tracker.accepts_auto_compaction_start(&invocation, meta.event_seq)
+            }
         }
-    } else { tracker.accepts_auto_compaction_terminal(&invocation, meta.event_seq) };
-    if accepted { CompactAdmission::Automatic(invocation) } else { CompactAdmission::Reject }
+    } else {
+        tracker.accepts_auto_compaction_terminal(&invocation, meta.event_seq)
+    };
+    if accepted {
+        CompactAdmission::Automatic(invocation)
+    } else {
+        CompactAdmission::Reject
+    }
 }
 
-fn commit_compact_lifecycle(agent: &mut AgentView, update: &XaiSessionUpdate, meta: &NotificationMeta, admission: CompactAdmission) -> bool {
+fn commit_compact_lifecycle(
+    agent: &mut AgentView,
+    update: &XaiSessionUpdate,
+    meta: &NotificationMeta,
+    admission: CompactAdmission,
+) -> bool {
     use crate::app::agent::CompactInvocationSettlement;
     match admission {
         CompactAdmission::Unrelated | CompactAdmission::Legacy => true,
         CompactAdmission::Reject => false,
         CompactAdmission::History => {
-            apply_session_event_with_delivery(update, &mut agent.session, &mut agent.scrollback, false, CompactionDelivery::Replay, true);
+            apply_session_event_with_delivery(
+                update,
+                &mut agent.session,
+                &mut agent.scrollback,
+                false,
+                CompactionDelivery::Replay,
+                true,
+            );
             agent.mark_reload_replay_seen();
-            if let Some(id) = &meta.event_id { agent.advance_last_seen_event_id(id.clone(), meta.event_seq); }
+            if let Some(id) = &meta.event_id {
+                agent.advance_last_seen_event_id(id.clone(), meta.event_seq);
+            }
             false
         }
         CompactAdmission::Automatic(invocation) => {
             if matches!(update, XaiSessionUpdate::AutoCompactStarted { .. }) {
-                agent.session.tracker.begin_auto_compaction(invocation, meta.event_seq)
-            } else { agent.session.tracker.admit_auto_compaction_terminal(&invocation, meta.event_seq) }
+                agent
+                    .session
+                    .tracker
+                    .begin_auto_compaction(invocation, meta.event_seq)
+            } else {
+                agent
+                    .session
+                    .tracker
+                    .admit_auto_compaction_terminal(&invocation, meta.event_seq)
+            }
         }
         CompactAdmission::Manual(id) => {
-            let Some(invocation) = agent.compact_invocations.get_mut(&id) else { return false; };
+            let Some(invocation) = agent.compact_invocations.get_mut(&id) else {
+                return false;
+            };
             match invocation.settlement {
-                CompactInvocationSettlement::AwaitingRpc | CompactInvocationSettlement::Queued | CompactInvocationSettlement::Executing => {
-                    invocation.settlement = if let XaiSessionUpdate::AutoCompactStarted { phase, .. } = update {
+                CompactInvocationSettlement::AwaitingRpc
+                | CompactInvocationSettlement::Queued
+                | CompactInvocationSettlement::Executing => {
+                    invocation.settlement = if let XaiSessionUpdate::AutoCompactStarted {
+                        phase,
+                        ..
+                    } = update
+                    {
                         match phase {
-                            xai_grok_shell::extensions::notification::CompactPhase::Queued => match invocation.settlement {
-                                CompactInvocationSettlement::Executing => CompactInvocationSettlement::Executing,
-                                CompactInvocationSettlement::AwaitingRpc | CompactInvocationSettlement::Queued => CompactInvocationSettlement::Queued,
-                                CompactInvocationSettlement::LifecycleObserved | CompactInvocationSettlement::RpcSettled => return false,
-                            },
-                            xai_grok_shell::extensions::notification::CompactPhase::Executing => CompactInvocationSettlement::Executing,
+                            xai_grok_shell::extensions::notification::CompactPhase::Queued => {
+                                match invocation.settlement {
+                                    CompactInvocationSettlement::Executing => {
+                                        CompactInvocationSettlement::Executing
+                                    }
+                                    CompactInvocationSettlement::AwaitingRpc
+                                    | CompactInvocationSettlement::Queued => {
+                                        CompactInvocationSettlement::Queued
+                                    }
+                                    CompactInvocationSettlement::LifecycleObserved
+                                    | CompactInvocationSettlement::RpcSettled => return false,
+                                }
+                            }
+                            xai_grok_shell::extensions::notification::CompactPhase::Executing => {
+                                CompactInvocationSettlement::Executing
+                            }
                         }
-                    } else { CompactInvocationSettlement::LifecycleObserved };
+                    } else {
+                        CompactInvocationSettlement::LifecycleObserved
+                    };
                 }
-                CompactInvocationSettlement::LifecycleObserved | CompactInvocationSettlement::RpcSettled => {}
+                CompactInvocationSettlement::LifecycleObserved
+                | CompactInvocationSettlement::RpcSettled => {}
             }
-            if invocation.settlement == CompactInvocationSettlement::Executing && agent.session.state.is_idle() {
+            if invocation.settlement == CompactInvocationSettlement::Executing
+                && agent.session.state.is_idle()
+            {
                 invocation.owner = crate::app::agent::CompactInvocationOwner::Command;
-                agent.session.start_command(crate::app::agent::AgentCommand::Compact);
+                agent
+                    .session
+                    .start_command(crate::app::agent::AgentCommand::Compact);
                 agent.running_wake_turn = None;
                 agent.turn_started_at = Some(invocation.started_at);
             }
@@ -1797,7 +1975,11 @@ fn commit_compact_lifecycle(agent: &mut AgentView, update: &XaiSessionUpdate, me
     }
 }
 
-pub(crate) fn admit_compact_lifecycle(agent: &mut AgentView, update: &XaiSessionUpdate, raw: Option<&serde_json::Value>) -> bool {
+pub(crate) fn admit_compact_lifecycle(
+    agent: &mut AgentView,
+    update: &XaiSessionUpdate,
+    raw: Option<&serde_json::Value>,
+) -> bool {
     let meta = NotificationMeta::from_xai(raw, update);
     let admission = probe_compact_lifecycle(agent, update, raw, &meta);
     commit_compact_lifecycle(agent, update, &meta, admission)
@@ -1826,7 +2008,8 @@ fn apply_compaction_or_retry_update(
     match update {
         XaiSessionUpdate::AutoCompactStarted {
             phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
-            reason, ..
+            reason,
+            ..
         } => {
             if agent.session.state.is_idle()
                 && !is_replay
@@ -1894,7 +2077,12 @@ pub(super) fn apply_session_event(
     is_api_key_auth: bool,
 ) -> bool {
     apply_session_event_with_delivery(
-        update, session, scrollback, is_api_key_auth, CompactionDelivery::Live, false,
+        update,
+        session,
+        scrollback,
+        is_api_key_auth,
+        CompactionDelivery::Live,
+        false,
     )
 }
 pub(super) fn apply_session_event_with_replay(
@@ -1905,8 +2093,16 @@ pub(super) fn apply_session_event_with_replay(
     is_replay: bool,
 ) -> bool {
     apply_session_event_with_delivery(
-        update, session, scrollback, is_api_key_auth,
-        if is_replay { CompactionDelivery::Replay } else { CompactionDelivery::Live }, is_replay,
+        update,
+        session,
+        scrollback,
+        is_api_key_auth,
+        if is_replay {
+            CompactionDelivery::Replay
+        } else {
+            CompactionDelivery::Live
+        },
+        is_replay,
     )
 }
 fn apply_session_event_with_delivery(
@@ -1924,7 +2120,9 @@ fn apply_session_event_with_delivery(
         } => false,
         XaiSessionUpdate::AutoCompactStarted {
             phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
-            percentage, reason, ..
+            percentage,
+            reason,
+            ..
         } => {
             tracing::info!("Auto-compact started: {percentage}% context used");
             if matches!(delivery, CompactionDelivery::Live) {
@@ -1953,7 +2151,10 @@ fn apply_session_event_with_delivery(
                 session.set_compaction_activity(None);
                 session.compact_held_prompt = None;
             }
-            if matches!(delivery, CompactionDelivery::Replay) || session.loading_replay || session.state.is_switch_model_compact() {
+            if matches!(delivery, CompactionDelivery::Replay)
+                || session.loading_replay
+                || session.state.is_switch_model_compact()
+            {
                 scrollback.push_block(RenderBlock::session_event(
                     SessionEvent::CompactionCompleted {
                         tokens_before: *tokens_before,
@@ -1990,8 +2191,7 @@ fn apply_session_event_with_delivery(
         }
         XaiSessionUpdate::RetryState(retry) => {
             tracing::debug!("Retry state: {retry:?}");
-            let historical =
-                matches!(delivery, CompactionDelivery::Replay) || is_replay;
+            let historical = matches!(delivery, CompactionDelivery::Replay) || is_replay;
             apply_retry_state(retry, session, scrollback, is_api_key_auth, historical);
             true
         }
@@ -2153,7 +2353,9 @@ pub(super) fn apply_retry_state(
                 session.set_retry_activity(None);
             }
             let wire = crate::app::error_display::WireErrorType::parse(Some(error_type.as_str()));
-            if failure_is_current && wire == crate::app::error_display::WireErrorType::EncryptedContentMismatch {
+            if failure_is_current
+                && wire == crate::app::error_display::WireErrorType::EncryptedContentMismatch
+            {
                 session.model_incompatible = true;
             }
             is_credit_limit = super::super::dispatch::is_credit_limit_error(None, message);

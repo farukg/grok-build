@@ -94,23 +94,21 @@ impl SessionActor {
         if let serde_json::Value::Object(fields) = &mut meta {
             fields.extend(extra_meta.clone());
         }
-        let Some(update) = background_tasks_update(
-            snapshots,
-            &self.session_info.id,
-            Some(meta),
-        ) else {
+        let Some(update) = background_tasks_update(snapshots, &self.session_info.id, Some(meta))
+        else {
             tracing::warn!(
                 session_id = %self.session_info.id,
                 "skipping unfittable background_tasks snapshot"
             );
             return;
         };
-        if let Err(error) = self.send_xai_notification_with_extra_meta(
-            update,
-            Some(extra_meta),
-            crate::session::storage::jsonl::AppendDurability::Buffered,
-        )
-        .await
+        if let Err(error) = self
+            .send_xai_notification_with_extra_meta(
+                update,
+                Some(extra_meta),
+                crate::session::storage::jsonl::AppendDurability::Buffered,
+            )
+            .await
         {
             tracing::error!(?error, "background_tasks snapshot persistence unavailable");
         }

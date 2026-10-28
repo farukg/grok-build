@@ -2,9 +2,9 @@
 
 use super::parent_interject::ParentInterjectSignal;
 use super::*;
+use crate::session::message_delivery::{InitialParentMessageAdmission, ParentMessageHandoff};
 use crate::session::telemetry::ActiveAgentMessageSafePointTrigger;
 use std::sync::Arc;
-use crate::session::message_delivery::{InitialParentMessageAdmission, ParentMessageHandoff};
 use xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission;
 use xai_grok_tools::implementations::grok_build::task::types::{
     ActiveAgentMessage, ActiveAgentMessageDelivery, ActiveAgentMessageOperation,
@@ -71,21 +71,32 @@ pub(super) enum ParentTeardownStatus {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum ParentRunningTeardown { Preserve, Stop }
+pub(super) enum ParentRunningTeardown {
+    Preserve,
+    Stop,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ParentTeardownRequest { Ordinary, HardTeardown, ActorDrop }
+pub(super) enum ParentTeardownRequest {
+    Ordinary,
+    HardTeardown,
+    ActorDrop,
+}
 
 #[cfg(test)]
 #[derive(Default)]
 enum ParentProjectionCut {
     #[default]
     Live,
-    Park { entered: oneshot::Sender<()>, release: oneshot::Receiver<()> },
+    Park {
+        entered: oneshot::Sender<()>,
+        release: oneshot::Receiver<()>,
+    },
 }
 
 pub(super) fn parent_teardown_uncertain() -> acp::Error {
-    acp::Error::internal_error().data("parent admission outcome uncertain after unacknowledged teardown")
+    acp::Error::internal_error()
+        .data("parent admission outcome uncertain after unacknowledged teardown")
 }
 
 /// Every slot mutation goes through this impl so the interject signal is recounted from the
@@ -282,8 +293,11 @@ enum ReservedParentMessageHandoff {
     Initial {
         recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe,
         publication: Box<crate::session::delivery_receiver::ParentMessagePublication>,
-        custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
-        prompt_admitted: oneshot::Sender<crate::session::message_delivery::InitialParentMessageReady>,
+        custody: Box<
+            xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody,
+        >,
+        prompt_admitted:
+            oneshot::Sender<crate::session::message_delivery::InitialParentMessageReady>,
         delivery: ActiveAgentMessageDelivery,
         artifact_upload_ctx: Option<crate::upload::manifest::ArtifactUploadContext>,
         json_schema: Option<serde_json::Value>,
@@ -303,8 +317,22 @@ impl ReservedParentMessageHandoff {
     fn into_queued(self, mut item: InputItem) -> (InputItem, ParentMessageReceipt) {
         let receipt = match self {
             Self::Live { permit, result_rx } => ParentMessageReceipt::Live { permit, result_rx },
-            Self::Initial { custody: _, recipe: _, publication: _, prompt_admitted, delivery, artifact_upload_ctx, json_schema, traceparent } => {
-                item.initial_child_prompt_ready = Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { delivery, ready: prompt_admitted });
+            Self::Initial {
+                custody: _,
+                recipe: _,
+                publication: _,
+                prompt_admitted,
+                delivery,
+                artifact_upload_ctx,
+                json_schema,
+                traceparent,
+            } => {
+                item.initial_child_prompt_ready = Some(
+                    crate::session::message_delivery::InitialChildPromptSink::ParentMessage {
+                        delivery,
+                        ready: prompt_admitted,
+                    },
+                );
                 if let Some(ctx) = artifact_upload_ctx {
                     item.trace_gcs_config = Some(ctx.gcs_config);
                     item.artifact_tracker = Some(ctx.artifact_tracker);
@@ -332,7 +360,9 @@ impl ParentMessageReceipt {
         match self {
             Self::Live { permit, result_rx } => {
                 let sender = permit.send(crate::agent::subagent::PromptTurnReceipt {
-                    prompt_id, result: result_rx, telemetry,
+                    prompt_id,
+                    result: result_rx,
+                    telemetry,
                 });
                 if sender.is_closed() {
                     return Err(());
@@ -405,14 +435,23 @@ impl SessionActor {
                     }
                 };
                 let (result_tx, result_rx) = oneshot::channel();
-                (result_tx, ReservedParentMessageHandoff::Live { permit, result_rx })
+                (
+                    result_tx,
+                    ReservedParentMessageHandoff::Live { permit, result_rx },
+                )
             }
             ParentMessageHandoff::Initial(initial) => {
                 if initial.receiver.session_id != self.session_id_string()
-                    || delivery.as_ref().and_then(ActiveAgentMessageDelivery::receiver) != Some(&initial.receiver)
+                    || delivery
+                        .as_ref()
+                        .and_then(ActiveAgentMessageDelivery::receiver)
+                        != Some(&initial.receiver)
                     || initial.respond_to.is_closed()
                     || initial.prompt_admitted.is_closed()
-                    || delivery.as_ref().and_then(ActiveAgentMessageDelivery::receiver) != Some(&initial.custody.receiver)
+                    || delivery
+                        .as_ref()
+                        .and_then(ActiveAgentMessageDelivery::receiver)
+                        != Some(&initial.custody.receiver)
                     || initial.json_schema != initial.custody.launch.runtime_overrides.output_schema
                     || initial.traceparent != initial.custody.launch.traceparent
                     || initial.artifacts.reference() != &initial.custody.launch.artifacts
@@ -421,24 +460,45 @@ impl SessionActor {
                     return;
                 }
                 let InitialParentMessageAdmission {
-                    custody, recipe, publication, receiver: _, respond_to, prompt_admitted, artifacts, json_schema, traceparent,
+                    custody,
+                    recipe,
+                    publication,
+                    receiver: _,
+                    respond_to,
+                    prompt_admitted,
+                    artifacts,
+                    json_schema,
+                    traceparent,
                 } = initial;
                 let Some(initial_delivery) = delivery.clone() else {
                     let _ = respond_to.send(ActiveMessageAdmission::Rejected);
                     return;
                 };
-                (respond_to, ReservedParentMessageHandoff::Initial {
-                    custody, recipe, publication, prompt_admitted, delivery: initial_delivery, artifact_upload_ctx: artifacts.into_context(), json_schema, traceparent,
-                })
+                (
+                    respond_to,
+                    ReservedParentMessageHandoff::Initial {
+                        custody,
+                        recipe,
+                        publication,
+                        prompt_admitted,
+                        delivery: initial_delivery,
+                        artifact_upload_ctx: artifacts.into_context(),
+                        json_schema,
+                        traceparent,
+                    },
+                )
             }
         };
         self.ensure_prefix_ready().await;
 
-        let prompt_id = crate::session::delivery_receiver::parent_message_prompt_id(&message.message_id);
+        let prompt_id =
+            crate::session::delivery_receiver::parent_message_prompt_id(&message.message_id);
         let admitted_at = std::time::Instant::now();
         let mut state = self.state.lock().await;
         if matches!(&handoff, ReservedParentMessageHandoff::Initial { .. })
-            && (state.running_task.is_some() || !state.pending_inputs.is_empty() || delivery.is_none())
+            && (state.running_task.is_some()
+                || !state.pending_inputs.is_empty()
+                || delivery.is_none())
         {
             let _ = respond_to.send(ActiveMessageAdmission::Rejected);
             return;
@@ -477,7 +537,9 @@ impl SessionActor {
                 && effective == ActiveAgentMessageOperation::Queue)
                 .then_some(crate::session::telemetry::ActiveAgentMessageFallbackReason::Idle),
         );
-        use crate::session::delivery_receiver::{ParentMessageAdmission, ParentMessageOperation, ParentMessageSource};
+        use crate::session::delivery_receiver::{
+            ParentMessageAdmission, ParentMessageOperation, ParentMessageSource,
+        };
         let durable_operation = match effective {
             ActiveAgentMessageOperation::Queue => ParentMessageOperation::Queue,
             ActiveAgentMessageOperation::Steer | ActiveAgentMessageOperation::Interject => {
@@ -486,22 +548,44 @@ impl SessionActor {
                     return;
                 };
                 let prompt_id = task.prompt_id.clone();
-                let parent_task = xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() };
+                let parent_task = xai_chat_state::ParentTask::Instance {
+                    id: task.identity.as_ref().clone(),
+                };
                 match effective {
-                    ActiveAgentMessageOperation::Steer => ParentMessageOperation::Steer { prompt_id, parent_task },
-                    ActiveAgentMessageOperation::Interject => ParentMessageOperation::Interject { prompt_id, parent_task },
+                    ActiveAgentMessageOperation::Steer => ParentMessageOperation::Steer {
+                        prompt_id,
+                        parent_task,
+                    },
+                    ActiveAgentMessageOperation::Interject => ParentMessageOperation::Interject {
+                        prompt_id,
+                        parent_task,
+                    },
                     ActiveAgentMessageOperation::Queue => ParentMessageOperation::Queue,
                 }
             }
         };
         let custody = match &handoff {
-            ReservedParentMessageHandoff::Initial { custody, publication, .. } => {
-                crate::session::delivery_receiver::ParentMessageCustody::Initial { custody: custody.clone(), publication: publication.clone() }
-            }
+            ReservedParentMessageHandoff::Initial {
+                custody,
+                publication,
+                ..
+            } => crate::session::delivery_receiver::ParentMessageCustody::Initial {
+                custody: custody.clone(),
+                publication: publication.clone(),
+            },
             ReservedParentMessageHandoff::Live { .. } => match &delivery {
                 Some(delivery) => match delivery.receiver() {
-                    Some(receiver) => crate::session::delivery_receiver::ParentMessageCustody::Live { receiver: receiver.clone(), operation: delivery.operation(), route: delivery.route() },
-                    None => { let _ = respond_to.send(ActiveMessageAdmission::Rejected); return; }
+                    Some(receiver) => {
+                        crate::session::delivery_receiver::ParentMessageCustody::Live {
+                            receiver: receiver.clone(),
+                            operation: delivery.operation(),
+                            route: delivery.route(),
+                        }
+                    }
+                    None => {
+                        let _ = respond_to.send(ActiveMessageAdmission::Rejected);
+                        return;
+                    }
                 },
                 None => crate::session::delivery_receiver::ParentMessageCustody::Legacy,
             },
@@ -510,7 +594,10 @@ impl SessionActor {
             custody,
             message_id: message.message_id.clone(),
             sender_session_id: message.sender_session_id.clone(),
-            source: match message_source { ActiveAgentMessageSource::Agent => ParentMessageSource::Agent, ActiveAgentMessageSource::Human => ParentMessageSource::Human },
+            source: match message_source {
+                ActiveAgentMessageSource::Agent => ParentMessageSource::Agent,
+                ActiveAgentMessageSource::Human => ParentMessageSource::Human,
+            },
             effective: durable_operation,
             prompt_id: prompt_id.clone(),
             text: message.text.to_string(),
@@ -520,8 +607,12 @@ impl SessionActor {
         let authority = match delivery {
             Some(delivery) => match delivery.claim_admission() {
                 Some(claim) => match &handoff {
-                    ReservedParentMessageHandoff::Initial { recipe, .. } => ParentAdmissionAuthority::native(claim, recipe.clone()),
-                    ReservedParentMessageHandoff::Live { .. } => ParentAdmissionAuthority::Coordinator(claim),
+                    ReservedParentMessageHandoff::Initial { recipe, .. } => {
+                        ParentAdmissionAuthority::native(claim, recipe.clone())
+                    }
+                    ReservedParentMessageHandoff::Live { .. } => {
+                        ParentAdmissionAuthority::Coordinator(claim)
+                    }
                 },
                 None => {
                     let _ = respond_to.send(ActiveMessageAdmission::Rejected);
@@ -532,7 +623,16 @@ impl SessionActor {
         };
         // Keep the exact live binding reserved until the receiver owner acknowledges admission.
         let (persisted_tx, persisted_rx) = oneshot::channel();
-        if self.notifications.persistence_tx.send(PersistenceMsg::AdmitParentMessage { admission, authority, respond_to: persisted_tx }).is_err() {
+        if self
+            .notifications
+            .persistence_tx
+            .send(PersistenceMsg::AdmitParentMessage {
+                admission,
+                authority,
+                respond_to: persisted_tx,
+            })
+            .is_err()
+        {
             let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
             return;
         }
@@ -594,11 +694,14 @@ impl SessionActor {
                         }
                         ReservedParentMessageHandoff::Initial { .. } => return Err(()),
                     };
-                    state.message_delivery.admit_pending(
-                        &binding,
-                        DeliveryMessage::new(message.message_id, origin, content),
-                        turn_result_tx,
-                    ).map_err(|_| ())?;
+                    state
+                        .message_delivery
+                        .admit_pending(
+                            &binding,
+                            DeliveryMessage::new(message.message_id, origin, content),
+                            turn_result_tx,
+                        )
+                        .map_err(|_| ())?;
                     receipt.send(prompt_id, telemetry)
                 }
             }
@@ -632,9 +735,13 @@ impl SessionActor {
         turn_id: &str,
         text: String,
     ) -> Result<bool, acp::Error> {
-        let admission = self.current_turn_admission(turn_id).await
+        let admission = self
+            .current_turn_admission(turn_id)
+            .await
             .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
-        let projected = self.commit_parent_message_projection(message_id, source, turn_id, text, admission).await?;
+        let projected = self
+            .commit_parent_message_projection(message_id, source, turn_id, text, admission)
+            .await?;
         #[cfg(test)]
         {
             let cut = std::mem::take(&mut self.state.lock().await.message_delivery.projection_cut);
@@ -664,22 +771,42 @@ impl SessionActor {
         let projection = xai_chat_state::DeliveryProjection {
             item,
             binding: xai_chat_state::DeliveryBinding {
-                delivery_id: crate::session::delivery_receiver::parent_message_delivery_id(message_id),
+                delivery_id: crate::session::delivery_receiver::parent_message_delivery_id(
+                    message_id,
+                ),
                 payload_digest: crate::session::delivery_receiver::payload_digest(&text),
                 turn_id: turn_id.to_owned(),
                 parent_task: admission.parent_task.clone(),
             },
         };
         let projection = xai_chat_state::InputProjection::Delivery(projection);
-        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
-        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(
+            self.session_id_string(),
+            &projection,
+        );
+        let result = self
+            .chat_state_handle
+            .append_input_with_source_and_ack(projection, admission)
+            .await;
         self.observe_strict_source(identity, &result);
-        match result.map(|ack| ack.acknowledgement).map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement)) {
+        match result
+            .map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))
+        {
             Ok(xai_chat_state::CompletionProjectionAck::Appended) => Ok(true),
             Ok(xai_chat_state::CompletionProjectionAck::AlreadyPresent { .. }) => Ok(false),
-            Ok(xai_chat_state::CompletionProjectionAck::TurnClosed) => Err(acp::Error::internal_error().data("parent-message turn closed before projection")),
-            Ok(xai_chat_state::CompletionProjectionAck::Continue { .. }) => Err(acp::Error::internal_error().data("parent-message execution cannot replay a projected input")),
-            Err(error) => Err(acp::Error::internal_error().data(format!("parent-message projection: {error}"))),
+            Ok(xai_chat_state::CompletionProjectionAck::TurnClosed) => {
+                Err(acp::Error::internal_error()
+                    .data("parent-message turn closed before projection"))
+            }
+            Ok(xai_chat_state::CompletionProjectionAck::Continue { .. }) => {
+                Err(acp::Error::internal_error()
+                    .data("parent-message execution cannot replay a projected input"))
+            }
+            Err(error) => {
+                Err(acp::Error::internal_error()
+                    .data(format!("parent-message projection: {error}")))
+            }
         }
     }
 
@@ -700,13 +827,27 @@ impl SessionActor {
                 return false;
             }
             let admission = xai_chat_state::InputAdmission {
-                parent_task: xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() },
+                parent_task: xai_chat_state::ParentTask::Instance {
+                    id: task.identity.as_ref().clone(),
+                },
                 cancellation: task.admission.clone(),
             };
-            (turn_binding(task), task.prompt_id.clone(), admission, trigger, messages)
+            (
+                turn_binding(task),
+                task.prompt_id.clone(),
+                admission,
+                trigger,
+                messages,
+            )
         };
         let (persisted_tx, persisted_rx) = oneshot::channel();
-        if self.notifications.persistence_tx.send(PersistenceMsg::FlushAndAck { respond_to: persisted_tx }).is_err()
+        if self
+            .notifications
+            .persistence_tx
+            .send(PersistenceMsg::FlushAndAck {
+                respond_to: persisted_tx,
+            })
+            .is_err()
             || !matches!(persisted_rx.await, Ok(Ok(())))
         {
             return false;
@@ -719,11 +860,19 @@ impl SessionActor {
             return false;
         }
         for message in super::parent_interject::order_for_delivery(&messages) {
-            if !state.message_delivery.has_identity(message.identity()) { continue; }
-            if let Err(error) = self.commit_parent_message_projection(
-                message.identity(), message.source().source, &prompt_id,
-                message.content().text.to_string(), admission.clone(),
-            ).await {
+            if !state.message_delivery.has_identity(message.identity()) {
+                continue;
+            }
+            if let Err(error) = self
+                .commit_parent_message_projection(
+                    message.identity(),
+                    message.source().source,
+                    &prompt_id,
+                    message.content().text.to_string(),
+                    admission.clone(),
+                )
+                .await
+            {
                 tracing::error!(%error, "parent-message retained after durable projection failure");
                 return false;
             }
@@ -738,9 +887,18 @@ impl SessionActor {
                 let mut notifications = Vec::with_capacity(ordered.len());
                 for message in &ordered {
                     let mut source_meta = user_chunk_meta.clone().unwrap_or_default();
-                    source_meta.insert(crate::session::source_binding::STRICT_ORIGIN_META.to_owned(), serde_json::json!(crate::session::source_binding::StrictInputRef::Delivery {
-                        session_id: self.session_id_string(), delivery_id: crate::session::delivery_receiver::parent_message_delivery_id(message.identity()),
-                    }));
+                    source_meta.insert(
+                        crate::session::source_binding::STRICT_ORIGIN_META.to_owned(),
+                        serde_json::json!(
+                            crate::session::source_binding::StrictInputRef::Delivery {
+                                session_id: self.session_id_string(),
+                                delivery_id:
+                                    crate::session::delivery_receiver::parent_message_delivery_id(
+                                        message.identity()
+                                    ),
+                            }
+                        ),
+                    );
                     let update = acp::SessionUpdate::UserMessageChunk(
                         acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
                             message.content().text.to_string(),
@@ -833,23 +991,36 @@ impl SessionActor {
     }
 
     pub(super) async fn stop_parent_messages_on_actor_exit(&self) {
-        let outcome = self.cancel_running_task_with_parent_teardown(crate::session::CancelOptions {
-            cancel_subagents: false,
-            kill_background_tasks: false,
-            history: crate::session::CancelHistoryDisposition::Keep,
-            trigger: Some(crate::session::CancelTrigger::Shutdown),
-            user_initiated: false,
-        }, ParentTeardownRequest::ActorDrop).await;
+        let outcome = self
+            .cancel_running_task_with_parent_teardown(
+                crate::session::CancelOptions {
+                    cancel_subagents: false,
+                    kill_background_tasks: false,
+                    history: crate::session::CancelHistoryDisposition::Keep,
+                    trigger: Some(crate::session::CancelTrigger::Shutdown),
+                    user_initiated: false,
+                },
+                ParentTeardownRequest::ActorDrop,
+            )
+            .await;
         if !outcome.settled {
             tracing::error!("actor exit has unresolved durable terminal settlement");
         }
     }
 
-    pub(super) async fn settle_all_parent_messages(&self, cause: TerminalCause) -> Result<(), acp::Error> {
-        self.settle_parent_messages_for_exit(cause, ParentRunningTeardown::Stop).await
+    pub(super) async fn settle_all_parent_messages(
+        &self,
+        cause: TerminalCause,
+    ) -> Result<(), acp::Error> {
+        self.settle_parent_messages_for_exit(cause, ParentRunningTeardown::Stop)
+            .await
     }
 
-    pub(super) async fn settle_parent_messages_for_exit(&self, cause: TerminalCause, running: ParentRunningTeardown) -> Result<(), acp::Error> {
+    pub(super) async fn settle_parent_messages_for_exit(
+        &self,
+        cause: TerminalCause,
+        running: ParentRunningTeardown,
+    ) -> Result<(), acp::Error> {
         debug_assert!(matches!(
             cause,
             TerminalCause::HardTeardown | TerminalCause::ActorDrop
@@ -858,15 +1029,29 @@ impl SessionActor {
         if state.message_delivery.teardown == ParentTeardownStatus::Unsettled {
             return Err(parent_teardown_uncertain());
         }
-        let running_front = state.running_task.as_ref().and_then(|task| state.pending_inputs.front()
-            .filter(|item| item.prompt_id == task.prompt_id).map(|item| item.prompt_id.clone()));
-        let mut message_ids: Vec<String> = state.message_delivery.lifecycle.identities().cloned().collect();
+        let running_front = state.running_task.as_ref().and_then(|task| {
+            state
+                .pending_inputs
+                .front()
+                .filter(|item| item.prompt_id == task.prompt_id)
+                .map(|item| item.prompt_id.clone())
+        });
+        let mut message_ids: Vec<String> = state
+            .message_delivery
+            .lifecycle
+            .identities()
+            .cloned()
+            .collect();
         for (index, item) in state.pending_inputs.iter().enumerate() {
-            if index == 0 && running_front.is_some() && matches!(running, ParentRunningTeardown::Preserve) {
+            if index == 0
+                && running_front.is_some()
+                && matches!(running, ParentRunningTeardown::Preserve)
+            {
                 continue;
             }
             if let PromptOrigin::ParentAgentMessage { message_id, .. }
-                | PromptOrigin::ParentHumanMessage { message_id, .. } = item.input_origin.as_prompt_origin()
+            | PromptOrigin::ParentHumanMessage { message_id, .. } =
+                item.input_origin.as_prompt_origin()
             {
                 message_ids.push(message_id.clone());
             }
@@ -875,12 +1060,25 @@ impl SessionActor {
             state.message_delivery.teardown = ParentTeardownStatus::Unsettled;
             let (respond_to, receive) = oneshot::channel();
             // Retain local ownership when durable settlement is uncertain.
-            self.notifications.persistence_tx.send(PersistenceMsg::CancelParentMessages {
-                message_ids: message_ids.clone(), respond_to,
-            }).map_err(|_| acp::Error::internal_error().data("parent teardown settlement owner closed"))?;
-            receive.await
-                .map_err(|_| acp::Error::internal_error().data("parent teardown settlement acknowledgement lost"))?
-                .map_err(|error| acp::Error::internal_error().data(format!("parent teardown settlement: {error}")))?;
+            self.notifications
+                .persistence_tx
+                .send(PersistenceMsg::CancelParentMessages {
+                    message_ids: message_ids.clone(),
+                    respond_to,
+                })
+                .map_err(|_| {
+                    acp::Error::internal_error().data("parent teardown settlement owner closed")
+                })?;
+            receive
+                .await
+                .map_err(|_| {
+                    acp::Error::internal_error()
+                        .data("parent teardown settlement acknowledgement lost")
+                })?
+                .map_err(|error| {
+                    acp::Error::internal_error()
+                        .data(format!("parent teardown settlement: {error}"))
+                })?;
         }
         state.message_delivery.teardown = match running {
             ParentRunningTeardown::Stop => ParentTeardownStatus::Settled,
@@ -899,7 +1097,8 @@ impl SessionActor {
             }
             if matches!(item.input_origin.as_prompt_origin(),
                 PromptOrigin::ParentAgentMessage { message_id, .. }
-                | PromptOrigin::ParentHumanMessage { message_id, .. } if message_ids.contains(message_id)) {
+                | PromptOrigin::ParentHumanMessage { message_id, .. } if message_ids.contains(message_id))
+            {
                 let _ = item.respond_to.send(result.clone());
             } else {
                 retained.push_back(item);

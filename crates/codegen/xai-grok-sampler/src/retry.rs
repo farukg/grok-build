@@ -291,8 +291,14 @@ pub fn format_sampling_error(err: &SamplingError, retry_count: Option<u32>) -> S
 
 pub(crate) fn clone_error(err: &SamplingError) -> SamplingError {
     match err {
-        SamplingError::RetrySchedule { requested_backoff, original, cause } => SamplingError::RetrySchedule {
-            requested_backoff: *requested_backoff, original: std::sync::Arc::clone(original), cause: *cause,
+        SamplingError::RetrySchedule {
+            requested_backoff,
+            original,
+            cause,
+        } => SamplingError::RetrySchedule {
+            requested_backoff: *requested_backoff,
+            original: std::sync::Arc::clone(original),
+            cause: *cause,
         },
         SamplingError::Auth {
             message,

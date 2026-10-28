@@ -58,7 +58,9 @@ pub struct QueueCaller {
 
 impl QueueCaller {
     pub(crate) fn from_session_control(session: &crate::session::SessionHandle) -> Self {
-        Self { session_id: session.info.id.clone() }
+        Self {
+            session_id: session.info.id.clone(),
+        }
     }
 
     pub(crate) fn controls(&self, session_id: &acp::SessionId) -> bool {
@@ -71,7 +73,9 @@ impl QueueCaller {
 
     #[cfg(test)]
     pub(crate) fn for_test_session(session_id: &str) -> Self {
-        Self { session_id: acp::SessionId::new(session_id.to_owned()) }
+        Self {
+            session_id: acp::SessionId::new(session_id.to_owned()),
+        }
     }
 }
 
@@ -129,7 +133,9 @@ impl QueueRejection {
             Self::NotOwner => "send now rejected: queue owner changed",
             Self::OperationConflict => "send now rejected: operation identity conflict",
             Self::Unauthorized => "send now rejected: session control not granted",
-            Self::Capacity => "send now rejected: operation receipt capacity reached; existing operations remain observable",
+            Self::Capacity => {
+                "send now rejected: operation receipt capacity reached; existing operations remain observable"
+            }
             Self::PayloadTooLarge => "send now rejected: request exceeds the 64 MiB ACP limit",
         }
     }
@@ -138,9 +144,15 @@ impl QueueRejection {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum QueueResult {
-    Queued { row: crate::session::prompt_queue::QueueEntryWire },
-    GoalInterjection { running_prompt_id: String },
-    Started { prompt_id: String },
+    Queued {
+        row: crate::session::prompt_queue::QueueEntryWire,
+    },
+    GoalInterjection {
+        running_prompt_id: String,
+    },
+    Started {
+        prompt_id: String,
+    },
     Rejected {
         reason: QueueRejection,
         row: Option<crate::session::prompt_queue::QueueEntryWire>,
@@ -176,12 +188,19 @@ pub async fn handle_queue(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult
     let caller = QueueCaller::from_session_control(&session);
     let operation = request.operation.clone();
     let (respond_to, receive) = tokio::sync::oneshot::channel();
-    let response = match session.cmd_tx.send(SessionCommand::QueueSendNow { caller, request, respond_to }) {
+    let response = match session.cmd_tx.send(SessionCommand::QueueSendNow {
+        caller,
+        request,
+        respond_to,
+    }) {
         Ok(()) => receive.await.unwrap_or(QueueResponse {
             operation,
             result: QueueResult::Unconfirmed,
         }),
-        Err(_) => QueueResponse { operation, result: QueueResult::Unconfirmed },
+        Err(_) => QueueResponse {
+            operation,
+            result: QueueResult::Unconfirmed,
+        },
     };
     super::to_raw_response(&response)
 }

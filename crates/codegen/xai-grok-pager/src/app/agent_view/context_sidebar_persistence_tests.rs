@@ -2,8 +2,8 @@
 //! Every test gives its views a store under a tempdir; none touches the real grok home.
 
 use super::{
-    AgentView, InputOutcome, KeyCode, KeyModifiers, click_row, draw, open_sidebar, press,
-    press_with, ready_report, screen, sidebar_row, test_fixtures, toast, focus_row,
+    AgentView, InputOutcome, KeyCode, KeyModifiers, click_row, draw, focus_row, open_sidebar,
+    press, press_with, ready_report, screen, sidebar_row, test_fixtures, toast,
 };
 use crate::scrollback::block::MessageKind;
 use crate::scrollback::types::DisplayForm;
@@ -175,12 +175,22 @@ fn g_switches_and_persists_the_effective_display_scope() {
         InputOutcome::Changed
     ));
     assert!(screen(&draw(&mut agent)).contains("display: global"));
-    assert_eq!(stored(&read_toml(&session_file(&root, "sess-a")), "scope", "message_display"), Some("global"));
+    assert_eq!(
+        stored(
+            &read_toml(&session_file(&root, "sess-a")),
+            "scope",
+            "message_display"
+        ),
+        Some("global")
+    );
     let mut restored = view(&root, Some("sess-a"));
     open_f7(&mut restored);
     let _ = press(&mut restored, KeyCode::End);
     assert!(screen(&draw(&mut restored)).contains("display: global"));
-    assert!(!global_file(&root).exists(), "switching scope changes no global value");
+    assert!(
+        !global_file(&root).exists(),
+        "switching scope changes no global value"
+    );
 }
 
 #[test]
@@ -266,11 +276,19 @@ fn section_folds_stay_global_while_display_values_use_session_scope() {
     let _ = press(&mut agent, KeyCode::Left);
     assert!(!screen(&draw(&mut agent)).contains("File reads"));
     assert_eq!(
-        stored(&read_toml(&global_file(&root)), "sidebar", "message_display"),
+        stored(
+            &read_toml(&global_file(&root)),
+            "sidebar",
+            "message_display"
+        ),
         Some("collapsed")
     );
     assert_eq!(
-        stored(&read_toml(&session_file(&root, "sess-a")), "sidebar", "message_display"),
+        stored(
+            &read_toml(&session_file(&root, "sess-a")),
+            "sidebar",
+            "message_display"
+        ),
         None
     );
     drop(agent);
@@ -308,15 +326,27 @@ fn the_display_title_choice_is_stored_in_the_effective_display_scope() {
         assert_eq!(form(&agent, kind), Some(DisplayForm::Collapsed), "{kind:?}");
     }
     let global = message_display_table(&global_file(&root));
-    assert_eq!(global.len(), leaves, "every leaf kind is stored as chosen: {global:?}");
-    assert!(global.values().all(|value| value.as_str() == Some("collapsed")));
+    assert_eq!(
+        global.len(),
+        leaves,
+        "every leaf kind is stored as chosen: {global:?}"
+    );
+    assert!(
+        global
+            .values()
+            .all(|value| value.as_str() == Some("collapsed"))
+    );
 
     let _ = toggle_display_scope(&mut agent);
     focus_row(&mut agent, "Message display");
     let _ = press(&mut agent, KeyCode::Char(' '));
     let session = message_display_table(&session_file(&root, "sess-a"));
     assert_eq!(session.len(), leaves);
-    assert!(session.values().all(|value| value.as_str() == Some("expanded")));
+    assert!(
+        session
+            .values()
+            .all(|value| value.as_str() == Some("expanded"))
+    );
 }
 
 #[test]
@@ -451,17 +481,26 @@ fn switching_scope_applies_values_immediately_and_preserves_the_other_scope() {
     flip(&mut agent, "File reads");
     let _ = toggle_display_scope(&mut agent);
     flip(&mut agent, "File reads");
-    assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Collapsed));
+    assert_eq!(
+        form(&agent, MessageKind::Read),
+        Some(DisplayForm::Collapsed)
+    );
     let _ = toggle_display_scope(&mut agent);
     assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Expanded));
     flip(&mut agent, "File reads");
     flip(&mut agent, "File reads");
     assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Expanded));
     let _ = toggle_display_scope(&mut agent);
-    assert_eq!(form(&agent, MessageKind::Read), Some(DisplayForm::Collapsed));
+    assert_eq!(
+        form(&agent, MessageKind::Read),
+        Some(DisplayForm::Collapsed)
+    );
     focus_row(&mut agent, "File reads");
     assert!(sidebar_row(&draw(&mut agent), "File reads").contains("1 line"));
-    assert_eq!(stored(&read_toml(&global_file(&root)), "message_display", "read"), Some("expanded"));
+    assert_eq!(
+        stored(&read_toml(&global_file(&root)), "message_display", "read"),
+        Some("expanded")
+    );
 }
 
 #[test]

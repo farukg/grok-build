@@ -236,30 +236,18 @@ mod tests {
     #[test]
     fn collapsed_header_shows_entry_count() {
         let block = ListDirToolCallBlock::new("src").with_output("a.rs\nb.rs\nsub/\n");
-        assert_eq!(
-            header_text(&block),
-            "src (3 entries)".to_owned()
-        );
+        assert_eq!(header_text(&block), "src (3 entries)".to_owned());
 
         let single = ListDirToolCallBlock::new("src").with_output("lonely.rs\n");
-        assert_eq!(
-            header_text(&single),
-            "src (1 entry)".to_owned()
-        );
+        assert_eq!(header_text(&single), "src (1 entry)".to_owned());
     }
 
     #[test]
     fn collapsed_header_omits_count_when_empty_or_failed() {
         let empty = ListDirToolCallBlock::new("src");
-        assert_eq!(
-            header_text(&empty),
-            "src".to_owned()
-        );
+        assert_eq!(header_text(&empty), "src".to_owned());
 
         let failed = ListDirToolCallBlock::new("gone").with_error("no such directory");
-        assert_eq!(
-            header_text(&failed),
-            "gone".to_owned()
-        );
+        assert_eq!(header_text(&failed), "gone".to_owned());
     }
 }

@@ -104,7 +104,10 @@ fn registered_moved_cloned_and_reregistered_waits_are_woken_with_shutdown() {
         let waker = futures::task::waker(count.clone());
         let mut moved = Box::pin(deadline.wait());
         owner.block_on(async {
-            assert!(moved.as_mut().poll(&mut Context::from_waker(&waker)).is_pending());
+            assert!(moved
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending());
         });
         let cancelled_count = Arc::new(WakeCount::default());
         let cancelled_waker = futures::task::waker(cancelled_count.clone());
@@ -139,7 +142,10 @@ fn true_elapsed_completion_survives_shutdown_but_a_new_wait_is_rejected() {
         let (wake_tx, wake_rx) = std::sync::mpsc::channel();
         let waker = futures::task::waker(Arc::new(WakeSignal(std::sync::Mutex::new(wake_tx))));
         let mut wait = Box::pin(deadline.wait());
-        assert!(wait.as_mut().poll(&mut Context::from_waker(&waker)).is_pending());
+        assert!(wait
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending());
         owner.block_on(async { sleep_until(deadline.deadline()).await });
         wake_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         drop(owner);

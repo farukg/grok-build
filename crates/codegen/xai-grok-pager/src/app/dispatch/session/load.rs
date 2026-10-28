@@ -140,7 +140,10 @@ fn stamp_loaded_child_role(app: &mut AppView, agent_id: AgentId, session_id: &st
         })
         .and_then(|entry| entry.parent_session_id.clone());
     crate::app::agent_view::stamp_child_role_for_session(
-        &mut app.agents, agent_id, session_id, parent_session_id.as_deref(),
+        &mut app.agents,
+        agent_id,
+        session_id,
+        parent_session_id.as_deref(),
     );
 }
 
@@ -342,11 +345,14 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
     let mut picker_dismissed = false;
     let entry_data = if let Some(agent) = get_active_agent_mut(app) {
         if let Some(ActiveModal::SessionPicker { entries, .. }) = agent.active_modal.as_mut() {
-            let data = entries
-                .as_ref()
-                .and_then(|s| s.get(index))
-                .map(|e| (e.id.clone(), e.source.clone(), e.cwd.clone(),
-                    crate::app::roster::SessionActivitySnapshot::from_picker_entry(e)));
+            let data = entries.as_ref().and_then(|s| s.get(index)).map(|e| {
+                (
+                    e.id.clone(),
+                    e.source.clone(),
+                    e.cwd.clone(),
+                    crate::app::roster::SessionActivitySnapshot::from_picker_entry(e),
+                )
+            });
             agent.active_modal = None;
             picker_dismissed = true;
             data
@@ -373,8 +379,12 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
                 Some(e) => e,
                 None => return vec![],
             };
-            let d = (entry.id.clone(), entry.source.clone(), entry.cwd.clone(),
-                crate::app::roster::SessionActivitySnapshot::from_picker_entry(entry));
+            let d = (
+                entry.id.clone(),
+                entry.source.clone(),
+                entry.cwd.clone(),
+                crate::app::roster::SessionActivitySnapshot::from_picker_entry(entry),
+            );
             app.session_picker_loading = false;
             app.session_picker_state.set_query("");
             app.session_picker_state.search_active = false;
@@ -388,7 +398,9 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
         return dispatch_picked_session(app, session_id, source, cwd);
     }
     let effects = dispatch_picked_session(app, session_id, source, cwd);
-    if let Some(id) = app.agents.find_by_session_id(activity.session_id.0.as_ref())
+    if let Some(id) = app
+        .agents
+        .find_by_session_id(activity.session_id.0.as_ref())
         && let Some(agent) = app.agents.get_mut(&id)
     {
         agent.restore_session_activity(&activity);
@@ -1264,7 +1276,11 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         session_id,
     );
     if app.agents.get(&agent_id).is_some_and(|agent| {
-        agent.session.session_id.as_ref().is_some_and(|bound| bound != &session_id)
+        agent
+            .session
+            .session_id
+            .as_ref()
+            .is_some_and(|bound| bound != &session_id)
     }) {
         return vec![];
     }
@@ -1277,7 +1293,9 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
     }
     let identity_rebind = super::super::dashboard::WorkspaceIdentityRebind::capture(app);
     crate::app::workspace_sync::allow_loaded_session(app, session_id.0.as_ref());
-    let activity = app.dashboard_roster().iter()
+    let activity = app
+        .dashboard_roster()
+        .iter()
         .find(|entry| entry.session_id == session_id.0.as_ref())
         .map(|entry| crate::app::roster::SessionActivitySnapshot {
             session_id: session_id.clone(),
@@ -1423,7 +1441,11 @@ pub(in crate::app::dispatch) fn handle_session_load_failed(
 ) -> Vec<Effect> {
     tracing::error!(agent = ?agent_id, session = ?session_id, error = %error, "Session load failed");
     if app.agents.get(&agent_id).is_some_and(|agent| {
-        agent.session.session_id.as_ref().is_some_and(|bound| bound != &session_id)
+        agent
+            .session
+            .session_id
+            .as_ref()
+            .is_some_and(|bound| bound != &session_id)
     }) {
         return vec![];
     }

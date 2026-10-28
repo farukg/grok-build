@@ -564,7 +564,9 @@ fn block_viewer_y_delivers_selected_text_without_pasting() {
     agent.prompt.set_text("draft");
     let clipboard = crate::test_util::RecordingClipboard::default();
     let viewer = agent.block_viewer.as_mut().unwrap();
-    viewer.list_state.set_clipboard_provider(Box::new(clipboard.clone()));
+    viewer
+        .list_state
+        .set_clipboard_provider(Box::new(clipboard.clone()));
     let entry_id = viewer.entry_id;
     assert!(viewer.handle_key(&KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)));
     assert_eq!(clipboard.writes(), vec!["hello world".to_owned()]);
@@ -578,7 +580,10 @@ fn block_viewer_enter_preserves_current_line_and_draft() {
     let mut agent = agent_with_markdown_viewer("hello world");
     agent.prompt.set_text("draft");
     let outcome = agent.handle_input(&Event::Key(enter_key()), &ActionRegistry::defaults());
-    assert!(matches!(outcome, crate::app::app_view::InputOutcome::Changed));
+    assert!(matches!(
+        outcome,
+        crate::app::app_view::InputOutcome::Changed
+    ));
     assert!(agent.block_viewer.is_some());
     assert_eq!(agent.prompt.text(), "draft");
     assert!(agent.block_viewer_resume.is_none());

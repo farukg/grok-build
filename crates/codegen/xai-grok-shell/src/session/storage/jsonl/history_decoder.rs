@@ -1,5 +1,5 @@
-use super::history_images::{ImageRejection, image_rejections, normalize_images};
 pub use super::history_images::HistoryImageIssue;
+use super::history_images::{ImageRejection, image_rejections, normalize_images};
 use crate::sampling::ConversationItem;
 use crate::sampling::types::ChatRequestMessage;
 use crate::session::persistence::CHAT_FORMAT_VERSION;
@@ -8,9 +8,16 @@ pub use xai_grok_sampling_types::LegacyReasoningIssue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryIssue {
-    InvalidJson { line: usize },
-    InvalidRecord { line: usize },
-    InvalidLegacyReasoning { line: usize, cause: LegacyReasoningIssue },
+    InvalidJson {
+        line: usize,
+    },
+    InvalidRecord {
+        line: usize,
+    },
+    InvalidLegacyReasoning {
+        line: usize,
+        cause: LegacyReasoningIssue,
+    },
     InvalidImage {
         line: usize,
         part: usize,
@@ -57,11 +64,14 @@ impl DecodedHistory {
                 LineRejectCause::Record(_) => HistoryIssue::InvalidRecord { line: dropped.line },
             })
             .chain(self.images.iter().flat_map(|images| {
-                images.rejected.iter().map(|image| HistoryIssue::InvalidImage {
-                    line: images.line,
-                    part: image.part,
-                    cause: image.issue(),
-                })
+                images
+                    .rejected
+                    .iter()
+                    .map(|image| HistoryIssue::InvalidImage {
+                        line: images.line,
+                        part: image.part,
+                        cause: image.issue(),
+                    })
             }))
             .chain(self.legacy_issues.iter().copied())
     }
@@ -105,11 +115,23 @@ pub fn decode_history(
     chat_format_version: u8,
     max_items: usize,
 ) -> Result<DecodedHistory, HistoryItemLimitExceeded> {
-    decode_history_bounded(contents, chat_format_version, HistoryLimits { items: max_items, issues: usize::MAX })
-        .map_err(|limit| match limit {
-            HistoryDecodeLimit::Items { limit, observed_issues: _ } => limit,
-            HistoryDecodeLimit::Issues { line, observed: _ } => HistoryItemLimitExceeded { line, max_items },
-        })
+    decode_history_bounded(
+        contents,
+        chat_format_version,
+        HistoryLimits {
+            items: max_items,
+            issues: usize::MAX,
+        },
+    )
+    .map_err(|limit| match limit {
+        HistoryDecodeLimit::Items {
+            limit,
+            observed_issues: _,
+        } => limit,
+        HistoryDecodeLimit::Issues { line, observed: _ } => {
+            HistoryItemLimitExceeded { line, max_items }
+        }
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -120,8 +142,14 @@ pub struct HistoryLimits {
 
 #[derive(Debug)]
 pub enum HistoryDecodeLimit {
-    Items { limit: HistoryItemLimitExceeded, observed_issues: usize },
-    Issues { line: usize, observed: usize },
+    Items {
+        limit: HistoryItemLimitExceeded,
+        observed_issues: usize,
+    },
+    Issues {
+        line: usize,
+        observed: usize,
+    },
 }
 
 struct Diagnostics {
@@ -132,7 +160,12 @@ struct Diagnostics {
 impl Diagnostics {
     fn issue(&mut self, line: usize) -> Result<(), HistoryDecodeLimit> {
         self.observed += 1;
-        if self.observed > self.limit { return Err(HistoryDecodeLimit::Issues { line, observed: self.observed }); }
+        if self.observed > self.limit {
+            return Err(HistoryDecodeLimit::Issues {
+                line,
+                observed: self.observed,
+            });
+        }
         Ok(())
     }
 }
@@ -143,7 +176,10 @@ pub fn decode_history_bounded(
     limits: HistoryLimits,
 ) -> Result<DecodedHistory, HistoryDecodeLimit> {
     let max_items = limits.items;
-    let mut diagnostics = Diagnostics { observed: 0, limit: limits.issues };
+    let mut diagnostics = Diagnostics {
+        observed: 0,
+        limit: limits.issues,
+    };
     let mut sibling_btc_ids_seen = HashSet::new();
     let mut decoded = DecodedHistory {
         items: Vec::new(),
@@ -178,9 +214,7 @@ pub fn decode_history_bounded(
         } else {
             serde_json::from_value::<ChatRequestMessage>(raw.clone())
                 .map(ConversationItem::from)
-                .or_else(|e| {
-                    serde_json::from_value::<ConversationItem>(raw.clone()).map_err(|_| e)
-                })
+                .or_else(|e| serde_json::from_value::<ConversationItem>(raw.clone()).map_err(|_| e))
         };
         let item = match item_result {
             Ok(item) => item,
@@ -196,22 +230,44 @@ pub fn decode_history_bounded(
         // Bound the upgrader's sibling/ID allocations before calling its shared implementation.
         if limits.issues != usize::MAX
             && let Some(candidates) = raw.get("raw_output").and_then(serde_json::Value::as_array)
-            && candidates.len() > max_items.saturating_sub(decoded.items.len()).saturating_sub(1) {
-            return Err(HistoryDecodeLimit::Items { limit: HistoryItemLimitExceeded { line: line_idx + 1, max_items }, observed_issues: diagnostics.observed });
+            && candidates.len()
+                > max_items
+                    .saturating_sub(decoded.items.len())
+                    .saturating_sub(1)
+        {
+            return Err(HistoryDecodeLimit::Items {
+                limit: HistoryItemLimitExceeded {
+                    line: line_idx + 1,
+                    max_items,
+                },
+                observed_issues: diagnostics.observed,
+            });
         }
         let mut report_limit = None;
         let siblings = xai_grok_sampling_types::upgrade_legacy_reasoning_reporting(
-            &raw, &mut sibling_btc_ids_seen,
+            &raw,
+            &mut sibling_btc_ids_seen,
             |cause| {
                 if report_limit.is_none() {
                     match diagnostics.issue(line_idx + 1) {
-                        Ok(()) => decoded.legacy_issues.push(HistoryIssue::InvalidLegacyReasoning { line: line_idx + 1, cause }),
-                        Err(limit) => { report_limit = Some(limit); }
+                        Ok(()) => {
+                            decoded
+                                .legacy_issues
+                                .push(HistoryIssue::InvalidLegacyReasoning {
+                                    line: line_idx + 1,
+                                    cause,
+                                })
+                        }
+                        Err(limit) => {
+                            report_limit = Some(limit);
+                        }
                     }
                 }
             },
         );
-        if let Some(limit) = report_limit { return Err(limit); }
+        if let Some(limit) = report_limit {
+            return Err(limit);
+        }
         for sibling in siblings {
             match &sibling {
                 ConversationItem::Reasoning(_) => decoded.upgraded_reasoning_count += 1,
@@ -222,12 +278,24 @@ pub fn decode_history_bounded(
                 | ConversationItem::ToolResult(_) => {}
             }
             if decoded.items.len() >= max_items {
-                return Err(HistoryDecodeLimit::Items { limit: HistoryItemLimitExceeded { line: line_idx + 1, max_items }, observed_issues: diagnostics.observed });
+                return Err(HistoryDecodeLimit::Items {
+                    limit: HistoryItemLimitExceeded {
+                        line: line_idx + 1,
+                        max_items,
+                    },
+                    observed_issues: diagnostics.observed,
+                });
             }
             decoded.items.push(sibling);
         }
         if decoded.items.len() >= max_items {
-            return Err(HistoryDecodeLimit::Items { limit: HistoryItemLimitExceeded { line: line_idx + 1, max_items }, observed_issues: diagnostics.observed });
+            return Err(HistoryDecodeLimit::Items {
+                limit: HistoryItemLimitExceeded {
+                    line: line_idx + 1,
+                    max_items,
+                },
+                observed_issues: diagnostics.observed,
+            });
         }
         if let ConversationItem::BackendToolCall(backend) = &item {
             sibling_btc_ids_seen.insert(backend.id().to_string());

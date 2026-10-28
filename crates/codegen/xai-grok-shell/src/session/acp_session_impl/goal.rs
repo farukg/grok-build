@@ -1943,7 +1943,8 @@ impl SessionActor {
                     .emit(crate::session::events::Event::GoalClassifierFailClosed {
                     reason:
                         crate::session::events::GoalClassifierFailClosedReason::ConcurrentInFlight
-                            .as_const_str().into(),
+                            .as_const_str()
+                            .into(),
                     attempt: 0,
                 });
                 let synthetic_info = self
@@ -1996,7 +1997,8 @@ impl SessionActor {
                     .emit(crate::session::events::Event::GoalClassifierFailOpen {
                     reason:
                         crate::session::events::GoalClassifierFailOpenReason::GoalNotActiveAtResolve
-                            .as_const_str().into(),
+                            .as_const_str()
+                            .into(),
                     attempt: 0,
                     latency_ms: fire_started.elapsed().as_millis() as u64,
                 });
@@ -2044,7 +2046,8 @@ impl SessionActor {
                     .emit(crate::session::events::Event::GoalClassifierFailOpen {
                     reason:
                         crate::session::events::GoalClassifierFailOpenReason::GoalNotActiveAtResolve
-                            .as_const_str().into(),
+                            .as_const_str()
+                            .into(),
                     attempt,
                     latency_ms: fire_started.elapsed().as_millis() as u64,
                 });
@@ -2444,8 +2447,8 @@ mod role_tool_names_tests {
 }
 
 #[cfg(test)]
-#[path = "goal_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "goal_live_consumer_tests.rs"]
 mod live_consumer_tests;
+#[cfg(test)]
+#[path = "goal_tests.rs"]
+mod tests;

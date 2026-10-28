@@ -13,7 +13,7 @@ use crate::session::{
     CancelOptions, CancelTrigger, SessionCommand, ShutdownKind, commands::PromptTurnResult,
 };
 use xai_grok_tools::implementations::grok_build::task::types::{
-    InterruptionCause, SubagentResult, SubagentState, ChildCancellation,
+    ChildCancellation, InterruptionCause, SubagentResult, SubagentState,
 };
 
 pub(super) const ACTIVE_MESSAGE_RECEIPT_CAPACITY: usize = 64;
@@ -213,7 +213,10 @@ impl PromptTurnReceiptDrain {
     }
 }
 
-pub(super) fn cancel_shell_child_turn(cmd_tx: &mpsc::UnboundedSender<SessionCommand>, intent: ChildCancellation) {
+pub(super) fn cancel_shell_child_turn(
+    cmd_tx: &mpsc::UnboundedSender<SessionCommand>,
+    intent: ChildCancellation,
+) {
     let trigger = match intent {
         ChildCancellation::Shutdown => CancelTrigger::Shutdown,
         ChildCancellation::Authorized => CancelTrigger::Coordinator,

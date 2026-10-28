@@ -1687,7 +1687,10 @@ mod tests {
         assert_eq!(output.lines.len(), 1, "collapsed shows the header only");
         // Exact suffix format is pinned by header_diffstat_spans_use_diff_colors.
         let text = line_to_string(&nth(&output.lines, 0).content);
-        assert!(text.starts_with(&"src/foo.rs".to_owned()), "header line: {text:?}");
+        assert!(
+            text.starts_with(&"src/foo.rs".to_owned()),
+            "header line: {text:?}"
+        );
         assert!(!text.contains("let y"), "no diff body while collapsed");
     }
 
@@ -1735,7 +1738,10 @@ mod tests {
             nth(&header.content.spans, 1).content.as_ref(),
             "/Users/me/project/src/foo.rs"
         );
-        assert_eq!(derive_selection_text(header), "/Users/me/project/src/foo.rs");
+        assert_eq!(
+            derive_selection_text(header),
+            "/Users/me/project/src/foo.rs"
+        );
         assert!(header.selection_text.is_none());
     }
 
@@ -1766,13 +1772,25 @@ mod tests {
 
         let a = EditToolCallBlock::new("/repo/src/a/main.rs", vec![]).output(&ctx);
         let b = EditToolCallBlock::new("/repo/lib/b/main.rs", vec![]).output(&ctx);
-        assert_eq!(nth(&nth(&a.lines, 0).content.spans, 1).content.as_ref(), "src/a/main.rs");
-        assert_eq!(nth(&nth(&b.lines, 0).content.spans, 1).content.as_ref(), "lib/b/main.rs");
+        assert_eq!(
+            nth(&nth(&a.lines, 0).content.spans, 1).content.as_ref(),
+            "src/a/main.rs"
+        );
+        assert_eq!(
+            nth(&nth(&b.lines, 0).content.spans, 1).content.as_ref(),
+            "lib/b/main.rs"
+        );
 
         // Creation keeps its own header spelling; only the preamble verb differs.
-        let creating = EditToolCallBlock::new("/repo/src/new_file.rs", vec![]).with_prefix("Creating ");
+        let creating =
+            EditToolCallBlock::new("/repo/src/new_file.rs", vec![]).with_prefix("Creating ");
         let collapsed = creating.output(&ctx);
-        assert_eq!(nth(&nth(&collapsed.lines, 0).content.spans, 1).content.as_ref(), "src/new_file.rs");
+        assert_eq!(
+            nth(&nth(&collapsed.lines, 0).content.spans, 1)
+                .content
+                .as_ref(),
+            "src/new_file.rs"
+        );
         let preamble = creating.preamble(&ctx).unwrap();
         let preamble_text: String = preamble
             .lines

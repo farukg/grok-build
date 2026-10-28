@@ -8,7 +8,8 @@ use crate::session::delivery_receiver::{
 struct ParentDeliveryObservation {
     #[serde(flatten)]
     receipt: DeliveryReceipt,
-    recovery_ref: xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef,
+    recovery_ref:
+        xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef,
 }
 
 impl SessionActor {
@@ -26,11 +27,21 @@ impl SessionActor {
         self.publish_delivery_observation(receipt);
     }
 
-    fn observe_delivery_record(&self, id: &str, record: &crate::session::delivery_receiver::DeliveryRecord) {
-        let receipt = record.receipt(&self.session_id_string(), id,
-            crate::session::receiver_execution::ReceiverPresence::Live);
+    fn observe_delivery_record(
+        &self,
+        id: &str,
+        record: &crate::session::delivery_receiver::DeliveryRecord,
+    ) {
+        let receipt = record.receipt(
+            &self.session_id_string(),
+            id,
+            crate::session::receiver_execution::ReceiverPresence::Live,
+        );
         match record.parent_recovery_ref() {
-            Some(recovery_ref) => self.publish_delivery_observation(&ParentDeliveryObservation { receipt, recovery_ref }),
+            Some(recovery_ref) => self.publish_delivery_observation(&ParentDeliveryObservation {
+                receipt,
+                recovery_ref,
+            }),
             None => self.delivery_changed(&receipt),
         }
     }
@@ -140,18 +151,29 @@ impl SessionActor {
                 continue;
             };
             let origin = match &record.provenance {
-                crate::session::delivery_receiver::DeliveryProvenance::External => PromptOrigin::Delivery {
-                    delivery_id: delivery_id.clone(), payload_digest: record.digest.clone(),
-                },
+                crate::session::delivery_receiver::DeliveryProvenance::External => {
+                    PromptOrigin::Delivery {
+                        delivery_id: delivery_id.clone(),
+                        payload_digest: record.digest.clone(),
+                    }
+                }
                 crate::session::delivery_receiver::DeliveryProvenance::ParentMessage { .. } => {
                     match &mode {
-                        crate::session::delivery_receiver::ReceiverResume::CurrentQueue => self.observe_delivery_record(delivery_id, record),
+                        crate::session::delivery_receiver::ReceiverResume::CurrentQueue => {
+                            self.observe_delivery_record(delivery_id, record)
+                        }
                         crate::session::delivery_receiver::ReceiverResume::Recovery { .. } => {}
                     }
                     continue;
-                },
+                }
             };
-            let exists = self.state.lock().await.pending_inputs.iter().any(|item| item.prompt_id == *prompt_id);
+            let exists = self
+                .state
+                .lock()
+                .await
+                .pending_inputs
+                .iter()
+                .any(|item| item.prompt_id == *prompt_id);
             if exists {
                 continue;
             }
@@ -192,10 +214,19 @@ impl SessionActor {
             },
         };
         let projection = xai_chat_state::InputProjection::Delivery(projection);
-        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(self.session_id_string(), &projection);
-        let result = self.chat_state_handle.append_input_with_source_and_ack(projection, admission).await;
+        let identity = crate::session::source_binding::StrictSourceOrigin::from_projection(
+            self.session_id_string(),
+            &projection,
+        );
+        let result = self
+            .chat_state_handle
+            .append_input_with_source_and_ack(projection, admission)
+            .await;
         self.observe_strict_source(identity, &result);
-        match result.map(|ack| ack.acknowledgement).map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement)) {
+        match result
+            .map(|ack| ack.acknowledgement)
+            .map_err(|error| error.map_acknowledgement(|ack| ack.acknowledgement))
+        {
             Ok(xai_chat_state::CompletionProjectionAck::Appended) => {
                 self.delivery_changed(&DeliveryReceipt {
                     session_id: self.session_id_string(),
@@ -295,8 +326,7 @@ impl SessionActor {
         progress: DeliveryProgress,
     ) -> Result<(), acp::Error> {
         let (respond_to, receive) = oneshot::channel();
-        self
-            .notifications
+        self.notifications
             .persistence_tx
             .send(PersistenceMsg::FinishDeliveryTurn {
                 turn_id: turn_id.to_owned(),
@@ -304,8 +334,13 @@ impl SessionActor {
                 origin,
                 progress,
                 respond_to,
-            }).map_err(|_| acp::Error::internal_error().data("terminal settlement owner closed"))?;
-        receive.await.map_err(|_| acp::Error::internal_error().data("terminal settlement acknowledgement lost"))?
+            })
+            .map_err(|_| acp::Error::internal_error().data("terminal settlement owner closed"))?;
+        receive
+            .await
+            .map_err(|_| {
+                acp::Error::internal_error().data("terminal settlement acknowledgement lost")
+            })?
             .map_err(|error| crate::session::persistence::io_error_to_acp(&error))?;
         Ok(())
     }

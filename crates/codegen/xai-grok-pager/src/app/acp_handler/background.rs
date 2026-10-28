@@ -17,20 +17,65 @@ pub(crate) fn route_bg_task_stdout(
     let tc_id = tcu.tool_call_id.0.to_string();
 
     let task_id = if let Some(tasks) = session.tracker.background_tasks_for_tool(&tc_id, meta) {
-        if let [task] = tasks && !session.tracker.has_foreground_tool_projection(&tc_id, meta)
-            && tcu.fields.raw_output.as_ref().and_then(|output| output.get("output_file")).and_then(|file| file.as_str()).is_none_or(|file|
-                file.is_empty() || session.bg_tasks.get(task).is_some_and(|task| task.output_file == file)) { task.clone() } else {
-            let Some(output_file) = tcu.fields.raw_output.as_ref().and_then(|output| output.get("output_file"))
-                .and_then(|file| file.as_str()).filter(|file| !file.is_empty()) else { return false; };
-            let mut matching = tasks.iter().filter(|id| session.bg_tasks.get(*id).is_some_and(|task| task.output_file == output_file));
-            let Some(task) = matching.next() else { return false; };
-            if matching.next().is_some() { return false; }
+        if let [task] = tasks
+            && !session.tracker.has_foreground_tool_projection(&tc_id, meta)
+            && tcu
+                .fields
+                .raw_output
+                .as_ref()
+                .and_then(|output| output.get("output_file"))
+                .and_then(|file| file.as_str())
+                .is_none_or(|file| {
+                    file.is_empty()
+                        || session
+                            .bg_tasks
+                            .get(task)
+                            .is_some_and(|task| task.output_file == file)
+                })
+        {
+            task.clone()
+        } else {
+            let Some(output_file) = tcu
+                .fields
+                .raw_output
+                .as_ref()
+                .and_then(|output| output.get("output_file"))
+                .and_then(|file| file.as_str())
+                .filter(|file| !file.is_empty())
+            else {
+                return false;
+            };
+            let mut matching = tasks.iter().filter(|id| {
+                session
+                    .bg_tasks
+                    .get(*id)
+                    .is_some_and(|task| task.output_file == output_file)
+            });
+            let Some(task) = matching.next() else {
+                return false;
+            };
+            if matching.next().is_some() {
+                return false;
+            }
             task.clone()
         }
     } else {
-        if !session.tracker.legacy_background_tool_is_unambiguous(&tc_id, meta)
-            || session.bg_tasks.values().filter(|task| task.tool_call_id == tc_id).take(2).count() > 1 { return false; }
-        let Some(task) = session.bg_tool_call_to_task.get(&tc_id) else { return false; };
+        if !session
+            .tracker
+            .legacy_background_tool_is_unambiguous(&tc_id, meta)
+            || session
+                .bg_tasks
+                .values()
+                .filter(|task| task.tool_call_id == tc_id)
+                .take(2)
+                .count()
+                > 1
+        {
+            return false;
+        }
+        let Some(task) = session.bg_tool_call_to_task.get(&tc_id) else {
+            return false;
+        };
         task.clone()
     };
 
@@ -62,13 +107,17 @@ pub(crate) fn route_bg_task_stdout(
             // Don't overwrite with empty stdout (shell clears buffer on completion).
             // `set_stdout` handles the BG_TASK_MAX_STDOUT trim, flips `truncated` on TUI-side overflow, and refreshes the cached `stdout_line_count`
             if !stdout.is_empty() {
-                if !meta.is_replay && agent.session.bg_tasks.get(&task_id).is_some_and(|task| task.status == BgTaskStatus::Running) {
+                if !meta.is_replay
+                    && agent
+                        .session
+                        .bg_tasks
+                        .get(&task_id)
+                        .is_some_and(|task| task.status == BgTaskStatus::Running)
+                {
                     agent.last_active_at = Some(std::time::Instant::now());
                 }
                 agent.set_bg_task_stdout(&task_id, stdout);
-                if chunk_truncated
-                    && let Some(bg_task) = agent.session.bg_tasks.get_mut(&task_id)
-                {
+                if chunk_truncated && let Some(bg_task) = agent.session.bg_tasks.get_mut(&task_id) {
                     bg_task.truncated = true;
                 }
             }
@@ -91,7 +140,11 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
     super::background_delivery::apply(session_notif, meta, app)
 }
 
-pub(super) fn apply_task_backgrounded(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
+pub(super) fn apply_task_backgrounded(
+    session_notif: SessionNotification,
+    meta: &NotificationMeta,
+    app: &mut AppView,
+) -> bool {
     let (tool_call_id, task_id, command, cwd, output_file, monitor_description, notif_description) =
         match session_notif.update {
             XaiSessionUpdate::TaskBackgrounded {
@@ -145,7 +198,9 @@ pub(super) fn apply_task_backgrounded(session_notif: SessionNotification, meta: 
     let scrollback = &mut agent.scrollback;
 
     // A demotion (foreground to background) means the execute block already exists in scrollback as a pending tool in the tracker
-    let demotion_eid = session.tracker.background_tool_entry_id(&tool_call_id, meta);
+    let demotion_eid = session
+        .tracker
+        .background_tool_entry_id(&tool_call_id, meta);
 
     // The structured `monitor_description` field identifies a monitor on the current path
     // Reparented monitors (subagent session sharing) and backends predating that field still bake a "[monitor] <desc>" prefix into the command
@@ -221,16 +276,22 @@ pub(super) fn apply_task_backgrounded(session_notif: SessionNotification, meta: 
             entry.invalidate_cache();
             scrollback.mark_height_dirty(eid);
             scrollback.finish_running(eid);
-            session.tracker.background_pending_tool(&tool_call_id, &task_id, meta);
+            session
+                .tracker
+                .background_pending_tool(&tool_call_id, &task_id, meta);
             Some(eid)
         } else if completed_early {
             // Entry gone and the task already completed: the completion block is already in scrollback, nothing left to render
-            session.tracker.background_pending_tool(&tool_call_id, &task_id, meta);
+            session
+                .tracker
+                .background_pending_tool(&tool_call_id, &task_id, meta);
             None
         } else {
             // The entry was removed between the tracker lookup and now (compaction, clear, etc.)
             // Create a fresh BgTask so the task still shows in the UI
-            session.tracker.background_pending_tool(&tool_call_id, &task_id, meta);
+            session
+                .tracker
+                .background_pending_tool(&tool_call_id, &task_id, meta);
             let block = crate::scrollback::blocks::BgTaskBlock::started(&command, &task_id)
                 .with_description(description.clone());
             let fallback = scrollback.push_block(RenderBlock::BgTask(block));
@@ -286,7 +347,9 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
 
     // Monitor events append stdout; an exact-id re-delivery must not append the line twice.
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
-    if !agent.accepts_current_source(&meta) { return false; }
+    if !agent.accepts_current_source(&meta) {
+        return false;
+    }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -314,7 +377,11 @@ pub(super) fn handle_scheduled_task_created(
     apply_scheduled_task_created(session_notif, &meta, app)
 }
 
-pub(super) fn apply_scheduled_task_created(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
+pub(super) fn apply_scheduled_task_created(
+    session_notif: SessionNotification,
+    meta: &NotificationMeta,
+    app: &mut AppView,
+) -> bool {
     let (task_id, prompt, human_schedule, next_fire_at) = match session_notif.update {
         XaiSessionUpdate::ScheduledTaskCreated {
             task_id,
@@ -337,7 +404,9 @@ pub(super) fn apply_scheduled_task_created(session_notif: SessionNotification, m
 
     // Scheduler re-announces (actor restart) re-deliver rows this client may already hold; the
     // task_id merge below is idempotent, but an exact-id duplicate is still not new activity.
-    if !agent.accepts_current_source(meta) { return false; }
+    if !agent.accepts_current_source(meta) {
+        return false;
+    }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -405,7 +474,9 @@ pub(super) fn handle_scheduled_task_fired(notif: &acp::ExtNotification, app: &mu
         .expect("find_session_match returned an existing AgentId");
 
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
-    if !agent.accepts_current_source(&meta) { return false; }
+    if !agent.accepts_current_source(&meta) {
+        return false;
+    }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -455,7 +526,11 @@ pub(super) fn handle_scheduled_task_deleted(
     apply_scheduled_task_deleted(session_notif, &meta, app)
 }
 
-pub(super) fn apply_scheduled_task_deleted(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
+pub(super) fn apply_scheduled_task_deleted(
+    session_notif: SessionNotification,
+    meta: &NotificationMeta,
+    app: &mut AppView,
+) -> bool {
     let (task_id, reason) = match session_notif.update {
         XaiSessionUpdate::ScheduledTaskDeleted { task_id, reason } => (task_id, reason),
         _ => return false,
@@ -473,7 +548,9 @@ pub(super) fn apply_scheduled_task_deleted(session_notif: SessionNotification, m
 
     // The removal below mutates pane state and may push an expiry notice; check admission first so
     // an exact-id re-delivery cannot re-remove (or re-notice) an already-processed deletion.
-    if !agent.accepts_current_source(meta) { return false; }
+    if !agent.accepts_current_source(meta) {
+        return false;
+    }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -573,7 +650,11 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     super::background_delivery::apply(session_notif, meta, app)
 }
 
-pub(super) fn apply_task_completed(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
+pub(super) fn apply_task_completed(
+    session_notif: SessionNotification,
+    meta: &NotificationMeta,
+    app: &mut AppView,
+) -> bool {
     let task_snapshot = match session_notif.update {
         XaiSessionUpdate::TaskCompleted { task_snapshot, .. } => task_snapshot,
         _ => return false,

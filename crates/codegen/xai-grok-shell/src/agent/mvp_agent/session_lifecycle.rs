@@ -502,12 +502,20 @@ impl MvpAgent {
         let required = children
             .iter()
             .map(|(id, _)| id.clone())
-            .chain(resident.iter().map(|entry| acp::SessionId::new(entry.session_id.clone())))
+            .chain(
+                resident
+                    .iter()
+                    .map(|entry| acp::SessionId::new(entry.session_id.clone())),
+            )
             .collect();
-        let summaries = storage.roster_summaries(200, required).await.unwrap_or_default();
+        let summaries = storage
+            .roster_summaries(200, required)
+            .await
+            .unwrap_or_default();
         for (id, child) in children {
             if let Some(mut entry) = self.resident_roster_entry(&id) {
-                entry.session_kind = Some(crate::session::persistence::SUBAGENT_SESSION_KIND.into());
+                entry.session_kind =
+                    Some(crate::session::persistence::SUBAGENT_SESSION_KIND.into());
                 entry.parent_session_id = Some(child.parent_session_id.0.to_string());
                 resident.push(entry);
             }

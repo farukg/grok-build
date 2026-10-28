@@ -1,4 +1,4 @@
-use super::super::coordinator::{ChildCancellation, ChildCancelOutcome};
+use super::super::coordinator::{ChildCancelOutcome, ChildCancellation};
 use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
 use super::*;
 use crate::implementations::grok_build::task::coordinator::ChildCompletion;

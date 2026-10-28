@@ -161,7 +161,11 @@ async fn replay_forwards_records_within_the_limit_untouched() {
     let params = next_ext_notification_params(&mut rx).expect("forwarded");
     let mut expected = record;
     expected["_meta"] = serde_json::json!({});
-    crate::extensions::current_actions::stamp_delivery(expected["_meta"].as_object_mut().unwrap(), &crate::extensions::current_actions::DeliveryRole::Unavailable).unwrap();
+    crate::extensions::current_actions::stamp_delivery(
+        expected["_meta"].as_object_mut().unwrap(),
+        &crate::extensions::current_actions::DeliveryRole::Unavailable,
+    )
+    .unwrap();
     assert_eq!(params, serde_json::to_string(&expected).unwrap());
 }
 
@@ -186,7 +190,11 @@ async fn replay_leaves_other_oversized_records_alone() {
     let params = next_ext_notification_params(&mut rx).expect("forwarded");
     let mut expected: Value = serde_json::from_str(&recorded).unwrap();
     expected["_meta"] = serde_json::json!({});
-    crate::extensions::current_actions::stamp_delivery(expected["_meta"].as_object_mut().unwrap(), &crate::extensions::current_actions::DeliveryRole::Unavailable).unwrap();
+    crate::extensions::current_actions::stamp_delivery(
+        expected["_meta"].as_object_mut().unwrap(),
+        &crate::extensions::current_actions::DeliveryRole::Unavailable,
+    )
+    .unwrap();
     assert_eq!(params, serde_json::to_string(&expected).unwrap());
 }
 
@@ -206,32 +214,67 @@ async fn parent_replay_does_not_emit_meta_less_unfinished_tool_call() {
 }
 
 async fn unbound_replay_erases_archived_authority(cursor: Option<&str>) {
-    use crate::extensions::current_actions::{DeliveryRole, PublicationContext, stamp_delivery, delivery_role};
+    use crate::extensions::current_actions::{
+        DeliveryRole, PublicationContext, delivery_role, stamp_delivery,
+    };
     use crate::session::current_actions::SnapshotBinding;
     let (agent, mut rx) = build_agent_with_gateway();
     let dir = tempfile::tempdir().unwrap();
     let cwd = xai_grok_paths::AbsPathBuf::new(dir.path().to_path_buf()).unwrap();
-    let archived = DeliveryRole::Live { context: PublicationContext {
-        binding: SnapshotBinding { session_id: "s".into(), binding_epoch: 7, load_generation: 9 },
-        incarnation: uuid::Uuid::new_v4(),
-    } };
-    let native = acp::SessionNotification::new(acp::SessionId::new("s"), acp::SessionUpdate::AgentMessageChunk(
-        acp::ContentChunk::new(acp::ContentBlock::from("original native content")),
-    ));
-    let mut records = vec![serde_json::to_value(&native).unwrap(), serde_json::to_value(&native).unwrap(), recorded_completion("original xAI output".into())];
+    let archived = DeliveryRole::Live {
+        context: PublicationContext {
+            binding: SnapshotBinding {
+                session_id: "s".into(),
+                binding_epoch: 7,
+                load_generation: 9,
+            },
+            incarnation: uuid::Uuid::new_v4(),
+        },
+    };
+    let native = acp::SessionNotification::new(
+        acp::SessionId::new("s"),
+        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::from(
+            "original native content",
+        ))),
+    );
+    let mut records = vec![
+        serde_json::to_value(&native).unwrap(),
+        serde_json::to_value(&native).unwrap(),
+        recorded_completion("original xAI output".into()),
+    ];
     let mut lines = Vec::new();
     for (index, record) in records.iter_mut().enumerate() {
         record["_meta"] = serde_json::json!({ "eventId": format!("s-{}", index + 1), "promptId": "original-prompt", "agentTimestampMs": 123 });
         stamp_delivery(record["_meta"].as_object_mut().unwrap(), &archived).unwrap();
-        let method = if index == 2 { "_x.ai/session/update" } else { "session/update" };
-        lines.push(serde_json::json!({ "timestamp": index, "method": method, "params": record }).to_string());
+        let method = if index == 2 {
+            "_x.ai/session/update"
+        } else {
+            "session/update"
+        };
+        lines.push(
+            serde_json::json!({ "timestamp": index, "method": method, "params": record })
+                .to_string(),
+        );
     }
     let path = dir.path().join("updates.jsonl");
     std::fs::write(&path, lines.join("\n")).unwrap();
     let updates_path = Some(path);
     let session_id = acp::SessionId::new("s");
-    let replay = agent.replay_session_updates(&session_id, &cwd, &updates_path, None, None, cursor, false, None);
-    let expected = if cursor.is_some() { &records[1..] } else { &records[..] };
+    let replay = agent.replay_session_updates(
+        &session_id,
+        &cwd,
+        &updates_path,
+        None,
+        None,
+        cursor,
+        false,
+        None,
+    );
+    let expected = if cursor.is_some() {
+        &records[1..]
+    } else {
+        &records[..]
+    };
     let receive = async {
         for original in expected {
             let delivered = match rx.recv().await.unwrap() {
@@ -248,11 +291,23 @@ async fn unbound_replay_erases_archived_authority(cursor: Option<&str>) {
                 }
                 _ => panic!("actual native replay notifications only"),
             };
-            assert_eq!(delivery_role(delivered["_meta"].as_object()).unwrap(), DeliveryRole::Unavailable);
+            assert_eq!(
+                delivery_role(delivered["_meta"].as_object()).unwrap(),
+                DeliveryRole::Unavailable
+            );
             let mut expected = original.clone();
-            stamp_delivery(expected["_meta"].as_object_mut().unwrap(), &DeliveryRole::Unavailable).unwrap();
-            if cursor.is_none() { expected["_meta"]["isReplay"] = true.into(); }
-            assert_eq!(delivered, expected, "replay changes authority, not original payload or identities");
+            stamp_delivery(
+                expected["_meta"].as_object_mut().unwrap(),
+                &DeliveryRole::Unavailable,
+            )
+            .unwrap();
+            if cursor.is_none() {
+                expected["_meta"]["isReplay"] = true.into();
+            }
+            assert_eq!(
+                delivered, expected,
+                "replay changes authority, not original payload or identities"
+            );
         }
     };
     let (result, ()) = tokio::join!(replay, receive);

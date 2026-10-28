@@ -15,12 +15,16 @@ pub(super) enum SendNowOutcome {
         row: crate::session::prompt_queue::QueueEntryWire,
         cancellation: SendNowCancellation,
     },
-    GoalInterjection { running_prompt_id: String },
+    GoalInterjection {
+        running_prompt_id: String,
+    },
     Rejected {
         reason: QueueRejection,
         row: Option<crate::session::prompt_queue::QueueEntryWire>,
     },
-    Unconfirmed { cancellation: SendNowCancellation },
+    Unconfirmed {
+        cancellation: SendNowCancellation,
+    },
 }
 
 impl SendNowOutcome {
@@ -43,8 +47,13 @@ impl SendNowOutcome {
     pub(super) fn result(&self) -> QueueResult {
         match self {
             Self::Queued { row, .. } => QueueResult::Queued { row: row.clone() },
-            Self::GoalInterjection { running_prompt_id } => QueueResult::GoalInterjection { running_prompt_id: running_prompt_id.clone() },
-            Self::Rejected { reason, row } => QueueResult::Rejected { reason: reason.clone(), row: row.clone() },
+            Self::GoalInterjection { running_prompt_id } => QueueResult::GoalInterjection {
+                running_prompt_id: running_prompt_id.clone(),
+            },
+            Self::Rejected { reason, row } => QueueResult::Rejected {
+                reason: reason.clone(),
+                row: row.clone(),
+            },
             Self::Unconfirmed { .. } => QueueResult::Unconfirmed,
         }
     }
@@ -92,7 +101,8 @@ pub(crate) struct QueueInputRequest {
     pub(crate) respond_to: oneshot::Sender<PromptTurnResult>,
     pub(crate) persist_ack: Option<oneshot::Sender<()>>,
     pub(crate) parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
-    pub(crate) initial_child_prompt_ready: Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
+    pub(crate) initial_child_prompt_ready:
+        Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
     pub(crate) traceparent: Option<String>,
 }
 
@@ -368,7 +378,8 @@ impl SessionActor {
             respond_to,
             persist_ack,
             parsed_prompt_tx,
-            initial_child_prompt_ready: initial_child_prompt_ready.map(crate::session::message_delivery::InitialChildPromptSink::Prompt),
+            initial_child_prompt_ready: initial_child_prompt_ready
+                .map(crate::session::message_delivery::InitialChildPromptSink::Prompt),
             queue_meta,
             queue_mutation_policy,
             send_now: false,
@@ -882,7 +893,8 @@ impl SessionActor {
             Some(owner) => super::queue_mutation::QueueOwner::Exact(Some(owner)),
             None => super::queue_mutation::QueueOwner::Unscoped,
         };
-        self.interject_queued_prompt(id, expected_version, owner, new_text).await
+        self.interject_queued_prompt(id, expected_version, owner, new_text)
+            .await
     }
 
     pub(super) async fn interject_queued_prompt(
@@ -907,18 +919,30 @@ impl SessionActor {
         let target = if state.running_prompt_id() == Some(id) {
             Err(QueueRejection::Running)
         } else {
-            match state.pending_inputs.iter().enumerate().find(|(_, item)| item.prompt_id == id || item.has_queue_id(id)) {
+            match state
+                .pending_inputs
+                .iter()
+                .enumerate()
+                .find(|(_, item)| item.prompt_id == id || item.has_queue_id(id))
+            {
                 None => Err(QueueRejection::Missing),
                 Some((_, item)) if !item.is_queue_editable() => Err(QueueRejection::Protected),
                 Some((position, item)) => match &item.queue_meta {
                     Some(meta) if meta.version != expected_version => Err(QueueRejection::Stale),
-                    Some(meta) if !owner.matches(meta.owner.as_deref()) => Err(QueueRejection::NotOwner),
+                    Some(meta) if !owner.matches(meta.owner.as_deref()) => {
+                        Err(QueueRejection::NotOwner)
+                    }
                     Some(_) => Ok(position),
                     None => Err(QueueRejection::Missing),
                 },
             }
         };
-        PreparedQueuePriority { id, owner, new_text, target }
+        PreparedQueuePriority {
+            id,
+            owner,
+            new_text,
+            target,
+        }
     }
 
     pub(super) fn interject_queued_prompt_locked(
@@ -926,7 +950,12 @@ impl SessionActor {
         state: &mut State,
         prepared: PreparedQueuePriority<'_>,
     ) -> SendNowOutcome {
-        let PreparedQueuePriority { id, owner, new_text, target } = prepared;
+        let PreparedQueuePriority {
+            id,
+            owner,
+            new_text,
+            target,
+        } = prepared;
         let running_front_id = state.running_prompt_id().map(str::to_string);
         let turn_running = running_front_id.is_some();
         let goal_active = self.goal_tracker.lock().status()
@@ -934,7 +963,10 @@ impl SessionActor {
         // Sampled early; the insert below never displaces the front.
         let cancel_decision = Self::send_now_cancels_running_turn(state, goal_active);
         let front_awaiting_commit_now = Self::front_awaiting_commit(state);
-        let row = self.build_queue_wire(state).into_iter().find(|row| row.id == id);
+        let row = self
+            .build_queue_wire(state)
+            .into_iter()
+            .find(|row| row.id == id);
         let pos = match target {
             Ok(position) => position,
             Err(reason) => {
@@ -943,7 +975,10 @@ impl SessionActor {
             }
         };
         let Some(mut item) = state.pending_inputs.remove(pos) else {
-            return SendNowOutcome::Rejected { reason: QueueRejection::Missing, row };
+            return SendNowOutcome::Rejected {
+                reason: QueueRejection::Missing,
+                row,
+            };
         };
         if let Some(new_text) = new_text.filter(|text| !text.trim().is_empty()) {
             Self::apply_queued_prompt_edit(&mut item, new_text.to_string(), owner.editor());
@@ -955,7 +990,10 @@ impl SessionActor {
         let outcome = match (merge_into_goal, running_front_id) {
             (true, Some(running_prompt_id)) => {
                 self.enqueue_prompt_as_planner_steering(&item);
-                self.enqueue_prompt_as_interjection(item, crate::session::events::InterjectionSource::Queue);
+                self.enqueue_prompt_as_interjection(
+                    item,
+                    crate::session::events::InterjectionSource::Queue,
+                );
                 SendNowOutcome::GoalInterjection { running_prompt_id }
             }
             (false, running_front_id) | (true, running_front_id @ None) => {
@@ -967,7 +1005,11 @@ impl SessionActor {
                 } else {
                     SendNowCancellation::KeepRunning
                 };
-                match self.build_queue_wire(state).into_iter().find(|row| row.id == id) {
+                match self
+                    .build_queue_wire(state)
+                    .into_iter()
+                    .find(|row| row.id == id)
+                {
                     Some(row) => SendNowOutcome::Queued { row, cancellation },
                     None => SendNowOutcome::Unconfirmed { cancellation },
                 }

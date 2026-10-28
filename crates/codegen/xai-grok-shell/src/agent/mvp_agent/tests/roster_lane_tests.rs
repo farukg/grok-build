@@ -5,9 +5,7 @@ use agent_client_protocol as acp;
 use xai_grok_tools::implementations::grok_build::task::types::AgentAddress;
 
 use super::{build_minimal_agent_for_tests, make_live_session_handle};
-use crate::agent::mvp_agent::{
-    ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild,
-};
+use crate::agent::mvp_agent::{ChildHost, ChildReach, ChildResidence, MvpAgent, RunningChild};
 use crate::agent::roster::{RosterActivity, RosterEntry, RosterOrigin};
 use crate::extensions::notification::SubagentDelivery;
 
@@ -113,7 +111,10 @@ fn child_row_without_a_host_stays_dormant() {
         "a reaped or restarted-away child is not running"
     );
     assert!(!row.resident);
-    assert_eq!(row.parent_session_id, None, "no live host to name the parent");
+    assert_eq!(
+        row.parent_session_id, None,
+        "no live host to name the parent"
+    );
 }
 
 #[tokio::test]
@@ -125,7 +126,10 @@ async fn build_roster_includes_live_children_beyond_recent_cap_without_hidden_or
     let _env = xai_grok_test_support::EnvGuard::set("GROK_HOME", home.path());
     let cwd = home.path().join("repo").to_string_lossy().into_owned();
     let write = |id: &str, child: bool, hidden: Option<bool>, age: u64| {
-        let info = Info { id: acp::SessionId::new(id), cwd: cwd.clone() };
+        let info = Info {
+            id: acp::SessionId::new(id),
+            cwd: cwd.clone(),
+        };
         let mut summary = Summary::new(&info, default_model_id()).unwrap();
         summary.generated_title = Some(id.into());
         if child {
@@ -137,18 +141,25 @@ async fn build_roster_includes_live_children_beyond_recent_cap_without_hidden_or
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("summary.json");
         std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
-        std::fs::File::open(path).unwrap().set_modified(
-            std::time::UNIX_EPOCH + std::time::Duration::from_secs(age)
-        ).unwrap();
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(age))
+            .unwrap();
     };
     write(CHILD, true, None, 1);
     write("hidden-child", true, Some(true), 1);
     for index in 0..205 {
         write(&format!("recent-{index}"), false, None, 10_000 + index);
     }
-    let recent = crate::session::persistence::list_recent_summaries(200).await.unwrap();
+    let recent = crate::session::persistence::list_recent_summaries(200)
+        .await
+        .unwrap();
     assert_eq!(recent.len(), 200);
-    assert!(!recent.iter().any(|summary| summary.info.id.0.as_ref() == CHILD));
+    assert!(
+        !recent
+            .iter()
+            .any(|summary| summary.info.id.0.as_ref() == CHILD)
+    );
     let agent = build_minimal_agent_for_tests();
     let child = acp::SessionId::new(CHILD);
     register_running_child(&agent, &child);
@@ -195,18 +206,32 @@ async fn roster_reads_preserve_activity_until_parent_or_child_events_are_persist
     let (handle, _, _rx) = make_live_session_handle(&unknown, None);
     agent.insert_resident(&unknown, handle);
     register_running_child(&agent, &child);
-    *agent.resident_handle(&child).unwrap().current_prompt_id.lock().unwrap() = Some("child-turn".into());
+    *agent
+        .resident_handle(&child)
+        .unwrap()
+        .current_prompt_id
+        .lock()
+        .unwrap() = Some("child-turn".into());
     for id in [&parent, &child] {
-        let info = Info { id: id.clone(), cwd: "/tmp".into() };
-        let mut summary = storage.init_session(&info, default_model_id()).await.unwrap();
+        let info = Info {
+            id: id.clone(),
+            cwd: "/tmp".into(),
+        };
+        let mut summary = storage
+            .init_session(&info, default_model_id())
+            .await
+            .unwrap();
         summary.last_active_at = chrono::DateTime::from_timestamp_millis(1_234);
         summary.updated_at = chrono::DateTime::from_timestamp_millis(99_000).unwrap();
         if id == &child {
             summary.session_kind = Some("subagent".into());
             summary.parent_session_id = Some(PARENT.into());
         }
-        std::fs::write(crate::session::persistence::session_dir(&info).join("summary.json"),
-            serde_json::to_vec(&summary).unwrap()).unwrap();
+        std::fs::write(
+            crate::session::persistence::session_dir(&info).join("summary.json"),
+            serde_json::to_vec(&summary).unwrap(),
+        )
+        .unwrap();
     }
     let first = agent.build_roster().await;
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -215,27 +240,58 @@ async fn roster_reads_preserve_activity_until_parent_or_child_events_are_persist
         let before = first.iter().find(|row| row.session_id == id).unwrap();
         let after = second.iter().find(|row| row.session_id == id).unwrap();
         assert_eq!(before, after, "fetching must not create activity for {id}");
-        assert_eq!(after.last_change_unix_ms, if id == "unknown-activity" { 0 } else { 1_234 });
-        let snapshot = agent.resident_roster_entry(&acp::SessionId::new(id)).unwrap();
+        assert_eq!(
+            after.last_change_unix_ms,
+            if id == "unknown-activity" { 0 } else { 1_234 }
+        );
+        let snapshot = agent
+            .resident_roster_entry(&acp::SessionId::new(id))
+            .unwrap();
         assert_eq!(snapshot.last_change_unix_ms, after.last_change_unix_ms);
     }
     for id in [&parent, &child] {
-        let info = Info { id: id.clone(), cwd: "/tmp".into() };
+        let info = Info {
+            id: id.clone(),
+            cwd: "/tmp".into(),
+        };
         let before = chrono::Utc::now().timestamp_millis();
-        storage.append_update(&info, &crate::session::storage::SessionUpdate::Acp(Box::new(
-            acp::SessionNotification::new(id.clone(), acp::SessionUpdate::AgentMessageChunk(
-                acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new("live output"))),
-            )),
-        ))).await.unwrap();
+        storage
+            .append_update(
+                &info,
+                &crate::session::storage::SessionUpdate::Acp(Box::new(
+                    acp::SessionNotification::new(
+                        id.clone(),
+                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            acp::ContentBlock::Text(acp::TextContent::new("live output")),
+                        )),
+                    ),
+                )),
+            )
+            .await
+            .unwrap();
         let after = chrono::Utc::now().timestamp_millis();
-        let persisted = storage.load_summary(&info).await.unwrap().last_change_unix_ms();
+        let persisted = storage
+            .load_summary(&info)
+            .await
+            .unwrap()
+            .last_change_unix_ms();
         assert!((before..=after).contains(&persisted));
         let rows = agent.build_roster().await;
-        let row = rows.iter().find(|row| row.session_id == id.0.as_ref()).unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.session_id == id.0.as_ref())
+            .unwrap();
         assert_eq!(row.activity, RosterActivity::Working);
         assert_eq!(row.last_change_unix_ms, persisted);
         let repeated = agent.build_roster().await;
-        assert_eq!(repeated.iter().find(|row| row.session_id == id.0.as_ref()).unwrap().last_change_unix_ms, persisted);
+        assert_eq!(
+            repeated
+                .iter()
+                .find(|row| row.session_id == id.0.as_ref())
+                .unwrap()
+                .last_change_unix_ms,
+            persisted
+        );
     }
 }
 

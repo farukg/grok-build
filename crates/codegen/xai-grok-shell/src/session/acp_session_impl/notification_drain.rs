@@ -48,15 +48,24 @@ pub(crate) struct PendingNotification {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NotificationBatchRow {
-    Terminal { id: xai_chat_state::completion::CompletionIdentity, text: String },
-    MonitorEvent { task_id: String, text: String },
+    Terminal {
+        id: xai_chat_state::completion::CompletionIdentity,
+        text: String,
+    },
+    MonitorEvent {
+        task_id: String,
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum NotificationBatchPayload {
     #[default]
     TerminalOnly,
-    Rows { id: String, rows: Vec<NotificationBatchRow> },
+    Rows {
+        id: String,
+        rows: Vec<NotificationBatchRow>,
+    },
 }
 
 impl SessionActor {
@@ -65,13 +74,14 @@ impl SessionActor {
         let mut excess = state
             .pending_notifications
             .iter()
-            .filter(|notification| matches!(notification.source, NotificationSource::MonitorEvent { .. }))
+            .filter(|notification| {
+                matches!(notification.source, NotificationSource::MonitorEvent { .. })
+            })
             .count()
             .saturating_sub(MAX_PENDING_NOTIFICATIONS);
         // Completion rows hold parked obligations; only transient events may be evicted.
         state.pending_notifications.retain(|notification| {
-            if excess > 0
-                && matches!(notification.source, NotificationSource::MonitorEvent { .. })
+            if excess > 0 && matches!(notification.source, NotificationSource::MonitorEvent { .. })
             {
                 excess -= 1;
                 false
@@ -93,36 +103,73 @@ impl SessionActor {
         );
     }
 
-    pub(super) fn notification_completion_ids(&self, notifications: &[PendingNotification]) -> Vec<xai_chat_state::completion::CompletionIdentity> {
+    pub(super) fn notification_completion_ids(
+        &self,
+        notifications: &[PendingNotification],
+    ) -> Vec<xai_chat_state::completion::CompletionIdentity> {
         use xai_chat_state::completion::{CompletionTaskKind, TerminalCompletionId};
-        notifications.iter().filter_map(|notification| {
-            let (task_id, task_kind) = match &notification.source {
-                NotificationSource::BashTaskCompleted { task_id } => (task_id, CompletionTaskKind::Bash),
-                NotificationSource::MonitorCompleted { task_id } => (task_id, CompletionTaskKind::Monitor),
-                NotificationSource::MonitorEvent { .. } => return None,
-            };
-            Some(TerminalCompletionId::Task { owner_session_id: self.session_id_string(), task_id: task_id.clone(), task_kind }.into())
-        }).collect()
+        notifications
+            .iter()
+            .filter_map(|notification| {
+                let (task_id, task_kind) = match &notification.source {
+                    NotificationSource::BashTaskCompleted { task_id } => {
+                        (task_id, CompletionTaskKind::Bash)
+                    }
+                    NotificationSource::MonitorCompleted { task_id } => {
+                        (task_id, CompletionTaskKind::Monitor)
+                    }
+                    NotificationSource::MonitorEvent { .. } => return None,
+                };
+                Some(
+                    TerminalCompletionId::Task {
+                        owner_session_id: self.session_id_string(),
+                        task_id: task_id.clone(),
+                        task_kind,
+                    }
+                    .into(),
+                )
+            })
+            .collect()
     }
 
-    fn notification_batch_payload(&self, notifications: &[PendingNotification]) -> NotificationBatchPayload {
-        let completed_monitors: std::collections::HashSet<_> = notifications.iter().filter_map(|row| match &row.source {
-            NotificationSource::MonitorCompleted { task_id } => Some(task_id.as_str()),
-            NotificationSource::MonitorEvent { .. } | NotificationSource::BashTaskCompleted { .. } => None,
-        }).collect();
-        NotificationBatchPayload::Rows { id: uuid::Uuid::now_v7().to_string(), rows: notifications.iter().filter_map(|row| {
-            let text = Self::queue_text_from_blocks(&row.prompt_blocks);
-            match &row.source {
-                NotificationSource::MonitorEvent { task_id } => {
-                    if completed_monitors.contains(task_id.as_str()) { return None; }
-                    Some(NotificationBatchRow::MonitorEvent { task_id: task_id.clone(), text })
-                }
-                NotificationSource::MonitorCompleted { .. } | NotificationSource::BashTaskCompleted { .. } => {
-                    self.notification_completion_ids(std::slice::from_ref(row)).into_iter().next()
-                        .map(|id| NotificationBatchRow::Terminal { id, text })
-                }
-            }
-        }).collect() }
+    fn notification_batch_payload(
+        &self,
+        notifications: &[PendingNotification],
+    ) -> NotificationBatchPayload {
+        let completed_monitors: std::collections::HashSet<_> = notifications
+            .iter()
+            .filter_map(|row| match &row.source {
+                NotificationSource::MonitorCompleted { task_id } => Some(task_id.as_str()),
+                NotificationSource::MonitorEvent { .. }
+                | NotificationSource::BashTaskCompleted { .. } => None,
+            })
+            .collect();
+        NotificationBatchPayload::Rows {
+            id: uuid::Uuid::now_v7().to_string(),
+            rows: notifications
+                .iter()
+                .filter_map(|row| {
+                    let text = Self::queue_text_from_blocks(&row.prompt_blocks);
+                    match &row.source {
+                        NotificationSource::MonitorEvent { task_id } => {
+                            if completed_monitors.contains(task_id.as_str()) {
+                                return None;
+                            }
+                            Some(NotificationBatchRow::MonitorEvent {
+                                task_id: task_id.clone(),
+                                text,
+                            })
+                        }
+                        NotificationSource::MonitorCompleted { .. }
+                        | NotificationSource::BashTaskCompleted { .. } => self
+                            .notification_completion_ids(std::slice::from_ref(row))
+                            .into_iter()
+                            .next()
+                            .map(|id| NotificationBatchRow::Terminal { id, text }),
+                    }
+                })
+                .collect(),
+        }
     }
 
     pub(super) fn notification_batch_text(
@@ -130,24 +177,57 @@ impl SessionActor {
         payload: &NotificationBatchPayload,
         terminals: &[(xai_chat_state::completion::CompletionIdentity, String)],
     ) -> Option<String> {
-        use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
-        let NotificationBatchPayload::Rows { rows, .. } = payload else { return None; };
-        let notifications: Vec<_> = rows.iter().filter_map(|row| {
-            let (source, text) = match row {
-                NotificationBatchRow::Terminal { id, .. } => {
-                    let text = terminals.iter().find(|(fresh, _)| fresh == id)?.1.clone();
-                    let CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { task_id, task_kind, .. }, .. } = id else { return None; };
-                    let source = match task_kind {
-                        CompletionTaskKind::Bash => NotificationSource::BashTaskCompleted { task_id: task_id.clone() },
-                        CompletionTaskKind::Monitor => NotificationSource::MonitorCompleted { task_id: task_id.clone() },
-                    };
-                    (source, text)
-                }
-                NotificationBatchRow::MonitorEvent { task_id, text } => (NotificationSource::MonitorEvent { task_id: task_id.clone() }, text.clone()),
-            };
-            Some(PendingNotification { prompt_id: String::new(), prompt_blocks: vec![acp::ContentBlock::from(text)], priority: NotificationPriority::Later, source })
-        }).collect();
-        Some(Self::queue_text_from_blocks(&Self::notification_blocks(&notifications, &self.tool_context.task_output_tool_name)))
+        use xai_chat_state::completion::{
+            CompletionIdentity, CompletionTaskKind, TerminalCompletionId,
+        };
+        let NotificationBatchPayload::Rows { rows, .. } = payload else {
+            return None;
+        };
+        let notifications: Vec<_> = rows
+            .iter()
+            .filter_map(|row| {
+                let (source, text) = match row {
+                    NotificationBatchRow::Terminal { id, .. } => {
+                        let text = terminals.iter().find(|(fresh, _)| fresh == id)?.1.clone();
+                        let CompletionIdentity::V2 {
+                            terminal:
+                                TerminalCompletionId::Task {
+                                    task_id, task_kind, ..
+                                },
+                            ..
+                        } = id
+                        else {
+                            return None;
+                        };
+                        let source = match task_kind {
+                            CompletionTaskKind::Bash => NotificationSource::BashTaskCompleted {
+                                task_id: task_id.clone(),
+                            },
+                            CompletionTaskKind::Monitor => NotificationSource::MonitorCompleted {
+                                task_id: task_id.clone(),
+                            },
+                        };
+                        (source, text)
+                    }
+                    NotificationBatchRow::MonitorEvent { task_id, text } => (
+                        NotificationSource::MonitorEvent {
+                            task_id: task_id.clone(),
+                        },
+                        text.clone(),
+                    ),
+                };
+                Some(PendingNotification {
+                    prompt_id: String::new(),
+                    prompt_blocks: vec![acp::ContentBlock::from(text)],
+                    priority: NotificationPriority::Later,
+                    source,
+                })
+            })
+            .collect();
+        Some(Self::queue_text_from_blocks(&Self::notification_blocks(
+            &notifications,
+            &self.tool_context.task_output_tool_name,
+        )))
     }
 
     pub(super) async fn consume_deferred_completions(&self) -> Vec<String> {
@@ -200,14 +280,36 @@ impl SessionActor {
             .join("\n");
         if !completion_text.is_empty() {
             let ids = self.notification_completion_ids(&deferred);
-            let prompt_id = self.state.lock().await.running_prompt_id().map(str::to_owned);
+            let prompt_id = self
+                .state
+                .lock()
+                .await
+                .running_prompt_id()
+                .map(str::to_owned);
             let committed = match prompt_id {
-                Some(prompt_id) => self.project_notification_batch(ids, &prompt_id, completion_text, &self.notification_batch_payload(&deferred)).await,
-                None => Err(xai_chat_state::StrictAppendError::NotCommitted(std::io::Error::new(std::io::ErrorKind::NotConnected, "deferred completion has no caller turn"))),
+                Some(prompt_id) => {
+                    self.project_notification_batch(
+                        ids,
+                        &prompt_id,
+                        completion_text,
+                        &self.notification_batch_payload(&deferred),
+                    )
+                    .await
+                }
+                None => Err(xai_chat_state::StrictAppendError::NotCommitted(
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "deferred completion has no caller turn",
+                    ),
+                )),
             };
             if let Err(error) = committed {
                 tracing::error!(%error, "deferred completions retained after projection failure");
-                self.state.lock().await.pending_notifications.extend(deferred);
+                self.state
+                    .lock()
+                    .await
+                    .pending_notifications
+                    .extend(deferred);
                 return Vec::new();
             }
         }
@@ -325,7 +427,9 @@ impl SessionActor {
             return;
         }
 
-        if let Some(index) = state.pending_inputs.iter()
+        if let Some(index) = state
+            .pending_inputs
+            .iter()
             .position(|input| self.pending_compact_allows_input(&input.prompt_id))
             && index > 0
             && let Some(input) = state.pending_inputs.remove(index)
@@ -354,10 +458,19 @@ impl SessionActor {
                 state.pending_inputs.push_front(input);
             }
         }
-        if state.pending_inputs.front().is_some_and(|item| item.input_origin.is_boundary_completion()) {
-            let boundary = state.pending_inputs.iter().position(|item| !item.input_origin.is_boundary_completion());
+        if state
+            .pending_inputs
+            .front()
+            .is_some_and(|item| item.input_origin.is_boundary_completion())
+        {
+            let boundary = state
+                .pending_inputs
+                .iter()
+                .position(|item| !item.input_origin.is_boundary_completion());
             let Some(index) = boundary else { return };
-            if let Some(input) = state.pending_inputs.remove(index) { state.pending_inputs.push_front(input); }
+            if let Some(input) = state.pending_inputs.remove(index) {
+                state.pending_inputs.push_front(input);
+            }
         }
         // Auto-compact is handled inline by process_conversation_turn, so there is no queued auto-compact to check here
 
@@ -420,7 +533,10 @@ impl SessionActor {
             return;
         }
         if self.compaction.cancel.manual_is_sealed()
-            || state.pending_inputs.front().is_some_and(|input| !self.pending_compact_allows_input(&input.prompt_id))
+            || state
+                .pending_inputs
+                .front()
+                .is_some_and(|input| !self.pending_compact_allows_input(&input.prompt_id))
         {
             return;
         }
@@ -565,14 +681,20 @@ impl SessionActor {
             "promoting front of pending_inputs to the running turn",
         );
         // Ordinary prompts publish before spawn so clients establish echo-skip before message chunks.
-        let initial_parent_message = matches!(&initial_child_prompt_ready,
-            Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { .. }));
+        let initial_parent_message = matches!(
+            &initial_child_prompt_ready,
+            Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { .. })
+        );
         let initial_parent_digest = match &initial_child_prompt_ready {
-            Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { .. }) => {
-                Some(Self::durable_delivery_payload(&prompt_blocks)
-                    .map(|payload| crate::session::delivery_receiver::payload_digest(&payload)))
+            Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage {
+                ..
+            }) => Some(
+                Self::durable_delivery_payload(&prompt_blocks)
+                    .map(|payload| crate::session::delivery_receiver::payload_digest(&payload)),
+            ),
+            Some(crate::session::message_delivery::InitialChildPromptSink::Prompt(_)) | None => {
+                None
             }
-            Some(crate::session::message_delivery::InitialChildPromptSink::Prompt(_)) | None => None,
         };
         let deferred_display = if initial_parent_message {
             Some(running_display)
@@ -618,35 +740,63 @@ impl SessionActor {
             use crate::session::message_delivery::InitialChildPromptSink;
             match initial_child_prompt_ready {
                 InitialChildPromptSink::Prompt(ready) => {
-                    let _ = ready.send(crate::session::message_delivery::InitialChildPublication::Prompt(publication_release));
+                    let _ = ready.send(
+                        crate::session::message_delivery::InitialChildPublication::Prompt(
+                            publication_release,
+                        ),
+                    );
                 }
                 InitialChildPromptSink::ParentMessage { delivery, ready } => {
-                    let Some(task) = state.running_task.as_ref() else { return };
+                    let Some(task) = state.running_task.as_ref() else {
+                        return;
+                    };
                     let turn_id = task.prompt_id.clone();
                     let admission = xai_chat_state::InputAdmission {
-                        parent_task: xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() },
+                        parent_task: xai_chat_state::ParentTask::Instance {
+                            id: task.identity.as_ref().clone(),
+                        },
                         cancellation: task.admission.clone(),
                     };
                     let message_id = delivery.message().message_id.clone();
-                    let reservation = initial_parent_digest.and_then(Result::ok).map(|payload_digest| {
-                        crate::session::persistence::ParentMessageTurnReservation {
-                            prompt_id: turn_id.clone(), payload_digest,
-                            turn_id: turn_id.clone(), admission: admission.clone(), delivery: delivery.clone(),
-                        }
-                    });
+                    let reservation =
+                        initial_parent_digest
+                            .and_then(Result::ok)
+                            .map(|payload_digest| {
+                                crate::session::persistence::ParentMessageTurnReservation {
+                                    prompt_id: turn_id.clone(),
+                                    payload_digest,
+                                    turn_id: turn_id.clone(),
+                                    admission: admission.clone(),
+                                    delivery: delivery.clone(),
+                                }
+                            });
                     let reserved = match reservation {
                         Some(reservation) if !ready.is_closed() => {
                             let (respond_to, receive) = oneshot::channel();
-                            if self.notifications.persistence_tx.send(PersistenceMsg::ReserveParentMessageTurn {
-                                reservation, respond_to,
-                            }).is_err() {
+                            if self
+                                .notifications
+                                .persistence_tx
+                                .send(PersistenceMsg::ReserveParentMessageTurn {
+                                    reservation,
+                                    respond_to,
+                                })
+                                .is_err()
+                            {
                                 None
                             } else {
                                 match receive.await {
-                                    Ok(Ok(proof)) if proof.matches_delivery(&self.session_id_string(), &delivery)
-                                        && proof.matches_turn(&turn_id, &admission) => Some(proof),
+                                    Ok(Ok(proof))
+                                        if proof.matches_delivery(
+                                            &self.session_id_string(),
+                                            &delivery,
+                                        ) && proof.matches_turn(&turn_id, &admission) =>
+                                    {
+                                        Some(proof)
+                                    }
                                     Ok(Ok(_)) => {
-                                        tracing::warn!("initial parent-message reservation identity mismatch");
+                                        tracing::warn!(
+                                            "initial parent-message reservation identity mismatch"
+                                        );
                                         None
                                     }
                                     Ok(Err(error)) => {
@@ -667,23 +817,36 @@ impl SessionActor {
                             if let Some(display) = deferred_display {
                                 self.broadcast_queue_changed_promoting(&state, display);
                             }
-                            let publication = reservation.publication(publication_release, self.notifications.persistence_tx.clone());
+                            let publication = reservation.publication(
+                                publication_release,
+                                self.notifications.persistence_tx.clone(),
+                            );
                             if let Some(task) = state.running_task.as_mut() {
-                                task.initial_parent_reservation = Some(publication.reservation.clone());
+                                task.initial_parent_reservation =
+                                    Some(publication.reservation.clone());
                             }
                             let _ = ready.send(publication);
                             return;
                         }
-                        Some(_) | None => { drop(publication_release); }
+                        Some(_) | None => {
+                            drop(publication_release);
+                        }
                     }
                     admission.cancellation.cancel();
-                    if let Err(error) = self.settle_durable_delivery_turn(
-                        &turn_id, admission.parent_task,
-                        crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { message_id },
-                        crate::session::delivery_receiver::DeliveryProgress::Cancelled {
-                            reason: "initial parent-message reservation was not acknowledged".into(),
-                        },
-                    ).await {
+                    if let Err(error) = self
+                        .settle_durable_delivery_turn(
+                            &turn_id,
+                            admission.parent_task,
+                            crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage {
+                                message_id,
+                            },
+                            crate::session::delivery_receiver::DeliveryProgress::Cancelled {
+                                reason: "initial parent-message reservation was not acknowledged"
+                                    .into(),
+                            },
+                        )
+                        .await
+                    {
                         tracing::warn!(%error, "initial reservation teardown unconfirmed");
                     }
                 }
@@ -796,7 +959,9 @@ impl SessionActor {
             // waiting for (gb-wake-2): it must surface even under the goal-active
             // blanket gate, or a waiting goal would stall with dead targets and no wake.
             let (waited, notifications) = self.partition_declared_wait_completions(notifications);
-            if !waited.is_empty() { self.break_declared_wait(); }
+            if !waited.is_empty() {
+                self.break_declared_wait();
+            }
             let (mut to_surface, dropped) = {
                 let goal_turn_task_ids = self.goal_turn_task_ids.lock();
                 Self::partition_goal_suppressed(suppress_all, &goal_turn_task_ids, notifications)
@@ -817,7 +982,11 @@ impl SessionActor {
         let ids = self.notification_completion_ids(&suppressed_notifications);
         if let Err(error) = self.suppress_terminal_notifications(ids).await {
             tracing::error!(%error, "goal-suppressed completions retained until durable disposition");
-            self.state.lock().await.pending_notifications.extend(suppressed_notifications);
+            self.state
+                .lock()
+                .await
+                .pending_notifications
+                .extend(suppressed_notifications);
         }
 
         if drained {
@@ -885,32 +1054,61 @@ impl SessionActor {
     }
 
     fn goal_suppresses_notifications(&self) -> bool {
-        self.goal_harness_enabled() && matches!(
-            self.goal_tracker.lock().status(),
-            Some(crate::session::goal_tracker::GoalStatus::Active | crate::session::goal_tracker::GoalStatus::Complete)
-        )
+        self.goal_harness_enabled()
+            && matches!(
+                self.goal_tracker.lock().status(),
+                Some(
+                    crate::session::goal_tracker::GoalStatus::Active
+                        | crate::session::goal_tracker::GoalStatus::Complete
+                )
+            )
     }
 
-    pub(super) async fn retain_or_suppress_task_wake(&self, fallback: TaskWakeFallback) -> Option<TaskWakeFallback> {
-        self.classify_task_notification(fallback).await.ok().flatten()
+    pub(super) async fn retain_or_suppress_task_wake(
+        &self,
+        fallback: TaskWakeFallback,
+    ) -> Option<TaskWakeFallback> {
+        self.classify_task_notification(fallback)
+            .await
+            .ok()
+            .flatten()
     }
 
-    pub(super) async fn classify_task_notification(&self, fallback: TaskWakeFallback) -> std::io::Result<Option<TaskWakeFallback>> {
+    pub(super) async fn classify_task_notification(
+        &self,
+        fallback: TaskWakeFallback,
+    ) -> std::io::Result<Option<TaskWakeFallback>> {
         let notification = PendingNotification {
-            prompt_id: fallback.prompt_id, prompt_blocks: fallback.prompt_blocks,
-            priority: NotificationPriority::Later, source: fallback.source,
+            prompt_id: fallback.prompt_id,
+            prompt_blocks: fallback.prompt_blocks,
+            priority: NotificationPriority::Later,
+            source: fallback.source,
         };
-        let (mut waited, notifications) = self.partition_declared_wait_completions(vec![notification]);
+        let (mut waited, notifications) =
+            self.partition_declared_wait_completions(vec![notification]);
         let (mut surface, suppressed) = Self::partition_goal_suppressed(
-            self.goal_suppresses_notifications(), &self.goal_turn_task_ids.lock(), notifications,
+            self.goal_suppresses_notifications(),
+            &self.goal_turn_task_ids.lock(),
+            notifications,
         );
         waited.append(&mut surface);
         if let Some(notification) = waited.pop() {
-            return Ok(Some(TaskWakeFallback { prompt_id: notification.prompt_id, prompt_blocks: notification.prompt_blocks, source: notification.source }));
+            return Ok(Some(TaskWakeFallback {
+                prompt_id: notification.prompt_id,
+                prompt_blocks: notification.prompt_blocks,
+                source: notification.source,
+            }));
         }
-        if let Err(error) = self.suppress_terminal_notifications(self.notification_completion_ids(&suppressed)).await {
+        if let Err(error) = self
+            .suppress_terminal_notifications(self.notification_completion_ids(&suppressed))
+            .await
+        {
             tracing::error!(%error, "task wake retained until goal suppression is durable");
-            self.state.lock().await.pending_notifications.extend(suppressed);
+            self.state
+                .lock()
+                .await
+                .pending_notifications
+                .extend(suppressed);
             return Err(error);
         }
         Ok(None)
@@ -925,7 +1123,8 @@ impl SessionActor {
         goal_turn_task_ids: &std::collections::HashSet<String>,
         notifications: Vec<PendingNotification>,
     ) -> (Vec<PendingNotification>, usize) {
-        let (surface, suppressed) = Self::partition_goal_suppressed(suppress_all, goal_turn_task_ids, notifications);
+        let (surface, suppressed) =
+            Self::partition_goal_suppressed(suppress_all, goal_turn_task_ids, notifications);
         (surface, suppressed.len())
     }
 
@@ -1044,13 +1243,27 @@ impl SessionActor {
         blocks
     }
 
-    pub(super) fn queue_notification_batch(&self, state: &mut State, notifications: Vec<PendingNotification>) -> bool {
-        if notifications.is_empty() { return false; }
+    pub(super) fn queue_notification_batch(
+        &self,
+        state: &mut State,
+        notifications: Vec<PendingNotification>,
+    ) -> bool {
+        if notifications.is_empty() {
+            return false;
+        }
         let ids = self.notification_completion_ids(&notifications);
         let payload = self.notification_batch_payload(&notifications);
-        let drained = Self::drain_notifications_into_turn(state, notifications, &self.tool_context.task_output_tool_name);
+        let drained = Self::drain_notifications_into_turn(
+            state,
+            notifications,
+            &self.tool_context.task_output_tool_name,
+        );
         if drained && let Some(input) = state.pending_inputs.back_mut() {
-            input.input_origin = input.input_origin.clone().with_completions(ids).with_notification_batch(payload);
+            input.input_origin = input
+                .input_origin
+                .clone()
+                .with_completions(ids)
+                .with_notification_batch(payload);
         }
         drained
     }

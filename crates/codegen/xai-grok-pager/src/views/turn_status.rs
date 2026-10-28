@@ -582,7 +582,13 @@ fn compute_activity(
             format!("{}…", command.display_name()),
             false,
         ),
-        (AgentState::CommandRunning { command: AgentCommand::Compact, .. }, Some(TurnActivity::Waiting(reason))) => (
+        (
+            AgentState::CommandRunning {
+                command: AgentCommand::Compact,
+                ..
+            },
+            Some(TurnActivity::Waiting(reason)),
+        ) => (
             Style::default().fg(theme.text_secondary),
             reason.label(),
             false,

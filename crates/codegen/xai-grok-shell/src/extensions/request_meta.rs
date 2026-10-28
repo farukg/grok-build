@@ -10,5 +10,9 @@ pub(crate) fn trace_meta(args: &acp::ExtRequest) -> Result<Option<serde_json::Va
     if args.method.as_ref() == super::interject::QUEUE_INTERJECT_METHOD {
         super::interject::validate_queue_request_size(args.params.get())?;
     }
-    Ok(serde_json::from_str::<ExtensionTraceMeta>(args.params.get()).ok().and_then(|value| value.meta))
+    Ok(
+        serde_json::from_str::<ExtensionTraceMeta>(args.params.get())
+            .ok()
+            .and_then(|value| value.meta),
+    )
 }

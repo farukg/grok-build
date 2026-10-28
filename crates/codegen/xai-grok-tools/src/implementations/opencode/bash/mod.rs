@@ -361,7 +361,10 @@ impl xai_tool_runtime::Tool for BashTool {
             .require::<NotificationHandle>()?
             .0
             .clone()
-            .with_tool_ownership(ctx.get::<xai_tool_protocol::tool_execution::ToolCallOwnership>().unwrap_or_default());
+            .with_tool_ownership(
+                ctx.get::<xai_tool_protocol::tool_execution::ToolCallOwnership>()
+                    .unwrap_or_default(),
+            );
 
         let output_byte_limit = resources
             .lock()
@@ -419,28 +422,45 @@ impl xai_tool_runtime::Tool for BashTool {
             }
         };
 
-        if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } = &result.disposition {
+        if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } =
+            &result.disposition
+        {
             notification_handle.send_backgrounded(crate::notification::BashExecutionBackgrounded {
                 base: BashNotificationBase {
                     start_time: handle.start_time,
-                    tool_call_id: tool_call_id.clone(), command: input.command.clone(),
-                    output: result.combined_output.as_bytes().to_vec(), total_bytes: result.total_bytes,
-                    truncated: result.truncated, cwd: cwd.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    command: input.command.clone(),
+                    output: result.combined_output.as_bytes().to_vec(),
+                    total_bytes: result.total_bytes,
+                    truncated: result.truncated,
+                    cwd: cwd.clone(),
                 },
-                output_file: handle.output_file.clone(), task_id: handle.task_id.clone(),
-                monitor_description: None, description: Some(input.description.clone()),
+                output_file: handle.output_file.clone(),
+                task_id: handle.task_id.clone(),
+                monitor_description: None,
+                description: Some(input.description.clone()),
             });
             let summary = match reason {
-                crate::computer::types::BackgroundReason::UserRedirect => "User moved the command to the background. The process is still running.",
-                crate::computer::types::BackgroundReason::ForegroundBudget => "The foreground budget expired. The process is still running in the background.",
+                crate::computer::types::BackgroundReason::UserRedirect => {
+                    "User moved the command to the background. The process is still running."
+                }
+                crate::computer::types::BackgroundReason::ForegroundBudget => {
+                    "The foreground budget expired. The process is still running in the background."
+                }
             };
-            return Ok(BashToolOutput::BackgroundTaskStarted(crate::types::output::BackgroundTaskStarted {
-                task_id: handle.task_id.clone(), task_type: "bash".into(),
-                output_file: handle.output_file.to_string_lossy().into_owned(), status: "running".into(),
-                command: input.command, summary: summary.into(),
-                retrieval_hint: format!("Read output from {}", handle.output_file.display()),
-                pre_formatted: None, pid: handle.pid,
-            }));
+            return Ok(BashToolOutput::BackgroundTaskStarted(
+                crate::types::output::BackgroundTaskStarted {
+                    task_id: handle.task_id.clone(),
+                    task_type: "bash".into(),
+                    output_file: handle.output_file.to_string_lossy().into_owned(),
+                    status: "running".into(),
+                    command: input.command,
+                    summary: summary.into(),
+                    retrieval_hint: format!("Read output from {}", handle.output_file.display()),
+                    pre_formatted: None,
+                    pid: handle.pid,
+                },
+            ));
         }
 
         // --- Send completion notification ---
@@ -787,7 +807,7 @@ mod tests {
     async fn truncated_output() {
         let mock = MockTerminal {
             foreground_result: Ok(TerminalRunResult {
-                    disposition: crate::computer::types::RunDisposition::Foreground,
+                disposition: crate::computer::types::RunDisposition::Foreground,
                 combined_output: "partial…".to_string(),
                 exit_code: Some(0),
                 truncated: true,
@@ -822,7 +842,7 @@ mod tests {
     async fn signal_field() {
         let mock = MockTerminal {
             foreground_result: Ok(TerminalRunResult {
-                    disposition: crate::computer::types::RunDisposition::Foreground,
+                disposition: crate::computer::types::RunDisposition::Foreground,
                 combined_output: String::new(),
                 exit_code: None,
                 truncated: false,

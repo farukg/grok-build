@@ -83,13 +83,22 @@ fn legacy_turns_accept_omitted_optional_metadata() {
         r#"{"type":"turn_started","session_id":"session","turn_number":1,"model_id":"model","yolo_mode":false,"conversation_message_count":0,"session_relationship":"primary","schema_version":"1.0"}"#,
     )
     .unwrap();
-    assert!(matches!(event, Event::TurnStarted { redirect_kind: None, .. }));
+    assert!(matches!(
+        event,
+        Event::TurnStarted {
+            redirect_kind: None,
+            ..
+        }
+    ));
     let event = decode_event(r#"{"type":"turn_ended","outcome":"interrupted"}"#).unwrap();
-    assert!(matches!(event, Event::TurnEnded {
-        outcome: TurnOutcomeLabel::Interrupted,
-        cancellation_category: None,
-        cancellation_context: None,
-    }));
+    assert!(matches!(
+        event,
+        Event::TurnEnded {
+            outcome: TurnOutcomeLabel::Interrupted,
+            cancellation_category: None,
+            cancellation_context: None,
+        }
+    ));
 }
 
 #[test]
@@ -185,7 +194,10 @@ fn entry_requires_string_timestamp_and_flattened_native_event() {
         r#"{"ts":"2026-10-28T00:00:00Z","type":"future_event"}"#,
         r#"{"ts":"2026-10-28T00:00:00Z","type":"tool_started","tool_name":false}"#,
     ] {
-        assert!(decode_event_entry(wire).is_err(), "malformed entry was accepted");
+        assert!(
+            decode_event_entry(wire).is_err(),
+            "malformed entry was accepted"
+        );
     }
 }
 

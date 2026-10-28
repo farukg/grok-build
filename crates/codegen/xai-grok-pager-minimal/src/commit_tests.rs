@@ -688,7 +688,9 @@ fn terminal_native_lock_paints_only_native_colors() {
         let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
 
         let width = 100u16;
-        let h = u16::try_from(renderer.desired_height(width)).unwrap().max(1);
+        let h = u16::try_from(renderer.desired_height(width))
+            .unwrap()
+            .max(1);
         let area = Rect::new(0, 0, width, h);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1015,7 +1017,14 @@ fn committed_thinking_paints_a_dim_rail_under_the_bullet() {
 
     let answer = ScrollbackEntry::new(RenderBlock::agent_message("the answer"));
     let renderer = minimal_renderer(&answer, &theme, appearance, test_cwd(), COMMITTED_TICK);
-    let area = Rect::new(0, 0, width, u16::try_from(renderer.desired_height(width)).unwrap().max(1));
+    let area = Rect::new(
+        0,
+        0,
+        width,
+        u16::try_from(renderer.desired_height(width))
+            .unwrap()
+            .max(1),
+    );
     let mut buf = Buffer::empty(area);
     renderer.render(area, &mut buf);
     assert_ne!(

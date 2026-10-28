@@ -138,15 +138,40 @@ impl MessageKind {
 
     pub fn parent(self) -> Option<Self> {
         match self {
-            Self::InjectedOther | Self::InjectedInstructions | Self::InjectedContinuation | Self::InjectedNotification
-            | Self::InjectedMemory | Self::InjectedSummary | Self::InjectedEnvironment
+            Self::InjectedOther
+            | Self::InjectedInstructions
+            | Self::InjectedContinuation
+            | Self::InjectedNotification
+            | Self::InjectedMemory
+            | Self::InjectedSummary
+            | Self::InjectedEnvironment
             | Self::InjectedConversation => Some(Self::Injected),
-            Self::UserPrompt | Self::AgentMessage | Self::Execute | Self::Read | Self::Edit
-            | Self::ListDir | Self::Search | Self::WebFetch | Self::WebSearch
-            | Self::IntegrationSearch | Self::UseTool | Self::MemorySearch | Self::SentMessage
-            | Self::Skill | Self::OtherTool | Self::Thinking | Self::System | Self::SessionEvent
-            | Self::BgTask | Self::Subagent | Self::Workflow | Self::Btw | Self::ContextInfo
-            | Self::MemoryCapture | Self::Injected | Self::Stub => None,
+            Self::UserPrompt
+            | Self::AgentMessage
+            | Self::Execute
+            | Self::Read
+            | Self::Edit
+            | Self::ListDir
+            | Self::Search
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::IntegrationSearch
+            | Self::UseTool
+            | Self::MemorySearch
+            | Self::SentMessage
+            | Self::Skill
+            | Self::OtherTool
+            | Self::Thinking
+            | Self::System
+            | Self::SessionEvent
+            | Self::BgTask
+            | Self::Subagent
+            | Self::Workflow
+            | Self::Btw
+            | Self::ContextInfo
+            | Self::MemoryCapture
+            | Self::Injected
+            | Self::Stub => None,
         }
     }
 
@@ -263,8 +288,7 @@ impl MessageKind {
             | Self::InjectedMemory
             | Self::InjectedSummary
             | Self::InjectedEnvironment
-            | Self::InjectedConversation
-                => DisplayForm::Collapsed,
+            | Self::InjectedConversation => DisplayForm::Collapsed,
         }
     }
 }
@@ -292,22 +316,44 @@ impl MessageGroup {
     }
 
     pub(crate) fn kinds(self) -> impl Iterator<Item = MessageKind> {
-        MessageKind::settings_kinds().iter().copied().filter(move |kind| *kind != MessageKind::Injected && kind.group() == Some(self))
+        MessageKind::settings_kinds()
+            .iter()
+            .copied()
+            .filter(move |kind| *kind != MessageKind::Injected && kind.group() == Some(self))
     }
 }
 
 impl MessageKind {
     pub(crate) fn group(self) -> Option<MessageGroup> {
         match self {
-            Self::UserPrompt | Self::AgentMessage | Self::Thinking | Self::Btw | Self::SentMessage => Some(MessageGroup::Conversation),
-            Self::Execute | Self::Read | Self::Edit | Self::ListDir | Self::Search => Some(MessageGroup::Files),
-            Self::WebFetch | Self::WebSearch | Self::IntegrationSearch | Self::UseTool
-            | Self::MemorySearch | Self::Skill | Self::OtherTool => Some(MessageGroup::Research),
+            Self::UserPrompt
+            | Self::AgentMessage
+            | Self::Thinking
+            | Self::Btw
+            | Self::SentMessage => Some(MessageGroup::Conversation),
+            Self::Execute | Self::Read | Self::Edit | Self::ListDir | Self::Search => {
+                Some(MessageGroup::Files)
+            }
+            Self::WebFetch
+            | Self::WebSearch
+            | Self::IntegrationSearch
+            | Self::UseTool
+            | Self::MemorySearch
+            | Self::Skill
+            | Self::OtherTool => Some(MessageGroup::Research),
             Self::BgTask | Self::Subagent | Self::Workflow => Some(MessageGroup::Work),
-            Self::System | Self::SessionEvent | Self::ContextInfo | Self::MemoryCapture => Some(MessageGroup::Session),
-            Self::Injected | Self::InjectedOther | Self::InjectedInstructions | Self::InjectedContinuation
-            | Self::InjectedNotification | Self::InjectedMemory | Self::InjectedSummary
-            | Self::InjectedEnvironment | Self::InjectedConversation => Some(MessageGroup::Injected),
+            Self::System | Self::SessionEvent | Self::ContextInfo | Self::MemoryCapture => {
+                Some(MessageGroup::Session)
+            }
+            Self::Injected
+            | Self::InjectedOther
+            | Self::InjectedInstructions
+            | Self::InjectedContinuation
+            | Self::InjectedNotification
+            | Self::InjectedMemory
+            | Self::InjectedSummary
+            | Self::InjectedEnvironment
+            | Self::InjectedConversation => Some(MessageGroup::Injected),
             Self::Stub => None,
         }
     }
@@ -538,11 +584,17 @@ pub(crate) fn prepend_bullet(
         return;
     }
     if output.lines.is_empty() {
-        output.lines.push(super::types::BlockLine::separator(ratatui::text::Line::default()));
+        output.lines.push(super::types::BlockLine::separator(
+            ratatui::text::Line::default(),
+        ));
     }
     let theme = crate::theme::Theme::current();
     let color = bullet.map(|style| style.color).unwrap_or_else(|| {
-        if ctx.mode == DisplayMode::Collapsed { theme.gray } else { theme.gray_bright }
+        if ctx.mode == DisplayMode::Collapsed {
+            theme.gray
+        } else {
+            theme.gray_bright
+        }
     });
     let width = unicode_width::UnicodeWidthStr::width(prefix);
     let padding = match layout {
@@ -558,11 +610,16 @@ pub(crate) fn prepend_bullet(
                 SymbolLayout::Body => padding.as_str(),
             }
         };
-        line.content.spans.insert(0, Span::styled(chrome.to_owned(), Style::default().fg(color)));
+        line.content.spans.insert(
+            0,
+            Span::styled(chrome.to_owned(), Style::default().fg(color)),
+        );
         crate::scrollback::types::shift_selection_metadata_for_prefix(line, 1);
         line.chrome_prefix_width += width;
         if line.bg_start_col > 0 {
-            line.bg_start_col = line.bg_start_col.saturating_add(u16::try_from(width).unwrap_or(u16::MAX));
+            line.bg_start_col = line
+                .bg_start_col
+                .saturating_add(u16::try_from(width).unwrap_or(u16::MAX));
         }
     }
 }
@@ -740,42 +797,70 @@ impl RenderBlock {
         completion: ToolCompletion,
     ) -> RenderedBlockOutput {
         let symbol = self.message_symbol_with_completion(ctx, completion);
-        let prefix = symbol.as_ref().map(|symbol| symbol.prefix(ctx)).unwrap_or_default();
+        let prefix = symbol
+            .as_ref()
+            .map(|symbol| symbol.prefix(ctx))
+            .unwrap_or_default();
         let content_ctx = self.symbol_context(ctx, &prefix);
         let mut rendered = if content_ctx.width == 0 {
             RenderedBlockOutput::from(BlockOutput {
-                lines: vec![super::types::BlockLine::separator(ratatui::text::Line::default())],
+                lines: vec![super::types::BlockLine::separator(
+                    ratatui::text::Line::default(),
+                )],
             })
         } else {
             match self {
-                RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) => edit.rendered_output(&content_ctx),
+                RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) => {
+                    edit.rendered_output(&content_ctx)
+                }
                 RenderBlock::ToolCall(ToolCallBlock::SentMessage(message)) => {
                     message.rendered_output(&content_ctx)
                 }
-                RenderBlock::Stub(_) | RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_)
-                | RenderBlock::Thinking(_) | RenderBlock::System(_) | RenderBlock::SessionEvent(_)
-                | RenderBlock::BgTask(_) | RenderBlock::Subagent(_) | RenderBlock::Workflow(_)
-                | RenderBlock::Btw(_) | RenderBlock::ContextInfo(_) | RenderBlock::MemoryCapture(_)
+                RenderBlock::Stub(_)
+                | RenderBlock::UserPrompt(_)
+                | RenderBlock::AgentMessage(_)
+                | RenderBlock::Thinking(_)
+                | RenderBlock::System(_)
+                | RenderBlock::SessionEvent(_)
+                | RenderBlock::BgTask(_)
+                | RenderBlock::Subagent(_)
+                | RenderBlock::Workflow(_)
+                | RenderBlock::Btw(_)
+                | RenderBlock::ContextInfo(_)
+                | RenderBlock::MemoryCapture(_)
                 | RenderBlock::Injected(_)
-                | RenderBlock::ToolCall(ToolCallBlock::Execute(_) | ToolCallBlock::Read(_)
-                    | ToolCallBlock::ListDir(_) | ToolCallBlock::Search(_) | ToolCallBlock::WebFetch(_)
-                    | ToolCallBlock::WebSearch(_) | ToolCallBlock::IntegrationSearch(_)
-                    | ToolCallBlock::UseTool(_) | ToolCallBlock::MemorySearch(_)
-                    | ToolCallBlock::Skill(_) | ToolCallBlock::Other(_)) => {
-                        RenderedBlockOutput::from(delegate_block!(self, output(&content_ctx)))
-                    }
+                | RenderBlock::ToolCall(
+                    ToolCallBlock::Execute(_)
+                    | ToolCallBlock::Read(_)
+                    | ToolCallBlock::ListDir(_)
+                    | ToolCallBlock::Search(_)
+                    | ToolCallBlock::WebFetch(_)
+                    | ToolCallBlock::WebSearch(_)
+                    | ToolCallBlock::IntegrationSearch(_)
+                    | ToolCallBlock::UseTool(_)
+                    | ToolCallBlock::MemorySearch(_)
+                    | ToolCallBlock::Skill(_)
+                    | ToolCallBlock::Other(_),
+                ) => RenderedBlockOutput::from(delegate_block!(self, output(&content_ctx))),
             }
         };
         if ctx.mode == DisplayMode::Collapsed {
             rendered.output.lines.truncate(1);
             if let Some(line) = rendered.output.lines.first_mut() {
                 line.content = crate::render::line_utils::truncate_line(
-                    std::mem::take(&mut line.content), usize::from(content_ctx.width),
+                    std::mem::take(&mut line.content),
+                    usize::from(content_ctx.width),
                 );
             }
         }
         if let Some(symbol) = symbol {
-            prepend_bullet(&mut rendered.output, ctx, &prefix, symbol.style(ctx), symbol.layout);
+            prepend_bullet(
+                &mut rendered.output,
+                ctx,
+                &prefix,
+                symbol.style(ctx),
+                symbol.layout,
+            );
         }
         rendered
     }
@@ -791,7 +876,8 @@ impl BlockContent for RenderBlock {
     }
 
     fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        self.message_symbol(ctx).and_then(|symbol| symbol.style(ctx))
+        self.message_symbol(ctx)
+            .and_then(|symbol| symbol.style(ctx))
     }
 
     fn accent_background(&self, ctx: &BlockContext) -> bool {
@@ -835,7 +921,8 @@ impl BlockContent for RenderBlock {
     }
 
     fn has_bullet(&self, ctx: &BlockContext) -> bool {
-        self.message_symbol(ctx).is_some_and(|symbol| symbol.is_visible(ctx))
+        self.message_symbol(ctx)
+            .is_some_and(|symbol| symbol.is_visible(ctx))
     }
 
     fn is_groupable(&self) -> bool {
@@ -862,7 +949,10 @@ impl BlockContent for RenderBlock {
         if self.estimate_extra_rows() == 0 {
             return Vec::new();
         }
-        let prefix = self.message_symbol(ctx).map(|symbol| symbol.prefix(ctx)).unwrap_or_default();
+        let prefix = self
+            .message_symbol(ctx)
+            .map(|symbol| symbol.prefix(ctx))
+            .unwrap_or_default();
         let content_ctx = self.symbol_context(ctx, &prefix);
         delegate_block!(self, diagram_affordances(&content_ctx))
     }
@@ -1059,11 +1149,7 @@ impl RenderBlock {
 
     /// Create a runtime-injected context entry (collapsed by default).
     /// `starts_turn` marks an auto-wake echo that opened a numbered prompt turn.
-    pub fn injected(
-        label: impl Into<String>,
-        text: impl Into<String>,
-        starts_turn: bool,
-    ) -> Self {
+    pub fn injected(label: impl Into<String>, text: impl Into<String>, starts_turn: bool) -> Self {
         RenderBlock::Injected(InjectedBlock::new(label, text).with_starts_turn(starts_turn))
     }
 
@@ -1750,7 +1836,13 @@ mod tests {
                     .with_selection_text(Some("body".to_string())),
             ],
         };
-        prepend_bullet(&mut output, &ctx(DisplayMode::Expanded, false), "◆ ", None, SymbolLayout::Header);
+        prepend_bullet(
+            &mut output,
+            &ctx(DisplayMode::Expanded, false),
+            "◆ ",
+            None,
+            SymbolLayout::Header,
+        );
         let Some(line) = output.lines.first() else {
             panic!("expected a prepended line: {output:?}");
         };

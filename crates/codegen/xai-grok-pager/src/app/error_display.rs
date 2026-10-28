@@ -171,7 +171,10 @@ fn append_retry_countdown(base: String, countdown: Option<RetryCountdown>) -> St
     match countdown {
         Some(RetryCountdown::Due) => format!("{base} (attempt due)"),
         Some(RetryCountdown::In(remaining)) => {
-            format!("{base} (next try in {})", crate::util::format_duration(remaining))
+            format!(
+                "{base} (next try in {})",
+                crate::util::format_duration(remaining)
+            )
         }
         None => base,
     }
@@ -1056,7 +1059,14 @@ mod tests {
             "Retrying (attempt 1)..."
         );
         assert_eq!(
-            format_retry_activity_label(3, 5, "weird dump", Some("http"), RetryLabelStyle::Status, None),
+            format_retry_activity_label(
+                3,
+                5,
+                "weird dump",
+                Some("http"),
+                RetryLabelStyle::Status,
+                None
+            ),
             "Connection failed | Retrying (attempt 3)..."
         );
         assert_eq!(
@@ -1071,7 +1081,14 @@ mod tests {
             "Rate limited | Retrying (2/5)"
         );
         assert_eq!(
-            format_retry_activity_label(1, 3, dns, Some("a_future_kind"), RetryLabelStyle::Status, None),
+            format_retry_activity_label(
+                1,
+                3,
+                dns,
+                Some("a_future_kind"),
+                RetryLabelStyle::Status,
+                None
+            ),
             "Retrying (attempt 1)..."
         );
         assert_eq!(

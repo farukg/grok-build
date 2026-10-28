@@ -29,12 +29,15 @@ fn register_compact(
         }
     }
     let id = CompactInvocationId(uuid::Uuid::new_v4());
-    agent.compact_invocations.insert(id, CompactInvocation {
-        settlement: crate::app::agent::CompactInvocationSettlement::AwaitingRpc,
-        owner,
-        started_at: Instant::now(),
-        binding_epoch: agent.session_binding_epoch,
-    });
+    agent.compact_invocations.insert(
+        id,
+        CompactInvocation {
+            settlement: crate::app::agent::CompactInvocationSettlement::AwaitingRpc,
+            owner,
+            started_at: Instant::now(),
+            binding_epoch: agent.session_binding_epoch,
+        },
+    );
     id
 }
 
@@ -354,7 +357,8 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
 
     let compact_at_front = agent.session.pending_prompts.front().is_some_and(|queued| {
         queued.kind == QueueEntryKind::Command
-            && crate::slash::parse_invocation(&queued.text).is_some_and(|inv| inv.token == "compact")
+            && crate::slash::parse_invocation(&queued.text)
+                .is_some_and(|inv| inv.token == "compact")
     });
     let admit_compact = compact_at_front
         && (agent.session.state.is_idle() || agent.session.state.is_turn_running());
@@ -430,11 +434,13 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
         None => return QueueDrain::blocked(),
     };
 
-    if admit_compact
-        && (agent.session.state.is_turn_running() || agent.running_wake_turn.is_some())
+    if admit_compact && (agent.session.state.is_turn_running() || agent.running_wake_turn.is_some())
     {
-        let invocation_id = register_compact(agent, crate::app::agent::CompactInvocationOwner::Concurrent);
-        agent.scrollback.push_block(RenderBlock::session_event(SessionEvent::CompactStarted));
+        let invocation_id =
+            register_compact(agent, crate::app::agent::CompactInvocationOwner::Concurrent);
+        agent
+            .scrollback
+            .push_block(RenderBlock::session_event(SessionEvent::CompactStarted));
         return QueueDrain {
             effects: vec![Effect::Compact {
                 agent_id: agent.session.id,
@@ -654,7 +660,10 @@ pub(super) fn maybe_drain_queue(agent: &mut AgentView, notices: &mut Vec<String>
                     Effect::Compact {
                         agent_id,
                         session_id,
-                        invocation_id: register_compact(agent, crate::app::agent::CompactInvocationOwner::Command),
+                        invocation_id: register_compact(
+                            agent,
+                            crate::app::agent::CompactInvocationOwner::Command,
+                        ),
                     },
                 ),
             };
@@ -1177,11 +1186,16 @@ pub(super) fn dispatch_queue_interject_shared(
     expected_version: u64,
     new_text: Option<String>,
 ) -> Vec<Effect> {
-    let Some(agent) = super::ctx::get_active_agent_mut(app) else { return Vec::new(); };
+    let Some(agent) = super::ctx::get_active_agent_mut(app) else {
+        return Vec::new();
+    };
     if let Some(text) = &new_text {
         agent.record_prompt_in_history(text);
     }
-    agent.begin_queue_send_now(id, expected_version, new_text).into_iter().collect()
+    agent
+        .begin_queue_send_now(id, expected_version, new_text)
+        .into_iter()
+        .collect()
 }
 
 /// Decides whether the edited row is dropped and whether its text reaches the send path.
@@ -1437,15 +1451,29 @@ mod tests {
     fn compact_mid_turn_submits_without_replacing_the_running_turn() {
         let mut app = test_app_with_agent();
         let id = AgentId(0);
-        app.agents.get_mut(&id).unwrap().begin_local_turn("still-running");
+        app.agents
+            .get_mut(&id)
+            .unwrap()
+            .begin_local_turn("still-running");
 
         let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
 
-        assert!(effects.iter().any(|effect| matches!(effect, Effect::Compact { .. })));
-        assert!(!effects.iter().any(|effect| matches!(effect, Effect::CancelTurn { .. })));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Compact { .. }))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CancelTurn { .. }))
+        );
         let agent = test_agent(&app, id);
         assert!(agent.session.state.is_turn_running());
-        assert_eq!(agent.session.current_prompt_id.as_deref(), Some("still-running"));
+        assert_eq!(
+            agent.session.current_prompt_id.as_deref(),
+            Some("still-running")
+        );
         assert!(agent.session.pending_prompts.is_empty());
     }
 
@@ -1459,8 +1487,16 @@ mod tests {
 
         let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
 
-        assert!(effects.iter().any(|effect| matches!(effect, Effect::Compact { .. })));
-        assert!(!effects.iter().any(|effect| matches!(effect, Effect::CancelTurn { .. })));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Compact { .. }))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CancelTurn { .. }))
+        );
         let agent = test_agent(&app, id);
         assert!(agent.session.state.is_turn_running());
         assert_eq!(agent.session.current_prompt_id, prompt_id);
@@ -1476,10 +1512,17 @@ mod tests {
 
         let effects = dispatch(Action::SendPrompt("/compact".into()), &mut app);
 
-        assert!(!effects.iter().any(|effect| matches!(effect, Effect::Compact { .. })));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Compact { .. }))
+        );
         let agent = test_agent(&app, AgentId(0));
         assert_eq!(agent.session.pending_prompts.len(), 2);
-        assert_eq!(agent.session.pending_prompts.front().unwrap().text, "before compact");
+        assert_eq!(
+            agent.session.pending_prompts.front().unwrap().text,
+            "before compact"
+        );
     }
 
     #[test]
@@ -2319,13 +2362,16 @@ mod tests {
             &mut app,
         );
         match effects.as_slice() {
-            [
-                Effect::QueueInterject { request, .. },
-            ] => {
+            [Effect::QueueInterject { request, .. }] => {
                 assert_eq!(request.operation.session_id, "test-session");
                 assert_eq!(request.operation.id, "p1");
                 assert_eq!(request.operation.expected_version, 5);
-                assert_eq!(request.action, xai_grok_shell::extensions::interject::QueueAction::Prioritize { new_text: None });
+                assert_eq!(
+                    request.action,
+                    xai_grok_shell::extensions::interject::QueueAction::Prioritize {
+                        new_text: None
+                    }
+                );
             }
             other => panic!("expected QueueInterject, got {other:?}"),
         }
@@ -2350,13 +2396,16 @@ mod tests {
             &mut app,
         );
         match effects.as_slice() {
-            [
-                Effect::QueueInterject { request, .. },
-            ] => {
+            [Effect::QueueInterject { request, .. }] => {
                 assert_eq!(request.operation.session_id, "test-session");
                 assert_eq!(request.operation.id, "p1");
                 assert_eq!(request.operation.expected_version, 5);
-                assert_eq!(request.action, xai_grok_shell::extensions::interject::QueueAction::Prioritize { new_text: Some("edited body".into()) });
+                assert_eq!(
+                    request.action,
+                    xai_grok_shell::extensions::interject::QueueAction::Prioritize {
+                        new_text: Some("edited body".into())
+                    }
+                );
             }
             other => panic!("expected single QueueInterject with newText, got {other:?}"),
         }

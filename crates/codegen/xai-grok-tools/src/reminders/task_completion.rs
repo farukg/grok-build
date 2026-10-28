@@ -708,17 +708,18 @@ impl Reminder for TaskCompletionReminder {
         tool_output: &ToolOutput,
         observations: &crate::types::completion_observation::SubagentCompletionObservations,
     ) -> Vec<String> {
-        let unconfirmed_kill_id = if let ToolOutput::KillTask(KillTaskOutput::Result(result)) = tool_output {
-            match result.outcome {
-                xai_tool_types::KillOutcome::Indeterminate { .. }
-                | xai_tool_types::KillOutcome::Failed { .. } => Some(result.task_id.as_str()),
-                xai_tool_types::KillOutcome::Killed
-                | xai_tool_types::KillOutcome::AlreadyExited
-                | xai_tool_types::KillOutcome::NotFound => None,
-            }
-        } else {
-            None
-        };
+        let unconfirmed_kill_id =
+            if let ToolOutput::KillTask(KillTaskOutput::Result(result)) = tool_output {
+                match result.outcome {
+                    xai_tool_types::KillOutcome::Indeterminate { .. }
+                    | xai_tool_types::KillOutcome::Failed { .. } => Some(result.task_id.as_str()),
+                    xai_tool_types::KillOutcome::Killed
+                    | xai_tool_types::KillOutcome::AlreadyExited
+                    | xai_tool_types::KillOutcome::NotFound => None,
+                }
+            } else {
+                None
+            };
         let consumed_ids: Vec<String> = consumed_completion_ids(tool_output)
             .into_iter()
             .map(str::to_string)
@@ -726,7 +727,8 @@ impl Reminder for TaskCompletionReminder {
         let (suppressed, reserved_ids) = {
             let res = resources.lock().await;
             (
-                res.get::<TaskWakeSuppressed>().is_some_and(TaskWakeSuppressed::get),
+                res.get::<TaskWakeSuppressed>()
+                    .is_some_and(TaskWakeSuppressed::get),
                 res.get::<TaskCompletionReservations>()
                     .map(TaskCompletionReservations::snapshot)
                     .unwrap_or_default(),
@@ -752,7 +754,10 @@ impl Reminder for TaskCompletionReminder {
                 .filter(|t| task_owned_by_session(t, my_owner.as_deref()))
                 .filter(|t| Some(t.task_id.as_str()) != unconfirmed_kill_id)
                 .collect();
-            for task in tasks.iter().filter(|task| consumed_ids.contains(&task.task_id)) {
+            for task in tasks
+                .iter()
+                .filter(|task| consumed_ids.contains(&task.task_id))
+            {
                 observations.record_task(task);
             }
             if suppressed {
@@ -852,28 +857,48 @@ mod tests {
                 resources.insert(reservations);
                 resources.insert(gate);
             }
-            let observations = crate::types::completion_observation::SubagentCompletionObservations::default();
-            let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_result("consumed", "completed", Some(0))));
-            assert!(TaskCompletionReminder.collect_reminders(shared, &output, &observations).await.is_empty());
+            let observations =
+                crate::types::completion_observation::SubagentCompletionObservations::default();
+            let output = ToolOutput::TaskOutput(TaskOutputOutput::Result(task_result(
+                "consumed",
+                "completed",
+                Some(0),
+            )));
+            assert!(
+                TaskCompletionReminder
+                    .collect_reminders(shared, &output, &observations)
+                    .await
+                    .is_empty()
+            );
             let observations = observations.snapshot();
-            assert!(matches!(&observations[..], [crate::types::completion_observation::ObservedCompletion::Terminal(
+            assert!(
+                matches!(&observations[..], [crate::types::completion_observation::ObservedCompletion::Terminal(
                 crate::types::completion_observation::ObservedTerminalCompletion::Task { snapshot }
-            )] if snapshot.task_id == "consumed"));
+            )] if snapshot.task_id == "consumed")
+            );
         }
     }
 
     #[tokio::test]
     async fn inlined_completion_reminder_carries_its_terminal_receipt_observation() {
-        let shared = shared_with(vec![make_completed("inline"), make_running("still-running")]);
-        let observations = crate::types::completion_observation::SubagentCompletionObservations::default();
+        let shared = shared_with(vec![
+            make_completed("inline"),
+            make_running("still-running"),
+        ]);
+        let observations =
+            crate::types::completion_observation::SubagentCompletionObservations::default();
         let output = ToolOutput::Text("unrelated result".into());
-        let reminders = TaskCompletionReminder.collect_reminders(shared, &output, &observations).await;
+        let reminders = TaskCompletionReminder
+            .collect_reminders(shared, &output, &observations)
+            .await;
         assert_eq!(reminders.len(), 1);
         assert!(reminders[0].contains("inline"));
         let observed = observations.snapshot();
-        assert!(matches!(&observed[..], [crate::types::completion_observation::ObservedCompletion::Terminal(
+        assert!(
+            matches!(&observed[..], [crate::types::completion_observation::ObservedCompletion::Terminal(
             crate::types::completion_observation::ObservedTerminalCompletion::Task { snapshot }
-        )] if snapshot.task_id == "inline"));
+        )] if snapshot.task_id == "inline")
+        );
     }
 
     #[test]
@@ -1643,7 +1668,9 @@ mod tests {
             outcome: KillOutcome::Killed,
             message: "Task was terminated successfully".into(),
         }));
-        let r = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert!(r.is_empty(), "kill_task result should suppress reminder");
     }
     #[tokio::test]
@@ -1667,15 +1694,32 @@ mod tests {
             }));
             assert!(consumed_completion_ids(&output).is_empty());
             assert!(output.is_error());
-            assert!(TaskCompletionReminder.collect_reminders(shared.clone(), &output, &Default::default()).await.is_empty());
-            assert!(!shared.lock().await.get::<State<ReportedTaskCompletions>>()
-                .expect("reported state").reported.contains("t1"));
+            assert!(
+                TaskCompletionReminder
+                    .collect_reminders(shared.clone(), &output, &Default::default())
+                    .await
+                    .is_empty()
+            );
+            assert!(
+                !shared
+                    .lock()
+                    .await
+                    .get::<State<ReportedTaskCompletions>>()
+                    .expect("reported state")
+                    .reported
+                    .contains("t1")
+            );
             let later = ToolOutput::Text(TextOutput {
                 text: "next result".into(),
                 consumed_completion_task_id: None,
             });
-            let reminders = TaskCompletionReminder.collect_reminders(shared, &later, &Default::default()).await;
-            assert!(reminders.join("\n").contains("t1"), "later completion remains reportable");
+            let reminders = TaskCompletionReminder
+                .collect_reminders(shared, &later, &Default::default())
+                .await;
+            assert!(
+                reminders.join("\n").contains("t1"),
+                "later completion remains reportable"
+            );
         }
     }
 
@@ -1687,7 +1731,9 @@ mod tests {
             text: "Task completed in 100ms with exit code: 0.".into(),
             consumed_completion_task_id: Some("t1".into()),
         });
-        let r = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert!(
             r.is_empty(),
             "Await Text with consumed_completion_task_id should suppress reminder"
@@ -1711,7 +1757,9 @@ mod tests {
             truncation_hint: String::new(),
             raw_output_bytes: 4,
         }));
-        let r = reminder.collect_reminders(shared.clone(), &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared.clone(), &output, &Default::default())
+            .await;
         assert!(
             r.is_empty(),
             "get_task_output(completed) should suppress reminder"
@@ -1757,7 +1805,9 @@ mod tests {
         let shared = shared_with(vec![make_completed("t1")]);
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let r = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert_eq!(
             r.len(),
             1,
@@ -1770,9 +1820,13 @@ mod tests {
         let shared = shared_with(vec![make_completed("t1")]);
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let first = reminder.collect_reminders(shared.clone(), &output, &Default::default()).await;
+        let first = reminder
+            .collect_reminders(shared.clone(), &output, &Default::default())
+            .await;
         assert_eq!(first.len(), 1);
-        let second = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let second = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert!(second.is_empty(), "should not repeat");
     }
     /// In a toolset that opts out of bash-completion reminders via `BashParams.surface_bg_completion_reminders = false` (compat namespace), the
@@ -1786,7 +1840,9 @@ mod tests {
         ]);
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let reminders = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let reminders = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert!(
             reminders.is_empty(),
             "expected no bash completion reminders when flag is disabled, got: {reminders:?}"
@@ -1900,7 +1956,9 @@ mod tests {
         let shared = res.into_shared();
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let first = reminder.collect_reminders(shared.clone(), &output, &Default::default()).await;
+        let first = reminder
+            .collect_reminders(shared.clone(), &output, &Default::default())
+            .await;
         assert!(
             first.is_empty(),
             "ordinary background tasks stay suppressed during goals"
@@ -1909,7 +1967,9 @@ mod tests {
             .lock()
             .await
             .insert(crate::implementations::grok_build::task::types::GoalLoopActive(false));
-        let second = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let second = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert!(
             second.is_empty(),
             "suppressed bash must not repeat, got: {second:?}"
@@ -1920,7 +1980,9 @@ mod tests {
         let shared = shared_with(vec![make_running("old-bg"), make_completed("done-1")]);
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::BackgroundTaskStarted(make_bg_started("new-bg"));
-        let r = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert_eq!(
             r.len(),
             2,
@@ -1941,7 +2003,9 @@ mod tests {
         let shared = shared_with(vec![make_completed("done-1")]);
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::BackgroundTaskStarted(make_bg_started("new-bg"));
-        let r = reminder.collect_reminders(shared, &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared, &output, &Default::default())
+            .await;
         assert_eq!(r.len(), 1);
         assert!(r.first().is_some_and(|s| s.contains("done-1")));
     }
@@ -2379,7 +2443,9 @@ mod tests {
         let shared = res.into_shared();
         let reminder = TaskCompletionReminder;
         let output = ToolOutput::Dynamic(serde_json::Value::Null.into());
-        let r = reminder.collect_reminders(shared.clone(), &output, &Default::default()).await;
+        let r = reminder
+            .collect_reminders(shared.clone(), &output, &Default::default())
+            .await;
         assert_eq!(r.len(), 1, "reserved ID should suppress reminder");
         assert!(r.first().is_some_and(|s| s.contains("t2")));
         let res = shared.lock().await;
@@ -2425,7 +2491,9 @@ mod tests {
                 .contains("reserved")
         );
         reservations.release("reserved");
-        let reminders = reminder.collect_reminders(shared.clone(), &output, &Default::default()).await;
+        let reminders = reminder
+            .collect_reminders(shared.clone(), &output, &Default::default())
+            .await;
         assert_eq!(reminders.len(), 1);
         assert!(reminders.first().is_some_and(|s| s.contains("reserved")));
         assert!(

@@ -156,7 +156,8 @@ pub(crate) struct RunShellChildHarnessConfig {
     hold_wake_abort_flush_ack: bool,
     reject_deferred_start_commit: bool,
     #[cfg(test)]
-    parent_input_fault: Option<crate::session::persistence::native_wake_tests_support::ParentInputFault>,
+    parent_input_fault:
+        Option<crate::session::persistence::native_wake_tests_support::ParentInputFault>,
     #[cfg(test)]
     initial_traceparent: Option<String>,
 }
@@ -292,7 +293,8 @@ pub(crate) struct SubagentSpawnContext {
     /// Parent session's ChatStateHandle, used to read the actual live sampling config and credentials from the parent session actor (async).
     /// Cheap Clone (mpsc sender). `None` when the parent SessionHandle is not found.
     pub parent_chat_state: Option<xai_chat_state::ChatStateHandle>,
-    pub context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyAuthority,
+    pub context_policy_authority:
+        crate::session::helpers::context_policy_store::ContextPolicyAuthority,
     /// Parent session's resolved turn limit, for subagent inheritance.
     pub parent_max_turns: Option<usize>,
     /// All available models for resolving model IDs from overrides.
@@ -1254,9 +1256,13 @@ async fn inherit_context_policy(
     let target = target.id.0.to_string();
     tokio::task::spawn_blocking(move || {
         let mut store = store;
-        store.ensure_session(source.id.0.as_ref(), &crate::session::persistence::session_dir(&source))?;
+        store.ensure_session(
+            source.id.0.as_ref(),
+            &crate::session::persistence::session_dir(&source),
+        )?;
         store.inherit(source.id.0.as_ref(), &target)
-    }).await?
+    })
+    .await?
 }
 enum BootstrapInitialContext {
     Ready(InitialContext),

@@ -325,7 +325,13 @@ mod tests {
     fn collapsed_surface_outside_cwd_stays_truthful_anchored_path() {
         let cwd = Path::new("/Users/me/project");
         assert_eq!(
-            path_for_tool_surface("/etc/hosts", ToolPathSurface::Collapsed, Some(cwd), Some(80), 0),
+            path_for_tool_surface(
+                "/etc/hosts",
+                ToolPathSurface::Collapsed,
+                Some(cwd),
+                Some(80),
+                0
+            ),
             "/etc/hosts"
         );
         assert_eq!(

@@ -18,9 +18,9 @@ use crate::computer::local::cgroup::{
 };
 use crate::computer::task_log;
 use crate::computer::types::{
-    BackgroundHandle, BackgroundedForeground, ComputerError, KillOutcome, KillSource, TaskSnapshot,
-    KillStage, KillProcessEffect, KillFailureReason, RunDisposition,
-    TerminalBackend, TerminalRunRequest, TerminalRunResult,
+    BackgroundHandle, BackgroundedForeground, ComputerError, KillFailureReason, KillOutcome,
+    KillProcessEffect, KillSource, KillStage, RunDisposition, TaskSnapshot, TerminalBackend,
+    TerminalRunRequest, TerminalRunResult,
 };
 use crate::notification::types::{BashNotificationBase, BashOutputChunk, ToolNotificationHandle};
 use crate::util::truncate::FRONT_BACK_TRUNCATION_MARKER;
@@ -33,7 +33,9 @@ use super::shell_state;
 #[path = "terminal_orphan_registry.rs"]
 mod orphan_registry;
 #[cfg(target_os = "linux")]
-pub use orphan_registry::{SweepSummary as TerminalOrphanSweepSummary, sweep as sweep_orphaned_process_groups};
+pub use orphan_registry::{
+    SweepSummary as TerminalOrphanSweepSummary, sweep as sweep_orphaned_process_groups,
+};
 
 /// Enroll a `Weak` in the scope(s) so TUI exit paths can reap the tree; the
 /// actor keeps the only strong ref, so a clean reap leaves a dead `Weak`.
@@ -76,11 +78,17 @@ async fn write_spawned_process_registration<R: Send + 'static>(
     pid: Option<u32>,
     writer: impl FnOnce(u32) -> std::io::Result<Option<R>> + Send + 'static,
 ) -> std::io::Result<Option<R>> {
-    let Some(pid) = pid else { return Ok(None); };
+    let Some(pid) = pid else {
+        return Ok(None);
+    };
     let started = Instant::now();
-    let result = tokio::task::spawn_blocking(move || writer(pid)).await
+    let result = tokio::task::spawn_blocking(move || writer(pid))
+        .await
         .map_err(std::io::Error::other)?;
-    tracing::debug!(elapsed_us = started.elapsed().as_micros(), "terminal ownership writer finished");
+    tracing::debug!(
+        elapsed_us = started.elapsed().as_micros(),
+        "terminal ownership writer finished"
+    );
     result
 }
 
@@ -367,8 +375,15 @@ impl BackgroundStatus {
 
 enum TerminalEnrollment {
     Unstarted,
-    InFlight { snapshot: TaskSnapshot, attempt: u64 },
-    Retry { snapshot: TaskSnapshot, attempt: u64, at: Instant },
+    InFlight {
+        snapshot: TaskSnapshot,
+        attempt: u64,
+    },
+    Retry {
+        snapshot: TaskSnapshot,
+        attempt: u64,
+        at: Instant,
+    },
     Enrolled,
 }
 
@@ -457,7 +472,9 @@ impl Drop for ProcessState {
                 tracing::warn!("uncollected terminal child has no durable orphan registration");
             }
             #[cfg(not(target_os = "linux"))]
-            tracing::warn!("terminal owner destroyed before collection; no durable orphan handoff on this platform");
+            tracing::warn!(
+                "terminal owner destroyed before collection; no durable orphan handoff on this platform"
+            );
         } else {
             self.retire_collected_ownership();
         }
@@ -470,7 +487,9 @@ impl ProcessState {
             return;
         }
         #[cfg(unix)]
-        { self.process_group = None; }
+        {
+            self.process_group = None;
+        }
         #[cfg(target_os = "linux")]
         {
             if let Some(registration) = self.orphan_registration.as_mut() {
@@ -819,7 +838,12 @@ impl LocalTerminalActor {
     }
 
     #[cfg(target_os = "linux")]
-    fn registration_writer(&self) -> impl FnOnce(u32) -> std::io::Result<Option<orphan_registry::Registration>> + Send + 'static + use<> {
+    fn registration_writer(
+        &self,
+    ) -> impl FnOnce(u32) -> std::io::Result<Option<orphan_registry::Registration>>
+    + Send
+    + 'static
+    + use<> {
         #[cfg(test)]
         let root = self.orphan_root.clone();
         move |pid| {
@@ -877,8 +901,13 @@ impl LocalTerminalActor {
         )?;
         #[cfg(target_os = "linux")]
         let (process_group, orphan_registration) = enroll_spawned_with_registration(
-            &self.scope, self.session_scope.as_ref(), process_group, child.id(), self.registration_writer(),
-        ).await;
+            &self.scope,
+            self.session_scope.as_ref(),
+            process_group,
+            child.id(),
+            self.registration_writer(),
+        )
+        .await;
         #[cfg(not(target_os = "linux"))]
         let process_group = enroll_spawned(&self.scope, self.session_scope.as_ref(), process_group);
         Ok(SpawnResult {
@@ -967,8 +996,13 @@ impl LocalTerminalActor {
         }
         #[cfg(target_os = "linux")]
         let (process_group, orphan_registration) = enroll_spawned_with_registration(
-            &self.scope, self.session_scope.as_ref(), process_group, child.id(), self.registration_writer(),
-        ).await;
+            &self.scope,
+            self.session_scope.as_ref(),
+            process_group,
+            child.id(),
+            self.registration_writer(),
+        )
+        .await;
         #[cfg(not(target_os = "linux"))]
         let process_group = enroll_spawned(&self.scope, self.session_scope.as_ref(), process_group);
 
@@ -1100,8 +1134,13 @@ impl LocalTerminalActor {
         }
         #[cfg(target_os = "linux")]
         let (process_group, orphan_registration) = enroll_spawned_with_registration(
-            &self.scope, self.session_scope.as_ref(), process_group, child.id(), self.registration_writer(),
-        ).await;
+            &self.scope,
+            self.session_scope.as_ref(),
+            process_group,
+            child.id(),
+            self.registration_writer(),
+        )
+        .await;
         #[cfg(not(target_os = "linux"))]
         let process_group = enroll_spawned(&self.scope, self.session_scope.as_ref(), process_group);
 
@@ -1133,30 +1172,41 @@ impl LocalTerminalActor {
     fn next_waiter_deadline(&self) -> Option<Instant> {
         self.completion_waiters
             .iter()
-            .filter(|(id, _)| self.processes.get(*id).is_none_or(|process| {
-                !process.is_complete() || matches!(process.enrollment, TerminalEnrollment::Enrolled)
-            }))
+            .filter(|(id, _)| {
+                self.processes.get(*id).is_none_or(|process| {
+                    !process.is_complete()
+                        || matches!(process.enrollment, TerminalEnrollment::Enrolled)
+                })
+            })
             .flat_map(|(_, waiters)| waiters)
             .map(|waiter| waiter.deadline)
-            .chain(self.processes.values().flat_map(|process| {
-                process.kill_replies.iter().map(|pending| pending.deadline)
-            }))
-            .chain(self.processes.values().filter_map(|process| match &process.enrollment {
-                TerminalEnrollment::Retry { at, .. } => Some(*at),
-                TerminalEnrollment::Unstarted
-                | TerminalEnrollment::InFlight { .. }
-                | TerminalEnrollment::Enrolled => None,
-            }))
+            .chain(
+                self.processes.values().flat_map(|process| {
+                    process.kill_replies.iter().map(|pending| pending.deadline)
+                }),
+            )
+            .chain(
+                self.processes
+                    .values()
+                    .filter_map(|process| match &process.enrollment {
+                        TerminalEnrollment::Retry { at, .. } => Some(*at),
+                        TerminalEnrollment::Unstarted
+                        | TerminalEnrollment::InFlight { .. }
+                        | TerminalEnrollment::Enrolled => None,
+                    }),
+            )
             .chain(self.processes.values().filter_map(|process| {
                 if process.draining || process.lifecycle.is_settled() {
                     return None;
                 }
                 match &process.lifecycle {
                     Lifecycle::Running => process.start_time.checked_add(match process.bg_status {
-                        BackgroundStatus::Foreground { auto_bg_on_timeout: true } => {
-                            process.timeout.min(process.foreground_block_budget)
+                        BackgroundStatus::Foreground {
+                            auto_bg_on_timeout: true,
+                        } => process.timeout.min(process.foreground_block_budget),
+                        BackgroundStatus::Foreground {
+                            auto_bg_on_timeout: false,
                         }
-                        BackgroundStatus::Foreground { auto_bg_on_timeout: false }
                         | BackgroundStatus::Backgrounded => process.timeout,
                     }),
                     Lifecycle::Exiting { since, .. } => {
@@ -1179,11 +1229,17 @@ impl LocalTerminalActor {
     fn command_deadline(&self, command: &TerminalCommand) -> Option<Instant> {
         let now = Instant::now();
         match command {
-            TerminalCommand::Run { request, .. } => now.checked_add(if request.auto_background_on_timeout {
-                request.timeout.min(request.foreground_block_budget.unwrap_or(self.foreground_block_budget))
-            } else {
-                request.timeout
-            }),
+            TerminalCommand::Run { request, .. } => {
+                now.checked_add(if request.auto_background_on_timeout {
+                    request.timeout.min(
+                        request
+                            .foreground_block_budget
+                            .unwrap_or(self.foreground_block_budget),
+                    )
+                } else {
+                    request.timeout
+                })
+            }
             TerminalCommand::RunBackground { request, .. } => now.checked_add(request.timeout),
             TerminalCommand::Kill { deadline, .. } => Some((*deadline).min(now + SIGTERM_GRACE)),
             TerminalCommand::WaitForCompletion { timeout, .. } => {
@@ -1332,9 +1388,15 @@ impl LocalTerminalActor {
                     reason: KillFailureReason::DispatchUnavailable,
                 });
             }
-            TerminalCommand::WaitForCompletion { reply, .. } => { let _ = reply.send(None); }
-            TerminalCommand::BackgroundForeground { reply, .. } => { let _ = reply.send(false); }
-            TerminalCommand::BackgroundForegroundCommands { reply, .. } => { let _ = reply.send(Vec::new()); }
+            TerminalCommand::WaitForCompletion { reply, .. } => {
+                let _ = reply.send(None);
+            }
+            TerminalCommand::BackgroundForeground { reply, .. } => {
+                let _ = reply.send(false);
+            }
+            TerminalCommand::BackgroundForegroundCommands { reply, .. } => {
+                let _ = reply.send(Vec::new());
+            }
             TerminalCommand::KillTasksByOwner { reply, .. }
             | TerminalCommand::ReparentNotifications { reply, .. } => drop(reply),
             TerminalCommand::KillForegroundCommands
@@ -1347,10 +1409,24 @@ impl LocalTerminalActor {
 
     async fn handle_command(&mut self, cmd: TerminalCommand) {
         match cmd {
-            TerminalCommand::EnrollmentFinished { task_id, attempt, result } => {
-                let Some(process) = self.processes.get_mut(&task_id) else { return; };
-                let TerminalEnrollment::InFlight { snapshot, attempt: current } = &process.enrollment else { return; };
-                if *current != attempt { return; }
+            TerminalCommand::EnrollmentFinished {
+                task_id,
+                attempt,
+                result,
+            } => {
+                let Some(process) = self.processes.get_mut(&task_id) else {
+                    return;
+                };
+                let TerminalEnrollment::InFlight {
+                    snapshot,
+                    attempt: current,
+                } = &process.enrollment
+                else {
+                    return;
+                };
+                if *current != attempt {
+                    return;
+                }
                 let success = result.is_ok();
                 process.enrollment = if success {
                     TerminalEnrollment::Enrolled
@@ -1367,10 +1443,15 @@ impl LocalTerminalActor {
                 let replies = std::mem::take(&mut process.kill_replies);
                 for pending in replies {
                     let acknowledged = success && Instant::now() < pending.deadline;
-                    let outcome = if acknowledged { pending.outcome } else { enrollment_uncertain() };
+                    let outcome = if acknowledged {
+                        pending.outcome
+                    } else {
+                        enrollment_uncertain()
+                    };
                     let delivered = pending.reply.send(outcome).is_ok();
                     if acknowledged && delivered {
-                        process.kill_result_delivered |= pending.source.marks_result_delivered(false);
+                        process.kill_result_delivered |=
+                            pending.source.marks_result_delivered(false);
                     }
                 }
                 self.notify_completion_waiters().await;
@@ -1430,7 +1511,10 @@ impl LocalTerminalActor {
                 self.handle_run_background(request, reply).await;
             }
             TerminalCommand::GetTask { task_id, reply } => {
-                if self.processes.get(&task_id).is_some_and(ProcessState::is_complete)
+                if self
+                    .processes
+                    .get(&task_id)
+                    .is_some_and(ProcessState::is_complete)
                     && !self.ensure_enrollment(&task_id).await
                 {
                     let _ = reply.send(None);
@@ -1762,7 +1846,12 @@ impl LocalTerminalActor {
             }
             self.notify_completion_waiters().await;
         } else {
-            process.kill_replies.push(KillReply { reply, source, outcome, deadline });
+            process.kill_replies.push(KillReply {
+                reply,
+                source,
+                outcome,
+                deadline,
+            });
             if let TerminalEnrollment::Retry { at, .. } = &mut process.enrollment {
                 *at = Instant::now();
             }
@@ -1806,25 +1895,43 @@ impl LocalTerminalActor {
     }
 
     async fn ensure_enrollment(&mut self, task_id: &str) -> bool {
-        let Some(process) = self.processes.get_mut(task_id) else { return true; };
-        if matches!(process.enrollment, TerminalEnrollment::Enrolled) { return true; }
-        if !process.is_complete() { return false; }
+        let Some(process) = self.processes.get_mut(task_id) else {
+            return true;
+        };
+        if matches!(process.enrollment, TerminalEnrollment::Enrolled) {
+            return true;
+        }
+        if !process.is_complete() {
+            return false;
+        }
         let (snapshot, attempt) = match &process.enrollment {
             TerminalEnrollment::Unstarted => (process.to_task_snapshot(task_id).await, 1),
-            TerminalEnrollment::Retry { snapshot, attempt, at } if Instant::now() >= *at => {
-                (snapshot.clone(), attempt.saturating_add(1))
-            }
+            TerminalEnrollment::Retry {
+                snapshot,
+                attempt,
+                at,
+            } if Instant::now() >= *at => (snapshot.clone(), attempt.saturating_add(1)),
             TerminalEnrollment::Retry { .. } | TerminalEnrollment::InFlight { .. } => return false,
             TerminalEnrollment::Enrolled => return true,
         };
-        process.enrollment = TerminalEnrollment::InFlight { snapshot: snapshot.clone(), attempt };
+        process.enrollment = TerminalEnrollment::InFlight {
+            snapshot: snapshot.clone(),
+            attempt,
+        };
         let acknowledgement = process.notification_handle.enroll_task_completion(snapshot);
-        let deadline = tokio::time::Instant::now() + crate::notification::handle::TERMINAL_ACK_BUDGET;
+        let deadline =
+            tokio::time::Instant::now() + crate::notification::handle::TERMINAL_ACK_BUDGET;
         let tx = self.owner_tx.clone();
         let task_id = task_id.to_string();
         tokio::spawn(async move {
             let result = acknowledgement.wait_until(deadline).await;
-            let _ = tx.send(TerminalCommand::EnrollmentFinished { task_id, attempt, result }).await;
+            let _ = tx
+                .send(TerminalCommand::EnrollmentFinished {
+                    task_id,
+                    attempt,
+                    result,
+                })
+                .await;
         });
         false
     }
@@ -2150,12 +2257,16 @@ impl LocalTerminalActor {
                 .unwrap_or(true); // process gone = treat as completed
 
             if completed {
-                if !self.ensure_enrollment(&task_id).await { continue; }
+                if !self.ensure_enrollment(&task_id).await {
+                    continue;
+                }
                 let snapshot = match self.processes.get(&task_id) {
                     Some(p) => Some(p.to_task_snapshot(&task_id).await),
                     None => self.completed_task_snapshots.get(&task_id).cloned(),
                 };
-                let Some(waiters) = self.completion_waiters.remove(&task_id) else { continue; };
+                let Some(waiters) = self.completion_waiters.remove(&task_id) else {
+                    continue;
+                };
                 let mut any_delivered = false;
                 for waiter in waiters {
                     if waiter.reply.send(snapshot.clone()).is_ok() {
@@ -2196,7 +2307,10 @@ impl LocalTerminalActor {
                 }
                 continue;
             }
-            if self.processes.get(&task_id).is_some_and(ProcessState::is_complete)
+            if self
+                .processes
+                .get(&task_id)
+                .is_some_and(ProcessState::is_complete)
                 && !self.ensure_enrollment(&task_id).await
             {
                 continue;
@@ -2247,7 +2361,9 @@ impl LocalTerminalActor {
         // Completion notifications fire unconditionally: pager UI, persistence, and
         // reservation bookkeeping need them; wait-suppression lives in the bridge.
         for task_id in newly_completed {
-            if !self.ensure_enrollment(&task_id).await { continue; }
+            if !self.ensure_enrollment(&task_id).await {
+                continue;
+            }
             if let Some(process) = self.processes.get(&task_id) {
                 let snapshot = process.to_task_snapshot(&task_id).await;
                 crate::sandbox_launch::exited(
@@ -2265,17 +2381,16 @@ impl LocalTerminalActor {
     }
 
     fn evict_if_foreground(&mut self, task_id: &str) {
-        if self
-            .processes
-            .get(task_id)
-            .is_some_and(|p| {
-                !p.bg_status.is_backgrounded()
-                    && p.is_complete()
-                    && p.child.id().is_none()
-                    && p.kill_replies.is_empty()
-                    && matches!(p.enrollment, TerminalEnrollment::Unstarted | TerminalEnrollment::Enrolled)
-            })
-        {
+        if self.processes.get(task_id).is_some_and(|p| {
+            !p.bg_status.is_backgrounded()
+                && p.is_complete()
+                && p.child.id().is_none()
+                && p.kill_replies.is_empty()
+                && matches!(
+                    p.enrollment,
+                    TerminalEnrollment::Unstarted | TerminalEnrollment::Enrolled
+                )
+        }) {
             self.processes.remove(task_id);
         }
     }
@@ -2556,24 +2671,33 @@ impl LocalTerminalActor {
 
     async fn collect_shutdown_children(&mut self) {
         self.poll_all_processes().await;
-        let finished: Vec<String> = self.processes.iter().filter(|(id, process)| {
-            process.is_complete()
-                && !process.draining
-                && process.child.id().is_none()
-                && process.lifecycle.swept_at().is_some()
-                && matches!(process.enrollment, TerminalEnrollment::Enrolled)
-                && process.completion_waiters.is_empty()
-                && process.kill_replies.is_empty()
-                && !self.completion_waiters.contains_key(*id)
-        }).map(|(id, _)| id.clone()).collect();
+        let finished: Vec<String> = self
+            .processes
+            .iter()
+            .filter(|(id, process)| {
+                process.is_complete()
+                    && !process.draining
+                    && process.child.id().is_none()
+                    && process.lifecycle.swept_at().is_some()
+                    && matches!(process.enrollment, TerminalEnrollment::Enrolled)
+                    && process.completion_waiters.is_empty()
+                    && process.kill_replies.is_empty()
+                    && !self.completion_waiters.contains_key(*id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
         for id in finished {
             self.processes.remove(&id);
         }
     }
 
     fn transition_to_background(&mut self, task_id: &str, reason: BackgroundReason) -> bool {
-        let Some(process) = self.processes.get_mut(task_id) else { return false; };
-        if process.lifecycle.has_exited() || process.bg_status.is_backgrounded() { return false; }
+        let Some(process) = self.processes.get_mut(task_id) else {
+            return false;
+        };
+        if process.lifecycle.has_exited() || process.bg_status.is_backgrounded() {
+            return false;
+        }
         process.bg_status = BackgroundStatus::Backgrounded;
         process.timeout = BACKGROUND_MAX_RUNTIME;
         let mut result = process.to_result();
@@ -2585,8 +2709,12 @@ impl LocalTerminalActor {
                 pid: process.child.id(),
             },
             reason: match reason {
-                BackgroundReason::UserSignal => crate::computer::types::BackgroundReason::UserRedirect,
-                BackgroundReason::ForegroundTimeout => crate::computer::types::BackgroundReason::ForegroundBudget,
+                BackgroundReason::UserSignal => {
+                    crate::computer::types::BackgroundReason::UserRedirect
+                }
+                BackgroundReason::ForegroundTimeout => {
+                    crate::computer::types::BackgroundReason::ForegroundBudget
+                }
             },
         };
         process.notify_waiters(Ok(result));
@@ -2704,7 +2832,6 @@ impl LocalTerminalActor {
                 process.notify_waiters(result);
             }
         }
-
     }
 
     async fn kill_foreground_commands_by_owner(&mut self, owner_session_id: &str) {
@@ -2735,7 +2862,6 @@ impl LocalTerminalActor {
                 process.notify_waiters(result);
             }
         }
-
     }
 
     /// Backgrounded only; foreground tasks go through `kill_foreground_commands_by_owner`.
@@ -2751,16 +2877,22 @@ impl LocalTerminalActor {
             .map(|(id, _)| id.clone())
             .collect();
 
-        let deadline = tokio::time::Instant::now() + SIGTERM_GRACE + REAP_GRACE + DRAIN_TIMEOUT
+        let deadline = tokio::time::Instant::now()
+            + SIGTERM_GRACE
+            + REAP_GRACE
+            + DRAIN_TIMEOUT
             + crate::notification::handle::TERMINAL_ACK_BUDGET;
         let mut results = Vec::with_capacity(owned_ids.len());
         for id in owned_ids {
             let (task_reply, receiver) = oneshot::channel();
-            self.handle_kill(&id, KillSource::Teardown, deadline.into_std(), task_reply).await;
+            self.handle_kill(&id, KillSource::Teardown, deadline.into_std(), task_reply)
+                .await;
             results.push(receiver);
         }
         tokio::spawn(async move {
-            for result in results { let _ = tokio::time::timeout_at(deadline, result).await; }
+            for result in results {
+                let _ = tokio::time::timeout_at(deadline, result).await;
+            }
             let _ = reply.send(());
         });
     }
@@ -3179,16 +3311,29 @@ impl TerminalBackend for LocalTerminalBackend {
 
     async fn kill_task_with_source(&self, task_id: &str, source: KillSource) -> KillOutcome {
         let (reply_tx, reply_rx) = oneshot::channel();
-        let deadline = tokio::time::Instant::now() + SIGTERM_GRACE + REAP_GRACE + DRAIN_TIMEOUT
+        let deadline = tokio::time::Instant::now()
+            + SIGTERM_GRACE
+            + REAP_GRACE
+            + DRAIN_TIMEOUT
             + crate::notification::handle::TERMINAL_ACK_BUDGET;
-        match tokio::time::timeout_at(deadline, self.cmd_tx.send(TerminalCommand::Kill {
-            task_id: task_id.to_string(), source, deadline: deadline.into_std(), reply: reply_tx,
-        })).await {
+        match tokio::time::timeout_at(
+            deadline,
+            self.cmd_tx.send(TerminalCommand::Kill {
+                task_id: task_id.to_string(),
+                source,
+                deadline: deadline.into_std(),
+                reply: reply_tx,
+            }),
+        )
+        .await
+        {
             Ok(Ok(())) => {}
-            Ok(Err(_)) | Err(_) => return KillOutcome::Failed {
-                stage: KillStage::ProcessTermination,
-                reason: KillFailureReason::DispatchUnavailable,
-            },
+            Ok(Err(_)) | Err(_) => {
+                return KillOutcome::Failed {
+                    stage: KillStage::ProcessTermination,
+                    reason: KillFailureReason::DispatchUnavailable,
+                };
+            }
         }
         match tokio::time::timeout_at(deadline, reply_rx).await {
             Ok(Ok(outcome)) => outcome,
@@ -3974,7 +4119,8 @@ mod tests {
         for kind in [TaskKind::Bash, TaskKind::Monitor] {
             for drop_first_ack in [false, true] {
                 let backend = LocalTerminalBackend::new();
-                let (notifications, mut deliveries) = ToolNotificationHandle::acknowledged_channel();
+                let (notifications, mut deliveries) =
+                    ToolNotificationHandle::acknowledged_channel();
                 let mut request = make_request("printf terminal-enrollment");
                 request.kind = kind;
                 request.owner_session_id = Some("durable-owner".into());
@@ -3983,43 +4129,79 @@ mod tests {
                 let waiter = tokio::spawn({
                     let backend = backend.clone();
                     let id = background.task_id.clone();
-                    async move { backend.wait_for_completion(&id, Some(Duration::from_secs(10))).await }
+                    async move {
+                        backend
+                            .wait_for_completion(&id, Some(Duration::from_secs(10)))
+                            .await
+                    }
                 });
                 let first_ack = loop {
-                    let delivery = tokio::time::timeout(Duration::from_secs(10), deliveries.recv()).await.unwrap().unwrap();
+                    let delivery = tokio::time::timeout(Duration::from_secs(10), deliveries.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
                     if let ToolNotification::TaskCompleted(snapshot) = delivery.notification {
                         assert_eq!(snapshot.task_id, background.task_id);
                         assert_eq!(snapshot.kind, kind);
-                        break delivery.acknowledgement.expect("enrollment must be acknowledged before publication");
+                        break delivery
+                            .acknowledgement
+                            .expect("enrollment must be acknowledged before publication");
                     }
                 };
-                assert!(!waiter.is_finished(), "waiter cannot observe a terminal before durable enrollment");
-                if drop_first_ack { drop(first_ack); } else { first_ack.send(Err("injected enrollment failure".into())).unwrap(); }
+                assert!(
+                    !waiter.is_finished(),
+                    "waiter cannot observe a terminal before durable enrollment"
+                );
+                if drop_first_ack {
+                    drop(first_ack);
+                } else {
+                    first_ack
+                        .send(Err("injected enrollment failure".into()))
+                        .unwrap();
+                }
                 let retry_ack = loop {
-                    let delivery = tokio::time::timeout(Duration::from_secs(10), deliveries.recv()).await.unwrap().unwrap();
+                    let delivery = tokio::time::timeout(Duration::from_secs(10), deliveries.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
                     if let ToolNotification::TaskCompleted(snapshot) = delivery.notification {
                         assert_eq!(snapshot.task_id, background.task_id);
-                        break delivery.acknowledgement.expect("failed enrollment cannot publish a terminal");
+                        break delivery
+                            .acknowledgement
+                            .expect("failed enrollment cannot publish a terminal");
                     }
                 };
-                assert!(!waiter.is_finished(), "failed or lost enrollment ACK cannot release terminal waiters");
+                assert!(
+                    !waiter.is_finished(),
+                    "failed or lost enrollment ACK cannot release terminal waiters"
+                );
                 retry_ack.send(Ok(())).unwrap();
                 let mut published = false;
                 while !published {
-                    let delivery = tokio::time::timeout(Duration::from_secs(10), deliveries.recv()).await.unwrap().unwrap();
+                    let delivery = tokio::time::timeout(Duration::from_secs(10), deliveries.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
                     if let Some(ack) = delivery.acknowledgement {
                         ack.send(Ok(())).unwrap();
-                    } else if let ToolNotification::TaskCompleted(snapshot) = delivery.notification {
+                    } else if let ToolNotification::TaskCompleted(snapshot) = delivery.notification
+                    {
                         assert_eq!(snapshot.task_id, background.task_id);
                         published = true;
                     }
                 }
                 let pump = tokio::spawn(async move {
                     while let Some(delivery) = deliveries.recv().await {
-                        if let Some(ack) = delivery.acknowledgement { let _ = ack.send(Ok(())); }
+                        if let Some(ack) = delivery.acknowledgement {
+                            let _ = ack.send(Ok(()));
+                        }
                     }
                 });
-                let completed = tokio::time::timeout(Duration::from_secs(10), waiter).await.unwrap().unwrap().unwrap();
+                let completed = tokio::time::timeout(Duration::from_secs(10), waiter)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
                 pump.abort();
                 assert!(completed.completed);
                 assert_eq!(completed.task_id, background.task_id);
@@ -4221,8 +4403,13 @@ mod tests {
             !result.timed_out,
             "auto-backgrounded result must not be timed_out"
         );
-        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected background handle"); };
-        assert_eq!(*reason, crate::computer::types::BackgroundReason::ForegroundBudget);
+        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else {
+            panic!("expected background handle");
+        };
+        assert_eq!(
+            *reason,
+            crate::computer::types::BackgroundReason::ForegroundBudget
+        );
         assert_ne!(handle.task_id, tool_call_id);
         let tool_call_id = handle.task_id.as_str();
 
@@ -4287,8 +4474,13 @@ mod tests {
         );
 
         let result = run.await.unwrap().unwrap();
-        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected background handle"); };
-        assert_eq!(*reason, crate::computer::types::BackgroundReason::UserRedirect);
+        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else {
+            panic!("expected background handle");
+        };
+        assert_eq!(
+            *reason,
+            crate::computer::types::BackgroundReason::UserRedirect
+        );
         assert_ne!(handle.task_id, tool_call_id);
         assert_eq!(backgrounded.first().unwrap().task_id, handle.task_id);
         let tool_call_id = handle.task_id.as_str();
@@ -4349,8 +4541,13 @@ mod tests {
             !result.timed_out,
             "budget-backgrounded result must not be timed_out"
         );
-        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected background handle"); };
-        assert_eq!(*reason, crate::computer::types::BackgroundReason::ForegroundBudget);
+        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else {
+            panic!("expected background handle");
+        };
+        assert_eq!(
+            *reason,
+            crate::computer::types::BackgroundReason::ForegroundBudget
+        );
         assert_ne!(handle.task_id, tool_call_id);
         let tool_call_id = handle.task_id.as_str();
         assert!(
@@ -4447,8 +4644,13 @@ mod tests {
             !result.timed_out,
             "per-request budget should auto-bg, not kill"
         );
-        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected background handle"); };
-        assert_eq!(*reason, crate::computer::types::BackgroundReason::ForegroundBudget);
+        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else {
+            panic!("expected background handle");
+        };
+        assert_eq!(
+            *reason,
+            crate::computer::types::BackgroundReason::ForegroundBudget
+        );
         assert_ne!(handle.task_id, tool_call_id);
         let tool_call_id = handle.task_id.as_str();
         assert!(
@@ -4495,8 +4697,13 @@ mod tests {
         let result = backend.run(request).await.unwrap();
         let elapsed = start.elapsed();
 
-        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else { panic!("expected background handle"); };
-        assert_eq!(*reason, crate::computer::types::BackgroundReason::ForegroundBudget);
+        let RunDisposition::Backgrounded { handle, reason } = &result.disposition else {
+            panic!("expected background handle");
+        };
+        assert_eq!(
+            *reason,
+            crate::computer::types::BackgroundReason::ForegroundBudget
+        );
         assert_ne!(handle.task_id, tool_call_id);
         let tool_call_id = handle.task_id.as_str();
         assert!(

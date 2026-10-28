@@ -35,38 +35,59 @@ fn paint_dashboard(app: &mut AppView, height: u16) -> String {
     let area = Rect::new(0, 0, 140, height);
     let mut buffer = Buffer::empty(area);
     crate::views::dashboard::render_dashboard(
-        &mut buffer, area, app.dashboard.as_mut().unwrap(), &mut app.agents,
-        &app.registry, None, &[], false,
-        crate::views::dashboard::WorkspaceRowInputs::default(), None, false, None, None,
+        &mut buffer,
+        area,
+        app.dashboard.as_mut().unwrap(),
+        &mut app.agents,
+        &app.registry,
+        None,
+        &[],
+        false,
+        crate::views::dashboard::WorkspaceRowInputs::default(),
+        None,
+        false,
+        None,
+        None,
     );
-    (0..height).map(|y| {
-        (0..area.width).map(|x| buffer.cell((x, y)).unwrap().symbol()).collect::<String>()
-    }).collect::<Vec<_>>().join("\n")
+    (0..height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
 fn dashboard_home_names_idle_section_and_end_names_gamma() {
-    use crossterm::event::KeyCode;
     use crate::views::dashboard::{DashboardRowId, RowState, SectionKey};
+    use crossterm::event::KeyCode;
     let mut app = app_with_three_named_agents();
     let state = app.dashboard.as_mut().unwrap();
     state.preview_enabled = false;
     state.focus_row(DashboardRowId::TopLevel(crate::app::agent::AgentId(1)));
     assert!(paint_dashboard(&mut app, 40).contains("Idle 3"));
     press_page_key(&mut app, KeyCode::Home);
-    assert_eq!(app.dashboard.as_ref().unwrap().selected_section,
-        Some(SectionKey::State(RowState::Idle)));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().selected_section,
+        Some(SectionKey::State(RowState::Idle))
+    );
     assert!(paint_dashboard(&mut app, 40).contains("Idle 3"));
     press_page_key(&mut app, KeyCode::End);
-    assert_eq!(app.dashboard.as_ref().unwrap().selected,
-        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(2))));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().selected,
+        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(2)))
+    );
     assert!(paint_dashboard(&mut app, 40).contains("gamma"));
     app.dashboard.as_mut().unwrap().focus_new_agent_button();
     press_page_key(&mut app, KeyCode::PageUp);
     assert!(app.dashboard.as_ref().unwrap().new_agent_button_focused());
     press_page_key(&mut app, KeyCode::PageDown);
-    assert_eq!(app.dashboard.as_ref().unwrap().selected_section,
-        Some(SectionKey::State(RowState::Idle)));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().selected_section,
+        Some(SectionKey::State(RowState::Idle))
+    );
 }
 
 /// An empty lane keeps the cursor intact: paging keys must not invent rows or drop the
@@ -78,19 +99,10 @@ fn dashboard_page_on_empty_lane_keeps_button_focus() {
     app.dashboard_persisted = Some(crate::views::dashboard::PersistedDashboard::defaults());
     app.active_view = ActiveView::AgentDashboard;
     ensure_dashboard_state(&mut app);
-    for mv in [
-        PageMove::Up,
-        PageMove::Down,
-        PageMove::Home,
-        PageMove::End,
-    ] {
+    for mv in [PageMove::Up, PageMove::Down, PageMove::Home, PageMove::End] {
         dispatch(Action::DashboardPage(mv), &mut app);
         assert!(
-            app.dashboard
-                .as_ref()
-                .unwrap()
-                .actions_focus
-                .is_some(),
+            app.dashboard.as_ref().unwrap().actions_focus.is_some(),
             "paging in an empty list must leave the button cursor alone ({mv:?})"
         );
     }
@@ -129,15 +141,17 @@ fn all_lane_lists_root_under_stable_identity() {
         .set_session_lane(SessionLane::All);
     let focusables = crate::app::dispatch::dashboard::dashboard_focusables(&app);
     assert!(
-        focusables.iter().any(|f| matches!(f, crate::views::dashboard::Focusable::Row(id) if *id == target)),
+        focusables
+            .iter()
+            .any(|f| matches!(f, crate::views::dashboard::Focusable::Row(id) if *id == target)),
         "the All lane must list the root row under its stable identity"
     );
 }
 
 #[test]
 fn rendered_directory_page_moves_six_named_sessions_in_eighteen_cells() {
-    use crossterm::event::KeyCode;
     use crate::views::dashboard::{DashboardRowId, Grouping};
+    use crossterm::event::KeyCode;
     let mut app = test_app();
     app.dashboard_persisted = Some(crate::views::dashboard::PersistedDashboard::defaults());
     let now = Instant::now();
@@ -160,18 +174,24 @@ fn rendered_directory_page_moves_six_named_sessions_in_eighteen_cells() {
     assert!(initial.contains("page-00") && initial.contains("page-05"));
     assert!(!initial.contains("page-06"));
     press_page_key(&mut app, KeyCode::PageDown);
-    assert_eq!(app.dashboard.as_ref().unwrap().selected,
-        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(6))));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().selected,
+        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(6)))
+    );
     let next = paint_dashboard(&mut app, 30);
     assert!(next.contains("page-06"));
     assert!(!next.contains("page-00"));
     press_page_key(&mut app, KeyCode::PageUp);
-    assert_eq!(app.dashboard.as_ref().unwrap().selected,
-        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(0))));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().selected,
+        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(0)))
+    );
     assert!(paint_dashboard(&mut app, 30).contains("page-00"));
     press_page_key(&mut app, KeyCode::End);
-    assert_eq!(app.dashboard.as_ref().unwrap().selected,
-        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(19))));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().selected,
+        Some(DashboardRowId::TopLevel(crate::app::agent::AgentId(19)))
+    );
     assert!(paint_dashboard(&mut app, 30).contains("page-19"));
 }
 
@@ -196,24 +216,44 @@ fn mixed_lane_render_names_complete_rows_and_state_headers_without_overrides() {
         agent.session.session_id = Some(acp::SessionId::new(name));
         agent.last_active_at = Some(now - std::time::Duration::from_secs(age));
         if running {
-            agent.session.bg_tasks.insert("task".into(),
-                crate::app::agent_test_fixtures::running_bg_task("task", false));
+            agent.session.bg_tasks.insert(
+                "task".into(),
+                crate::app::agent_test_fixtures::running_bg_task("task", false),
+            );
         }
         if child {
             agent.role = AgentRole::Child(ChildLink {
                 parent: Some(AgentId(0)),
                 parent_session_id: acp::SessionId::new("RunRoot"),
-                subagent_id: name.into(), started_at: now,
+                subagent_id: name.into(),
+                started_at: now,
             });
         }
         app.agents.insert(AgentId(slot), agent);
     }
     app.active_view = ActiveView::AgentDashboard;
     ensure_dashboard_state(&mut app);
-    let names = ["RunRoot", "RunChild", "IdleRootNew", "IdleChildNew", "IdleRootOld", "IdleChildOld"];
+    let names = [
+        "RunRoot",
+        "RunChild",
+        "IdleRootNew",
+        "IdleChildNew",
+        "IdleRootOld",
+        "IdleChildOld",
+    ];
     for (lane, expected, running_count, idle_count) in [
-        (SessionLane::Main, vec!["RunRoot", "IdleRootNew", "IdleRootOld"], 1, 2),
-        (SessionLane::Subagents, vec!["RunChild", "IdleChildNew", "IdleChildOld"], 1, 2),
+        (
+            SessionLane::Main,
+            vec!["RunRoot", "IdleRootNew", "IdleRootOld"],
+            1,
+            2,
+        ),
+        (
+            SessionLane::Subagents,
+            vec!["RunChild", "IdleChildNew", "IdleChildOld"],
+            1,
+            2,
+        ),
         (SessionLane::All, names.to_vec(), 2, 4),
     ] {
         for grouping in [Grouping::State, Grouping::Directory] {
@@ -223,15 +263,28 @@ fn mixed_lane_render_names_complete_rows_and_state_headers_without_overrides() {
             state.preview_enabled = false;
             state.focus_new_agent_button();
             let painted = paint_dashboard(&mut app, 60);
-            let visible: Vec<_> = painted.lines().flat_map(|line| {
-                names.iter().copied().filter(move |name| line.contains(name))
-            }).collect();
+            let visible: Vec<_> = painted
+                .lines()
+                .flat_map(|line| {
+                    names
+                        .iter()
+                        .copied()
+                        .filter(move |name| line.contains(name))
+                })
+                .collect();
             assert_eq!(visible, expected, "{lane:?} {grouping:?}");
-            let headers: Vec<_> = painted.lines().filter_map(|line| {
-                if line.contains(&format!("Working {running_count}")) { Some("Working") }
-                else if line.contains(&format!("Idle {idle_count}")) { Some("Idle") }
-                else { None }
-            }).collect();
+            let headers: Vec<_> = painted
+                .lines()
+                .filter_map(|line| {
+                    if line.contains(&format!("Working {running_count}")) {
+                        Some("Working")
+                    } else if line.contains(&format!("Idle {idle_count}")) {
+                        Some("Idle")
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             let expected_headers = match grouping {
                 Grouping::State => vec!["Working", "Idle"],
                 Grouping::Directory => vec![],
@@ -239,15 +292,21 @@ fn mixed_lane_render_names_complete_rows_and_state_headers_without_overrides() {
             assert_eq!(headers, expected_headers, "{lane:?} {grouping:?}");
             press_page_key(&mut app, crossterm::event::KeyCode::Home);
             match grouping {
-                Grouping::State => assert_eq!(app.dashboard.as_ref().unwrap().selected_section,
-                    Some(crate::views::dashboard::SectionKey::State(crate::views::dashboard::RowState::Working))),
+                Grouping::State => assert_eq!(
+                    app.dashboard.as_ref().unwrap().selected_section,
+                    Some(crate::views::dashboard::SectionKey::State(
+                        crate::views::dashboard::RowState::Working
+                    ))
+                ),
                 Grouping::Directory => {
                     let first = match lane {
                         SessionLane::Main | SessionLane::All => AgentId(0),
                         SessionLane::Subagents => AgentId(1),
                     };
-                    assert_eq!(app.dashboard.as_ref().unwrap().selected,
-                        Some(crate::views::dashboard::DashboardRowId::TopLevel(first)));
+                    assert_eq!(
+                        app.dashboard.as_ref().unwrap().selected,
+                        Some(crate::views::dashboard::DashboardRowId::TopLevel(first))
+                    );
                 }
             }
             assert!(paint_dashboard(&mut app, 60).contains(expected[0]));
@@ -256,8 +315,10 @@ fn mixed_lane_render_names_complete_rows_and_state_headers_without_overrides() {
                 SessionLane::Main => AgentId(3),
                 SessionLane::Subagents | SessionLane::All => AgentId(5),
             };
-            assert_eq!(app.dashboard.as_ref().unwrap().selected,
-                Some(crate::views::dashboard::DashboardRowId::TopLevel(last)));
+            assert_eq!(
+                app.dashboard.as_ref().unwrap().selected,
+                Some(crate::views::dashboard::DashboardRowId::TopLevel(last))
+            );
             assert!(paint_dashboard(&mut app, 60).contains(*expected.last().unwrap()));
         }
     }

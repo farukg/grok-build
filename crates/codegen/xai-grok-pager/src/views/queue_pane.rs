@@ -497,7 +497,10 @@ impl QueuePane {
         self.mutation = mutation;
     }
 
-    pub(crate) fn set_admission_labels(&mut self, labels: std::collections::HashMap<String, QueueAdmissionDisplay>) {
+    pub(crate) fn set_admission_labels(
+        &mut self,
+        labels: std::collections::HashMap<String, QueueAdmissionDisplay>,
+    ) {
         self.admission_labels = labels;
     }
 
@@ -904,12 +907,26 @@ impl QueuePane {
         self.list_state
             .prepare_layout(&self.entries, list_area.width, list_area.height);
         for index in self.list_state.visible_range() {
-            let Some(entry) = self.entries.get_mut(index) else { continue; };
-            let Some(display) = entry.server_id.as_ref().and_then(|id| self.admission_labels.get(id)) else { continue; };
+            let Some(entry) = self.entries.get_mut(index) else {
+                continue;
+            };
+            let Some(display) = entry
+                .server_id
+                .as_ref()
+                .and_then(|id| self.admission_labels.get(id))
+            else {
+                continue;
+            };
             let (first_line, line_count) = match &display.edited_text {
                 Some(text) => {
                     entry.text = text.clone();
-                    (text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or(""), text.lines().count())
+                    (
+                        text.lines()
+                            .map(str::trim)
+                            .find(|line| !line.is_empty())
+                            .unwrap_or(""),
+                        text.lines().count(),
+                    )
                 }
                 None => (entry.first_line.as_str(), entry.line_count),
             };

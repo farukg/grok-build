@@ -118,17 +118,17 @@ impl From<PrefireOutcome> for PrefirePass1Run {
         }
     }
 }
+#[path = "compaction_admission.rs"]
+mod admission;
+#[cfg(test)]
+#[path = "compaction_admission_tests.rs"]
+mod admission_tests;
 #[cfg(test)]
 #[path = "compaction_two_pass_prefire_helper_tests.rs"]
 mod two_pass_prefire_helper_tests;
 #[cfg(test)]
 #[path = "compaction_verbatim_input_tests.rs"]
 mod verbatim_input_tests;
-#[cfg(test)]
-#[path = "compaction_admission_tests.rs"]
-mod admission_tests;
-#[path = "compaction_admission.rs"]
-mod admission;
 impl SessionActor {
     /// Two-pass is active for this session when the flag resolved on at build and the agent is not one that keeps its single short self-summary.
     pub(crate) fn two_pass_active(&self) -> bool {
@@ -620,7 +620,8 @@ impl SessionActor {
     )]
     pub(crate) async fn run_compact(self: &Arc<Self>) -> Result<(), acp::Error> {
         let _current_action = crate::session::current_actions::CompactRegistration::new(
-            self.current_actions.clone(), crate::session::current_actions::CompactOwner::Inline,
+            self.current_actions.clone(),
+            crate::session::current_actions::CompactOwner::Inline,
             crate::session::current_actions::CompactStage::Executing,
             xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
         );
@@ -653,14 +654,20 @@ impl SessionActor {
     ) {
         let extra_meta = invocation_id.map(|id| {
             let mut meta = serde_json::Map::new();
-            meta.insert(crate::session::acp_types::COMPACT_INVOCATION_META_KEY.into(), serde_json::json!(id));
+            meta.insert(
+                crate::session::acp_types::COMPACT_INVOCATION_META_KEY.into(),
+                serde_json::json!(id),
+            );
             meta
         });
-        if let Err(error) = self.send_xai_notification_with_extra_meta(
-            update,
-            extra_meta,
-            crate::session::storage::jsonl::AppendDurability::Buffered,
-        ).await {
+        if let Err(error) = self
+            .send_xai_notification_with_extra_meta(
+                update,
+                extra_meta,
+                crate::session::storage::jsonl::AppendDurability::Buffered,
+            )
+            .await
+        {
             tracing::warn!(%error, "manual compaction notification failed");
         }
     }
@@ -677,10 +684,13 @@ impl SessionActor {
                 reason: AutoCompactCancelReason::UserCancelled,
             },
             Some(CompactErrorKind::Failed) | None => SessionUpdate::AutoCompactFailed {
-                error: Self::user_facing_compact_error(&crate::sampling::error::acp_error_message(error)),
+                error: Self::user_facing_compact_error(&crate::sampling::error::acp_error_message(
+                    error,
+                )),
             },
         };
-        self.send_manual_compact_notification(invocation_id, update).await;
+        self.send_manual_compact_notification(invocation_id, update)
+            .await;
     }
 
     pub(crate) async fn acknowledge_compaction_persistence(&self) -> Result<(), acp::Error> {
@@ -688,10 +698,14 @@ impl SessionActor {
         self.notifications
             .persistence_tx
             .send(PersistenceMsg::FlushAndAck { respond_to })
-            .map_err(|_| acp::Error::internal_error().data("compaction persistence channel closed"))?;
+            .map_err(|_| {
+                acp::Error::internal_error().data("compaction persistence channel closed")
+            })?;
         persisted
             .await
-            .map_err(|_| acp::Error::internal_error().data("compaction persistence did not respond"))?
+            .map_err(|_| {
+                acp::Error::internal_error().data("compaction persistence did not respond")
+            })?
             .map_err(|error| acp::Error::internal_error().data(error.to_string()))
     }
 
@@ -707,13 +721,17 @@ impl SessionActor {
             .as_ref()
             .map(|c| c.context_window.get())
             .unwrap_or(DEFAULT_CONTEXT_WINDOW);
-        self.send_manual_compact_notification(invocation_id, crate::extensions::notification::SessionUpdate::AutoCompactStarted {
-            phase: crate::extensions::notification::CompactPhase::Executing,
-            tokens_used: total_tokens,
-            context_window,
-            percentage: xai_token_estimation::usage_percentage_u8(total_tokens, context_window),
-            reason: "Manual compaction".into(),
-        }).await;
+        self.send_manual_compact_notification(
+            invocation_id,
+            crate::extensions::notification::SessionUpdate::AutoCompactStarted {
+                phase: crate::extensions::notification::CompactPhase::Executing,
+                tokens_used: total_tokens,
+                context_window,
+                percentage: xai_token_estimation::usage_percentage_u8(total_tokens, context_window),
+                reason: "Manual compaction".into(),
+            },
+        )
+        .await;
         self.maybe_pre_compaction_flush(total_tokens, context_window, "pre_compaction")
             .await;
         if let Err(e) = self
@@ -740,12 +758,15 @@ impl SessionActor {
         let span = tracing::Span::current();
         span.record("post_tokens", tokens_after as i64);
         span.record("success", true);
-        self.send_manual_compact_notification(invocation_id, XaiSessionUpdate::AutoCompactCompleted {
-            tokens_before: Some(total_tokens),
-            tokens_after,
-            elapsed_ms: None,
-            summary_preview: None,
-        })
+        self.send_manual_compact_notification(
+            invocation_id,
+            XaiSessionUpdate::AutoCompactCompleted {
+                tokens_before: Some(total_tokens),
+                tokens_after,
+                elapsed_ms: None,
+                summary_preview: None,
+            },
+        )
         .await;
         self.emit_status_snapshot_detached();
         Ok(())
@@ -1099,7 +1120,9 @@ impl SessionActor {
         .await;
         let max_retries = 3u32;
         let retry_delay_secs = 3u64;
-        let context_policy_guard = self.admit_context_policy_for_request().await
+        let context_policy_guard = self
+            .admit_context_policy_for_request()
+            .await
             .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
         let (conv_len, system_message, full_conversation, context_policy) = tokio::join!(
             self.chat_state_handle.get_conversation_len(),
@@ -1107,8 +1130,8 @@ impl SessionActor {
             self.chat_state_handle.get_conversation(),
             self.chat_state_handle.get_context_policy(),
         );
-        let context_policy = context_policy
-            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+        let context_policy =
+            context_policy.map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
         let full_conversation = context_policy.project(full_conversation);
         drop(context_policy_guard);
         let assembly_start = std::time::Instant::now();
@@ -2462,9 +2485,15 @@ impl SessionActor {
     ) -> Result<(), acp::Error> {
         use crate::extensions::notification::SessionUpdate as XaiSessionUpdate;
         let (_cancel, _cancel_scope) = self.compaction.cancel.enter();
-        let prompt_id = self.current_prompt_id.lock()
-            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?.clone();
-        let _activity = self.compaction.cancel.begin_activity(prompt_id, self.current_actions.clone());
+        let prompt_id = self
+            .current_prompt_id
+            .lock()
+            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?
+            .clone();
+        let _activity = self
+            .compaction
+            .cancel
+            .begin_activity(prompt_id, self.current_actions.clone());
         let _compaction_phase = self.turn_phases.begin_compaction();
         self.record_compaction_variant();
         let tokens_before = self.chat_state_handle.get_total_tokens().await;
@@ -2540,7 +2569,10 @@ impl SessionActor {
                         let detail = crate::sampling::error::acp_error_message(&e);
                         XaiSessionUpdate::AutoCompactFailed {
                             error: if self.compaction.is_suppressed() {
-                                Self::suppress_notification_message(Self::classify_suppress_reason(&detail), &detail)
+                                Self::suppress_notification_message(
+                                    Self::classify_suppress_reason(&detail),
+                                    &detail,
+                                )
                             } else {
                                 Self::failure_with_retry_guidance(&detail)
                             },

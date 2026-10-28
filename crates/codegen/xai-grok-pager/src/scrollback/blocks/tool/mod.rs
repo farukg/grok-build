@@ -287,7 +287,10 @@ impl ToolCallBlock {
         }
     }
 
-    pub(crate) fn set_execution_clock(&mut self, clock: crate::acp::tool_clock::ToolExecutionClock) {
+    pub(crate) fn set_execution_clock(
+        &mut self,
+        clock: crate::acp::tool_clock::ToolExecutionClock,
+    ) {
         match self {
             ToolCallBlock::Execute(b) => b.execution_clock = clock,
             ToolCallBlock::Read(b) => b.execution_clock = clock,

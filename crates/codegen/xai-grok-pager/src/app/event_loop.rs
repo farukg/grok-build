@@ -14,7 +14,6 @@ use crate::app::reader_thread::ReaderThread;
 use crate::appearance::ConfigWatcher;
 use crate::client_identity::{PAGER_CLIENT_TYPE, PAGER_CLIENT_VERSION};
 use crate::render::draw::{EscapeWriter, WriterDrain, WriterEvent};
-use xai_grok_shell::config::panel_settings_watcher::{PanelSettingsChange, PanelSettingsWatcher};
 use crate::theme::system_appearance::{self, SystemAppearanceWatcher};
 use crate::theme::{Theme, ThemeKind, cache as theme_cache};
 use agent_client_protocol as acp;
@@ -24,6 +23,7 @@ use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, sleep_until};
 use xai_acp_lib::{AcpClientMessage, acp_send};
+use xai_grok_shell::config::panel_settings_watcher::{PanelSettingsChange, PanelSettingsWatcher};
 /// During a continuous terminal drag, dozens of resize events fire per second, and each would rebuild the layout of every entry.
 /// One deferred draw runs after the size stabilizes instead.
 /// Whether authenticated interactive startup should create the unused home session.
@@ -1865,20 +1865,22 @@ pub(crate) async fn run(
     // Live panel-preference sync across processes sharing the same settings root.
     // Absent only when no grok home resolves or no watch installs at all; local
     // edits then still apply locally, nothing else changes.
-    let (mut panel_settings_watcher, mut panel_settings_rx) =
-        match app.panel_settings_root.as_deref() {
-            Some(root) => match PanelSettingsWatcher::start(root, None) {
-                Some((watcher, rx)) => (Some(watcher), Some(rx)),
-                None => {
-                    tracing::warn!(
-                        root = %root.display(),
-                        "panel settings watcher failed to start; cross-window preference sync is off"
-                    );
-                    (None, None)
-                }
-            },
-            None => (None, None),
-        };
+    let (mut panel_settings_watcher, mut panel_settings_rx) = match app
+        .panel_settings_root
+        .as_deref()
+    {
+        Some(root) => match PanelSettingsWatcher::start(root, None) {
+            Some((watcher, rx)) => (Some(watcher), Some(rx)),
+            None => {
+                tracing::warn!(
+                    root = %root.display(),
+                    "panel settings watcher failed to start; cross-window preference sync is off"
+                );
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
     let quit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     crate::app::signal_handler::set_quit_notify(quit_notify.clone());
     let mut stall_rollup =
@@ -4056,7 +4058,15 @@ fn process_effects(
             continue;
         };
         let load_binding = effects::current_actions::prepare(&eff, app);
-        let (quit, meta) = effects::execute(eff, tasks, &app.acp_tx, &app.cwd, &flags, progress_tx, load_binding);
+        let (quit, meta) = effects::execute(
+            eff,
+            tasks,
+            &app.acp_tx,
+            &app.cwd,
+            &flags,
+            progress_tx,
+            load_binding,
+        );
         if let Some((seq, abort_handle)) = meta.auth_abort_handle
             && let super::app_view::AuthState::Authenticating {
                 request_seq,

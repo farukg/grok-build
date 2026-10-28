@@ -43,14 +43,17 @@ pub(crate) fn stamp_child_role_for_session(
                     .flatten()
             })
         });
-    let Some(parent_session_id) = parent_session_id.filter(|parent| parent.0.as_ref() != session_id) else {
+    let Some(parent_session_id) =
+        parent_session_id.filter(|parent| parent.0.as_ref() != session_id)
+    else {
         return;
     };
     let parent = views.find_by_session_id(&parent_session_id.0);
     if let Some(view) = views.get_mut(&opened) {
         match &mut view.role {
             AgentRole::Child(link)
-                if link.parent_session_id == parent_session_id && link.subagent_id == session_id =>
+                if link.parent_session_id == parent_session_id
+                    && link.subagent_id == session_id =>
             {
                 link.parent = parent;
             }
@@ -149,7 +152,8 @@ impl AgentView {
         {
             return false;
         }
-        self.applied_background_event_ids.push_back(event_id.to_owned());
+        self.applied_background_event_ids
+            .push_back(event_id.to_owned());
         while self.applied_background_event_ids.len() > super::APPLIED_BACKGROUND_EVENT_ID_LIMIT {
             self.applied_background_event_ids.pop_front();
         }
@@ -715,7 +719,11 @@ impl AgentView {
             let historical = Box::new(self.take_replay_transcript());
             self.restore_replay_transcript(live);
             self.load_reconstruction = super::load_continuation::LoadReconstruction::Continuing {
-                historical, origin: super::load_continuation::ContinuationOrigin::Reload { original_floor, retained },
+                historical,
+                origin: super::load_continuation::ContinuationOrigin::Reload {
+                    original_floor,
+                    retained,
+                },
             };
             return;
         }
@@ -773,7 +781,9 @@ impl AgentView {
             super::load_continuation::ReloadRetarget::Retargeted => return,
             super::load_continuation::ReloadRetarget::Unchanged => {}
         }
-        if self.session_reload.is_some() { self.open_live_load_delivery(); }
+        if self.session_reload.is_some() {
+            self.open_live_load_delivery();
+        }
         if let Some(prev) = self.session_reload.take() {
             tracing::warn!(
                 generation,
@@ -883,7 +893,9 @@ impl AgentView {
     /// An open window would corrupt the incoming load's batch/replay bookkeeping and defer its results.
     /// The window's pending re-init completion later no-ops (generation gone).
     pub(crate) fn abort_session_reload(&mut self) {
-        if self.session_reload.is_some() { self.open_live_load_delivery(); }
+        if self.session_reload.is_some() {
+            self.open_live_load_delivery();
+        }
         if let Some(reload) = self.session_reload.take()
             && self.apply_reload_outcome(reload, false)
         {
@@ -891,7 +903,11 @@ impl AgentView {
         }
     }
     pub(crate) fn supersede_session_reload(&mut self, previous: u64, next: u64) {
-        if !self.session_reload.as_ref().is_some_and(|reload| reload.generation == previous) {
+        if !self
+            .session_reload
+            .as_ref()
+            .is_some_and(|reload| reload.generation == previous)
+        {
             return;
         }
         match self.retarget_live_reload(next) {
@@ -905,8 +921,11 @@ impl AgentView {
     /// Returns `false` (untouched state) when no window with that generation is open.
     /// Either the agent was never reloading, or a newer reconnect already superseded it.
     pub(crate) fn finish_session_reload(&mut self, generation: u64, success: bool) -> bool {
-        if self.session_reload.as_ref().is_some_and(|reload| reload.generation == generation
-            && reload.binding_epoch == self.session_binding_epoch) { self.open_live_load_delivery(); }
+        if self.session_reload.as_ref().is_some_and(|reload| {
+            reload.generation == generation && reload.binding_epoch == self.session_binding_epoch
+        }) {
+            self.open_live_load_delivery();
+        }
         match self.session_reload.take() {
             Some(reload) if reload.binding_epoch != self.session_binding_epoch => {
                 drop(reload);
@@ -935,14 +954,17 @@ impl AgentView {
     /// Requires the synthetic-turn guard ([`acp_handler::should_adopt_running_prompt`]) and that the turn did not already end in this load's replay.
     /// Adopting it would re-strand the viewer on "Waiting…".
     pub(crate) fn should_adopt_running_prompt(&self, prompt_id: &str) -> bool {
-        !matches!(self.load_reconstruction,
+        !matches!(
+            self.load_reconstruction,
             super::load_continuation::LoadReconstruction::Continuing { .. }
-                | super::load_continuation::LoadReconstruction::Continued { .. })
-            && crate::app::acp_handler::should_adopt_running_prompt(prompt_id)
+                | super::load_continuation::LoadReconstruction::Continued { .. }
+        ) && crate::app::acp_handler::should_adopt_running_prompt(prompt_id)
             && !self.replayed_terminal_prompts.contains(prompt_id)
             && !self.is_rewound_prompt(prompt_id)
             && !self.is_self_originated_prompt(prompt_id)
-            && !self.live_admission_tracker().has_admitted_live_prompt(prompt_id)
+            && !self
+                .live_admission_tracker()
+                .has_admitted_live_prompt(prompt_id)
             && !self.ended_child_prompt_ids.contains(prompt_id)
     }
     /// Whether a wake turn is in flight (streaming or cancelling) while the pane is idle.
@@ -1054,8 +1076,11 @@ impl AgentView {
         running_prompt_id: Option<String>,
     ) -> bool {
         let finalized = self.finish_session_reload(generation, ok);
-        if finalized && !matches!(self.load_reconstruction,
-            super::load_continuation::LoadReconstruction::Continued { .. })
+        if finalized
+            && !matches!(
+                self.load_reconstruction,
+                super::load_continuation::LoadReconstruction::Continued { .. }
+            )
         {
             self.release_stale_execute_plan_prompt(running_prompt_id.as_deref());
         }
@@ -1179,7 +1204,9 @@ impl AgentView {
         }
         self.complete_load_transcript_with_replay(completion, success && reload.saw_replay);
         match loaded_turn {
-            super::load_continuation::LoadedTurn::Reconstructed => self.reset_follow_ups_for_reload(),
+            super::load_continuation::LoadedTurn::Reconstructed => {
+                self.reset_follow_ups_for_reload()
+            }
             super::load_continuation::LoadedTurn::Continued => {}
         }
         dropped_heavy
@@ -1187,15 +1214,29 @@ impl AgentView {
     /// Effective turn elapsed time, excluding time spent in question views (accumulated pauses plus the currently open one, on both clocks).
     pub fn turn_elapsed(&self) -> Option<std::time::Duration> {
         use crate::app::agent::AgentCommand;
-        let local_prompt = self.session.current_prompt_id.as_deref().is_some_and(|prompt| self.is_self_originated_prompt(prompt));
+        let local_prompt = self
+            .session
+            .current_prompt_id
+            .as_deref()
+            .is_some_and(|prompt| self.is_self_originated_prompt(prompt));
         let local_command = match self.session.state.command_in_flight() {
             Some(AgentCommand::Compact) => true,
             Some(AgentCommand::SwitchModelCompact) | None => false,
-            Some(AgentCommand::CreateWorktree | AgentCommand::RestoreWorktree | AgentCommand::RestoreCode
-                | AgentCommand::ForkSession | AgentCommand::MemoryFlush | AgentCommand::MemoryDream) => true,
+            Some(
+                AgentCommand::CreateWorktree
+                | AgentCommand::RestoreWorktree
+                | AgentCommand::RestoreCode
+                | AgentCommand::ForkSession
+                | AgentCommand::MemoryFlush
+                | AgentCommand::MemoryDream,
+            ) => true,
         };
-        if !local_prompt && !local_command { return self.current_source_turn_elapsed(); }
-        let Some(started_at) = self.turn_started_at else { return self.current_source_turn_elapsed(); };
+        if !local_prompt && !local_command {
+            return self.current_source_turn_elapsed();
+        }
+        let Some(started_at) = self.turn_started_at else {
+            return self.current_source_turn_elapsed();
+        };
         let instant_elapsed = started_at.elapsed();
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut instant_paused = self.turn_paused_duration;
@@ -1227,13 +1268,24 @@ impl AgentView {
         &self,
     ) -> Option<crate::acp::tracker::TurnActivity> {
         use crate::acp::tracker::{TurnActivity, WaitingReason};
-        use crate::app::agent::{AgentCommand, AgentState, CompactInvocationOwner, CompactInvocationSettlement};
+        use crate::app::agent::{
+            AgentCommand, AgentState, CompactInvocationOwner, CompactInvocationSettlement,
+        };
         if let Some(activity) = self.current_action_activity() {
             return activity.or_else(|| {
-                self.session.state.is_busy().then_some(TurnActivity::Waiting(if self.compact_invocations.values().any(|invocation|
-                    invocation.binding_epoch == self.session_binding_epoch && invocation.settlement != CompactInvocationSettlement::RpcSettled) {
-                    WaitingReason::CompactionSettlement
-                } else { WaitingReason::BackendResponse }))
+                self.session
+                    .state
+                    .is_busy()
+                    .then_some(TurnActivity::Waiting(
+                        if self.compact_invocations.values().any(|invocation| {
+                            invocation.binding_epoch == self.session_binding_epoch
+                                && invocation.settlement != CompactInvocationSettlement::RpcSettled
+                        }) {
+                            WaitingReason::CompactionSettlement
+                        } else {
+                            WaitingReason::BackendResponse
+                        },
+                    ))
             });
         }
         if self.compact_invocations.values().any(|invocation| {
@@ -1242,16 +1294,24 @@ impl AgentView {
         }) {
             return Some(TurnActivity::AutoCompacting);
         }
-        if matches!(self.session.state, AgentState::CommandRunning { command: AgentCommand::Compact, .. })
-            && let Some(invocation) = self.compact_invocations.values().find(|invocation| {
-                invocation.binding_epoch == self.session_binding_epoch
-                    && matches!(invocation.owner, CompactInvocationOwner::Command)
-                    && invocation.settlement != CompactInvocationSettlement::RpcSettled
-            })
-        {
+        if matches!(
+            self.session.state,
+            AgentState::CommandRunning {
+                command: AgentCommand::Compact,
+                ..
+            }
+        ) && let Some(invocation) = self.compact_invocations.values().find(|invocation| {
+            invocation.binding_epoch == self.session_binding_epoch
+                && matches!(invocation.owner, CompactInvocationOwner::Command)
+                && invocation.settlement != CompactInvocationSettlement::RpcSettled
+        }) {
             return Some(match invocation.settlement {
-                CompactInvocationSettlement::AwaitingRpc => TurnActivity::Waiting(WaitingReason::CompactionAdmission),
-                CompactInvocationSettlement::Queued => TurnActivity::Waiting(WaitingReason::CompactionQueued),
+                CompactInvocationSettlement::AwaitingRpc => {
+                    TurnActivity::Waiting(WaitingReason::CompactionAdmission)
+                }
+                CompactInvocationSettlement::Queued => {
+                    TurnActivity::Waiting(WaitingReason::CompactionQueued)
+                }
                 CompactInvocationSettlement::Executing => TurnActivity::AutoCompacting,
                 CompactInvocationSettlement::LifecycleObserved => {
                     TurnActivity::Waiting(WaitingReason::CompactionSettlement)
@@ -1278,7 +1338,12 @@ impl AgentView {
         let reason = if self.has_running_foreground_subagent() {
             WaitingReason::subagent()
         } else if self.session.in_flight_prompt.is_some()
-            || self.session.current_prompt_id.as_deref().is_some_and(|prompt| self.is_self_originated_prompt(prompt)) {
+            || self
+                .session
+                .current_prompt_id
+                .as_deref()
+                .is_some_and(|prompt| self.is_self_originated_prompt(prompt))
+        {
             WaitingReason::Model
         } else {
             WaitingReason::ActionSourceUnavailable

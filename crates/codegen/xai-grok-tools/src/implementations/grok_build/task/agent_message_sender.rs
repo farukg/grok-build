@@ -68,8 +68,11 @@ impl AgentMessageSender {
     }
 
     pub(crate) fn for_identity(
-        factory: Option<&AgentMessageSenderFactory>, child_id: &str, enabled: bool,
-        attempt_id: AttemptId, generation: ActiveChildGeneration,
+        factory: Option<&AgentMessageSenderFactory>,
+        child_id: &str,
+        enabled: bool,
+        attempt_id: AttemptId,
+        generation: ActiveChildGeneration,
     ) -> MintedChildIdentity {
         let sender = if enabled {
             AgentId::from_uuid_v7(child_id)
@@ -110,18 +113,33 @@ impl AgentMessageSender {
     }
 
     pub async fn recover_message(
-        &self, reference: super::native_recovery::MessageRecoveryRef,
+        &self,
+        reference: super::native_recovery::MessageRecoveryRef,
         action: super::native_recovery::MessageRecoveryAction,
     ) -> super::types::ActiveAgentMessageOutcome {
         let permit = match Arc::clone(&self.active_message_permits).try_acquire_owned() {
             Ok(permit) => permit,
-            Err(_) => return super::types::ActiveAgentMessageOutcome::Saturated { max_in_flight: self.active_message_capacity },
+            Err(_) => {
+                return super::types::ActiveAgentMessageOutcome::Saturated {
+                    max_in_flight: self.active_message_capacity,
+                };
+            }
         };
         let Some(tx) = self.recovery_tx.upgrade() else {
-            return super::types::ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference };
+            return super::types::ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: reference,
+            };
         };
-        super::native_recovery::dispatch_recovery(&tx, permit, reference, action,
-            super::types::ActiveMessageSenderContext::GrantedChild { holder: self.holder.clone() }).await
+        super::native_recovery::dispatch_recovery(
+            &tx,
+            permit,
+            reference,
+            action,
+            super::types::ActiveMessageSenderContext::GrantedChild {
+                holder: self.holder.clone(),
+            },
+        )
+        .await
     }
 
     pub async fn send(

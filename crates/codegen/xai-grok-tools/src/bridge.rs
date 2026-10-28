@@ -727,20 +727,38 @@ impl ToolBridge {
         output: &ToolOutput,
         existing: &[crate::types::completion_observation::ObservedCompletion],
     ) -> Vec<crate::types::completion_observation::ObservedCompletion> {
-        use crate::types::completion_observation::{ObservedCompletion, ObservedTerminalCompletion};
-        let ids: Vec<_> = crate::reminders::task_completion::consumed_completion_ids(output).into_iter().filter(|id| {
-            !existing.iter().any(|observation| match observation {
-                ObservedCompletion::Terminal(ObservedTerminalCompletion::Task { snapshot }) => snapshot.task_id == *id,
-                ObservedCompletion::Subagent(_) | ObservedCompletion::Terminal(ObservedTerminalCompletion::Workflow { .. }) => false,
+        use crate::types::completion_observation::{
+            ObservedCompletion, ObservedTerminalCompletion,
+        };
+        let ids: Vec<_> = crate::reminders::task_completion::consumed_completion_ids(output)
+            .into_iter()
+            .filter(|id| {
+                !existing.iter().any(|observation| match observation {
+                    ObservedCompletion::Terminal(ObservedTerminalCompletion::Task { snapshot }) => {
+                        snapshot.task_id == *id
+                    }
+                    ObservedCompletion::Subagent(_)
+                    | ObservedCompletion::Terminal(ObservedTerminalCompletion::Workflow {
+                        ..
+                    }) => false,
+                })
             })
-        }).collect();
-        if ids.is_empty() { return Vec::new(); }
-        let Some(terminal) = &self.terminal else { return Vec::new(); };
+            .collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let Some(terminal) = &self.terminal else {
+            return Vec::new();
+        };
         let owner = self.read_resource::<OwnerSessionId>().await;
-        let observations = crate::types::completion_observation::SubagentCompletionObservations::default();
+        let observations =
+            crate::types::completion_observation::SubagentCompletionObservations::default();
         for id in ids {
             if let Some(snapshot) = terminal.get_task(id).await
-                && crate::reminders::task_completion::task_owned_by_session(&snapshot, owner.as_ref().map(|owner| owner.0.as_str()))
+                && crate::reminders::task_completion::task_owned_by_session(
+                    &snapshot,
+                    owner.as_ref().map(|owner| owner.0.as_str()),
+                )
             {
                 observations.record_task(&snapshot);
             }

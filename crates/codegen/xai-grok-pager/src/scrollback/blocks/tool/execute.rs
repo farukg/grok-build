@@ -725,7 +725,10 @@ impl BlockContent for ExecuteToolCallBlock {
         let header_style = ctx.appearance.scrollback.blocks.execute.header_style;
         let prefix = match header_style {
             ExecuteHeaderStyle::Shell => String::new(),
-            ExecuteHeaderStyle::Label => format!("{} ", crate::scrollback::block::MessageKind::Execute.symbol_glyph()),
+            ExecuteHeaderStyle::Label => format!(
+                "{} ",
+                crate::scrollback::block::MessageKind::Execute.symbol_glyph()
+            ),
         };
         let width = usize::from(ctx.width).saturating_sub(UnicodeWidthStr::width(prefix.as_str()));
 
@@ -745,8 +748,13 @@ impl BlockContent for ExecuteToolCallBlock {
         let mut lines: Vec<Line<'static>> =
             header_rows.into_iter().map(|row| row.content).collect();
 
-        if !prefix.is_empty() && let Some(first) = lines.first_mut() {
-            first.spans.insert(0, Span::styled(prefix, theme.primary().add_modifier(Modifier::BOLD)));
+        if !prefix.is_empty()
+            && let Some(first) = lines.first_mut()
+        {
+            first.spans.insert(
+                0,
+                Span::styled(prefix, theme.primary().add_modifier(Modifier::BOLD)),
+            );
         }
 
         if self.output.is_none()
@@ -821,7 +829,10 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, true, false);
         assert_eq!(headers.len(), 1);
-        assert_eq!(line_text(&nth(&headers, 0).0), "the unit test suite".to_owned());
+        assert_eq!(
+            line_text(&nth(&headers, 0).0),
+            "the unit test suite".to_owned()
+        );
     }
 
     #[test]

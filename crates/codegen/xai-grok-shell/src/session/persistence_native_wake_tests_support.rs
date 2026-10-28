@@ -30,7 +30,9 @@ pub(crate) enum NativeDeferredCommit {
 
 #[derive(Debug)]
 pub(crate) enum NativeAttemptEndCut {
-    BeforeTerminal { release: tokio::sync::oneshot::Sender<()> },
+    BeforeTerminal {
+        release: tokio::sync::oneshot::Sender<()>,
+    },
     RunnerSnapshot {
         ownership: crate::session::receiver_execution::InitialMessageTerminalOwnership,
         release: tokio::sync::oneshot::Sender<()>,
@@ -77,9 +79,18 @@ pub(super) fn configure_storage(
                 Ok(())
             })
         }
-        Some(ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } | ParentInputFault::LoseAdmissionAck | ParentInputFault::LoseReservationAck
-            | ParentInputFault::ReservationDigestConflict | ParentInputFault::ShutdownAfterAdmission
-            | ParentInputFault::ShutdownAfterProjection | ParentInputFault::ShutdownAfterWakeStart | ParentInputFault::ShutdownBeforeProjection)
+        Some(
+            ParentInputFault::BeforeAdoptedProjection { .. }
+            | ParentInputFault::ReleasedAttemptEnd { .. }
+            | ParentInputFault::PublishedReconfirm { .. }
+            | ParentInputFault::LoseAdmissionAck
+            | ParentInputFault::LoseReservationAck
+            | ParentInputFault::ReservationDigestConflict
+            | ParentInputFault::ShutdownAfterAdmission
+            | ParentInputFault::ShutdownAfterProjection
+            | ParentInputFault::ShutdownAfterWakeStart
+            | ParentInputFault::ShutdownBeforeProjection,
+        )
         | None => storage,
     }
 }
@@ -90,9 +101,18 @@ pub(super) fn configure_transport(
 ) -> PersistenceHandle {
     match fault {
         Some(ParentInputFault::AtomicWrite(_)) | None => return handle,
-        Some(ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } | ParentInputFault::LoseAdmissionAck | ParentInputFault::LoseReservationAck
-            | ParentInputFault::ReservationDigestConflict | ParentInputFault::ShutdownAfterAdmission
-            | ParentInputFault::ShutdownAfterProjection | ParentInputFault::ShutdownAfterWakeStart | ParentInputFault::ShutdownBeforeProjection) => {}
+        Some(
+            ParentInputFault::BeforeAdoptedProjection { .. }
+            | ParentInputFault::ReleasedAttemptEnd { .. }
+            | ParentInputFault::PublishedReconfirm { .. }
+            | ParentInputFault::LoseAdmissionAck
+            | ParentInputFault::LoseReservationAck
+            | ParentInputFault::ReservationDigestConflict
+            | ParentInputFault::ShutdownAfterAdmission
+            | ParentInputFault::ShutdownAfterProjection
+            | ParentInputFault::ShutdownAfterWakeStart
+            | ParentInputFault::ShutdownBeforeProjection,
+        ) => {}
     }
     let (proxy, mut requests) = mpsc::unbounded_channel();
     let real = std::mem::replace(&mut handle.tx, proxy);
@@ -105,51 +125,106 @@ pub(super) fn configure_transport(
                         let _ = cut.reached.send(());
                         let _ = cut.release.await;
                     }
-                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => owner_cut = Some(pending),
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                        owner_cut = Some(pending)
+                    }
                     Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {}
                 }
             }
             match fault.clone() {
                 Some(ParentInputFault::ReleasedAttemptEnd { terminal, .. })
-                    if matches!(&message, PersistenceMsg::CancelParentMessages { .. } | PersistenceMsg::ResolveParentMessageTerminal { .. }) => {
+                    if matches!(
+                        &message,
+                        PersistenceMsg::CancelParentMessages { .. }
+                            | PersistenceMsg::ResolveParentMessageTerminal { .. }
+                    ) =>
+                {
                     let (release, released) = tokio::sync::oneshot::channel();
-                    terminal.send(NativeAttemptEndCut::BeforeTerminal { release }).unwrap();
+                    terminal
+                        .send(NativeAttemptEndCut::BeforeTerminal { release })
+                        .unwrap();
                     let _ = released.await;
                     let _ = real.send(message);
                     fault = None;
                 }
-                Some(ParentInputFault::BeforeAdoptedProjection { observe, .. }
-                    | ParentInputFault::ReleasedAttemptEnd { observe, .. }) => {
-                    if let PersistenceMsg::AppendInputAndAck { projection, admission, respond_to } = message {
-                        if matches!(&projection, xai_chat_state::InputProjection::Delivery(delivery) if delivery.binding.delivery_id.starts_with("parent-message/")) {
+                Some(
+                    ParentInputFault::BeforeAdoptedProjection { observe, .. }
+                    | ParentInputFault::ReleasedAttemptEnd { observe, .. },
+                ) => {
+                    if let PersistenceMsg::AppendInputAndAck {
+                        projection,
+                        admission,
+                        respond_to,
+                    } = message
+                    {
+                        if matches!(&projection, xai_chat_state::InputProjection::Delivery(delivery) if delivery.binding.delivery_id.starts_with("parent-message/"))
+                        {
                             let (release, released) = tokio::sync::oneshot::channel();
-                            observe.send(NativeProjectionFaultProbe { owner: real.clone(), release, cancellation: admission.cancellation.clone() }).unwrap();
+                            observe
+                                .send(NativeProjectionFaultProbe {
+                                    owner: real.clone(),
+                                    release,
+                                    cancellation: admission.cancellation.clone(),
+                                })
+                                .unwrap();
                             let owner = real.clone();
                             tokio::spawn(async move {
                                 let _ = released.await;
-                                let _ = owner.send(PersistenceMsg::AppendInputAndAck { projection, admission, respond_to });
+                                let _ = owner.send(PersistenceMsg::AppendInputAndAck {
+                                    projection,
+                                    admission,
+                                    respond_to,
+                                });
                             });
-                            if matches!(&fault, Some(ParentInputFault::BeforeAdoptedProjection { .. })) {
+                            if matches!(
+                                &fault,
+                                Some(ParentInputFault::BeforeAdoptedProjection { .. })
+                            ) {
                                 fault = None;
                             }
                         } else {
-                            let _ = real.send(PersistenceMsg::AppendInputAndAck { projection, admission, respond_to });
+                            let _ = real.send(PersistenceMsg::AppendInputAndAck {
+                                projection,
+                                admission,
+                                respond_to,
+                            });
                         }
                     } else {
                         let _ = real.send(message);
                     }
                 }
                 Some(ParentInputFault::PublishedReconfirm { observe, .. }) => {
-                    if let PersistenceMsg::ReconfirmPublishedParentMessage { reservation, launch, respond_to } = message {
-                        let cancellation = super::parent_message::tests_support::cancellation(&reservation);
+                    if let PersistenceMsg::ReconfirmPublishedParentMessage {
+                        reservation,
+                        launch,
+                        respond_to,
+                    } = message
+                    {
+                        let cancellation =
+                            super::parent_message::tests_support::cancellation(&reservation);
                         let (reply, response) = tokio::sync::oneshot::channel();
-                        real.send(PersistenceMsg::ReconfirmPublishedParentMessage { reservation, launch, respond_to: reply }).unwrap();
+                        real.send(PersistenceMsg::ReconfirmPublishedParentMessage {
+                            reservation,
+                            launch,
+                            respond_to: reply,
+                        })
+                        .unwrap();
                         let result = response.await.unwrap();
-                        assert!(result.is_ok(), "cut requires a real successful reconfirm: {result:?}");
+                        assert!(
+                            result.is_ok(),
+                            "cut requires a real successful reconfirm: {result:?}"
+                        );
                         let (release, released) = tokio::sync::oneshot::channel();
                         let (pause_owner, paused) = tokio::sync::oneshot::channel();
                         owner_cut = Some(paused);
-                        observe.send(NativeAdoptionFaultProbe { owner: real.clone(), release, cancellation, pause_owner }).unwrap();
+                        observe
+                            .send(NativeAdoptionFaultProbe {
+                                owner: real.clone(),
+                                release,
+                                cancellation,
+                                pause_owner,
+                            })
+                            .unwrap();
                         tokio::spawn(async move {
                             if released.await.is_ok() {
                                 let _ = respond_to.send(result);
@@ -160,42 +235,89 @@ pub(super) fn configure_transport(
                         let _ = real.send(message);
                     }
                 }
-                Some(cut @ (ParentInputFault::LoseAdmissionAck | ParentInputFault::ShutdownAfterAdmission)) => {
-                    if let PersistenceMsg::AdmitParentMessage { admission, authority, respond_to } = message {
+                Some(
+                    cut @ (ParentInputFault::LoseAdmissionAck
+                    | ParentInputFault::ShutdownAfterAdmission),
+                ) => {
+                    if let PersistenceMsg::AdmitParentMessage {
+                        admission,
+                        authority,
+                        respond_to,
+                    } = message
+                    {
                         let (reply, response) = tokio::sync::oneshot::channel();
-                        real.send(PersistenceMsg::AdmitParentMessage { admission, authority, respond_to: reply }).unwrap();
+                        real.send(PersistenceMsg::AdmitParentMessage {
+                            admission,
+                            authority,
+                            respond_to: reply,
+                        })
+                        .unwrap();
                         let result = response.await.unwrap();
-                        assert!(result.is_ok(), "cut requires a real durable admission: {result:?}");
+                        assert!(
+                            result.is_ok(),
+                            "cut requires a real durable admission: {result:?}"
+                        );
                         drop(respond_to);
                         match cut {
                             ParentInputFault::ShutdownAfterAdmission => break,
                             ParentInputFault::LoseAdmissionAck => fault = None,
-                            ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } | ParentInputFault::AtomicWrite(_) | ParentInputFault::LoseReservationAck
-                            | ParentInputFault::ReservationDigestConflict | ParentInputFault::ShutdownAfterProjection | ParentInputFault::ShutdownAfterWakeStart | ParentInputFault::ShutdownBeforeProjection => unreachable!(),
+                            ParentInputFault::BeforeAdoptedProjection { .. }
+                            | ParentInputFault::ReleasedAttemptEnd { .. }
+                            | ParentInputFault::PublishedReconfirm { .. }
+                            | ParentInputFault::AtomicWrite(_)
+                            | ParentInputFault::LoseReservationAck
+                            | ParentInputFault::ReservationDigestConflict
+                            | ParentInputFault::ShutdownAfterProjection
+                            | ParentInputFault::ShutdownAfterWakeStart
+                            | ParentInputFault::ShutdownBeforeProjection => unreachable!(),
                         }
                     } else {
                         let _ = real.send(message);
                     }
                 }
-                Some(cut @ (ParentInputFault::LoseReservationAck | ParentInputFault::ReservationDigestConflict)) => {
-                    if let PersistenceMsg::ReserveParentMessageTurn { mut reservation, respond_to } = message {
+                Some(
+                    cut @ (ParentInputFault::LoseReservationAck
+                    | ParentInputFault::ReservationDigestConflict),
+                ) => {
+                    if let PersistenceMsg::ReserveParentMessageTurn {
+                        mut reservation,
+                        respond_to,
+                    } = message
+                    {
                         if matches!(cut, ParentInputFault::ReservationDigestConflict) {
                             reservation.payload_digest = "conflicting-digest".into();
                         }
                         let (reply, response) = tokio::sync::oneshot::channel();
-                        real.send(PersistenceMsg::ReserveParentMessageTurn { reservation, respond_to: reply }).unwrap();
+                        real.send(PersistenceMsg::ReserveParentMessageTurn {
+                            reservation,
+                            respond_to: reply,
+                        })
+                        .unwrap();
                         let result = response.await.unwrap();
                         match cut {
                             ParentInputFault::LoseReservationAck => {
-                                assert!(result.is_ok(), "cut requires a genuine reservation: {result:?}");
+                                assert!(
+                                    result.is_ok(),
+                                    "cut requires a genuine reservation: {result:?}"
+                                );
                                 drop(respond_to);
                             }
                             ParentInputFault::ReservationDigestConflict => {
-                                assert!(result.is_err(), "durable owner must reject the conflicting digest");
+                                assert!(
+                                    result.is_err(),
+                                    "durable owner must reject the conflicting digest"
+                                );
                                 let _ = respond_to.send(result);
                             }
-                            ParentInputFault::BeforeAdoptedProjection { .. } | ParentInputFault::ReleasedAttemptEnd { .. } | ParentInputFault::PublishedReconfirm { .. } | ParentInputFault::AtomicWrite(_) | ParentInputFault::LoseAdmissionAck
-                            | ParentInputFault::ShutdownAfterAdmission | ParentInputFault::ShutdownAfterProjection | ParentInputFault::ShutdownAfterWakeStart | ParentInputFault::ShutdownBeforeProjection => unreachable!(),
+                            ParentInputFault::BeforeAdoptedProjection { .. }
+                            | ParentInputFault::ReleasedAttemptEnd { .. }
+                            | ParentInputFault::PublishedReconfirm { .. }
+                            | ParentInputFault::AtomicWrite(_)
+                            | ParentInputFault::LoseAdmissionAck
+                            | ParentInputFault::ShutdownAfterAdmission
+                            | ParentInputFault::ShutdownAfterProjection
+                            | ParentInputFault::ShutdownAfterWakeStart
+                            | ParentInputFault::ShutdownBeforeProjection => unreachable!(),
                         }
                         fault = None;
                     } else {
@@ -203,56 +325,112 @@ pub(super) fn configure_transport(
                     }
                 }
                 Some(ParentInputFault::ShutdownAfterWakeStart) => {
-                    if let PersistenceMsg::WakeStart { start, abort, respond_to } = message {
+                    if let PersistenceMsg::WakeStart {
+                        start,
+                        abort,
+                        respond_to,
+                    } = message
+                    {
                         let (reply, response) = tokio::sync::oneshot::channel();
-                        real.send(PersistenceMsg::WakeStart { start, abort, respond_to: reply }).unwrap();
+                        real.send(PersistenceMsg::WakeStart {
+                            start,
+                            abort,
+                            respond_to: reply,
+                        })
+                        .unwrap();
                         let result = response.await.unwrap();
-                        assert!(result.is_ok(), "cut requires a genuine committed WakeStart: {result:?}");
+                        assert!(
+                            result.is_ok(),
+                            "cut requires a genuine committed WakeStart: {result:?}"
+                        );
                         drop(respond_to);
                         break;
                     }
                     let _ = real.send(message);
                 }
                 Some(ParentInputFault::ShutdownBeforeProjection) => {
-                    if let PersistenceMsg::AppendInputAndAck { projection, admission, mut respond_to } = message {
-                        if matches!(&projection, xai_chat_state::InputProjection::Delivery(projection) if projection.binding.delivery_id.starts_with("parent-message/")) {
+                    if let PersistenceMsg::AppendInputAndAck {
+                        projection,
+                        admission,
+                        mut respond_to,
+                    } = message
+                    {
+                        if matches!(&projection, xai_chat_state::InputProjection::Delivery(projection) if projection.binding.delivery_id.starts_with("parent-message/"))
+                        {
                             drop(real);
                             respond_to.closed().await;
                             break;
                         }
-                        let _ = real.send(PersistenceMsg::AppendInputAndAck { projection, admission, respond_to });
+                        let _ = real.send(PersistenceMsg::AppendInputAndAck {
+                            projection,
+                            admission,
+                            respond_to,
+                        });
                     } else {
                         let _ = real.send(message);
                     }
                 }
                 Some(ParentInputFault::ShutdownAfterProjection) => {
-                    if let PersistenceMsg::AppendInputAndAck { projection, admission, respond_to } = message {
+                    if let PersistenceMsg::AppendInputAndAck {
+                        projection,
+                        admission,
+                        respond_to,
+                    } = message
+                    {
                         let is_parent = matches!(&projection, xai_chat_state::InputProjection::Delivery(projection) if projection.binding.delivery_id.starts_with("parent-message/"));
                         if is_parent {
                             let (reply, response) = tokio::sync::oneshot::channel();
-                            real.send(PersistenceMsg::AppendInputAndAck { projection, admission, respond_to: reply }).unwrap();
+                            real.send(PersistenceMsg::AppendInputAndAck {
+                                projection,
+                                admission,
+                                respond_to: reply,
+                            })
+                            .unwrap();
                             let result = response.await.unwrap();
-                            assert!(matches!(result, Ok(xai_chat_state::CompletionProjectionAck::Appended)), "cut requires a genuine strict projection: {result:?}");
+                            assert!(
+                                matches!(
+                                    result,
+                                    Ok(xai_chat_state::CompletionProjectionAck::Appended)
+                                ),
+                                "cut requires a genuine strict projection: {result:?}"
+                            );
                             drop(respond_to);
                             break;
                         }
-                        let _ = real.send(PersistenceMsg::AppendInputAndAck { projection, admission, respond_to });
+                        let _ = real.send(PersistenceMsg::AppendInputAndAck {
+                            projection,
+                            admission,
+                            respond_to,
+                        });
                     } else {
                         let _ = real.send(message);
                     }
                 }
-                Some(ParentInputFault::AtomicWrite(_)) | None => { let _ = real.send(message); }
+                Some(ParentInputFault::AtomicWrite(_)) | None => {
+                    let _ = real.send(message);
+                }
             }
         }
     });
     handle
 }
 
-pub(crate) fn wire_reference_fixture() -> xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
-    use xai_grok_tools::implementations::grok_build::task::{native_recovery::MessageRecoveryRef, root_control::AgentMessageGeneration, types::{ActiveAgentMessageOperation, ActiveMessageReceiver}};
+pub(crate) fn wire_reference_fixture()
+-> xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
+    use xai_grok_tools::implementations::grok_build::task::{
+        native_recovery::MessageRecoveryRef,
+        root_control::AgentMessageGeneration,
+        types::{ActiveAgentMessageOperation, ActiveMessageReceiver},
+    };
     MessageRecoveryRef {
-        delivery_id: "parent-message/message".into(), message_id: "message".into(), prompt_id: "parent-message-message".into(),
-        payload_digest: "ab".repeat(32), operation: ActiveAgentMessageOperation::Queue,
-        receiver: ActiveMessageReceiver { session_id: "receiver".into(), generation: AgentMessageGeneration::mint(42) },
+        delivery_id: "parent-message/message".into(),
+        message_id: "message".into(),
+        prompt_id: "parent-message-message".into(),
+        payload_digest: "ab".repeat(32),
+        operation: ActiveAgentMessageOperation::Queue,
+        receiver: ActiveMessageReceiver {
+            session_id: "receiver".into(),
+            generation: AgentMessageGeneration::mint(42),
+        },
     }
 }

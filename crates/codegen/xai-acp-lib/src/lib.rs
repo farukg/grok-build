@@ -11,7 +11,10 @@ mod publication;
 mod publication_tests;
 mod stdin_reader;
 
-pub use publication::{PublicationCompletion, PublicationFailure, PublicationGuard, PublicationPrefix, ReceiverSettlement, ReceiverSettlementSelectionError};
+pub use publication::{
+    PublicationCompletion, PublicationFailure, PublicationGuard, PublicationPrefix,
+    ReceiverSettlement, ReceiverSettlementSelectionError,
+};
 
 pub use self::{
     channel::{AcpAgentChannel, AcpChannel, AcpClientChannel, acp_channels, acp_send},

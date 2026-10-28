@@ -86,7 +86,8 @@ impl<S: AcpSide> Clone for AcpGatewaySender<S> {
 impl<S: AcpSide> AcpGatewaySender<S> {
     pub fn new(tx: mpsc::UnboundedSender<S::OutMessage>) -> Self {
         Self {
-            tx, tracing: false,
+            tx,
+            tracing: false,
             publications: Default::default(),
             receiver_settlement: crate::ReceiverSettlement::TransportOnly,
         }
@@ -98,7 +99,9 @@ impl<S: AcpSide> AcpGatewaySender<S> {
     }
 
     /// Requires an in-process receiver that completes notifications only after applying or rejecting them.
-    pub fn with_local_receiver_settlement(mut self) -> Result<Self, crate::ReceiverSettlementSelectionError> {
+    pub fn with_local_receiver_settlement(
+        mut self,
+    ) -> Result<Self, crate::ReceiverSettlementSelectionError> {
         if !self.publications.can_select_receiver() {
             return Err(crate::ReceiverSettlementSelectionError);
         }
@@ -173,10 +176,17 @@ impl TracePhase {
         let (verb, noun) = self.subject();
         match disclosure {
             TraceDisclosure::Payload { method } => {
-                format!("{verb} {} {noun}: {}", crate::common::compact_json(method), payload())
+                format!(
+                    "{verb} {} {noun}: {}",
+                    crate::common::compact_json(method),
+                    payload()
+                )
             }
             TraceDisclosure::EnvelopeOnly { method } => {
-                format!("{verb} {} {noun}: payload withheld", crate::common::compact_json(method))
+                format!(
+                    "{verb} {} {noun}: payload withheld",
+                    crate::common::compact_json(method)
+                )
             }
         }
     }
@@ -204,9 +214,8 @@ fn after_request<T: Serialize>(
         match &response {
             Ok(response) => tracing::debug!(
                 "{}",
-                TracePhase::ReceivedResponse.line(disclosure, || {
-                    crate::common::compact_json(response)
-                })
+                TracePhase::ReceivedResponse
+                    .line(disclosure, || { crate::common::compact_json(response) })
             ),
             // Log at debug level - errors are handled visually in the TUI status bar
             Err(err) => tracing::debug!(
@@ -426,7 +435,9 @@ impl<S: AcpSide> AcpGatewaySender<S> {
         let completion = self.enqueue(request, "forward_with_completion").1;
         match self.receiver_settlement {
             crate::ReceiverSettlement::TransportOnly => completion.boxed(),
-            crate::ReceiverSettlement::AppliedOrDiscarded => self.publications.completion(completion),
+            crate::ReceiverSettlement::AppliedOrDiscarded => {
+                self.publications.completion(completion)
+            }
         }
     }
 
@@ -473,9 +484,8 @@ impl<S: AcpSide> AcpGatewaySender<S> {
             let disclosure = request.trace_disclosure();
             tracing::debug!(
                 "{}",
-                TracePhase::ReceivedRequest.line(&disclosure, || {
-                    crate::common::compact_json(&request)
-                })
+                TracePhase::ReceivedRequest
+                    .line(&disclosure, || { crate::common::compact_json(&request) })
             );
         }
         acp_send(request, &self.tx).await

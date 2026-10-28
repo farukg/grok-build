@@ -128,9 +128,11 @@ async fn execute_with_captured_active_message_events(
 ) -> Vec<crate::session::telemetry::ActiveAgentMessageEvent> {
     let (result, events) = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        crate::session::telemetry::capture_product_events(
-            actor.execute_tool_calls(vec![call], None, None),
-        ),
+        crate::session::telemetry::capture_product_events(actor.execute_tool_calls(
+            vec![call],
+            None,
+            None,
+        )),
     )
     .await
     .expect("generic tool completion must not hang");
@@ -168,7 +170,11 @@ fn active_message_outputs_distinguish_uncertain_from_proved_rejection() {
     for (label, output, expected) in [
         (
             "uncertain",
-            SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: crate::session::persistence::native_wake_tests_support::wire_reference_fixture().into() },
+            SendSubagentMessageOutput::AdmissionUncertain {
+                recovery_ref:
+                    crate::session::persistence::native_wake_tests_support::wire_reference_fixture()
+                        .into(),
+            },
             "unconfirmed",
         ),
         (

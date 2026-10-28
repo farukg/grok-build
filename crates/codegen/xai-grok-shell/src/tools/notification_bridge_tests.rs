@@ -14,7 +14,12 @@ async fn handle_notification_with_admission(
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
     accepted: bool,
 ) {
-    let notification = handle_notification(config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, offsets);
+    let notification = handle_notification(
+        config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        offsets,
+    );
     tokio::pin!(notification);
 
     let mut command = tokio::select! {
@@ -42,7 +47,12 @@ async fn handle_notification_with_goal_policy(
     offsets: &mut HashMap<BashStreamKey, usize>,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
 ) {
-    let delivery = handle_notification(config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, offsets);
+    let delivery = handle_notification(
+        config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        offsets,
+    );
     tokio::pin!(delivery);
     let command = tokio::select! {
         _ = &mut delivery => panic!("goal publication settled before its policy acknowledgement"),
@@ -53,7 +63,13 @@ async fn handle_notification_with_goal_policy(
     };
     assert!(batch.automatic);
     assert_eq!(batch.admissions.len(), 1);
-    batch.admissions.pop().unwrap().respond_to.send(false).unwrap();
+    batch
+        .admissions
+        .pop()
+        .unwrap()
+        .respond_to
+        .send(false)
+        .unwrap();
     delivery.await;
 }
 
@@ -163,40 +179,111 @@ fn make_task_snapshot(task_id: &str, kind: TaskKind) -> TaskSnapshot {
 #[tokio::test(flavor = "current_thread")]
 async fn acknowledged_terminal_transport_waits_for_the_completion_owner_before_publication() {
     use crate::session::storage::StorageAdapter;
-    tokio::task::LocalSet::new().run_until(async {
-        let (config, mut gateway, mut persistence, mut commands) = make_test_config_full_raw();
-        let info = crate::session::SessionInfo { id: config.session_id.clone(), cwd: "/tmp".into() };
-        let mut snapshot = make_task_snapshot("durable-execution", TaskKind::Bash);
-        snapshot.owner_session_id = Some(info.id.to_string());
-        let handle = spawn_notification_bridge(config);
-        let enrollment = tokio::task::spawn_local(handle.enroll_task_completion(snapshot.clone()).wait());
-        let (source, text, policy, ack) = loop {
-            if let PersistenceMsg::EnrollTerminalCompletion { source, text, policy, respond_to } = tokio::time::timeout(std::time::Duration::from_secs(5), persistence.recv()).await.unwrap().unwrap() {
-                break (source, text, policy, respond_to);
-            }
-        };
-        assert!(!enrollment.is_finished());
-        assert!(commands.try_recv().is_err(), "enrollment cannot wake the actor");
-        assert!(gateway.try_recv().is_err(), "enrollment cannot publish a terminal");
-        let directory = tempfile::tempdir().unwrap();
-        let storage = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
-        storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
-        storage.enroll_terminal_completion(&info, source, text, policy).await.unwrap();
-        let reopened = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
-        assert_eq!(reopened.read_completion_state(&info).await.unwrap().obligations.len(), 1);
-        assert!(!enrollment.is_finished(), "durable commit without ACK cannot release the producer");
-        ack.send(Ok(())).unwrap();
-        let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv()).await.unwrap().unwrap();
-        let SessionCommand::ClassifyTerminalNotification { respond_to, .. } = command else { panic!("enrollment must resolve actor policy without publishing a wake") };
-        assert!(!enrollment.is_finished(), "producer acknowledgement must wait for the actor policy decision");
-        respond_to.send(Ok(crate::session::commands::TerminalNotificationDecision::Surface)).unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(5), enrollment).await.unwrap().unwrap().unwrap();
-        assert!(commands.try_recv().is_err());
-        handle.send_task_complete(snapshot);
-        let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv()).await.unwrap().unwrap();
-        let SessionCommand::TaskCompletionBatch(mut batch) = command else { panic!("terminal publication must use the maintained actor admission transport") };
-        batch.admissions.pop().unwrap().respond_to.send(true).unwrap();
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (config, mut gateway, mut persistence, mut commands) = make_test_config_full_raw();
+            let info = crate::session::SessionInfo {
+                id: config.session_id.clone(),
+                cwd: "/tmp".into(),
+            };
+            let mut snapshot = make_task_snapshot("durable-execution", TaskKind::Bash);
+            snapshot.owner_session_id = Some(info.id.to_string());
+            let handle = spawn_notification_bridge(config);
+            let enrollment =
+                tokio::task::spawn_local(handle.enroll_task_completion(snapshot.clone()).wait());
+            let (source, text, policy, ack) = loop {
+                if let PersistenceMsg::EnrollTerminalCompletion {
+                    source,
+                    text,
+                    policy,
+                    respond_to,
+                } = tokio::time::timeout(std::time::Duration::from_secs(5), persistence.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                {
+                    break (source, text, policy, respond_to);
+                }
+            };
+            assert!(!enrollment.is_finished());
+            assert!(
+                commands.try_recv().is_err(),
+                "enrollment cannot wake the actor"
+            );
+            assert!(
+                gateway.try_recv().is_err(),
+                "enrollment cannot publish a terminal"
+            );
+            let directory = tempfile::tempdir().unwrap();
+            let storage =
+                crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(
+                    directory.path().to_path_buf(),
+                );
+            storage
+                .init_session(&info, acp::ModelId::new("test"))
+                .await
+                .unwrap();
+            storage
+                .enroll_terminal_completion(&info, source, text, policy)
+                .await
+                .unwrap();
+            let reopened =
+                crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(
+                    directory.path().to_path_buf(),
+                );
+            assert_eq!(
+                reopened
+                    .read_completion_state(&info)
+                    .await
+                    .unwrap()
+                    .obligations
+                    .len(),
+                1
+            );
+            assert!(
+                !enrollment.is_finished(),
+                "durable commit without ACK cannot release the producer"
+            );
+            ack.send(Ok(())).unwrap();
+            let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let SessionCommand::ClassifyTerminalNotification { respond_to, .. } = command else {
+                panic!("enrollment must resolve actor policy without publishing a wake")
+            };
+            assert!(
+                !enrollment.is_finished(),
+                "producer acknowledgement must wait for the actor policy decision"
+            );
+            respond_to
+                .send(Ok(
+                    crate::session::commands::TerminalNotificationDecision::Surface,
+                ))
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), enrollment)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert!(commands.try_recv().is_err());
+            handle.send_task_complete(snapshot);
+            let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let SessionCommand::TaskCompletionBatch(mut batch) = command else {
+                panic!("terminal publication must use the maintained actor admission transport")
+            };
+            batch
+                .admissions
+                .pop()
+                .unwrap()
+                .respond_to
+                .send(true)
+                .unwrap();
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -911,7 +998,13 @@ async fn scheduled_task_created_is_persisted() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     let msg = persistence_rx
         .try_recv()
@@ -965,7 +1058,13 @@ async fn bash_output_chunk_forwards_live_without_persisting() {
         });
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     assert!(
         persistence_rx.try_recv().is_err(),
@@ -1054,7 +1153,13 @@ async fn bash_output_chunk_skips_persist_when_gateway_closed() {
             },
         });
     let mut offsets = HashMap::new();
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
     assert!(
         persistence_rx.try_recv().is_err(),
         "closed gateway must not persist InProgress bash either"
@@ -1192,7 +1297,13 @@ async fn task_backgrounded_persisted_line_is_stamped() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     match persistence_rx.try_recv().expect("must persist") {
         PersistenceMsg::Update(crate::session::storage::SessionUpdate::Xai(notif)) => {
@@ -1224,7 +1335,13 @@ async fn task_backgrounded_requests_background_tasks_snapshot() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     match persistence_rx.try_recv().expect("must persist incremental") {
         PersistenceMsg::Update(crate::session::storage::SessionUpdate::Xai(notif)) => {
@@ -1327,8 +1444,20 @@ async fn burst_of_backgrounded_events_requests_one_snapshot() {
     let (config, _gateway_rx, _persistence_rx, mut cmd_rx) = make_test_config_full();
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, backgrounded_notification("a"), &mut offsets).await;
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, backgrounded_notification("b"), &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        backgrounded_notification("a"),
+        &mut offsets,
+    )
+    .await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        backgrounded_notification("b"),
+        &mut offsets,
+    )
+    .await;
 
     assert_emit_background_tasks_snapshot(&mut cmd_rx);
     assert!(
@@ -1420,7 +1549,13 @@ async fn scheduled_task_fired_is_not_persisted() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     assert!(
         persistence_rx.try_recv().is_err(),
@@ -1468,7 +1603,13 @@ async fn cross_session_monitor_event_is_dropped() {
     let notification = make_monitor_event_notification("mon-foreign", Some("other-session"));
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     assert!(
         cmd_rx.try_recv().is_err(),
@@ -1492,7 +1633,13 @@ async fn same_session_monitor_event_is_injected() {
     let notification = make_monitor_event_notification("mon-own", Some("test-session"));
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     match cmd_rx
         .try_recv()
@@ -1513,7 +1660,13 @@ async fn legacy_monitor_event_without_owner_is_injected() {
     let notification = make_monitor_event_notification("mon-legacy", None);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     assert!(
         matches!(
@@ -1537,7 +1690,13 @@ async fn block_waited_task_skips_auto_wake_prompt() {
     let notification = ToolNotification::TaskCompleted(snapshot);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     // block_waited tasks must NOT inject a synthetic prompt: the blocking caller already received the result directly
     match cmd_rx
@@ -1579,7 +1738,13 @@ async fn explicitly_killed_task_skips_auto_wake_prompt() {
     let notification = ToolNotification::TaskCompleted(snapshot);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     // Model-tool / delivered kill skips auto-wake; UI kill is `ui_killed_task_auto_wakes_and_tells_model_not_to_restart`
     match cmd_rx
@@ -1705,7 +1870,10 @@ async fn ui_killed_task_gate_armed_defers_to_fallback() {
     .await;
 
     assert!(
-        matches!(cmd_rx.try_recv(), Ok(SessionCommand::TaskCompletionBatch(_))),
+        matches!(
+            cmd_rx.try_recv(),
+            Ok(SessionCommand::TaskCompletionBatch(_))
+        ),
         "gate-armed UI kill must still request admission, not the suppress arm"
     );
     assert_eq!(
@@ -1733,7 +1901,13 @@ async fn bash_task_completed_falls_back_when_auto_wake_disabled() {
     let notification = ToolNotification::TaskCompleted(snapshot);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     let cmd = cmd_rx.try_recv().expect("expected completion batch");
     match cmd {
@@ -1827,7 +2001,13 @@ async fn plan_mode_exited_emits_current_mode_update_default() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     // Gateway: one CurrentModeUpdate("default").
     let mut gateway_modes = Vec::new();
@@ -1886,7 +2066,13 @@ async fn plan_mode_exited_does_not_arm_exit_reminder_by_default() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     assert!(
         !config.plan_mode.lock().has_pending_exit_reminder(),
@@ -1929,7 +2115,13 @@ async fn plan_mode_exited_arms_exit_reminder_when_gated() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     assert!(
         config.plan_mode.lock().has_pending_exit_reminder(),
@@ -1961,7 +2153,13 @@ async fn plan_mode_entered_emits_current_mode_update_plan() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     let mut gateway_modes = Vec::new();
     while let Ok(msg) = gateway_rx.try_recv() {
@@ -2011,8 +2209,13 @@ fn make_large_bash_snapshot(task_id: &str, output_file: PathBuf) -> TaskSnapshot
     }
 }
 
-fn completion_batch_prompt_text(cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>, automatic: bool) -> String {
-    let SessionCommand::TaskCompletionBatch(batch) = cmd_rx.try_recv().expect("expected completion batch") else {
+fn completion_batch_prompt_text(
+    cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
+    automatic: bool,
+) -> String {
+    let SessionCommand::TaskCompletionBatch(batch) =
+        cmd_rx.try_recv().expect("expected completion batch")
+    else {
         panic!("expected completion batch");
     };
     assert_eq!(batch.automatic, automatic);
@@ -2174,7 +2377,13 @@ async fn request_background_tasks_snapshot_skipped_when_emit_local_disabled() {
         },
     );
     let mut offsets = HashMap::new();
-    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
+    handle_notification(
+        &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
+        notification,
+        &mut offsets,
+    )
+    .await;
 
     let mut saw_snapshot = false;
     while let Ok(cmd) = cmd_rx.try_recv() {

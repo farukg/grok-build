@@ -1465,7 +1465,9 @@ pub enum RequestSnapshotQuery {
     /// The newest captured request of the session.
     Latest,
     /// The publication body of one exact prepared observation.
-    Body { key: crate::views::request_viewer::RequestBodyKey },
+    Body {
+        key: crate::views::request_viewer::RequestBodyKey,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1506,7 +1508,9 @@ pub enum Effect {
         chat_kind: bool,
     },
     /// Change the process working directory (dashboard location picker, `/cd`).
-    SetWorkingDir { path: std::path::PathBuf },
+    SetWorkingDir {
+        path: std::path::PathBuf,
+    },
     /// Create a git worktree and then create or load an ACP session in it.
     /// When `load_session_id` is `Some`, loads that session in the new worktree instead of creating a fresh one (`--resume` with `--worktree`).
     CreateWorktreeSession {
@@ -1594,7 +1598,9 @@ pub enum Effect {
     /// Uses roster visibility, not the history picker's hidden-session filter.
     FetchDashboardSessions,
     /// Lazily open dashboard v2's process-owned SQLite store and read its initial snapshot off the event-loop thread.
-    LoadWorkspaceSnapshot { db_path: std::path::PathBuf },
+    LoadWorkspaceSnapshot {
+        db_path: std::path::PathBuf,
+    },
     /// Apply one mutation; [`TaskResult::WorkspaceWriteCompleted`] carries the handle and mutation back.
     WriteWorkspace {
         store: xai_grok_dashboard_store::WorkspaceStore,
@@ -1739,10 +1745,14 @@ pub enum Effect {
         hidden_ids: std::collections::BTreeSet<String>,
     },
     /// Persist `[privacy].privacy_banner_acked` (RFC 3339 dismiss time).
-    PersistPrivacyBannerAcked { acked_at: String },
+    PersistPrivacyBannerAcked {
+        acked_at: String,
+    },
     /// Persist a plugin CTA dismissal to `[plugin_cta].dismissed`; the locked write sleep-polls the config-init flock, so it must run off the render path.
     /// config-init flock, so it must run off the render path.
-    PersistPluginCtaDismissed { plugin_id: String },
+    PersistPluginCtaDismissed {
+        plugin_id: String,
+    },
     /// Persist the consent answer to `[consent]` in config.toml.
     PersistConsentAnswer {
         account: Option<String>,
@@ -1751,9 +1761,14 @@ pub enum Effect {
         acked: bool,
     },
     /// Files the acceptance server side; the local marker is what stops the re-prompt if it fails.
-    RecordConsentUpstream { notice_id: String, version: i32 },
+    RecordConsentUpstream {
+        notice_id: String,
+        version: i32,
+    },
     /// Persist memory modal fullscreen preference to `[hints]` in config.toml.
-    PersistMemoryFullscreen { fullscreen: bool },
+    PersistMemoryFullscreen {
+        fullscreen: bool,
+    },
     /// Persist the dashboard's `[dashboard]` configuration to `~/.grok/config.toml`.
     /// Dashboard writes share a process-local FIFO and atomically replace the file.
     /// Other pagers and unrelated config writers can still overwrite concurrent changes.
@@ -1817,7 +1832,9 @@ pub enum Effect {
         target: crate::app::agent_view::PromptTarget,
     },
     /// Toggle plan mode: fire-and-forget signal to the shell.
-    TogglePlanMode { session_id: acp::SessionId },
+    TogglePlanMode {
+        session_id: acp::SessionId,
+    },
     /// Remove a server-owned queued prompt: fire-and-forget `x.ai/queue/remove`.
     /// The agent re-broadcasts the authoritative queue.
     QueueRemove {
@@ -1831,7 +1848,9 @@ pub enum Effect {
         ordered_ids: Vec<String>,
     },
     /// Clear the caller's server-owned queued prompts: fire-and-forget `x.ai/queue/clear`.
-    QueueClear { session_id: acp::SessionId },
+    QueueClear {
+        session_id: acp::SessionId,
+    },
     /// Replace the text of a server-owned queued prompt in place: fire-and-forget `x.ai/queue/edit`.
     /// The session actor's serialized mailbox makes this last-writer-wins for concurrent edits.
     /// The rebroadcast of `x.ai/queue/changed` is the truth signal.
@@ -1894,9 +1913,14 @@ pub enum Effect {
         force_interactive: bool,
     },
     /// Poll for auth URL from the agent (ext request).
-    PollAuthUrl { request_seq: u64 },
+    PollAuthUrl {
+        request_seq: u64,
+    },
     /// Submit a manually-pasted auth code (ext request).
-    SubmitAuthCode { request_seq: u64, code: String },
+    SubmitAuthCode {
+        request_seq: u64,
+        code: String,
+    },
     /// Fetch MCP server list from the shell (x.ai/mcp/list).
     FetchMcpsList {
         agent_id: AgentId,
@@ -2180,22 +2204,30 @@ pub enum Effect {
     /// Cancel an in-flight interactive auth on the shell (`x.ai/auth/cancel`).
     /// Used when the user abandons mid-session `/login` so the device-code poll stops instead of running until the code expires.
     /// `request_seq` scopes the cancel so a delayed RPC cannot tear down a successor login.
-    CancelAuth { request_seq: u64 },
+    CancelAuth {
+        request_seq: u64,
+    },
     /// Re-check subscription status via `x.ai/auth/check_subscription`.
     /// `verify` scopes the result to a deferred-gate verification (see [`crate::app::subscription`]); `None` for generic checks.
-    CheckSubscription { verify: Option<u64> },
+    CheckSubscription {
+        verify: Option<u64>,
+    },
     /// `x.ai/auth/hydrate_team_capability` for `identity`; the answer is dropped if the account changed meanwhile.
     HydrateTeamCapability {
         identity: crate::app::app_view::AuthIdentity,
     },
     /// One-shot subscription re-check triggered by a credit-limit 403.
     /// If the tier changed, the stashed prompt is retried instead of showing the upsell modal.
-    CreditLimitRecheck { agent_id: AgentId },
+    CreditLimitRecheck {
+        agent_id: AgentId,
+    },
     /// Schedule a 5s timer that fires `TaskResult::PaywallCheckTick`.
     SchedulePaywallCheck,
     /// Schedule `TaskResult::GateVerifyTimeout { generation }` after [`crate::app::subscription::GATE_VERIFY_TIMEOUT`].
     /// [`crate::app::subscription::GATE_VERIFY_TIMEOUT`].
-    ScheduleGateVerifyTimeout { generation: u64 },
+    ScheduleGateVerifyTimeout {
+        generation: u64,
+    },
     /// Log out then authenticate sequentially in one task.
     SwitchAccount {
         request_seq: u64,
@@ -2203,7 +2235,9 @@ pub enum Effect {
         use_oauth: bool,
     },
     /// Clear the auth copy feedback after a delay if its generation is still current.
-    ScheduleClearAuthCopyFeedback { generation: u64 },
+    ScheduleClearAuthCopyFeedback {
+        generation: u64,
+    },
     /// Register the current session in the active-session registry
     /// (`~/.grok/active_sessions.json`).
     RegisterActiveSession {
@@ -2211,7 +2245,9 @@ pub enum Effect {
         cwd: String,
     },
     /// Unregister a session from the active-sessions registry (clean exit).
-    UnregisterActiveSession { session_id: acp::SessionId },
+    UnregisterActiveSession {
+        session_id: acp::SessionId,
+    },
     /// Quit the application.
     Quit,
     /// Toggle coding data sharing via ACP.
@@ -2327,9 +2363,15 @@ pub enum Effect {
     RefreshGate,
     /// Spawn a debounce sleep task for shell suggestions.
     /// `agent_id` rides to the expiry so the fetch is built from the arming agent, not whatever view is active when the timer fires.
-    DebounceSuggestions { agent_id: AgentId, generation: u64 },
+    DebounceSuggestions {
+        agent_id: AgentId,
+        generation: u64,
+    },
     /// Spawn a debounce sleep task for plugin-CTA keyword matching.
-    DebouncePluginCta { agent_id: AgentId, generation: u64 },
+    DebouncePluginCta {
+        agent_id: AgentId,
+        generation: u64,
+    },
     /// Send an ACP `x.ai/suggest` request to the shell.
     /// `agent_id` is echoed on the result so the response routes to the agent that fetched, not whatever view is active when it lands.
     FetchShellSuggestions {
@@ -2458,7 +2500,8 @@ impl TaskResult {
             | TaskResult::SessionLoaded { .. }
             | TaskResult::WorktreeSessionCreated { .. }
             | TaskResult::WorktreeForked { .. } => true,
-            TaskResult::WithPinnedMemoryMode { result, .. } | TaskResult::WithCurrentActions { result, .. }
+            TaskResult::WithPinnedMemoryMode { result, .. }
+            | TaskResult::WithCurrentActions { result, .. }
             | TaskResult::WithPublication { result, .. } => result.ends_startup(),
             _ => false,
         }
@@ -2499,7 +2542,10 @@ pub enum TaskResult {
     QueueInterjectComplete {
         operation: xai_grok_shell::extensions::interject::QueueOperation,
         binding_epoch: u64,
-        result: Result<xai_grok_shell::extensions::interject::QueueResponse, super::agent_view::queue::QueueTransport>,
+        result: Result<
+            xai_grok_shell::extensions::interject::QueueResponse,
+            super::agent_view::queue::QueueTransport,
+        >,
     },
     WithPublication {
         agent_id: AgentId,
@@ -2784,14 +2830,20 @@ pub enum TaskResult {
         agent_id: AgentId,
         session_id: acp::SessionId,
         generation: u64,
-        result: Result<xai_grok_shell::extensions::context_policy::ContextPolicyResponse, ContextPolicyTransportError>,
+        result: Result<
+            xai_grok_shell::extensions::context_policy::ContextPolicyResponse,
+            ContextPolicyTransportError,
+        >,
     },
     /// The shell answered the inspector's latest-request query; `None` means nothing is captured.
     RequestSnapshotLoaded {
         agent_id: AgentId,
         session_id: acp::SessionId,
         generation: u64,
-        result: Result<Option<xai_grok_shell::session::request_capture::RequestSnapshot>, RequestSnapshotTransportError>,
+        result: Result<
+            Option<xai_grok_shell::session::request_capture::RequestSnapshot>,
+            RequestSnapshotTransportError,
+        >,
     },
     /// The shell answered the inspector's raw-body query.
     RequestBodyLoaded {
@@ -2799,7 +2851,8 @@ pub enum TaskResult {
         session_id: acp::SessionId,
         generation: u64,
         key: crate::views::request_viewer::RequestBodyKey,
-        result: Result<crate::views::request_viewer::RequestBodyContent, RequestSnapshotTransportError>,
+        result:
+            Result<crate::views::request_viewer::RequestBodyContent, RequestSnapshotTransportError>,
     },
     DeliverSubagentComplete {
         outcome: Option<xai_grok_shell::extensions::subagent_deliver::DeliverSubagentOutcome>,

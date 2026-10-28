@@ -601,7 +601,10 @@ fn finish_child_with_result_at(
         }
     }
     for publication in unrelated {
-        coordinator.terminal_published_tx.send(publication).expect("publication queue open");
+        coordinator
+            .terminal_published_tx
+            .send(publication)
+            .expect("publication queue open");
     }
 }
 
@@ -921,7 +924,11 @@ async fn claimed_deadline_race_remains_uncertain_and_finalization_unclean() {
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
     let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
-    let claim = held.late_delivery.clone().claim_admission().expect("claim wins");
+    let claim = held
+        .late_delivery
+        .clone()
+        .claim_admission()
+        .expect("claim wins");
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
 
@@ -929,7 +936,9 @@ async fn claimed_deadline_race_remains_uncertain_and_finalization_unclean() {
     finish_next_active_message(&mut coordinator).await;
 
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() },
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: expected_recovery_ref.clone()
+        },
         response_outcome(response).await
     );
     assert!(!finalization_outcome(finalize_rx).await);
@@ -951,13 +960,27 @@ async fn claimed_cancellation_keeps_owned_authority_after_observer_settlement() 
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
     let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
-    let claim = held.late_delivery.clone().claim_admission().expect("claim wins");
+    let claim = held
+        .late_delivery
+        .clone()
+        .claim_admission()
+        .expect("claim wins");
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
-    coordinator.active.get("child").unwrap().cancellation.cancel();
+    coordinator
+        .active
+        .get("child")
+        .unwrap()
+        .cancellation
+        .cancel();
 
     finish_next_active_message(&mut coordinator).await;
-    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }, response_outcome(response).await);
+    assert_eq!(
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: expected_recovery_ref.clone()
+        },
+        response_outcome(response).await
+    );
     assert!(!finalization_outcome(finalize_rx).await);
     assert!(held.late_delivery.claim_admission().is_none());
     assert!(held.release.send(ActiveMessageAdmission::Admitted).is_err());
@@ -982,7 +1005,12 @@ async fn child_admitted_requires_completed_durable_proof_handoff() {
         let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
         let held = recv_with_timeout(&mut admissions).await;
         let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
-        let proof = held.late_delivery.clone().claim_admission().unwrap().commit();
+        let proof = held
+            .late_delivery
+            .clone()
+            .claim_admission()
+            .unwrap()
+            .commit();
         assert_eq!(held.message_id, proof.delivery().message().message_id);
         assert_eq!("parent", proof.delivery().message().sender_session_id);
         assert_eq!("follow up", proof.delivery().message().text.as_ref());
@@ -999,10 +1027,16 @@ async fn child_admitted_requires_completed_durable_proof_handoff() {
                 message_id: held.message_id,
             }
         } else {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: expected_recovery_ref.clone(),
+            }
         };
         assert_eq!(expected, response_outcome(response).await, "{cut:?}");
-        assert_eq!(completed, finalization_outcome(finalize_rx).await, "{cut:?}");
+        assert_eq!(
+            completed,
+            finalization_outcome(finalize_rx).await,
+            "{cut:?}"
+        );
         assert!(coordinator.active_messages.is_empty());
         if let Some(proof) = retained {
             proof.handoff(|| ());
@@ -1020,13 +1054,28 @@ async fn dropped_claim_cannot_restore_definite_cancellation() {
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
     let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
-    drop(held.late_delivery.clone().claim_admission().expect("claim wins"));
+    drop(
+        held.late_delivery
+            .clone()
+            .claim_admission()
+            .expect("claim wins"),
+    );
     assert!(held.late_delivery.claim_admission().is_none());
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
-    coordinator.active.get("child").unwrap().cancellation.cancel();
+    coordinator
+        .active
+        .get("child")
+        .unwrap()
+        .cancellation
+        .cancel();
     finish_next_active_message(&mut coordinator).await;
-    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }, response_outcome(response).await);
+    assert_eq!(
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: expected_recovery_ref.clone()
+        },
+        response_outcome(response).await
+    );
     assert!(!finalization_outcome(finalize_rx).await);
 }
 
@@ -1036,7 +1085,12 @@ async fn unsettled_completion_before_runner_output_marks_terminal_result_failed(
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let call = recv_with_timeout(&mut admissions).await;
-    drop(call.late_delivery.clone().claim_admission().expect("claim wins"));
+    drop(
+        call.late_delivery
+            .clone()
+            .claim_admission()
+            .expect("claim wins"),
+    );
     coordinator
         .active
         .get("child")
@@ -1045,7 +1099,9 @@ async fn unsettled_completion_before_runner_output_marks_terminal_result_failed(
         .cancel();
     finish_next_active_message(&mut coordinator).await;
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: call.late_delivery.recovery_ref().unwrap()
+        },
         response_outcome(response).await
     );
     finish_child(&mut coordinator, "child");
@@ -1064,7 +1120,12 @@ async fn runner_output_parked_before_unsettled_completion_is_failed() {
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let call = recv_with_timeout(&mut admissions).await;
-    drop(call.late_delivery.clone().claim_admission().expect("claim wins"));
+    drop(
+        call.late_delivery
+            .clone()
+            .claim_admission()
+            .expect("claim wins"),
+    );
 
     finish_child(&mut coordinator, "child");
     assert!(coordinator.terminal_outputs.contains_key("child"));
@@ -1076,7 +1137,9 @@ async fn runner_output_parked_before_unsettled_completion_is_failed() {
         .cancel();
     finish_next_active_message(&mut coordinator).await;
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: call.late_delivery.recovery_ref().unwrap()
+        },
         response_outcome(response).await
     );
     let result = &coordinator
@@ -1141,7 +1204,12 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
         }
     });
     let call = recv_with_timeout(&mut admissions).await;
-    drop(call.late_delivery.clone().claim_admission().expect("claim wins"));
+    drop(
+        call.late_delivery
+            .clone()
+            .claim_admission()
+            .expect("claim wins"),
+    );
 
     panic.notify_one();
     let short_wait = std::time::Duration::from_millis(100);
@@ -1156,7 +1224,9 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
         .send(ActiveMessageAdmission::Rejected)
         .expect("selected admission future alive");
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: call.late_delivery.recovery_ref().unwrap()
+        },
         await_with_timeout(response).await.unwrap()
     );
     let result = recv_with_timeout(&mut completions).await;
@@ -1233,7 +1303,9 @@ async fn stale_admission_and_completed_lookup_preserve_identity_authority() {
     let late_delivery = call.late_delivery.clone();
     release_admission(&mut coordinator, call, ActiveMessageAdmission::Admitted).await;
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: late_delivery.recovery_ref().unwrap() },
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: late_delivery.recovery_ref().unwrap()
+        },
         response_outcome(response).await
     );
     assert!(late_delivery.claim_admission().is_none());
@@ -1260,12 +1332,19 @@ async fn actor_drop_classifies_channel_closure_from_lease_proof() {
         let held = recv_with_timeout(&mut admissions).await;
         let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let claim = is_claimed.then(|| {
-            held.late_delivery.clone().claim_admission().expect("claim wins")
+            held.late_delivery
+                .clone()
+                .claim_admission()
+                .expect("claim wins")
         });
 
         let expected = if is_claimed {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
-        } else { ActiveAgentMessageOutcome::ChannelClosed };
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: expected_recovery_ref.clone(),
+            }
+        } else {
+            ActiveAgentMessageOutcome::ChannelClosed
+        };
         drop(coordinator);
         assert_eq!(expected, response_outcome(response).await);
         assert!(held.late_delivery.claim_admission().is_none());
@@ -1312,7 +1391,9 @@ async fn dropped_admitted_completion_is_uncertain_and_finalization_unclean() {
     assert!(completion.is_settled);
     drop(completion);
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: call.late_delivery.recovery_ref().unwrap()
+        },
         response_outcome(response).await
     );
     let (finalize_tx, mut finalize_rx) = oneshot::channel();

@@ -79,15 +79,26 @@ impl EventWriter {
         owner: &xai_tool_protocol::tool_execution::ToolCallOwnership,
     ) {
         if let Some(callback) = self.inner.tool_lifecycle.get() {
-            callback(ToolLifecycleEvent::Cancelled { tool_call_id, owner });
+            callback(ToolLifecycleEvent::Cancelled {
+                tool_call_id,
+                owner,
+            });
         }
     }
 
     pub fn emit(&self, event: Event) {
-        if let Event::ToolExecution { tool_call_id, owner, timing } = &event
+        if let Event::ToolExecution {
+            tool_call_id,
+            owner,
+            timing,
+        } = &event
             && let Some(callback) = self.inner.tool_lifecycle.get()
         {
-            callback(ToolLifecycleEvent::Execution { tool_call_id, owner, timing });
+            callback(ToolLifecycleEvent::Execution {
+                tool_call_id,
+                owner,
+                timing,
+            });
         }
         let entry = EventEntry {
             ts: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),

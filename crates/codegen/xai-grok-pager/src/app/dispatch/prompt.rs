@@ -2034,21 +2034,32 @@ pub(super) fn handle_compact_complete(
         }
         match invocation.settlement {
             CompactInvocationSettlement::RpcSettled => return vec![],
-            CompactInvocationSettlement::AwaitingRpc | CompactInvocationSettlement::Queued
-            | CompactInvocationSettlement::Executing | CompactInvocationSettlement::LifecycleObserved => {
+            CompactInvocationSettlement::AwaitingRpc
+            | CompactInvocationSettlement::Queued
+            | CompactInvocationSettlement::Executing
+            | CompactInvocationSettlement::LifecycleObserved => {
                 invocation.settlement = CompactInvocationSettlement::RpcSettled;
             }
         }
-        let owns_command = matches!(invocation.owner, crate::app::agent::CompactInvocationOwner::Command)
-            && matches!(agent.session.state,
-                AgentState::CommandRunning { command: AgentCommand::Compact, .. }
-                | AgentState::CommandCancelling { command: AgentCommand::Compact });
-        let was_cancelling = owns_command && matches!(
+        let owns_command = matches!(
+            invocation.owner,
+            crate::app::agent::CompactInvocationOwner::Command
+        ) && matches!(
             agent.session.state,
-            AgentState::CommandCancelling {
+            AgentState::CommandRunning {
                 command: AgentCommand::Compact,
+                ..
+            } | AgentState::CommandCancelling {
+                command: AgentCommand::Compact
             }
         );
+        let was_cancelling = owns_command
+            && matches!(
+                agent.session.state,
+                AgentState::CommandCancelling {
+                    command: AgentCommand::Compact,
+                }
+            );
         let elapsed = invocation.started_at.elapsed();
         agent.settle_current_actions_compact(invocation_id);
         if owns_command {
@@ -2058,9 +2069,7 @@ pub(super) fn handle_compact_complete(
         match &result {
             Ok(()) => {
                 agent.scrollback.push_block(RenderBlock::session_event(
-                    SessionEvent::CompactCompleted {
-                        elapsed,
-                    },
+                    SessionEvent::CompactCompleted { elapsed },
                 ));
             }
             // Typed kind with old-shell text fallback, per `compact_error`.

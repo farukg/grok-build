@@ -37,7 +37,12 @@ impl ReplayCompletionDrain {
         if self.pending.len() >= REPLAY_COMPLETION_WINDOW
             && let Some(oldest) = self.pending.pop_front()
         {
-            self.outcome = self.outcome.and(oldest.await.map_err(|_| ()).and_then(|result| result.map_err(|_| ())));
+            self.outcome = self.outcome.and(
+                oldest
+                    .await
+                    .map_err(|_| ())
+                    .and_then(|result| result.map_err(|_| ())),
+            );
         }
         self.pending.push_back(rx);
         self.forwarded += 1;
@@ -49,7 +54,11 @@ impl ReplayCompletionDrain {
 
     pub(super) async fn drain_all(mut self) -> bool {
         while let Some(rx) = self.pending.pop_front() {
-            self.outcome = self.outcome.and(rx.await.map_err(|_| ()).and_then(|result| result.map_err(|_| ())));
+            self.outcome = self.outcome.and(
+                rx.await
+                    .map_err(|_| ())
+                    .and_then(|result| result.map_err(|_| ())),
+            );
         }
         self.outcome.is_ok()
     }
@@ -108,7 +117,9 @@ impl MvpAgent {
         };
         let is_xai = method == "_x.ai/session/update";
         let role = match binding {
-            Some(binding) => crate::extensions::current_actions::DeliveryRole::Historical { binding: binding.clone() },
+            Some(binding) => crate::extensions::current_actions::DeliveryRole::Historical {
+                binding: binding.clone(),
+            },
             None => crate::extensions::current_actions::DeliveryRole::Unavailable,
         };
 
@@ -183,7 +194,12 @@ impl MvpAgent {
         if let Some(tid) = target_client_id {
             stamp_meta_value(&mut notification.meta, "x.ai/leaderClientId", tid);
         }
-        if crate::extensions::current_actions::stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new), &role).is_err() {
+        if crate::extensions::current_actions::stamp_delivery(
+            notification.meta.get_or_insert_with(acp::Meta::new),
+            &role,
+        )
+        .is_err()
+        {
             self.gateway.fail_publication();
             return None;
         }

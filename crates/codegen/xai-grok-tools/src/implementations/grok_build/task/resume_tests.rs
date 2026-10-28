@@ -5,9 +5,9 @@ use super::*;
 use crate::implementations::grok_build::task::TaskTool;
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::coordinator::{
-    ActiveMessageAdmission, ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest,
-    ChildRunner, SendBoxFuture, StartedChild, SubagentCoordinator, SubagentProgress,
-    ChildCancellation, ChildCancelOutcome,
+    ActiveMessageAdmission, ChildCancelOutcome, ChildCancellation, ChildCompletion, ChildControl,
+    ChildRunOutput, ChildRunRequest, ChildRunner, SendBoxFuture, StartedChild, SubagentCoordinator,
+    SubagentProgress,
 };
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageDelivery, CurrentPromptIdResource, SessionIdResource, SubagentDepthCounter,
@@ -132,7 +132,12 @@ impl ChildRunner for RecordingRunner {
             let request = run.request;
             let _ = runs.send(request.clone());
             if let Some(origin) = run.wake_origin {
-                origin.delivery.claim_admission().expect("mock bootstrap claim").commit().handoff(|| ());
+                origin
+                    .delivery
+                    .claim_admission()
+                    .expect("mock bootstrap claim")
+                    .commit()
+                    .handoff(|| ());
             }
             let _ = run
                 .reporter

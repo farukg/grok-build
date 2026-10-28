@@ -24,7 +24,12 @@ impl ClockSample {
         if before_ns > after_ns {
             return Err(ClockUnavailable::ClockUnavailable);
         }
-        Ok(Self { domain, local, before_ns, after_ns })
+        Ok(Self {
+            domain,
+            local,
+            before_ns,
+            after_ns,
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -36,7 +41,11 @@ impl ClockSample {
         let offset_ns = deadline_ns.checked_sub(native_ns)?;
         let offset = std::time::Duration::from_nanos(offset_ns.unsigned_abs());
         let local = Instant::from_std(self.local);
-        if offset_ns >= 0 { local.checked_add(offset) } else { local.checked_sub(offset) }
+        if offset_ns >= 0 {
+            local.checked_add(offset)
+        } else {
+            local.checked_sub(offset)
+        }
     }
 }
 
@@ -47,7 +56,8 @@ impl LinuxClockDomain {
 
         let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
             .map_err(|_| ClockUnavailable::DomainUnavailable)?;
-        let boot_id = Uuid::parse_str(boot_id.trim()).map_err(|_| ClockUnavailable::DomainUnavailable)?;
+        let boot_id =
+            Uuid::parse_str(boot_id.trim()).map_err(|_| ClockUnavailable::DomainUnavailable)?;
         if boot_id.is_nil() {
             return Err(ClockUnavailable::DomainUnavailable);
         }
@@ -76,7 +86,8 @@ impl LinuxClockDomain {
 fn monotonic_ns() -> Result<i64, ClockUnavailable> {
     use nix::time::{ClockId, clock_gettime};
 
-    let at = clock_gettime(ClockId::CLOCK_MONOTONIC).map_err(|_| ClockUnavailable::ClockUnavailable)?;
+    let at =
+        clock_gettime(ClockId::CLOCK_MONOTONIC).map_err(|_| ClockUnavailable::ClockUnavailable)?;
     let nanos = i128::from(at.tv_sec()) * 1_000_000_000 + i128::from(at.tv_nsec());
     i64::try_from(nanos).map_err(|_| ClockUnavailable::ClockRange)
 }
@@ -100,7 +111,9 @@ fn monotonic_offset_ns(contents: &str) -> Result<i64, ClockUnavailable> {
         if nanos >= 1_000_000_000 {
             return Err(ClockUnavailable::DomainUnavailable);
         }
-        monotonic = seconds.checked_mul(1_000_000_000).and_then(|seconds| seconds.checked_add(i64::from(nanos)));
+        monotonic = seconds
+            .checked_mul(1_000_000_000)
+            .and_then(|seconds| seconds.checked_add(i64::from(nanos)));
         if monotonic.is_none() {
             return Err(ClockUnavailable::ClockRange);
         }

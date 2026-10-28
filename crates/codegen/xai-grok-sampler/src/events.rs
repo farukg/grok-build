@@ -285,13 +285,21 @@ impl From<&SamplingError> for SamplingErrorInfo {
         let message = err.to_string();
 
         let retry_schedule = match err {
-            SamplingError::RetrySchedule { requested_backoff, original, cause } => Some(RetryScheduleFailureInfo {
-                requested_backoff: *requested_backoff, original: Box::new(Self::from(original.as_ref())), cause: *cause,
+            SamplingError::RetrySchedule {
+                requested_backoff,
+                original,
+                cause,
+            } => Some(RetryScheduleFailureInfo {
+                requested_backoff: *requested_backoff,
+                original: Box::new(Self::from(original.as_ref())),
+                cause: *cause,
             }),
             _ => None,
         };
         let (kind, status_code, retry_after_secs, model_metadata) = match err {
-            SamplingError::RetrySchedule { .. } => (SamplingErrorKind::RetrySchedule, None, None, None),
+            SamplingError::RetrySchedule { .. } => {
+                (SamplingErrorKind::RetrySchedule, None, None, None)
+            }
             SamplingError::Auth { .. } => (SamplingErrorKind::Auth, None, None, None),
             SamplingError::InvalidConfiguration(_) | SamplingError::MtlsConfiguration(_) => {
                 (SamplingErrorKind::Api, None, None, None)
@@ -376,11 +384,15 @@ impl SamplingErrorInfo {
         cause: xai_grok_sampling_types::error::RetryScheduleCause,
     ) -> Self {
         let error = SamplingError::RetrySchedule {
-            original: std::sync::Arc::new(original.to_error()), requested_backoff, cause,
+            original: std::sync::Arc::new(original.to_error()),
+            requested_backoff,
+            cause,
         };
         let mut info = Self::from(&error);
         info.retry_schedule = Some(RetryScheduleFailureInfo {
-            original: Box::new(original), requested_backoff, cause,
+            original: Box::new(original),
+            requested_backoff,
+            cause,
         });
         info
     }
@@ -390,9 +402,12 @@ impl SamplingErrorInfo {
             SamplingErrorKind::RetrySchedule => match &self.retry_schedule {
                 Some(failure) => SamplingError::RetrySchedule {
                     original: std::sync::Arc::new(failure.original.to_error()),
-                    requested_backoff: failure.requested_backoff, cause: failure.cause,
+                    requested_backoff: failure.requested_backoff,
+                    cause: failure.cause,
                 },
-                None => SamplingError::InvalidConfiguration("retry schedule failure is missing its cause"),
+                None => SamplingError::InvalidConfiguration(
+                    "retry schedule failure is missing its cause",
+                ),
             },
             SamplingErrorKind::IdleTimeout => SamplingError::IdleTimeout {
                 elapsed_secs: self
@@ -442,7 +457,6 @@ impl SamplingErrorInfo {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

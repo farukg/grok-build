@@ -207,16 +207,14 @@ impl BlockContent for WebFetchToolCallBlock {
 
                 if let Some(output) = self.output.as_deref().filter(|o| !o.trim().is_empty()) {
                     lines.push(Line::from("").into());
-                    super::body::push_content_box(
-                        &mut lines,
-                        output,
-                        &theme,
-                        ctx,
-                    );
+                    super::body::push_content_box(&mut lines, output, &theme, ctx);
                 } else if let Some(ref err) = self.error {
                     lines.push(Line::from("").into());
                     lines.extend(super::body::wrapped_body(
-                        err, theme.fg(theme.accent_error), ctx.content_width(), "  ",
+                        err,
+                        theme.fg(theme.accent_error),
+                        ctx.content_width(),
+                        "  ",
                     ));
                 } else {
                     lines.push(Line::from("").into());

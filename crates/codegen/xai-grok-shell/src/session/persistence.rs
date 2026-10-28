@@ -241,7 +241,9 @@ pub struct SessionStateCopy {
 #[allow(clippy::large_enum_variant)]
 pub enum PersistenceMsg {
     ReadPublishedRequestSources {
-        respond_to: tokio::sync::oneshot::Sender<io::Result<Vec<xai_grok_sampling_types::SourceOccurrenceId>>>,
+        respond_to: tokio::sync::oneshot::Sender<
+            io::Result<Vec<xai_grok_sampling_types::SourceOccurrenceId>>,
+        >,
     },
     BeginRequestCapture {
         origin: super::request_capture::RequestOrigin,
@@ -250,16 +252,19 @@ pub enum PersistenceMsg {
         request: super::request_capture::RequestSnapshotId,
         attempt: xai_grok_sampler::request_capture::RequestAttemptId,
         evidence: xai_grok_sampler::request_capture::LocalRequestEvidence,
-        respond_to: tokio::sync::oneshot::Sender<super::request_capture::RequestSnapshotNotification>,
+        respond_to:
+            tokio::sync::oneshot::Sender<super::request_capture::RequestSnapshotNotification>,
     },
     ReadRequestSnapshots {
         request: super::storage::request_capture::SnapshotRead,
-        respond_to: tokio::sync::oneshot::Sender<super::storage::request_capture::SnapshotReadResult>,
+        respond_to:
+            tokio::sync::oneshot::Sender<super::storage::request_capture::SnapshotReadResult>,
     },
     Update(SessionUpdate),
     AppendUpdatesAndAck {
         updates: Vec<SessionUpdate>,
-        respond_to: tokio::sync::oneshot::Sender<Result<(), super::request_capture::PublicationFailure>>,
+        respond_to:
+            tokio::sync::oneshot::Sender<Result<(), super::request_capture::PublicationFailure>>,
     },
     AppendUpdateDurablyAndAck {
         update: SessionUpdate,
@@ -289,7 +294,8 @@ pub enum PersistenceMsg {
     AdmitParentMessage {
         admission: super::delivery_receiver::ParentMessageAdmission,
         authority: super::delivery_receiver::ParentAdmissionAuthority,
-        respond_to: tokio::sync::oneshot::Sender<io::Result<super::delivery_receiver::ParentAdmissionAck>>,
+        respond_to:
+            tokio::sync::oneshot::Sender<io::Result<super::delivery_receiver::ParentAdmissionAck>>,
     },
     ReserveParentMessageTurn {
         reservation: ParentMessageTurnReservation,
@@ -314,11 +320,15 @@ pub enum PersistenceMsg {
         turn_id: String,
         parent_task: xai_chat_state::ParentTask,
         origin: super::delivery_receiver::ReceiverTurnOrigin,
-        respond_to: tokio::sync::oneshot::Sender<super::receiver_execution::InitialMessageTerminalOwnership>,
+        respond_to: tokio::sync::oneshot::Sender<
+            super::receiver_execution::InitialMessageTerminalOwnership,
+        >,
     },
     ReconfirmPublishedParentMessage {
         reservation: std::sync::Arc<ReservedParentMessageTurn>,
-        launch: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeLaunch>,
+        launch: Box<
+            xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeLaunch,
+        >,
         respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
     },
     FinishDeliveryTurn {
@@ -1735,7 +1745,9 @@ mod request_capture;
 
 #[path = "persistence_parent_message.rs"]
 mod parent_message;
-pub use parent_message::{ParentMessagePublicationGate, ParentMessageTurnReservation, ReservedParentMessageTurn};
+pub use parent_message::{
+    ParentMessagePublicationGate, ParentMessageTurnReservation, ReservedParentMessageTurn,
+};
 
 struct SessionPersistence {
     receiver_owner: super::receiver_execution::ReceiverOwner,
@@ -1895,14 +1907,21 @@ impl SessionPersistence {
                 acp::SessionUpdate::AgentThoughtChunk(new_chunk),
                 acp::SessionUpdate::AgentThoughtChunk(mut pending_chunk),
             ) => {
-                let output_only = |meta: &Option<serde_json::Map<String, serde_json::Value>>| meta.as_ref().is_none_or(|meta| {
-                    meta.len() == 1 && meta.contains_key(super::source_binding::OUTPUT_ORIGIN_META)
-                });
-                let did_merge = output_only(&pending_chunk.meta) && output_only(&new_chunk.meta)
+                let output_only = |meta: &Option<serde_json::Map<String, serde_json::Value>>| {
+                    meta.as_ref().is_none_or(|meta| {
+                        meta.len() == 1
+                            && meta.contains_key(super::source_binding::OUTPUT_ORIGIN_META)
+                    })
+                };
+                let did_merge = output_only(&pending_chunk.meta)
+                    && output_only(&new_chunk.meta)
                     && Self::try_merge_text(&mut pending_chunk.content, &new_chunk.content);
 
                 if did_merge {
-                    pending_chunk.meta = super::source_binding::merge_output_meta(pending_chunk.meta, new_chunk.meta.clone());
+                    pending_chunk.meta = super::source_binding::merge_output_meta(
+                        pending_chunk.meta,
+                        new_chunk.meta.clone(),
+                    );
                     let merged_update = match &incoming.update {
                         acp::SessionUpdate::AgentMessageChunk(_) => {
                             acp::SessionUpdate::AgentMessageChunk(pending_chunk)
@@ -2161,20 +2180,37 @@ impl SessionPersistence {
         Ok(())
     }
 
-    async fn append_diagnostic_updates_and_sync(&mut self, updates: Vec<SessionUpdate>) -> Result<(), super::request_capture::PublicationFailure> {
-        use super::request_capture::{CaptureFailure, PublicationDurability, PublicationFailure, PublicationProgress};
-        self.drain_pending().await.map_err(|error| PublicationFailure {
-            cause: CaptureFailure::io(&error.into_io_error()),
-            progress: PublicationProgress::NotCommitted,
-        })?;
+    async fn append_diagnostic_updates_and_sync(
+        &mut self,
+        updates: Vec<SessionUpdate>,
+    ) -> Result<(), super::request_capture::PublicationFailure> {
+        use super::request_capture::{
+            CaptureFailure, PublicationDurability, PublicationFailure, PublicationProgress,
+        };
+        self.drain_pending()
+            .await
+            .map_err(|error| PublicationFailure {
+                cause: CaptureFailure::io(&error.into_io_error()),
+                progress: PublicationProgress::NotCommitted,
+            })?;
         let mut committed = 0;
         let mut failure = None;
         for update in &updates {
-            match self.storage.append_update_commit_aware(&self.info, update).await {
+            match self
+                .storage
+                .append_update_commit_aware(&self.info, update)
+                .await
+            {
                 Ok(()) => committed += 1,
                 Err(crate::session::storage::AppendUpdateError::NotCommitted(error)) => {
-                    if error.get_ref().is_some_and(|source| source.is::<tokio::task::JoinError>()) {
-                        return Err(PublicationFailure { cause: CaptureFailure::WorkerLost, progress: PublicationProgress::AmbiguousSuffix { committed } });
+                    if error
+                        .get_ref()
+                        .is_some_and(|source| source.is::<tokio::task::JoinError>())
+                    {
+                        return Err(PublicationFailure {
+                            cause: CaptureFailure::WorkerLost,
+                            progress: PublicationProgress::AmbiguousSuffix { committed },
+                        });
                     }
                     failure = Some(CaptureFailure::io(&error));
                     break;
@@ -2190,21 +2226,43 @@ impl SessionPersistence {
             }
         }
         if committed > 0 {
-            self.storage.sync_session_files_selected(&self.info, crate::session::storage::SessionFileSet {
-                updates: true, ..Default::default()
-            }).await.map_err(|error| PublicationFailure {
-                cause: CaptureFailure::io(&error),
-                progress: PublicationProgress::JournalPrefix { committed, durability: PublicationDurability::Unconfirmed },
-            })?;
-            self.claim_request_source_publications(&updates[..committed]).await.map_err(|error| PublicationFailure {
-                cause: CaptureFailure::io(&error),
-                progress: PublicationProgress::JournalPrefix { committed, durability: PublicationDurability::Synced },
-            })?;
+            self.storage
+                .sync_session_files_selected(
+                    &self.info,
+                    crate::session::storage::SessionFileSet {
+                        updates: true,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|error| PublicationFailure {
+                    cause: CaptureFailure::io(&error),
+                    progress: PublicationProgress::JournalPrefix {
+                        committed,
+                        durability: PublicationDurability::Unconfirmed,
+                    },
+                })?;
+            self.claim_request_source_publications(&updates[..committed])
+                .await
+                .map_err(|error| PublicationFailure {
+                    cause: CaptureFailure::io(&error),
+                    progress: PublicationProgress::JournalPrefix {
+                        committed,
+                        durability: PublicationDurability::Synced,
+                    },
+                })?;
         }
         match failure {
             Some(cause) => Err(PublicationFailure {
-                cause, progress: if committed == 0 { PublicationProgress::NotCommitted }
-                    else { PublicationProgress::JournalPrefix { committed, durability: PublicationDurability::Synced } },
+                cause,
+                progress: if committed == 0 {
+                    PublicationProgress::NotCommitted
+                } else {
+                    PublicationProgress::JournalPrefix {
+                        committed,
+                        durability: PublicationDurability::Synced,
+                    }
+                },
             }),
             None => Ok(()),
         }
@@ -2363,11 +2421,21 @@ impl SessionPersistence {
                 PersistenceMsg::BeginRequestCapture { origin } => {
                     self.begin_request_capture(origin).await;
                 }
-                PersistenceMsg::RecordRequestCapture { request, attempt, evidence, respond_to } => {
-                    let notification = self.record_request_capture(request, attempt, evidence).await;
+                PersistenceMsg::RecordRequestCapture {
+                    request,
+                    attempt,
+                    evidence,
+                    respond_to,
+                } => {
+                    let notification = self
+                        .record_request_capture(request, attempt, evidence)
+                        .await;
                     let _ = respond_to.send(notification);
                 }
-                PersistenceMsg::ReadRequestSnapshots { request, respond_to } => {
+                PersistenceMsg::ReadRequestSnapshots {
+                    request,
+                    respond_to,
+                } => {
                     let result = self.read_request_snapshots(request).await;
                     let _ = respond_to.send(result);
                 }
@@ -2413,7 +2481,10 @@ impl SessionPersistence {
                         }
                     }
                 }
-                PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } => {
+                PersistenceMsg::AppendUpdatesAndAck {
+                    updates,
+                    respond_to,
+                } => {
                     let result = self.append_diagnostic_updates_and_sync(updates).await;
                     let _ = respond_to.send(result);
                 }
@@ -2477,7 +2548,11 @@ impl SessionPersistence {
                     };
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::AdmitParentMessage { admission, authority, respond_to } => {
+                PersistenceMsg::AdmitParentMessage {
+                    admission,
+                    authority,
+                    respond_to,
+                } => {
                     let adoption = authority.claim().and_then(|claim| match claim.origin() {
                         xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::Durable { .. } if authority.native_recipe().is_some() => Some(admission.message_id.clone()),
                         xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::New
@@ -2485,7 +2560,16 @@ impl SessionPersistence {
                     });
                     let result = match self.flush_and_sync().await {
                         Ok(()) => match self.claim_receiver().await {
-                            Ok(_) => self.storage.admit_parent_message(&self.info, &admission, authority, self.receiver_owner.access()).await,
+                            Ok(_) => {
+                                self.storage
+                                    .admit_parent_message(
+                                        &self.info,
+                                        &admission,
+                                        authority,
+                                        self.receiver_owner.access(),
+                                    )
+                                    .await
+                            }
                             Err(error) => Err(error),
                         },
                         Err(error) => Err(error),
@@ -2499,7 +2583,10 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::ReserveParentMessageTurn { reservation, respond_to } => {
+                PersistenceMsg::ReserveParentMessageTurn {
+                    reservation,
+                    respond_to,
+                } => {
                     let result = self.reserve_parent_message_turn(reservation).await;
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
@@ -2527,11 +2614,24 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::CancelParentMessages { mut message_ids, respond_to } => {
-                    message_ids.retain(|message_id| !self.receiver_owner.retain_parent_message_at_end(message_id));
+                PersistenceMsg::CancelParentMessages {
+                    mut message_ids,
+                    respond_to,
+                } => {
+                    message_ids.retain(|message_id| {
+                        !self.receiver_owner.retain_parent_message_at_end(message_id)
+                    });
                     let result = match self.flush_and_sync().await {
                         Ok(()) => match self.claim_receiver().await {
-                            Ok(_) => self.storage.cancel_parent_messages(&self.info, &message_ids, self.receiver_owner.access()).await,
+                            Ok(_) => {
+                                self.storage
+                                    .cancel_parent_messages(
+                                        &self.info,
+                                        &message_ids,
+                                        self.receiver_owner.access(),
+                                    )
+                                    .await
+                            }
                             Err(error) => Err(error),
                         },
                         Err(error) => Err(error),
@@ -2539,12 +2639,25 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::ResolveParentMessageTerminal { turn_id, parent_task, origin, respond_to } => {
-                    let decision = self.receiver_owner.terminal_decision(&turn_id, &parent_task, &origin);
+                PersistenceMsg::ResolveParentMessageTerminal {
+                    turn_id,
+                    parent_task,
+                    origin,
+                    respond_to,
+                } => {
+                    let decision =
+                        self.receiver_owner
+                            .terminal_decision(&turn_id, &parent_task, &origin);
                     let _ = respond_to.send(decision);
                 }
-                PersistenceMsg::ReconfirmPublishedParentMessage { reservation, launch, respond_to } => {
-                    let result = self.reconfirm_parent_message_publication(&reservation, &launch).await;
+                PersistenceMsg::ReconfirmPublishedParentMessage {
+                    reservation,
+                    launch,
+                    respond_to,
+                } => {
+                    let result = self
+                        .reconfirm_parent_message_publication(&reservation, &launch)
+                        .await;
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
@@ -2555,7 +2668,10 @@ impl SessionPersistence {
                     progress,
                     respond_to,
                 } => {
-                    if self.receiver_owner.retain_turn_at_end(&turn_id, &parent_task, &origin) {
+                    if self
+                        .receiver_owner
+                        .retain_turn_at_end(&turn_id, &parent_task, &origin)
+                    {
                         let _ = respond_to.send(Ok(Vec::new()));
                         continue;
                     }
@@ -2621,17 +2737,34 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::SuppressTerminalCompletions { ids, reason, respond_to } => {
+                PersistenceMsg::SuppressTerminalCompletions {
+                    ids,
+                    reason,
+                    respond_to,
+                } => {
                     let result = match self.flush_and_sync().await {
-                        Ok(()) => self.storage.suppress_terminal_completions(&self.info, ids, reason).await,
+                        Ok(()) => {
+                            self.storage
+                                .suppress_terminal_completions(&self.info, ids, reason)
+                                .await
+                        }
                         Err(error) => Err(error),
                     };
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::EnrollTerminalCompletion { source, text, policy, respond_to } => {
+                PersistenceMsg::EnrollTerminalCompletion {
+                    source,
+                    text,
+                    policy,
+                    respond_to,
+                } => {
                     let result = match self.flush_and_sync().await {
-                        Ok(()) => self.storage.enroll_terminal_completion(&self.info, source, text, policy).await,
+                        Ok(()) => {
+                            self.storage
+                                .enroll_terminal_completion(&self.info, source, text, policy)
+                                .await
+                        }
                         Err(error) => Err(error),
                     };
                     self.observe_io(&result);
@@ -2677,7 +2810,13 @@ impl SessionPersistence {
                                         .await
                                 }
                                 xai_chat_state::InputProjection::Notification(notification) => {
-                                    self.storage.append_notification_commit_aware(&self.info, notification, &admission).await
+                                    self.storage
+                                        .append_notification_commit_aware(
+                                            &self.info,
+                                            notification,
+                                            &admission,
+                                        )
+                                        .await
                                 }
                                 xai_chat_state::InputProjection::Delivery(delivery) => {
                                     match self.receiver_owner.bind_projection(
@@ -2703,7 +2842,8 @@ impl SessionPersistence {
                         }
                     };
                     if let xai_chat_state::InputProjection::Delivery(delivery) = &projection {
-                        self.receiver_owner.observe_projection(&delivery.binding, &result);
+                        self.receiver_owner
+                            .observe_projection(&delivery.binding, &result);
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     if result.is_ok() {
@@ -3241,8 +3381,10 @@ fn collect_session_files_recursive_with_artifacts(
                 name: name.to_string(),
                 data,
             });
-        } else if file_type.is_dir() && path != base.join(archive_logs::TERMINAL_DIR)
-            && path != base.join(super::storage::request_capture::DIRECTORY) {
+        } else if file_type.is_dir()
+            && path != base.join(archive_logs::TERMINAL_DIR)
+            && path != base.join(super::storage::request_capture::DIRECTORY)
+        {
             collect_session_files_recursive_with_artifacts(base, &path, files, artifacts);
         }
     }

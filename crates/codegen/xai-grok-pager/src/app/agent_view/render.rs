@@ -1004,7 +1004,11 @@ impl AgentView {
         }
         let dock_on = crate::views::dock::enabled() && area.height > agent::SHORT_TERMINAL_ROWS;
         self.dock_on = dock_on;
-        let tasks_height = if dock_on { 0 } else { self.tasks.desired_height(area.height) };
+        let tasks_height = if dock_on {
+            0
+        } else {
+            self.tasks.desired_height(area.height)
+        };
         let todo_height = self.todo.desired_height(area.height);
         self.sync_queue_pane();
         self.queue.overlay.visible = !self.visible_queue_is_empty();
@@ -1033,7 +1037,9 @@ impl AgentView {
         let turn_status_parked = if dock_covers_cues { false } else { parked };
         let wake_display_state = self.wake_display_state();
         let source_display_state = self.current_actions_display_state();
-        let display_state = wake_display_state.or(source_display_state).unwrap_or(&self.session.state);
+        let display_state = wake_display_state
+            .or(source_display_state)
+            .unwrap_or(&self.session.state);
         let send_now_gap = self.send_now_awaiting_current() && display_state.is_idle();
         let status_state = if send_now_gap {
             crate::app::agent::AgentState::TurnRunning
@@ -1279,7 +1285,11 @@ impl AgentView {
                 "[Auto-scroll]",
                 hover_or(
                     self.hit_auto_scroll.hovered,
-                    bg.fg(if self.scrollback.is_follow_mode() { theme.link_fg } else { theme.gray }),
+                    bg.fg(if self.scrollback.is_follow_mode() {
+                        theme.link_fg
+                    } else {
+                        theme.gray
+                    }),
                 ),
             )),
         );
@@ -1955,8 +1965,9 @@ impl AgentView {
             data.focused = self.active_pane == ActivePane::Dock && !self.dock_focus_in_sidebar;
             self.sync_dock_hover_from_pointer(upper_dock_rect);
             data.hovered = self.dock_hovered;
-            data.stop_hovered = crate::views::dock::hovered_stop_button_rect(upper_dock_rect, &data)
-                .is_some_and(|hit| hit.rect.contains(self.last_mouse_pos.into()));
+            data.stop_hovered =
+                crate::views::dock::hovered_stop_button_rect(upper_dock_rect, &data)
+                    .is_some_and(|hit| hit.rect.contains(self.last_mouse_pos.into()));
             crate::views::dock::render(buf, upper_dock_rect, &theme, &data);
             self.cache_dock_stop_at(upper_dock_rect, &data);
         }
@@ -2121,14 +2132,17 @@ impl AgentView {
                         state: &status_state,
                         activity: &activity,
                         turn_elapsed: self.turn_elapsed(),
-                        activity_started_at: activity.as_ref().and_then(|_| self.current_action_started_at()),
+                        activity_started_at: activity
+                            .as_ref()
+                            .and_then(|_| self.current_action_started_at()),
                         tick,
                         drain_blocked: turn_status_drain_blocked,
-                        buttons: (source_display_state.is_none() || wake_display_state.is_some()).then_some(turn_status::MouseButtons {
-                            cancel_hovered: self.hit_cancel_button.hovered,
-                            bg_hovered: self.hit_bg_button.hovered,
-                            watching_hovered: self.hit_watching_cue.hovered,
-                        }),
+                        buttons: (source_display_state.is_none() || wake_display_state.is_some())
+                            .then_some(turn_status::MouseButtons {
+                                cancel_hovered: self.hit_cancel_button.hovered,
+                                bg_hovered: self.hit_bg_button.hovered,
+                                watching_hovered: self.hit_watching_cue.hovered,
+                            }),
                         has_running_execute,
                         total_tokens: self.context_state.as_ref().map(|c| c.used),
                         session_starting_since: self.session_starting_since,

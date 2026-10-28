@@ -1011,7 +1011,10 @@ fn full_row_drag(
 ) -> crate::scrollback::text_selection::ActiveTextDrag {
     use crate::scrollback::text_selection::{ActiveTextDrag, RangeHit};
     let hit = RangeHit {
-        position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: 0 },
+        position: crate::scrollback::selection_position::SourcePosition::Overlay {
+            row: line.block_line_idx,
+            column: 0,
+        },
         entry_idx: line.entry_idx,
         range_id: line.range_id,
         block_line_idx: line.block_line_idx,
@@ -1050,7 +1053,9 @@ fn labeled_truncation_header_synthetic_line_copies_label_text() {
     // Collapsed: the header row copies its hidden-prefix label.
     let (buf, result) = render_state(&state, viewport, true);
     let model = &result.selection_model;
-    let header = model.range_local(0, GROUP_HEADER_RANGE_ID).expect("header range");
+    let header = model
+        .range_local(0, GROUP_HEADER_RANGE_ID)
+        .expect("header range");
     assert_eq!(header.lines.len(), 1);
     assert_eq!(at(&header.lines, 0).text, "Ran 3 commands");
     assert_eq!(at(&header.lines, 0).screen_y, 0);
@@ -2344,7 +2349,9 @@ fn verb_group_expanded_slot_header_and_member_select_independently() {
     let model = &result.selection_model;
 
     // The two rows resolve to two distinct ranges, one line each on their own screen rows
-    let header = model.range_local(0, GROUP_HEADER_RANGE_ID).expect("header range");
+    let header = model
+        .range_local(0, GROUP_HEADER_RANGE_ID)
+        .expect("header range");
     assert_eq!(header.lines.len(), 1);
     assert_eq!(at(&header.lines, 0).text, "Read 2 files");
     assert_eq!(at(&header.lines, 0).screen_y, 0);
@@ -2903,7 +2910,10 @@ fn collapsed_headers_paint_distinguishing_paths_and_keep_file_targets() {
     let (Some(a), Some(b)) = (painted_a, painted_b) else {
         panic!("expected both duplicate cases to paint");
     };
-    assert_ne!(a, b, "same basename in different dirs must stay distinguishable");
+    assert_ne!(
+        a, b,
+        "same basename in different dirs must stay distinguishable"
+    );
 
     // A shortened paint cannot resolve on its own, so grok owns the URL again.
     let entry = ScrollbackEntry::new(RenderBlock::read("/worktree/src/a/main.rs", None));
@@ -2937,7 +2947,9 @@ fn collapsed_headers_paint_distinguishing_paths_and_keep_file_targets() {
 #[test]
 fn collapsed_tool_headers_compose_one_glyph_with_the_fitted_path() {
     use crate::appearance::AppearanceConfig;
-    use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
+    use crate::scrollback::types::{
+        BlockContext, DisplayMode, derive_selection_text, selectable_cols,
+    };
 
     // Pin color support so the category prefix is exactly `{glyph} `.
     let _theme = crate::theme::cache::pin_theme();
@@ -2954,8 +2966,14 @@ fn collapsed_tool_headers_compose_one_glyph_with_the_fitted_path() {
     };
 
     for (glyph, block) in [
-        (crate::glyphs::tool_read_file(), RenderBlock::read("/repo/src/a/main.rs", None)),
-        (crate::glyphs::tool_edit_file(), RenderBlock::edit("/repo/src/a/main.rs", None)),
+        (
+            crate::glyphs::tool_read_file(),
+            RenderBlock::read("/repo/src/a/main.rs", None),
+        ),
+        (
+            crate::glyphs::tool_edit_file(),
+            RenderBlock::edit("/repo/src/a/main.rs", None),
+        ),
     ] {
         let wide = block.output(&ctx(80));
         let header = at(&wide.lines, 0);
@@ -2965,7 +2983,10 @@ fn collapsed_tool_headers_compose_one_glyph_with_the_fitted_path() {
             "one category glyph from the compositor"
         );
         assert_eq!(at(&header.content.spans, 1).content.as_ref(), "");
-        assert_eq!(at(&header.content.spans, 2).content.as_ref(), "src/a/main.rs");
+        assert_eq!(
+            at(&header.content.spans, 2).content.as_ref(),
+            "src/a/main.rs"
+        );
         assert_eq!(header.chrome_prefix_width, 2);
         assert_eq!(derive_selection_text(header), "src/a/main.rs");
         assert_eq!(
@@ -2976,7 +2997,9 @@ fn collapsed_tool_headers_compose_one_glyph_with_the_fitted_path() {
         assert!(
             matches!(
                 header.link_target.as_ref(),
-                Some(crate::render::osc8::LinkTarget::File(path) if path.as_ref() == std::path::Path::new("/repo/src/a/main.rs"))
+                Some(
+                    crate::render::osc8::LinkTarget::File(path) if path.as_ref() == std::path::Path::new("/repo/src/a/main.rs"),
+                )
             ),
             "identity stays the anchored absolute path"
         );
@@ -3068,7 +3091,10 @@ fn edit_boundary_sidecar_stays_aligned_when_prefix_row_is_clipped() {
         .flat_map(|range| &range.lines)
         .find_map(|line| {
             let hit = crate::scrollback::text_selection::RangeHit {
-                position: crate::scrollback::selection_position::SourcePosition::Overlay { row: line.block_line_idx, column: 0 },
+                position: crate::scrollback::selection_position::SourcePosition::Overlay {
+                    row: line.block_line_idx,
+                    column: 0,
+                },
                 entry_idx: line.entry_idx,
                 range_id: line.range_id,
                 block_line_idx: line.block_line_idx,
@@ -3368,9 +3394,11 @@ fn overlay_pretty_link_url_in_list_wraps_correctly() {
     // Continuation OverlayLinks start at content_x (no indent offset)
     for frag in group.get(1..).into_iter().flatten() {
         assert_eq!(
-            frag.col_start, content_x + 2,
+            frag.col_start,
+            content_x + 2,
             "OverlayLink on list continuation row must start after message chrome; got col_start={} but expected {}",
-            frag.col_start, content_x + 2
+            frag.col_start,
+            content_x + 2
         );
     }
 
@@ -3486,9 +3514,11 @@ fn overlay_list_arxiv_pretty_link_wraps_correctly() {
     // Continuation OverlayLinks start at content_x (no indent offset)
     for frag in group.get(1..).into_iter().flatten() {
         assert_eq!(
-            frag.col_start, content_x + 2,
+            frag.col_start,
+            content_x + 2,
             "OverlayLink on list continuation row must start after message chrome; got col_start={} but expected {}",
-            frag.col_start, content_x + 2
+            frag.col_start,
+            content_x + 2
         );
     }
 

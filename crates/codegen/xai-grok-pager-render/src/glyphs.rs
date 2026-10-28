@@ -403,17 +403,29 @@ pub fn tool_skill() -> &'static str {
 
 /// Web search, distinct from local pattern search.
 pub fn tool_web_search() -> &'static str {
-    if is_legacy_windows_console() { "?" } else { "⊕" }
+    if is_legacy_windows_console() {
+        "?"
+    } else {
+        "⊕"
+    }
 }
 
 /// Integration discovery.
 pub fn tool_integration_search() -> &'static str {
-    if is_legacy_windows_console() { "?" } else { "⌕" }
+    if is_legacy_windows_console() {
+        "?"
+    } else {
+        "⌕"
+    }
 }
 
 /// File edit; creation has a separate marker.
 pub fn tool_edit_file() -> &'static str {
-    if is_legacy_windows_console() { "/" } else { "✎" }
+    if is_legacy_windows_console() {
+        "/"
+    } else {
+        "✎"
+    }
 }
 
 pub fn tool_create_file() -> &'static str {
@@ -422,69 +434,135 @@ pub fn tool_create_file() -> &'static str {
 
 /// Command label when shell-style `$` headers are disabled.
 pub fn tool_execute() -> &'static str {
-    if is_legacy_windows_console() { ">" } else { "▹" }
+    if is_legacy_windows_console() {
+        ">"
+    } else {
+        "▹"
+    }
 }
 
 pub fn history_subagent() -> &'static str {
-    if is_legacy_windows_console() { "&" } else { "⋈" }
+    if is_legacy_windows_console() {
+        "&"
+    } else {
+        "⋈"
+    }
 }
 
 pub fn history_task() -> &'static str {
-    if is_legacy_windows_console() { "o" } else { "◷" }
+    if is_legacy_windows_console() {
+        "o"
+    } else {
+        "◷"
+    }
 }
 
 pub fn history_workflow() -> &'static str {
-    if is_legacy_windows_console() { "=" } else { "≋" }
+    if is_legacy_windows_console() {
+        "="
+    } else {
+        "≋"
+    }
 }
 
 pub fn history_user() -> &'static str {
-    if is_legacy_windows_console() { ">" } else { "❯" }
+    if is_legacy_windows_console() {
+        ">"
+    } else {
+        "❯"
+    }
 }
 
 pub fn history_assistant() -> &'static str {
-    if is_legacy_windows_console() { "*" } else { "✦" }
+    if is_legacy_windows_console() {
+        "*"
+    } else {
+        "✦"
+    }
 }
 
 pub fn history_thinking() -> &'static str {
-    if is_legacy_windows_console() { "~" } else { "∴" }
+    if is_legacy_windows_console() {
+        "~"
+    } else {
+        "∴"
+    }
 }
 
-pub fn history_message() -> &'static str { "→" }
+pub fn history_message() -> &'static str {
+    "→"
+}
 
-pub fn history_btw() -> &'static str { "?" }
+pub fn history_btw() -> &'static str {
+    "?"
+}
 
 pub fn history_integration() -> &'static str {
-    if is_legacy_windows_console() { "&" } else { "⇄" }
+    if is_legacy_windows_console() {
+        "&"
+    } else {
+        "⇄"
+    }
 }
 
 pub fn history_tool() -> &'static str {
-    if is_legacy_windows_console() { ":" } else { "⚒" }
+    if is_legacy_windows_console() {
+        ":"
+    } else {
+        "⚒"
+    }
 }
 
 pub fn history_system() -> &'static str {
-    if is_legacy_windows_console() { "i" } else { "ⓘ" }
+    if is_legacy_windows_console() {
+        "i"
+    } else {
+        "ⓘ"
+    }
 }
 
 pub fn history_injected() -> &'static str {
-    if is_legacy_windows_console() { "+" } else { "↪" }
+    if is_legacy_windows_console() {
+        "+"
+    } else {
+        "↪"
+    }
 }
 
 pub fn history_instructions() -> &'static str {
-    if is_legacy_windows_console() { "#" } else { "≡" }
+    if is_legacy_windows_console() {
+        "#"
+    } else {
+        "≡"
+    }
 }
 
 pub fn history_reminder() -> &'static str {
-    if is_legacy_windows_console() { "!" } else { "↻" }
+    if is_legacy_windows_console() {
+        "!"
+    } else {
+        "↻"
+    }
 }
 
-pub fn history_notification() -> &'static str { "!" }
+pub fn history_notification() -> &'static str {
+    "!"
+}
 
 pub fn history_summary() -> &'static str {
-    if is_legacy_windows_console() { "=" } else { "▥" }
+    if is_legacy_windows_console() {
+        "="
+    } else {
+        "▥"
+    }
 }
 
 pub fn history_environment() -> &'static str {
-    if is_legacy_windows_console() { "/" } else { "⌂" }
+    if is_legacy_windows_console() {
+        "/"
+    } else {
+        "⌂"
+    }
 }
 
 /// One funnel for toast chrome that legacy ConHost cannot render. Non-legacy platforms return the borrow unchanged.

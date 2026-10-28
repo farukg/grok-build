@@ -194,9 +194,12 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
             }
             for (id, operation) in &mut agent.queue_operations {
                 if operation.binding_epoch == agent.session_binding_epoch
-                    && matches!(operation.admission, crate::app::agent_view::queue::QueueAdmission::Answered(
-                        xai_grok_shell::extensions::interject::QueueResult::Queued { .. }
-                    ))
+                    && matches!(
+                        operation.admission,
+                        crate::app::agent_view::queue::QueueAdmission::Answered(
+                            xai_grok_shell::extensions::interject::QueueResult::Queued { .. }
+                        )
+                    )
                     && !agent.shared_queue.iter().any(|row| row.id == *id)
                 {
                     operation.admission = crate::app::agent_view::queue::QueueAdmission::Answered(
@@ -204,10 +207,13 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
                     );
                 }
                 if operation.binding_epoch == agent.session_binding_epoch
-                    && !matches!(operation.admission, crate::app::agent_view::queue::QueueAdmission::Answered(
-                        xai_grok_shell::extensions::interject::QueueResult::GoalInterjection { .. }
-                        | xai_grok_shell::extensions::interject::QueueResult::Started { .. }
-                    ))
+                    && !matches!(
+                        operation.admission,
+                        crate::app::agent_view::queue::QueueAdmission::Answered(
+                            xai_grok_shell::extensions::interject::QueueResult::GoalInterjection { .. }
+                                | xai_grok_shell::extensions::interject::QueueResult::Started { .. }
+                        )
+                    )
                     && !agent.shared_queue.iter().any(|row| row.id == *id)
                 {
                     agent.shared_queue.push(operation.row.clone());

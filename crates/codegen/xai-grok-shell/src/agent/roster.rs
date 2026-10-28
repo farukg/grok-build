@@ -134,7 +134,8 @@ pub(crate) fn merge_roster(
         entry.last_turn_summary = summary.last_turn_summary.clone();
         entry.last_change_unix_ms = summary.last_change_unix_ms();
         if summary.is_subagent_kind() {
-            entry.session_kind = Some(crate::session::persistence::SUBAGENT_SESSION_KIND.to_string());
+            entry.session_kind =
+                Some(crate::session::persistence::SUBAGENT_SESSION_KIND.to_string());
             entry.parent_session_id = summary.parent_session_id.clone();
         }
     }
@@ -244,7 +245,10 @@ mod merge_roster_tests {
             panic!("expected one roster row: {out:?}");
         };
         assert_eq!(row.title.as_deref(), Some("Busy turn"));
-        assert_eq!(row.last_change_unix_ms, 1_234, "Working adopts persisted activity");
+        assert_eq!(
+            row.last_change_unix_ms, 1_234,
+            "Working adopts persisted activity"
+        );
     }
 
     #[test]
@@ -260,16 +264,24 @@ mod merge_roster_tests {
 
     #[test]
     fn activity_not_metadata_update_is_authoritative_in_every_state() {
-        for activity in [RosterActivity::Working, RosterActivity::Idle, RosterActivity::NeedsInput,
-            RosterActivity::Dormant, RosterActivity::Completed, RosterActivity::Dead]
-        {
+        for activity in [
+            RosterActivity::Working,
+            RosterActivity::Idle,
+            RosterActivity::NeedsInput,
+            RosterActivity::Dormant,
+            RosterActivity::Completed,
+            RosterActivity::Dead,
+        ] {
             let mut active = summary("active", None, 1_234);
             active.updated_at = chrono::DateTime::from_timestamp_millis(99_000).unwrap();
             let mut legacy = summary("legacy", None, 1);
             legacy.last_active_at = None;
             legacy.updated_at = chrono::DateTime::from_timestamp_millis(4_321).unwrap();
             let out = merge_roster(
-                vec![resident("active", activity, 0), resident("legacy", activity, 0)],
+                vec![
+                    resident("active", activity, 0),
+                    resident("legacy", activity, 0),
+                ],
                 vec![active, legacy],
             );
             assert_eq!(out[0].session_id, "legacy");
@@ -348,7 +360,11 @@ mod merge_roster_tests {
             vec![resident("sub", RosterActivity::Idle, 9_000)],
             vec![sub],
         );
-        assert_eq!(out.len(), 1, "resident child must not be duplicated as dormant");
+        assert_eq!(
+            out.len(),
+            1,
+            "resident child must not be duplicated as dormant"
+        );
         let Some(row) = out.first() else {
             panic!("expected one roster row: {out:?}");
         };
@@ -367,7 +383,10 @@ mod merge_roster_tests {
 
     #[test]
     fn explicitly_hidden_children_exclude_dormant_and_resident_rows() {
-        for resident_rows in [vec![], vec![resident("child", RosterActivity::Working, 9_000)]] {
+        for resident_rows in [
+            vec![],
+            vec![resident("child", RosterActivity::Working, 9_000)],
+        ] {
             let mut child = summary("child", Some("Hidden child"), 5_000);
             child.session_kind = Some("subagent".into());
             child.hidden = Some(true);

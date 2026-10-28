@@ -148,7 +148,10 @@ impl BlockContent for UseToolCallBlock {
                     lines.push(Line::from("").into());
                     for (key, val) in &self.input_args {
                         lines.extend(super::body::wrapped_body(
-                            &format!("{key}: {val}"), theme.primary(), ctx.content_width(), "  ",
+                            &format!("{key}: {val}"),
+                            theme.primary(),
+                            ctx.content_width(),
+                            "  ",
                         ));
                     }
                 }
@@ -160,7 +163,10 @@ impl BlockContent for UseToolCallBlock {
                 if let Some(ref err) = self.error {
                     lines.push(Line::from("").into());
                     lines.extend(super::body::wrapped_body(
-                        err, theme.fg(theme.accent_error), ctx.content_width(), "  ",
+                        err,
+                        theme.fg(theme.accent_error),
+                        ctx.content_width(),
+                        "  ",
                     ));
                 }
 

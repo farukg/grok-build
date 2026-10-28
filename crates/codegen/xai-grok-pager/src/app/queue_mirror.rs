@@ -17,7 +17,9 @@ impl AppView {
                 self.prepare_queue_mirror_binding(&session_id);
                 let queue = self.shared_prompt_queues.entry(session_id).or_default();
                 match queue.iter_mut().find(|current| current.id == row.id) {
-                    Some(current) => { *current = row; }
+                    Some(current) => {
+                        *current = row;
+                    }
                     None => queue.push(row),
                 }
             }
@@ -42,8 +44,8 @@ impl AppView {
         self.prepare_queue_mirror_binding(&session_id);
         entries.retain(|row| running_prompt_id.as_deref() != Some(row.id.as_str()));
         if let Some(previous) = self.shared_prompt_queues.get(&session_id) {
-            let versions: std::collections::HashMap<_, _> = previous.iter()
-                .map(|row| (row.id.as_str(), row)).collect();
+            let versions: std::collections::HashMap<_, _> =
+                previous.iter().map(|row| (row.id.as_str(), row)).collect();
             for row in &mut entries {
                 if let Some(known) = versions.get(row.id.as_str())
                     && known.version > row.version
@@ -106,13 +108,21 @@ impl AppView {
     }
 
     fn prepare_queue_mirror_binding(&mut self, session_id: &str) {
-        let binding = self.agents.find_by_session_id(session_id)
-            .and_then(|id| self.agents.get(&id).map(|agent| (id, agent.session_binding_epoch)));
-        if self.queue_mirror_bindings.get(session_id).is_some_and(|previous| *previous != binding) {
+        let binding = self.agents.find_by_session_id(session_id).and_then(|id| {
+            self.agents
+                .get(&id)
+                .map(|agent| (id, agent.session_binding_epoch))
+        });
+        if self
+            .queue_mirror_bindings
+            .get(session_id)
+            .is_some_and(|previous| *previous != binding)
+        {
             self.shared_prompt_queues.remove(session_id);
             self.optimistic_prompt_echoes.remove(session_id);
         }
-        self.queue_mirror_bindings.insert(session_id.to_owned(), binding);
+        self.queue_mirror_bindings
+            .insert(session_id.to_owned(), binding);
     }
     /// Push an optimistic echo row for a server-authoritative prompt the pager just sent.
     /// (A plain prompt or agent-bound kind typed while a turn is running.)

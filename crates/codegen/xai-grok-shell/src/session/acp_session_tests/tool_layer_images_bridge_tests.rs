@@ -189,7 +189,7 @@ fn prepared_post_tool_use_call(id: &str, tool_name: &str) -> PreparedToolCall {
         model_id: Some("test-model".to_string()),
         invocation_id: "018f6b6c-7b3a-7c3a-8c3a-000000000001".to_string(),
         source: crate::extensions::tool_timing::ToolCallSource::Unknown,
-                current_action: Default::default(),
+        current_action: Default::default(),
         tool_id: "opaque".to_string(),
         tool_version: None,
         concatenated_json_count: 0,

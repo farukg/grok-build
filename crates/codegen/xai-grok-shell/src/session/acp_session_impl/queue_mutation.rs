@@ -4,7 +4,12 @@ use super::*;
 use xai_agent_lifecycle::{InputPolicy, QueuePolicy, ShutdownPolicy};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct InputOrigin(PromptOrigin, Vec<xai_chat_state::completion::CompletionIdentity>, crate::session::completion_delivery::CompletionOffer, super::notification_drain::NotificationBatchPayload);
+pub(crate) struct InputOrigin(
+    PromptOrigin,
+    Vec<xai_chat_state::completion::CompletionIdentity>,
+    crate::session::completion_delivery::CompletionOffer,
+    super::notification_drain::NotificationBatchPayload,
+);
 
 impl InputOrigin {
     pub(crate) fn from_prompt_id(prompt_id: &str) -> Self {
@@ -12,23 +17,41 @@ impl InputOrigin {
     }
 
     pub(crate) const fn new(origin: PromptOrigin) -> Self {
-        Self(origin, Vec::new(), crate::session::completion_delivery::CompletionOffer::None, super::notification_drain::NotificationBatchPayload::TerminalOnly)
+        Self(
+            origin,
+            Vec::new(),
+            crate::session::completion_delivery::CompletionOffer::None,
+            super::notification_drain::NotificationBatchPayload::TerminalOnly,
+        )
     }
 
-    pub(crate) fn with_completions(mut self, ids: Vec<xai_chat_state::completion::CompletionIdentity>) -> Self {
+    pub(crate) fn with_completions(
+        mut self,
+        ids: Vec<xai_chat_state::completion::CompletionIdentity>,
+    ) -> Self {
         self.1 = ids;
         self.2 = crate::session::completion_delivery::CompletionOffer::Automatic;
         self
     }
 
-    pub(crate) fn with_notification_batch(mut self, payload: super::notification_drain::NotificationBatchPayload) -> Self {
+    pub(crate) fn with_notification_batch(
+        mut self,
+        payload: super::notification_drain::NotificationBatchPayload,
+    ) -> Self {
         self.3 = payload;
         self
     }
 
-    pub(crate) fn notification_batch(&self) -> &super::notification_drain::NotificationBatchPayload { &self.3 }
+    pub(crate) fn notification_batch(
+        &self,
+    ) -> &super::notification_drain::NotificationBatchPayload {
+        &self.3
+    }
 
-    pub(crate) fn with_completion_offer(mut self, offer: crate::session::completion_delivery::CompletionOffer) -> Self {
+    pub(crate) fn with_completion_offer(
+        mut self,
+        offer: crate::session::completion_delivery::CompletionOffer,
+    ) -> Self {
         self.2 = offer;
         self
     }
@@ -38,7 +61,9 @@ impl InputOrigin {
             || matches!(&self.0, PromptOrigin::SubagentCompleted { completion } if matches!(completion.kind, crate::session::CompletionWakeKind::Boundary | crate::session::CompletionWakeKind::BoundaryRecovery))
     }
 
-    pub(crate) fn completions(&self) -> &[xai_chat_state::completion::CompletionIdentity] { &self.1 }
+    pub(crate) fn completions(&self) -> &[xai_chat_state::completion::CompletionIdentity] {
+        &self.1
+    }
 
     pub(crate) fn policy(&self) -> InputPolicy {
         let mut policy = self.0.policy();
@@ -48,14 +73,19 @@ impl InputOrigin {
         policy
     }
 
-    pub(super) fn remove_consumed_completions(&mut self, consumed: &[xai_chat_state::completion::CompletionIdentity]) -> bool {
+    pub(super) fn remove_consumed_completions(
+        &mut self,
+        consumed: &[xai_chat_state::completion::CompletionIdentity],
+    ) -> bool {
         let had_completions = !self.1.is_empty();
         self.1.retain(|id| !consumed.contains(id));
         let rows_empty = match &mut self.3 {
             super::notification_drain::NotificationBatchPayload::TerminalOnly => true,
             super::notification_drain::NotificationBatchPayload::Rows { rows, .. } => {
                 rows.retain(|row| match row {
-                    super::notification_drain::NotificationBatchRow::Terminal { id, .. } => !consumed.contains(id),
+                    super::notification_drain::NotificationBatchRow::Terminal { id, .. } => {
+                        !consumed.contains(id)
+                    }
                     super::notification_drain::NotificationBatchRow::MonitorEvent { .. } => true,
                 });
                 rows.is_empty()
@@ -177,7 +207,10 @@ impl QueueOwner<'_> {
     }
 }
 
-use crate::extensions::interject::{QueueAction, QueueCaller, QueueRequest, QueueResponse, QueueResult, QueueRejection, MAX_QUEUE_REQUEST_BYTES};
+use crate::extensions::interject::{
+    MAX_QUEUE_REQUEST_BYTES, QueueAction, QueueCaller, QueueRejection, QueueRequest, QueueResponse,
+    QueueResult,
+};
 
 pub(crate) const QUEUE_OPERATION_LIMIT: usize = 1024;
 pub(crate) const QUEUE_OPERATION_BYTES: usize = 16 * 1024 * 1024;
@@ -201,7 +234,11 @@ pub(crate) struct QueueOperations {
 }
 
 impl QueueOperations {
-    fn replay(&self, caller: &QueueCaller, request: &QueueRequest) -> Result<Option<QueueReplay>, QueueRejection> {
+    fn replay(
+        &self,
+        caller: &QueueCaller,
+        request: &QueueRequest,
+    ) -> Result<Option<QueueReplay>, QueueRejection> {
         let Some(record) = self.settled.get(&request.operation.operation_id) else {
             return Ok(None);
         };
@@ -213,17 +250,24 @@ impl QueueOperations {
         }
         match &request.action {
             QueueAction::Prioritize { new_text } => {
-                if record.edit_digest != new_text.as_deref().map(|text| blake3::hash(text.as_bytes())) {
+                if record.edit_digest
+                    != new_text
+                        .as_deref()
+                        .map(|text| blake3::hash(text.as_bytes()))
+                {
                     return Err(QueueRejection::OperationConflict);
                 }
                 Ok(Some(QueueReplay::Response(record.response.clone())))
             }
             QueueAction::Observe => match &record.response.result {
                 QueueResult::Queued { row } => Ok(Some(QueueReplay::ObserveQueued {
-                    version: row.version, owner: row.owner.clone(),
+                    version: row.version,
+                    owner: row.owner.clone(),
                 })),
-                QueueResult::GoalInterjection { .. } | QueueResult::Started { .. }
-                | QueueResult::Rejected { .. } | QueueResult::Unconfirmed => {
+                QueueResult::GoalInterjection { .. }
+                | QueueResult::Started { .. }
+                | QueueResult::Rejected { .. }
+                | QueueResult::Unconfirmed => {
                     Ok(Some(QueueReplay::Response(record.response.clone())))
                 }
             },
@@ -250,29 +294,49 @@ fn request_bytes(request: &QueueRequest) -> usize {
         QueueAction::Prioritize { new_text } => optional_bytes(new_text.as_deref()),
         QueueAction::Observe => 0,
     };
-    request.operation.session_id.len().saturating_add(request.operation.id.len())
-        .saturating_add(optional_bytes(request.owner.as_deref())).saturating_add(text_bytes)
+    request
+        .operation
+        .session_id
+        .len()
+        .saturating_add(request.operation.id.len())
+        .saturating_add(optional_bytes(request.owner.as_deref()))
+        .saturating_add(text_bytes)
 }
 
-fn receipt_reservation(caller: &QueueCaller, request: &QueueRequest, state: &State, replacement_text: Option<&str>) -> usize {
-    let mut bytes = std::mem::size_of::<(uuid::Uuid, QueueOperationRecord)>().saturating_mul(4)
+fn receipt_reservation(
+    caller: &QueueCaller,
+    request: &QueueRequest,
+    state: &State,
+    replacement_text: Option<&str>,
+) -> usize {
+    let mut bytes = std::mem::size_of::<(uuid::Uuid, QueueOperationRecord)>()
+        .saturating_mul(4)
         .saturating_add(64)
         .saturating_add(state.running_prompt_id().map_or(0, str::len))
         .saturating_add(caller.retained_bytes())
         .saturating_add(request.operation.session_id.len())
         .saturating_add(request.operation.id.len())
         .saturating_add(optional_bytes(request.owner.as_deref()));
-    if let Some(meta) = state.pending_inputs.iter()
-        .filter_map(|item| item.queue_meta.as_ref()).find(|meta| meta.id == request.operation.id)
+    if let Some(meta) = state
+        .pending_inputs
+        .iter()
+        .filter_map(|item| item.queue_meta.as_ref())
+        .find(|meta| meta.id == request.operation.id)
     {
         let replacement_bytes = optional_bytes(replacement_text);
         let combined_bytes = meta.combined_texts.as_ref().map_or(0, |texts| {
-            texts.iter().fold(texts.len().saturating_mul(std::mem::size_of::<String>()),
-                |bytes, text| bytes.saturating_add(text.len()))
+            texts.iter().fold(
+                texts.len().saturating_mul(std::mem::size_of::<String>()),
+                |bytes, text| bytes.saturating_add(text.len()),
+            )
         });
-        bytes = bytes.saturating_add(meta.id.len())
+        bytes = bytes
+            .saturating_add(meta.id.len())
             .saturating_add(optional_bytes(meta.owner.as_deref()))
-            .saturating_add(optional_bytes(meta.last_editor.as_deref()).max(optional_bytes(request.owner.as_deref())))
+            .saturating_add(
+                optional_bytes(meta.last_editor.as_deref())
+                    .max(optional_bytes(request.owner.as_deref())),
+            )
             .saturating_add(meta.kind.len())
             .saturating_add(meta.text.len().max(replacement_bytes))
             .saturating_add(combined_bytes);
@@ -307,43 +371,84 @@ impl SessionActor {
                 let state = self.state.lock().await;
                 let result = if state.running_prompt_id() == Some(request.operation.id.as_str()) {
                     if state.front_message_committed
-                        && state.pending_inputs.iter().any(|item| item.queue_meta.as_ref().is_some_and(|meta| {
-                            meta.id == request.operation.id && meta.version == version && meta.owner == owner
-                        }))
+                        && state.pending_inputs.iter().any(|item| {
+                            item.queue_meta.as_ref().is_some_and(|meta| {
+                                meta.id == request.operation.id
+                                    && meta.version == version
+                                    && meta.owner == owner
+                            })
+                        })
                     {
-                        QueueResult::Started { prompt_id: request.operation.id.clone() }
+                        QueueResult::Started {
+                            prompt_id: request.operation.id.clone(),
+                        }
                     } else {
                         QueueResult::Unconfirmed
                     }
                 } else {
-                    match self.build_queue_wire(&state).into_iter().find(|row| row.id == request.operation.id) {
-                        Some(row) if row.version == version && row.owner == owner => QueueResult::Queued { row },
-                        Some(row) => QueueResult::Rejected { reason: QueueRejection::Stale, row: Some(row) },
+                    match self
+                        .build_queue_wire(&state)
+                        .into_iter()
+                        .find(|row| row.id == request.operation.id)
+                    {
+                        Some(row) if row.version == version && row.owner == owner => {
+                            QueueResult::Queued { row }
+                        }
+                        Some(row) => QueueResult::Rejected {
+                            reason: QueueRejection::Stale,
+                            row: Some(row),
+                        },
                         None => QueueResult::Unconfirmed,
                     }
                 };
-                return (QueueResponse { operation: request.operation, result }, None);
+                return (
+                    QueueResponse {
+                        operation: request.operation,
+                        result,
+                    },
+                    None,
+                );
             }
             Ok(None) => {}
         }
         match &request.action {
-            QueueAction::Observe => (QueueResponse { operation: request.operation, result: QueueResult::Unconfirmed }, None),
+            QueueAction::Observe => (
+                QueueResponse {
+                    operation: request.operation,
+                    result: QueueResult::Unconfirmed,
+                },
+                None,
+            ),
             QueueAction::Prioritize { new_text } => {
                 let mut state = self.state.lock().await;
                 let prepared = Self::prepare_queue_priority(
-                    &state, &request.operation.id, request.operation.expected_version,
-                    QueueOwner::Exact(request.owner.as_deref()), new_text.as_deref(),
+                    &state,
+                    &request.operation.id,
+                    request.operation.expected_version,
+                    QueueOwner::Exact(request.owner.as_deref()),
+                    new_text.as_deref(),
                 );
-                let reservation = receipt_reservation(&caller, &request, &state, prepared.replacement_text());
+                let reservation =
+                    receipt_reservation(&caller, &request, &state, prepared.replacement_text());
                 if let Err(reason) = self.queue_operations.borrow_mut().admit(reservation) {
                     return (rejected(reason), None);
                 }
-                let edit_digest = new_text.as_deref().map(|text| blake3::hash(text.as_bytes()));
+                let edit_digest = new_text
+                    .as_deref()
+                    .map(|text| blake3::hash(text.as_bytes()));
                 let outcome = self.interject_queued_prompt_locked(&mut state, prepared);
-                let response = QueueResponse { operation: request.operation, result: outcome.result() };
+                let response = QueueResponse {
+                    operation: request.operation,
+                    result: outcome.result(),
+                };
                 self.queue_operations.borrow_mut().settled.insert(
                     response.operation.operation_id,
-                    QueueOperationRecord { caller, owner: request.owner, edit_digest, response: response.clone() },
+                    QueueOperationRecord {
+                        caller,
+                        owner: request.owner,
+                        edit_digest,
+                        response: response.clone(),
+                    },
                 );
                 let mutation = match &outcome {
                     super::prompt_queue::SendNowOutcome::Rejected { .. } => None,

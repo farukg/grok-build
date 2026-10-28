@@ -660,23 +660,43 @@ pub(crate) async fn spawn_session_actor(
     .await;
     drop(chat_state_timer);
     chat_state_handle.update_credentials(credentials);
-    let context_policy_binding = crate::session::helpers::context_policy_store::ContextPolicyBinding::new(context_policy_authority);
+    let context_policy_binding =
+        crate::session::helpers::context_policy_store::ContextPolicyBinding::new(
+            context_policy_authority,
+        );
     {
         let store = context_policy_binding.authority.clone().write_owned().await;
         let context_session_id = session_info.id.0.to_string();
         let context_session_dir = crate::session::persistence::session_dir(&session_info);
         let (store, policy) = tokio::task::spawn_blocking(move || {
             let mut store = store;
-            let policy = store.ensure_session(&context_session_id, &context_session_dir)
+            let policy = store
+                .ensure_session(&context_session_id, &context_session_dir)
                 .and_then(|()| store.effective(&context_session_id));
             (store, policy)
-        }).await.map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
-        let policy = policy.map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
-        chat_state_handle.set_context_policy(policy).await
-            .map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
+        })
+        .await
+        .map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?;
+        let policy = policy.map_err(|error| {
+            xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error))
+        })?;
+        chat_state_handle
+            .set_context_policy(policy)
+            .await
+            .map_err(|error| {
+                xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error))
+            })?;
         context_policy_binding.applied_revision.store(
-            store.selection(session_info.id.0.as_ref(), &context_policy_binding.incarnation)
-                .map_err(|error| xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error)))?.version.revision,
+            store
+                .selection(
+                    session_info.id.0.as_ref(),
+                    &context_policy_binding.incarnation,
+                )
+                .map_err(|error| {
+                    xai_grok_agent::AgentBuildError::IoError(std::io::Error::other(error))
+                })?
+                .version
+                .revision,
             std::sync::atomic::Ordering::Release,
         );
     }
@@ -750,7 +770,11 @@ pub(crate) async fn spawn_session_actor(
     let emit_local_background_tasks = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let background_tasks_snapshot_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let current_actions = crate::session::current_actions::Source::default();
-    current_actions.attach_emitter(gateway.clone(), gateway_enabled.clone(), session_info.id.clone());
+    current_actions.attach_emitter(
+        gateway.clone(),
+        gateway_enabled.clone(),
+        session_info.id.clone(),
+    );
     let tools_notification_handle = crate::tools::notification_bridge::spawn_notification_bridge(
         crate::tools::notification_bridge::NotificationBridgeConfig {
             current_actions: current_actions.clone(),
@@ -2136,7 +2160,9 @@ pub(crate) async fn spawn_session_actor(
         workspace_ops: workspace_ops.clone(),
         trace_config_template: std::cell::RefCell::new(None),
     });
-    session.current_actions.attach_replay_queue(session.event_tx.clone());
+    session
+        .current_actions
+        .attach_replay_queue(session.event_tx.clone());
     drop(actor_build);
     let (actor_setup_timer, actor_setup_span) = spawn_await_step!("actor_setup");
     async {
@@ -2393,7 +2419,11 @@ pub(crate) async fn spawn_session_actor(
                             session_id.clone(),
                             tool_call_id.clone(),
                             crate::session::pending_interaction::PendingKind::Question,
-                            Some((session_for_hooks.current_actions.clone(), crate::session::current_actions::FrozenOwner::Unavailable, xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()))),
+                            Some((
+                                session_for_hooks.current_actions.clone(),
+                                crate::session::current_actions::FrozenOwner::Unavailable,
+                                xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
+                            )),
                         );
                     tokio::select! {
                         biased;

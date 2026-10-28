@@ -211,22 +211,53 @@ fn workspace_dashboard_subagent_lane_renders_roster_with_shared_filter_and_pins(
     let mut state = DashboardState::new();
     state.lane = SessionLane::Subagents;
     state.filter = Filter::Substring("Alpha".into());
-    state.pinned.insert(DashboardRowId::Roster { session_id: "Alpha child".into() });
-    state.focus_row(DashboardRowId::Roster { session_id: "Alpha child".into() });
+    state.pinned.insert(DashboardRowId::Roster {
+        session_id: "Alpha child".into(),
+    });
+    state.focus_row(DashboardRowId::Roster {
+        session_id: "Alpha child".into(),
+    });
     let mut buf = Buffer::empty(area);
     let _ = render_dashboard(
-        &mut buf, area, &mut state, &mut agents, &registry, None, &roster,
-        true, WorkspaceRowInputs::default(), None, false, None, None,
+        &mut buf,
+        area,
+        &mut state,
+        &mut agents,
+        &registry,
+        None,
+        &roster,
+        true,
+        WorkspaceRowInputs::default(),
+        None,
+        false,
+        None,
+        None,
     );
     let content = buf_to_text(&buf);
     assert!(content.contains("Alpha child"), "{content}");
     assert!(!content.contains("Beta child"), "{content}");
-    assert_eq!(state.selected, Some(DashboardRowId::Roster { session_id: "Alpha child".into() }));
+    assert_eq!(
+        state.selected,
+        Some(DashboardRowId::Roster {
+            session_id: "Alpha child".into()
+        })
+    );
     state.lane = SessionLane::Main;
     let mut buf = Buffer::empty(area);
     let _ = render_dashboard(
-        &mut buf, area, &mut state, &mut agents, &registry, None, &roster,
-        true, WorkspaceRowInputs::default(), None, false, None, None,
+        &mut buf,
+        area,
+        &mut state,
+        &mut agents,
+        &registry,
+        None,
+        &roster,
+        true,
+        WorkspaceRowInputs::default(),
+        None,
+        false,
+        None,
+        None,
     );
     assert!(!buf_to_text(&buf).contains("Alpha child"));
 }
@@ -2636,7 +2667,8 @@ fn pinned_rows_render_in_activity_order_without_moving_selection() {
                 header_test_row(3, RowState::Working, "unpinned"),
             ];
             for (row, seconds) in rows.iter_mut().zip([1_000, 2_000, 1_500]) {
-                row.last_change_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+                row.last_change_at =
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
             }
             let mut state = DashboardState::new();
             state.grouping = grouping;
@@ -2665,7 +2697,10 @@ fn pinned_rows_render_in_activity_order_without_moving_selection() {
                 match activity {
                     RowState::Working => assert!(second < unpinned && unpinned < first, "{text}"),
                     RowState::Idle => assert!(unpinned < second && second < first, "{text}"),
-                    RowState::NeedsInput | RowState::Inactive | RowState::Completed | RowState::Failed => unreachable!(),
+                    RowState::NeedsInput
+                    | RowState::Inactive
+                    | RowState::Completed
+                    | RowState::Failed => unreachable!(),
                 }
                 assert_eq!(reorder.first(), state.selected.as_ref());
             }

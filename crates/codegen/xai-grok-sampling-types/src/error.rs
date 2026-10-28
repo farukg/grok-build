@@ -139,13 +139,24 @@ pub enum RetryScheduleCause {
     #[error("requested delay overflows Instant")]
     InstantRange,
     #[error("{0}")]
-    Deadline(#[source] #[serde(with = "DeadlineErrorWire")] tokio::time::error::DeadlineError),
+    Deadline(
+        #[source]
+        #[serde(with = "DeadlineErrorWire")]
+        tokio::time::error::DeadlineError,
+    ),
     #[error("{0}")]
-    Wait(#[source] #[serde(with = "timer_error_wire")] tokio::time::error::Error),
+    Wait(
+        #[source]
+        #[serde(with = "timer_error_wire")]
+        tokio::time::error::Error,
+    ),
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(remote = "tokio::time::error::DeadlineError", rename_all = "snake_case")]
+#[serde(
+    remote = "tokio::time::error::DeadlineError",
+    rename_all = "snake_case"
+)]
 enum DeadlineErrorWire {
     MissingRuntime,
     TimeDisabled,
@@ -159,12 +170,20 @@ mod timer_error_wire {
 
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
-    enum Fault { Shutdown, AtCapacity, Invalid }
+    enum Fault {
+        Shutdown,
+        AtCapacity,
+        Invalid,
+    }
 
     pub fn serialize<S: Serializer>(error: &Error, serializer: S) -> Result<S::Ok, S::Error> {
-        let fault = if error.is_shutdown() { Fault::Shutdown }
-            else if error.is_at_capacity() { Fault::AtCapacity }
-            else { Fault::Invalid };
+        let fault = if error.is_shutdown() {
+            Fault::Shutdown
+        } else if error.is_at_capacity() {
+            Fault::AtCapacity
+        } else {
+            Fault::Invalid
+        };
         fault.serialize(serializer)
     }
 
@@ -176,7 +195,6 @@ mod timer_error_wire {
         })
     }
 }
-
 
 #[derive(Debug, Error)]
 pub enum SamplingError {
@@ -191,7 +209,9 @@ pub enum SamplingError {
     /// The model's mTLS endpoint or local client identity cannot be used safely.
     #[error("invalid mTLS client configuration: {0}")]
     MtlsConfiguration(String),
-    #[error("retry scheduling failed for {requested_backoff:?}: {cause}; original error: {original}")]
+    #[error(
+        "retry scheduling failed for {requested_backoff:?}: {cause}; original error: {original}"
+    )]
     RetrySchedule {
         requested_backoff: std::time::Duration,
         original: std::sync::Arc<SamplingError>,

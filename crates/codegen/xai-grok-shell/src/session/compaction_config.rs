@@ -81,10 +81,12 @@ pub(crate) struct CompactCancelGate {
     pub(crate) manual_worker: RefCell<ManualCompactWorker>,
     pub(crate) manual_finished: tokio::sync::Notify,
     #[cfg(test)]
-    pub(crate) manual_reservation_pause: RefCell<Option<(
-        tokio::sync::oneshot::Sender<()>,
-        tokio::sync::oneshot::Receiver<()>,
-    )>>,
+    pub(crate) manual_reservation_pause: RefCell<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>,
+    >,
     #[cfg(test)]
     pub(crate) manual_teardown_started: tokio::sync::Notify,
 }
@@ -125,34 +127,53 @@ impl Drop for CompactCancelScope<'_> {
 }
 
 impl CompactCancelGate {
-    pub(crate) fn begin_activity(&self, prompt_id: Option<String>, source: super::current_actions::Source) -> AutomaticCompactScope<'_> {
+    pub(crate) fn begin_activity(
+        &self,
+        prompt_id: Option<String>,
+        source: super::current_actions::Source,
+    ) -> AutomaticCompactScope<'_> {
         let invocation = crate::session::acp_types::AutomaticCompactInvocation {
-            id: crate::session::acp_types::CompactInvocationId(uuid::Uuid::new_v4()), prompt_id,
+            id: crate::session::acp_types::CompactInvocationId(uuid::Uuid::new_v4()),
+            prompt_id,
         };
         let current_action = super::current_actions::CompactRegistration::new(
-            source, super::current_actions::CompactOwner::Automatic { invocation: invocation.clone() },
+            source,
+            super::current_actions::CompactOwner::Automatic {
+                invocation: invocation.clone(),
+            },
             super::current_actions::CompactStage::Executing,
             xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
         );
-        self.activity.replace(AutomaticCompactActivity::Running(invocation));
-        AutomaticCompactScope { gate: self, _current_action: current_action }
+        self.activity
+            .replace(AutomaticCompactActivity::Running(invocation));
+        AutomaticCompactScope {
+            gate: self,
+            _current_action: current_action,
+        }
     }
 
-    pub(crate) fn activity_invocation(&self) -> Option<crate::session::acp_types::AutomaticCompactInvocation> {
+    pub(crate) fn activity_invocation(
+        &self,
+    ) -> Option<crate::session::acp_types::AutomaticCompactInvocation> {
         match &*self.activity.borrow() {
             AutomaticCompactActivity::Idle => None,
-            AutomaticCompactActivity::Running(invocation) | AutomaticCompactActivity::Settled(invocation) => Some(invocation.clone()),
+            AutomaticCompactActivity::Running(invocation)
+            | AutomaticCompactActivity::Settled(invocation) => Some(invocation.clone()),
         }
     }
 
     pub(crate) fn activity_needs_terminal(&self) -> bool {
-        matches!(*self.activity.borrow(), AutomaticCompactActivity::Running(_))
+        matches!(
+            *self.activity.borrow(),
+            AutomaticCompactActivity::Running(_)
+        )
     }
 
     pub(crate) fn settle_activity(&self) {
         let activity = self.activity.take();
         self.activity.replace(match activity {
-            AutomaticCompactActivity::Running(invocation) | AutomaticCompactActivity::Settled(invocation) => {
+            AutomaticCompactActivity::Running(invocation)
+            | AutomaticCompactActivity::Settled(invocation) => {
                 AutomaticCompactActivity::Settled(invocation)
             }
             AutomaticCompactActivity::Idle => AutomaticCompactActivity::Idle,
@@ -169,7 +190,9 @@ impl CompactCancelGate {
     pub(crate) fn manual_can_start(&self) -> bool {
         match &*self.manual_worker.borrow() {
             ManualCompactWorker::Idle => true,
-            ManualCompactWorker::Running(_) | ManualCompactWorker::Sealed | ManualCompactWorker::SealedRunning(_) => false,
+            ManualCompactWorker::Running(_)
+            | ManualCompactWorker::Sealed
+            | ManualCompactWorker::SealedRunning(_) => false,
         }
     }
 
@@ -177,7 +200,9 @@ impl CompactCancelGate {
         let current = self.manual_worker.take();
         self.manual_worker.replace(match current {
             ManualCompactWorker::Idle | ManualCompactWorker::Sealed => ManualCompactWorker::Sealed,
-            ManualCompactWorker::Running(worker) | ManualCompactWorker::SealedRunning(worker) => ManualCompactWorker::SealedRunning(worker),
+            ManualCompactWorker::Running(worker) | ManualCompactWorker::SealedRunning(worker) => {
+                ManualCompactWorker::SealedRunning(worker)
+            }
         });
     }
 
@@ -186,7 +211,9 @@ impl CompactCancelGate {
             ManualCompactWorker::Idle => (ManualCompactWorker::Idle, None),
             ManualCompactWorker::Running(worker) => (ManualCompactWorker::Idle, Some(worker)),
             ManualCompactWorker::Sealed => (ManualCompactWorker::Sealed, None),
-            ManualCompactWorker::SealedRunning(worker) => (ManualCompactWorker::Sealed, Some(worker)),
+            ManualCompactWorker::SealedRunning(worker) => {
+                (ManualCompactWorker::Sealed, Some(worker))
+            }
         };
         self.manual_worker.replace(next);
         worker

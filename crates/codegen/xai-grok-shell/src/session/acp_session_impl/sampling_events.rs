@@ -1,11 +1,18 @@
 use super::*;
 
 impl SessionActor {
-    async fn send_thought_chunk(&self, text: String, chunk_index: u64, origin: crate::session::source_binding::OutputSourceOrigin, request_id: &xai_grok_sampler::RequestId) {
+    async fn send_thought_chunk(
+        &self,
+        text: String,
+        chunk_index: u64,
+        origin: crate::session::source_binding::OutputSourceOrigin,
+        request_id: &xai_grok_sampler::RequestId,
+    ) {
         self.send_sampling_update(
-            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new(text),
-            )).meta(Some(origin.into_meta()))),
+            acp::SessionUpdate::AgentThoughtChunk(
+                acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(text)))
+                    .meta(Some(origin.into_meta())),
+            ),
             Some(chunk_index),
             request_id,
         )
@@ -140,22 +147,48 @@ impl SessionActor {
         ) {
             self.close_stream_apply_span(event.request_id());
         }
-        let closes_stream = request_present && matches!(&event, SamplingEvent::Completed { .. } | SamplingEvent::Failed { .. });
-        if !request_owned && !closes_backend_tool && !resolves_pending_strip && !local_request && !closes_stream {
+        let closes_stream = request_present
+            && matches!(
+                &event,
+                SamplingEvent::Completed { .. } | SamplingEvent::Failed { .. }
+            );
+        if !request_owned
+            && !closes_backend_tool
+            && !resolves_pending_strip
+            && !local_request
+            && !closes_stream
+        {
             return;
         }
 
         match event {
-            SamplingEvent::LocalRequest { request_id, attempt, evidence } => {
-                if let xai_grok_sampler::request_capture::LocalRequestEvidence::DispatchStarted { started_at } = &evidence {
+            SamplingEvent::LocalRequest {
+                request_id,
+                attempt,
+                evidence,
+            } => {
+                if let xai_grok_sampler::request_capture::LocalRequestEvidence::DispatchStarted {
+                    started_at,
+                } = &evidence
+                {
                     self.dispatch_sampling_attempt(&request_id, attempt, *started_at);
                 }
-                if matches!(&evidence, xai_grok_sampler::request_capture::LocalRequestEvidence::Finished {
-                    outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Cancelled,
-                }) && self.sampling_owner(&request_id).is_some_and(|owner| owner.attempt == attempt) {
-                    self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Cancelled);
+                if matches!(
+                    &evidence,
+                    xai_grok_sampler::request_capture::LocalRequestEvidence::Finished {
+                        outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Cancelled,
+                    }
+                ) && self
+                    .sampling_owner(&request_id)
+                    .is_some_and(|owner| owner.attempt == attempt)
+                {
+                    self.finish_sampling_request(
+                        &request_id,
+                        crate::extensions::sampling_lifecycle::SamplingOutcome::Cancelled,
+                    );
                 }
-                self.observe_local_request(request_id, attempt, evidence).await;
+                self.observe_local_request(request_id, attempt, evidence)
+                    .await;
             }
             SamplingEvent::StreamStarted {
                 request_id,
@@ -190,101 +223,108 @@ impl SessionActor {
                 chunk_index,
             } => {
                 let origin = crate::session::source_binding::OutputSourceOrigin {
-                    session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(), reference: origin,
+                    session_id: self.session_id_string(),
+                    request_id: request_id.as_str().to_owned(),
+                    reference: origin,
                 };
                 match channel {
-                SamplingChannel::Text => {
-                    self.bump_stream_apply_span(&request_id, text.len());
-                    // Append to the out-of-band trace accumulator; it never enters chat_state
-                    // See `StreamingTurnCapture` for how the capture begins and ends
-                    {
-                        let mut cap = self.streaming_turn_capture.lock();
-                        if cap.prompt_id.is_none() {
-                            let prompt_id = self
-                                .current_prompt_id
-                                .lock()
-                                .expect("current_prompt_id mutex poisoned")
-                                .clone();
-                            cap.begin_turn(prompt_id, self.current_turn_number.get());
-                            // `StreamStarted` was dropped; count this generation so `attempt_count` matches the path where `StreamStarted` arrived
-                            // No timestamp is available, so none is stamped
-                            cap.attempt_count += 1;
+                    SamplingChannel::Text => {
+                        self.bump_stream_apply_span(&request_id, text.len());
+                        // Append to the out-of-band trace accumulator; it never enters chat_state
+                        // See `StreamingTurnCapture` for how the capture begins and ends
+                        {
+                            let mut cap = self.streaming_turn_capture.lock();
+                            if cap.prompt_id.is_none() {
+                                let prompt_id = self
+                                    .current_prompt_id
+                                    .lock()
+                                    .expect("current_prompt_id mutex poisoned")
+                                    .clone();
+                                cap.begin_turn(prompt_id, self.current_turn_number.get());
+                                // `StreamStarted` was dropped; count this generation so `attempt_count` matches the path where `StreamStarted` arrived
+                                // No timestamp is available, so none is stamped
+                                cap.attempt_count += 1;
+                            }
+                            cap.claim_current_request(request_id.as_str());
+                            cap.append(false, &text);
                         }
-                        cap.claim_current_request(request_id.as_str());
-                        cap.append(false, &text);
-                    }
 
-                    self.record_turn_first_token(Some(&request_id));
-                    self.record_turn_first_meaningful_output(Some(&request_id));
+                        self.record_turn_first_token(Some(&request_id));
+                        self.record_turn_first_meaningful_output(Some(&request_id));
 
-                    // The phase change is emitted alongside each text delta so the UI flips to "streaming text" the moment content starts arriving
-                    // The `PhaseChanged` event itself is idempotent on the consumer side
-                    self.emit_event(crate::session::events::Event::PhaseChanged {
-                        phase: crate::session::events::Phase::StreamingText,
-                    });
-                    self.send_sampling_update(
-                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                            acp::ContentBlock::Text(acp::TextContent::new(text)),
-                        ).meta(Some(origin.into_meta()))),
-                        Some(chunk_index),
-                        &request_id,
-                    )
-                    .await;
-                }
-                SamplingChannel::Reasoning => {
-                    if text.is_empty() {
-                        return;
+                        // The phase change is emitted alongside each text delta so the UI flips to "streaming text" the moment content starts arriving
+                        // The `PhaseChanged` event itself is idempotent on the consumer side
+                        self.emit_event(crate::session::events::Event::PhaseChanged {
+                            phase: crate::session::events::Phase::StreamingText,
+                        });
+                        self.send_sampling_update(
+                            acp::SessionUpdate::AgentMessageChunk(
+                                acp::ContentChunk::new(acp::ContentBlock::Text(
+                                    acp::TextContent::new(text),
+                                ))
+                                .meta(Some(origin.into_meta())),
+                            ),
+                            Some(chunk_index),
+                            &request_id,
+                        )
+                        .await;
                     }
-                    self.bump_stream_apply_span(&request_id, text.len());
-                    // Append to the out-of-band trace accumulator; it never enters chat_state
-                    {
-                        let mut cap = self.streaming_turn_capture.lock();
-                        if cap.prompt_id.is_none() {
-                            let prompt_id = self
-                                .current_prompt_id
-                                .lock()
-                                .expect("current_prompt_id mutex poisoned")
-                                .clone();
-                            cap.begin_turn(prompt_id, self.current_turn_number.get());
-                            // `StreamStarted` was dropped; count this generation so `attempt_count` matches the path where `StreamStarted` arrived
-                            // No timestamp is available, so none is stamped
-                            cap.attempt_count += 1;
+                    SamplingChannel::Reasoning => {
+                        if text.is_empty() {
+                            return;
                         }
-                        cap.claim_current_request(request_id.as_str());
-                        cap.append(true, &text);
+                        self.bump_stream_apply_span(&request_id, text.len());
+                        // Append to the out-of-band trace accumulator; it never enters chat_state
+                        {
+                            let mut cap = self.streaming_turn_capture.lock();
+                            if cap.prompt_id.is_none() {
+                                let prompt_id = self
+                                    .current_prompt_id
+                                    .lock()
+                                    .expect("current_prompt_id mutex poisoned")
+                                    .clone();
+                                cap.begin_turn(prompt_id, self.current_turn_number.get());
+                                // `StreamStarted` was dropped; count this generation so `attempt_count` matches the path where `StreamStarted` arrived
+                                // No timestamp is available, so none is stamped
+                                cap.attempt_count += 1;
+                            }
+                            cap.claim_current_request(request_id.as_str());
+                            cap.append(true, &text);
+                        }
+
+                        // Reasoning is a token (ttft) but not meaningful output (ttfm).
+                        self.record_turn_first_token(Some(&request_id));
+
+                        self.emit_event(crate::session::events::Event::PhaseChanged {
+                            phase: crate::session::events::Phase::StreamingReasoning,
+                        });
+                        self.send_thought_chunk(text, chunk_index, origin, &request_id)
+                            .await;
                     }
+                    SamplingChannel::Narration => {
+                        // Not appended to the capture. The capture already recorded these deltas as reasoning
+                        self.record_turn_first_meaningful_output(Some(&request_id));
 
-                    // Reasoning is a token (ttft) but not meaningful output (ttfm).
-                    self.record_turn_first_token(Some(&request_id));
-
-                    self.emit_event(crate::session::events::Event::PhaseChanged {
-                        phase: crate::session::events::Phase::StreamingReasoning,
-                    });
-                    self.send_thought_chunk(text, chunk_index, origin, &request_id).await;
+                        self.emit_event(crate::session::events::Event::PhaseChanged {
+                            phase: crate::session::events::Phase::StreamingText,
+                        });
+                        // A complete block, unlike streaming text deltas: paragraph breaks on both sides keep it
+                        // from gluing onto response text or a sibling narration sharing the message entry
+                        // (markdown rendering collapses the extra blank lines)
+                        self.send_sampling_update(
+                            acp::SessionUpdate::AgentMessageChunk(
+                                acp::ContentChunk::new(acp::ContentBlock::Text(
+                                    acp::TextContent::new(format!("\n\n{text}\n\n")),
+                                ))
+                                .meta(Some(origin.into_meta())),
+                            ),
+                            Some(chunk_index),
+                            &request_id,
+                        )
+                        .await;
+                    }
                 }
-                SamplingChannel::Narration => {
-                    // Not appended to the capture. The capture already recorded these deltas as reasoning
-                    self.record_turn_first_meaningful_output(Some(&request_id));
-
-                    self.emit_event(crate::session::events::Event::PhaseChanged {
-                        phase: crate::session::events::Phase::StreamingText,
-                    });
-                    // A complete block, unlike streaming text deltas: paragraph breaks on both sides keep it
-                    // from gluing onto response text or a sibling narration sharing the message entry
-                    // (markdown rendering collapses the extra blank lines)
-                    self.send_sampling_update(
-                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                            acp::ContentBlock::Text(acp::TextContent::new(format!(
-                                "\n\n{text}\n\n"
-                            ))),
-                        ).meta(Some(origin.into_meta()))),
-                        Some(chunk_index),
-                        &request_id,
-                    )
-                    .await;
-                }
-                }
-            },
+            }
             SamplingEvent::ToolCallDelta {
                 request_id,
                 tool_index,
@@ -370,7 +410,10 @@ impl SessionActor {
                 response,
                 metrics: _,
             } => {
-                self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Completed);
+                self.finish_sampling_request(
+                    &request_id,
+                    crate::extensions::sampling_lifecycle::SamplingOutcome::Completed,
+                );
                 let request_updates_turn = request_owned;
 
                 // Persist before the drain waiter is released so the next prompt cannot
@@ -517,7 +560,9 @@ impl SessionActor {
                         "reason": crate::util::truncate(&reason, 300),
                     })),
                 );
-                self.schedule_sampling_retry(&request_id, &deadline,
+                self.schedule_sampling_retry(
+                    &request_id,
+                    &deadline,
                     crate::extensions::notification::RetryState::Retrying {
                         attempt,
                         max_retries,
@@ -528,7 +573,10 @@ impl SessionActor {
                 );
             }
             SamplingEvent::Failed { request_id, error } => {
-                self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Failed);
+                self.finish_sampling_request(
+                    &request_id,
+                    crate::extensions::sampling_lifecycle::SamplingOutcome::Failed,
+                );
                 // Persist before releasing the drain waiter / waking the turn.
                 self.apply_pending_image_strip(&request_id).await;
                 if !request_owned {
@@ -585,9 +633,15 @@ impl SessionActor {
                 self.record_turn_first_token(Some(&request_id));
                 let (title, kind, raw_input) = backend_tool_display(&name);
                 let mut meta = crate::session::source_binding::OutputSourceOrigin {
-                    session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(),
-                    reference: xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(call_id.clone()) },
-                }.into_meta();
+                    session_id: self.session_id_string(),
+                    request_id: request_id.as_str().to_owned(),
+                    reference: xai_grok_sampling_types::OutputOrigin::Item {
+                        reference: xai_grok_sampling_types::ProviderOutputRef::Item(
+                            call_id.clone(),
+                        ),
+                    },
+                }
+                .into_meta();
                 meta.insert("backend".to_owned(), serde_json::Value::Bool(true));
                 self.send_sampling_update(
                     acp::SessionUpdate::ToolCall(
@@ -625,17 +679,25 @@ impl SessionActor {
                 }
                 let (title, _kind, _raw_input) = backend_tool_display(&name);
                 let origin = crate::session::source_binding::OutputSourceOrigin {
-                    session_id: self.session_id_string(), request_id: request_id.as_str().to_owned(),
-                    reference: xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(call_id.clone()) },
+                    session_id: self.session_id_string(),
+                    request_id: request_id.as_str().to_owned(),
+                    reference: xai_grok_sampling_types::OutputOrigin::Item {
+                        reference: xai_grok_sampling_types::ProviderOutputRef::Item(
+                            call_id.clone(),
+                        ),
+                    },
                 };
                 self.send_update(
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-                        acp::ToolCallId::new(Arc::from(call_id.as_str())),
-                        acp::ToolCallUpdateFields::new()
-                            .status(Some(status))
-                            .title(Some(title))
-                            .raw_output(result),
-                    ).meta(Some(origin.into_meta()))),
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            acp::ToolCallId::new(Arc::from(call_id.as_str())),
+                            acp::ToolCallUpdateFields::new()
+                                .status(Some(status))
+                                .title(Some(title))
+                                .raw_output(result),
+                        )
+                        .meta(Some(origin.into_meta())),
+                    ),
                     None,
                 )
                 .await;

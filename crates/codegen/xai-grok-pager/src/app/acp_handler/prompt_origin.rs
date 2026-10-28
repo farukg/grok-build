@@ -71,10 +71,7 @@ pub(crate) fn should_adopt_running_prompt(prompt_id: &str) -> bool {
 }
 
 /// Commit a live prompt after the ingress has admitted its turn identity.
-pub(super) fn note_child_live_prompt(
-    child: &mut AgentView,
-    prompt_id: Option<&str>,
-) {
+pub(super) fn note_child_live_prompt(child: &mut AgentView, prompt_id: Option<&str>) {
     if child.session.loading_replay {
         return;
     }
@@ -140,8 +137,10 @@ pub(super) fn child_prompt_admission<'a>(
         }
         return ChildPromptAdmission::Apply;
     };
-    if child.ended_child_prompt_ids.contains(pid) || child.superseded_child_prompt_ids.contains(pid)
-        || (child.session.current_prompt_id.as_deref() != Some(pid) && child.is_self_originated_prompt(pid))
+    if child.ended_child_prompt_ids.contains(pid)
+        || child.superseded_child_prompt_ids.contains(pid)
+        || (child.session.current_prompt_id.as_deref() != Some(pid)
+            && child.is_self_originated_prompt(pid))
     {
         return ChildPromptAdmission::Drop;
     }

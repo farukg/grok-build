@@ -20,7 +20,12 @@ impl AcpDelivery {
         }
     }
 
-    pub(super) fn apply<T>(self, app: &mut AppView, id: AgentId, apply: impl FnOnce(&mut AppView) -> T) -> T {
+    pub(super) fn apply<T>(
+        self,
+        app: &mut AppView,
+        id: AgentId,
+        apply: impl FnOnce(&mut AppView) -> T,
+    ) -> T {
         match self {
             Self::Work => with_load_delivery(app, id, LoadDelivery::Live, apply),
             Self::History => with_load_delivery(app, id, LoadDelivery::Historical, apply),

@@ -76,12 +76,20 @@ impl WorkflowNotifySender {
         );
     }
 
-    fn emit_terminal(&self, state: WorkflowRunState, elapsed_ms: u64, active_agents: u32, persist: bool) {
+    fn emit_terminal(
+        &self,
+        state: WorkflowRunState,
+        elapsed_ms: u64,
+        active_agents: u32,
+        persist: bool,
+    ) {
         let notify = self.clone();
         tokio::spawn(async move {
             match notify.store.persist_ack(&state).await {
                 Ok(()) => notify.broadcast(&state, elapsed_ms, active_agents, persist),
-                Err(error) => tracing::error!(run_id = %state.run_id, %error, "workflow terminal publication withheld until enrollment"),
+                Err(error) => {
+                    tracing::error!(run_id = %state.run_id, %error, "workflow terminal publication withheld until enrollment")
+                }
             }
         });
     }

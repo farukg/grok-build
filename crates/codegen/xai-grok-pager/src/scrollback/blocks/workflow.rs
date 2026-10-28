@@ -4,9 +4,7 @@ use ratatui::text::{Line, Span, Text};
 
 use crate::appearance::AppearanceConfig;
 use crate::scrollback::block::BlockContent;
-use crate::scrollback::types::{
-    AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode,
-};
+use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode};
 use crate::theme::Theme;
 use crate::util::format_duration;
 
@@ -57,7 +55,8 @@ impl WorkflowBlock {
 
     fn phase_trail(&self) -> Option<String> {
         (!self.phases.is_empty()).then(|| {
-            self.phases.iter()
+            self.phases
+                .iter()
                 .map(|phase| format!("{} {}", phase.title, phase_mark(&phase.state)))
                 .collect::<Vec<_>>()
                 .join(" → ")
@@ -130,15 +129,17 @@ impl BlockContent for WorkflowBlock {
                 lines: vec![line.into()],
             };
         }
-        let mut lines = super::tool::body::wrapped_lines(
-            [Line::from(spans)], ctx.content_width(), "",
-        );
+        let mut lines =
+            super::tool::body::wrapped_lines([Line::from(spans)], ctx.content_width(), "");
         let width = ctx.content_width();
         let objective = self.objective.trim();
         if !objective.is_empty() {
             lines.push(BlockLine::separator(Line::from("")));
             lines.extend(super::tool::body::wrapped_body(
-                &self.objective, theme.primary(), width, "",
+                &self.objective,
+                theme.primary(),
+                width,
+                "",
             ));
         }
         if !self.phases.is_empty() {
@@ -146,7 +147,10 @@ impl BlockContent for WorkflowBlock {
             for p in &self.phases {
                 let mark = phase_mark(&p.state);
                 lines.extend(super::tool::body::wrapped_body(
-                    &format!("{mark} {}", p.title), theme.muted(), width, "  ",
+                    &format!("{mark} {}", p.title),
+                    theme.muted(),
+                    width,
+                    "  ",
                 ));
             }
         }
@@ -288,7 +292,8 @@ mod tests {
         };
         let theme = Theme::current();
         let bullet = crate::scrollback::RenderBlock::Workflow(block.clone())
-            .bullet(&test_ctx()).expect("terminal bullet");
+            .bullet(&test_ctx())
+            .expect("terminal bullet");
         assert_eq!(bullet, AccentStyle::static_color(theme.gray_dim));
         assert!(block.accent(&test_ctx()).is_none());
     }

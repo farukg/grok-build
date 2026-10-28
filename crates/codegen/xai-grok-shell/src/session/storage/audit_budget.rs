@@ -20,7 +20,15 @@ pub struct AuditLimits {
 
 impl Default for AuditLimits {
     fn default() -> Self {
-        Self { issues: MAX_ISSUES, inventory_entries: MAX_INVENTORY_ENTRIES, response_bytes: MAX_RESPONSE_BYTES, history_items: 100_000, inventory_path_bytes: MAX_INVENTORY_PATH_BYTES, inventory_depth: MAX_INVENTORY_DEPTH, decode_bytes: MAX_DECODE_BYTES }
+        Self {
+            issues: MAX_ISSUES,
+            inventory_entries: MAX_INVENTORY_ENTRIES,
+            response_bytes: MAX_RESPONSE_BYTES,
+            history_items: 100_000,
+            inventory_path_bytes: MAX_INVENTORY_PATH_BYTES,
+            inventory_depth: MAX_INVENTORY_DEPTH,
+            decode_bytes: MAX_DECODE_BYTES,
+        }
     }
 }
 
@@ -68,26 +76,42 @@ pub(super) struct Budget {
 
 impl Budget {
     pub fn new(limits: AuditLimits, build: &str) -> Self {
-        Self { limits: limits.bounded(), observed_files: 0, observed_issues: 0, response_bytes: 2048_usize.saturating_add(build.len().saturating_mul(6)) }
+        Self {
+            limits: limits.bounded(),
+            observed_files: 0,
+            observed_issues: 0,
+            response_bytes: 2048_usize.saturating_add(build.len().saturating_mul(6)),
+        }
     }
 
     pub fn exceeded(&self, budget: BudgetKind) -> BudgetExceeded {
-        BudgetExceeded { budget, observed_files: self.observed_files, observed_issues: self.observed_issues }
+        BudgetExceeded {
+            budget,
+            observed_files: self.observed_files,
+            observed_issues: self.observed_issues,
+        }
     }
 
     pub fn response(&mut self, bytes: usize) -> Result<(), BudgetExceeded> {
         self.response_bytes = self.response_bytes.saturating_add(bytes);
-        if self.response_bytes > self.limits.response_bytes { return Err(self.exceeded(BudgetKind::ResponseBytes)); }
+        if self.response_bytes > self.limits.response_bytes {
+            return Err(self.exceeded(BudgetKind::ResponseBytes));
+        }
         Ok(())
     }
 
     pub fn issue_capacity(&self, path: &str) -> usize {
-        self.limits.response_bytes.saturating_sub(self.response_bytes) / issue_bytes(path)
+        self.limits
+            .response_bytes
+            .saturating_sub(self.response_bytes)
+            / issue_bytes(path)
     }
 
     pub fn issue(&mut self, path: &str) -> Result<(), BudgetExceeded> {
         self.observed_issues += 1;
-        if self.observed_issues > self.limits.issues { return Err(self.exceeded(BudgetKind::Issues)); }
+        if self.observed_issues > self.limits.issues {
+            return Err(self.exceeded(BudgetKind::Issues));
+        }
         self.response(issue_bytes(path))
     }
 }
@@ -107,12 +131,22 @@ pub(super) struct InventoryBudget {
 }
 
 impl InventoryBudget {
-    pub fn new(limits: AuditLimits) -> Self { Self { entries: 0, path_bytes: 0, limits } }
+    pub fn new(limits: AuditLimits) -> Self {
+        Self {
+            entries: 0,
+            path_bytes: 0,
+            limits,
+        }
+    }
 
     pub fn entry(&mut self, bytes: usize) -> Result<(), BudgetKind> {
-        if self.entries >= self.limits.inventory_entries { return Err(BudgetKind::InventoryEntries); }
+        if self.entries >= self.limits.inventory_entries {
+            return Err(BudgetKind::InventoryEntries);
+        }
         self.path_bytes = self.path_bytes.saturating_add(bytes);
-        if self.path_bytes > self.limits.inventory_path_bytes { return Err(BudgetKind::InventoryPaths); }
+        if self.path_bytes > self.limits.inventory_path_bytes {
+            return Err(BudgetKind::InventoryPaths);
+        }
         self.entries += 1;
         Ok(())
     }

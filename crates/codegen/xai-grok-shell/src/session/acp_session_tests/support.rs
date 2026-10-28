@@ -1038,14 +1038,27 @@ pub(crate) struct CompletionWakeReceiverFixture {
 pub(crate) fn spawn_completion_receiver(
     actor: Arc<SessionActor>,
     events: mpsc::UnboundedReceiver<SessionEvent>,
-) -> (mpsc::UnboundedSender<SessionCommand>, tokio_util::task::AbortOnDropHandle<()>) {
+) -> (
+    mpsc::UnboundedSender<SessionCommand>,
+    tokio_util::task::AbortOnDropHandle<()>,
+) {
     let (sender, commands) = mpsc::unbounded_channel();
     let (chat_sender, chat_events) = mpsc::unbounded_channel();
     let task = tokio::task::spawn_local(async move {
         let _chat_sender = chat_sender;
-        super::run_session(actor, commands, chat_events, events, None,
-            Arc::new(parking_lot::Mutex::new(xai_grok_workspace::file_system::CodebaseIndexManager::new())),
-            std::path::PathBuf::from("/tmp"), crate::session::fs_watch::FsWatchCapabilities::none()).await;
+        super::run_session(
+            actor,
+            commands,
+            chat_events,
+            events,
+            None,
+            Arc::new(parking_lot::Mutex::new(
+                xai_grok_workspace::file_system::CodebaseIndexManager::new(),
+            )),
+            std::path::PathBuf::from("/tmp"),
+            crate::session::fs_watch::FsWatchCapabilities::none(),
+        )
+        .await;
     });
     (sender, tokio_util::task::AbortOnDropHandle::new(task))
 }
@@ -1058,7 +1071,12 @@ pub(crate) async fn completion_wake_receiver_fixture() -> CompletionWakeReceiver
     actor.state.lock().await.running_task = Some(running_task_stub("caller-busy"));
     let actor = Arc::new(actor);
     let (sender, task) = spawn_completion_receiver(actor.clone(), event_rx);
-    CompletionWakeReceiverFixture { actor, sender, writes, task }
+    CompletionWakeReceiverFixture {
+        actor,
+        sender,
+        writes,
+        task,
+    }
 }
 pub(crate) fn bash_completed_notification(task_id: &str) -> PendingNotification {
     PendingNotification {

@@ -7,7 +7,9 @@ use xai_grok_tools::computer::local::terminal::LocalTerminalBackend;
 use xai_grok_tools::computer::types::{TerminalBackend, TerminalRunRequest};
 
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(15), future).await.expect("terminal actor restart rendezvous timed out")
+    tokio::time::timeout(std::time::Duration::from_secs(15), future)
+        .await
+        .expect("terminal actor restart rendezvous timed out")
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -103,12 +105,26 @@ fn assert_original_terminal_payload(
     output: &str,
     output_file: &std::path::Path,
 ) {
-    use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
-    let task_kind = match kind { TaskKind::Bash => CompletionTaskKind::Bash, TaskKind::Monitor => CompletionTaskKind::Monitor };
-    let expected: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: "test-actor".into(), task_id: task_id.into(), task_kind }.into();
+    use xai_chat_state::completion::{
+        CompletionIdentity, CompletionTaskKind, TerminalCompletionId,
+    };
+    let task_kind = match kind {
+        TaskKind::Bash => CompletionTaskKind::Bash,
+        TaskKind::Monitor => CompletionTaskKind::Monitor,
+    };
+    let expected: CompletionIdentity = TerminalCompletionId::Task {
+        owner_session_id: "test-actor".into(),
+        task_id: task_id.into(),
+        task_kind,
+    }
+    .into();
     assert_eq!(id, &expected);
     assert!(matches!(payload.policy, CompletionEventPolicy::Automatic));
-    let crate::session::completion_delivery::CompletionPayloadSource::Task(snapshot) = &payload.source else { panic!("real producer payload must retain the original task snapshot") };
+    let crate::session::completion_delivery::CompletionPayloadSource::Task(snapshot) =
+        &payload.source
+    else {
+        panic!("real producer payload must retain the original task snapshot")
+    };
     assert_eq!(snapshot.task_id, task_id);
     assert_eq!(snapshot.owner_session_id.as_deref(), Some("test-actor"));
     assert_eq!(snapshot.kind, kind);
@@ -120,11 +136,14 @@ fn assert_original_terminal_payload(
     assert_eq!(snapshot.exit_code, Some(0));
     assert_eq!(snapshot.signal, None);
     assert!(snapshot.completed && snapshot.end_time.is_some() && snapshot.is_backgrounded);
-    assert!(!snapshot.block_waited && !snapshot.explicitly_killed && !snapshot.kill_result_delivered);
+    assert!(
+        !snapshot.block_waited && !snapshot.explicitly_killed && !snapshot.kill_result_delivered
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn actual_goal_active_bash_and_monitor_bridge_commits_policy_before_publication_and_restart() {
+async fn actual_goal_active_bash_and_monitor_bridge_commits_policy_before_publication_and_restart()
+{
     tokio::task::LocalSet::new().run_until(async {
         for kind in [TaskKind::Bash, TaskKind::Monitor] {
             let directory = tempfile::tempdir().unwrap();

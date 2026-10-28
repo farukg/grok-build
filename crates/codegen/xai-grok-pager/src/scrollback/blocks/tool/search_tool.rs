@@ -118,7 +118,8 @@ impl SearchToolCallBlock {
                 let s = if self.result_count == 1 { "" } else { "s" };
                 let suffix = format!(" ({} result{s})", self.result_count);
 
-                let suffix_fits = unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix.len() < w;
+                let suffix_fits =
+                    unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix.len() < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
 
                 let query_budget = w

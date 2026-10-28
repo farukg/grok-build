@@ -1,88 +1,283 @@
 use super::*;
-use crate::session::completion_delivery::{CompletionEventPolicy, CompletionPayloadSource, CompletionSuppression};
+use crate::session::completion_delivery::{
+    CompletionEventPolicy, CompletionPayloadSource, CompletionSuppression,
+};
 use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
 use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
 use xai_grok_tools::computer::types::{TaskKind, TaskSnapshot};
 
-fn terminal(info: &crate::session::SessionInfo, task_id: &str, kind: TaskKind, text: &str) -> TaskSnapshot {
+fn terminal(
+    info: &crate::session::SessionInfo,
+    task_id: &str,
+    kind: TaskKind,
+    text: &str,
+) -> TaskSnapshot {
     TaskSnapshot {
-        task_id: task_id.into(), command: "finished".into(), display_command: None, cwd: "/tmp".into(),
-        start_time: std::time::SystemTime::UNIX_EPOCH, end_time: Some(std::time::SystemTime::UNIX_EPOCH),
-        output: text.into(), output_file: Default::default(), truncated: false, exit_code: Some(0), signal: None,
-        completed: true, kind, block_waited: false, explicitly_killed: false, kill_result_delivered: false,
-        owner_session_id: Some(info.id.to_string()), description: None, is_backgrounded: true, output_total_bytes: text.len(),
+        task_id: task_id.into(),
+        command: "finished".into(),
+        display_command: None,
+        cwd: "/tmp".into(),
+        start_time: std::time::SystemTime::UNIX_EPOCH,
+        end_time: Some(std::time::SystemTime::UNIX_EPOCH),
+        output: text.into(),
+        output_file: Default::default(),
+        truncated: false,
+        exit_code: Some(0),
+        signal: None,
+        completed: true,
+        kind,
+        block_waited: false,
+        explicitly_killed: false,
+        kill_result_delivered: false,
+        owner_session_id: Some(info.id.to_string()),
+        description: None,
+        is_backgrounded: true,
+        output_total_bytes: text.len(),
     }
 }
 
 fn row(task_id: &str, text: &str, source: NotificationSource) -> PendingNotification {
-    PendingNotification { prompt_id: task_id.into(), prompt_blocks: vec![acp::ContentBlock::from(text)], priority: NotificationPriority::Later, source }
+    PendingNotification {
+        prompt_id: task_id.into(),
+        prompt_blocks: vec![acp::ContentBlock::from(text)],
+        priority: NotificationPriority::Later,
+        source,
+    }
 }
 
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(10), future).await.expect("notification batch rendezvous timed out")
+    tokio::time::timeout(std::time::Duration::from_secs(10), future)
+        .await
+        .expect("notification batch rendezvous timed out")
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn actual_drain_projection_preserves_unrelated_observations_with_exact_terminal_receipts() {
-    tokio::task::LocalSet::new().run_until(async {
-        for suppress in [false, true] {
-            let directory = tempfile::tempdir().unwrap();
-            let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
-            let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
-            storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
-            let eligible: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: info.id.to_string(), task_id: "eligible-monitor".into(), task_kind: CompletionTaskKind::Monitor }.into();
-            storage.enroll_terminal_completion(&info,
-                CompletionPayloadSource::Task(Box::new(terminal(&info, "eligible-monitor", TaskKind::Monitor, "eligible terminal evidence"))),
-                "eligible terminal evidence".into(), CompletionEventPolicy::Automatic).await.unwrap();
-            let suppressed: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: info.id.to_string(), task_id: "silent-bash".into(), task_kind: CompletionTaskKind::Bash }.into();
-            if suppress {
-                storage.enroll_terminal_completion(&info,
-                    CompletionPayloadSource::Task(Box::new(terminal(&info, "silent-bash", TaskKind::Bash, "forbidden terminal evidence"))),
-                    "forbidden terminal evidence".into(), CompletionEventPolicy::Automatic).await.unwrap();
-                storage.suppress_terminal_completions(&info, vec![suppressed.clone()], CompletionSuppression::GoalNotificationPolicy).await.unwrap();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for suppress in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let info = crate::session::SessionInfo {
+                    id: acp::SessionId::new("test-actor"),
+                    cwd: "/tmp".into(),
+                };
+                let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+                    directory.path().to_path_buf(),
+                ));
+                storage
+                    .init_session(&info, acp::ModelId::new("test"))
+                    .await
+                    .unwrap();
+                let eligible: CompletionIdentity = TerminalCompletionId::Task {
+                    owner_session_id: info.id.to_string(),
+                    task_id: "eligible-monitor".into(),
+                    task_kind: CompletionTaskKind::Monitor,
+                }
+                .into();
+                storage
+                    .enroll_terminal_completion(
+                        &info,
+                        CompletionPayloadSource::Task(Box::new(terminal(
+                            &info,
+                            "eligible-monitor",
+                            TaskKind::Monitor,
+                            "eligible terminal evidence",
+                        ))),
+                        "eligible terminal evidence".into(),
+                        CompletionEventPolicy::Automatic,
+                    )
+                    .await
+                    .unwrap();
+                let suppressed: CompletionIdentity = TerminalCompletionId::Task {
+                    owner_session_id: info.id.to_string(),
+                    task_id: "silent-bash".into(),
+                    task_kind: CompletionTaskKind::Bash,
+                }
+                .into();
+                if suppress {
+                    storage
+                        .enroll_terminal_completion(
+                            &info,
+                            CompletionPayloadSource::Task(Box::new(terminal(
+                                &info,
+                                "silent-bash",
+                                TaskKind::Bash,
+                                "forbidden terminal evidence",
+                            ))),
+                            "forbidden terminal evidence".into(),
+                            CompletionEventPolicy::Automatic,
+                        )
+                        .await
+                        .unwrap();
+                    storage
+                        .suppress_terminal_completions(
+                            &info,
+                            vec![suppressed.clone()],
+                            CompletionSuppression::GoalNotificationPolicy,
+                        )
+                        .await
+                        .unwrap();
+                }
+                let persistence = crate::session::persistence::durable_update_tests::test_actor(
+                    info.clone(),
+                    storage.clone(),
+                );
+                let _persistence = tokio_util::task::AbortOnDropHandle::new(persistence.task);
+                let (gateway, gateway_rx) = mpsc::unbounded_channel();
+                super::super::super::support::drain_gateway(gateway_rx);
+                let (actor, _) =
+                    super::super::super::support::create_test_actor_with_chat_persistence(
+                        0,
+                        256_000,
+                        85,
+                        gateway,
+                        persistence.handle.tx.clone(),
+                        Box::new(
+                            crate::session::chat_persistence::ChannelChatPersistence::new(
+                                persistence.handle.tx.clone(),
+                            ),
+                        ),
+                    )
+                    .await;
+                let mut rows = vec![
+                    row(
+                        "eligible-monitor",
+                        "eligible terminal evidence",
+                        NotificationSource::MonitorCompleted {
+                            task_id: "eligible-monitor".into(),
+                        },
+                    ),
+                    row(
+                        "independent-monitor",
+                        "independent transient evidence",
+                        NotificationSource::MonitorEvent {
+                            task_id: "independent-monitor".into(),
+                        },
+                    ),
+                    row(
+                        "eligible-monitor",
+                        "superseded transient evidence",
+                        NotificationSource::MonitorEvent {
+                            task_id: "eligible-monitor".into(),
+                        },
+                    ),
+                ];
+                if suppress {
+                    rows.insert(
+                        0,
+                        row(
+                            "silent-bash",
+                            "forbidden terminal evidence",
+                            NotificationSource::BashTaskCompleted {
+                                task_id: "silent-bash".into(),
+                            },
+                        ),
+                    );
+                }
+                let input = {
+                    let mut state = actor.state.lock().await;
+                    assert!(actor.queue_notification_batch(&mut state, rows));
+                    state.pending_inputs.pop_front().unwrap()
+                };
+                actor.state.lock().await.running_task = Some(
+                    super::super::super::support::running_task_stub("batch-caller"),
+                );
+                let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
+                assert!(matches!(
+                    bounded(actor.project_terminal_input(
+                        &input.input_origin,
+                        "batch-caller",
+                        text.clone()
+                    ))
+                    .await
+                    .unwrap(),
+                    TerminalInputProjection::Applied { .. }
+                ));
+                assert!(matches!(
+                    bounded(actor.project_terminal_input(
+                        &input.input_origin,
+                        "batch-caller",
+                        text
+                    ))
+                    .await
+                    .unwrap(),
+                    TerminalInputProjection::AlreadyPresent { .. }
+                ));
+                let history = actor
+                    .chat_state_handle
+                    .snapshot()
+                    .await
+                    .unwrap()
+                    .conversation;
+                assert_eq!(
+                    history
+                        .iter()
+                        .filter(|item| item.text_content().contains("eligible terminal evidence"))
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    history
+                        .iter()
+                        .filter(|item| item
+                            .text_content()
+                            .contains("independent transient evidence"))
+                        .count(),
+                    1
+                );
+                assert!(history.iter().all(|item| {
+                    !item.text_content().contains("forbidden terminal evidence")
+                        && !item
+                            .text_content()
+                            .contains("superseded transient evidence")
+                }));
+                assert_eq!(history.len(), 1);
+                assert_eq!(
+                    history[0]
+                        .text_content()
+                        .matches("eligible terminal evidence")
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    history[0]
+                        .text_content()
+                        .matches("independent transient evidence")
+                        .count(),
+                    1
+                );
+                let reopened =
+                    JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
+                let recovered = reopened
+                    .recover_subagent_completions(&info)
+                    .await
+                    .unwrap()
+                    .completion_delivery;
+                assert_eq!(
+                    recovered
+                        .receipts
+                        .iter()
+                        .map(|receipt| receipt.completion.clone())
+                        .collect::<Vec<_>>(),
+                    vec![eligible]
+                );
+                assert!(
+                    recovered
+                        .receipts
+                        .iter()
+                        .all(|receipt| receipt.completion != suppressed)
+                );
             }
-            let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
-            let _persistence = tokio_util::task::AbortOnDropHandle::new(persistence.task);
-            let (gateway, gateway_rx) = mpsc::unbounded_channel();
-            super::super::super::support::drain_gateway(gateway_rx);
-            let (actor, _) = super::super::super::support::create_test_actor_with_chat_persistence(0, 256_000, 85,
-                gateway, persistence.handle.tx.clone(), Box::new(crate::session::chat_persistence::ChannelChatPersistence::new(persistence.handle.tx.clone()))).await;
-            let mut rows = vec![
-                row("eligible-monitor", "eligible terminal evidence", NotificationSource::MonitorCompleted { task_id: "eligible-monitor".into() }),
-                row("independent-monitor", "independent transient evidence", NotificationSource::MonitorEvent { task_id: "independent-monitor".into() }),
-                row("eligible-monitor", "superseded transient evidence", NotificationSource::MonitorEvent { task_id: "eligible-monitor".into() }),
-            ];
-            if suppress {
-                rows.insert(0, row("silent-bash", "forbidden terminal evidence", NotificationSource::BashTaskCompleted { task_id: "silent-bash".into() }));
-            }
-            let input = {
-                let mut state = actor.state.lock().await;
-                assert!(actor.queue_notification_batch(&mut state, rows));
-                state.pending_inputs.pop_front().unwrap()
-            };
-            actor.state.lock().await.running_task = Some(super::super::super::support::running_task_stub("batch-caller"));
-            let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
-            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "batch-caller", text.clone())).await.unwrap(), TerminalInputProjection::Applied { .. }));
-            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "batch-caller", text)).await.unwrap(), TerminalInputProjection::AlreadyPresent { .. }));
-            let history = actor.chat_state_handle.snapshot().await.unwrap().conversation;
-            assert_eq!(history.iter().filter(|item| item.text_content().contains("eligible terminal evidence")).count(), 1);
-            assert_eq!(history.iter().filter(|item| item.text_content().contains("independent transient evidence")).count(), 1);
-            assert!(history.iter().all(|item| !item.text_content().contains("forbidden terminal evidence") && !item.text_content().contains("superseded transient evidence")));
-            assert_eq!(history.len(), 1);
-            assert_eq!(history[0].text_content().matches("eligible terminal evidence").count(), 1);
-            assert_eq!(history[0].text_content().matches("independent transient evidence").count(), 1);
-            let reopened = JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
-            let recovered = reopened.recover_subagent_completions(&info).await.unwrap().completion_delivery;
-            assert_eq!(recovered.receipts.iter().map(|receipt| receipt.completion.clone()).collect::<Vec<_>>(), vec![eligible]);
-            assert!(recovered.receipts.iter().all(|receipt| receipt.completion != suppressed));
-        }
-    }).await;
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn bridge_enrollment_preserves_selected_wait_then_projects_an_ordinary_automatic_peer() {
-    use crate::tools::notification_bridge::{spawn_notification_bridge, tests::make_test_config_full_raw};
     use crate::session::completion_delivery::CompletionObligation;
+    use crate::tools::notification_bridge::{
+        spawn_notification_bridge, tests::make_test_config_full_raw,
+    };
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
         let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
@@ -228,45 +423,152 @@ async fn preexisting_tool_receipt_does_not_consume_a_new_unrelated_observation()
 
 #[tokio::test(flavor = "current_thread")]
 async fn event_only_and_all_suppressed_batches_have_their_own_acknowledged_identity() {
-    tokio::task::LocalSet::new().run_until(async {
-        for suppress in [false, true] {
-            let directory = tempfile::tempdir().unwrap();
-            let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
-            let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
-            storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
-            let mut rows = vec![row("independent", "event-only literal evidence", NotificationSource::MonitorEvent { task_id: "independent".into() })];
-            if suppress {
-                let id: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: "test-actor".into(), task_id: "silent-monitor".into(), task_kind: CompletionTaskKind::Monitor }.into();
-                storage.enroll_terminal_completion(&info, CompletionPayloadSource::Task(Box::new(terminal(&info, "silent-monitor", TaskKind::Monitor, "silent original output"))), "silent original text".into(), CompletionEventPolicy::Automatic).await.unwrap();
-                storage.suppress_terminal_completions(&info, vec![id], CompletionSuppression::GoalNotificationPolicy).await.unwrap();
-                rows.extend([
-                    row("silent-monitor", "forbidden silent original text", NotificationSource::MonitorCompleted { task_id: "silent-monitor".into() }),
-                    row("silent-monitor", "forbidden own observation", NotificationSource::MonitorEvent { task_id: "silent-monitor".into() }),
-                ]);
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for suppress in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let info = crate::session::SessionInfo {
+                    id: acp::SessionId::new("test-actor"),
+                    cwd: "/tmp".into(),
+                };
+                let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+                    directory.path().to_path_buf(),
+                ));
+                storage
+                    .init_session(&info, acp::ModelId::new("test"))
+                    .await
+                    .unwrap();
+                let mut rows = vec![row(
+                    "independent",
+                    "event-only literal evidence",
+                    NotificationSource::MonitorEvent {
+                        task_id: "independent".into(),
+                    },
+                )];
+                if suppress {
+                    let id: CompletionIdentity = TerminalCompletionId::Task {
+                        owner_session_id: "test-actor".into(),
+                        task_id: "silent-monitor".into(),
+                        task_kind: CompletionTaskKind::Monitor,
+                    }
+                    .into();
+                    storage
+                        .enroll_terminal_completion(
+                            &info,
+                            CompletionPayloadSource::Task(Box::new(terminal(
+                                &info,
+                                "silent-monitor",
+                                TaskKind::Monitor,
+                                "silent original output",
+                            ))),
+                            "silent original text".into(),
+                            CompletionEventPolicy::Automatic,
+                        )
+                        .await
+                        .unwrap();
+                    storage
+                        .suppress_terminal_completions(
+                            &info,
+                            vec![id],
+                            CompletionSuppression::GoalNotificationPolicy,
+                        )
+                        .await
+                        .unwrap();
+                    rows.extend([
+                        row(
+                            "silent-monitor",
+                            "forbidden silent original text",
+                            NotificationSource::MonitorCompleted {
+                                task_id: "silent-monitor".into(),
+                            },
+                        ),
+                        row(
+                            "silent-monitor",
+                            "forbidden own observation",
+                            NotificationSource::MonitorEvent {
+                                task_id: "silent-monitor".into(),
+                            },
+                        ),
+                    ]);
+                }
+                let persistence = crate::session::persistence::durable_update_tests::test_actor(
+                    info.clone(),
+                    storage.clone(),
+                );
+                let _persistence = tokio_util::task::AbortOnDropHandle::new(persistence.task);
+                let (gateway, gateway_rx) = mpsc::unbounded_channel();
+                super::super::super::support::drain_gateway(gateway_rx);
+                let (actor, _) =
+                    super::super::super::support::create_test_actor_with_chat_persistence(
+                        0,
+                        256_000,
+                        85,
+                        gateway,
+                        persistence.handle.tx.clone(),
+                        Box::new(
+                            crate::session::chat_persistence::ChannelChatPersistence::new(
+                                persistence.handle.tx.clone(),
+                            ),
+                        ),
+                    )
+                    .await;
+                let input = {
+                    let mut state = actor.state.lock().await;
+                    state.running_task = Some(super::super::super::support::running_task_stub(
+                        "event-only-caller",
+                    ));
+                    assert!(actor.queue_notification_batch(&mut state, rows));
+                    state.pending_inputs.pop_front().unwrap()
+                };
+                let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
+                assert!(matches!(
+                    bounded(actor.project_terminal_input(
+                        &input.input_origin,
+                        "event-only-caller",
+                        text.clone()
+                    ))
+                    .await
+                    .unwrap(),
+                    TerminalInputProjection::Applied { .. }
+                ));
+                assert!(matches!(
+                    bounded(actor.project_terminal_input(
+                        &input.input_origin,
+                        "event-only-caller",
+                        text
+                    ))
+                    .await
+                    .unwrap(),
+                    TerminalInputProjection::AlreadyPresent { .. }
+                ));
+                let history = actor
+                    .chat_state_handle
+                    .snapshot()
+                    .await
+                    .unwrap()
+                    .conversation;
+                assert_eq!(history.len(), 1);
+                assert_eq!(
+                    history[0]
+                        .text_content()
+                        .matches("event-only literal evidence")
+                        .count(),
+                    1
+                );
+                assert!(!history[0].text_content().contains("forbidden"));
+                let reopened =
+                    JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
+                assert!(
+                    reopened
+                        .read_completion_state(&info)
+                        .await
+                        .unwrap()
+                        .receipts
+                        .is_empty()
+                );
             }
-            let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
-            let _persistence = tokio_util::task::AbortOnDropHandle::new(persistence.task);
-            let (gateway, gateway_rx) = mpsc::unbounded_channel();
-            super::super::super::support::drain_gateway(gateway_rx);
-            let (actor, _) = super::super::super::support::create_test_actor_with_chat_persistence(0, 256_000, 85,
-                gateway, persistence.handle.tx.clone(), Box::new(crate::session::chat_persistence::ChannelChatPersistence::new(persistence.handle.tx.clone()))).await;
-            let input = {
-                let mut state = actor.state.lock().await;
-                state.running_task = Some(super::super::super::support::running_task_stub("event-only-caller"));
-                assert!(actor.queue_notification_batch(&mut state, rows));
-                state.pending_inputs.pop_front().unwrap()
-            };
-            let text = SessionActor::queue_text_from_blocks(&input.prompt_blocks);
-            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "event-only-caller", text.clone())).await.unwrap(), TerminalInputProjection::Applied { .. }));
-            assert!(matches!(bounded(actor.project_terminal_input(&input.input_origin, "event-only-caller", text)).await.unwrap(), TerminalInputProjection::AlreadyPresent { .. }));
-            let history = actor.chat_state_handle.snapshot().await.unwrap().conversation;
-            assert_eq!(history.len(), 1);
-            assert_eq!(history[0].text_content().matches("event-only literal evidence").count(), 1);
-            assert!(!history[0].text_content().contains("forbidden"));
-            let reopened = JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
-            assert!(reopened.read_completion_state(&info).await.unwrap().receipts.is_empty());
-        }
-    }).await;
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

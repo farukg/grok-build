@@ -122,12 +122,20 @@ impl OtherToolCallBlock {
                     .iter()
                     .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                     .sum();
-                let summary = if spans.is_empty() { self.summary.clone() } else { format!("  {}", self.summary) };
+                let summary = if spans.is_empty() {
+                    self.summary.clone()
+                } else {
+                    format!("  {}", self.summary)
+                };
                 if used + summary.len() <= w {
                     spans.push(Span::styled(summary, theme.muted()));
                 }
             } else {
-                let summary = if spans.is_empty() { self.summary.clone() } else { format!("  {}", self.summary) };
+                let summary = if spans.is_empty() {
+                    self.summary.clone()
+                } else {
+                    format!("  {}", self.summary)
+                };
                 spans.push(Span::styled(summary, theme.muted()));
             }
         }
@@ -318,8 +326,7 @@ impl BlockContent for OtherToolCallBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        self.output.as_deref().is_some_and(|o| !o.trim().is_empty())
-            || self.error.is_some()
+        self.output.as_deref().is_some_and(|o| !o.trim().is_empty()) || self.error.is_some()
     }
 
     fn default_display_mode(&self) -> DisplayMode {

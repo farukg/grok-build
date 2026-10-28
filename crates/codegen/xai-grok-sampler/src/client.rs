@@ -31,8 +31,7 @@ use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
     ConversationResponse, CreateResponseWrapper, DEFAULT_EXACT_REPETITION_MIN_TOKENS,
     DOOM_LOOP_CHECK_HEADER, EXACT_REPETITION_CHECK_HEADER, MessagesRequestWrapper,
-    ResponseModelMetadata, Result, SamplingError, SentCredential,
-    is_check_event, messages, rs,
+    ResponseModelMetadata, Result, SamplingError, SentCredential, is_check_event, messages, rs,
 };
 use xai_grok_sampling_types::{
     FallbackCount, RouteCandidate, RouteIdentity, RouteModel, RouteProfile, RouteProvider,
@@ -1055,7 +1054,13 @@ impl SamplingClient {
             sent_bearer,
         } = self.post(self.endpoint("chat/completions"));
         let built_request = self
-            .build_json_request(grok_headers.apply(builder), crate::request_body::chat_body(&payload, crate::request_body::BodyMode::NonStreaming)?)
+            .build_json_request(
+                grok_headers.apply(builder),
+                crate::request_body::chat_body(
+                    &payload,
+                    crate::request_body::BodyMode::NonStreaming,
+                )?,
+            )
             .await?;
         let response = self.send(built_request).await?;
 
@@ -1116,7 +1121,11 @@ impl SamplingClient {
             .await
             .inspect(|response| {
                 if let Some(capture) = &self.capture {
-                    capture.emit(crate::request_capture::LocalRequestEvidence::ResponseHeaders { status: response.status().as_u16() });
+                    capture.emit(
+                        crate::request_capture::LocalRequestEvidence::ResponseHeaders {
+                            status: response.status().as_u16(),
+                        },
+                    );
                 }
             })
             .inspect_err(|e| tracing::debug!("HTTP request failed: {}", e))
@@ -1141,7 +1150,11 @@ impl SamplingClient {
         })?;
         span_timing.record_response_headers();
         if let Some(capture) = &self.capture {
-            capture.emit(crate::request_capture::LocalRequestEvidence::ResponseHeaders { status: response.status().as_u16() });
+            capture.emit(
+                crate::request_capture::LocalRequestEvidence::ResponseHeaders {
+                    status: response.status().as_u16(),
+                },
+            );
         }
         Ok(response)
     }
@@ -1205,7 +1218,10 @@ impl SamplingClient {
             .apply(builder)
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
         let built_request = self
-            .build_json_request(http_request, crate::request_body::chat_body(&payload, crate::request_body::BodyMode::Streaming)?)
+            .build_json_request(
+                http_request,
+                crate::request_body::chat_body(&payload, crate::request_body::BodyMode::Streaming)?,
+            )
             .await?;
 
         tracing::debug!(
@@ -1342,7 +1358,11 @@ impl SamplingClient {
     ) -> Result<rs::Response> {
         crate::request_body::apply_response_defaults(&self.defaults, &mut request)?;
 
-        let request_body = crate::request_body::responses_body(&self.defaults, &mut request, crate::request_body::BodyMode::NonStreaming)?;
+        let request_body = crate::request_body::responses_body(
+            &self.defaults,
+            &mut request,
+            crate::request_body::BodyMode::NonStreaming,
+        )?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
         let x_grok_req_id = request.x_grok_req_id.as_deref().unwrap_or_default();
@@ -1481,7 +1501,11 @@ impl SamplingClient {
 
         request.inner.stream = Some(true);
 
-        let request_body = crate::request_body::responses_body(&self.defaults, &mut request, crate::request_body::BodyMode::Streaming)?;
+        let request_body = crate::request_body::responses_body(
+            &self.defaults,
+            &mut request,
+            crate::request_body::BodyMode::Streaming,
+        )?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
         let x_grok_req_id = request.x_grok_req_id.as_deref().unwrap_or_default();
@@ -1495,7 +1519,6 @@ impl SamplingClient {
             model_id = model_id.as_str(),
             "Sending responses API stream request"
         );
-
 
         let grok_headers = GrokRequestHeaders {
             capabilities_opt_in: self.defaults.gateway_capabilities_header,
@@ -1709,7 +1732,10 @@ impl SamplingClient {
             sent_bearer,
         } = self.post(self.endpoint("messages"));
         let built_request = self
-            .build_json_request(grok_headers.apply(builder), crate::request_body::json_body(&request.inner)?)
+            .build_json_request(
+                grok_headers.apply(builder),
+                crate::request_body::json_body(&request.inner)?,
+            )
             .await?;
         let response = self.send(built_request).await?;
 
@@ -1839,7 +1865,10 @@ impl SamplingClient {
             .apply(builder)
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
         let built_request = self
-            .build_json_request(http_request, crate::request_body::json_body(&request.inner)?)
+            .build_json_request(
+                http_request,
+                crate::request_body::json_body(&request.inner)?,
+            )
             .await?;
 
         tracing::debug!(
@@ -2020,7 +2049,10 @@ impl SamplingClient {
     )> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::responses_request(request, crate::request_body::BodyMode::Streaming);
+        let wrapper = crate::request_body::responses_request(
+            request,
+            crate::request_body::BodyMode::Streaming,
+        );
 
         self.create_response_stream(wrapper).await
     }
@@ -2032,7 +2064,10 @@ impl SamplingClient {
     ) -> Result<rs::Response> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::responses_request(request, crate::request_body::BodyMode::NonStreaming);
+        let wrapper = crate::request_body::responses_request(
+            request,
+            crate::request_body::BodyMode::NonStreaming,
+        );
 
         self.create_response(wrapper).await
     }
@@ -2047,7 +2082,10 @@ impl SamplingClient {
     )> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::messages_request(request, crate::request_body::BodyMode::Streaming);
+        let wrapper = crate::request_body::messages_request(
+            request,
+            crate::request_body::BodyMode::Streaming,
+        );
 
         self.create_message_stream(wrapper).await
     }
@@ -2059,7 +2097,10 @@ impl SamplingClient {
     ) -> Result<messages::MessagesResponse> {
         crate::request_body::apply_conversation_defaults(&self.defaults, &mut request)?;
 
-        let wrapper = crate::request_body::messages_request(request, crate::request_body::BodyMode::NonStreaming);
+        let wrapper = crate::request_body::messages_request(
+            request,
+            crate::request_body::BodyMode::NonStreaming,
+        );
 
         self.create_message(wrapper).await
     }
@@ -2754,7 +2795,10 @@ mod tests {
     #[test]
     fn extract_retry_after_preserves_u64_and_rejects_malformed_seconds() {
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(reqwest::header::RETRY_AFTER, u64::MAX.to_string().parse().unwrap());
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            u64::MAX.to_string().parse().unwrap(),
+        );
         assert_eq!(extract_retry_after(&headers), Some(u64::MAX));
         for malformed in ["-1", "1.5", "18446744073709551616", "invalid"] {
             headers.insert(reqwest::header::RETRY_AFTER, malformed.parse().unwrap());

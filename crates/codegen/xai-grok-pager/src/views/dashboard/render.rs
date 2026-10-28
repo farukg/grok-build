@@ -64,8 +64,8 @@ pub(crate) fn render_dashboard(
 ) -> Option<(u16, u16)> {
     // The All lane lists workspace-store root rows next to children, so the v2 row semantics apply
     // there too; the Subagents lane (live/roster children only) stays on the v1 surface.
-    state.workspace_membership_mode = workspace_dashboard_enabled
-        && state.session_lane() != super::row::SessionLane::Subagents;
+    state.workspace_membership_mode =
+        workspace_dashboard_enabled && state.session_lane() != super::row::SessionLane::Subagents;
     // Cache whether a pinned (non-dismissible) promo CTA is live so the key handler can steal Ctrl+O for it; the dispatch re-resolves the gate
     state.pinned_upgrade_cta_live = upgrade_cta.is_some_and(|cta| cta.pinned);
     state.clear_chrome_hit_areas();

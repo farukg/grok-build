@@ -3,8 +3,8 @@ use crate::scrollback::block::{MessageKind, RenderBlock};
 use crate::scrollback::types::{AccentStyle, BlockContext, ToolCompletion};
 use crate::theme::{Theme, color_support};
 
-use super::{BgTaskKind, SessionEvent, SubagentBlockKind, WorkflowBlockStatus};
 use super::tool::{SentMessageDelivery, SentMessagePresentation, ToolCallBlock};
+use super::{BgTaskKind, SessionEvent, SubagentBlockKind, WorkflowBlockStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageStatus {
@@ -55,23 +55,47 @@ impl MessageSymbol {
     fn configured_glyph(&self, ctx: &BlockContext) -> Option<&'static str> {
         match self.kind {
             MessageKind::UserPrompt => Some(self.glyph),
-            MessageKind::AgentMessage | MessageKind::Execute | MessageKind::Read
-            | MessageKind::Edit | MessageKind::ListDir | MessageKind::Search
-            | MessageKind::WebFetch | MessageKind::WebSearch | MessageKind::IntegrationSearch
-            | MessageKind::UseTool | MessageKind::MemorySearch | MessageKind::SentMessage
-            | MessageKind::Skill | MessageKind::OtherTool | MessageKind::Thinking | MessageKind::System
-            | MessageKind::SessionEvent | MessageKind::BgTask | MessageKind::Subagent
-            | MessageKind::Workflow | MessageKind::Btw | MessageKind::ContextInfo
-            | MessageKind::MemoryCapture | MessageKind::Injected | MessageKind::InjectedOther
-            | MessageKind::InjectedInstructions | MessageKind::InjectedContinuation
-            | MessageKind::InjectedNotification | MessageKind::InjectedMemory
-            | MessageKind::InjectedSummary | MessageKind::InjectedEnvironment
-            | MessageKind::InjectedConversation | MessageKind::Stub => match ctx.appearance.scrollback.blocks.tool.bullet {
+            MessageKind::AgentMessage
+            | MessageKind::Execute
+            | MessageKind::Read
+            | MessageKind::Edit
+            | MessageKind::ListDir
+            | MessageKind::Search
+            | MessageKind::WebFetch
+            | MessageKind::WebSearch
+            | MessageKind::IntegrationSearch
+            | MessageKind::UseTool
+            | MessageKind::MemorySearch
+            | MessageKind::SentMessage
+            | MessageKind::Skill
+            | MessageKind::OtherTool
+            | MessageKind::Thinking
+            | MessageKind::System
+            | MessageKind::SessionEvent
+            | MessageKind::BgTask
+            | MessageKind::Subagent
+            | MessageKind::Workflow
+            | MessageKind::Btw
+            | MessageKind::ContextInfo
+            | MessageKind::MemoryCapture
+            | MessageKind::Injected
+            | MessageKind::InjectedOther
+            | MessageKind::InjectedInstructions
+            | MessageKind::InjectedContinuation
+            | MessageKind::InjectedNotification
+            | MessageKind::InjectedMemory
+            | MessageKind::InjectedSummary
+            | MessageKind::InjectedEnvironment
+            | MessageKind::InjectedConversation
+            | MessageKind::Stub => match ctx.appearance.scrollback.blocks.tool.bullet {
                 ToolBullet::Category => Some(self.glyph),
-                ToolBullet::None | ToolBullet::Dot | ToolBullet::SmallCircle | ToolBullet::Circle
-                | ToolBullet::SmallTriangle | ToolBullet::Triangle | ToolBullet::Diamond => {
-                    ctx.appearance.scrollback.blocks.tool.bullet.char()
-                }
+                ToolBullet::None
+                | ToolBullet::Dot
+                | ToolBullet::SmallCircle
+                | ToolBullet::Circle
+                | ToolBullet::SmallTriangle
+                | ToolBullet::Triangle
+                | ToolBullet::Diamond => ctx.appearance.scrollback.blocks.tool.bullet.char(),
             },
         }
     }
@@ -89,10 +113,18 @@ impl MessageSymbol {
         let prefix = match (color_support::get(), self.status.label()) {
             (color_support::ColorLevel::None, Some(label)) => format!("{glyph} [{label}] "),
             (color_support::ColorLevel::None, None)
-            | (color_support::ColorLevel::Basic | color_support::ColorLevel::Ansi256
-                | color_support::ColorLevel::TrueColor, Some(_))
-            | (color_support::ColorLevel::Basic | color_support::ColorLevel::Ansi256
-                | color_support::ColorLevel::TrueColor, None) => format!("{glyph} "),
+            | (
+                color_support::ColorLevel::Basic
+                | color_support::ColorLevel::Ansi256
+                | color_support::ColorLevel::TrueColor,
+                Some(_),
+            )
+            | (
+                color_support::ColorLevel::Basic
+                | color_support::ColorLevel::Ansi256
+                | color_support::ColorLevel::TrueColor,
+                None,
+            ) => format!("{glyph} "),
         };
         use unicode_width::UnicodeWidthStr;
         if prefix.width() <= usize::from(ctx.width) {
@@ -109,7 +141,11 @@ impl MessageSymbol {
         match self.status {
             MessageStatus::Information if self.kind == MessageKind::UserPrompt => {
                 let color = match theme.accent_user {
-                    ratatui::style::Color::Reset if crate::theme::cache::terminal_native_locked() => ratatui::style::Color::Cyan,
+                    ratatui::style::Color::Reset
+                        if crate::theme::cache::terminal_native_locked() =>
+                    {
+                        ratatui::style::Color::Cyan
+                    }
                     color => color,
                 };
                 Some(AccentStyle::static_color(color))
@@ -118,24 +154,51 @@ impl MessageSymbol {
             MessageStatus::Running => Some(match self.kind {
                 MessageKind::Thinking => {
                     let config = &ctx.appearance.scrollback.blocks.thinking;
-                    if config.animate { AccentStyle::animated(config.accent) } else { AccentStyle::static_color(config.accent) }
+                    if config.animate {
+                        AccentStyle::animated(config.accent)
+                    } else {
+                        AccentStyle::static_color(config.accent)
+                    }
                 }
-                MessageKind::Execute => AccentStyle::animated(ctx.appearance.scrollback.blocks.execute.running_accent),
+                MessageKind::Execute => {
+                    AccentStyle::animated(ctx.appearance.scrollback.blocks.execute.running_accent)
+                }
                 MessageKind::SessionEvent => AccentStyle::animated(theme.gray),
-                MessageKind::UserPrompt | MessageKind::AgentMessage | MessageKind::Read
-                | MessageKind::Edit | MessageKind::ListDir | MessageKind::Search
-                | MessageKind::WebFetch | MessageKind::WebSearch | MessageKind::IntegrationSearch
-                | MessageKind::UseTool | MessageKind::MemorySearch | MessageKind::SentMessage
-                | MessageKind::Skill | MessageKind::OtherTool | MessageKind::System
-                | MessageKind::BgTask | MessageKind::Subagent
-                | MessageKind::Workflow | MessageKind::Btw | MessageKind::ContextInfo
-                | MessageKind::MemoryCapture | MessageKind::Injected | MessageKind::InjectedOther
-                | MessageKind::InjectedInstructions | MessageKind::InjectedContinuation
-                | MessageKind::InjectedNotification | MessageKind::InjectedMemory
-                | MessageKind::InjectedSummary | MessageKind::InjectedEnvironment
-                | MessageKind::InjectedConversation | MessageKind::Stub => AccentStyle::animated_running(ctx, &theme),
+                MessageKind::UserPrompt
+                | MessageKind::AgentMessage
+                | MessageKind::Read
+                | MessageKind::Edit
+                | MessageKind::ListDir
+                | MessageKind::Search
+                | MessageKind::WebFetch
+                | MessageKind::WebSearch
+                | MessageKind::IntegrationSearch
+                | MessageKind::UseTool
+                | MessageKind::MemorySearch
+                | MessageKind::SentMessage
+                | MessageKind::Skill
+                | MessageKind::OtherTool
+                | MessageKind::System
+                | MessageKind::BgTask
+                | MessageKind::Subagent
+                | MessageKind::Workflow
+                | MessageKind::Btw
+                | MessageKind::ContextInfo
+                | MessageKind::MemoryCapture
+                | MessageKind::Injected
+                | MessageKind::InjectedOther
+                | MessageKind::InjectedInstructions
+                | MessageKind::InjectedContinuation
+                | MessageKind::InjectedNotification
+                | MessageKind::InjectedMemory
+                | MessageKind::InjectedSummary
+                | MessageKind::InjectedEnvironment
+                | MessageKind::InjectedConversation
+                | MessageKind::Stub => AccentStyle::animated_running(ctx, &theme),
             }),
-            MessageStatus::Done | MessageStatus::Queued => Some(AccentStyle::static_color(theme.accent_success)),
+            MessageStatus::Done | MessageStatus::Queued => {
+                Some(AccentStyle::static_color(theme.accent_success))
+            }
             MessageStatus::Failed => Some(AccentStyle::static_color(theme.accent_error)),
             MessageStatus::Cancelled => Some(AccentStyle::static_color(theme.gray_dim)),
             MessageStatus::Paused | MessageStatus::Unavailable | MessageStatus::Unconfirmed => {
@@ -160,7 +223,9 @@ impl MessageKind {
             Self::WebSearch => glyphs::tool_web_search(),
             Self::IntegrationSearch => glyphs::tool_integration_search(),
             Self::UseTool => glyphs::history_integration(),
-            Self::MemorySearch | Self::MemoryCapture | Self::InjectedMemory => glyphs::tool_memory_search(),
+            Self::MemorySearch | Self::MemoryCapture | Self::InjectedMemory => {
+                glyphs::tool_memory_search()
+            }
             Self::SentMessage => glyphs::history_message(),
             Self::Skill => glyphs::tool_skill(),
             Self::OtherTool => glyphs::history_tool(),
@@ -183,7 +248,11 @@ impl MessageKind {
 }
 
 fn started_status(ctx: &BlockContext) -> MessageStatus {
-    if ctx.is_running { MessageStatus::Running } else { MessageStatus::Inactive }
+    if ctx.is_running {
+        MessageStatus::Running
+    } else {
+        MessageStatus::Inactive
+    }
 }
 
 impl RenderBlock {
@@ -203,21 +272,33 @@ impl RenderBlock {
             Self::Stub(_) => return None,
             Self::UserPrompt(user) => {
                 layout = SymbolLayout::Body;
-                if !ctx.appearance.scrollback.blocks.prompt.show_prefix || ctx.appearance.prompt.compact {
+                if !ctx.appearance.scrollback.blocks.prompt.show_prefix
+                    || ctx.appearance.prompt.compact
+                {
                     return None;
                 }
-                if user.is_bash { glyph = "$"; }
-                if user.is_cron { glyph = crate::glyphs::history_reminder(); }
+                if user.is_bash {
+                    glyph = "$";
+                }
+                if user.is_cron {
+                    glyph = crate::glyphs::history_reminder();
+                }
                 MessageStatus::Information
             }
             Self::System(_) => {
                 layout = SymbolLayout::Body;
                 MessageStatus::Information
             }
-            Self::ContextInfo(_) | Self::MemoryCapture(_) | Self::Injected(_) => MessageStatus::Information,
+            Self::ContextInfo(_) | Self::MemoryCapture(_) | Self::Injected(_) => {
+                MessageStatus::Information
+            }
             Self::AgentMessage(_) => {
                 layout = SymbolLayout::Body;
-                if ctx.is_running { MessageStatus::Running } else { MessageStatus::Finished }
+                if ctx.is_running {
+                    MessageStatus::Running
+                } else {
+                    MessageStatus::Finished
+                }
             }
             Self::Thinking(_) => {
                 if ctx.mode != crate::scrollback::types::DisplayMode::Collapsed
@@ -225,45 +306,79 @@ impl RenderBlock {
                 {
                     layout = SymbolLayout::Body;
                 }
-                if ctx.is_running { MessageStatus::Running } else { MessageStatus::Finished }
+                if ctx.is_running {
+                    MessageStatus::Running
+                } else {
+                    MessageStatus::Finished
+                }
             }
             Self::Btw(_) => {
-                if ctx.is_running { MessageStatus::Running } else { MessageStatus::Finished }
+                if ctx.is_running {
+                    MessageStatus::Running
+                } else {
+                    MessageStatus::Finished
+                }
             }
             Self::ToolCall(tool) => {
                 match tool {
-                    ToolCallBlock::Read(read) if read.is_skill_read() => glyph = crate::glyphs::tool_skill(),
-                    ToolCallBlock::Edit(edit) if edit.prefix.starts_with("Creating ") => glyph = crate::glyphs::tool_create_file(),
-                    ToolCallBlock::Execute(_) | ToolCallBlock::Read(_) | ToolCallBlock::Edit(_)
-                    | ToolCallBlock::ListDir(_) | ToolCallBlock::Search(_) | ToolCallBlock::WebFetch(_)
-                    | ToolCallBlock::WebSearch(_) | ToolCallBlock::IntegrationSearch(_)
-                    | ToolCallBlock::UseTool(_) | ToolCallBlock::MemorySearch(_)
-                    | ToolCallBlock::SentMessage(_) | ToolCallBlock::Skill(_) | ToolCallBlock::Other(_) => {}
+                    ToolCallBlock::Read(read) if read.is_skill_read() => {
+                        glyph = crate::glyphs::tool_skill()
+                    }
+                    ToolCallBlock::Edit(edit) if edit.prefix.starts_with("Creating ") => {
+                        glyph = crate::glyphs::tool_create_file()
+                    }
+                    ToolCallBlock::Execute(_)
+                    | ToolCallBlock::Read(_)
+                    | ToolCallBlock::Edit(_)
+                    | ToolCallBlock::ListDir(_)
+                    | ToolCallBlock::Search(_)
+                    | ToolCallBlock::WebFetch(_)
+                    | ToolCallBlock::WebSearch(_)
+                    | ToolCallBlock::IntegrationSearch(_)
+                    | ToolCallBlock::UseTool(_)
+                    | ToolCallBlock::MemorySearch(_)
+                    | ToolCallBlock::SentMessage(_)
+                    | ToolCallBlock::Skill(_)
+                    | ToolCallBlock::Other(_) => {}
                 }
                 match tool {
                     ToolCallBlock::SentMessage(sent) => match sent.presentation {
                         SentMessagePresentation::Sending => started_status(ctx),
-                        SentMessagePresentation::Sent => match sent.input.as_ref().and_then(|input| input.delivery) {
-                            Some(SentMessageDelivery::Queue) => MessageStatus::Queued,
-                            None | Some(SentMessageDelivery::Steer | SentMessageDelivery::Interject) => MessageStatus::Done,
-                        },
+                        SentMessagePresentation::Sent => {
+                            match sent.input.as_ref().and_then(|input| input.delivery) {
+                                Some(SentMessageDelivery::Queue) => MessageStatus::Queued,
+                                None
+                                | Some(
+                                    SentMessageDelivery::Steer | SentMessageDelivery::Interject,
+                                ) => MessageStatus::Done,
+                            }
+                        }
                         SentMessagePresentation::Rejected { .. } => MessageStatus::Failed,
                         SentMessagePresentation::Unconfirmed { .. } => MessageStatus::Unconfirmed,
                     },
-                    ToolCallBlock::Execute(_) | ToolCallBlock::Read(_) | ToolCallBlock::Edit(_)
-                    | ToolCallBlock::ListDir(_) | ToolCallBlock::Search(_) | ToolCallBlock::WebFetch(_)
-                    | ToolCallBlock::WebSearch(_) | ToolCallBlock::IntegrationSearch(_)
-                    | ToolCallBlock::UseTool(_) | ToolCallBlock::MemorySearch(_)
-                    | ToolCallBlock::Skill(_) | ToolCallBlock::Other(_) => {
-                        match completion {
-                            ToolCompletion::Completed => MessageStatus::Done,
-                            ToolCompletion::Failed => MessageStatus::Failed,
-                            ToolCompletion::Cancelled => MessageStatus::Cancelled,
-                            ToolCompletion::Unconfirmed => {
-                                if !tool.is_success() { MessageStatus::Failed } else { started_status(ctx) }
+                    ToolCallBlock::Execute(_)
+                    | ToolCallBlock::Read(_)
+                    | ToolCallBlock::Edit(_)
+                    | ToolCallBlock::ListDir(_)
+                    | ToolCallBlock::Search(_)
+                    | ToolCallBlock::WebFetch(_)
+                    | ToolCallBlock::WebSearch(_)
+                    | ToolCallBlock::IntegrationSearch(_)
+                    | ToolCallBlock::UseTool(_)
+                    | ToolCallBlock::MemorySearch(_)
+                    | ToolCallBlock::Skill(_)
+                    | ToolCallBlock::Other(_) => match completion {
+                        ToolCompletion::Completed => MessageStatus::Done,
+                        ToolCompletion::Failed => MessageStatus::Failed,
+                        ToolCompletion::Cancelled => MessageStatus::Cancelled,
+                        ToolCompletion::Unconfirmed => {
+                            if !tool.is_success() {
+                                MessageStatus::Failed
+                            } else {
+                                started_status(ctx)
                             }
                         }
-                    }
+                    },
                 }
             }
             Self::BgTask(task) => match task.kind {
@@ -290,42 +405,77 @@ impl RenderBlock {
                     SessionEvent::CompactionStarted { .. } | SessionEvent::CompactStarted => {
                         (crate::glyphs::history_summary(), MessageStatus::Information)
                     }
-                    SessionEvent::CompactionCompleted { .. } | SessionEvent::CompactCompleted { .. } => {
+                    SessionEvent::CompactionCompleted { .. }
+                    | SessionEvent::CompactCompleted { .. } => {
                         (crate::glyphs::history_summary(), MessageStatus::Done)
                     }
-                    SessionEvent::CompactionFailed { .. } => (crate::glyphs::history_summary(), MessageStatus::Failed),
-                    SessionEvent::CompactionCancelled => (crate::glyphs::history_summary(), MessageStatus::Cancelled),
-                    SessionEvent::TurnCompleted { .. } | SessionEvent::GoalCompleted { .. } => (glyph, MessageStatus::Done),
-                    SessionEvent::TurnCancelled { .. } => (glyph, MessageStatus::Cancelled),
-                    SessionEvent::TurnFailed { .. } | SessionEvent::RetryFailed { .. }
-                    | SessionEvent::RequestFailed { .. } => (glyph, MessageStatus::Failed),
-                    SessionEvent::ReAuthRequired | SessionEvent::ContextTooLarge | SessionEvent::DiskFull
-                    | SessionEvent::ModelUnavailable { .. } => (glyph, MessageStatus::Unavailable),
-                    SessionEvent::MemoryCommandCompleted { succeeded, .. } => {
-                        (crate::glyphs::tool_memory_search(), if succeeded { MessageStatus::Done } else { MessageStatus::Failed })
+                    SessionEvent::CompactionFailed { .. } => {
+                        (crate::glyphs::history_summary(), MessageStatus::Failed)
                     }
+                    SessionEvent::CompactionCancelled => {
+                        (crate::glyphs::history_summary(), MessageStatus::Cancelled)
+                    }
+                    SessionEvent::TurnCompleted { .. } | SessionEvent::GoalCompleted { .. } => {
+                        (glyph, MessageStatus::Done)
+                    }
+                    SessionEvent::TurnCancelled { .. } => (glyph, MessageStatus::Cancelled),
+                    SessionEvent::TurnFailed { .. }
+                    | SessionEvent::RetryFailed { .. }
+                    | SessionEvent::RequestFailed { .. } => (glyph, MessageStatus::Failed),
+                    SessionEvent::ReAuthRequired
+                    | SessionEvent::ContextTooLarge
+                    | SessionEvent::DiskFull
+                    | SessionEvent::ModelUnavailable { .. } => (glyph, MessageStatus::Unavailable),
+                    SessionEvent::MemoryCommandCompleted { succeeded, .. } => (
+                        crate::glyphs::tool_memory_search(),
+                        if succeeded {
+                            MessageStatus::Done
+                        } else {
+                            MessageStatus::Failed
+                        },
+                    ),
                     SessionEvent::Recap { .. } => {
                         layout = SymbolLayout::Header;
-                        (crate::glyphs::history_summary(), if ctx.is_running { MessageStatus::Running } else { MessageStatus::Information })
+                        (
+                            crate::glyphs::history_summary(),
+                            if ctx.is_running {
+                                MessageStatus::Running
+                            } else {
+                                MessageStatus::Information
+                            },
+                        )
                     }
-                    SessionEvent::TurnBlockedByHook { .. } | SessionEvent::TurnHalted { .. } => (glyph, MessageStatus::Paused),
-                    SessionEvent::MemoryCommandStarted { .. } | SessionEvent::MemorySaved { .. } => {
-                        (crate::glyphs::tool_memory_search(), MessageStatus::Information)
+                    SessionEvent::TurnBlockedByHook { .. } | SessionEvent::TurnHalted { .. } => {
+                        (glyph, MessageStatus::Paused)
                     }
-                    SessionEvent::HookAnnotation { .. } | SessionEvent::HookOutcome { .. }
-                    | SessionEvent::PlanModeEnteredByAgent { .. } | SessionEvent::PlanReviewClosed { .. } => (glyph, MessageStatus::Information),
+                    SessionEvent::MemoryCommandStarted { .. }
+                    | SessionEvent::MemorySaved { .. } => (
+                        crate::glyphs::tool_memory_search(),
+                        MessageStatus::Information,
+                    ),
+                    SessionEvent::HookAnnotation { .. }
+                    | SessionEvent::HookOutcome { .. }
+                    | SessionEvent::PlanModeEnteredByAgent { .. }
+                    | SessionEvent::PlanReviewClosed { .. } => (glyph, MessageStatus::Information),
                 };
                 glyph = event_glyph;
                 status
             }
         };
-        Some(MessageSymbol { glyph, kind, status, layout })
+        Some(MessageSymbol {
+            glyph,
+            kind,
+            status,
+            layout,
+        })
     }
 
     pub(crate) fn symbol_context(&self, ctx: &BlockContext, prefix: &str) -> BlockContext {
         let mut content = ctx.clone();
         let width = unicode_width::UnicodeWidthStr::width(prefix);
-        content.width = ctx.width.saturating_sub(u16::try_from(width).unwrap_or(ctx.width));
+        content.width = ctx
+            .width
+            .saturating_sub(u16::try_from(width).unwrap_or(ctx.width));
         content.appearance.scrollback.blocks.tool.bullet = ToolBullet::None;
         if matches!(self, Self::UserPrompt(_)) {
             content.appearance.scrollback.blocks.prompt.show_prefix = false;

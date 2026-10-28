@@ -196,19 +196,22 @@ impl BlockContent for MemorySearchToolCallBlock {
                     // Snippet preview: Truncated keeps the first three non-empty lines behind a
                     // quiet ellipsis; Expanded wraps the whole snippet so the full result the
                     // model saw stays inline (the viewer is no longer the only source).
-                    let snippet_lines: Vec<&str> = r
-                        .snippet
-                        .lines()
-                        .collect();
+                    let snippet_lines: Vec<&str> = r.snippet.lines().collect();
                     let shown = if ctx.mode == DisplayMode::Truncated {
                         snippet_lines.len().min(TRUNCATED_SNIPPET_LINES)
                     } else {
                         snippet_lines.len()
                     };
-                    lines.extend(super::body::wrapped_body(
-                        &snippet_lines[..shown].join("\n"),
-                        theme.muted(), ctx.content_width(), "    ",
-                    ).into_iter().map(|line| line.with_panel_background(theme.bg_dark)));
+                    lines.extend(
+                        super::body::wrapped_body(
+                            &snippet_lines[..shown].join("\n"),
+                            theme.muted(),
+                            ctx.content_width(),
+                            "    ",
+                        )
+                        .into_iter()
+                        .map(|line| line.with_panel_background(theme.bg_dark)),
+                    );
                     if shown < snippet_lines.len() {
                         lines.push(
                             BlockLine::separator(Line::from(Span::styled(

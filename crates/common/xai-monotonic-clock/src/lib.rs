@@ -24,15 +24,27 @@ pub enum ClockUnavailable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "clock", rename_all = "snake_case", try_from = "WirePoint")]
 pub enum MonotonicPoint {
-    LinuxMonotonic { domain: LinuxClockDomain, earliest_ns: i64, latest_ns: i64 },
-    Unavailable { reason: ClockUnavailable },
+    LinuxMonotonic {
+        domain: LinuxClockDomain,
+        earliest_ns: i64,
+        latest_ns: i64,
+    },
+    Unavailable {
+        reason: ClockUnavailable,
+    },
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "clock", rename_all = "snake_case")]
 enum WirePoint {
-    LinuxMonotonic { domain: LinuxClockDomain, earliest_ns: i64, latest_ns: i64 },
-    Unavailable { reason: ClockUnavailable },
+    LinuxMonotonic {
+        domain: LinuxClockDomain,
+        earliest_ns: i64,
+        latest_ns: i64,
+    },
+    Unavailable {
+        reason: ClockUnavailable,
+    },
 }
 
 impl TryFrom<WirePoint> for MonotonicPoint {
@@ -40,11 +52,19 @@ impl TryFrom<WirePoint> for MonotonicPoint {
 
     fn try_from(point: WirePoint) -> Result<Self, Self::Error> {
         match point {
-            WirePoint::LinuxMonotonic { domain, earliest_ns, latest_ns } => {
+            WirePoint::LinuxMonotonic {
+                domain,
+                earliest_ns,
+                latest_ns,
+            } => {
                 if domain.boot_id.is_nil() || earliest_ns > latest_ns {
                     return Err("invalid monotonic clock domain or interval");
                 }
-                Ok(Self::LinuxMonotonic { domain, earliest_ns, latest_ns })
+                Ok(Self::LinuxMonotonic {
+                    domain,
+                    earliest_ns,
+                    latest_ns,
+                })
             }
             WirePoint::Unavailable { reason } => Ok(Self::Unavailable { reason }),
         }
@@ -53,14 +73,16 @@ impl TryFrom<WirePoint> for MonotonicPoint {
 
 impl Default for MonotonicPoint {
     fn default() -> Self {
-        Self::Unavailable { reason: ClockUnavailable::ClockUnavailable }
+        Self::Unavailable {
+            reason: ClockUnavailable::ClockUnavailable,
+        }
     }
 }
 
 #[cfg(feature = "native")]
-mod native_clock;
-#[cfg(feature = "native")]
 mod mapping;
+#[cfg(feature = "native")]
+mod native_clock;
 #[cfg(feature = "native")]
 pub use mapping::LocalClockMapping;
 

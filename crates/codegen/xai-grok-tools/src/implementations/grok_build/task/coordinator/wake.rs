@@ -133,7 +133,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .send(ActiveAgentMessageOutcome::NotFoundOrNotOwned);
             return;
         };
-        let previous_completion = super::super::native_recovery::PreviousCompletion::capture(completed);
+        let previous_completion =
+            super::super::native_recovery::PreviousCompletion::capture(completed);
         let mut wake_request = completed.request.clone();
         let agent_address = completed.agent_address.clone();
         let spawner_session_id = completed.spawner_session_id.clone();

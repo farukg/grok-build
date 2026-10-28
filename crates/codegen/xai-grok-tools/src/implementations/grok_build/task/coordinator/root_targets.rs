@@ -126,7 +126,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             std::sync::Arc::clone(&lease),
         );
         delivery.bind_receiver(root.control.session_id(), key.generation);
-        let Some(recovery_ref) = delivery.recovery_ref() else { return; };
+        let Some(recovery_ref) = delivery.recovery_ref() else {
+            return;
+        };
         self.active_messages.push(ActiveMessageFuture {
             target: ActiveMessageCompletionTarget::Root(key),
             recovery_ref,

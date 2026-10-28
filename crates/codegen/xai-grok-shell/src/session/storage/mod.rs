@@ -36,18 +36,18 @@ impl SessionListVisibility {
 }
 
 pub mod audit;
-pub mod update_decoder;
-#[cfg(test)]
-mod update_decoder_tests;
 pub mod jsonl;
-pub mod request_capture;
 pub(crate) mod relocation;
 mod replay;
 #[cfg(test)]
 mod replay_tests;
+pub mod request_capture;
 pub mod search;
 mod search_content;
 pub(crate) mod summary_write;
+pub mod update_decoder;
+#[cfg(test)]
+mod update_decoder_tests;
 
 /// The session search index moved to its own crate; re-exported here so `session::storage::search_fts::…` keeps resolving for its consumers.
 pub use xai_grok_session_search::fts as search_fts;
@@ -74,7 +74,11 @@ pub(crate) fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AtomicWriteFault { Write, Sync, ParentSync }
+pub(crate) enum AtomicWriteFault {
+    Write,
+    Sync,
+    ParentSync,
+}
 
 #[cfg(test)]
 pub(crate) struct AtomicWriteFaultScope {
@@ -85,13 +89,18 @@ pub(crate) struct AtomicWriteFaultScope {
 #[cfg(test)]
 impl AtomicWriteFaultScope {
     pub(crate) fn enter() -> Self {
-        Self { prior: ATOMIC_WRITE_FAULT.take(), _thread: std::marker::PhantomData }
+        Self {
+            prior: ATOMIC_WRITE_FAULT.take(),
+            _thread: std::marker::PhantomData,
+        }
     }
 }
 
 #[cfg(test)]
 impl Drop for AtomicWriteFaultScope {
-    fn drop(&mut self) { ATOMIC_WRITE_FAULT.set(self.prior); }
+    fn drop(&mut self) {
+        ATOMIC_WRITE_FAULT.set(self.prior);
+    }
 }
 
 #[cfg(test)]
@@ -110,7 +119,9 @@ impl std::fmt::Display for AtomicWriteFailure {
 
 #[cfg(test)]
 impl std::error::Error for AtomicWriteFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.source) }
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 #[cfg(test)]
@@ -135,7 +146,13 @@ pub(crate) fn fail_next_atomic_write(fault: AtomicWriteFault) {
 }
 
 pub(crate) fn write_private_bytes_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    write_bytes_atomic_with_mode(path, bytes, sync_file_durable, || sync_parent_dir_durable(path), Some(0o600))
+    write_bytes_atomic_with_mode(
+        path,
+        bytes,
+        sync_file_durable,
+        || sync_parent_dir_durable(path),
+        Some(0o600),
+    )
 }
 
 fn write_bytes_atomic_with(
@@ -181,7 +198,10 @@ fn write_bytes_atomic_with_mode(
         }
         #[cfg(test)]
         if matches!(fault, Some(AtomicWriteFault::Sync)) {
-            return Err(AtomicWriteFailure::error(AtomicWriteFault::Sync, io::Error::other("injected atomic file sync failure")));
+            return Err(AtomicWriteFailure::error(
+                AtomicWriteFault::Sync,
+                io::Error::other("injected atomic file sync failure"),
+            ));
         }
         // NTFS/ext4 journal a rename as old-file-or-new-file only when the new file's data is already flushed
         // Without this fsync a power loss can leave the committed rename in place with zero-length content
@@ -194,7 +214,10 @@ fn write_bytes_atomic_with_mode(
         Ok(()) => {
             #[cfg(test)]
             if matches!(fault, Some(AtomicWriteFault::ParentSync)) {
-                return Err(AtomicWriteFailure::error(AtomicWriteFault::ParentSync, io::Error::other("injected atomic parent sync failure")));
+                return Err(AtomicWriteFailure::error(
+                    AtomicWriteFault::ParentSync,
+                    io::Error::other("injected atomic parent sync failure"),
+                ));
             }
             sync_parent()
         }
@@ -1395,7 +1418,10 @@ pub trait StorageAdapter: Send + Sync {
         _authority: crate::session::delivery_receiver::ParentAdmissionAuthority,
         _access: crate::session::receiver_execution::ReceiverAccess<'_>,
     ) -> io::Result<crate::session::delivery_receiver::ParentAdmissionAck> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "durable parent-message admission unsupported"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "durable parent-message admission unsupported",
+        ))
     }
 
     async fn cancel_parent_messages(
@@ -1404,7 +1430,10 @@ pub trait StorageAdapter: Send + Sync {
         _message_ids: &[String],
         _access: crate::session::receiver_execution::ReceiverAccess<'_>,
     ) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "durable parent-message settlement unsupported"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "durable parent-message settlement unsupported",
+        ))
     }
 
     async fn receive_delivery(
@@ -1484,7 +1513,10 @@ pub trait StorageAdapter: Send + Sync {
         _ids: Vec<xai_chat_state::completion::CompletionIdentity>,
         _reason: crate::session::completion_delivery::CompletionSuppression,
     ) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "durable completion suppression is unsupported"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "durable completion suppression is unsupported",
+        ))
     }
 
     async fn enroll_terminal_completion(
@@ -1494,7 +1526,10 @@ pub trait StorageAdapter: Send + Sync {
         _text: String,
         _policy: crate::session::completion_delivery::CompletionEventPolicy,
     ) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "durable terminal enrollment is unsupported"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "durable terminal enrollment is unsupported",
+        ))
     }
 
     async fn prepare_subagent_completion(
@@ -1542,10 +1577,14 @@ pub trait StorageAdapter: Send + Sync {
         _info: &Info,
         _projection: &xai_chat_state::input_projection::NotificationProjection,
         _admission: &xai_chat_state::InputAdmission,
-    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError> {
-        Err(xai_chat_state::StrictAppendError::NotCommitted(io::Error::new(
-            io::ErrorKind::Unsupported, "strict notification projection is unsupported",
-        )))
+    ) -> Result<xai_chat_state::CompletionProjectionAck, xai_chat_state::CompletionProjectionError>
+    {
+        Err(xai_chat_state::StrictAppendError::NotCommitted(
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "strict notification projection is unsupported",
+            ),
+        ))
     }
 
     async fn append_completion_commit_aware(
@@ -1803,11 +1842,11 @@ pub use jsonl::JsonlStorageAdapter;
 #[cfg(any(test, feature = "test-support"))]
 pub use replay::load_updates_for_replay_at;
 pub use replay::{
-    PassiveReplayBatch, PassiveReplayCursor, PassiveReplayError, PassiveReplayLimits, PassiveReplayPhase,
-    ReplayBudget, ReplayCompletion, ReplayCorruptionPolicy, ReplayFinalRecordPolicy, ReplayStart,
-    PreparedReplay, ReplayEmission, ReplayLookupFallback, ReplayPathHint, ReplayedUpdate,
-    load_updates_for_replay, prepare_replay_lines, replay_would_emit, stream_replay_updates_at,
-    stream_replay_updates_at_hinted,
+    PassiveReplayBatch, PassiveReplayCursor, PassiveReplayError, PassiveReplayLimits,
+    PassiveReplayPhase, PreparedReplay, ReplayBudget, ReplayCompletion, ReplayCorruptionPolicy,
+    ReplayEmission, ReplayFinalRecordPolicy, ReplayLookupFallback, ReplayPathHint, ReplayStart,
+    ReplayedUpdate, load_updates_for_replay, prepare_replay_lines, replay_would_emit,
+    stream_replay_updates_at, stream_replay_updates_at_hinted,
 };
 pub(crate) use replay::{ReplayToolCollapser, UnfinishedSubagent, filter_delta_replay_lines};
 
@@ -1887,11 +1926,28 @@ struct ToolUpdateAt {
 /// Marker work yields after each positional visit.
 enum RetentionWork {
     Idle,
-    Rewind { cut: usize, target: usize },
-    Remove { refs: std::vec::IntoIter<ContextItemRef> },
-    FindTurn { refs: std::vec::IntoIter<ContextItemRef>, prompt_index: usize, before: usize },
-    RemoveRange { refs: std::vec::IntoIter<ContextItemRef>, next: usize, end: usize },
-    RemoveTool { refs: std::vec::IntoIter<ContextItemRef>, tool_call_id: ToolCallId, next: usize },
+    Rewind {
+        cut: usize,
+        target: usize,
+    },
+    Remove {
+        refs: std::vec::IntoIter<ContextItemRef>,
+    },
+    FindTurn {
+        refs: std::vec::IntoIter<ContextItemRef>,
+        prompt_index: usize,
+        before: usize,
+    },
+    RemoveRange {
+        refs: std::vec::IntoIter<ContextItemRef>,
+        next: usize,
+        end: usize,
+    },
+    RemoveTool {
+        refs: std::vec::IntoIter<ContextItemRef>,
+        tool_call_id: ToolCallId,
+        next: usize,
+    },
 }
 
 /// Positional tombstones survive removals; rewind alone reclaims the tail.
@@ -1922,23 +1978,34 @@ impl<T> RewindSurvivors<T> {
     fn push(&mut self, item: T, step: RewindStep) {
         match step {
             RewindStep::Rewind { target } => {
-                let cut = self.turns.get(target).map_or(self.items.len(), |turn| turn.position);
+                let cut = self
+                    .turns
+                    .get(target)
+                    .map_or(self.items.len(), |turn| turn.position);
                 self.work = RetentionWork::Rewind { cut, target };
                 self.tracker.on_non_user();
                 return;
             }
             RewindStep::RemoveItems(refs) => {
-                self.work = RetentionWork::Remove { refs: refs.into_iter() };
+                self.work = RetentionWork::Remove {
+                    refs: refs.into_iter(),
+                };
                 self.tracker.on_non_user();
                 return;
             }
             RewindStep::UserChunk { prompt_index } => {
                 if self.tracker.on_user_chunk(prompt_index) {
-                    self.turns.push(TurnStart { position: self.items.len(), prompt_index });
+                    self.turns.push(TurnStart {
+                        position: self.items.len(),
+                        prompt_index,
+                    });
                 }
             }
             RewindStep::ToolUpdate(tool_call_id) => {
-                self.tool_updates.push(ToolUpdateAt { position: self.items.len(), tool_call_id });
+                self.tool_updates.push(ToolUpdateAt {
+                    position: self.items.len(),
+                    tool_call_id,
+                });
                 self.tracker.on_non_user();
             }
             RewindStep::Other => self.tracker.on_non_user(),
@@ -1957,7 +2024,11 @@ impl<T> RewindSurvivors<T> {
                 } else if self.turns.len() > target {
                     self.turns.pop();
                     RetentionWork::Rewind { cut, target }
-                } else if self.tool_updates.last().is_some_and(|tool| tool.position >= cut) {
+                } else if self
+                    .tool_updates
+                    .last()
+                    .is_some_and(|tool| tool.position >= cut)
+                {
                     self.tool_updates.pop();
                     RetentionWork::Rewind { cut, target }
                 } else {
@@ -1966,25 +2037,41 @@ impl<T> RewindSurvivors<T> {
             }
             RetentionWork::Remove { mut refs } => match refs.next() {
                 Some(ContextItemRef::Turn { prompt_index }) => RetentionWork::FindTurn {
-                    refs, prompt_index, before: self.turns.len(),
+                    refs,
+                    prompt_index,
+                    before: self.turns.len(),
                 },
                 Some(ContextItemRef::ToolExchange { tool_call_id }) => RetentionWork::RemoveTool {
-                    refs, tool_call_id, next: 0,
+                    refs,
+                    tool_call_id,
+                    next: 0,
                 },
                 None => RetentionWork::Idle,
             },
-            RetentionWork::FindTurn { refs, prompt_index, before } => {
+            RetentionWork::FindTurn {
+                refs,
+                prompt_index,
+                before,
+            } => {
                 if before == 0 {
                     RetentionWork::Remove { refs }
                 } else {
                     let index = before - 1;
                     if self.turns[index].prompt_index == Some(prompt_index) {
                         RetentionWork::RemoveRange {
-                            refs, next: self.turns[index].position,
-                            end: self.turns.get(index + 1).map_or(self.items.len(), |turn| turn.position),
+                            refs,
+                            next: self.turns[index].position,
+                            end: self
+                                .turns
+                                .get(index + 1)
+                                .map_or(self.items.len(), |turn| turn.position),
                         }
                     } else {
-                        RetentionWork::FindTurn { refs, prompt_index, before: index }
+                        RetentionWork::FindTurn {
+                            refs,
+                            prompt_index,
+                            before: index,
+                        }
                     }
                 }
             }
@@ -1993,19 +2080,31 @@ impl<T> RewindSurvivors<T> {
                     if let Some(slot) = self.items.get_mut(next) {
                         *slot = Survivor::Removed;
                     }
-                    RetentionWork::RemoveRange { refs, next: next + 1, end }
+                    RetentionWork::RemoveRange {
+                        refs,
+                        next: next + 1,
+                        end,
+                    }
                 } else {
                     RetentionWork::Remove { refs }
                 }
             }
-            RetentionWork::RemoveTool { refs, tool_call_id, next } => {
+            RetentionWork::RemoveTool {
+                refs,
+                tool_call_id,
+                next,
+            } => {
                 if let Some(tool) = self.tool_updates.get(next) {
                     if tool.tool_call_id == tool_call_id {
                         if let Some(slot) = self.items.get_mut(tool.position) {
                             *slot = Survivor::Removed;
                         }
                     }
-                    RetentionWork::RemoveTool { refs, tool_call_id, next: next + 1 }
+                    RetentionWork::RemoveTool {
+                        refs,
+                        tool_call_id,
+                        next: next + 1,
+                    }
                 } else {
                     RetentionWork::Remove { refs }
                 }
@@ -2014,10 +2113,13 @@ impl<T> RewindSurvivors<T> {
     }
 
     fn into_kept(self) -> Vec<T> {
-        self.items.into_iter().filter_map(|survivor| match survivor {
-            Survivor::Kept(item) => Some(item),
-            Survivor::Removed => None,
-        }).collect()
+        self.items
+            .into_iter()
+            .filter_map(|survivor| match survivor {
+                Survivor::Kept(item) => Some(item),
+                Survivor::Removed => None,
+            })
+            .collect()
     }
 }
 

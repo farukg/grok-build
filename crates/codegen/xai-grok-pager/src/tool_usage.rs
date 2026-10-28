@@ -271,14 +271,23 @@ impl ToolUsageStats {
                     let category = ToolCategory::from_tool_block(tc);
                     let status = match entry.tool_completion() {
                         crate::scrollback::types::ToolCompletion::Completed => {
-                            if matches!(tc, ToolCallBlock::SentMessage(message) if message.is_unconfirmed()) {
+                            if matches!(tc, ToolCallBlock::SentMessage(message) if message.is_unconfirmed())
+                            {
                                 BlockStatus::Unconfirmed
-                            } else { BlockStatus::Success }
+                            } else {
+                                BlockStatus::Success
+                            }
                         }
                         crate::scrollback::types::ToolCompletion::Failed
-                        | crate::scrollback::types::ToolCompletion::Cancelled => BlockStatus::Failed,
+                        | crate::scrollback::types::ToolCompletion::Cancelled => {
+                            BlockStatus::Failed
+                        }
                         crate::scrollback::types::ToolCompletion::Unconfirmed => {
-                            if entry.is_running { BlockStatus::Running } else { BlockStatus::Unconfirmed }
+                            if entry.is_running {
+                                BlockStatus::Running
+                            } else {
+                                BlockStatus::Unconfirmed
+                            }
                         }
                     };
 
@@ -369,13 +378,26 @@ mod tests {
         let mut scrollback = ScrollbackState::new();
         let mut tracker = crate::acp::tracker::AcpUpdateTracker::new();
         for (id, command, status) in [
-            ("success", "echo hello", agent_client_protocol::ToolCallStatus::Completed),
-            ("failed", "bad_command", agent_client_protocol::ToolCallStatus::Failed),
+            (
+                "success",
+                "echo hello",
+                agent_client_protocol::ToolCallStatus::Completed,
+            ),
+            (
+                "failed",
+                "bad_command",
+                agent_client_protocol::ToolCallStatus::Failed,
+            ),
         ] {
-            tracker.handle_update(agent_client_protocol::SessionUpdate::ToolCall(
-                agent_client_protocol::ToolCall::new(id, command)
-                    .kind(agent_client_protocol::ToolKind::Execute).status(status)),
-                &crate::acp::meta::NotificationMeta::default(), &mut scrollback);
+            tracker.handle_update(
+                agent_client_protocol::SessionUpdate::ToolCall(
+                    agent_client_protocol::ToolCall::new(id, command)
+                        .kind(agent_client_protocol::ToolKind::Execute)
+                        .status(status),
+                ),
+                &crate::acp::meta::NotificationMeta::default(),
+                &mut scrollback,
+            );
         }
         scrollback
     }

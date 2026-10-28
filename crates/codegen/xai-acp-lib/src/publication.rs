@@ -1,15 +1,16 @@
 use std::sync::{Arc, Mutex};
 
-use futures::{FutureExt, StreamExt};
 use futures::future::{BoxFuture, Shared};
 use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
 use tokio::sync::oneshot;
 
 use crate::AcpResult;
 
 type Receipt = Shared<BoxFuture<'static, Result<(), PublicationFailure>>>;
 
-pub type PublicationCompletion<T> = BoxFuture<'static, Result<AcpResult<T>, oneshot::error::RecvError>>;
+pub type PublicationCompletion<T> =
+    BoxFuture<'static, Result<AcpResult<T>, oneshot::error::RecvError>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicationFailure {
@@ -23,7 +24,9 @@ pub struct ReceiverSettlementSelectionError;
 
 impl std::fmt::Display for ReceiverSettlementSelectionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("receiver settlement must be selected before sharing or using the gateway sender")
+        formatter.write_str(
+            "receiver settlement must be selected before sharing or using the gateway sender",
+        )
     }
 }
 
@@ -43,7 +46,10 @@ struct Receipts {
 
 impl Default for Receipts {
     fn default() -> Self {
-        Self { pending: FuturesUnordered::new(), outcome: Ok(()) }
+        Self {
+            pending: FuturesUnordered::new(),
+            outcome: Ok(()),
+        }
     }
 }
 
@@ -61,7 +67,10 @@ impl Receipts {
 
     fn prefix(&mut self) -> PublicationPrefix {
         self.reap();
-        PublicationPrefix { pending: self.pending.iter().cloned().collect(), outcome: self.outcome }
+        PublicationPrefix {
+            pending: self.pending.iter().cloned().collect(),
+            outcome: self.outcome,
+        }
     }
 }
 
@@ -85,31 +94,60 @@ pub(crate) struct Publications(Arc<Mutex<PublicationState>>);
 impl Publications {
     pub(crate) fn can_select_receiver(&self) -> bool {
         Arc::strong_count(&self.0) == 1
-            && matches!(self.0.lock().unwrap_or_else(|error| error.into_inner()).gateway_use, GatewayUse::Unused)
+            && matches!(
+                self.0
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .gateway_use,
+                GatewayUse::Unused
+            )
     }
 
     pub(crate) fn start(&self) {
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).gateway_use = GatewayUse::Started;
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .gateway_use = GatewayUse::Started;
     }
 
     pub(crate) fn begin(&self) -> PublicationGuard {
         let (tx, rx) = oneshot::channel();
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).producers
-            .push(async move { rx.await.map_err(|_| PublicationFailure::ProducerLost) }.boxed().shared());
-        PublicationGuard { settled: Some(tx), custody: PublicationCustody::Preparing }
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .producers
+            .push(
+                async move { rx.await.map_err(|_| PublicationFailure::ProducerLost) }
+                    .boxed()
+                    .shared(),
+            );
+        PublicationGuard {
+            settled: Some(tx),
+            custody: PublicationCustody::Preparing,
+        }
     }
 
     pub(crate) fn track<T: Send + 'static>(&self, rx: oneshot::Receiver<AcpResult<T>>) {
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).deliveries
-            .push(async move {
-                match rx.await {
-                    Ok(Ok(_)) => Ok(()),
-                    Ok(Err(_)) | Err(_) => Err(PublicationFailure::ReceiverFailed),
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .deliveries
+            .push(
+                async move {
+                    match rx.await {
+                        Ok(Ok(_)) => Ok(()),
+                        Ok(Err(_)) | Err(_) => Err(PublicationFailure::ReceiverFailed),
+                    }
                 }
-            }.boxed().shared());
+                .boxed()
+                .shared(),
+            );
     }
 
-    pub(crate) fn completion<T: Send + 'static>(&self, rx: oneshot::Receiver<AcpResult<T>>) -> PublicationCompletion<T> {
+    pub(crate) fn completion<T: Send + 'static>(
+        &self,
+        rx: oneshot::Receiver<AcpResult<T>>,
+    ) -> PublicationCompletion<T> {
         let (tx, response) = oneshot::channel();
         let receipt = async move {
             let result = rx.await;
@@ -119,24 +157,43 @@ impl Publications {
             };
             let _ = tx.send(result);
             outcome
-        }.boxed().shared();
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).deliveries.push(receipt.clone());
+        }
+        .boxed()
+        .shared();
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .deliveries
+            .push(receipt.clone());
         async move {
             let _ = receipt.await;
             response.await?
-        }.boxed()
+        }
+        .boxed()
     }
 
     pub(crate) fn fail(&self) {
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).deliveries.outcome = Err(PublicationFailure::IncompletePublication);
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .deliveries
+            .outcome = Err(PublicationFailure::IncompletePublication);
     }
 
     pub(crate) fn producers(&self) -> PublicationPrefix {
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).producers.prefix()
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .producers
+            .prefix()
     }
 
     pub(crate) fn deliveries(&self) -> PublicationPrefix {
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).deliveries.prefix()
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .deliveries
+            .prefix()
     }
 }
 
@@ -154,7 +211,10 @@ pub struct PublicationGuard {
 
 impl PublicationGuard {
     pub(crate) fn untracked() -> Self {
-        Self { settled: None, custody: PublicationCustody::Preparing }
+        Self {
+            settled: None,
+            custody: PublicationCustody::Preparing,
+        }
     }
 
     pub fn require_delivery(&mut self) {
@@ -174,10 +234,17 @@ impl Drop for PublicationGuard {
     fn drop(&mut self) {
         if let Some(settled) = self.settled.take() {
             match self.custody {
-                PublicationCustody::Preparing | PublicationCustody::Enqueued | PublicationCustody::Rejected if !std::thread::panicking() => {
+                PublicationCustody::Preparing
+                | PublicationCustody::Enqueued
+                | PublicationCustody::Rejected
+                    if !std::thread::panicking() =>
+                {
                     let _ = settled.send(());
                 }
-                PublicationCustody::Preparing | PublicationCustody::Enqueued | PublicationCustody::Rejected | PublicationCustody::Owed => {}
+                PublicationCustody::Preparing
+                | PublicationCustody::Enqueued
+                | PublicationCustody::Rejected
+                | PublicationCustody::Owed => {}
             }
         }
     }

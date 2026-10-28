@@ -1,7 +1,9 @@
 //! Cancellation, send-now, rewind, reporting, and terminal cleanup for `SessionActor`.
 
+use super::parent_message::{
+    ParentTeardownRequest, ParentTeardownStatus, parent_teardown_uncertain,
+};
 use super::*;
-use super::parent_message::{ParentTeardownRequest, ParentTeardownStatus, parent_teardown_uncertain};
 use xai_grok_tools::implementations::grok_build::task::coordinator::ChildCancellation;
 
 /// Whether the post-cancel notification drain stays suppressed: rewind and non-stop cancels clear it, a stop gesture arms it.
@@ -69,7 +71,8 @@ impl SessionActor {
         if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
             use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
             let backend = ChannelBackend::for_session(event_tx, self.session_id_string());
-            let _ = backend.request_cancel_parent_session(intent, tokio::sync::oneshot::channel().0);
+            let _ =
+                backend.request_cancel_parent_session(intent, tokio::sync::oneshot::channel().0);
         }
     }
 
@@ -296,8 +299,13 @@ impl SessionActor {
         &self,
         options: crate::session::CancelOptions,
     ) -> CancelOutcome {
-        let parent_request = if options.kill_background_tasks { ParentTeardownRequest::HardTeardown } else { ParentTeardownRequest::Ordinary };
-        self.cancel_running_task_with_parent_teardown(options, parent_request).await
+        let parent_request = if options.kill_background_tasks {
+            ParentTeardownRequest::HardTeardown
+        } else {
+            ParentTeardownRequest::Ordinary
+        };
+        self.cancel_running_task_with_parent_teardown(options, parent_request)
+            .await
     }
 
     pub(super) async fn cancel_running_task_with_parent_teardown(
@@ -324,7 +332,10 @@ impl SessionActor {
                 let queued = if Self::is_running_prompt(&state, requested) {
                     None
                 } else {
-                    state.pending_inputs.iter().position(|item| item.prompt_id == *requested)
+                    state
+                        .pending_inputs
+                        .iter()
+                        .position(|item| item.prompt_id == *requested)
                 };
                 let disposition = match queued {
                     Some(pos) => {
@@ -339,12 +350,19 @@ impl SessionActor {
                 return CancelOutcome::noop();
             }
         }
-        if options.trigger.as_ref().is_some_and(crate::session::CancelTrigger::is_user_gesture)
+        if options
+            .trigger
+            .as_ref()
+            .is_some_and(crate::session::CancelTrigger::is_user_gesture)
             || (options.user_initiated
-                && (options.trigger.is_none() || kind == Some(crate::session::CancelKind::StopGesture)))
+                && (options.trigger.is_none()
+                    || kind == Some(crate::session::CancelKind::StopGesture)))
         {
             if owns_maintenance
-                && matches!(options.history, crate::session::CancelHistoryDisposition::Keep)
+                && matches!(
+                    options.history,
+                    crate::session::CancelHistoryDisposition::Keep
+                )
             {
                 self.arm_wake_barrier(options.trigger.as_ref());
                 self.abort_compaction_for_manual_stop().await;
@@ -355,7 +373,9 @@ impl SessionActor {
                 };
             }
             match &options.history {
-                crate::session::CancelHistoryDisposition::RewindIfNoOutput { prompt_id: Some(_) } => {
+                crate::session::CancelHistoryDisposition::RewindIfNoOutput {
+                    prompt_id: Some(_),
+                } => {
                     self.compaction.cancel.request_cancel();
                 }
                 crate::session::CancelHistoryDisposition::Keep
@@ -512,9 +532,16 @@ impl SessionActor {
         }
         let child_cancellation = match trigger.as_ref() {
             Some(crate::session::CancelTrigger::Shutdown) => ChildCancellation::Shutdown,
-            Some(crate::session::CancelTrigger::Esc | crate::session::CancelTrigger::CtrlC
-                | crate::session::CancelTrigger::Coordinator | crate::session::CancelTrigger::SendNow | crate::session::CancelTrigger::SessionClose
-                | crate::session::CancelTrigger::SessionDelete | crate::session::CancelTrigger::Client(_)) | None => ChildCancellation::Authorized,
+            Some(
+                crate::session::CancelTrigger::Esc
+                | crate::session::CancelTrigger::CtrlC
+                | crate::session::CancelTrigger::Coordinator
+                | crate::session::CancelTrigger::SendNow
+                | crate::session::CancelTrigger::SessionClose
+                | crate::session::CancelTrigger::SessionDelete
+                | crate::session::CancelTrigger::Client(_),
+            )
+            | None => ChildCancellation::Authorized,
         };
         let mut finalization = if rewind_requested {
             CancelFinalization::Rewind
@@ -527,12 +554,18 @@ impl SessionActor {
                 ChildCancellation::Authorized => {
                     if let Some(task) = state.running_task.as_ref()
                         && lease.binding.epoch() == Some(task.epoch)
-                        && matches!(task.input_origin.as_prompt_origin(), PromptOrigin::ParentAgentMessage { .. } | PromptOrigin::ParentHumanMessage { .. })
+                        && matches!(
+                            task.input_origin.as_prompt_origin(),
+                            PromptOrigin::ParentAgentMessage { .. }
+                                | PromptOrigin::ParentHumanMessage { .. }
+                        )
                         && let Some(reservation) = &task.initial_parent_reservation
                     {
                         reservation.authorize_turn_cancel(
                             &task.prompt_id,
-                            &xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() },
+                            &xai_chat_state::ParentTask::Instance {
+                                id: task.identity.as_ref().clone(),
+                            },
                         );
                     }
                 }
@@ -546,12 +579,23 @@ impl SessionActor {
         };
         let parent_cause = match parent_request {
             ParentTeardownRequest::Ordinary => None,
-            ParentTeardownRequest::HardTeardown => Some(xai_message_delivery_core::TerminalCause::HardTeardown),
-            ParentTeardownRequest::ActorDrop => Some(xai_message_delivery_core::TerminalCause::ActorDrop),
+            ParentTeardownRequest::HardTeardown => {
+                Some(xai_message_delivery_core::TerminalCause::HardTeardown)
+            }
+            ParentTeardownRequest::ActorDrop => {
+                Some(xai_message_delivery_core::TerminalCause::ActorDrop)
+            }
         };
         let teardown_elapsed_ms = if parent_cause.is_some() {
-            self.state.lock().await.running_task.as_ref().map(|task| elapsed_ms_saturating(task.started_at, std::time::Instant::now()))
-        } else { None };
+            self.state
+                .lock()
+                .await
+                .running_task
+                .as_ref()
+                .map(|task| elapsed_ms_saturating(task.started_at, std::time::Instant::now()))
+        } else {
+            None
+        };
         if let Some(cause) = parent_cause {
             {
                 let state = self.state.lock().await;
@@ -611,10 +655,12 @@ impl SessionActor {
         // `None` when no running task supplies a start time (do not persist `Some(0)`)
         let cancel_elapsed_ms = {
             let state = self.state.lock().await;
-            let cancel_elapsed_ms = teardown_elapsed_ms.or_else(|| state
-                .running_task
-                .as_ref()
-                .map(|t| elapsed_ms_saturating(t.started_at, std::time::Instant::now())));
+            let cancel_elapsed_ms = teardown_elapsed_ms.or_else(|| {
+                state
+                    .running_task
+                    .as_ref()
+                    .map(|t| elapsed_ms_saturating(t.started_at, std::time::Instant::now()))
+            });
             if cancel_subagents
                 && parent_request == ParentTeardownRequest::Ordinary
                 && let Some(epoch) = claimed_turn_epoch
@@ -826,15 +872,18 @@ impl SessionActor {
             } else {
                 xai_message_delivery_core::TerminalCause::SoftCancel
             };
-            let message_target =
-                if matches!(message_cause, xai_message_delivery_core::TerminalCause::HardTeardown | xai_message_delivery_core::TerminalCause::ActorDrop) {
-                    xai_message_delivery_core::TerminalTarget::All
-                } else {
-                    binding.as_ref().map_or(
-                        xai_message_delivery_core::TerminalTarget::All,
-                        xai_message_delivery_core::TerminalTarget::Turn,
-                    )
-                };
+            let message_target = if matches!(
+                message_cause,
+                xai_message_delivery_core::TerminalCause::HardTeardown
+                    | xai_message_delivery_core::TerminalCause::ActorDrop
+            ) {
+                xai_message_delivery_core::TerminalTarget::All
+            } else {
+                binding.as_ref().map_or(
+                    xai_message_delivery_core::TerminalTarget::All,
+                    xai_message_delivery_core::TerminalTarget::Turn,
+                )
+            };
             let (message_completions, had_message_fallbacks) =
                 self.transition_parent_messages(&mut state, message_target, message_cause);
             let pending_inputs = if rewound_input.is_some() {
@@ -845,9 +894,16 @@ impl SessionActor {
                 let mut kept = VecDeque::with_capacity(state.pending_inputs.len());
                 let mut cancelled = VecDeque::new();
                 for item in std::mem::take(&mut state.pending_inputs) {
-                    let is_running_turn = cancelled_prompt_id.as_deref() == Some(item.prompt_id.as_str());
-                    if is_running_turn || (parent_teardown == ParentTeardownStatus::Unsettled
-                        && matches!(item.input_origin.as_prompt_origin(), super::PromptOrigin::ParentAgentMessage { .. } | super::PromptOrigin::ParentHumanMessage { .. })) {
+                    let is_running_turn =
+                        cancelled_prompt_id.as_deref() == Some(item.prompt_id.as_str());
+                    if is_running_turn
+                        || (parent_teardown == ParentTeardownStatus::Unsettled
+                            && matches!(
+                                item.input_origin.as_prompt_origin(),
+                                super::PromptOrigin::ParentAgentMessage { .. }
+                                    | super::PromptOrigin::ParentHumanMessage { .. }
+                            ))
+                    {
                         cancelled.push_back(item);
                     } else if suppress_task_wakes
                         && item.task_wake_fallback.is_some()
@@ -892,8 +948,7 @@ impl SessionActor {
         if suppress_task_wakes {
             self.auto_pause_goal_if_active_with_message(
                 crate::session::goal_tracker::GoalPauseReason::User,
-                "Session stopped by the user. Run /goal resume to continue the goal."
-                    .to_string(),
+                "Session stopped by the user. Run /goal resume to continue the goal.".to_string(),
             )
             .await;
         }
@@ -1041,8 +1096,15 @@ impl SessionActor {
             CancelFinalization::Rewind => None,
         };
         let parent_turn_unsettled = parent_teardown == ParentTeardownStatus::Unsettled
-            && matches!(&cancelled_input_binding.receiver_origin, crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { .. });
-        let mut terminal_result = if parent_turn_unsettled { Err(parent_teardown_uncertain()) } else { Ok(()) };
+            && matches!(
+                &cancelled_input_binding.receiver_origin,
+                crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { .. }
+            );
+        let mut terminal_result = if parent_turn_unsettled {
+            Err(parent_teardown_uncertain())
+        } else {
+            Ok(())
+        };
         if rewound_input.is_none()
             && !parent_turn_unsettled
             && let Some(prompt_id) = cancelled_prompt_id.or(no_task_pinned_prompt_id)
@@ -1054,23 +1116,24 @@ impl SessionActor {
             }
             // `cancelTrigger` lets clients tell a send-now cancel from a Ctrl+C/Esc one
             // `MidTurnAbort` matches what the prompt's RPC resolves with below, so the event and the RPC agree
-            terminal_result = self.emit_turn_completed(
-                prompt_id,
-                &Ok(acp::StopReason::Cancelled),
-                cancelled_usage.clone(),
-                trigger.as_ref().map(crate::session::CancelTrigger::as_str),
-                // A no-task pinned cancel reaches here too; only a torn-down task is a mid-turn abort.
-                tore_down_task.then(|| {
-                    crate::session::commands::meta_category_str(
-                        crate::session::events::CancellationCategory::MidTurnAbort,
-                    )
-                }),
-                None,
-                cancel_elapsed_ms,
-                None,
-                cancelled_input_binding,
-            )
-            .await;
+            terminal_result = self
+                .emit_turn_completed(
+                    prompt_id,
+                    &Ok(acp::StopReason::Cancelled),
+                    cancelled_usage.clone(),
+                    trigger.as_ref().map(crate::session::CancelTrigger::as_str),
+                    // A no-task pinned cancel reaches here too; only a torn-down task is a mid-turn abort.
+                    tore_down_task.then(|| {
+                        crate::session::commands::meta_category_str(
+                            crate::session::events::CancellationCategory::MidTurnAbort,
+                        )
+                    }),
+                    None,
+                    cancel_elapsed_ms,
+                    None,
+                    cancelled_input_binding,
+                )
+                .await;
         }
 
         if let Some(input) = rewound_input {
@@ -1094,19 +1157,25 @@ impl SessionActor {
 
         let message_result = if parent_teardown == ParentTeardownStatus::Unsettled {
             Err(parent_teardown_uncertain())
-        } else { terminal_result.clone().map(|()| PromptTurnOk {
-            stop_reason: acp::StopReason::Cancelled,
-            total_tokens,
-            turn_snapshot: None,
-            completion_kind: PromptCompletionKind::mid_turn_abort(None),
-            structured_output: None,
-            usage: cancelled_usage.clone(),
-            tool_overrides: self.effective_tool_overrides(),
-        }) };
+        } else {
+            terminal_result.clone().map(|()| PromptTurnOk {
+                stop_reason: acp::StopReason::Cancelled,
+                total_tokens,
+                turn_snapshot: None,
+                completion_kind: PromptCompletionKind::mid_turn_abort(None),
+                structured_output: None,
+                usage: cancelled_usage.clone(),
+                tool_overrides: self.effective_tool_overrides(),
+            })
+        };
         Self::settle_parent_message_completions(message_completions, &message_result);
         for (idx, input) in pending_inputs.into_iter().enumerate() {
             if parent_teardown == ParentTeardownStatus::Unsettled
-                && matches!(input.input_origin.as_prompt_origin(), super::PromptOrigin::ParentAgentMessage { .. } | super::PromptOrigin::ParentHumanMessage { .. })
+                && matches!(
+                    input.input_origin.as_prompt_origin(),
+                    super::PromptOrigin::ParentAgentMessage { .. }
+                        | super::PromptOrigin::ParentHumanMessage { .. }
+                )
             {
                 let _ = input.respond_to.send(Err(parent_teardown_uncertain()));
                 continue;
@@ -1121,36 +1190,43 @@ impl SessionActor {
             }
             let _ = input
                 .respond_to
-                .send((if is_running_turn { terminal_result.clone() } else { Ok(()) }).map(|()| PromptTurnOk {
-                    stop_reason: acp::StopReason::Cancelled,
-                    total_tokens,
-                    turn_snapshot: None,
-                    // Category and trigger go to the running turn only (idx 0), matching events.jsonl's category
-                    // Queued prompts were removed, not mid-turn aborted; MvpAgent stamps the trigger on the `PromptResponse` `_meta`
-                    completion_kind: if is_running_turn {
-                        PromptCompletionKind::mid_turn_abort(
-                            trigger.as_ref().map(crate::session::CancelTrigger::as_str),
-                        )
+                .send(
+                    (if is_running_turn {
+                        terminal_result.clone()
                     } else {
-                        PromptCompletionKind::Cancelled {
-                            category: None,
-                            context: None,
-                        }
-                    },
-                    structured_output: None,
-                    usage: if is_running_turn {
-                        cancelled_usage.clone()
-                    } else {
-                        None
-                    },
-                    // Only the running turn (idx 0) ran, so only it reports the tool overrides it ran under
-                    // A queued prompt that never promoted has nothing to report (like respond_removed_prompt)
-                    tool_overrides: if is_running_turn {
-                        self.effective_tool_overrides()
-                    } else {
-                        None
-                    },
-                }))
+                        Ok(())
+                    })
+                    .map(|()| PromptTurnOk {
+                        stop_reason: acp::StopReason::Cancelled,
+                        total_tokens,
+                        turn_snapshot: None,
+                        // Category and trigger go to the running turn only (idx 0), matching events.jsonl's category
+                        // Queued prompts were removed, not mid-turn aborted; MvpAgent stamps the trigger on the `PromptResponse` `_meta`
+                        completion_kind: if is_running_turn {
+                            PromptCompletionKind::mid_turn_abort(
+                                trigger.as_ref().map(crate::session::CancelTrigger::as_str),
+                            )
+                        } else {
+                            PromptCompletionKind::Cancelled {
+                                category: None,
+                                context: None,
+                            }
+                        },
+                        structured_output: None,
+                        usage: if is_running_turn {
+                            cancelled_usage.clone()
+                        } else {
+                            None
+                        },
+                        // Only the running turn (idx 0) ran, so only it reports the tool overrides it ran under
+                        // A queued prompt that never promoted has nothing to report (like respond_removed_prompt)
+                        tool_overrides: if is_running_turn {
+                            self.effective_tool_overrides()
+                        } else {
+                            None
+                        },
+                    }),
+                )
                 .ok();
         }
         // The aborted task skips the completion arm; no next turn starts before this returns.
@@ -1170,7 +1246,9 @@ impl SessionActor {
                 WakeBarrier::Clear
             },
             turn_stopped,
-            settled: settled && terminal_result.is_ok() && parent_teardown != ParentTeardownStatus::Unsettled,
+            settled: settled
+                && terminal_result.is_ok()
+                && parent_teardown != ParentTeardownStatus::Unsettled,
         }
     }
 

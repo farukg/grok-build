@@ -39,7 +39,9 @@ pub(super) fn invalid_images(item: &ConversationItem) -> Vec<ImageRejection> {
     image_rejections(item).collect()
 }
 
-pub(super) fn image_rejections(item: &ConversationItem) -> impl Iterator<Item = ImageRejection> + '_ {
+pub(super) fn image_rejections(
+    item: &ConversationItem,
+) -> impl Iterator<Item = ImageRejection> + '_ {
     let parts: &[ContentPart] = match item {
         ConversationItem::User(user) => &user.content,
         ConversationItem::ToolResult(tool) => &tool.images,
@@ -48,14 +50,15 @@ pub(super) fn image_rejections(item: &ConversationItem) -> impl Iterator<Item = 
         | ConversationItem::BackendToolCall(_)
         | ConversationItem::Reasoning(_) => &[],
     };
-    parts.iter().enumerate().filter_map(|(part, content)| {
-        match content {
+    parts
+        .iter()
+        .enumerate()
+        .filter_map(|(part, content)| match content {
             ContentPart::Image { url } if url.starts_with("data:") => {
                 data_uri_reject_cause(url).map(|cause| ImageRejection { part, cause })
             }
             ContentPart::Image { .. } | ContentPart::Text { .. } => None,
-        }
-    })
+        })
 }
 
 fn data_uri_reject_cause(url: &str) -> Option<ImageRejectCause> {
@@ -66,7 +69,11 @@ fn data_uri_reject_cause(url: &str) -> Option<ImageRejectCause> {
     let Some((header, payload)) = after_data.split_once(',') else {
         return Some(ImageRejectCause::Header);
     };
-    if !header.as_bytes().windows(7).any(|w| w.eq_ignore_ascii_case(b";base64")) {
+    if !header
+        .as_bytes()
+        .windows(7)
+        .any(|w| w.eq_ignore_ascii_case(b";base64"))
+    {
         return Some(ImageRejectCause::Header);
     }
     if payload.len() * 3 / 4 > MAX_LOADED_IMAGE_BYTES {

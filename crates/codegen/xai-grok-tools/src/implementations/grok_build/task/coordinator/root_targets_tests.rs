@@ -43,7 +43,8 @@ pub(in super::super) struct TestRootControl {
     generation: AgentMessageGeneration,
     is_receipt_closed: bool,
     routes: mpsc::UnboundedSender<ActiveMessageRoute>,
-    held_admissions: Option<mpsc::UnboundedSender<super::super::active_message::tests::AdmissionCall>>,
+    held_admissions:
+        Option<mpsc::UnboundedSender<super::super::active_message::tests::AdmissionCall>>,
 }
 
 impl RootReceiptSink for bool {
@@ -411,14 +412,18 @@ async fn root_deadline_arbitrates_real_claim_before_any_handoff() {
         let (routes_tx, mut routes) = mpsc::unbounded_channel();
         install_roots(routes_tx);
         ROOTS.with_borrow_mut(|roots| {
-            roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
-                Some(admission_tx);
+            roots
+                .get_mut(&AgentId::parse(ROOT_A).unwrap())
+                .unwrap()
+                .held_admissions = Some(admission_tx);
         });
         let response = begin(
             &mut coordinator,
             &tx,
             agent(ROOT_A),
-            ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
+            ActiveMessageSenderContext::RootSession {
+                session_id: Arc::from("root-b"),
+            },
         );
         let held = recv_with_timeout(&mut admissions).await;
         let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
@@ -428,7 +433,9 @@ async fn root_deadline_arbitrates_real_claim_before_any_handoff() {
         let completion = coordinator.active_messages.next().await.unwrap();
         coordinator.finish_active_message(completion);
         let expected = if claimed {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: expected_recovery_ref.clone(),
+            }
         } else {
             ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline
         };
@@ -440,7 +447,10 @@ async fn root_deadline_arbitrates_real_claim_before_any_handoff() {
         if let Some(claim) = claim {
             assert_eq!("root-b", claim.delivery().message().sender_session_id);
             assert_eq!("hello", claim.delivery().message().text.as_ref());
-            assert_eq!(ActiveAgentMessageOperation::Steer, claim.delivery().operation());
+            assert_eq!(
+                ActiveAgentMessageOperation::Steer,
+                claim.delivery().operation()
+            );
             let (receipt, mut receipts) = mpsc::unbounded_channel();
             claim.commit().handoff(|| receipt.send("hello").unwrap());
             assert_eq!(Some("hello"), receipts.recv().await);
@@ -455,21 +465,27 @@ async fn root_observer_drop_cannot_revoke_owned_claim() {
         let (routes_tx, mut routes) = mpsc::unbounded_channel();
         install_roots(routes_tx);
         ROOTS.with_borrow_mut(|roots| {
-            roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
-                Some(admission_tx);
+            roots
+                .get_mut(&AgentId::parse(ROOT_A).unwrap())
+                .unwrap()
+                .held_admissions = Some(admission_tx);
         });
         let response = begin(
             &mut coordinator,
             &tx,
             agent(ROOT_A),
-            ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
+            ActiveMessageSenderContext::RootSession {
+                session_id: Arc::from("root-b"),
+            },
         );
         let held = recv_with_timeout(&mut admissions).await;
         let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let claim = claimed.then(|| held.late_delivery.clone().claim_admission().unwrap());
         drop(coordinator);
         let expected = if claimed {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: expected_recovery_ref.clone(),
+            }
         } else {
             ActiveAgentMessageOutcome::ChannelClosed
         };
@@ -497,8 +513,10 @@ async fn root_admitted_requires_completed_durable_proof_handoff() {
         let (routes_tx, mut routes) = mpsc::unbounded_channel();
         install_roots(routes_tx);
         ROOTS.with_borrow_mut(|roots| {
-            roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
-                Some(admission_tx);
+            roots
+                .get_mut(&AgentId::parse(ROOT_A).unwrap())
+                .unwrap()
+                .held_admissions = Some(admission_tx);
         });
         let response = begin(
             &mut coordinator,
@@ -510,11 +528,19 @@ async fn root_admitted_requires_completed_durable_proof_handoff() {
         );
         let held = recv_with_timeout(&mut admissions).await;
         let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
-        let proof = held.late_delivery.clone().claim_admission().unwrap().commit();
+        let proof = held
+            .late_delivery
+            .clone()
+            .claim_admission()
+            .unwrap()
+            .commit();
         assert_eq!(held.message_id, proof.delivery().message().message_id);
         assert_eq!("root-b", proof.delivery().message().sender_session_id);
         assert_eq!("hello", proof.delivery().message().text.as_ref());
-        assert_eq!(ActiveAgentMessageOperation::Steer, proof.delivery().operation());
+        assert_eq!(
+            ActiveAgentMessageOperation::Steer,
+            proof.delivery().operation()
+        );
         let retained = cut.apply(proof);
         assert!(held.late_delivery.claim_admission().is_none());
         let (finalize_tx, mut finalize_rx) = tokio::sync::oneshot::channel();
@@ -535,7 +561,9 @@ async fn root_admitted_requires_completed_durable_proof_handoff() {
                 message_id: held.message_id,
             }
         } else {
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
+            ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: expected_recovery_ref.clone(),
+            }
         };
         assert_eq!(expected, response_outcome(response).await, "{cut:?}");
         assert_eq!(completed, finalize_rx.await.unwrap(), "{cut:?}");
@@ -553,14 +581,18 @@ async fn root_lost_claim_and_ack_remain_uncertain() {
     let (routes_tx, mut routes) = mpsc::unbounded_channel();
     install_roots(routes_tx);
     ROOTS.with_borrow_mut(|roots| {
-        roots.get_mut(&AgentId::parse(ROOT_A).unwrap()).unwrap().held_admissions =
-            Some(admission_tx);
+        roots
+            .get_mut(&AgentId::parse(ROOT_A).unwrap())
+            .unwrap()
+            .held_admissions = Some(admission_tx);
     });
     let response = begin(
         &mut coordinator,
         &tx,
         agent(ROOT_A),
-        ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
+        ActiveMessageSenderContext::RootSession {
+            session_id: Arc::from("root-b"),
+        },
     );
     let held = recv_with_timeout(&mut admissions).await;
     let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
@@ -569,7 +601,12 @@ async fn root_lost_claim_and_ack_remain_uncertain() {
     drop(held.release);
     let completion = coordinator.active_messages.next().await.unwrap();
     coordinator.finish_active_message(completion);
-    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }, response_outcome(response).await);
+    assert_eq!(
+        ActiveAgentMessageOutcome::AdmissionUncertain {
+            recovery_ref: expected_recovery_ref.clone()
+        },
+        response_outcome(response).await
+    );
     assert!(routes.try_recv().is_err());
     assert!(coordinator.root_active_messages.is_empty());
 }

@@ -182,24 +182,25 @@ mod model_notice_tests;
 mod rewind;
 mod role;
 pub(crate) use role::{AgentRole, ChildLink, PromptTarget};
-#[cfg(test)]
-mod role_tests;
 pub(crate) mod context_removal;
 pub(crate) mod context_sidebar;
 #[cfg(test)]
 mod context_sidebar_tests;
-mod request_viewer;
+pub(crate) mod current_actions;
+pub(crate) mod load_continuation;
 mod panel_persistence;
+mod publication;
 #[cfg(test)]
 pub(crate) mod removal_test_support;
 pub(crate) mod removal_verdict;
+mod request_viewer;
+#[cfg(test)]
+mod role_tests;
 mod selection;
 mod session;
-pub(crate) mod load_continuation;
-pub(crate) mod current_actions;
-mod publication;
 pub use current_actions::{CurrentActionsContext, CurrentActionsReadContext};
 pub(crate) use session::stamp_child_role_for_session;
+pub(crate) mod inline_sources;
 mod session_mode;
 mod shell_completion;
 mod sidebars;
@@ -211,7 +212,6 @@ mod task_icon_mouse_tests;
 mod task_status_tests;
 mod timeline_panel;
 mod viewer;
-pub(crate) mod inline_sources;
 mod workflows_overlay;
 use super::actions;
 use super::dispatch;

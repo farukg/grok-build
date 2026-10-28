@@ -77,8 +77,16 @@ impl From<ActiveAgentMessageOutcome> for SendSubagentMessageOutcome {
             ActiveAgentMessageOutcome::Saturated { max_in_flight } => {
                 Self::Saturated { max_in_flight }
             }
-            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } => Self::AdmissionUncertain { recovery_ref },
-            ActiveAgentMessageOutcome::RecoveryObserved { recovery_ref, state } => Self::RecoveryObserved { recovery_ref, state },
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } => {
+                Self::AdmissionUncertain { recovery_ref }
+            }
+            ActiveAgentMessageOutcome::RecoveryObserved {
+                recovery_ref,
+                state,
+            } => Self::RecoveryObserved {
+                recovery_ref,
+                state,
+            },
             ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline => Self::NotAcceptedBeforeDeadline,
             ActiveAgentMessageOutcome::Limit {
                 max_bytes,
@@ -123,8 +131,10 @@ pub(crate) async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResul
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecoverSubagentMessageRequest {
     pub(crate) session_id: String,
-    pub(crate) recovery_ref: xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef,
-    pub(crate) action: xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryAction,
+    pub(crate) recovery_ref:
+        xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef,
+    pub(crate) action:
+        xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryAction,
 }
 
 pub(crate) async fn handle_recovery(
@@ -132,11 +142,19 @@ pub(crate) async fn handle_recovery(
     args: &acp::ExtRequest,
     coordinator: &xai_grok_tools::implementations::grok_build::task::backend::SubagentCoordinatorSender,
 ) -> ExtResult {
-    if !agent.cfg.borrow().is_feature_enabled(crate::agent::config::Feature::ActiveAgentMessages) {
+    if !agent
+        .cfg
+        .borrow()
+        .is_feature_enabled(crate::agent::config::Feature::ActiveAgentMessages)
+    {
         return Err(acp::Error::method_not_found());
     }
     let request: RecoverSubagentMessageRequest = super::parse_params(args)?;
-    if agent.session_handle_waiting_for_load(&acp::SessionId::new(request.session_id.clone())).await.is_none() {
+    if agent
+        .session_handle_waiting_for_load(&acp::SessionId::new(request.session_id.clone()))
+        .await
+        .is_none()
+    {
         return respond(Ok::<_, String>(SendSubagentMessageOutcome::Rejected));
     }
     let outcome = coordinator.recover_message(request.recovery_ref, request.action,
@@ -173,20 +191,36 @@ mod tests {
 
     #[test]
     fn admission_uncertainty_retains_exact_recovery_reference_in_extension_output() {
-        use xai_grok_tools::implementations::grok_build::task::{native_recovery::MessageRecoveryRef, root_control::AgentMessageGeneration, types::{ActiveAgentMessageOperation, ActiveMessageReceiver}};
+        use xai_grok_tools::implementations::grok_build::task::{
+            native_recovery::MessageRecoveryRef,
+            root_control::AgentMessageGeneration,
+            types::{ActiveAgentMessageOperation, ActiveMessageReceiver},
+        };
         let reference = MessageRecoveryRef {
-            delivery_id: "parent-message/message".into(), message_id: "message".into(),
-            prompt_id: "parent-message-message".into(), payload_digest: "ab".repeat(32),
-            receiver: ActiveMessageReceiver { session_id: "receiver".into(), generation: AgentMessageGeneration::mint(42) },
+            delivery_id: "parent-message/message".into(),
+            message_id: "message".into(),
+            prompt_id: "parent-message-message".into(),
+            payload_digest: "ab".repeat(32),
+            receiver: ActiveMessageReceiver {
+                session_id: "receiver".into(),
+                generation: AgentMessageGeneration::mint(42),
+            },
             operation: ActiveAgentMessageOperation::Queue,
         };
-        let output = SendSubagentMessageOutcome::from(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference.clone() });
+        let output =
+            SendSubagentMessageOutcome::from(ActiveAgentMessageOutcome::AdmissionUncertain {
+                recovery_ref: reference.clone(),
+            });
         let wire = serde_json::to_value(output).unwrap();
         assert_eq!(wire["kind"], "admission_uncertain");
-        assert_eq!(wire["recoveryRef"], serde_json::to_value(&reference).unwrap());
+        assert_eq!(
+            wire["recoveryRef"],
+            serde_json::to_value(&reference).unwrap()
+        );
         let request: RecoverSubagentMessageRequest = serde_json::from_value(serde_json::json!({
             "sessionId": "authenticated-parent", "action": "observe", "recoveryRef": reference,
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(request.action, xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryAction::Observe);
     }
 

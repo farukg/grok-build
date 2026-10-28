@@ -164,18 +164,27 @@ impl ThinkingBlock {
         self.content.text()
     }
 
-    pub fn elapsed_time_ms(&self) -> Option<i64> { self.elapsed_time_ms }
+    pub fn elapsed_time_ms(&self) -> Option<i64> {
+        self.elapsed_time_ms
+    }
 
-    pub(crate) fn source_len(&self) -> usize { self.content.with_source(str::len) }
+    pub(crate) fn source_len(&self) -> usize {
+        self.content.with_source(str::len)
+    }
 
     pub(crate) fn source_tail(&self, offset: usize) -> Option<String> {
-        self.content.with_source(|source| source.get(offset..).map(str::to_owned))
+        self.content
+            .with_source(|source| source.get(offset..).map(str::to_owned))
     }
 
     pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
-        let Some(tail) = self.source_tail(offset) else { return false; };
+        let Some(tail) = self.source_tail(offset) else {
+            return false;
+        };
         self.content = historical.content.clone();
-        if !tail.is_empty() { self.content.push_chunk_deferred(&tail); }
+        if !tail.is_empty() {
+            self.content.push_chunk_deferred(&tail);
+        }
         true
     }
 

@@ -541,7 +541,9 @@ pub enum SubagentCompletion {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
 pub enum SessionUpdate {
-    RequestSourceObserved { observation: crate::session::source_binding::SourceBindingObservation },
+    RequestSourceObserved {
+        observation: crate::session::source_binding::SourceBindingObservation,
+    },
     /// A diff review request containing one or more file diffs for user review.
     DiffReview {
         /// The diff content to be reviewed.
@@ -549,7 +551,9 @@ pub enum SessionUpdate {
     },
     /// Notification that a retry is in progress due to a transient error.
     RetryState(RetryState),
-    SamplingLifecycle { lifecycle: crate::extensions::sampling_lifecycle::SamplingLifecycle },
+    SamplingLifecycle {
+        lifecycle: crate::extensions::sampling_lifecycle::SamplingLifecycle,
+    },
     /// Auto-compact is starting due to context window threshold
     AutoCompactStarted {
         #[serde(default)]
@@ -1665,7 +1669,8 @@ mod tests {
         };
         let wire = serde_json::to_value(&stamped).unwrap();
         assert_eq!(
-            wire.get("nextAttemptAtMs").and_then(serde_json::Value::as_i64),
+            wire.get("nextAttemptAtMs")
+                .and_then(serde_json::Value::as_i64),
             Some(1_700_000_000_000)
         );
         let round: RetryState = serde_json::from_value(wire).unwrap();

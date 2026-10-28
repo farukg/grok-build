@@ -1,12 +1,17 @@
 use super::support::*;
 use super::*;
+use crate::extensions::interject::{
+    QueueAction, QueueCaller, QueueOperation, QueueRejection, QueueRequest, QueueResponse,
+    QueueResult,
+};
 use std::rc::Rc;
-use crate::extensions::interject::{QueueAction, QueueCaller, QueueOperation, QueueRejection, QueueRequest, QueueResponse, QueueResult};
 
 fn request(id: &str, version: u64, owner: Option<&str>) -> QueueRequest {
     QueueRequest {
         operation: QueueOperation {
-            session_id: "test-actor".into(), id: id.into(), expected_version: version,
+            session_id: "test-actor".into(),
+            id: id.into(),
+            expected_version: version,
             operation_id: uuid::Uuid::new_v4(),
         },
         action: QueueAction::Prioritize { new_text: None },
@@ -14,14 +19,30 @@ fn request(id: &str, version: u64, owner: Option<&str>) -> QueueRequest {
     }
 }
 
-async fn submit(sender: &mpsc::UnboundedSender<SessionCommand>, request: QueueRequest) -> QueueResponse {
+async fn submit(
+    sender: &mpsc::UnboundedSender<SessionCommand>,
+    request: QueueRequest,
+) -> QueueResponse {
     submit_as(sender, QueueCaller::for_test_session("test-actor"), request).await
 }
 
-async fn submit_as(sender: &mpsc::UnboundedSender<SessionCommand>, caller: QueueCaller, request: QueueRequest) -> QueueResponse {
+async fn submit_as(
+    sender: &mpsc::UnboundedSender<SessionCommand>,
+    caller: QueueCaller,
+    request: QueueRequest,
+) -> QueueResponse {
     let (respond_to, receive) = oneshot::channel();
-    sender.send(SessionCommand::QueueSendNow { caller, request, respond_to }).unwrap();
-    tokio::time::timeout(Duration::from_secs(5), receive).await.unwrap().unwrap()
+    sender
+        .send(SessionCommand::QueueSendNow {
+            caller,
+            request,
+            respond_to,
+        })
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), receive)
+        .await
+        .unwrap()
+        .unwrap()
 }
 
 fn hold_next_flush(actor: &mut Arc<SessionActor>) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
@@ -39,7 +60,9 @@ fn hold_next_flush(actor: &mut Arc<SessionActor>) -> (oneshot::Receiver<()>, one
                 continue;
             };
             let (ack, persisted) = oneshot::channel();
-            upstream.send(PersistenceMsg::FlushAndAck { respond_to: ack }).unwrap();
+            upstream
+                .send(PersistenceMsg::FlushAndAck { respond_to: ack })
+                .unwrap();
             let result = persisted.await.unwrap();
             assert!(result.is_ok());
             if let Some((observed, released)) = barrier.take() {
@@ -52,10 +75,15 @@ fn hold_next_flush(actor: &mut Arc<SessionActor>) -> (oneshot::Receiver<()>, one
     (committed, release)
 }
 
-async fn actor() -> (Arc<SessionActor>, mpsc::UnboundedReceiver<SessionEvent>, mpsc::UnboundedReceiver<ChatFixtureEvent>) {
+async fn actor() -> (
+    Arc<SessionActor>,
+    mpsc::UnboundedReceiver<SessionEvent>,
+    mpsc::UnboundedReceiver<ChatFixtureEvent>,
+) {
     let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
     spawn_gateway_loop(gateway_rx);
-    let (actor, events, writes) = create_observed_completion_test_actor(0, 256_000, 85, gateway_tx).await;
+    let (actor, events, writes) =
+        create_observed_completion_test_actor(0, 256_000, 85, gateway_tx).await;
     (Arc::new(actor), events, writes)
 }
 
@@ -284,54 +312,81 @@ async fn queue_operation_observes_without_reapplication_or_cross_version_reuse()
 
 #[tokio::test(flavor = "current_thread")]
 async fn goal_interjection_reports_its_real_running_binding_without_second_turn() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, events, _) = actor().await;
-        actor.goal_tracker.lock().create_goal("goal".into(), "objective".into(), None, 0, chrono::Utc::now().to_rfc3339(), None);
-        {
-            let mut state = actor.state.lock().await;
-            state.pending_inputs.push_back(user_item("running-goal", "A"));
-            state.running_task = Some(running_task_stub("running-goal"));
-            state.front_message_committed = true;
-            state.pending_inputs.push_back(user_item("steer", "A"));
-        }
-        let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
-        let sent = request("steer", 0, Some("A"));
-        let response = submit(&sender, sent.clone()).await;
-        assert_eq!(response.result, QueueResult::GoalInterjection { running_prompt_id: "running-goal".into() });
-        assert_eq!(submit(&sender, sent).await, response);
-        let state = actor.state.lock().await;
-        assert_eq!(state.running_prompt_id(), Some("running-goal"));
-        assert_eq!(state.pending_inputs.len(), 1);
-        drop(state);
-        let interjections = actor.pending_interjections.drain_all();
-        assert_eq!(interjections.len(), 1);
-        assert_eq!(interjections[0].text, "text for steer");
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, events, _) = actor().await;
+            actor.goal_tracker.lock().create_goal(
+                "goal".into(),
+                "objective".into(),
+                None,
+                0,
+                chrono::Utc::now().to_rfc3339(),
+                None,
+            );
+            {
+                let mut state = actor.state.lock().await;
+                state
+                    .pending_inputs
+                    .push_back(user_item("running-goal", "A"));
+                state.running_task = Some(running_task_stub("running-goal"));
+                state.front_message_committed = true;
+                state.pending_inputs.push_back(user_item("steer", "A"));
+            }
+            let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
+            let sent = request("steer", 0, Some("A"));
+            let response = submit(&sender, sent.clone()).await;
+            assert_eq!(
+                response.result,
+                QueueResult::GoalInterjection {
+                    running_prompt_id: "running-goal".into()
+                }
+            );
+            assert_eq!(submit(&sender, sent).await, response);
+            let state = actor.state.lock().await;
+            assert_eq!(state.running_prompt_id(), Some("running-goal"));
+            assert_eq!(state.pending_inputs.len(), 1);
+            drop(state);
+            let interjections = actor.pending_interjections.drain_all();
+            assert_eq!(interjections.len(), 1);
+            assert_eq!(interjections[0].text, "text for steer");
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn finalizing_goal_keeps_priority_queued_instead_of_claiming_a_goal_binding() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, events, _) = actor().await;
-        actor.goal_tracker.lock().create_goal("goal".into(), "objective".into(), None, 0, chrono::Utc::now().to_rfc3339(), None);
-        let mut lease = {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, events, _) = actor().await;
+            actor.goal_tracker.lock().create_goal(
+                "goal".into(),
+                "objective".into(),
+                None,
+                0,
+                chrono::Utc::now().to_rfc3339(),
+                None,
+            );
+            let mut lease = {
+                let mut state = actor.state.lock().await;
+                state
+                    .pending_inputs
+                    .push_back(user_item("running-goal", "A"));
+                state.running_task = Some(running_task_stub("running-goal"));
+                state.front_message_committed = true;
+                state.pending_inputs.push_back(user_item("steer", "A"));
+                state.claim_cancel_finalization().unwrap()
+            };
+            let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
+            let response = submit(&sender, request("steer", 0, Some("A"))).await;
+            assert!(matches!(response.result, QueueResult::Queued { row } if row.id == "steer"));
+            assert!(actor.pending_interjections.is_empty());
             let mut state = actor.state.lock().await;
-            state.pending_inputs.push_back(user_item("running-goal", "A"));
-            state.running_task = Some(running_task_stub("running-goal"));
-            state.front_message_committed = true;
-            state.pending_inputs.push_back(user_item("steer", "A"));
-            state.claim_cancel_finalization().unwrap()
-        };
-        let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
-        let response = submit(&sender, request("steer", 0, Some("A"))).await;
-        assert!(matches!(response.result, QueueResult::Queued { row } if row.id == "steer"));
-        assert!(actor.pending_interjections.is_empty());
-        let mut state = actor.state.lock().await;
-        assert_eq!(state.running_prompt_id(), Some("running-goal"));
-        assert_eq!(state.pending_inputs.len(), 2);
-        assert!(state.release_finalizing_task(&lease));
-        assert!(state.finish_finalization(&mut lease));
-    }).await;
+            assert_eq!(state.running_prompt_id(), Some("running-goal"));
+            assert_eq!(state.pending_inputs.len(), 2);
+            assert!(state.release_finalizing_task(&lease));
+            assert!(state.finish_finalization(&mut lease));
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -392,154 +447,244 @@ async fn lost_reply_observes_the_atomic_edit_without_reapplying_it() {
     }).await;
 }
 
-
 #[tokio::test(flavor = "current_thread")]
 async fn copied_owner_and_operation_do_not_delegate_session_control() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, events, _) = actor().await;
-        let _lease = {
-            let mut state = actor.state.lock().await;
-            state.pending_inputs.push_back(user_item("owned", "A"));
-            state.claim_cancel_finalization().unwrap()
-        };
-        let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
-        let accepted_request = request("owned", 0, Some("A"));
-        let accepted = submit(&sender, accepted_request.clone()).await;
-        assert!(matches!(&accepted.result, QueueResult::Queued { .. }));
-        {
-            let mut state = actor.state.lock().await;
-            state.arm_hook_block_hold();
-            state.notifications_suppressed = true;
-        }
-        let before = actor.build_queue_wire(&actor.state.lock().await);
-        let mut spoof = request("owned", 0, Some("A"));
-        spoof.action = QueueAction::Prioritize { new_text: Some("forged payload".into()) };
-        let mut observe = accepted_request.clone();
-        observe.action = QueueAction::Observe;
-        for attempt in [spoof, observe.clone()] {
-            let response = submit_as(&sender, QueueCaller::for_test_session("not-delegated-session"), attempt).await;
-            assert!(matches!(response.result, QueueResult::Rejected { reason: QueueRejection::Unauthorized, row: None }));
-        }
-        let state = actor.state.lock().await;
-        assert_eq!(actor.build_queue_wire(&state), before);
-        assert!(state.hook_block_held());
-        assert!(state.notifications_suppressed);
-        assert!(state.finalization_gate.is_active());
-        assert!(state.running_task.is_none());
-        assert!(actor.pending_interjections.is_empty());
-        drop(state);
-        assert_eq!(submit(&sender, accepted_request).await, accepted);
-        assert_eq!(submit(&sender, observe).await, accepted);
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, events, _) = actor().await;
+            let _lease = {
+                let mut state = actor.state.lock().await;
+                state.pending_inputs.push_back(user_item("owned", "A"));
+                state.claim_cancel_finalization().unwrap()
+            };
+            let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
+            let accepted_request = request("owned", 0, Some("A"));
+            let accepted = submit(&sender, accepted_request.clone()).await;
+            assert!(matches!(&accepted.result, QueueResult::Queued { .. }));
+            {
+                let mut state = actor.state.lock().await;
+                state.arm_hook_block_hold();
+                state.notifications_suppressed = true;
+            }
+            let before = actor.build_queue_wire(&actor.state.lock().await);
+            let mut spoof = request("owned", 0, Some("A"));
+            spoof.action = QueueAction::Prioritize {
+                new_text: Some("forged payload".into()),
+            };
+            let mut observe = accepted_request.clone();
+            observe.action = QueueAction::Observe;
+            for attempt in [spoof, observe.clone()] {
+                let response = submit_as(
+                    &sender,
+                    QueueCaller::for_test_session("not-delegated-session"),
+                    attempt,
+                )
+                .await;
+                assert!(matches!(
+                    response.result,
+                    QueueResult::Rejected {
+                        reason: QueueRejection::Unauthorized,
+                        row: None
+                    }
+                ));
+            }
+            let state = actor.state.lock().await;
+            assert_eq!(actor.build_queue_wire(&state), before);
+            assert!(state.hook_block_held());
+            assert!(state.notifications_suppressed);
+            assert!(state.finalization_gate.is_active());
+            assert!(state.running_task.is_none());
+            assert!(actor.pending_interjections.is_empty());
+            drop(state);
+            assert_eq!(submit(&sender, accepted_request).await, accepted);
+            assert_eq!(submit(&sender, observe).await, accepted);
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn count_capacity_refuses_new_operations_but_keeps_known_receipts() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, events, _) = actor().await;
-        let _lease = {
-            let mut state = actor.state.lock().await;
-            state.pending_inputs.push_back(user_item("owned", "A"));
-            state.arm_hook_block_hold();
-            state.claim_cancel_finalization().unwrap()
-        };
-        let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
-        let first = request("missing", 0, Some("A"));
-        let receipt = submit(&sender, first.clone()).await;
-        assert!(matches!(&receipt.result, QueueResult::Rejected { reason: QueueRejection::Missing, .. }));
-        for index in 1..=super::queue_mutation::QUEUE_OPERATION_LIMIT {
-            let mut attempt = request(if index % 2 == 0 { "missing" } else { "owned" }, 9, Some("A"));
-            attempt.action = QueueAction::Prioritize { new_text: Some("ø".repeat(16 * 1024)) };
-            let result = submit(&sender, attempt).await.result;
-            if index == super::queue_mutation::QUEUE_OPERATION_LIMIT {
-                assert!(matches!(result, QueueResult::Rejected { reason: QueueRejection::Capacity, row: None }));
-            } else {
-                assert!(matches!(result, QueueResult::Rejected { reason: QueueRejection::Missing | QueueRejection::Stale, .. }));
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, events, _) = actor().await;
+            let _lease = {
+                let mut state = actor.state.lock().await;
+                state.pending_inputs.push_back(user_item("owned", "A"));
+                state.arm_hook_block_hold();
+                state.claim_cancel_finalization().unwrap()
+            };
+            let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
+            let first = request("missing", 0, Some("A"));
+            let receipt = submit(&sender, first.clone()).await;
+            assert!(matches!(
+                &receipt.result,
+                QueueResult::Rejected {
+                    reason: QueueRejection::Missing,
+                    ..
+                }
+            ));
+            for index in 1..=super::queue_mutation::QUEUE_OPERATION_LIMIT {
+                let mut attempt = request(
+                    if index % 2 == 0 { "missing" } else { "owned" },
+                    9,
+                    Some("A"),
+                );
+                attempt.action = QueueAction::Prioritize {
+                    new_text: Some("ø".repeat(16 * 1024)),
+                };
+                let result = submit(&sender, attempt).await.result;
+                if index == super::queue_mutation::QUEUE_OPERATION_LIMIT {
+                    assert!(matches!(
+                        result,
+                        QueueResult::Rejected {
+                            reason: QueueRejection::Capacity,
+                            row: None
+                        }
+                    ));
+                } else {
+                    assert!(matches!(
+                        result,
+                        QueueResult::Rejected {
+                            reason: QueueRejection::Missing | QueueRejection::Stale,
+                            ..
+                        }
+                    ));
+                }
             }
-        }
-        let mut mutation = request("owned", 0, Some("A"));
-        mutation.action = QueueAction::Prioritize { new_text: Some("must not replace".into()) };
-        assert!(matches!(submit(&sender, mutation).await.result, QueueResult::Rejected { reason: QueueRejection::Capacity, row: None }));
-        assert_eq!(submit(&sender, first.clone()).await, receipt);
-        let mut observe = first;
-        observe.action = QueueAction::Observe;
-        assert_eq!(submit(&sender, observe).await, receipt);
-        let mut unknown = request("owned", 0, Some("A"));
-        unknown.action = QueueAction::Observe;
-        assert_eq!(submit(&sender, unknown).await.result, QueueResult::Unconfirmed);
-        let state = actor.state.lock().await;
-        assert_eq!(state.pending_inputs[0].queue_meta.as_ref().unwrap().text, "text for owned");
-        assert_eq!(state.pending_inputs[0].queue_meta.as_ref().unwrap().version, 0);
-        assert!(state.hook_block_held());
-        assert!(state.running_task.is_none());
-    }).await;
+            let mut mutation = request("owned", 0, Some("A"));
+            mutation.action = QueueAction::Prioritize {
+                new_text: Some("must not replace".into()),
+            };
+            assert!(matches!(
+                submit(&sender, mutation).await.result,
+                QueueResult::Rejected {
+                    reason: QueueRejection::Capacity,
+                    row: None
+                }
+            ));
+            assert_eq!(submit(&sender, first.clone()).await, receipt);
+            let mut observe = first;
+            observe.action = QueueAction::Observe;
+            assert_eq!(submit(&sender, observe).await, receipt);
+            let mut unknown = request("owned", 0, Some("A"));
+            unknown.action = QueueAction::Observe;
+            assert_eq!(
+                submit(&sender, unknown).await.result,
+                QueueResult::Unconfirmed
+            );
+            let state = actor.state.lock().await;
+            assert_eq!(
+                state.pending_inputs[0].queue_meta.as_ref().unwrap().text,
+                "text for owned"
+            );
+            assert_eq!(
+                state.pending_inputs[0].queue_meta.as_ref().unwrap().version,
+                0
+            );
+            assert!(state.hook_block_held());
+            assert!(state.running_task.is_none());
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn byte_capacity_is_reserved_before_atomic_edit_and_keeps_last_receipt() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, events, _) = actor().await;
-        let _lease = {
-            let mut state = actor.state.lock().await;
-            state.pending_inputs.push_back(user_item("owned", "A"));
-            state.claim_cancel_finalization().unwrap()
-        };
-        let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
-        let mut version = 0;
-        let mut last = None;
-        for _ in 0..20 {
-            let mut attempt = request("owned", version, Some("A"));
-            attempt.action = QueueAction::Prioritize { new_text: Some("界".repeat(350_000)) };
-            let response = submit(&sender, attempt.clone()).await;
-            match &response.result {
-                QueueResult::Queued { row } => {
-                    version += 1;
-                    assert_eq!(row.version, version);
-                    last = Some((attempt, response));
-                    actor.state.lock().await.arm_hook_block_hold();
-                }
-                QueueResult::Rejected { reason, row } => {
-                    assert_eq!(*reason, QueueRejection::Capacity);
-                    assert!(row.is_none());
-                    break;
-                }
-                QueueResult::GoalInterjection { .. } | QueueResult::Started { .. } | QueueResult::Unconfirmed => {
-                    panic!("an unstarted held input must not claim a running binding");
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, events, _) = actor().await;
+            let _lease = {
+                let mut state = actor.state.lock().await;
+                state.pending_inputs.push_back(user_item("owned", "A"));
+                state.claim_cancel_finalization().unwrap()
+            };
+            let (sender, _loop_task) = spawn_completion_receiver(actor.clone(), events);
+            let mut version = 0;
+            let mut last = None;
+            for _ in 0..20 {
+                let mut attempt = request("owned", version, Some("A"));
+                attempt.action = QueueAction::Prioritize {
+                    new_text: Some("界".repeat(350_000)),
+                };
+                let response = submit(&sender, attempt.clone()).await;
+                match &response.result {
+                    QueueResult::Queued { row } => {
+                        version += 1;
+                        assert_eq!(row.version, version);
+                        last = Some((attempt, response));
+                        actor.state.lock().await.arm_hook_block_hold();
+                    }
+                    QueueResult::Rejected { reason, row } => {
+                        assert_eq!(*reason, QueueRejection::Capacity);
+                        assert!(row.is_none());
+                        break;
+                    }
+                    QueueResult::GoalInterjection { .. }
+                    | QueueResult::Started { .. }
+                    | QueueResult::Unconfirmed => {
+                        panic!("an unstarted held input must not claim a running binding");
+                    }
                 }
             }
-        }
-        assert!((1..16).contains(&version), "UTF-8 bytes, not character count, consume the byte budget");
-        let (accepted, receipt) = last.unwrap();
-        let before = actor.build_queue_wire(&actor.state.lock().await);
-        assert_eq!(submit(&sender, accepted.clone()).await, receipt);
-        let mut observe = accepted.clone();
-        observe.action = QueueAction::Observe;
-        assert_eq!(submit(&sender, observe).await, receipt);
-        let mut oversized = request("owned", version, Some("A"));
-        oversized.action = QueueAction::Prioritize { new_text: Some("界".repeat(crate::extensions::interject::MAX_QUEUE_REQUEST_BYTES / 3 + 1)) };
-        assert!(matches!(submit(&sender, oversized).await.result, QueueResult::Rejected { reason: QueueRejection::PayloadTooLarge, row: None }));
-        let state = actor.state.lock().await;
-        assert_eq!(actor.build_queue_wire(&state), before);
-        assert!(state.hook_block_held());
-        assert!(state.finalization_gate.is_active());
-        assert!(state.running_task.is_none());
-    }).await;
+            assert!(
+                (1..16).contains(&version),
+                "UTF-8 bytes, not character count, consume the byte budget"
+            );
+            let (accepted, receipt) = last.unwrap();
+            let before = actor.build_queue_wire(&actor.state.lock().await);
+            assert_eq!(submit(&sender, accepted.clone()).await, receipt);
+            let mut observe = accepted.clone();
+            observe.action = QueueAction::Observe;
+            assert_eq!(submit(&sender, observe).await, receipt);
+            let mut oversized = request("owned", version, Some("A"));
+            oversized.action = QueueAction::Prioritize {
+                new_text: Some(
+                    "界".repeat(crate::extensions::interject::MAX_QUEUE_REQUEST_BYTES / 3 + 1),
+                ),
+            };
+            assert!(matches!(
+                submit(&sender, oversized).await.result,
+                QueueResult::Rejected {
+                    reason: QueueRejection::PayloadTooLarge,
+                    row: None
+                }
+            ));
+            let state = actor.state.lock().await;
+            assert_eq!(actor.build_queue_wire(&state), before);
+            assert!(state.hook_block_held());
+            assert!(state.finalization_gate.is_active());
+            assert!(state.running_task.is_none());
+        })
+        .await;
 }
 
-
-async fn leader_request(client: &mut crate::leader::LeaderClient, request: &QueueRequest, claimed_client: &str) -> QueueResponse {
+async fn leader_request(
+    client: &mut crate::leader::LeaderClient,
+    request: &QueueRequest,
+    claimed_client: &str,
+) -> QueueResponse {
     let id = uuid::Uuid::new_v4().to_string();
     let mut params = serde_json::to_value(request).unwrap();
-    params.as_object_mut().unwrap().insert("_meta".into(), serde_json::json!({
-        "clientIdentifier": claimed_client,
-        "caller": claimed_client,
-        "sessionControl": { "sessionId": "claimed-grant" },
-    }));
-    client.send(serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": "_x.ai/queue/interject", "params": params,
-    }).to_string()).unwrap();
+    params.as_object_mut().unwrap().insert(
+        "_meta".into(),
+        serde_json::json!({
+            "clientIdentifier": claimed_client,
+            "caller": claimed_client,
+            "sessionControl": { "sessionId": "claimed-grant" },
+        }),
+    );
+    client
+        .send(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "_x.ai/queue/interject", "params": params,
+            })
+            .to_string(),
+        )
+        .unwrap();
     loop {
-        let payload = tokio::time::timeout(Duration::from_secs(5), client.recv()).await.unwrap().unwrap();
+        let payload = tokio::time::timeout(Duration::from_secs(5), client.recv())
+            .await
+            .unwrap()
+            .unwrap();
         let reply: serde_json::Value = serde_json::from_str(&payload).unwrap();
         if reply.get("id").and_then(serde_json::Value::as_str) == Some(id.as_str()) {
             return serde_json::from_value(reply.get("result").unwrap().clone()).unwrap();
@@ -549,8 +694,8 @@ async fn leader_request(client: &mut crate::leader::LeaderClient, request: &Queu
 
 #[tokio::test(flavor = "current_thread")]
 async fn two_leader_clients_share_real_session_control_not_claimed_client_ownership() {
-    use acp::Agent as _;
     use crate::leader::{ClientCapabilities, ClientMode, LeaderClient};
+    use acp::Agent as _;
     let local = tokio::task::LocalSet::new();
     let keepalive = local.run_until(async {
         let (actor, events, _) = actor().await;
@@ -627,23 +772,33 @@ async fn two_leader_clients_share_real_session_control_not_claimed_client_owners
     drop(keepalive);
 }
 
-
 #[tokio::test(flavor = "current_thread")]
 async fn oversized_queue_protocol_reports_usage_error_before_session_lookup() {
     use acp::Agent as _;
     let local = tokio::task::LocalSet::new();
-    let keepalive = local.run_until(async {
-        let agent = crate::agent::mvp_agent::tests::build_minimal_agent_for_tests();
-        let raw = format!("{{\"sessionId\":\"absent\",\"padding\":\"{}\"}}",
-            "x".repeat(crate::extensions::interject::MAX_QUEUE_REQUEST_BYTES));
-        let raw = serde_json::value::RawValue::from_string(raw).unwrap();
-        let error = agent.ext_method(acp::ExtRequest::new("x.ai/queue/interject", raw.into())).await.unwrap_err();
-        assert_eq!(error.code, acp::Error::invalid_params().code);
-        let diagnostic = error.data.as_ref().and_then(serde_json::Value::as_str).unwrap();
-        assert!(diagnostic.contains("67108864 protocol bytes"));
-        assert!(diagnostic.contains("no operation admitted"));
-        agent
-    }).await;
+    let keepalive = local
+        .run_until(async {
+            let agent = crate::agent::mvp_agent::tests::build_minimal_agent_for_tests();
+            let raw = format!(
+                "{{\"sessionId\":\"absent\",\"padding\":\"{}\"}}",
+                "x".repeat(crate::extensions::interject::MAX_QUEUE_REQUEST_BYTES)
+            );
+            let raw = serde_json::value::RawValue::from_string(raw).unwrap();
+            let error = agent
+                .ext_method(acp::ExtRequest::new("x.ai/queue/interject", raw.into()))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, acp::Error::invalid_params().code);
+            let diagnostic = error
+                .data
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .unwrap();
+            assert!(diagnostic.contains("67108864 protocol bytes"));
+            assert!(diagnostic.contains("no operation admitted"));
+            agent
+        })
+        .await;
     drop(local);
     drop(keepalive);
 }

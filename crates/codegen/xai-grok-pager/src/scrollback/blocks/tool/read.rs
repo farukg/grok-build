@@ -175,13 +175,16 @@ impl ReadToolCallBlock {
 
         if let Some(skill) = self.skill_name() {
             let line = Line::from(vec![
-                Span::styled(match surface {
-                    crate::render::tool_paths::ToolPathSurface::Fullscreen => "Skill ".to_owned(),
-                    crate::render::tool_paths::ToolPathSurface::Collapsed
-                    | crate::render::tool_paths::ToolPathSurface::Expanded => {
-                        String::new()
-                    }
-                }, bold_style),
+                Span::styled(
+                    match surface {
+                        crate::render::tool_paths::ToolPathSurface::Fullscreen => {
+                            "Skill ".to_owned()
+                        }
+                        crate::render::tool_paths::ToolPathSurface::Collapsed
+                        | crate::render::tool_paths::ToolPathSurface::Expanded => String::new(),
+                    },
+                    bold_style,
+                ),
                 Span::styled(skill.to_owned(), path_style),
             ]);
             return match width {
@@ -884,10 +887,16 @@ mod tests {
         let block = ReadToolCallBlock::new("/opt/service/deep/main.rs");
         let mut ctx = make_ctx();
         ctx.cwd = Some(std::path::PathBuf::from("/repo"));
-        assert_eq!(span_text(first_line(&block.output(&ctx)), 1), "/opt/service/deep/main.rs");
+        assert_eq!(
+            span_text(first_line(&block.output(&ctx)), 1),
+            "/opt/service/deep/main.rs"
+        );
         // Raw block budget: width 12 minus the category bullet indent 2.
         ctx.width = 12;
-        assert_eq!(span_text(first_line(&block.output(&ctx)), 1), "/o/s/deep\u{2026}");
+        assert_eq!(
+            span_text(first_line(&block.output(&ctx)), 1),
+            "/o/s/deep\u{2026}"
+        );
     }
 
     #[test]
@@ -905,10 +914,7 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(
-            header,
-            "src/main.rs".to_owned()
-        );
+        assert_eq!(header, "src/main.rs".to_owned());
 
         let preamble = block.preamble(&ctx).unwrap();
         let preamble_text: String = preamble
@@ -963,10 +969,7 @@ mod tests {
             "/Users/me/project/src/main.rs",
             "copy/highlight should match the painted path span, not the kind glyph row"
         );
-        assert_eq!(
-            span_text(header, 0),
-            "".to_owned()
-        );
+        assert_eq!(span_text(header, 0), "".to_owned());
         assert!(header.selection_text.is_none());
     }
 

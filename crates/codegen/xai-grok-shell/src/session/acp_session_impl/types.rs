@@ -59,8 +59,12 @@ pub(crate) enum SamplerFailureRecovery {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TerminalInputProjection {
     NotApplicable,
-    Applied { origin: crate::session::source_binding::StrictInputRef },
-    AlreadyPresent { origin: crate::session::source_binding::StrictInputRef },
+    Applied {
+        origin: crate::session::source_binding::StrictInputRef,
+    },
+    AlreadyPresent {
+        origin: crate::session::source_binding::StrictInputRef,
+    },
 }
 
 /// Outcome of a single turn attempt via the sampler-based path.
@@ -263,7 +267,9 @@ pub(crate) enum StopGateDecision {
     AllowStop {
         wait: super::stop_gate::TurnWaitDeclaration,
     },
-    KeepWorking { feedback: String },
+    KeepWorking {
+        feedback: String,
+    },
 }
 
 /// Serialized onto `streaming_partial.json` so trace inspection can tell whether the abort interrupted thinking, response text, or a tool call.

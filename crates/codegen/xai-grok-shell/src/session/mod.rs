@@ -1,5 +1,4 @@
 pub mod acp_types;
-pub mod current_actions;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod admission_crash_tests_support;
 pub mod announcement_state;
@@ -7,6 +6,7 @@ pub mod auto_mode;
 pub mod batch_dream;
 pub mod commands;
 pub(crate) mod completion_delivery;
+pub mod current_actions;
 pub mod delivery_receiver;
 pub mod receiver_execution;
 pub use completion_delivery::{
@@ -21,12 +21,12 @@ pub(crate) mod memory_state;
 pub mod merge;
 pub(crate) mod message_delivery;
 pub mod notifications;
-pub mod request_capture;
-pub mod source_binding;
 pub mod pending_interaction;
 pub mod prompt_queue;
 mod remove_items;
+pub mod request_capture;
 pub(crate) mod resume_status;
+pub mod source_binding;
 pub use self::remove_items::{
     ContextItemRef, RemoveContextItemsOutcome, RemoveItemsRequest, SkipReason, SkippedItem,
     ToolCallId,
@@ -291,12 +291,12 @@ impl PromptOrigin {
         if let Some(reason) = Self::from_prompt_id(prompt_id).injected_reason_wire() {
             return Some(reason);
         }
-        crate::session::completion_delivery::completion_from_prompt_id(prompt_id).is_some().then(
-            || {
+        crate::session::completion_delivery::completion_from_prompt_id(prompt_id)
+            .is_some()
+            .then(|| {
                 use crate::sampling::SyntheticReason;
                 SyntheticReason::SubagentCompleted.wire_name()
-            },
-        )
+            })
     }
     pub fn completion_id(&self) -> Option<&str> {
         match self {
@@ -529,8 +529,14 @@ mod tests {
             .injected_reason_wire(),
             None
         );
-        assert_eq!(PromptOrigin::from_prompt_id("scheduler-fired-abc").injected_reason_wire(), None);
-        assert_eq!(PromptOrigin::from_prompt_id("plan-resume-1").injected_reason_wire(), None);
+        assert_eq!(
+            PromptOrigin::from_prompt_id("scheduler-fired-abc").injected_reason_wire(),
+            None
+        );
+        assert_eq!(
+            PromptOrigin::from_prompt_id("plan-resume-1").injected_reason_wire(),
+            None
+        );
 
         hidden_origin_yields_reason(&PromptOrigin::from_prompt_id("task-completed-t1"));
         hidden_origin_yields_reason(&PromptOrigin::SubagentCompleted {
@@ -555,7 +561,10 @@ mod tests {
             )),
             Some(SyntheticReason::SubagentCompleted.wire_name())
         );
-        assert_eq!(PromptOrigin::injected_reason_for_prompt_id("my-prompt"), None);
+        assert_eq!(
+            PromptOrigin::injected_reason_for_prompt_id("my-prompt"),
+            None
+        );
     }
 }
 /// Determines whether the session sends an initial file index to the client or just streams raw file events.

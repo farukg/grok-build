@@ -1,7 +1,7 @@
 use tokio::sync::mpsc;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
-    ActiveMessageAdmission, ChildControl, LocalBoxFuture, SendBoxFuture, SubagentProgress,
-    ChildCancellation, ChildCancelOutcome,
+    ActiveMessageAdmission, ChildCancelOutcome, ChildCancellation, ChildControl, LocalBoxFuture,
+    SendBoxFuture, SubagentProgress,
 };
 use xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageDelivery;
 use xai_message_delivery_core::DeliveryEnvelope;
@@ -11,7 +11,8 @@ use crate::session::{SessionCommand, SessionThread};
 
 /// Shell runtime handle retained while a child is active.
 pub(crate) struct ShellChildRuntime {
-    pub(crate) initial_parent_reservation: Option<std::sync::Arc<crate::session::persistence::ReservedParentMessageTurn>>,
+    pub(crate) initial_parent_reservation:
+        Option<std::sync::Arc<crate::session::persistence::ReservedParentMessageTurn>>,
     pub(crate) child_cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     pub(crate) message_delivery: crate::session::message_delivery::MessageDeliveryHandle,
     pub(crate) active_message_target_session_id: String,
@@ -36,13 +37,17 @@ impl ChildControl for ShellChildRuntime {
     type ProgressFuture = LocalBoxFuture<SubagentProgress>;
 
     fn has_initial_message_reservation(&self, delivery: &ActiveAgentMessageDelivery) -> bool {
-        self.initial_parent_reservation.as_ref().is_some_and(|reservation| {
-            reservation.matches_delivery(&self.active_message_target_session_id, delivery)
-                && delivery.receiver().is_some_and(|receiver| receiver.generation == self.active_message_target_generation)
-        })
+        self.initial_parent_reservation
+            .as_ref()
+            .is_some_and(|reservation| {
+                reservation.matches_delivery(&self.active_message_target_session_id, delivery)
+                    && delivery.receiver().is_some_and(|receiver| {
+                        receiver.generation == self.active_message_target_generation
+                    })
+            })
     }
 
-    fn initial_message_terminal_ownership(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership {
+    fn initial_message_terminal_ownership(&self) -> xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership{
         use xai_grok_tools::implementations::grok_build::task::coordinator::InitialMessageTerminalOwnership;
         match &self.initial_parent_reservation {
             Some(reservation) => reservation.publication_contract().terminal_ownership(),
@@ -126,7 +131,9 @@ impl ChildControl for ShellChildRuntime {
                 if let Some(reservation) = &self.initial_parent_reservation {
                     match reservation.authorize_cancel() {
                         ChildCancelOutcome::Accepted => {}
-                        ChildCancelOutcome::AttemptEnded => return ChildCancelOutcome::AttemptEnded,
+                        ChildCancelOutcome::AttemptEnded => {
+                            return ChildCancelOutcome::AttemptEnded;
+                        }
                     }
                 }
             }

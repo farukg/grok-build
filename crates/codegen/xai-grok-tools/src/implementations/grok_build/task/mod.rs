@@ -16,12 +16,12 @@
 //! - `Params<TaskParams>` — whether the model may pick a child model (optional)
 
 mod active_message;
-pub mod native_recovery;
 pub mod admission;
 mod agent_message_sender;
 pub mod backend;
 pub mod coordinator;
 mod coordinator_state;
+pub mod native_recovery;
 pub mod result_delivery;
 pub use coordinator_state::{cap_completion_output, completion_summary, terminal_snapshot};
 pub mod model_policy;

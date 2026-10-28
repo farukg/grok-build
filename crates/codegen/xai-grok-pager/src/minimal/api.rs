@@ -285,7 +285,9 @@ pub fn set_minimal_committed_plan_id(app: &mut AppView, id: Option<String>) {
 }
 
 pub fn action_display_state(v: &AgentView) -> &crate::app::agent::AgentState {
-    v.wake_display_state().or(v.current_actions_display_state()).unwrap_or(&v.session.state)
+    v.wake_display_state()
+        .or(v.current_actions_display_state())
+        .unwrap_or(&v.session.state)
 }
 
 pub fn current_action_started_at(v: &AgentView) -> Option<std::time::Instant> {

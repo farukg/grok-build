@@ -424,7 +424,10 @@ fn nonleader_roster_response_preserves_root_fields_and_child_parentage() {
     assert!(roster.is_worktree);
     assert_eq!(roster.model_id.as_deref(), Some("grok-4"));
     assert_eq!(roster.activity, RosterActivity::Dormant);
-    assert_eq!(roster.last_turn_summary.as_deref(), Some("Fixed the parser"));
+    assert_eq!(
+        roster.last_turn_summary.as_deref(),
+        Some("Fixed the parser")
+    );
     assert!(!roster.resident);
     assert_eq!(roster.last_change_unix_ms, updated);
     assert_eq!(roster.origin.kind, "local");
@@ -444,7 +447,10 @@ fn list_activity_preserves_exact_wire_provenance_and_legacy_absence() {
     ] {
         let entries = parse(serde_json::json!({"sessions": [row]}));
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].last_active_at.unwrap().timestamp_millis(), 946_684_800_123);
+        assert_eq!(
+            entries[0].last_active_at.unwrap().timestamp_millis(),
+            946_684_800_123
+        );
     }
     for activity in [None, Some(Value::Null)] {
         let mut entry = row("legacy", "local");
@@ -457,5 +463,8 @@ fn list_activity_preserves_exact_wire_provenance_and_legacy_absence() {
     }
     let entries = parse(serde_json::json!({"sessions": [conversation_row("unknown")]}));
     assert_eq!(entries[0].last_active_at, None);
-    assert_eq!(entries[0].updated_at, chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
+    assert_eq!(
+        entries[0].updated_at,
+        chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
+    );
 }

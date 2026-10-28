@@ -31,11 +31,18 @@ pub(super) struct PreparedStartArtifacts {
 }
 
 #[derive(Clone, Copy)]
-enum StartPublicationState { Pending, Existing, Published }
+enum StartPublicationState {
+    Pending,
+    Existing,
+    Published,
+}
 
 impl StartPublicationState {
     fn is_published(self) -> bool {
-        match self { Self::Published => true, Self::Pending | Self::Existing => false }
+        match self {
+            Self::Published => true,
+            Self::Pending | Self::Existing => false,
+        }
     }
 }
 
@@ -115,7 +122,8 @@ impl StartArtifactPublication {
                 self.publication = StartPublicationState::Published;
             }
         }
-        let allowed = self.boundary == PublicationBoundary::Prepared || self.publication.is_published();
+        let allowed =
+            self.boundary == PublicationBoundary::Prepared || self.publication.is_published();
         if allowed {
             self.completion_data.capture_start_artifacts(&self.prepared);
         }
@@ -144,7 +152,11 @@ impl StartArtifactPublication {
             && write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
         #[cfg(not(test))]
         let metadata_written = write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
-        self.publication = if metadata_written { StartPublicationState::Published } else { StartPublicationState::Pending };
+        self.publication = if metadata_written {
+            StartPublicationState::Published
+        } else {
+            StartPublicationState::Pending
+        };
         if self.boundary == PublicationBoundary::Prepared || metadata_written {
             self.completion_data.capture_start_artifacts(&self.prepared);
         }

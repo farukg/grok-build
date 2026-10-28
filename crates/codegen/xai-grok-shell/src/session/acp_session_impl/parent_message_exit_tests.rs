@@ -1,35 +1,62 @@
-use super::*;
 use super::boundary_tests::{actual_shutdown, persist_peer, stop_persistence};
-use crate::session::delivery_receiver::{DeliveryExecution, DeliveryProvenance, ParentMessageOperation, ReceiverResume};
+use super::*;
+use crate::session::delivery_receiver::{
+    DeliveryExecution, DeliveryProvenance, ParentMessageOperation, ReceiverResume,
+};
 use crate::session::storage::{AtomicWriteFault, fail_next_atomic_write};
 
 #[derive(Clone, Copy, Debug)]
-enum CancelCut { Acknowledged, Precommit, Postrename, LostAck }
+enum CancelCut {
+    Acknowledged,
+    Precommit,
+    Postrename,
+    LostAck,
+}
 
 #[derive(Clone, Copy, Debug)]
-enum Exit { Shutdown, CommandsClosed }
+enum Exit {
+    Shutdown,
+    CommandsClosed,
+}
 
 #[derive(Clone, Copy, Debug)]
-enum ParentRoute { Queue, Fallback }
+enum ParentRoute {
+    Queue,
+    Fallback,
+}
 
-async fn fixture(cut: CancelCut, barrier: ReceiverBarrier, projection: ReceiverBarrier) -> ReceiverFixture {
+async fn fixture(
+    cut: CancelCut,
+    barrier: ReceiverBarrier,
+    projection: ReceiverBarrier,
+) -> ReceiverFixture {
     let directory = tempfile::tempdir().unwrap();
     let storage = JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
     let storage = match cut {
         CancelCut::Acknowledged | CancelCut::LostAck => storage,
-        CancelCut::Precommit => storage.with_parent_settlement_probe(|| { fail_next_atomic_write(AtomicWriteFault::Write); Ok(()) }),
-        CancelCut::Postrename => storage.with_parent_settlement_probe(|| { fail_next_atomic_write(AtomicWriteFault::ParentSync); Ok(()) }),
+        CancelCut::Precommit => storage.with_parent_settlement_probe(|| {
+            fail_next_atomic_write(AtomicWriteFault::Write);
+            Ok(())
+        }),
+        CancelCut::Postrename => storage.with_parent_settlement_probe(|| {
+            fail_next_atomic_write(AtomicWriteFault::ParentSync);
+            Ok(())
+        }),
     };
     let ack = match cut {
         CancelCut::LostAck => ReceiverSettlementAck::Lose,
-        CancelCut::Acknowledged | CancelCut::Precommit | CancelCut::Postrename => ReceiverSettlementAck::Forward,
+        CancelCut::Acknowledged | CancelCut::Precommit | CancelCut::Postrename => {
+            ReceiverSettlementAck::Forward
+        }
     };
     receiver_with_exit_cuts(directory, storage, barrier, ack, projection).await
 }
 
 async fn exit(receiver: &mut ReceiverFixture, exit: Exit) {
     match exit {
-        Exit::Shutdown => actual_shutdown(receiver, crate::session::ShutdownKind::CancelRunningTurn).await,
+        Exit::Shutdown => {
+            actual_shutdown(receiver, crate::session::ShutdownKind::CancelRunningTurn).await
+        }
         Exit::CommandsClosed => {
             let (_, empty) = mpsc::unbounded_channel();
             let events = std::mem::replace(&mut receiver.events, empty);
@@ -37,50 +64,99 @@ async fn exit(receiver: &mut ReceiverFixture, exit: Exit) {
             drop(commands);
             let (_chat, chat_rx) = mpsc::unbounded_channel();
             bounded(super::super::super::run_session(
-                receiver.actor.clone(), command_rx, chat_rx, events, None,
-                Arc::new(parking_lot::Mutex::new(xai_grok_workspace::file_system::CodebaseIndexManager::new())),
-                std::path::PathBuf::from("/tmp"), crate::session::fs_watch::FsWatchCapabilities::none(),
-            )).await;
+                receiver.actor.clone(),
+                command_rx,
+                chat_rx,
+                events,
+                None,
+                Arc::new(parking_lot::Mutex::new(
+                    xai_grok_workspace::file_system::CodebaseIndexManager::new(),
+                )),
+                std::path::PathBuf::from("/tmp"),
+                crate::session::fs_watch::FsWatchCapabilities::none(),
+            ))
+            .await;
         }
     }
 }
 
 fn assert_uncertain(result: crate::session::commands::PromptTurnResult) {
     let error = result.expect_err("unacknowledged parent teardown cannot publish Cancelled");
-    assert_eq!(serde_json::to_value(error).unwrap()["data"],
-        "parent admission outcome uncertain after unacknowledged teardown");
+    assert_eq!(
+        serde_json::to_value(error).unwrap()["data"],
+        "parent admission outcome uncertain after unacknowledged teardown"
+    );
 }
 
 async fn assert_cut(receiver: &mut ReceiverFixture, cut: CancelCut) {
     let observed = bounded(receiver.settlement_results.recv()).await.unwrap();
-    assert_eq!(observed, match cut {
-        CancelCut::Acknowledged | CancelCut::LostAck => SettlementObservation::Committed,
-        CancelCut::Precommit => SettlementObservation::Fault(AtomicWriteFault::Write),
-        CancelCut::Postrename => SettlementObservation::Fault(AtomicWriteFault::ParentSync),
-    });
-    assert!(matches!(receiver.settlement_results.try_recv(), Err(mpsc::error::TryRecvError::Empty)), "failed teardown must not silently retry");
-    assert_eq!(receiver.actor.state.lock().await.message_delivery.teardown, match cut {
-        CancelCut::Acknowledged => ParentTeardownStatus::Settled,
-        CancelCut::Precommit | CancelCut::Postrename | CancelCut::LostAck => ParentTeardownStatus::Unsettled,
-    });
+    assert_eq!(
+        observed,
+        match cut {
+            CancelCut::Acknowledged | CancelCut::LostAck => SettlementObservation::Committed,
+            CancelCut::Precommit => SettlementObservation::Fault(AtomicWriteFault::Write),
+            CancelCut::Postrename => SettlementObservation::Fault(AtomicWriteFault::ParentSync),
+        }
+    );
+    assert!(
+        matches!(
+            receiver.settlement_results.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ),
+        "failed teardown must not silently retry"
+    );
+    assert_eq!(
+        receiver.actor.state.lock().await.message_delivery.teardown,
+        match cut {
+            CancelCut::Acknowledged => ParentTeardownStatus::Settled,
+            CancelCut::Precommit | CancelCut::Postrename | CancelCut::LostAck =>
+                ParentTeardownStatus::Unsettled,
+        }
+    );
 }
 
-async fn parked_user(receiver: &ReceiverFixture) -> (oneshot::Sender<()>, mpsc::UnboundedReceiver<super::super::super::turn_task::TurnCompletionMsg>) {
+async fn parked_user(
+    receiver: &ReceiverFixture,
+) -> (
+    oneshot::Sender<()>,
+    mpsc::UnboundedReceiver<super::super::super::turn_task::TurnCompletionMsg>,
+) {
     let (release, start_gate) = oneshot::channel();
     let (completion, completed) = mpsc::unbounded_channel();
     let mut state = receiver.actor.state.lock().await;
     state.running_task.take().unwrap().abort();
     state.pending_inputs.pop_front().unwrap();
-    state.pending_inputs.push_front(super::super::super::support::user_item("held-tool-turn", "literal user work"));
+    state
+        .pending_inputs
+        .push_front(super::super::super::support::user_item(
+            "held-tool-turn",
+            "literal user work",
+        ));
     let epoch = receiver.actor.turn_report.start_next_turn();
-    state.running_task = Some(AgentTask::new_prompt(receiver.actor.clone(), super::super::super::turn_task::TurnInputRequest {
-        prompt_id: "held-tool-turn".into(), input_origin: InputOrigin::new(PromptOrigin::User),
-        prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new("literal user work"))],
-        prompt_mode: PromptMode::Agent, trace_gcs_config: None, artifact_tracker: None,
-        client_identifier: None, screen_mode: None, verbatim: true, send_now: false,
-        json_schema: None, persist_ack: None, parsed_prompt_tx: None, traceparent: None,
-        start_gate: Some(start_gate),
-    }, epoch, completion));
+    state.running_task = Some(AgentTask::new_prompt(
+        receiver.actor.clone(),
+        super::super::super::turn_task::TurnInputRequest {
+            prompt_id: "held-tool-turn".into(),
+            input_origin: InputOrigin::new(PromptOrigin::User),
+            prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                "literal user work",
+            ))],
+            prompt_mode: PromptMode::Agent,
+            trace_gcs_config: None,
+            artifact_tracker: None,
+            client_identifier: None,
+            screen_mode: None,
+            verbatim: true,
+            send_now: false,
+            json_schema: None,
+            persist_ack: None,
+            parsed_prompt_tx: None,
+            traceparent: None,
+            start_gate: Some(start_gate),
+        },
+        epoch,
+        completion,
+    ));
     (release, completed)
 }
 
@@ -251,83 +327,210 @@ async fn promoted_parent_shutdown_stops_exact_live_task_after_real_projection() 
 
 #[tokio::test(flavor = "current_thread")]
 async fn graceful_exit_preserves_promoted_parent_and_its_exact_running_front() {
-    tokio::task::LocalSet::new().run_until(async {
-        let mut receiver = fixture(CancelCut::Acknowledged, ReceiverBarrier::Forward, ReceiverBarrier::HoldNext).await;
-        let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer_with_operation(ActiveAgentMessageOperation::Queue).await;
-        let recovery_ref = delivery.recovery_ref().unwrap();
-        let message_id = delivery.message().message_id.clone();
-        let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
-        let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
-        ack.send(proof).unwrap();
-        bounded(admitting).await.unwrap();
-        assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::Accepted { message_id: message_id.clone() });
-        let mut receipt = receipts.recv().await.unwrap();
-        {
-            let mut state = receiver.actor.state.lock().await;
-            state.running_task.take().unwrap().abort();
-            state.pending_inputs.retain(|item| item.prompt_id != "held-tool-turn");
-        }
-        let (entered, parked) = oneshot::channel();
-        let (release, continue_work) = oneshot::channel();
-        receiver.actor.state.lock().await.message_delivery.projection_cut = ParentProjectionCut::Park { entered, release: continue_work };
-        let (completion, mut completed) = mpsc::unbounded_channel();
-        SessionActor::maybe_start_running_task(receiver.actor.clone(), completion).await;
-        let (_, projected, ack) = bounded(receiver.projections.recv()).await.unwrap();
-        assert!(matches!(&projected, Ok(xai_chat_state::CompletionProjectionAck::Appended)));
-        ack.send(projected).unwrap();
-        bounded(parked).await.unwrap();
-        let identity = receiver.actor.state.lock().await.running_task.as_ref().unwrap().identity.clone();
-        actual_shutdown(&mut receiver, crate::session::ShutdownKind::Graceful).await;
-        {
-            let state = receiver.actor.state.lock().await;
-            let task = state.running_task.as_ref().unwrap();
-            assert!(std::rc::Rc::ptr_eq(&identity, &task.identity));
-            assert_eq!(state.pending_inputs.front().unwrap().prompt_id, task.prompt_id);
-            assert!(!task.admission.is_cancelled());
-            assert!(!task.handle.is_finished());
-        }
-        assert!(matches!(receipt.result.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
-        assert!(matches!(receiver.settlement_results.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
-        let loaded = receiver.storage.load_session(&receiver.actor.session_info).await.unwrap();
-        assert!(matches!(loaded.summary.completion_delivery.receiver.records[&format!("parent-message/{message_id}")].execution, DeliveryExecution::Processing { .. }));
-        receiver.actor.state.lock().await.running_task.as_ref().unwrap().abort();
-        assert!(bounded(completed.recv()).await.is_none());
-        assert!(release.send(()).is_err());
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut receiver = fixture(
+                CancelCut::Acknowledged,
+                ReceiverBarrier::Forward,
+                ReceiverBarrier::HoldNext,
+            )
+            .await;
+            let Producer {
+                delivery,
+                reply,
+                outcome,
+                _coordinator,
+                _spawn,
+                ..
+            } = producer_with_operation(ActiveAgentMessageOperation::Queue).await;
+            let recovery_ref = delivery.recovery_ref().unwrap();
+            let message_id = delivery.message().message_id.clone();
+            let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
+            let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
+            ack.send(proof).unwrap();
+            bounded(admitting).await.unwrap();
+            assert_eq!(
+                bounded(outcome).await.unwrap(),
+                ActiveAgentMessageOutcome::Accepted {
+                    message_id: message_id.clone()
+                }
+            );
+            let mut receipt = receipts.recv().await.unwrap();
+            {
+                let mut state = receiver.actor.state.lock().await;
+                state.running_task.take().unwrap().abort();
+                state
+                    .pending_inputs
+                    .retain(|item| item.prompt_id != "held-tool-turn");
+            }
+            let (entered, parked) = oneshot::channel();
+            let (release, continue_work) = oneshot::channel();
+            receiver
+                .actor
+                .state
+                .lock()
+                .await
+                .message_delivery
+                .projection_cut = ParentProjectionCut::Park {
+                entered,
+                release: continue_work,
+            };
+            let (completion, mut completed) = mpsc::unbounded_channel();
+            SessionActor::maybe_start_running_task(receiver.actor.clone(), completion).await;
+            let (_, projected, ack) = bounded(receiver.projections.recv()).await.unwrap();
+            assert!(matches!(
+                &projected,
+                Ok(xai_chat_state::CompletionProjectionAck::Appended)
+            ));
+            ack.send(projected).unwrap();
+            bounded(parked).await.unwrap();
+            let identity = receiver
+                .actor
+                .state
+                .lock()
+                .await
+                .running_task
+                .as_ref()
+                .unwrap()
+                .identity
+                .clone();
+            actual_shutdown(&mut receiver, crate::session::ShutdownKind::Graceful).await;
+            {
+                let state = receiver.actor.state.lock().await;
+                let task = state.running_task.as_ref().unwrap();
+                assert!(std::rc::Rc::ptr_eq(&identity, &task.identity));
+                assert_eq!(
+                    state.pending_inputs.front().unwrap().prompt_id,
+                    task.prompt_id
+                );
+                assert!(!task.admission.is_cancelled());
+                assert!(!task.handle.is_finished());
+            }
+            assert!(matches!(
+                receipt.result.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                receiver.settlement_results.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            let loaded = receiver
+                .storage
+                .load_session(&receiver.actor.session_info)
+                .await
+                .unwrap();
+            assert!(matches!(
+                loaded.summary.completion_delivery.receiver.records
+                    [&format!("parent-message/{message_id}")]
+                    .execution,
+                DeliveryExecution::Processing { .. }
+            ));
+            receiver
+                .actor
+                .state
+                .lock()
+                .await
+                .running_task
+                .as_ref()
+                .unwrap()
+                .abort();
+            assert!(bounded(completed.recv()).await.is_none());
+            assert!(release.send(()).is_err());
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn actual_actor_drop_reports_uncertainty_without_cancelling_queued_intent() {
-    tokio::task::LocalSet::new().run_until(async {
-        for operation in [ActiveAgentMessageOperation::Steer, ActiveAgentMessageOperation::Interject, ActiveAgentMessageOperation::Queue] {
-        let mut receiver = receiver().await;
-        let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer_with_operation(operation).await;
-        let recovery_ref = delivery.recovery_ref().unwrap();
-        let message_id = delivery.message().message_id.clone();
-        let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
-        let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
-        ack.send(proof).unwrap();
-        bounded(admitting).await.unwrap();
-        assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::Accepted { message_id: message_id.clone() });
-        let receipt = receipts.recv().await.unwrap();
-        receiver.actor.state.lock().await.running_task.take().unwrap().abort();
-        stop_persistence(&mut receiver).await;
-        receiver._proxy.abort();
-        assert!(bounded(&mut receiver._proxy).await.unwrap_err().is_cancelled());
-        let ReceiverFixture { actor, storage, _directory, .. } = receiver;
-        let info = actor.session_info.clone();
-        assert_eq!(Arc::strong_count(&actor), 1, "observe actual final actor ownership, not a run-loop return");
-        drop(actor);
-        let observation = bounded(receipt.result).await;
-        match operation {
-            ActiveAgentMessageOperation::Steer | ActiveAgentMessageOperation::Interject => assert_uncertain(observation.unwrap()),
-            ActiveAgentMessageOperation::Queue => assert!(observation.is_err(), "queue owner drop is lost observation, not durable Cancelled"),
-        }
-        let (_lease, summary) = storage.claim_receiver(&info).await.unwrap();
-        assert!(matches!(summary.completion_delivery.receiver.records[&format!("parent-message/{message_id}")].execution, DeliveryExecution::Queued { .. }));
-        assert!(storage.load_session(&info).await.unwrap().chat_history.iter().all(|item| item.text_content() != "claim-bound text stays behind the tool boundary"));
-        }
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for operation in [
+                ActiveAgentMessageOperation::Steer,
+                ActiveAgentMessageOperation::Interject,
+                ActiveAgentMessageOperation::Queue,
+            ] {
+                let mut receiver = receiver().await;
+                let Producer {
+                    delivery,
+                    reply,
+                    outcome,
+                    _coordinator,
+                    _spawn,
+                    ..
+                } = producer_with_operation(operation).await;
+                let recovery_ref = delivery.recovery_ref().unwrap();
+                let message_id = delivery.message().message_id.clone();
+                let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
+                let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
+                ack.send(proof).unwrap();
+                bounded(admitting).await.unwrap();
+                assert_eq!(
+                    bounded(outcome).await.unwrap(),
+                    ActiveAgentMessageOutcome::Accepted {
+                        message_id: message_id.clone()
+                    }
+                );
+                let receipt = receipts.recv().await.unwrap();
+                receiver
+                    .actor
+                    .state
+                    .lock()
+                    .await
+                    .running_task
+                    .take()
+                    .unwrap()
+                    .abort();
+                stop_persistence(&mut receiver).await;
+                receiver._proxy.abort();
+                assert!(
+                    bounded(&mut receiver._proxy)
+                        .await
+                        .unwrap_err()
+                        .is_cancelled()
+                );
+                let ReceiverFixture {
+                    actor,
+                    storage,
+                    _directory,
+                    ..
+                } = receiver;
+                let info = actor.session_info.clone();
+                assert_eq!(
+                    Arc::strong_count(&actor),
+                    1,
+                    "observe actual final actor ownership, not a run-loop return"
+                );
+                drop(actor);
+                let observation = bounded(receipt.result).await;
+                match operation {
+                    ActiveAgentMessageOperation::Steer | ActiveAgentMessageOperation::Interject => {
+                        assert_uncertain(observation.unwrap())
+                    }
+                    ActiveAgentMessageOperation::Queue => assert!(
+                        observation.is_err(),
+                        "queue owner drop is lost observation, not durable Cancelled"
+                    ),
+                }
+                let (_lease, summary) = storage.claim_receiver(&info).await.unwrap();
+                assert!(matches!(
+                    summary.completion_delivery.receiver.records
+                        [&format!("parent-message/{message_id}")]
+                        .execution,
+                    DeliveryExecution::Queued { .. }
+                ));
+                assert!(
+                    storage
+                        .load_session(&info)
+                        .await
+                        .unwrap()
+                        .chat_history
+                        .iter()
+                        .all(|item| item.text_content()
+                            != "claim-bound text stays behind the tool boundary")
+                );
+            }
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

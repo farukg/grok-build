@@ -2,8 +2,8 @@ use super::*;
 
 use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
-    ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest, ChildRunner, SendBoxFuture,
-    SubagentCoordinator, SubagentProgress, ChildCancellation, ChildCancelOutcome,
+    ChildCancelOutcome, ChildCancellation, ChildCompletion, ChildControl, ChildRunOutput,
+    ChildRunRequest, ChildRunner, SendBoxFuture, SubagentCoordinator, SubagentProgress,
 };
 use xai_grok_tools::implementations::grok_build::task::types::{
     AgentMessageSenderResource, SubagentDescribeOutcome, SubagentOwner, SubagentRequest,

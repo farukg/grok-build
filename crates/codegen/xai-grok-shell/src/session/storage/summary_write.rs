@@ -123,7 +123,8 @@ impl Summary {
             SummaryActivity::Occurred => {
                 // Monotonic: a stale concurrent writer can never move it backwards.
                 self.last_active_at = Some(
-                    self.last_active_at.map_or(now, |existing| existing.max(now)),
+                    self.last_active_at
+                        .map_or(now, |existing| existing.max(now)),
                 );
                 self.updated_at = now;
             }
@@ -647,12 +648,25 @@ mod tests {
             summary.updated_at = chrono::DateTime::from_timestamp_millis(9_876).unwrap();
             write_summary_atomic(&path, &summary).unwrap();
             for update in [
-                XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
-                XaiUpdate::SessionSummaryGenerated { session_summary: "loaded title".into() },
+                XaiUpdate::BackgroundTasks {
+                    tasks: Vec::new(),
+                    truncated: false,
+                },
+                XaiUpdate::SessionSummaryGenerated {
+                    session_summary: "loaded title".into(),
+                },
             ] {
-                adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
-                    session_id: info.id.clone(), update, meta: None,
-                }))).await.unwrap();
+                adapter
+                    .append_update(
+                        &info,
+                        &SessionUpdate::Xai(Box::new(SessionNotification {
+                            session_id: info.id.clone(),
+                            update,
+                            meta: None,
+                        })),
+                    )
+                    .await
+                    .unwrap();
                 let loaded = read_summary(&path).unwrap();
                 assert_eq!(loaded.last_active_at, active);
                 assert_eq!(loaded.updated_at, summary.updated_at);
@@ -661,49 +675,97 @@ mod tests {
             let message = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                 acp::ContentBlock::Text(acp::TextContent::new("real output")),
             ));
-            let replay = acp::SessionNotification::new(info.id.clone(), message.clone())
-                .meta(Some(serde_json::json!({"isReplay": true}).as_object().unwrap().clone()));
-            adapter.append_update(&info, &SessionUpdate::Acp(Box::new(replay))).await.unwrap();
+            let replay =
+                acp::SessionNotification::new(info.id.clone(), message.clone()).meta(Some(
+                    serde_json::json!({"isReplay": true})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ));
+            adapter
+                .append_update(&info, &SessionUpdate::Acp(Box::new(replay)))
+                .await
+                .unwrap();
             let loaded = read_summary(&path).unwrap();
             assert_eq!(loaded.last_active_at, active);
             assert_eq!(loaded.updated_at, summary.updated_at);
-            adapter.append_update(&info, &SessionUpdate::Acp(Box::new(
-                acp::SessionNotification::new(info.id.clone(), message),
-            ))).await.unwrap();
+            adapter
+                .append_update(
+                    &info,
+                    &SessionUpdate::Acp(Box::new(acp::SessionNotification::new(
+                        info.id.clone(),
+                        message,
+                    ))),
+                )
+                .await
+                .unwrap();
             let live = read_summary(&path).unwrap();
             assert!(live.last_change_unix_ms() > 9_876);
             let count = live.num_messages;
-            adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
-                session_id: info.id.clone(),
-                update: XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
-                meta: None,
-            }))).await.unwrap();
+            adapter
+                .append_update(
+                    &info,
+                    &SessionUpdate::Xai(Box::new(SessionNotification {
+                        session_id: info.id.clone(),
+                        update: XaiUpdate::BackgroundTasks {
+                            tasks: Vec::new(),
+                            truncated: false,
+                        },
+                        meta: None,
+                    })),
+                )
+                .await
+                .unwrap();
             let observed = read_summary(&path).unwrap();
             assert_eq!(observed.last_active_at, live.last_active_at);
             assert_eq!(observed.updated_at, live.updated_at);
-            assert_eq!(observed.num_messages, count + 1, "observations remain persisted");
+            assert_eq!(
+                observed.num_messages,
+                count + 1,
+                "observations remain persisted"
+            );
             write_summary_atomic(&path, &summary).unwrap();
             for meta in [
                 serde_json::json!({"activityProvenance": "observation"}),
                 serde_json::json!({"activityProvenance": "invalid"}),
                 serde_json::json!({"activityProvenance": "live", "isReplay": true}),
             ] {
-                adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
-                    session_id: info.id.clone(),
-                    update: XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
-                    meta: Some(meta),
-                }))).await.unwrap();
+                adapter
+                    .append_update(
+                        &info,
+                        &SessionUpdate::Xai(Box::new(SessionNotification {
+                            session_id: info.id.clone(),
+                            update: XaiUpdate::BackgroundTasks {
+                                tasks: Vec::new(),
+                                truncated: false,
+                            },
+                            meta: Some(meta),
+                        })),
+                    )
+                    .await
+                    .unwrap();
                 let replayed = read_summary(&path).unwrap();
                 assert_eq!(replayed.last_active_at, active);
                 assert_eq!(replayed.updated_at, summary.updated_at);
             }
-            adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
-                session_id: info.id.clone(),
-                update: XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
-                meta: Some(serde_json::json!({"activityProvenance": "live"})),
-            }))).await.unwrap();
-            assert!(read_summary(&path).unwrap().last_change_unix_ms() > 9_876,
-                "a producer-correlated work snapshot remains real activity");
+            adapter
+                .append_update(
+                    &info,
+                    &SessionUpdate::Xai(Box::new(SessionNotification {
+                        session_id: info.id.clone(),
+                        update: XaiUpdate::BackgroundTasks {
+                            tasks: Vec::new(),
+                            truncated: false,
+                        },
+                        meta: Some(serde_json::json!({"activityProvenance": "live"})),
+                    })),
+                )
+                .await
+                .unwrap();
+            assert!(
+                read_summary(&path).unwrap().last_change_unix_ms() > 9_876,
+                "a producer-correlated work snapshot remains real activity"
+            );
         }
     }
 
@@ -716,11 +778,15 @@ mod tests {
             summary.last_active_at = active;
             summary.updated_at = chrono::DateTime::from_timestamp_millis(9_876).unwrap();
             write_summary_atomic(&path, &summary).unwrap();
-            adapter.stamp_session_identity_if_absent(&info, None, |_| {
-                crate::session::persistence::SessionIdentity {
-                    agent_id: "ag1.a1".into(), attempt_id: "at1.a1".into(),
-                }
-            }).await.unwrap();
+            adapter
+                .stamp_session_identity_if_absent(&info, None, |_| {
+                    crate::session::persistence::SessionIdentity {
+                        agent_id: "ag1.a1".into(),
+                        attempt_id: "at1.a1".into(),
+                    }
+                })
+                .await
+                .unwrap();
             let loaded = read_summary(&path).unwrap();
             assert_eq!(loaded.last_active_at, active);
             assert_eq!(loaded.updated_at, summary.updated_at);

@@ -1,9 +1,15 @@
 use super::*;
 use std::future::Future;
-use xai_grok_shell::extensions::current_actions::{self as wire, DeliveryRole, GenerationEnd, LoadCut};
+use xai_grok_shell::extensions::current_actions::{
+    self as wire, DeliveryRole, GenerationEnd, LoadCut,
+};
 use xai_grok_shell::session::current_actions::{CurrentActionsSnapshot, SnapshotBinding};
 
-async fn pump<T>(future: impl Future<Output = T>, rx: &mut xai_acp_lib::AcpClientRx, app: &mut AppView) -> T {
+async fn pump<T>(
+    future: impl Future<Output = T>,
+    rx: &mut xai_acp_lib::AcpClientRx,
+    app: &mut AppView,
+) -> T {
     tokio::pin!(future);
     loop {
         tokio::select! {
@@ -15,9 +21,13 @@ async fn pump<T>(future: impl Future<Output = T>, rx: &mut xai_acp_lib::AcpClien
 
 fn notification(app: &mut AppView, method: &str, value: &impl serde::Serialize) {
     let (response_tx, mut completion) = tokio::sync::oneshot::channel();
-    handle(AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
-        request: acp_fixtures::ext_notification(method, value), response_tx,
-    }), app);
+    handle(
+        AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
+            request: acp_fixtures::ext_notification(method, value),
+            response_tx,
+        }),
+        app,
+    );
     assert!(completion.try_recv().unwrap().is_ok());
 }
 
@@ -38,10 +48,18 @@ fn actual_transport_only_resident_load_never_claims_pager_settlement() {
 fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
     use std::rc::Rc;
     use std::sync::Arc;
-    use xai_grok_shell::agent::{MvpAgent, config::{Config, ModelEntry}};
-    use xai_grok_test_support::{MockInferenceServer, InferenceEndpoint, InferenceRequestMatcher, ScriptedResponse};
+    use xai_grok_shell::agent::{
+        MvpAgent,
+        config::{Config, ModelEntry},
+    };
+    use xai_grok_test_support::{
+        InferenceEndpoint, InferenceRequestMatcher, MockInferenceServer, ScriptedResponse,
+    };
     let mut keepalive = None;
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async {
         tokio::time::timeout(Duration::from_secs(90), async {
@@ -231,12 +249,26 @@ fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
 }
 
 fn negative_capture(binding: SnapshotBinding, incarnation: uuid::Uuid) -> GenerationEnd {
-    use xai_grok_shell::session::current_actions::{CurrentActions, SourceVersion, BackendToolsObservation};
-    GenerationEnd { snapshot: CurrentActions {
-        binding, version: SourceVersion { incarnation, sequence: 1 }, event_frontier: 100,
-        turn: None, sampling: Vec::new(), tools: Vec::new(), backend_tools: BackendToolsObservation::Unavailable,
-        compactions: Vec::new(), hooks: Vec::new(), interactions: Vec::new(),
-    } }
+    use xai_grok_shell::session::current_actions::{
+        BackendToolsObservation, CurrentActions, SourceVersion,
+    };
+    GenerationEnd {
+        snapshot: CurrentActions {
+            binding,
+            version: SourceVersion {
+                incarnation,
+                sequence: 1,
+            },
+            event_frontier: 100,
+            turn: None,
+            sampling: Vec::new(),
+            tools: Vec::new(),
+            backend_tools: BackendToolsObservation::Unavailable,
+            compactions: Vec::new(),
+            hooks: Vec::new(),
+            interactions: Vec::new(),
+        },
+    }
 }
 
 #[test]
@@ -251,52 +283,102 @@ fn stale_generation_reply_and_marker_cannot_take_current_load_custody() {
     let end = negative_capture(stale.clone(), uuid::Uuid::new_v4());
     let activity = test_agent(&app, id).last_active_at;
     notification(&mut app, wire::GENERATION_END_METHOD, &end);
-    assert!(!app.agents.get_mut(&id).unwrap().receive_generation_end(end.clone()));
-    crate::app::dispatch::dispatch(Action::TaskComplete(TaskResult::WithPublication {
-        agent_id: id, binding: stale, snapshot: CurrentActionsSnapshot::Current(end.snapshot), cut: LoadCut::Settled,
-        result: Box::new(TaskResult::SessionLoaded {
-            agent_id: id, session_id: acp::SessionId::new(original.session_id.clone()), models: None, modes: None,
-            code_restored: false, restore_summary: None, restore_degree: None, running_prompt_id: None,
+    assert!(
+        !app.agents
+            .get_mut(&id)
+            .unwrap()
+            .receive_generation_end(end.clone())
+    );
+    crate::app::dispatch::dispatch(
+        Action::TaskComplete(TaskResult::WithPublication {
+            agent_id: id,
+            binding: stale,
+            snapshot: CurrentActionsSnapshot::Current(end.snapshot),
+            cut: LoadCut::Settled,
+            result: Box::new(TaskResult::SessionLoaded {
+                agent_id: id,
+                session_id: acp::SessionId::new(original.session_id.clone()),
+                models: None,
+                modes: None,
+                code_restored: false,
+                restore_summary: None,
+                restore_degree: None,
+                running_prompt_id: None,
+            }),
         }),
-    }), &mut app);
+        &mut app,
+    );
     let view = test_agent(&app, id);
     assert_eq!(view.current_actions_binding(), Some(original));
     assert!(view.current_actions_context().is_none());
     assert!(view.session.loading_replay);
     assert!(view.session_reload.is_some());
-    assert_eq!(view.session.current_prompt_id.as_deref(), Some(prompt.as_str()));
+    assert_eq!(
+        view.session.current_prompt_id.as_deref(),
+        Some(prompt.as_str())
+    );
     assert_eq!(view.last_active_at, activity);
 }
 
 #[test]
 fn missing_role_historical_role_and_foreign_actor_cannot_bootstrap_transition_authority() {
-    use xai_grok_shell::session::current_actions::{CurrentActionsEvent, CurrentActionTransition, CurrentHook, SourceVersion, FrozenOwner};
+    use xai_grok_shell::session::current_actions::{
+        CurrentActionTransition, CurrentActionsEvent, CurrentHook, FrozenOwner, SourceVersion,
+    };
     let id = AgentId(0);
     let (mut app, _, prompt) = target(id, true);
     let view = app.agents.get_mut(&id).unwrap();
     let context = crate::app::agent_view::CurrentActionsContext {
-        binding: view.current_actions_binding().unwrap(), incarnation: uuid::Uuid::new_v4(),
+        binding: view.current_actions_binding().unwrap(),
+        incarnation: uuid::Uuid::new_v4(),
     };
     assert!(view.bind_current_actions(context.clone()));
     let event = CurrentActionsEvent {
-        session_id: context.binding.session_id.clone(), version: SourceVersion { incarnation: context.incarnation, sequence: 10 },
-        transition: CurrentActionTransition::HookStarted { hook: CurrentHook {
-            batch_id: uuid::Uuid::new_v4(), turn: FrozenOwner::Root { prompt_id: prompt, task_id: "negative-transition".into() },
-            started_at: MonotonicPoint::at(tokio::time::Instant::now()),
-        } },
+        session_id: context.binding.session_id.clone(),
+        version: SourceVersion {
+            incarnation: context.incarnation,
+            sequence: 10,
+        },
+        transition: CurrentActionTransition::HookStarted {
+            hook: CurrentHook {
+                batch_id: uuid::Uuid::new_v4(),
+                turn: FrozenOwner::Root {
+                    prompt_id: prompt,
+                    task_id: "negative-transition".into(),
+                },
+                started_at: MonotonicPoint::at(tokio::time::Instant::now()),
+            },
+        },
     };
     let activity = test_agent(&app, id).last_active_at;
-    for role in [None, Some(DeliveryRole::Historical { binding: context.binding.clone() }),
-        Some(DeliveryRole::LiveUnbound { session_id: context.binding.session_id.clone(), incarnation: uuid::Uuid::new_v4() })] {
+    for role in [
+        None,
+        Some(DeliveryRole::Historical {
+            binding: context.binding.clone(),
+        }),
+        Some(DeliveryRole::LiveUnbound {
+            session_id: context.binding.session_id.clone(),
+            incarnation: uuid::Uuid::new_v4(),
+        }),
+    ] {
         let mut candidate = event.clone();
-        if let Some(DeliveryRole::LiveUnbound { incarnation, .. }) = &role { candidate.version.incarnation = *incarnation; }
+        if let Some(DeliveryRole::LiveUnbound { incarnation, .. }) = &role {
+            candidate.version.incarnation = *incarnation;
+        }
         let mut payload = serde_json::to_value(&candidate).unwrap();
         if let Some(role) = role {
             let mut meta = acp::Meta::new();
             wire::stamp_delivery(&mut meta, &role).unwrap();
-            payload.as_object_mut().unwrap().insert("_meta".into(), serde_json::to_value(meta).unwrap());
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("_meta".into(), serde_json::to_value(meta).unwrap());
         }
-        notification(&mut app, xai_grok_shell::session::current_actions::TRANSITION_METHOD, &payload);
+        notification(
+            &mut app,
+            xai_grok_shell::session::current_actions::TRANSITION_METHOD,
+            &payload,
+        );
         let view = test_agent(&app, id);
         assert_eq!(view.current_actions_context(), Some(&context));
         assert_eq!(view.current_action_started_at(), None);
@@ -312,15 +394,26 @@ fn explicit_discard_completes_without_row_clock_ack_or_reconnect_cursor() {
         let (mut app, sid, prompt) = target(id, true);
         let view = app.agents.get_mut(&id).unwrap();
         let context = crate::app::agent_view::CurrentActionsContext {
-            binding: view.current_actions_binding().unwrap(), incarnation: uuid::Uuid::new_v4(),
+            binding: view.current_actions_binding().unwrap(),
+            incarnation: uuid::Uuid::new_v4(),
         };
         view.bind_current_actions(context.clone());
         view.advance_last_seen_event_id(format!("{sid}-7"), Some(7));
         let rows = view.scrollback.len();
         let activity = view.last_active_at;
         let ack = view.prompt_ack.is_some();
-        let role = if historical { DeliveryRole::Historical { binding: context.binding.clone() } }
-            else { DeliveryRole::Live { context: wire::PublicationContext { binding: context.binding.clone(), incarnation: context.incarnation } } };
+        let role = if historical {
+            DeliveryRole::Historical {
+                binding: context.binding.clone(),
+            }
+        } else {
+            DeliveryRole::Live {
+                context: wire::PublicationContext {
+                    binding: context.binding.clone(),
+                    incarnation: context.incarnation,
+                },
+            }
+        };
         let record = wire::DiscardedRecord { role,
             notification: wire::DiscardedNotification::Acp(Box::new(acp::SessionNotification::new(acp::SessionId::new(sid),
                 acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(acp::ContentBlock::from("discarded original must not render"))))
@@ -333,7 +426,10 @@ fn explicit_discard_completes_without_row_clock_ack_or_reconnect_cursor() {
         assert_eq!(view.last_active_at, activity);
         assert_eq!(view.prompt_ack.is_some(), ack);
         assert_eq!(view.last_seen_event_seq, Some(7));
-        assert_eq!(view.last_seen_event_id.as_deref(), Some(format!("{sid}-7").as_str()));
+        assert_eq!(
+            view.last_seen_event_id.as_deref(),
+            Some(format!("{sid}-7").as_str())
+        );
         assert_eq!(view.current_action_started_at(), None);
         assert_eq!(view.current_actions_context(), Some(&context));
     }

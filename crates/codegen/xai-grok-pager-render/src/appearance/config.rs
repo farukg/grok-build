@@ -553,8 +553,13 @@ impl ToolBullet {
     pub fn prefix_width(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Category | Self::Dot | Self::SmallCircle | Self::Circle
-            | Self::SmallTriangle | Self::Triangle | Self::Diamond => 2,
+            Self::Category
+            | Self::Dot
+            | Self::SmallCircle
+            | Self::Circle
+            | Self::SmallTriangle
+            | Self::Triangle
+            | Self::Diamond => 2,
         }
     }
 

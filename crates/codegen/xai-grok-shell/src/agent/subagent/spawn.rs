@@ -65,11 +65,17 @@ pub(crate) use super::completion_publication::present_child_completion;
 
 struct ShellChildRunner {
     #[cfg(test)]
-    native_wake_fault: std::cell::RefCell<Option<crate::session::persistence::native_wake_tests_support::ParentInputFault>>,
+    native_wake_fault: std::cell::RefCell<
+        Option<crate::session::persistence::native_wake_tests_support::ParentInputFault>,
+    >,
     #[cfg(test)]
     native_wake_artifacts: Option<(String, crate::session::repo_changes::UploadMethod)>,
     #[cfg(test)]
-    native_coordinator_tx: Option<mpsc::UnboundedSender<xai_grok_tools::implementations::grok_build::task::types::SubagentEvent>>,
+    native_coordinator_tx: Option<
+        mpsc::UnboundedSender<
+            xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
+        >,
+    >,
     agent_ref: LocalRef<MvpAgent>,
     /// Owned: panics are logged, coordinator teardown aborts stragglers.
     presentations: std::cell::RefCell<Vec<tokio_util::task::AbortOnDropHandle<()>>>,
@@ -144,9 +150,14 @@ impl coordinator::ChildRunner for ShellChildRunner {
         &self,
         request: &xai_grok_tools::implementations::grok_build::task::native_recovery::SubagentMessageRecoveryRequest,
         audience: &xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryAudience,
-    ) -> xai_grok_tools::implementations::grok_build::task::native_recovery::PreparedMessageRecovery {
+    ) -> xai_grok_tools::implementations::grok_build::task::native_recovery::PreparedMessageRecovery
+    {
         use xai_grok_tools::implementations::grok_build::task::native_recovery::PreparedMessageRecovery;
-        let Some(cwd) = self.agent_ref.get().get_session_cwd(&acp::SessionId::new(audience.parent_session_id())) else {
+        let Some(cwd) = self
+            .agent_ref
+            .get()
+            .get_session_cwd(&acp::SessionId::new(audience.parent_session_id()))
+        else {
             return PreparedMessageRecovery::Refused;
         };
         super::native_recovery::prepare(request, audience, &cwd)
@@ -155,9 +166,15 @@ impl coordinator::ChildRunner for ShellChildRunner {
     fn run(&self, mut run: coordinator::ChildRunRequest<Self::Control>) -> Self::RunFuture {
         let agent_ref = self.agent_ref.clone();
         #[cfg(test)]
-        let native_wake_fault = run.wake_origin.as_ref().and_then(|_| self.native_wake_fault.borrow_mut().take());
+        let native_wake_fault = run
+            .wake_origin
+            .as_ref()
+            .and_then(|_| self.native_wake_fault.borrow_mut().take());
         #[cfg(test)]
-        let native_wake_artifacts = run.wake_origin.as_ref().and(self.native_wake_artifacts.clone());
+        let native_wake_artifacts = run
+            .wake_origin
+            .as_ref()
+            .and(self.native_wake_artifacts.clone());
         #[cfg(test)]
         let native_coordinator_tx = self.native_coordinator_tx.clone();
         Box::pin(async move {
@@ -213,7 +230,9 @@ impl coordinator::ChildRunner for ShellChildRunner {
                 };
             };
             #[cfg(test)]
-            if let Some(sender) = native_coordinator_tx { ctx.subagent_event_tx = sender; }
+            if let Some(sender) = native_coordinator_tx {
+                ctx.subagent_event_tx = sender;
+            }
             #[cfg(test)]
             if let Some((bucket, method)) = native_wake_artifacts {
                 ctx.gcs_bucket_url = Some(bucket);
@@ -221,13 +240,19 @@ impl coordinator::ChildRunner for ShellChildRunner {
             }
             #[cfg(test)]
             if let Some(fault) = native_wake_fault {
-                let parent_info = crate::session::info::Info { id: acp::SessionId::new(parent_sid.clone()), cwd: ctx.parent_cwd.to_string_lossy().into_owned() };
+                let parent_info = crate::session::info::Info {
+                    id: acp::SessionId::new(parent_sid.clone()),
+                    cwd: ctx.parent_cwd.to_string_lossy().into_owned(),
+                };
                 let mut harness = super::RunShellChildHarnessConfig::new(
-                    crate::session::persistence::session_dir(&parent_info).join("subagents").join(&run.request.id),
+                    crate::session::persistence::session_dir(&parent_info)
+                        .join("subagents")
+                        .join(&run.request.id),
                     super::InitialAttemptBehavior::Normal,
                 );
                 harness.parent_input_fault = Some(fault);
-                harness.initial_traceparent = Some("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".into());
+                harness.initial_traceparent =
+                    Some("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".into());
                 ctx.run_shell_child_harness = Some(harness);
             }
             let parent_handle = this.resident_handle(&acp::SessionId::new(parent_sid.clone()));

@@ -41,15 +41,22 @@ pub(crate) fn has_parked_plan_approval(pending: &PendingInteractions) -> bool {
 
 /// Fire-and-forget broadcast of a session notification carrying a `sessionId` (so the routing layer fans it out to every subscriber).
 /// Never persisted.
-fn broadcast(gateway: &GatewaySender, session_id: &acp::SessionId, update: XaiSessionUpdate, version: Option<super::current_actions::SourceVersion>) {
+fn broadcast(
+    gateway: &GatewaySender,
+    session_id: &acp::SessionId,
+    update: XaiSessionUpdate,
+    version: Option<super::current_actions::SourceVersion>,
+) {
     let notification = SessionNotification {
         session_id: session_id.clone(),
         update,
-        meta: version.and_then(|version| serde_json::to_value(version).ok()).map(|version| {
-            let mut meta = acp::Meta::new();
-            meta.insert(super::current_actions::VERSION_META_KEY.into(), version);
-            serde_json::Value::Object(meta)
-        }),
+        meta: version
+            .and_then(|version| serde_json::to_value(version).ok())
+            .map(|version| {
+                let mut meta = acp::Meta::new();
+                meta.insert(super::current_actions::VERSION_META_KEY.into(), version);
+                serde_json::Value::Object(meta)
+            }),
     };
     if let Ok(params) = serde_json::value::to_raw_value(&notification) {
         gateway.forward_fire_and_forget(acp::ExtNotification::new(
@@ -72,7 +79,10 @@ pub(crate) struct PendingInteractionGuard {
 
 enum InteractionObservation {
     Unavailable,
-    Registered { source: super::current_actions::Source, registration_id: uuid::Uuid },
+    Registered {
+        source: super::current_actions::Source,
+        registration_id: uuid::Uuid,
+    },
 }
 
 impl PendingInteractionGuard {
@@ -83,16 +93,30 @@ impl PendingInteractionGuard {
         session_id: acp::SessionId,
         tool_call_id: String,
         kind: PendingKind,
-        source: Option<(super::current_actions::Source, super::current_actions::FrozenOwner, xai_monotonic_clock::MonotonicPoint)>,
+        source: Option<(
+            super::current_actions::Source,
+            super::current_actions::FrozenOwner,
+            xai_monotonic_clock::MonotonicPoint,
+        )>,
     ) -> Self {
         let (observation, version) = match source {
             Some((source, owner, started_at)) => {
-                let registration_id = source.start_interaction(&pending, &tool_call_id, kind, owner, started_at);
+                let registration_id =
+                    source.start_interaction(&pending, &tool_call_id, kind, owner, started_at);
                 let version = source.version();
-                (InteractionObservation::Registered { source, registration_id }, version)
+                (
+                    InteractionObservation::Registered {
+                        source,
+                        registration_id,
+                    },
+                    version,
+                )
             }
             None => {
-                pending.lock().unwrap_or_else(|error| error.into_inner()).insert(tool_call_id.clone(), kind);
+                pending
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .insert(tool_call_id.clone(), kind);
                 (InteractionObservation::Unavailable, None)
             }
         };
@@ -118,11 +142,20 @@ impl PendingInteractionGuard {
 impl Drop for PendingInteractionGuard {
     fn drop(&mut self) {
         let (removed, version) = match &self.observation {
-            InteractionObservation::Registered { source, registration_id } => (
-                source.finish_interaction(&self.pending, &self.tool_call_id, *registration_id), source.version(),
+            InteractionObservation::Registered {
+                source,
+                registration_id,
+            } => (
+                source.finish_interaction(&self.pending, &self.tool_call_id, *registration_id),
+                source.version(),
             ),
             InteractionObservation::Unavailable => (
-                self.pending.lock().unwrap_or_else(|error| error.into_inner()).remove(&self.tool_call_id).is_some(), None,
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(&self.tool_call_id)
+                    .is_some(),
+                None,
             ),
         };
         // First-answer-wins: only announce resolution if this guard actually owned the live entry

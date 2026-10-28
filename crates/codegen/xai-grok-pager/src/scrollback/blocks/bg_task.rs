@@ -44,7 +44,9 @@ pub struct BgTaskBlock {
 
 impl BgTaskBlock {
     pub fn format_elapsed(elapsed: Option<Duration>) -> String {
-        elapsed.map(format_duration).unwrap_or_else(|| "unknown".into())
+        elapsed
+            .map(format_duration)
+            .unwrap_or_else(|| "unknown".into())
     }
 
     pub fn started(command: impl Into<String>, task_id: impl Into<String>) -> Self {
@@ -64,7 +66,9 @@ impl BgTaskBlock {
         Self {
             command: command.into(),
             task_id: task_id.into(),
-            kind: BgTaskKind::Completed { elapsed: elapsed.into() },
+            kind: BgTaskKind::Completed {
+                elapsed: elapsed.into(),
+            },
             description: None,
         }
     }
@@ -99,7 +103,9 @@ impl BgTaskBlock {
 
     /// Mark a Started block as completed.
     pub fn mark_completed(&mut self, elapsed: impl Into<Option<Duration>>) {
-        self.kind = BgTaskKind::Completed { elapsed: elapsed.into() };
+        self.kind = BgTaskKind::Completed {
+            elapsed: elapsed.into(),
+        };
     }
 
     /// Mark a Started block as failed.
@@ -153,20 +159,27 @@ impl BgTaskBlock {
         let mut lines = Vec::new();
         if let Some(description) = self.description.as_deref().filter(|d| !d.trim().is_empty()) {
             lines.extend(super::tool::body::wrapped_body(
-                description, theme.primary(), ctx.content_width(), "",
+                description,
+                theme.primary(),
+                ctx.content_width(),
+                "",
             ));
             lines.push(BlockLine::separator(Line::from("")));
         }
         let mut command = super::tool::body::wrapped_lines(
-            self.command.lines().map(|line| Line::from(
-                crate::views::tasks_pane::highlight_bash_command(line),
-            )),
-            ctx.content_width(), "  ",
+            self.command
+                .lines()
+                .map(|line| Line::from(crate::views::tasks_pane::highlight_bash_command(line))),
+            ctx.content_width(),
+            "  ",
         );
         if let Some(first) = command.first_mut() {
             if let Some(prefix) = first.content.spans.first_mut() {
                 *prefix = Span::styled(
-                    crate::render::line_utils::truncate_str("$ ", ctx.content_width().saturating_sub(1)),
+                    crate::render::line_utils::truncate_str(
+                        "$ ",
+                        ctx.content_width().saturating_sub(1),
+                    ),
                     theme.dim(),
                 );
             }
@@ -222,7 +235,10 @@ impl BlockContent for BgTaskBlock {
                     }
                 };
                 Line::from(vec![
-                    Span::styled(format!("{verb} in {}: ", Self::format_elapsed(*elapsed)), muted),
+                    Span::styled(
+                        format!("{verb} in {}: ", Self::format_elapsed(*elapsed)),
+                        muted,
+                    ),
                     Span::styled(format!("{}{}", display, detail), muted),
                 ])
             }
@@ -258,7 +274,9 @@ impl BlockContent for BgTaskBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        self.description.as_deref().is_some_and(|d| !d.trim().is_empty())
+        self.description
+            .as_deref()
+            .is_some_and(|d| !d.trim().is_empty())
             || !self.command.trim().is_empty()
     }
 
@@ -566,7 +584,6 @@ mod tests {
             "newlines should become spaces in failed variant, got: {text:?}"
         );
     }
-
 
     #[test]
     fn expanded_body_shows_description_and_command() {

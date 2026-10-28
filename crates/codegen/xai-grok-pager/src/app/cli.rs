@@ -24,7 +24,10 @@ pub enum SessionAuditCommand {
 }
 
 #[derive(Parser)]
-#[command(name = "session-audit", about = "Read-only native session decoding; no configuration, runtime or provider startup")]
+#[command(
+    name = "session-audit",
+    about = "Read-only native session decoding; no configuration, runtime or provider startup"
+)]
 struct SessionAuditArgs {
     #[command(subcommand)]
     command: SessionAuditCommand,
@@ -35,15 +38,36 @@ impl SessionAuditCommand {
         let mut args = std::env::args_os();
         let executable = args.next()?;
         let first = args.next()?;
-        let bin = std::path::Path::new(&executable).file_name().and_then(|name| name.to_str())
-            .filter(|name| matches!(*name, "grok" | "agent")).unwrap_or("grok");
+        let bin = std::path::Path::new(&executable)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| matches!(*name, "grok" | "agent"))
+            .unwrap_or("grok");
         if first == "session-audit" {
-            return Some(SessionAuditArgs::parse_from(std::iter::once(std::ffi::OsString::from(format!("{bin} session-audit"))).chain(args)).command);
+            return Some(
+                SessionAuditArgs::parse_from(
+                    std::iter::once(std::ffi::OsString::from(format!("{bin} session-audit")))
+                        .chain(args),
+                )
+                .command,
+            );
         }
-        if !std::env::args_os().skip(2).any(|arg| arg == "session-audit") { return None; }
-        let matches = PagerArgs::command().defer(|command| command)
-            .get_matches_from(std::iter::once(std::ffi::OsString::from(bin)).chain(std::iter::once(first)).chain(args));
-        let ("session-audit", subcommand) = matches.subcommand()? else { return None; };
+        if !std::env::args_os()
+            .skip(2)
+            .any(|arg| arg == "session-audit")
+        {
+            return None;
+        }
+        let matches = PagerArgs::command()
+            .defer(|command| command)
+            .get_matches_from(
+                std::iter::once(std::ffi::OsString::from(bin))
+                    .chain(std::iter::once(first))
+                    .chain(args),
+            );
+        let ("session-audit", subcommand) = matches.subcommand()? else {
+            return None;
+        };
         match SessionAuditArgs::from_arg_matches(subcommand) {
             Ok(args) => Some(args.command),
             Err(error) => error.exit(),
@@ -864,7 +888,8 @@ fn strip_cur_dir(path: PathBuf) -> PathBuf {
         .collect()
 }
 fn pager_environment(command: clap::Command) -> clap::Command {
-    command.mut_arg("sandbox", |arg| arg.env("GROK_SANDBOX"))
+    command
+        .mut_arg("sandbox", |arg| arg.env("GROK_SANDBOX"))
         .mut_arg("log_sampling", |arg| arg.env("GROK_LOG_SAMPLING"))
 }
 
