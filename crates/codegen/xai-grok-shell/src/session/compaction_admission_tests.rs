@@ -233,7 +233,7 @@ async fn actor_retains_busy_compact_and_executes_original_request_in_input_order
             while !fixture.updates.borrow().iter().any(|update| matches!(update,
                 XaiSessionUpdate::AutoCompactStarted {
                     phase: crate::extensions::notification::CompactPhase::Queued, ..
-                }))) {
+                })) {
                 fixture.updates_changed.notified().await;
             }
 
