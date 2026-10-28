@@ -24,10 +24,7 @@ pub struct ExecuteToolCallBlock {
     pub description: Option<String>,
     /// The terminal output. Streamed incrementally.
     pub output: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Whether this is a user-initiated bash-mode (`!`) command.
     /// Streams as a truncated live tail, expands to full output on finish.
     pub bash_mode: bool,
@@ -35,15 +32,13 @@ pub struct ExecuteToolCallBlock {
     pub header_display: Option<String>,
 }
 impl ExecuteToolCallBlock {
-    /// Create a new execute block. Pre-completed blocks never get timing; they show `"-"`.
     pub fn new(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
             error: None,
             description: None,
             output: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             bash_mode: false,
             header_display: None,
         }
@@ -75,25 +70,11 @@ impl ExecuteToolCallBlock {
         }
     }
 
-    /// Finalize elapsed time from `started_at`.
-    ///
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
-    /// Set error (mutable); compute elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
@@ -102,14 +83,8 @@ impl ExecuteToolCallBlock {
         self.error.is_none()
     }
 
-    /// Get elapsed time in ms. Returns current elapsed if still running, or stored value if finished.
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     /// Get copyable text for this block (stdout output).
@@ -195,7 +170,7 @@ impl ExecuteToolCallBlock {
                 } else {
                     theme.primary().add_modifier(Modifier::BOLD)
                 };
-                let prefix = format!("{} ", crate::glyphs::tool_execute());
+                let prefix = String::new();
                 let mut hang = UnicodeWidthStr::width(prefix.as_str());
                 let mut spans = vec![Span::styled(prefix, label_style)];
                 if self.bash_mode {
@@ -289,7 +264,7 @@ impl ExecuteToolCallBlock {
         } else {
             theme.primary().add_modifier(Modifier::BOLD)
         };
-        let mut spans = vec![Span::styled(format!("{} ", crate::glyphs::tool_execute()), label_style)];
+        let mut spans = vec![Span::styled(String::new(), label_style)];
         if self.bash_mode {
             // Same style as session event messages (e.g. "Worked for 2.3s")
             spans.push(Span::styled("(user) ", theme.muted()));
@@ -748,6 +723,11 @@ impl BlockContent for ExecuteToolCallBlock {
     fn preamble(&self, ctx: &BlockContext) -> Option<Text<'static>> {
         let theme = Theme::current();
         let header_style = ctx.appearance.scrollback.blocks.execute.header_style;
+        let prefix = match header_style {
+            ExecuteHeaderStyle::Shell => String::new(),
+            ExecuteHeaderStyle::Label => format!("{} ", crate::scrollback::block::MessageKind::Execute.symbol_glyph()),
+        };
+        let width = usize::from(ctx.width).saturating_sub(UnicodeWidthStr::width(prefix.as_str()));
 
         // `header_lines` flattens `\n` to spaces, which smashes multi-line commands into one run-on row in the block viewer
         // The viewer draws no bullet, so `ctx.width` (not `content_width()`) is the row width
@@ -757,13 +737,17 @@ impl BlockContent for ExecuteToolCallBlock {
             &theme,
             header_style,
             /*muted_command*/ false,
-            ctx.width as usize,
+            width,
             /*extra_indent*/ 0,
             /*truncate_to_width*/ false,
             /*include_command*/ true,
         );
         let mut lines: Vec<Line<'static>> =
             header_rows.into_iter().map(|row| row.content).collect();
+
+        if !prefix.is_empty() && let Some(first) = lines.first_mut() {
+            first.spans.insert(0, Span::styled(prefix, theme.primary().add_modifier(Modifier::BOLD)));
+        }
 
         if self.output.is_none()
             && let Some(error) = &self.error
@@ -822,7 +806,7 @@ mod tests {
         let title = line_text(&nth(&headers, 0).0);
         let cmd = line_text(&nth(&headers, 1).0);
         // Leading "Run " on the description is stripped (Label already has it).
-        assert_eq!(title, format!("{} the unit test suite", crate::glyphs::tool_execute()));
+        assert_eq!(title, "the unit test suite".to_owned());
         assert!(cmd.starts_with("$ "), "cmd={cmd:?}");
         assert!(cmd.contains("cargo test --lib"), "cmd={cmd:?}");
         // Prefix span counts: "Run " only on title; "$ " on command.
@@ -837,7 +821,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, true, false);
         assert_eq!(headers.len(), 1);
-        assert_eq!(line_text(&nth(&headers, 0).0), format!("{} the unit test suite", crate::glyphs::tool_execute()));
+        assert_eq!(line_text(&nth(&headers, 0).0), "the unit test suite".to_owned());
     }
 
     #[test]
@@ -869,8 +853,7 @@ mod tests {
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, false);
         assert_eq!(headers.len(), 1);
         let text = line_text(&nth(&headers, 0).0);
-        assert!(text.starts_with(&format!("{} ", crate::glyphs::tool_execute())), "header={text:?}");
-        assert!(text.contains("echo hi"), "header={text:?}");
+        assert_eq!(text, "echo hi");
     }
 
     #[test]
@@ -913,8 +896,8 @@ mod tests {
         );
         let first = line_text(&nth(&lines, 0).content);
         assert!(
-            first.starts_with(&format!("{} ", crate::glyphs::tool_execute())),
-            "Label soft-wrap first row needs Run prefix: {first:?}"
+            first.starts_with("git status --short --branch"),
+            "Label soft-wrap first row must retain the command: {first:?}"
         );
         assert!(
             first.contains("&&"),
@@ -953,7 +936,7 @@ mod tests {
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 2);
         let title = line_text(&nth(&headers, 0).0);
-        assert_eq!(title, format!("{} (user) List files", crate::glyphs::tool_execute()));
+        assert_eq!(title, "(user) List files".to_owned());
         assert_eq!(nth(&headers, 0).1, 2); // "Run " and "(user) "
     }
 

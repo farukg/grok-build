@@ -259,6 +259,7 @@ struct AgentLoadOutcome {
     running_prompt_id: Option<String>,
     /// Persistent-memory implementation pinned by the re-spawned actor.
     memory_mode: Option<xai_grok_shell::config::MemoryMode>,
+    publication: Option<effects::current_actions::LoadPublication>,
 }
 type ReconnectLoadState = (
     bool,
@@ -2708,8 +2709,7 @@ pub(crate) async fn run(
                         // A surviving higher watermark would silently drop its fresh pushes
                         app.announcements_last_gen = 0;
 
-                        // Cancel any in-flight re-init from a previous reconnect cycle and restore those agents' stashed transcripts
-                        // Their load requests rode the now-dead connection
+                        // The old load requests rode the dead connection; retarget without discarding admitted live owners.
                         if let Some(handle) = reconnect_abort_handle.take() {
                             handle.abort();
                         }
@@ -2720,7 +2720,7 @@ pub(crate) async fn run(
                             );
                             for prev_id in prev.agent_ids {
                                 if let Some(agent) = app.agents.get_mut(&prev_id) {
-                                    agent.finish_session_reload(prev.generation, false);
+                                    agent.supersede_session_reload(prev.generation, generation);
                                 }
                             }
                         }
@@ -2760,7 +2760,8 @@ pub(crate) async fn run(
                             // The reload adoption supersedes a pre-disconnect stash.
                             app.pending_running_adoptions.remove(&id);
                             reload_agent_ids.push(id);
-                            load_plans.push((id, plan));
+                            let binding = agent.begin_publication_load();
+                            load_plans.push((id, plan, binding));
                         }
                         let any_reload = !reload_agent_ids.is_empty();
                         // Per-agent `auto_mode` was just re-seeded from the reload meta; keep `/auto` feature-gate slash visibility in sync
@@ -2809,7 +2810,11 @@ pub(crate) async fn run(
                                 }
 
                                 let mut loads = Vec::with_capacity(load_plans.len());
-                                for (agent_id, plan) in load_plans {
+                                for (agent_id, mut plan, binding) in load_plans {
+                                    if let Some(binding) = &binding {
+                                        let Some(meta) = plan.meta.as_object_mut() else { return None; };
+                                        if xai_grok_shell::extensions::current_actions::stamp_load_binding(meta, binding).is_err() { return None; }
+                                    }
                                     let mcp_servers = effects::discover_mcp_servers(plan.cwd.clone()).await;
                                     let load_req = acp::LoadSessionRequest::new(plan.session_id, plan.cwd).mcp_servers(mcp_servers).meta(plan.meta.as_object().cloned());
                                     match acp_send(load_req, &acp_tx).await {
@@ -2825,6 +2830,7 @@ pub(crate) async fn run(
                                                     effects::parse_session_memory_mode(
                                                         resp.meta.as_ref(),
                                                     ),
+                                                publication: binding.map(|binding| effects::current_actions::LoadPublication::read(binding, resp.meta.as_ref())),
                                             });
                                         }
                                         Err(e) => {
@@ -2835,6 +2841,7 @@ pub(crate) async fn run(
                                                 success: false,
                                                 running_prompt_id: None,
                                                 memory_mode: None,
+                                                publication: binding.map(|binding| effects::current_actions::LoadPublication::read(binding, None)),
                                             });
                                         }
                                     }
@@ -2903,10 +2910,12 @@ pub(crate) async fn run(
                 // Finalize the reload windows on the agents the re-init was started for, NOT whatever view is active now
                 // See `SessionReload` for the outcome handling
                 // Each window resolves on ITS load outcome (one broken session must not discard the other tabs' replayed transcripts)
+                let mut publications = std::collections::HashMap::new();
                 let mut loads: std::collections::HashMap<_, _> = outcome
                     .loads
                     .into_iter()
                     .map(|l| {
+                        if let Some(publication) = l.publication { publications.insert(l.agent_id, publication); }
                         (
                             l.agent_id,
                             (
@@ -2932,15 +2941,23 @@ pub(crate) async fn run(
                 for id in &pending.agent_ids {
                     let (ok, running_prompt_id, memory_mode) =
                         loads.remove(id).unwrap_or((false, None, None));
+                    let publication = publications.remove(id);
+                    if let Some(publication) = &publication {
+                        acp_handler::current_actions::apply_load_publication(&mut app, *id, publication);
+                    }
                     if let Some(agent) = app.agents.get_mut(id) {
                         if ok {
                             agent.memory_mode = memory_mode;
                         }
-                        agent.finalize_reload_and_maybe_adopt(
+                        let finalized = agent.finalize_reload_and_maybe_adopt(
                             pending.generation,
                             ok,
                             running_prompt_id,
                         );
+                        if finalized && ok && let Some(publication) = publication
+                            && let xai_grok_shell::session::current_actions::CurrentActionsSnapshot::Current(current) = publication.snapshot {
+                            agent.complete_publication_load(&publication.binding, &current, &publication.cut);
+                        }
                     }
                 }
 
@@ -4038,7 +4055,8 @@ fn process_effects(
         else {
             continue;
         };
-        let (quit, meta) = effects::execute(eff, tasks, &app.acp_tx, &app.cwd, &flags, progress_tx);
+        let load_binding = effects::current_actions::prepare(&eff, app);
+        let (quit, meta) = effects::execute(eff, tasks, &app.acp_tx, &app.cwd, &flags, progress_tx, load_binding);
         if let Some((seq, abort_handle)) = meta.auth_abort_handle
             && let super::app_view::AuthState::Authenticating {
                 request_seq,

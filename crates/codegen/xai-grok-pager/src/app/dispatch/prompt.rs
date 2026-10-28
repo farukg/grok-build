@@ -2009,8 +2009,6 @@ pub(super) fn handle_memory_command_complete(
     ));
 
     agent.mark_turn_finished(TurnEnd::Completed);
-    agent.activity_started_at = None;
-    agent.last_activity = None;
 
     if app.reconnect_pending {
         return vec![];
@@ -2036,7 +2034,8 @@ pub(super) fn handle_compact_complete(
         }
         match invocation.settlement {
             CompactInvocationSettlement::RpcSettled => return vec![],
-            CompactInvocationSettlement::AwaitingRpc | CompactInvocationSettlement::LifecycleObserved => {
+            CompactInvocationSettlement::AwaitingRpc | CompactInvocationSettlement::Queued
+            | CompactInvocationSettlement::Executing | CompactInvocationSettlement::LifecycleObserved => {
                 invocation.settlement = CompactInvocationSettlement::RpcSettled;
             }
         }
@@ -2051,6 +2050,7 @@ pub(super) fn handle_compact_complete(
             }
         );
         let elapsed = invocation.started_at.elapsed();
+        agent.settle_current_actions_compact(invocation_id);
         if owns_command {
             agent.session.finish_command();
         }
@@ -2084,8 +2084,6 @@ pub(super) fn handle_compact_complete(
             return vec![];
         }
         agent.mark_turn_finished(TurnEnd::Completed);
-        agent.activity_started_at = None;
-        agent.last_activity = None;
 
         if app.reconnect_pending {
             return vec![];

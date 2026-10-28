@@ -390,12 +390,13 @@ struct RowSegment {
     screen_row: u16,
     start: usize,
     end: usize,
+    chrome_prefix_width: usize,
 }
 
 /// Soft-wrapped rows (`Some` joiner) are re-joined before matching so a wrapped path is detected whole; styling boundaries must not truncate a match.
 /// Overlaps with existing markdown links are skipped. Relative paths link only on a unique `media_paths` match.
 pub fn scan_lines_for_url_overlays<'a>(
-    lines: impl Iterator<Item = (u16, &'a Line<'static>, Option<&'a str>)>,
+    lines: impl Iterator<Item = (u16, &'a Line<'static>, Option<&'a str>, usize)>,
     content_x: u16,
     media_paths: &[PathBuf],
     overlay: &mut LinkOverlay,
@@ -405,7 +406,7 @@ pub fn scan_lines_for_url_overlays<'a>(
     let mut group_text = String::new();
     let mut group_rows: Vec<RowSegment> = Vec::new();
 
-    for (screen_row, line, joiner) in lines {
+    for (screen_row, line, joiner, chrome_prefix_width) in lines {
         // A `None` joiner is a hard break: flush the current group and start a new logical line
         // A `Some` joiner with no accumulated rows (e.g. a wrap continuation scrolled in at the top of the viewport) also starts a new group.
         // Its fragment is scanned standalone
@@ -418,13 +419,15 @@ pub fn scan_lines_for_url_overlays<'a>(
             }
         }
         let start = group_text.len();
-        for span in &line.spans {
+        // Message chrome is one prefix span, absent from the logical source.
+        for span in line.spans.iter().skip(usize::from(chrome_prefix_width > 0)) {
             group_text.push_str(span.content.as_ref());
         }
         group_rows.push(RowSegment {
             screen_row,
             start,
             end: group_text.len(),
+            chrome_prefix_width,
         });
     }
     scan_logical_line(&group_text, &group_rows, content_x, media_paths, overlay);
@@ -454,7 +457,7 @@ fn push_link_segments(
         let Some(matched) = text.get(start..end) else {
             continue;
         };
-        let col_start = UnicodeWidthStr::width(before);
+        let col_start = row.chrome_prefix_width + UnicodeWidthStr::width(before);
         let col_end = col_start + UnicodeWidthStr::width(matched);
         let (Some(cs), Some(ce)) = (
             to_overlay_col(content_x, col_start),
@@ -688,8 +691,8 @@ mod tests {
         media_paths: &[PathBuf],
         overlay: &mut LinkOverlay,
     ) {
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            lines.map(|(row, line)| (row, line, None)).collect();
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            lines.map(|(row, line)| (row, line, None, 0)).collect();
         scan_lines_for_url_overlays(rows.into_iter(), content_x, media_paths, overlay);
     }
 
@@ -1401,8 +1404,8 @@ mod tests {
         let row0 =
             make_line("Image generated and saved to /Users/alice/.grok/sessions/%2FUsers%2Fali");
         let row1 = make_line("ce%2Fcode%2Fxai/00000000-0000-0000-0000-000000000001/images/1.jpg");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(3, &row0, None), (4, &row1, Some(""))];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(3, &row0, None, 0), (4, &row1, Some(""), 0)];
         let mut overlay = LinkOverlay::new();
         scan_lines_for_url_overlays(rows.into_iter(), 2, &[], &mut overlay);
 
@@ -1445,8 +1448,8 @@ mod tests {
         // Wrapped path ending mid-sentence: trailing `.` on the last row is trimmed from the clickable region
         let row0 = make_line("Saved to /Users/me/.grok/sessions/%2Fabc/019f3a86/ima");
         let row1 = make_line("ges/1.jpg. Enjoy!");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(0, &row0, None), (1, &row1, Some(""))];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(0, &row0, None, 0), (1, &row1, Some(""), 0)];
         let mut overlay = LinkOverlay::new();
         scan_lines_for_url_overlays(rows.into_iter(), 0, &[], &mut overlay);
 
@@ -1476,8 +1479,8 @@ mod tests {
 
         let row0 = make_line("Saved to images/1.p");
         let row1 = make_line("ng in the workspace.");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(0, &row0, None), (1, &row1, Some(""))];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(0, &row0, None, 0), (1, &row1, Some(""), 0)];
         let mut overlay = LinkOverlay::new();
         scan_lines_for_url_overlays(rows.into_iter(), 0, &media, &mut overlay);
 
@@ -1495,8 +1498,8 @@ mod tests {
     fn scan_url_soft_wrapped_across_rows() {
         let row0 = make_line("See https://example.com/some/lo");
         let row1 = make_line("ng/path?key=val for details.");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(0, &row0, None), (1, &row1, Some(""))];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(0, &row0, None, 0), (1, &row1, Some(""), 0)];
         let mut overlay = LinkOverlay::new();
         scan_lines_for_url_overlays(rows.into_iter(), 0, &[], &mut overlay);
 
@@ -1521,8 +1524,8 @@ mod tests {
         // Markdown mapped the first wrap fragment; the scanner must still cover the continuation instead of dropping the whole match
         let row0 = make_line("See https://example.com/some/lo");
         let row1 = make_line("ng/path?key=val for details.");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(0, &row0, None), (1, &row1, Some(""))];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(0, &row0, None, 0), (1, &row1, Some(""), 0)];
         let mut overlay = LinkOverlay::new();
         overlay.push(OverlayLink {
             screen_row: 0,
@@ -1580,8 +1583,8 @@ mod tests {
         // A spaced final segment (`Demo App.app`) wrapped at the space still matches as one path
         let row0 = make_line("open /tmp/release/Demo");
         let row1 = make_line("App.app now");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(0, &row0, None), (1, &row1, Some(" "))];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(0, &row0, None, 0), (1, &row1, Some(" "), 0)];
         let mut overlay = LinkOverlay::new();
         scan_lines_for_url_overlays(rows.into_iter(), 0, &[], &mut overlay);
 
@@ -1607,8 +1610,8 @@ mod tests {
         // A `None` joiner means separate source lines: fragments must not be glued into a single false path across rows
         let row0 = make_line("prefix /Users/alice");
         let row1 = make_line("suffix.txt more");
-        let rows: Vec<(u16, &Line<'static>, Option<&str>)> =
-            vec![(0, &row0, None), (1, &row1, None)];
+        let rows: Vec<(u16, &Line<'static>, Option<&str>, usize)> =
+            vec![(0, &row0, None, 0), (1, &row1, None, 0)];
         let mut overlay = LinkOverlay::new();
         scan_lines_for_url_overlays(rows.into_iter(), 0, &[], &mut overlay);
 

@@ -26,10 +26,7 @@ pub struct WebFetchToolCallBlock {
     pub error: Option<String>,
     /// Fetched content (markdown or raw text).
     pub output: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
 }
 
 impl WebFetchToolCallBlock {
@@ -41,8 +38,7 @@ impl WebFetchToolCallBlock {
             bytes: None,
             error: None,
             output: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
         }
     }
 
@@ -65,30 +61,15 @@ impl WebFetchToolCallBlock {
     }
 
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     /// Render the header line: kind glyph `url`.
@@ -107,7 +88,7 @@ impl WebFetchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = format!("{} ", crate::glyphs::tool_web_fetch());
+        let prefix = String::new();
         let display_url = match max_width {
             Some(w) => truncate_str(
                 &self.url,
@@ -260,17 +241,6 @@ impl BlockContent for WebFetchToolCallBlock {
             Some(AccentStyle::animated(theme.accent_running))
         } else {
             Some(AccentStyle::static_color(theme.accent_tool))
-        }
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else if ctx.mode == DisplayMode::Collapsed {
-            None
-        } else {
-            self.accent(ctx)
         }
     }
 

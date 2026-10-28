@@ -179,6 +179,41 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
             .map(|p| p.prompt_id.clone());
         if let Some(agent) = app.agents.get_mut(&aid) {
             agent.shared_queue = snapshot;
+            agent.shared_queue.retain(|row| {
+                !agent.queue_operations.get(&row.id).is_some_and(|operation| {
+                    operation.binding_epoch == agent.session_binding_epoch
+                        && operation.row.version == row.version
+                        && matches!(operation.admission, crate::app::agent_view::queue::QueueAdmission::Answered(
+                            xai_grok_shell::extensions::interject::QueueResult::GoalInterjection { .. }
+                            | xai_grok_shell::extensions::interject::QueueResult::Started { .. }
+                        ))
+                })
+            });
+            if let Some(running) = running_prompt_id.as_deref() {
+                agent.queue_operations.remove(running);
+            }
+            for (id, operation) in &mut agent.queue_operations {
+                if operation.binding_epoch == agent.session_binding_epoch
+                    && matches!(operation.admission, crate::app::agent_view::queue::QueueAdmission::Answered(
+                        xai_grok_shell::extensions::interject::QueueResult::Queued { .. }
+                    ))
+                    && !agent.shared_queue.iter().any(|row| row.id == *id)
+                {
+                    operation.admission = crate::app::agent_view::queue::QueueAdmission::Answered(
+                        xai_grok_shell::extensions::interject::QueueResult::Unconfirmed,
+                    );
+                }
+                if operation.binding_epoch == agent.session_binding_epoch
+                    && !matches!(operation.admission, crate::app::agent_view::queue::QueueAdmission::Answered(
+                        xai_grok_shell::extensions::interject::QueueResult::GoalInterjection { .. }
+                        | xai_grok_shell::extensions::interject::QueueResult::Started { .. }
+                    ))
+                    && !agent.shared_queue.iter().any(|row| row.id == *id)
+                {
+                    agent.shared_queue.push(operation.row.clone());
+                }
+            }
+            agent.refresh_queue_admission();
             if acks_watch {
                 agent.note_prompt_ack(
                     crate::app::prompt_ack::AckSignal::QueueChanged,
@@ -238,23 +273,16 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
         let fire = app.agents.get_mut(&aid).and_then(|agent| {
             agent.resolve_send_now_awaiting_confirm(&raw_entries, running_prompt_id.as_deref())
         });
-        if let Some((id, expected_version)) = fire {
-            if let Some(agent) = app.agents.get_mut(&aid) {
-                // Same arming contract as `dispatch_queue_interject_shared`.
-                super::super::dispatch::arm_send_now_and_paint(agent, &id, None);
-            }
+        if let Some((id, expected_version)) = fire
+            && let Some(agent) = app.agents.get_mut(&aid)
+            && let Some(effect) = agent.begin_queue_send_now(id.clone(), expected_version, None)
+        {
             crate::unified_log::info(
                 "prompt.queue_send_now_confirmed",
                 Some(&session_id),
                 Some(serde_json::json!({ "prompt_id": id, "version": expected_version })),
             );
-            app.pending_effects
-                .push(crate::app::actions::Effect::QueueInterject {
-                    session_id: sid.clone(),
-                    id,
-                    expected_version,
-                    new_text: None,
-                });
+            app.pending_effects.push(effect);
         }
     }
 

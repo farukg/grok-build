@@ -84,7 +84,14 @@ fn unconfirmed(input: Option<SentMessageInput>) -> SentMessageToolCallBlock {
 }
 
 fn with_elapsed(mut block: SentMessageToolCallBlock, elapsed_ms: i64) -> SentMessageToolCallBlock {
-    block.elapsed_ms = Some(elapsed_ms);
+    block.execution_clock = crate::acp::tool_clock::ToolExecutionClock::new(uuid::Uuid::from_u128(1));
+    block.execution_clock.apply(
+        xai_grok_shell::extensions::tool_timing::ToolExecutionTiming::Finished {
+            execution_id: xai_grok_shell::extensions::tool_timing::ToolExecutionId::generate(),
+            started_at: Default::default(), duration_ms: elapsed_ms.try_into().unwrap(),
+            termination: xai_grok_shell::extensions::tool_timing::ToolExecutionTermination::Returned,
+        }, crate::acp::tool_clock::ToolClockAdmission::Unconfirmed,
+    );
     block
 }
 
@@ -370,8 +377,8 @@ fn bullet_and_label_styles_follow_running_and_selection() {
         (in_flight.clone(), running(Expanded), pulsing),
         // A cancelled turn leaves the row Sending with the turn no longer running
         (in_flight, context(120, Collapsed), None),
-        (sent(None), running(Collapsed), None),
-        (sent(None), running(Expanded), fixed(theme.accent_tool)),
+        (sent(None), running(Collapsed), fixed(theme.accent_success)),
+        (sent(None), running(Expanded), fixed(theme.accent_success)),
         (
             rejected(None),
             running(Collapsed),
@@ -381,7 +388,7 @@ fn bullet_and_label_styles_follow_running_and_selection() {
     ] {
         assert_eq!(
             expected,
-            block.bullet(&ctx),
+            RenderBlock::ToolCall(ToolCallBlock::SentMessage(block.clone())).bullet(&ctx),
             "{:?} {:?} running={}",
             block.presentation,
             ctx.mode,

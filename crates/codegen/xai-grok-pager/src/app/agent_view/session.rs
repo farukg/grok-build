@@ -76,8 +76,13 @@ impl AgentView {
     /// A stale cursor relies on exact-match failure for safety; a stale highwater could dedup-drop the new session's events outright.
     pub(crate) fn bind_session_id(&mut self, session_id: agent_client_protocol::SessionId) {
         if self.session.session_id.as_ref() != Some(&session_id) {
+            self.abort_session_reload();
+            self.load_reconstruction = super::load_continuation::LoadReconstruction::Closed;
+            self.last_active_at = None;
             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
             self.inline_sources = Default::default();
+            self.current_actions = Default::default();
+            self.publication_load = Default::default();
             self.compact_invocations.clear();
             self.last_seen_event_id = None;
             self.last_seen_event_seq = None;
@@ -94,6 +99,14 @@ impl AgentView {
         self.session_new_phase = None;
         self.pending_session_id = None;
         self.load_failed = false;
+    }
+    pub(crate) fn restore_session_activity(
+        &mut self,
+        snapshot: &crate::app::roster::SessionActivitySnapshot,
+    ) {
+        if self.session.session_id.as_ref() == Some(&snapshot.session_id) {
+            self.last_active_at = self.last_active_at.max(snapshot.instant());
+        }
     }
     /// The top-bar MCP chip shows real server counts only; a `0/0` report renders nothing
     pub(crate) fn mcp_chip_visible(&self) -> bool {
@@ -144,9 +157,14 @@ impl AgentView {
     }
     /// Unbind this view from its current session identity.
     pub(crate) fn unbind_session_id(&mut self) {
+        self.abort_session_reload();
         if self.session.session_id.take().is_some() {
+            self.load_reconstruction = super::load_continuation::LoadReconstruction::Closed;
+            self.last_active_at = None;
             self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
             self.inline_sources = Default::default();
+            self.current_actions = Default::default();
+            self.publication_load = Default::default();
             self.compact_invocations.clear();
             self.deferred_subagent_finishes.clear();
             self.clear_minimal_btw_lifecycle();
@@ -225,6 +243,10 @@ impl AgentView {
             last_seen_event_seq: None,
             deferred_subagent_finishes: Default::default(),
             session_reload: None,
+            current_actions: Default::default(),
+            current_actions_generation: 0,
+            publication_load: Default::default(),
+            load_reconstruction: super::load_continuation::LoadReconstruction::Closed,
             unexpected_replay_drops: 0,
             late_replay_until: None,
             replayed_terminal_prompts: HashSet::new(),
@@ -298,13 +320,11 @@ impl AgentView {
             self_interjection_ids: std::collections::HashSet::new(),
             interjection_painted_blocks: std::collections::HashMap::new(),
             interjection_retry_images: std::collections::HashMap::new(),
-            last_active_at: Some(Instant::now()),
+            last_active_at: None,
             current_branch: None,
             is_worktree: false,
             main_repo: None,
             worktree_label: None,
-            activity_started_at: None,
-            last_activity: None,
             pane_areas: PaneAreas::default(),
             hovered_entry: None,
             pending_text_drag: None,
@@ -527,6 +547,7 @@ impl AgentView {
             front_message_committed: true,
             optimistic_queue_ids: std::collections::HashSet::new(),
             send_now_awaiting_confirm: None,
+            queue_operations: Default::default(),
             send_now_painted_blocks: std::collections::HashMap::new(),
             send_now_echo_pending: std::collections::HashMap::new(),
             follow_without_jump_prompt_id: None,
@@ -553,6 +574,11 @@ impl AgentView {
     pub(crate) fn location_path(&self) -> &std::path::Path {
         &self.session.cwd
     }
+    pub(crate) fn settle_loaded_turn(&mut self) {
+        let last_active_at = self.last_active_at;
+        self.mark_turn_finished(TurnEnd::Aborted);
+        self.last_active_at = last_active_at;
+    }
     /// Called at every turn-termination site; clears the wall anchor so a turn that reuses a prompt id cannot report the prior attempt's wall span.
     pub(crate) fn mark_turn_finished(&mut self, end: TurnEnd) {
         let now = Instant::now();
@@ -570,6 +596,7 @@ impl AgentView {
     /// Start the acknowledgment watch for a prompt this client just drained and sent.
     /// Chat sessions never arm: the gateway bridge has no queue broadcast, so their first signal is the first delta.
     pub(crate) fn arm_prompt_ack(&mut self, prompt_id: &str, now: Instant) {
+        self.last_active_at = Some(now);
         if self.chat_kind {
             return;
         }
@@ -663,15 +690,37 @@ impl AgentView {
                 .late_replay_until
                 .is_some_and(|deadline| std::time::Instant::now() < deadline)
     }
-    /// Enter a `session/load` replay window: the fields coupled to that transition (including `cancel_latency`) reset together in one place.
-    pub(crate) fn begin_replay_window(&mut self) {
-        self.clear_minimal_btw_lifecycle();
+    fn begin_historical_reconstruction(&mut self) {
+        self.current_actions_generation = self.current_actions_generation.wrapping_add(1);
+        self.retarget_current_actions_load();
+        self.load_reconstruction = super::load_continuation::LoadReconstruction::Historical;
         self.session.loading_replay = true;
         self.replayed_terminal_prompts.clear();
         self.replayed_visible_prompts.clear();
         self.replayed_bash_prompts.clear();
         self.unexpected_replay_drops = 0;
         self.late_replay_until = None;
+    }
+
+    /// Enter a `session/load` replay window: the fields coupled to that transition (including `cancel_latency`) reset together in one place.
+    pub(crate) fn begin_replay_window(&mut self) {
+        let owns_live_turn = self.session.state.is_busy() || self.running_wake_turn.is_some();
+        if owns_live_turn {
+            self.remember_current_prompt_projection();
+            self.session.tracker.begin_live_reconstruction();
+            let retained = self.active_transcript_entries();
+            let live = self.take_replay_transcript();
+            let original_floor = live.scrollback.id_floor();
+            self.begin_historical_reconstruction();
+            let historical = Box::new(self.take_replay_transcript());
+            self.restore_replay_transcript(live);
+            self.load_reconstruction = super::load_continuation::LoadReconstruction::Continuing {
+                historical, origin: super::load_continuation::ContinuationOrigin::Reload { original_floor, retained },
+            };
+            return;
+        }
+        self.begin_historical_reconstruction();
+        self.clear_minimal_btw_lifecycle();
         self.running_wake_turn = None;
         self.finished_wake_prompts.clear();
         self.ended_child_prompt_ids.clear();
@@ -684,6 +733,7 @@ impl AgentView {
         self.front_message_committed = true;
         self.optimistic_queue_ids.clear();
         self.send_now_awaiting_confirm = None;
+        self.queue_operations.clear();
         self.send_now_painted_blocks.clear();
         self.send_now_echo_pending.clear();
         self.workflow_blocks.clear();
@@ -694,13 +744,9 @@ impl AgentView {
     /// Swap every replay-rebuilt field for a fresh value and return the old state.
     /// The fields reset together so stale revision gates cannot suppress the replayed updates.
     pub(crate) fn take_replay_rebuilt_state(&mut self) -> ReplayRebuiltState {
-        let fresh = self.scrollback.fresh_continuation();
-        let tracker = crate::acp::tracker::AcpUpdateTracker::sharing_labels(
-            &self.session.tracker.subagent_labels,
-        );
+        self.remember_current_prompt_projection();
         ReplayRebuiltState {
-            scrollback: std::mem::replace(&mut self.scrollback, fresh),
-            tracker: std::mem::replace(&mut self.session.tracker, tracker),
+            transcript: self.take_replay_transcript(),
             todo: std::mem::take(&mut self.todo),
             workflow_blocks: std::mem::take(&mut self.workflow_blocks),
             workflow_runs: std::mem::take(&mut self.workflow_runs),
@@ -711,13 +757,8 @@ impl AgentView {
     /// Put a taken [`ReplayRebuiltState`] back: the counterpart of [`Self::take_replay_rebuilt_state`].
     /// A caller whose rebuild failed restores the stash so it does not leave a bare view where content used to be.
     /// The subagent restore path and the reload failure outcome use it.
-    pub(crate) fn restore_replay_rebuilt_state(&mut self, mut taken: ReplayRebuiltState) {
-        taken.scrollback.raise_id_floor(self.scrollback.id_floor());
-        taken
-            .scrollback
-            .raise_invalidation_floor(self.scrollback.invalidation_generations());
-        self.scrollback = taken.scrollback;
-        self.session.tracker = taken.tracker;
+    pub(crate) fn restore_replay_rebuilt_state(&mut self, taken: ReplayRebuiltState) {
+        self.restore_replay_transcript(taken.transcript);
         self.todo = taken.todo;
         self.workflow_blocks = taken.workflow_blocks;
         self.workflow_runs = taken.workflow_runs;
@@ -728,6 +769,11 @@ impl AgentView {
     /// The transcript is NOT cleared; it stays recoverable until [`finish_session_reload`](Self::finish_session_reload) decides the outcome.
     pub(crate) fn begin_session_reload(&mut self, generation: u64) {
         self.dismiss_jump_picker();
+        match self.retarget_live_reload(generation) {
+            super::load_continuation::ReloadRetarget::Retargeted => return,
+            super::load_continuation::ReloadRetarget::Unchanged => {}
+        }
+        if self.session_reload.is_some() { self.open_live_load_delivery(); }
         if let Some(prev) = self.session_reload.take() {
             tracing::warn!(
                 generation,
@@ -747,19 +793,16 @@ impl AgentView {
         if let Some(rid) = self.pending_recap_entry.take() {
             self.scrollback.remove_entry(rid);
         }
-        self.session.model_switch_pending = false;
-        self.session.models.model_changed_during_switch = false;
-        self.release_hook_block_hold();
-        self.pending_adoption_updates.clear();
+        self.session.tracker.begin_live_reconstruction();
         let stash = self.take_replay_rebuilt_state();
         self.session_reload = Some(SessionReload {
             generation,
+            binding_epoch: self.session_binding_epoch,
             stash,
             last_seen_event_id: self.last_seen_event_id.clone(),
             last_seen_event_seq: self.last_seen_event_seq,
             last_applied_event_seq: self.last_applied_event_seq,
             last_applied_xai_event_seq: self.last_applied_xai_event_seq,
-            applied_background_event_ids: std::mem::take(&mut self.applied_background_event_ids),
             saw_replay: false,
             saw_todo_update: false,
             replayed_expiry_notices: Vec::new(),
@@ -768,7 +811,7 @@ impl AgentView {
             crate::scrollback::block::RenderBlock::system("Reloading session after reconnect..."),
         ));
         self.scrollback.begin_batch();
-        self.begin_replay_window();
+        self.begin_historical_reconstruction();
     }
     /// Record that an `isReplay` update applied while a reload window is open. No-op otherwise.
     pub(crate) fn mark_reload_replay_seen(&mut self) {
@@ -795,6 +838,7 @@ impl AgentView {
     /// Start a locally-tracked turn: enter TurnRunning with the turn-scoped bookkeeping every real turn start must apply, so no caller can miss it.
     /// Deliberately NOT used by server-initiated synthetic turns (auto-wake / actor runs): they never call `start_turn`.
     pub(crate) fn start_turn_boundary(&mut self, starting_prompt_id: Option<&str>) {
+        self.open_live_load_delivery();
         if self
             .expect_send_now_cancel
             .as_deref()
@@ -831,7 +875,7 @@ impl AgentView {
         self.session.tracker.clear_user_echo_skip();
         self.front_message_committed = true;
         self.session.current_prompt_id = Some(prompt_id.clone());
-        self.turn_started_at = Some(Instant::now());
+        self.turn_started_at = None;
         self.scrollback.enable_follow_with_preserve();
         self.flush_pending_follow_ups(&prompt_id);
     }
@@ -839,17 +883,36 @@ impl AgentView {
     /// An open window would corrupt the incoming load's batch/replay bookkeeping and defer its results.
     /// The window's pending re-init completion later no-ops (generation gone).
     pub(crate) fn abort_session_reload(&mut self) {
+        if self.session_reload.is_some() { self.open_live_load_delivery(); }
         if let Some(reload) = self.session_reload.take()
             && self.apply_reload_outcome(reload, false)
         {
             crate::memory_release::release_retained_memory("reload-abort");
         }
     }
+    pub(crate) fn supersede_session_reload(&mut self, previous: u64, next: u64) {
+        if !self.session_reload.as_ref().is_some_and(|reload| reload.generation == previous) {
+            return;
+        }
+        match self.retarget_live_reload(next) {
+            super::load_continuation::ReloadRetarget::Retargeted => {}
+            super::load_continuation::ReloadRetarget::Unchanged => {
+                self.finish_session_reload(previous, false);
+            }
+        }
+    }
     /// Finalize the reload window opened for `generation`.
     /// Returns `false` (untouched state) when no window with that generation is open.
     /// Either the agent was never reloading, or a newer reconnect already superseded it.
     pub(crate) fn finish_session_reload(&mut self, generation: u64, success: bool) -> bool {
+        if self.session_reload.as_ref().is_some_and(|reload| reload.generation == generation
+            && reload.binding_epoch == self.session_binding_epoch) { self.open_live_load_delivery(); }
         match self.session_reload.take() {
+            Some(reload) if reload.binding_epoch != self.session_binding_epoch => {
+                drop(reload);
+                crate::memory_release::release_retained_memory("reload-old-binding");
+                false
+            }
             Some(reload) if reload.generation == generation => {
                 if self.apply_reload_outcome(reload, success) {
                     crate::memory_release::release_retained_memory("reload-finalize");
@@ -872,9 +935,15 @@ impl AgentView {
     /// Requires the synthetic-turn guard ([`acp_handler::should_adopt_running_prompt`]) and that the turn did not already end in this load's replay.
     /// Adopting it would re-strand the viewer on "Waiting…".
     pub(crate) fn should_adopt_running_prompt(&self, prompt_id: &str) -> bool {
-        crate::app::acp_handler::should_adopt_running_prompt(prompt_id)
+        !matches!(self.load_reconstruction,
+            super::load_continuation::LoadReconstruction::Continuing { .. }
+                | super::load_continuation::LoadReconstruction::Continued { .. })
+            && crate::app::acp_handler::should_adopt_running_prompt(prompt_id)
             && !self.replayed_terminal_prompts.contains(prompt_id)
             && !self.is_rewound_prompt(prompt_id)
+            && !self.is_self_originated_prompt(prompt_id)
+            && !self.live_admission_tracker().has_admitted_live_prompt(prompt_id)
+            && !self.ended_child_prompt_ids.contains(prompt_id)
     }
     /// Whether a wake turn is in flight (streaming or cancelling) while the pane is idle.
     pub(crate) fn wake_turn_active(&self) -> bool {
@@ -985,7 +1054,9 @@ impl AgentView {
         running_prompt_id: Option<String>,
     ) -> bool {
         let finalized = self.finish_session_reload(generation, ok);
-        if finalized {
+        if finalized && !matches!(self.load_reconstruction,
+            super::load_continuation::LoadReconstruction::Continued { .. })
+        {
             self.release_stale_execute_plan_prompt(running_prompt_id.as_deref());
         }
         if finalized
@@ -1001,16 +1072,21 @@ impl AgentView {
     /// (A full-arena purge there would madvise away warm pages on the most common reconnect outcome, once per open tab.)
     #[must_use = "purge retained memory iff a heavy transient dropped"]
     fn apply_reload_outcome(&mut self, reload: SessionReload, success: bool) -> bool {
+        if reload.binding_epoch != self.session_binding_epoch {
+            return true;
+        }
+        let completion = self.take_load_completion();
         if let Some(pid) = self.loading_placeholder_id.take() {
             self.scrollback.remove_entry(pid);
         }
+        let loaded_turn = completion.turn();
         let dropped_heavy;
         if success && reload.saw_replay {
             self.scrollback.end_batch();
             dropped_heavy = true;
         } else if success {
             let stash = reload.stash;
-            let mut tail = std::mem::replace(&mut self.scrollback, stash.scrollback);
+            let mut tail = std::mem::replace(&mut self.scrollback, stash.transcript.scrollback);
             let mut dedupe_budget: HashMap<String, usize> = HashMap::new();
             for entry_id in &reload.replayed_expiry_notices {
                 let staged_text = (0..tail.len()).find_map(|i| {
@@ -1081,9 +1157,13 @@ impl AgentView {
             self.restore_replay_rebuilt_state(reload.stash);
             self.last_seen_event_id = reload.last_seen_event_id;
             self.last_seen_event_seq = reload.last_seen_event_seq;
-            self.last_applied_event_seq = reload.last_applied_event_seq;
-            self.last_applied_xai_event_seq = reload.last_applied_xai_event_seq;
-            self.applied_background_event_ids = reload.applied_background_event_ids;
+            match loaded_turn {
+                super::load_continuation::LoadedTurn::Continued => {}
+                super::load_continuation::LoadedTurn::Reconstructed => {
+                    self.last_applied_event_seq = reload.last_applied_event_seq;
+                    self.last_applied_xai_event_seq = reload.last_applied_xai_event_seq;
+                }
+            }
             dropped_heavy = true;
         }
         self.session.loading_replay = false;
@@ -1094,20 +1174,29 @@ impl AgentView {
         }
         self.session.prompt_history_loading = false;
         self.session.tracker.clear_user_echo_skip();
-        self.session.finish_turn(&mut self.scrollback);
-        self.scrollback.finish_all_running();
         if let Some(id) = self.pending_recap_entry.take() {
             self.scrollback.remove_entry(id);
         }
-        self.mark_turn_finished(TurnEnd::Aborted);
-        self.activity_started_at = None;
-        self.last_activity = None;
-        self.reset_follow_ups_for_reload();
+        self.complete_load_transcript_with_replay(completion, success && reload.saw_replay);
+        match loaded_turn {
+            super::load_continuation::LoadedTurn::Reconstructed => self.reset_follow_ups_for_reload(),
+            super::load_continuation::LoadedTurn::Continued => {}
+        }
         dropped_heavy
     }
     /// Effective turn elapsed time, excluding time spent in question views (accumulated pauses plus the currently open one, on both clocks).
     pub fn turn_elapsed(&self) -> Option<std::time::Duration> {
-        let instant_elapsed = self.turn_started_at?.elapsed();
+        use crate::app::agent::AgentCommand;
+        let local_prompt = self.session.current_prompt_id.as_deref().is_some_and(|prompt| self.is_self_originated_prompt(prompt));
+        let local_command = match self.session.state.command_in_flight() {
+            Some(AgentCommand::Compact) => true,
+            Some(AgentCommand::SwitchModelCompact) | None => false,
+            Some(AgentCommand::CreateWorktree | AgentCommand::RestoreWorktree | AgentCommand::RestoreCode
+                | AgentCommand::ForkSession | AgentCommand::MemoryFlush | AgentCommand::MemoryDream) => true,
+        };
+        if !local_prompt && !local_command { return self.current_source_turn_elapsed(); }
+        let Some(started_at) = self.turn_started_at else { return self.current_source_turn_elapsed(); };
+        let instant_elapsed = started_at.elapsed();
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut instant_paused = self.turn_paused_duration;
         let mut wall_paused = self.turn_paused_wall;
@@ -1138,7 +1227,38 @@ impl AgentView {
         &self,
     ) -> Option<crate::acp::tracker::TurnActivity> {
         use crate::acp::tracker::{TurnActivity, WaitingReason};
-        use crate::app::agent::AgentState;
+        use crate::app::agent::{AgentCommand, AgentState, CompactInvocationOwner, CompactInvocationSettlement};
+        if let Some(activity) = self.current_action_activity() {
+            return activity.or_else(|| {
+                self.session.state.is_busy().then_some(TurnActivity::Waiting(if self.compact_invocations.values().any(|invocation|
+                    invocation.binding_epoch == self.session_binding_epoch && invocation.settlement != CompactInvocationSettlement::RpcSettled) {
+                    WaitingReason::CompactionSettlement
+                } else { WaitingReason::BackendResponse }))
+            });
+        }
+        if self.compact_invocations.values().any(|invocation| {
+            invocation.binding_epoch == self.session_binding_epoch
+                && invocation.settlement == CompactInvocationSettlement::Executing
+        }) {
+            return Some(TurnActivity::AutoCompacting);
+        }
+        if matches!(self.session.state, AgentState::CommandRunning { command: AgentCommand::Compact, .. })
+            && let Some(invocation) = self.compact_invocations.values().find(|invocation| {
+                invocation.binding_epoch == self.session_binding_epoch
+                    && matches!(invocation.owner, CompactInvocationOwner::Command)
+                    && invocation.settlement != CompactInvocationSettlement::RpcSettled
+            })
+        {
+            return Some(match invocation.settlement {
+                CompactInvocationSettlement::AwaitingRpc => TurnActivity::Waiting(WaitingReason::CompactionAdmission),
+                CompactInvocationSettlement::Queued => TurnActivity::Waiting(WaitingReason::CompactionQueued),
+                CompactInvocationSettlement::Executing => TurnActivity::AutoCompacting,
+                CompactInvocationSettlement::LifecycleObserved => {
+                    TurnActivity::Waiting(WaitingReason::CompactionSettlement)
+                }
+                CompactInvocationSettlement::RpcSettled => return None,
+            });
+        }
         if let Some(activity) = self.session.turn_activity() {
             return Some(activity);
         }
@@ -1157,8 +1277,11 @@ impl AgentView {
         }
         let reason = if self.has_running_foreground_subagent() {
             WaitingReason::subagent()
-        } else {
+        } else if self.session.in_flight_prompt.is_some()
+            || self.session.current_prompt_id.as_deref().is_some_and(|prompt| self.is_self_originated_prompt(prompt)) {
             WaitingReason::Model
+        } else {
+            WaitingReason::ActionSourceUnavailable
         };
         Some(TurnActivity::Waiting(reason))
     }
@@ -1786,7 +1909,7 @@ mod resolve_turn_activity_tests {
                 cwd: String::new(),
                 output_file: String::new(),
                 status: BgTaskStatus::Running,
-                start_time: SystemTime::now(),
+                start_time: Some(SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,
@@ -1860,7 +1983,7 @@ mod resolve_turn_activity_tests {
                 cwd: String::new(),
                 output_file: String::new(),
                 status: BgTaskStatus::Running,
-                start_time: SystemTime::now(),
+                start_time: Some(SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,
@@ -1915,7 +2038,7 @@ mod resolve_turn_activity_tests {
                 cwd: String::new(),
                 output_file: String::new(),
                 status: BgTaskStatus::Running,
-                start_time: SystemTime::now(),
+                start_time: Some(SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,
@@ -1979,7 +2102,7 @@ mod resolve_turn_activity_tests {
                 cwd: String::new(),
                 output_file: String::new(),
                 status: BgTaskStatus::Running,
-                start_time: SystemTime::now(),
+                start_time: Some(SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,
@@ -2138,7 +2261,7 @@ mod resolve_turn_activity_tests {
                 cwd: String::new(),
                 output_file: String::new(),
                 status: BgTaskStatus::Running,
-                start_time: SystemTime::now(),
+                start_time: Some(SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,

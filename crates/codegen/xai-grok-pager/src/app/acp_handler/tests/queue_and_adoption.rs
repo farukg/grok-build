@@ -305,16 +305,15 @@
             agent.optimistic_queue_ids.is_empty(),
             "the broadcast confirms the echo"
         );
-        assert_eq!(
-            agent.expect_send_now_cancel.as_deref(),
-            Some(echo_id.as_str()),
-            "the fired send-now arms the cancel expectation"
-        );
+        assert!(agent.expect_send_now_cancel.is_none());
+        assert!(agent.shared_queue.iter().any(|row| row.id == echo_id));
+        assert!(agent.queue_operations.contains_key(&echo_id));
         assert!(
             app.pending_effects.iter().any(|e| matches!(
                 e,
-                Effect::QueueInterject { id, expected_version, new_text: None, .. }
-                    if *id == echo_id && *expected_version == 3
+                Effect::QueueInterject { request, .. }
+                    if request.operation.id == echo_id && request.operation.expected_version == 3
+                        && request.action == xai_grok_shell::extensions::interject::QueueAction::Prioritize { new_text: None }
             )),
             "the parked send-now must fire with the authoritative version; effects = {:?}",
             app.pending_effects
@@ -386,8 +385,8 @@
         assert!(
             app.pending_effects.iter().any(|e| matches!(
                 e,
-                Effect::QueueInterject { id, expected_version, .. }
-                    if *id == echo_id && *expected_version == 1
+                Effect::QueueInterject { request, .. }
+                    if request.operation.id == echo_id && request.operation.expected_version == 1
             ))
         );
     }

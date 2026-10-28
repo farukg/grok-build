@@ -1170,33 +1170,18 @@ pub(super) fn dispatch_drain_queue(app: &mut AppView) -> Vec<Effect> {
     maybe_drain_queue_and_note_peek(app, id)
 }
 
-/// `Action::QueueInterjectShared` arm: map the (possibly edited) queue interject to a fire-and-forget effect scoped to the active agent's session.
+/// Submit priority admission without painting a sent prompt or hiding the queue row.
 pub(super) fn dispatch_queue_interject_shared(
     app: &mut AppView,
     id: String,
     expected_version: u64,
     new_text: Option<String>,
 ) -> Vec<Effect> {
-    match active_agent_session_id(app) {
-        Some(session_id) => {
-            with_active_agent(app, |agent| {
-                // Edited override is user-typed text; keep it Ctrl+R recallable.
-                if let Some(text) = &new_text {
-                    agent.record_prompt_in_history(text);
-                }
-                agent.release_hook_block_hold();
-                agent.note_self_originated_prompt(&id);
-                arm_send_now_and_paint(agent, &id, new_text.as_deref());
-            });
-            vec![Effect::QueueInterject {
-                session_id,
-                id,
-                expected_version,
-                new_text,
-            }]
-        }
-        None => vec![],
+    let Some(agent) = super::ctx::get_active_agent_mut(app) else { return Vec::new(); };
+    if let Some(text) = &new_text {
+        agent.record_prompt_in_history(text);
     }
+    agent.begin_queue_send_now(id, expected_version, new_text).into_iter().collect()
 }
 
 /// Decides whether the edited row is dropped and whether its text reaches the send path.
@@ -1379,7 +1364,7 @@ mod tests {
             cwd: "/tmp".into(),
             output_file: "/tmp/out".into(),
             status: crate::app::agent::BgTaskStatus::Running,
-            start_time: std::time::SystemTime::now(),
+            start_time: Some(std::time::SystemTime::now()),
             end_time: None,
             exit_code: None,
             signal: None,
@@ -2323,6 +2308,8 @@ mod tests {
             other => panic!("expected QueueEdit, got {other:?}"),
         }
 
+        seed_shared_row(&mut app, AgentId(0));
+        app.agents.get_mut(&AgentId(0)).unwrap().shared_queue[0].version = 5;
         let effects = dispatch(
             Action::QueueInterjectShared {
                 id: "p1".into(),
@@ -2333,17 +2320,12 @@ mod tests {
         );
         match effects.as_slice() {
             [
-                Effect::QueueInterject {
-                    session_id,
-                    id,
-                    expected_version,
-                    new_text,
-                },
+                Effect::QueueInterject { request, .. },
             ] => {
-                assert_eq!(session_id.0.as_ref(), "test-session");
-                assert_eq!(id, "p1");
-                assert_eq!(*expected_version, 5);
-                assert_eq!(*new_text, None, "plain interject carries no override");
+                assert_eq!(request.operation.session_id, "test-session");
+                assert_eq!(request.operation.id, "p1");
+                assert_eq!(request.operation.expected_version, 5);
+                assert_eq!(request.action, xai_grok_shell::extensions::interject::QueueAction::Prioritize { new_text: None });
             }
             other => panic!("expected QueueInterject, got {other:?}"),
         }
@@ -2355,7 +2337,10 @@ mod tests {
                 .is_empty()
         );
 
-        // Edited interject: the same arm carrying the edited text as the newText override
+        // A separate request carries the edited text atomically.
+        let mut app = test_app_with_agent();
+        seed_shared_row(&mut app, AgentId(0));
+        app.agents.get_mut(&AgentId(0)).unwrap().shared_queue[0].version = 5;
         let effects = dispatch(
             Action::QueueInterjectShared {
                 id: "p1".into(),
@@ -2366,17 +2351,12 @@ mod tests {
         );
         match effects.as_slice() {
             [
-                Effect::QueueInterject {
-                    session_id,
-                    id,
-                    expected_version,
-                    new_text,
-                },
+                Effect::QueueInterject { request, .. },
             ] => {
-                assert_eq!(session_id.0.as_ref(), "test-session");
-                assert_eq!(id, "p1");
-                assert_eq!(*expected_version, 5);
-                assert_eq!(new_text.as_deref(), Some("edited body"));
+                assert_eq!(request.operation.session_id, "test-session");
+                assert_eq!(request.operation.id, "p1");
+                assert_eq!(request.operation.expected_version, 5);
+                assert_eq!(request.action, xai_grok_shell::extensions::interject::QueueAction::Prioritize { new_text: Some("edited body".into()) });
             }
             other => panic!("expected single QueueInterject with newText, got {other:?}"),
         }
@@ -2890,9 +2870,9 @@ mod tests {
             .count()
     }
 
-    /// Queue-row send-now paints at dispatch; the adoption reuses the block.
+    /// Queue-row send-now stays queued until the authoritative start paints it.
     #[test]
-    fn queue_interject_shared_paints_user_block_at_arm() {
+    fn queue_interject_shared_waits_for_authoritative_start() {
         let mut app = test_app_with_agent();
         let id = AgentId(0);
         {
@@ -2924,16 +2904,19 @@ mod tests {
         let agent = app.agents.get_mut(&id).unwrap();
         assert_eq!(
             user_prompt_count(agent, "ty"),
-            1,
-            "send-now must paint the user block at dispatch"
+            0,
+            "priority admission is not a sent prompt"
         );
-        // The adoption shim reuses the painted block instead of double-pushing.
+        assert!(agent.expect_send_now_cancel.is_none());
+        agent.sync_queue_pane();
+        assert_eq!(agent.queue.entry_ids().len(), 1);
+        // Only the authoritative turn-start shim may paint the user prompt.
         agent.note_self_originated_prompt("p-ty");
         apply_turn_start_shim(agent, "p-ty".into(), Some("ty".into()), "prompt", None);
         assert_eq!(
             user_prompt_count(agent, "ty"),
             1,
-            "turn-start adoption must reuse the dispatch-painted block"
+            "the actual start paints the prompt exactly once"
         );
     }
 

@@ -75,35 +75,89 @@ pub(super) fn apply_child_acp_update(
     update: acp::SessionUpdate,
     meta: &NotificationMeta,
 ) -> bool {
-    crate::app::subagent::hydrate_resumed_child(&mut app.agents, child);
     let affected = child_or_parent_active(app, child);
+    let Some(child_view) = app.agents.get(&child) else {
+        return false;
+    };
+    if meta.is_replay && !child_view.live_admission_tracker().accepts_known_tool_identity(meta) { return false; }
+    if !child_view.accepts_current_source(meta) || !child_view.admission_tracker(meta).accepts_sampling_acp(&update, meta) {
+        return false;
+    }
+    match child_view.admission_tracker(meta).tool_admission(&update, meta, child_view.session.current_prompt_id.as_deref()) {
+        crate::acp::tracker::ToolAdmission::Reject => return false,
+        crate::acp::tracker::ToolAdmission::EntryOnly => {
+            if meta.is_replay && !child_view.accepts_replayed_update() { return false; }
+            let current = child_view.session.current_prompt_id.clone();
+            let current_tool = child_view.admission_tracker(meta).tool_observation_is_current(&update, meta, current.as_deref());
+            if child_view.has_stashed_tool_observation(&update, meta) {
+                let Some(view) = app.agents.get_mut(&child) else { return false; };
+                return view.apply_stashed_tool_observation(update, meta) && affected;
+            }
+            if !meta.is_replay && !current_tool {
+                let Some(view) = app.agents.get_mut(&child) else { return false; };
+                return view.handle_admitted_tool_observation(update, meta, current.as_deref()) && affected;
+            }
+            let delivery = if meta.is_replay {
+                super::super::agent_view::load_continuation::LoadDelivery::Historical
+            } else {
+                super::super::agent_view::load_continuation::LoadDelivery::Live
+            };
+            return super::super::agent_view::load_continuation::with_load_delivery(app, child, delivery, |app| {
+                let Some(view) = app.agents.get_mut(&child) else { return false; };
+                view.handle_admitted_tool_observation(update, meta, current.as_deref()) && affected
+            });
+        }
+        crate::acp::tracker::ToolAdmission::Turn => {}
+    }
+    if !admission::admits_delivery(child_view, meta) { return false; }
+    if child_view.has_stashed_tool_observation(&update, meta) {
+        let Some(view) = app.agents.get_mut(&child) else { return false; };
+        return view.apply_stashed_tool_observation(update, meta) && affected;
+    }
+    let Some(child_view) = app.agents.get(&child) else { return false; };
+    if !admission::admits_delivery(child_view, meta) { return false; }
+    let scope = admission::update_scope(child_view, &update);
+    let prompt_admission = if meta.is_replay || matches!(scope, admission::UpdateScope::DrainedTool) {
+        prompt_origin::ChildPromptAdmission::Apply
+    } else {
+        prompt_origin::child_prompt_admission(child_view, meta.prompt_id.as_deref(), meta.turn_start_ms)
+    };
+    match prompt_admission {
+        prompt_origin::ChildPromptAdmission::Drop => return false,
+        prompt_origin::ChildPromptAdmission::Closed(pid) => {
+            // Retain the identity learned for a previously nameless closed turn, not its metadata.
+            if let Some(pid) = pid
+                && let Some(child_view) = app.agents.get_mut(&child)
+            {
+                child_view.ended_child_prompt_ids.insert(pid.to_owned());
+                if child_view.unidentified_child_turn_closed_prompt.is_none() {
+                    child_view.unidentified_child_turn_closed_prompt = Some(pid.to_owned());
+                }
+            }
+            return false;
+        }
+        prompt_origin::ChildPromptAdmission::Apply => {}
+    }
+    if matches!(scope, admission::UpdateScope::DrainedTool) {
+        let Some(child_view) = app.agents.get_mut(&child) else {
+            return false;
+        };
+        let changed = child_view.handle_admitted_acp_update(update, meta);
+        return changed && affected;
+    }
+    let delivery = delivery::AcpDelivery::classify(&update, meta);
+    delivery.apply(app, child, |app| {
+    if !meta.is_replay { crate::app::subagent::hydrate_resumed_child(&mut app.agents, child); }
     let Some(child_view) = app.agents.get_mut(&child) else {
         return false;
     };
-    let session_id = child_view
-        .session
-        .session_id
-        .as_ref()
-        .map(|id| id.0.to_string())
-        .unwrap_or_default();
-    if drop_unexpected_replay(child_view, meta, &session_id, "child session/update") {
-        return false;
-    }
-    if !meta.is_replay {
-        if meta.event_seq.is_some_and(|seq| {
-            child_view
-                .last_applied_event_seq
-                .is_some_and(|last| seq <= last)
-        }) {
-            return false;
+    admission::commit_metadata(child_view, meta);
+    let detached_tool = !matches!(scope, admission::UpdateScope::Turn);
+    if !detached_tool {
+        ack_prompt_from_update(child_view, meta);
+        if let Some(tokens) = meta.total_tokens {
+            confirm_context_used(child_view, tokens);
         }
-        if let Some(seq) = meta.event_seq {
-            child_view.last_applied_event_seq = Some(seq);
-        }
-    }
-    ack_prompt_from_update(child_view, meta);
-    if let Some(tokens) = meta.total_tokens {
-        confirm_context_used(child_view, tokens);
     }
     let context_used = match &update {
         acp::SessionUpdate::UsageUpdate(usage) => {
@@ -115,53 +169,44 @@ pub(super) fn apply_child_acp_update(
         }
         _ => None,
     };
-    let ended = !meta.is_replay
-        && meta.prompt_id.as_deref().is_some_and(|pid| {
-            child_view.ended_child_prompt_ids.contains(pid)
-                || child_view.superseded_child_prompt_ids.contains(pid)
-        });
-    let mut content_applied = false;
-    if !ended {
-        let is_live = !meta.is_replay && !child_view.session.loading_replay;
-        let apply = !is_live
-            || note_child_live_prompt(
-                child_view,
-                meta.prompt_id.as_deref(),
-                meta.turn_start_ms,
-                meta.is_replay,
-            );
-        if apply {
-            if is_live {
-                if let Some(ts) = meta.turn_start_ms {
-                    let named = meta.prompt_id.as_deref().is_some_and(|pid| !pid.is_empty());
-                    if named
-                        || child_view.turn_start_ms_prompt.is_none()
-                        || child_view.turn_start_ms == Some(ts)
-                    {
-                        child_view.turn_start_ms = Some(ts);
-                        if named {
-                            child_view.turn_start_ms_prompt = meta.prompt_id.clone();
-                        }
-                    }
+    let is_live = !meta.is_replay;
+    if is_live && !detached_tool {
+        note_child_live_prompt(child_view, meta.prompt_id.as_deref());
+        if let Some(ts) = meta.turn_start_ms {
+            let named = meta.prompt_id.as_deref().is_some_and(|pid| !pid.is_empty());
+            if named
+                || child_view.turn_start_ms_prompt.is_none()
+                || child_view.turn_start_ms == Some(ts)
+            {
+                child_view.turn_start_ms = Some(ts);
+                if named {
+                    child_view.turn_start_ms_prompt = meta.prompt_id.clone();
                 }
-                backdate_child_turn_clock(child_view);
-            }
-            let content_before = child_view.scrollback.content_generation();
-            let source_before = child_view.inline_sources.signal.revision();
-            let routed_stdout = if let acp::SessionUpdate::ToolCallUpdate(ref tcu) = update {
-                route_bg_task_stdout(tcu, child_view)
-            } else {
-                false
-            };
-            if !routed_stdout {
-                child_view.session.handle_update(update, meta, &mut child_view.scrollback);
-            }
-            content_applied = child_view.scrollback.content_generation() != content_before
-                || child_view.inline_sources.signal.revision() != source_before;
-            for entry_id in child_view.session.tracker.take_pending_edit_hl() {
-                child_view.submit_edit_highlight(entry_id);
             }
         }
+        backdate_child_turn_clock(child_view);
+    }
+    if is_live && !detached_tool && (admission::has_text_fragment(&update)
+        || (!child_view.session.loading_replay
+            && (crate::acp::tracker::is_agent_output_update(&update)
+                || matches!(&update, acp::SessionUpdate::UserMessageChunk(_)))))
+    {
+        child_view.last_active_at = Some(std::time::Instant::now());
+    }
+    let content_before = child_view.scrollback.content_generation();
+    let source_before = child_view.inline_sources.signal.revision();
+    let routed_stdout = if let acp::SessionUpdate::ToolCallUpdate(ref tcu) = update {
+        route_bg_task_stdout(tcu, child_view, meta)
+    } else {
+        false
+    };
+    if !routed_stdout {
+        child_view.handle_admitted_acp_update(update, meta);
+    }
+    let content_applied = child_view.scrollback.content_generation() != content_before
+        || child_view.inline_sources.signal.revision() != source_before;
+    for entry_id in child_view.session.tracker.take_pending_edit_hl() {
+        child_view.submit_edit_highlight(entry_id);
     }
     let label = subagent_activity_label(child_view);
     if content_applied {
@@ -170,8 +215,11 @@ pub(super) fn apply_child_acp_update(
     if let Some(observation) = context_used {
         observe_child(&mut app.agents, child, observation);
     }
-    observe_child(&mut app.agents, child, ChildObservation::Activity(label));
+    if !meta.is_replay {
+        observe_child(&mut app.agents, child, ChildObservation::Activity(label));
+    }
     affected
+    })
 }
 
 /// The xAI updates whose meaning differs for a child: its turn ends through the runner, and its row mirrors activity and context.
@@ -183,6 +231,7 @@ pub(super) fn is_child_turn_update(update: &XaiSessionUpdate) -> bool {
             | XaiSessionUpdate::AutoCompactFailed { .. }
             | XaiSessionUpdate::AutoCompactCancelled { .. }
             | XaiSessionUpdate::RetryState(_)
+            | XaiSessionUpdate::SamplingLifecycle { .. }
             | XaiSessionUpdate::MemoryFlushCompleted { .. }
             | XaiSessionUpdate::MemoryDreamCompleted { .. }
             | XaiSessionUpdate::MemorySessionSaved { .. }
@@ -197,26 +246,47 @@ pub(super) fn is_child_turn_update(update: &XaiSessionUpdate) -> bool {
 pub(super) fn apply_child_xai_update(
     app: &mut AppView,
     child: AgentId,
-    update: XaiSessionUpdate,
-    is_api_key_auth: bool,
-    meta: Option<&serde_json::Value>,
+    notification: SessionNotification,
+    metadata: &NotificationMeta,
 ) -> bool {
+    let is_api_key_auth = app.is_api_key_auth;
+    let update = notification.update;
+    let meta = notification.meta.as_ref();
+    if let Some(changed) = sampling::handle_sampling_update(app, child, &update, metadata) {
+        return changed;
+    }
     let affected = child_or_parent_active(app, child);
     match update {
         XaiSessionUpdate::AutoCompactStarted { .. }
         | XaiSessionUpdate::AutoCompactCompleted { .. }
         | XaiSessionUpdate::AutoCompactFailed { .. }
         | XaiSessionUpdate::AutoCompactCancelled { .. }
-        | XaiSessionUpdate::RetryState(_)
         | XaiSessionUpdate::MemoryFlushCompleted { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }
         | XaiSessionUpdate::HookAnnotation { .. } => {
-            crate::app::subagent::hydrate_resumed_child(&mut app.agents, child);
+            if !metadata.is_replay { crate::app::subagent::hydrate_resumed_child(&mut app.agents, child); }
             let Some(child_view) = app.agents.get_mut(&child) else {
                 return false;
             };
-            let changed = apply_child_view_session_event(child_view, &update, is_api_key_auth);
+            let historical = metadata.is_replay;
+            if !historical && (metadata.event_seq.is_some_and(|seq| {
+                child_view.last_applied_xai_event_seq.is_some_and(|last| seq <= last)
+            }) || (metadata.prompt_id.is_some()
+                && metadata.prompt_id != child_view.session.current_prompt_id)) {
+                return false;
+            }
+            child_view.observe_current_source(metadata);
+            if !historical && let Some(seq) = metadata.event_seq {
+                child_view.last_applied_xai_event_seq = Some(seq);
+            }
+            let last_active_at = child_view.last_active_at;
+            let changed = super::session_notification::apply_child_view_session_event_with_replay(
+                child_view, &update, is_api_key_auth, historical,
+            );
+            if historical {
+                child_view.last_active_at = last_active_at;
+            }
             if let XaiSessionUpdate::AutoCompactCompleted { tokens_after, .. } = update {
                 observe_child(
                     &mut app.agents,
@@ -229,33 +299,6 @@ pub(super) fn apply_child_xai_update(
             }
             changed && affected
         }
-        XaiSessionUpdate::ToolCallDeltaChunk {
-            ref name,
-            tool_index,
-            ..
-        } => {
-            let row_live = app
-                .agents
-                .link_and_parent(child)
-                .and_then(|(link, parent)| parent.subagent_sessions.get(&link.subagent_id))
-                .is_some_and(|info| info.is_running());
-            let Some(child_view) = app.agents.get_mut(&child) else {
-                return false;
-            };
-            if child_view.session.loading_replay || !row_live {
-                return false;
-            }
-            if !child_view
-                .session
-                .tracker
-                .note_tool_call_arguments_delta(name.as_deref(), tool_index)
-            {
-                return false;
-            }
-            let label = subagent_activity_label(child_view);
-            observe_child(&mut app.agents, child, ChildObservation::Activity(label));
-            affected
-        }
         XaiSessionUpdate::TurnCompleted {
             prompt_id,
             stop_reason,
@@ -264,7 +307,7 @@ pub(super) fn apply_child_xai_update(
             elapsed_ms,
             ..
         } => {
-            if NotificationMeta::from_json(meta.and_then(|v| v.as_object())).is_replay {
+            if metadata.is_replay {
                 return false;
             }
             crate::app::subagent::hydrate_resumed_child(&mut app.agents, child);
@@ -293,6 +336,7 @@ pub(super) fn apply_child_xai_update(
                 elapsed_ms,
             );
             if finished {
+                child_view.settle_current_actions_prompt(&prompt_id);
                 let label = subagent_activity_label(child_view);
                 observe_child(&mut app.agents, child, ChildObservation::Activity(label));
                 app.agents.note_inline_content_changed(child);
@@ -303,6 +347,8 @@ pub(super) fn apply_child_xai_update(
             let Some(child_view) = app.agents.get_mut(&child) else {
                 return false;
             };
+            if metadata.is_replay { return false; }
+            child_view.observe_current_source(metadata);
             child_view.session.models.served_route = Some(route);
             affected
         }

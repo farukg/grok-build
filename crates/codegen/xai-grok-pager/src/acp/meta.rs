@@ -1,14 +1,83 @@
 //! Strongly-typed notification metadata.
 //!
 //! Parses the `_meta` JSON from `SessionNotification` into a struct with typed fields.
-//! All fields are `Option`, so parsing degrades gracefully when grok-shell hasn't been updated or meta is absent.
+//! Missing legacy provenance stays uncorrelated; malformed sampling provenance remains distinct.
 
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
+use xai_grok_shell::extensions::sampling_lifecycle::{
+    SamplingLifecycle, SamplingOwner, SAMPLING_LIFECYCLE_META_KEY, SAMPLING_OWNER_META_KEY,
+};
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub enum SamplingMetadata {
+    #[default]
+    Legacy,
+    Malformed,
+    Owner(SamplingOwner),
+    Lifecycle(SamplingLifecycle),
+}
+
+impl SamplingMetadata {
+    fn owner(&self) -> Option<&SamplingOwner> {
+        match self {
+            Self::Owner(owner) | Self::Lifecycle(SamplingLifecycle { owner, .. }) => Some(owner),
+            Self::Legacy | Self::Malformed => None,
+        }
+    }
+
+    fn parse(meta: &acp::Meta, explicit: Option<&SamplingLifecycle>) -> Self {
+        let parse = || -> Result<Self, ()> {
+            let owner = meta.get(SAMPLING_OWNER_META_KEY)
+                .map(|value| serde_json::from_value::<SamplingOwner>(value.clone()).map_err(|_| ()))
+                .transpose()?;
+            let lifecycle = meta.get(SAMPLING_LIFECYCLE_META_KEY)
+                .map(|value| serde_json::from_value::<SamplingLifecycle>(value.clone()).map_err(|_| ()))
+                .transpose()?;
+            let lifecycle = match (lifecycle, explicit) {
+                (Some(stamped), Some(explicit)) if &stamped != explicit => return Err(()),
+                (Some(stamped), _) => Some(stamped),
+                (None, Some(explicit)) => Some(explicit.clone()),
+                (None, None) => None,
+            };
+            let owner = match (owner, lifecycle.as_ref()) {
+                (Some(owner), Some(lifecycle)) if owner != lifecycle.owner => return Err(()),
+                (Some(owner), _) => owner,
+                (None, Some(lifecycle)) => lifecycle.owner.clone(),
+                (None, None) => return Ok(Self::Legacy),
+            };
+            if owner.prompt_id.is_empty() || owner.request_id.as_str().is_empty() || owner.attempt.0 == 0 {
+                return Err(());
+            }
+            if meta.get("promptId").is_some_and(|value| value.as_str() != Some(owner.prompt_id.as_str()))
+                || meta.get("requestId").is_some_and(|value| value.as_str() != Some(owner.request_id.as_str()))
+                || meta.get("streamEpoch").is_some_and(|value| value.as_u64() != Some(owner.attempt.0))
+            {
+                return Err(());
+            }
+            Ok(match lifecycle {
+                Some(lifecycle) => Self::Lifecycle(lifecycle),
+                None => Self::Owner(owner),
+            })
+        };
+        match parse() {
+            Ok(parsed) => parsed,
+            Err(()) => Self::Malformed,
+        }
+    }
+}
 
 /// Parsed fields from `SessionNotification._meta`.
 ///
 /// Extracted once in [`acp_handler`](super::super::app::acp_handler) and passed downstream to the tracker and agent state.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub(crate) enum CurrentSourceMetadata {
+    #[default]
+    Legacy,
+    Malformed,
+    Version(xai_grok_shell::session::current_actions::SourceVersion),
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NotificationMeta {
     /// Accumulated token count across the session (`totalTokens`).
@@ -34,6 +103,47 @@ pub struct NotificationMeta {
     /// util::event_id`). Per-session events arrive in increasing order, so the pager keeps a highwater and drops
     /// anything at or below it. such updates always apply.
     pub event_seq: Option<u64>,
+    /// Sampler request that produced this buffered xAI delta (`requestId`). Absent on old shells.
+    pub xai_request_id: Option<String>,
+    /// Retry-attempt epoch of that request (`streamEpoch`); changes when the scheduler discards
+    /// an attempt. Absent on old shells.
+    pub xai_stream_epoch: Option<u64>,
+    #[serde(default)]
+    pub sampling: SamplingMetadata,
+    #[serde(default)]
+    pub(crate) current_actions_version: CurrentSourceMetadata,
+    #[serde(default)]
+    pub(crate) delivery_role: xai_grok_shell::extensions::current_actions::DeliveryRole,
+    #[serde(skip)]
+    pub(crate) tool: super::tool_meta::ToolMetadata,
+}
+
+pub(crate) fn tool_completion(
+    status: acp::ToolCallStatus,
+    meta: Option<&acp::Meta>,
+) -> crate::scrollback::types::ToolCompletion {
+    use crate::scrollback::types::ToolCompletion;
+    use xai_grok_shell::session::acp_types::{ToolTerminalStatus, TOOL_TERMINAL_STATUS_META_KEY};
+    let terminal = meta.and_then(|meta| meta.get(TOOL_TERMINAL_STATUS_META_KEY))
+        .and_then(|value| serde_json::from_value::<ToolTerminalStatus>(value.clone()).ok());
+    match (status, terminal) {
+        (acp::ToolCallStatus::Failed, Some(ToolTerminalStatus::Cancelled)) => ToolCompletion::Cancelled,
+        (status, _) => status.into(),
+    }
+}
+
+/// Request/attempt provenance of a buffered `ToolCallDeltaChunk`, parsed from its `_meta`.
+/// Equal provenance means the deltas belong to one continuous argument stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WritingDeltaStream {
+    Legacy { request_id: Option<String>, stream_epoch: Option<u64> },
+    Owned(SamplingOwner),
+}
+
+impl Default for WritingDeltaStream {
+    fn default() -> Self {
+        Self::Legacy { request_id: None, stream_epoch: None }
+    }
 }
 
 /// Serializable counterpart of the replay stamp the agent injects on replayed notifications.
@@ -107,14 +217,20 @@ pub fn event_id_counter(event_id: &str) -> Option<u64> {
 impl NotificationMeta {
     /// Parse from the `_meta` JSON map on a `SessionNotification`.
     pub fn from_json(meta: Option<&serde_json::Map<String, serde_json::Value>>) -> Self {
-        let Some(m) = meta else {
-            return Self::default();
-        };
+        Self::parse_json(meta, None)
+    }
+
+    fn parse_json(meta: Option<&acp::Meta>, lifecycle: Option<&SamplingLifecycle>) -> Self {
+        let empty = acp::Meta::new();
+        let m = meta.unwrap_or(&empty);
         let event_id = m
             .get("eventId")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let event_seq = event_id.as_deref().and_then(event_id_counter);
+        let sampling = SamplingMetadata::parse(m, lifecycle);
+        let owner = sampling.owner();
+        let delivery_role = xai_grok_shell::extensions::current_actions::delivery_role(meta).unwrap_or_default();
         Self {
             total_tokens: m.get("totalTokens").and_then(|v| v.as_u64()),
             agent_timestamp_ms: m.get("agentTimestampMs").and_then(|v| v.as_i64()),
@@ -123,10 +239,80 @@ impl NotificationMeta {
             prompt_id: m
                 .get("promptId")
                 .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| owner.map(|owner| owner.prompt_id.clone())),
+            is_replay: match &delivery_role {
+                xai_grok_shell::extensions::current_actions::DeliveryRole::Historical { .. } => true,
+                xai_grok_shell::extensions::current_actions::DeliveryRole::Live { .. }
+                | xai_grok_shell::extensions::current_actions::DeliveryRole::LiveUnbound { .. } => false,
+                xai_grok_shell::extensions::current_actions::DeliveryRole::Unavailable => m.get("isReplay").and_then(|v| v.as_bool()).unwrap_or(false),
+            },
+            delivery_role,
+            xai_request_id: m
+                .get("requestId")
+                .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            is_replay: m.get("isReplay").and_then(|v| v.as_bool()).unwrap_or(false),
+            xai_stream_epoch: m.get("streamEpoch").and_then(|v| v.as_u64()),
             event_id,
             event_seq,
+            sampling,
+            current_actions_version: match m.get(xai_grok_shell::session::current_actions::VERSION_META_KEY) {
+                None => CurrentSourceMetadata::Legacy,
+                Some(value) => match serde_json::from_value(value.clone()) {
+                    Ok(version) => CurrentSourceMetadata::Version(version),
+                    Err(_) => CurrentSourceMetadata::Malformed,
+                },
+            },
+            tool: if ["promptId", "requestId"].iter().any(|key| m.get(*key)
+                .is_some_and(|value| value.as_str().is_none_or(str::is_empty)))
+                || m.get("streamEpoch").is_some_and(|value| value.as_u64().is_none())
+                || m.get("isReplay").is_some_and(|value| !value.is_boolean())
+                || m.get("eventId").is_some_and(|value| value.as_str().is_none_or(str::is_empty))
+            {
+                super::tool_meta::ToolMetadata::Malformed
+            } else { super::tool_meta::ToolMetadata::NotTool },
+        }
+    }
+
+    pub(crate) fn from_xai(
+        raw: Option<&serde_json::Value>,
+        update: &xai_grok_shell::extensions::notification::SessionUpdate,
+    ) -> Self {
+        use xai_grok_shell::extensions::notification::SessionUpdate;
+        if raw.is_some_and(|raw| !raw.is_object()) {
+            return Self { sampling: SamplingMetadata::Malformed, ..Self::default() };
+        }
+        let lifecycle = if let SessionUpdate::SamplingLifecycle { lifecycle } = update {
+            Some(lifecycle)
+        } else {
+            None
+        };
+        let mut meta = Self::parse_json(raw.and_then(serde_json::Value::as_object), lifecycle);
+        if !matches!(update, SessionUpdate::RetryState(_) | SessionUpdate::SamplingLifecycle { .. })
+            && matches!(&meta.sampling, SamplingMetadata::Lifecycle(_))
+        {
+            meta.sampling = SamplingMetadata::Malformed;
+        }
+        meta
+    }
+
+    pub(crate) fn with_tool(mut self, update: &acp::SessionUpdate) -> Self {
+        if !matches!(self.tool, super::tool_meta::ToolMetadata::Malformed) {
+            self.tool = super::tool_meta::ToolMetadata::parse(update, &self);
+        }
+        self
+    }
+
+    pub(crate) fn sampling_owner(&self) -> Option<&SamplingOwner> {
+        self.sampling.owner()
+    }
+
+    pub(crate) fn writing_stream(&self) -> WritingDeltaStream {
+        match self.sampling_owner() {
+            Some(owner) => WritingDeltaStream::Owned(owner.clone()),
+            None => WritingDeltaStream::Legacy {
+                request_id: self.xai_request_id.clone(), stream_epoch: self.xai_stream_epoch,
+            },
         }
     }
 }
@@ -230,5 +416,21 @@ mod tests {
         assert!(!meta.is_replay);
         assert_eq!(meta.event_id, None);
         assert_eq!(meta.event_seq, None);
+        assert_eq!(meta.xai_request_id, None);
+        assert_eq!(meta.xai_stream_epoch, None);
+    }
+
+    #[test]
+    fn parse_xai_delta_provenance() {
+        let meta_json = json!({
+            "promptId": "p-1",
+            "requestId": "req-9",
+            "streamEpoch": 2u64,
+        });
+        let map = meta_json.as_object().unwrap();
+        let meta = NotificationMeta::from_json(Some(map));
+
+        assert_eq!(meta.xai_request_id.as_deref(), Some("req-9"));
+        assert_eq!(meta.xai_stream_epoch, Some(2));
     }
 }

@@ -201,6 +201,7 @@ fn parse_session_picker_entries_with(
             let last_active_at: Option<chrono::DateTime<chrono::Utc>> = v
                 .get("lastActiveAt")
                 .or_else(|| v.get("last_active_at"))
+                .or_else(|| v.get("_meta").and_then(|meta| meta.get("lastActiveAt")))
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse().ok());
             let branch = v.get("branch").and_then(Value::as_str).map(String::from);

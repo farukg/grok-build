@@ -256,9 +256,7 @@ pub enum Action {
     QueueReleaseEditShared {
         id: String,
     },
-    /// Interject a server-authoritative (shared) queued prompt into the running turn.
-    /// The agent atomically removes it from the queue and merges its text into the in-flight turn.
-    /// Mirrors the local "Send now" / `Ctrl+Enter` path, which uses [`Interject`](Self::Interject) directly because the local queue is client-owned.
+    /// Request server-authoritative priority admission; only an active goal may absorb it as an interjection.
     QueueInterjectShared {
         id: String,
         expected_version: u64,
@@ -1852,14 +1850,11 @@ pub enum Effect {
         session_id: acp::SessionId,
         id: String,
     },
-    /// The same single version check applies, so a stale version no-ops the edit too.
-    /// If the turn already ended, the agent saves a version-matching `new_text` to the row as an LWW edit instead.
-    /// The edit survives and drains; it is never silently lost.
+    /// Correlated, version-checked priority admission with an optional atomic text edit.
+    /// Acceptance is not turn start; subsequent requests observe the same operation.
     QueueInterject {
-        session_id: acp::SessionId,
-        id: String,
-        expected_version: u64,
-        new_text: Option<String>,
+        request: xai_grok_shell::extensions::interject::QueueRequest,
+        binding_epoch: u64,
     },
     /// Set the session mode via ACP `session/set_mode`.
     SetSessionMode {
@@ -2463,7 +2458,8 @@ impl TaskResult {
             | TaskResult::SessionLoaded { .. }
             | TaskResult::WorktreeSessionCreated { .. }
             | TaskResult::WorktreeForked { .. } => true,
-            TaskResult::WithPinnedMemoryMode { result, .. } => result.ends_startup(),
+            TaskResult::WithPinnedMemoryMode { result, .. } | TaskResult::WithCurrentActions { result, .. }
+            | TaskResult::WithPublication { result, .. } => result.ends_startup(),
             _ => false,
         }
     }
@@ -2500,6 +2496,24 @@ pub enum WorkspaceWriteCompletion {
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TaskResult {
+    QueueInterjectComplete {
+        operation: xai_grok_shell::extensions::interject::QueueOperation,
+        binding_epoch: u64,
+        result: Result<xai_grok_shell::extensions::interject::QueueResponse, super::agent_view::queue::QueueTransport>,
+    },
+    WithPublication {
+        agent_id: AgentId,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
+        snapshot: xai_grok_shell::session::current_actions::CurrentActionsSnapshot,
+        cut: xai_grok_shell::extensions::current_actions::LoadCut,
+        result: Box<TaskResult>,
+    },
+    WithCurrentActions {
+        agent_id: AgentId,
+        context: crate::app::agent_view::CurrentActionsReadContext,
+        snapshot: xai_grok_shell::session::current_actions::CurrentActionsSnapshot,
+        result: Box<TaskResult>,
+    },
     /// Session lifecycle result paired with the memory mode pinned by the
     /// actor that produced it. The wrapper lets all lifecycle variants share
     /// one typed metadata path.
@@ -2586,6 +2600,7 @@ pub enum TaskResult {
     /// Local `summary.json` display fields for [`Effect::HydrateSessionMetaFromDisk`].
     SessionMetaFromDisk {
         agent_id: AgentId,
+        activity: Option<crate::app::roster::SessionActivitySnapshot>,
         /// The display title paired with whether it came from a manual `/rename` (`summary.title_is_manual`, restores the prompt-border title).
         /// Manual-ness cannot exist without a title.
         title: Option<(String, bool)>,

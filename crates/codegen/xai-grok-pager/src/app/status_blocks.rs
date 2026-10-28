@@ -134,7 +134,7 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
         };
         rows.push(format!(
             "  {status:<9}{kind} · {one_line}  ({})",
-            format_duration(task.elapsed())
+            task.elapsed_label()
         ));
     }
     let mut sched: Vec<_> = agent.session.scheduled_tasks.values().collect();

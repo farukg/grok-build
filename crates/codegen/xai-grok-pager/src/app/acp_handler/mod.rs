@@ -27,9 +27,14 @@ use xai_grok_shell::extensions::notification::{
 use xai_grok_shell::tools::todo::todo_item_from_plan_entry;
 use xai_grok_tools::notification::ScheduledTaskRemovedReason;
 use xai_grok_workspace::permission::bash_command_splitting::BashCommandHighlights;
+mod admission;
 mod background;
+mod background_delivery;
+pub(crate) use background::route_bg_task_stdout;
 mod context_policy;
+pub(crate) mod current_actions;
 mod child_observation;
+mod delivery;
 mod follow_ups;
 mod interactions;
 mod mcp;
@@ -38,6 +43,7 @@ mod prompt_origin;
 mod queue;
 mod request_snapshot;
 mod routing;
+mod sampling;
 mod session_notification;
 mod settings;
 mod subagent_activity;
@@ -49,7 +55,7 @@ use background::*;
 use background::{
     apply_background_tasks_snapshot, derive_child_cwd, handle_git_head_changed, handle_monitor_event,
     handle_scheduled_task_created, handle_scheduled_task_deleted, handle_scheduled_task_fired,
-    handle_task_backgrounded, handle_task_completed, route_bg_task_stdout,
+    handle_task_backgrounded, handle_task_completed,
 };
 use child_observation::{
     ChildObservation, apply_child_acp_update, apply_child_xai_update, complete_child_prompt,
@@ -185,7 +191,7 @@ fn is_streaming_output(msg: &AcpClientMessage) -> bool {
 fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
-            let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
+            let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref()).with_tool(&notif.request.update);
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch(id)) if is_child_view(app, id) => {
                     apply_child_acp_update(app, id, notif.request.update, &meta)
@@ -196,59 +202,128 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         .pending_running_adoptions
                         .get(&id)
                         .map(|p| p.prompt_id.clone());
-                    let agent = app
-                        .agents
-                        .get_mut(&id)
-                        .expect("find_session_match returned an existing AgentId");
-                    let dedup_drop = !meta.is_replay
-                        && meta.event_seq.is_some_and(|seq| {
-                            agent.last_applied_event_seq.is_some_and(|last| seq <= last)
-                        });
-                    if let Some(seq) = meta.event_seq
-                        && !meta.is_replay
-                        && !dedup_drop
-                    {
-                        agent.last_applied_event_seq = Some(seq);
-                    }
-                    ack_prompt_from_update(agent, &meta);
-                    if drop_unexpected_replay(
-                        agent,
-                        &meta,
-                        notif.request.session_id.0.as_ref(),
-                        "session/update",
-                    ) {
+                    let Some(agent) = app.agents.get(&id) else {
+                        notif.response_tx.send(Ok(())).ok();
+                        return false;
+                    };
+                    if !agent.accepts_current_source(&meta) { notif.response_tx.send(Ok(())).ok(); return false; }
+                    if meta.is_replay && !agent.live_admission_tracker().accepts_known_tool_identity(&meta) { notif.response_tx.send(Ok(())).ok(); return false; }
+                    let authority = agent.admission_tracker(&meta);
+                    if !authority.accepts_sampling_acp(&notif.request.update, &meta) {
                         notif.response_tx.send(Ok(())).ok();
                         return false;
                     }
-                    if !dedup_drop
-                        && !meta.is_replay
-                        && let Some(notif_pid) = meta.prompt_id.as_deref()
-                        && agent.session.current_prompt_id.as_deref() != Some(notif_pid)
-                        && !is_server_initiated_prompt(notif_pid)
-                    {
-                        agent.attached_as_viewer = !agent.is_self_originated_prompt(notif_pid);
+                    match authority.tool_admission(&notif.request.update, &meta, agent.session.current_prompt_id.as_deref()) {
+                        crate::acp::tracker::ToolAdmission::Reject => {
+                            notif.response_tx.send(Ok(())).ok();
+                            return false;
+                        }
+                        crate::acp::tracker::ToolAdmission::EntryOnly => {
+                            if meta.is_replay && !agent.accepts_replayed_update() {
+                                notif.response_tx.send(Ok(())).ok();
+                                return false;
+                            }
+                            let current = agent.session.current_prompt_id.clone();
+                            let current_tool = authority.tool_observation_is_current(&notif.request.update, &meta, current.as_deref());
+                            if agent.has_stashed_tool_observation(&notif.request.update, &meta) {
+                                let Some(agent) = app.agents.get_mut(&id) else { return false; };
+                                let changed = agent.apply_stashed_tool_observation(notif.request.update, &meta);
+                                notif.response_tx.send(Ok(())).ok();
+                                return changed && is_active;
+                            }
+                            if !meta.is_replay && !current_tool {
+                                let Some(agent) = app.agents.get_mut(&id) else { return false; };
+                                let changed = agent.handle_admitted_tool_observation(notif.request.update, &meta, current.as_deref());
+                                notif.response_tx.send(Ok(())).ok();
+                                return changed && is_active;
+                            }
+                            let delivery = if meta.is_replay {
+                                super::agent_view::load_continuation::LoadDelivery::Historical
+                            } else {
+                                super::agent_view::load_continuation::LoadDelivery::Live
+                            };
+                            let changed = super::agent_view::load_continuation::with_load_delivery(app, id, delivery, |app| {
+                                let Some(agent) = app.agents.get_mut(&id) else { return false; };
+                                agent.handle_admitted_tool_observation(notif.request.update, &meta, current.as_deref())
+                            });
+                            notif.response_tx.send(Ok(())).ok();
+                            return changed && is_active;
+                        }
+                        crate::acp::tracker::ToolAdmission::Turn => {}
                     }
-                    if !dedup_drop {
+                    if !admission::admits_delivery(agent, &meta) {
+                        notif.response_tx.send(Ok(())).ok();
+                        return false;
+                    }
+                    if agent.has_stashed_tool_observation(&notif.request.update, &meta) {
+                        let Some(agent) = app.agents.get_mut(&id) else { return false; };
+                        let changed = agent.apply_stashed_tool_observation(notif.request.update, &meta);
+                        notif.response_tx.send(Ok(())).ok();
+                        return changed && is_active;
+                    }
+                    let Some(agent) = app.agents.get(&id) else { return false; };
+                    let scope = admission::update_scope(agent, &notif.request.update);
+                    let admission = admission::root_admission(agent, &meta, stashed_adoption_pid.as_deref(), scope);
+                    match admission {
+                        admission::RootAdmission::Drop => {
+                            notif.response_tx.send(Ok(())).ok();
+                            return false;
+                        }
+                        admission::RootAdmission::Buffer => {
+                            let Some(agent) = app.agents.get_mut(&id) else {
+                                notif.response_tx.send(Ok(())).ok();
+                                return false;
+                            };
+                            if let Some(pid) = meta.prompt_id.as_ref()
+                                && agent.pending_adoption_updates.len()
+                                    < super::agent_view::MAX_PENDING_ADOPTION_UPDATES
+                            {
+                                agent.pending_adoption_updates.push((pid.clone(), notif.request.update, meta));
+                            }
+                            notif.response_tx.send(Ok(())).ok();
+                            return false;
+                        }
+                        admission::RootAdmission::AdoptViewer | admission::RootAdmission::Apply => {}
+                    }
+                    if matches!(scope, admission::UpdateScope::DrainedTool) {
+                        let Some(agent) = app.agents.get_mut(&id) else {
+                            notif.response_tx.send(Ok(())).ok();
+                            return false;
+                        };
+                        let changed = agent.handle_admitted_acp_update(notif.request.update, &meta);
+                        notif.response_tx.send(Ok(())).ok();
+                        return changed && is_active;
+                    }
+                    let loading_replay = agent.session.loading_replay;
+                    let delivery = delivery::AcpDelivery::classify(&notif.request.update, &meta);
+                    delivery.apply(app, id, |app| {
+                    let Some(agent) = app.agents.get_mut(&id) else { return false; };
+                    if matches!(admission, admission::RootAdmission::AdoptViewer) {
+                        agent.attached_as_viewer = true;
+                        if let Some(pid) = meta.prompt_id.as_ref() {
+                            agent.session.current_prompt_id = Some(pid.clone());
+                            agent.clear_follow_ups();
+                            agent.flush_pending_follow_ups(pid);
+                        }
+                    }
+                    admission::commit_metadata(agent, &meta);
+                    let detached_tool = !matches!(scope, admission::UpdateScope::Turn);
+                    if !detached_tool {
+                        if !meta.is_replay && let Some(pid) = meta.prompt_id.as_deref() {
+                            agent.session.tracker.note_admitted_live_prompt(pid);
+                        }
+                        ack_prompt_from_update(agent, &meta);
                         if let Some(tokens) = meta.total_tokens {
                             confirm_context_used(agent, tokens);
                         }
-                        if let Some(ts) = meta.turn_start_ms {
+                        if !meta.is_replay && let Some(ts) = meta.turn_start_ms {
                             agent.turn_start_ms = Some(ts);
                             agent.turn_start_ms_prompt = meta.prompt_id.clone();
                         }
                     }
                     let mut plan_mode_modal_refresh_needed = false;
                     let mut workflows_modal_refresh = false;
-                    let mutated = if dedup_drop {
-                        tracing::debug!(
-                            session_id = notif.request.session_id.0.as_ref(),
-                            event_seq = meta.event_seq,
-                            last_applied = agent.last_applied_event_seq,
-                            is_replay = meta.is_replay,
-                            "load-race: session/update DROPPED by dedup highwater (event_seq <= last_applied)"
-                        );
-                        false
-                    } else if let acp::SessionUpdate::Plan(plan) = notif.request.update {
+                    let mutated = if let acp::SessionUpdate::Plan(plan) = notif.request.update {
                         let items: Vec<_> = plan
                             .entries
                             .into_iter()
@@ -264,61 +339,15 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         advance_reconnect_cursor(agent, &mut meta);
                         is_active
                     } else if let acp::SessionUpdate::ToolCallUpdate(ref tcu) = notif.request.update
-                        && route_bg_task_stdout(tcu, agent)
+                        && route_bg_task_stdout(tcu, agent, &meta)
                     {
+                        agent.observe_background_tool_update(tcu, &meta);
                         advance_reconnect_cursor(agent, &mut meta);
-                        !meta.is_replay && !agent.session.loading_replay
-                    } else if !meta.is_replay
-                        && let Some(notif_pid) = meta.prompt_id.as_ref()
-                        && agent.session.current_prompt_id.as_ref() != Some(notif_pid)
-                        && !agent.attached_as_viewer
-                        && stashed_adoption_pid.as_deref() == Some(notif_pid.as_str())
-                    {
-                        if agent.pending_adoption_updates.len()
-                            < super::agent_view::MAX_PENDING_ADOPTION_UPDATES
-                        {
-                            tracing::debug!(
-                                target: "qtrace",
-                                pid = std::process::id(),
-                                event = "adoption_update_buffered",
-                                prompt_id = %notif_pid,
-                                "buffering session/update for the stashed pending adoption",
-                            );
-                            agent.pending_adoption_updates.push((
-                                notif_pid.clone(),
-                                notif.request.update,
-                                meta.clone(),
-                            ));
-                        } else {
-                            tracing::debug!(
-                                prompt_id = %notif_pid,
-                                "pending-adoption buffer full; dropping update (kept prefix)",
-                            );
-                        }
-                        false
-                    } else if !meta.is_replay
-                        && let Some(notif_pid) = meta.prompt_id.as_ref()
-                        && agent.session.current_prompt_id.as_ref() != Some(notif_pid)
-                        && !((agent.session.current_prompt_id.is_none()
-                            || agent
-                                .session
-                                .current_prompt_id
-                                .as_deref()
-                                .is_some_and(is_server_initiated_prompt))
-                            && is_server_initiated_prompt(notif_pid))
-                        && !agent.attached_as_viewer
-                    {
-                        tracing::debug!(
-                            session_id = notif.request.session_id.0.as_ref(),
-                            notif_prompt_id = meta.prompt_id.as_deref(),
-                            current_prompt_id = agent.session.current_prompt_id.as_deref(),
-                            attached_as_viewer = agent.attached_as_viewer,
-                            loading_replay = agent.session.loading_replay,
-                            "load-race: session/update DROPPED by promptId-mismatch gate on a non-viewer (stale/rewound-turn guard)"
-                        );
-                        !agent.session.loading_replay
+                        !meta.is_replay
                     } else {
                         if let Some(notif_pid) = meta.prompt_id.as_ref()
+                            && !detached_tool
+                            && !meta.is_replay
                             && agent.session.current_prompt_id.as_ref() != Some(notif_pid)
                             && agent.attached_as_viewer
                         {
@@ -326,7 +355,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             agent.clear_follow_ups();
                             agent.flush_pending_follow_ups(notif_pid);
                         }
-                        if !meta.is_replay
+                        if !meta.is_replay && !detached_tool
                             && let Some(notif_pid) = meta.prompt_id.as_deref()
                             && is_wake_prompt(notif_pid)
                         {
@@ -348,8 +377,12 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                                 },
                             ));
                         }
-                        let had_activity_before = agent.session.tracker.activity().is_some();
                         let update = notif.request.update;
+                        let is_agent_output = crate::acp::tracker::is_agent_output_update(&update);
+                        let real_fragment = admission::has_text_fragment(&update);
+                        let owns_turn_activity = !detached_tool && !matches!(&update, acp::SessionUpdate::ToolCallUpdate(tool)
+                            if meta.prompt_id.is_none()
+                                && agent.session.tracker.tool_title(tool.tool_call_id.0.as_ref()).is_none());
                         let (is_visible_kind, is_bash) = if meta.is_replay {
                             (
                                 crate::acp::tracker::is_agent_output_update(&update),
@@ -359,6 +392,9 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             (false, false)
                         };
                         let user_echo = matches!(update, acp::SessionUpdate::UserMessageChunk(_));
+                        if user_echo && !meta.is_replay && !agent.session.loading_replay {
+                            agent.last_active_at = Some(std::time::Instant::now());
+                        }
                         let swallow_send_now_echo = user_echo
                             && !meta.is_replay
                             && user_message_text(&update).is_some_and(|text| {
@@ -367,9 +403,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         let changed = if swallow_send_now_echo {
                             false
                         } else {
-                            agent
-                                .session
-                                .handle_update(update, &meta, &mut agent.scrollback)
+                            agent.handle_admitted_acp_update(update, &meta)
                         };
                         if meta.is_replay
                             && let Some(pid) = meta.prompt_id.as_ref()
@@ -384,13 +418,21 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         if !user_echo
                             && !meta.is_replay
                             && !agent.session.loading_replay
+                            && !detached_tool
                             && meta.prompt_id.as_deref()
                                 == agent.session.current_prompt_id.as_deref()
                         {
                             agent.front_message_committed = true;
                         }
-                        if !had_activity_before && agent.session.tracker.activity().is_some() {
-                            note_first_turn_activity(agent);
+                        if is_agent_output && !meta.is_replay && !detached_tool
+                            && (real_fragment || (!agent.session.loading_replay
+                                && (changed || agent.session.tracker.activity().is_some())))
+                        {
+                            if owns_turn_activity {
+                                note_first_turn_activity(agent);
+                            } else if changed {
+                                agent.last_active_at = Some(std::time::Instant::now());
+                            }
                         }
                         if let Some(commands) = agent.session.tracker.take_pending_acp_commands() {
                             let workflows_changed = workflow_commands(&commands)
@@ -410,6 +452,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             agent.submit_edit_highlight(entry_id);
                         }
                         if agent.attached_as_viewer
+                            && !detached_tool
                             && !meta.is_replay
                             && !agent.session.loading_replay
                             && agent
@@ -424,7 +467,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             app.session_cycle = crate::views::dashboard::SessionCycleCache::Stale;
                         }
                         advance_reconnect_cursor(agent, &mut meta);
-                        !meta.is_replay && !agent.session.loading_replay
+                        !meta.is_replay && (real_fragment || !agent.session.loading_replay)
                     };
                     if plan_mode_modal_refresh_needed {
                         crate::app::dispatch::refresh_open_settings_modals(app);
@@ -434,6 +477,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     }
                     if mutated
                         && !meta.is_replay
+                        && !loading_replay
                         && app
                             .agents
                             .get(&id)
@@ -444,6 +488,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         app.pending_effects.extend(flush);
                     }
                     mutated && is_active
+                    })
                 }
                 None => {
                     tracing::debug!(
@@ -476,6 +521,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
 /// Copies a child's `UsageUpdate` into its `SubagentInfo` for the dock.
 /// A child on a daemon backend sends no `SubagentProgress`.
 pub(super) fn note_first_turn_activity(agent: &mut AgentView) {
+    agent.last_active_at = Some(std::time::Instant::now());
     agent.session.in_flight_prompt = None;
     if let Some(started) = agent.turn_started_at
         && agent.first_activity_logged_for != Some(started)
@@ -579,6 +625,9 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         return handle_session_notification(notif, app);
     }
     match method {
+        xai_grok_shell::session::current_actions::TRANSITION_METHOD => current_actions::handle_transition(notif, app),
+        xai_grok_shell::extensions::current_actions::GENERATION_END_METHOD => current_actions::handle_generation_end(notif, app),
+        xai_grok_shell::extensions::current_actions::DISCARD_METHOD => current_actions::handle_discard(notif, app),
         "x.ai/follow_ups" => handle_follow_ups(notif, app),
         "x.ai/task_backgrounded" => handle_task_backgrounded(notif, app),
         "x.ai/task_completed" => handle_task_completed(notif, app),

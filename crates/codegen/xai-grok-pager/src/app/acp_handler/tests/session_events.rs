@@ -333,8 +333,9 @@
             max_retries: 3,
             reason: "rate limited".into(),
             error_type: None,
+            next_attempt_at_ms: None,
         };
-        apply_retry_state(&retry, &mut session, &mut scrollback, false);
+        apply_retry_state(&retry, &mut session, &mut scrollback, false, false);
         assert!(
             session.in_flight_prompt.is_none(),
             "RetryState bypasses session/update in_flight hook"
@@ -354,7 +355,7 @@
                 is_rate_limited: true,
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.rate_limited,
             "rate_limited flag must be set when is_rate_limited is true"
@@ -373,7 +374,7 @@
 
         let mut session = make_session(Some("s1"));
         let mut scrollback = ScrollbackState::new();
-        apply_retry_state(&empty, &mut session, &mut scrollback, false);
+        apply_retry_state(&empty, &mut session, &mut scrollback, false, false);
         match last_session_event(&scrollback) {
             Some(SessionEvent::RetryFailed { error, .. }) => {
                 assert_eq!(error, RATE_LIMITED_USER_MESSAGE_OAUTH);
@@ -395,7 +396,7 @@
 
         let mut session = make_session(Some("s1"));
         let mut scrollback = ScrollbackState::new();
-        apply_retry_state(&exhausted, &mut session, &mut scrollback, false);
+        apply_retry_state(&exhausted, &mut session, &mut scrollback, false, false);
         match last_session_event(&scrollback) {
             Some(SessionEvent::RetryFailed { error, .. }) => {
                 assert_eq!(error, body);
@@ -421,7 +422,7 @@
 
         let mut session = make_session(Some("s1"));
         let mut scrollback = ScrollbackState::new();
-        apply_retry_state(&rpm, &mut session, &mut scrollback, true);
+        apply_retry_state(&rpm, &mut session, &mut scrollback, true, false);
         match last_session_event(&scrollback) {
             Some(SessionEvent::RetryFailed { error, .. }) => {
                 assert_eq!(error, RATE_LIMITED_USER_MESSAGE_API_KEY);
@@ -443,7 +444,7 @@
                 is_rate_limited: false,
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             !session.rate_limited,
             "rate_limited flag must not be set when is_rate_limited is false"
@@ -473,7 +474,7 @@
                 is_rate_limited: true,
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.rate_limited,
             "free-usage keeps rate_limited (TurnFailed/toast suppression)"
@@ -505,6 +506,7 @@
             &mut session,
             &mut scrollback,
             false,
+            false,
         );
         match scrollback.last().map(|e| &e.block) {
             Some(RenderBlock::SessionEvent(ev)) => {
@@ -533,7 +535,7 @@
                 is_rate_limited: false,
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.credit_limit_blocked,
             "credit_limit_blocked must be set for credit-limit 403"
@@ -562,7 +564,7 @@
                 message: "status 403: run out of credits".into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.credit_limit_blocked,
             "credit_limit_blocked must be set for credit-limit 403"
@@ -593,7 +595,7 @@
                         .into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.credit_limit_blocked,
             "credit_limit_blocked must be set for pool 402 balance exhausted"
@@ -618,7 +620,7 @@
                 message: "internal server error".into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             !session.credit_limit_blocked,
             "credit_limit_blocked must NOT be set for non-credit-limit errors"
@@ -669,7 +671,7 @@
                     .into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             matches!(
                 last_session_event(&scrollback),
@@ -698,7 +700,7 @@
                 message: "Unauthorized (401) from https://proxy/v1/messages".into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.in_flight_prompt.is_some(),
             "in_flight_prompt must be preserved on a recoverable auth failure"
@@ -718,7 +720,7 @@
                     .into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(matches!(
             last_session_event(&scrollback),
             Some(SessionEvent::ReAuthRequired)
@@ -738,7 +740,7 @@
                     .into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(matches!(
             last_session_event(&scrollback),
             Some(SessionEvent::RetryFailed { .. })
@@ -756,7 +758,7 @@
                 message: r#"API error (status 500 Internal Server Error): {"error":"upstream exploded"}"#.into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         match last_session_event(&scrollback) {
             Some(SessionEvent::RequestFailed {
                 status,
@@ -786,6 +788,7 @@
             },
             &mut session,
             &mut scrollback,
+            false,
             false,
         );
         match last_session_event(&scrollback) {
@@ -817,7 +820,7 @@
                     .into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             matches!(
                 last_session_event(&scrollback),
@@ -842,6 +845,7 @@
             },
             &mut session,
             &mut scrollback,
+            false,
             false,
         );
         assert!(
@@ -869,7 +873,7 @@
                 message: "the prompt is too long for this model's context window".into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             matches!(
                 last_session_event(&scrollback),
@@ -1327,6 +1331,7 @@
                     max_retries: 3,
                     reason: "overloaded".into(),
                     error_type: None,
+                    due_at: None,
                 }));
             agent.running_wake_turn = Some(crate::app::agent_view::RunningWakeTurn {
                 prompt_id: "task-completed-1".into(),
@@ -1427,7 +1432,7 @@
                 message: "incompatible history".into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             session.model_incompatible,
             "encrypted_content_mismatch should set model_incompatible flag"
@@ -1446,7 +1451,7 @@
                 message: "bad request".into(),
             },
             &mut session,
-            &mut scrollback, false);
+            &mut scrollback, false, false);
         assert!(
             !session.model_incompatible,
             "non-encrypted_content error types must not set model_incompatible"

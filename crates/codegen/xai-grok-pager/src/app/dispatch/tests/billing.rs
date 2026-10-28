@@ -1340,6 +1340,7 @@ fn free_usage_failure_opens_paywall_modal() {
                 max_retries: 2,
                 reason: "429 Too Many Requests".into(),
                 error_type: None,
+                next_attempt_at_ms: None,
             }),
             &mut agent.session,
             &mut agent.scrollback,

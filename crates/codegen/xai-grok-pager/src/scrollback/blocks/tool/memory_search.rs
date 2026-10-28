@@ -29,8 +29,7 @@ pub struct MemorySearchToolCallBlock {
     pub query: String,
     pub results: Vec<MemoryResult>,
     pub error: Option<String>,
-    pub started_at: Option<std::time::Instant>,
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
 }
 
 impl MemorySearchToolCallBlock {
@@ -39,8 +38,7 @@ impl MemorySearchToolCallBlock {
             query: query.into(),
             results: Vec::new(),
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
         }
     }
 
@@ -49,28 +47,15 @@ impl MemorySearchToolCallBlock {
     }
 
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        self.elapsed_ms.or_else(|| {
-            self.started_at
-                .map(|start| start.elapsed().as_millis() as i64)
-        })
+        self.execution_clock.elapsed_ms()
     }
 
     fn header_line(&self, theme: &Theme, muted: bool, max_width: Option<usize>) -> Line<'static> {
@@ -86,7 +71,7 @@ impl MemorySearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = format!("{} ", crate::glyphs::tool_memory_search());
+        let prefix = String::new();
         let count = self.results.len();
         let suffix = if count > 0 {
             let s = if count == 1 { "" } else { "s" };
@@ -262,17 +247,6 @@ impl BlockContent for MemorySearchToolCallBlock {
             Some(AccentStyle::animated(theme.accent_running))
         } else {
             Some(AccentStyle::static_color(theme.accent_tool))
-        }
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else if ctx.mode == DisplayMode::Collapsed {
-            None
-        } else {
-            self.accent(ctx)
         }
     }
 

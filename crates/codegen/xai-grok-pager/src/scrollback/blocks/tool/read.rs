@@ -61,10 +61,7 @@ pub struct ReadToolCallBlock {
     pub line_range: Option<LineRange>,
     /// Error message if the tool call failed (None means success).
     pub error: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Raw file content (unformatted). `None` for errors, images, PDFs.
     pub content: Option<String>,
     /// Total number of lines in the file (from `FileContent.total_lines`).
@@ -80,15 +77,12 @@ pub struct ReadToolCallBlock {
 }
 
 impl ReadToolCallBlock {
-    /// Pre-completed blocks have no meaningful local timing, so `started_at` is `None`.
-    /// Timing is only set for blocks that enter a running UI state (via `set_last_running(true)` in `ScrollbackState`).
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             line_range: None,
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             content: None,
             total_lines: None,
             image_ref: None,
@@ -140,35 +134,16 @@ impl ReadToolCallBlock {
         self.skill_name().is_some()
     }
 
-    /// Set the error, computing elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
-    /// Finalize elapsed time from `started_at`.
-    ///
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     /// Render header line: `Read path (start-end)`.
@@ -204,7 +179,7 @@ impl ReadToolCallBlock {
                     crate::render::tool_paths::ToolPathSurface::Fullscreen => "Skill ".to_owned(),
                     crate::render::tool_paths::ToolPathSurface::Collapsed
                     | crate::render::tool_paths::ToolPathSurface::Expanded => {
-                        format!("{} ", crate::glyphs::tool_skill())
+                        String::new()
                     }
                 }, bold_style),
                 Span::styled(skill.to_owned(), path_style),
@@ -215,11 +190,9 @@ impl ReadToolCallBlock {
             };
         }
 
-        // Transcript surfaces lead with the kind glyph; the fullscreen preamble keeps the textual verb.
-        let glyph_prefix = format!("{} ", crate::glyphs::tool_read_file());
         let prefix = match surface {
             crate::render::tool_paths::ToolPathSurface::Collapsed
-            | crate::render::tool_paths::ToolPathSurface::Expanded => glyph_prefix.as_str(),
+            | crate::render::tool_paths::ToolPathSurface::Expanded => "",
             crate::render::tool_paths::ToolPathSurface::Fullscreen => "Read ",
         };
         let range_suffix = self
@@ -533,15 +506,6 @@ impl BlockContent for ReadToolCallBlock {
         None
     }
 
-    fn bullet(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else {
-            None
-        }
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false
     }
@@ -851,11 +815,11 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(text, format!("{} deploy", crate::glyphs::tool_skill()));
+        assert_eq!(text, "deploy".to_owned());
     }
 
     #[test]
-    fn regular_file_renders_the_read_kind_glyph() {
+    fn regular_file_header_shows_the_stored_path_without_cwd() {
         let block = ReadToolCallBlock::new("src/main.rs");
         let output = block.output(&make_ctx());
         let text: String = first_line(&output)
@@ -864,28 +828,66 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert!(
-            text.starts_with(&format!("{} ", crate::glyphs::tool_read_file())),
-            "expected the read kind glyph, got '{text}'"
-        );
-        assert!(text.contains("main.rs"));
+        assert_eq!(text, "src/main.rs");
     }
 
     #[test]
-    fn collapsed_header_shows_basename_only() {
+    fn collapsed_header_shows_cwd_relative_path_when_it_fits() {
         let block = ReadToolCallBlock::new("/Users/me/project/src/main.rs")
             .with_line_range(LineRange::new(1, 10));
-        let output = block.output(&make_ctx());
+        let mut ctx = make_ctx();
+        ctx.cwd = Some(std::path::PathBuf::from("/Users/me/project"));
+        let output = block.output(&ctx);
         let text: String = first_line(&output)
             .content
             .spans
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(
-            text,
-            format!("{} main.rs (1-10)", crate::glyphs::tool_read_file())
-        );
+        assert_eq!(text, "src/main.rs (1-10)".to_owned());
+
+        // Without a session cwd the stored path is shown, never relativized.
+        let stored = block.output(&make_ctx());
+        let text: String = first_line(&stored)
+            .content
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(text, "/Users/me/project/src/main.rs (1-10)".to_owned());
+    }
+
+    #[test]
+    fn collapsed_header_shortens_front_dirs_when_tight() {
+        let block = ReadToolCallBlock::new("/repo/crates/codegen/src/main.rs");
+        let mut ctx = make_ctx();
+        ctx.width = 20;
+        ctx.cwd = Some(std::path::PathBuf::from("/repo"));
+        let output = block.output(&ctx);
+        assert_eq!(span_text(first_line(&output), 1), "c/c/src/main.rs");
+    }
+
+    #[test]
+    fn collapsed_headers_distinguish_same_basename_in_different_dirs() {
+        let mut ctx = make_ctx();
+        ctx.cwd = Some(std::path::PathBuf::from("/repo"));
+        let a = ReadToolCallBlock::new("/repo/src/a/main.rs").output(&ctx);
+        let b = ReadToolCallBlock::new("/repo/lib/b/main.rs").output(&ctx);
+        let a = span_text(first_line(&a), 1).to_owned();
+        let b = span_text(first_line(&b), 1).to_owned();
+        assert_eq!(a, "src/a/main.rs");
+        assert_eq!(b, "lib/b/main.rs");
+    }
+
+    #[test]
+    fn collapsed_header_outside_cwd_keeps_truthful_path() {
+        let block = ReadToolCallBlock::new("/opt/service/deep/main.rs");
+        let mut ctx = make_ctx();
+        ctx.cwd = Some(std::path::PathBuf::from("/repo"));
+        assert_eq!(span_text(first_line(&block.output(&ctx)), 1), "/opt/service/deep/main.rs");
+        // Raw block budget: width 12 minus the category bullet indent 2.
+        ctx.width = 12;
+        assert_eq!(span_text(first_line(&block.output(&ctx)), 1), "/o/s/deep\u{2026}");
     }
 
     #[test]
@@ -905,7 +907,7 @@ mod tests {
             .collect();
         assert_eq!(
             header,
-            format!("{} src/main.rs", crate::glyphs::tool_read_file())
+            "src/main.rs".to_owned()
         );
 
         let preamble = block.preamble(&ctx).unwrap();
@@ -955,15 +957,15 @@ mod tests {
             "only path span should be selectable, got {:?}",
             header.selectable
         );
-        // Collapsed: copy the painted basename, not a full-path override.
+        // Collapsed: copy the painted path, not a full-path override.
         assert_eq!(
             derive_selection_text(header),
-            "main.rs",
+            "/Users/me/project/src/main.rs",
             "copy/highlight should match the painted path span, not the kind glyph row"
         );
         assert_eq!(
             span_text(header, 0),
-            format!("{} ", crate::glyphs::tool_read_file())
+            "".to_owned()
         );
         assert!(header.selection_text.is_none());
     }
@@ -1005,7 +1007,7 @@ mod tests {
                 .as_ref(),
             "file:///Users/me/project/src/main.rs"
         );
-        assert_eq!(span_text(collapsed_header, 1), "main.rs");
+        assert_eq!(span_text(collapsed_header, 1), "src/main.rs");
 
         ctx.mode = DisplayMode::Expanded;
         let expanded = block.output(&ctx);
@@ -1024,7 +1026,7 @@ mod tests {
 
         assert!(matches!(&header.selectable, Selectable::Spans(r) if *r == (1..2)));
         assert_eq!(derive_selection_text(header), "deploy");
-        assert_eq!(span_text(header, 0), format!("{} ", crate::glyphs::tool_skill()));
+        assert_eq!(span_text(header, 0), "".to_owned());
     }
 
     #[test]

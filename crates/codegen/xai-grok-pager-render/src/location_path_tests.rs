@@ -226,3 +226,67 @@ fn shorten_location_path_unc_host_without_share_unchanged() {
     );
     assert_eq!(shorten_location_path("//host/").as_ref(), "//host/");
 }
+
+#[test]
+fn fit_location_path_keeps_the_full_spelling_when_it_fits() {
+    assert_eq!(fit_location_path("", 0).as_ref(), "");
+    assert_eq!(fit_location_path("src/main.rs", 20).as_ref(), "src/main.rs");
+    assert_eq!(
+        fit_location_path("alpha/beta/gamma/delta/file.rs", 30).as_ref(),
+        "alpha/beta/gamma/delta/file.rs"
+    );
+}
+
+#[test]
+fn fit_location_path_shortens_front_dirs_before_touching_the_tail() {
+    assert_eq!(
+        fit_location_path("alpha/beta/gamma/delta/file.rs", 29).as_ref(),
+        "a/b/g/delta/file.rs"
+    );
+    assert_eq!(
+        fit_location_path("alpha/beta/gamma/delta/file.rs", 19).as_ref(),
+        "a/b/g/delta/file.rs"
+    );
+    assert_eq!(
+        fit_location_path("~/.config/nvim/lua/init.lua", 26).as_ref(),
+        "~/.c/nvim/lua/init.lua"
+    );
+}
+
+#[test]
+fn fit_location_path_falls_back_to_the_bounded_final_truncation() {
+    assert_eq!(
+        fit_location_path("alpha/beta/gamma/delta/file.rs", 10).as_ref(),
+        "a/b/g/del\u{2026}"
+    );
+    assert_eq!(fit_location_path("src/main.rs", 7).as_ref(), "src/ma\u{2026}");
+    assert_eq!(fit_location_path("src/main.rs", 1).as_ref(), "\u{2026}");
+    assert_eq!(fit_location_path("src/main.rs", 0).as_ref(), "");
+}
+
+#[test]
+fn fit_location_path_measures_wide_glyphs_in_display_columns() {
+    // 日本語/階層/ファイル.rs is 21 columns; shortening 日本語 to 日 gives 17.
+    assert_eq!(
+        fit_location_path("日本語/階層/ファイル.rs", 20).as_ref(),
+        "日/階層/ファイル.rs"
+    );
+    // A wide grapheme that straddles the boundary is dropped whole, so the
+    // 16-column fit ends after ファイ plus the ellipsis.
+    assert_eq!(
+        fit_location_path("日本語/階層/ファイル.rs", 16).as_ref(),
+        "日/階層/ファイ\u{2026}"
+    );
+}
+
+#[test]
+fn fit_location_path_keeps_same_basename_dirs_distinguishable() {
+    assert_eq!(
+        fit_location_path("crates/a/main.rs", 12).as_ref(),
+        "c/a/main.rs"
+    );
+    assert_eq!(
+        fit_location_path("crates/b/main.rs", 12).as_ref(),
+        "c/b/main.rs"
+    );
+}

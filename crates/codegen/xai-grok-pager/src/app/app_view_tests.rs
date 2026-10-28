@@ -538,6 +538,7 @@ pub(crate) fn test_app() -> AppView {
         dashboard_sessions_loading: false,
         workspace_membership: Default::default(),
         shared_prompt_queues: std::collections::HashMap::new(),
+        queue_mirror_bindings: std::collections::HashMap::new(),
         optimistic_prompt_echoes: std::collections::HashMap::new(),
         pending_running_adoptions: std::collections::HashMap::new(),
         session_picker_grouped: false,

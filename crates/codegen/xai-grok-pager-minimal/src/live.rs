@@ -138,7 +138,7 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal, ctx: &Terminal
                 return (None, None);
             };
             agent.active_pane = xai_grok_pager::app::agent_view::AgentPane::Prompt;
-            let status_activity = minimal_advance_phase_timer(agent);
+            let status_activity = minimal_api::resolve_turn_activity(agent);
             let show_todos = crate::todo::todo_panel_visible(agent, force_todos);
             let queued = agent.session.pending_prompts.len() + agent.shared_queue.len();
             if let Some(kind) = super::panel::active(agent) {
@@ -515,18 +515,6 @@ fn draw_tail(
         }
     }
 }
-/// Resolve the current turn activity and advance the phase timer when it changes. Minimal has a separate draw path,
-/// so it must drive the same logic or the phase timer would never reset.
-fn minimal_advance_phase_timer(
-    agent: &mut xai_grok_pager::app::agent_view::AgentView,
-) -> Option<xai_grok_pager::acp::tracker::TurnActivity> {
-    let activity = minimal_api::resolve_turn_activity(agent);
-    if activity.as_ref() != minimal_api::last_activity(agent) {
-        agent.activity_started_at = Some(std::time::Instant::now());
-        minimal_api::set_last_activity(agent, activity.clone());
-    }
-    activity
-}
 /// Reuses the full-TUI [`turn_status::render_turn_status`] widget instead of collapsing everything to "working…".
 /// Keyboard-only, so the mouse `[stop]` / `[↓]` buttons are suppressed (`None`). When the widget would draw nothing
 /// a small `minimal · /help` hint is shown instead.
@@ -556,7 +544,7 @@ fn render_minimal_status(
     let drain_blocked = minimal_api::drain_blocked(agent);
     let parked = minimal_api::renders_parked(agent);
     if !turn_status::should_show(
-        &agent.session.state,
+        minimal_api::action_display_state(agent),
         drain_blocked,
         minimal_api::session_starting_since(agent),
         watchers,
@@ -574,10 +562,10 @@ fn render_minimal_status(
         buf,
         area,
         turn_status::TurnStatusArgs {
-            state: &agent.session.state,
+            state: minimal_api::action_display_state(agent),
             activity,
             turn_elapsed: agent.turn_elapsed(),
-            activity_started_at: agent.activity_started_at,
+            activity_started_at: minimal_api::current_action_started_at(agent),
             tick: agent.scrollback.animation_tick(),
             drain_blocked,
             buttons: None,
@@ -968,6 +956,7 @@ mod tests {
                 max_retries: 3,
                 reason: "transient error".to_string(),
                 error_type: None,
+                due_at: None,
             }),
             None,
             &theme,

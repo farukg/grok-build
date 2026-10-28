@@ -125,10 +125,12 @@ fn tool_headers_use_kind_glyphs_without_losing_identity() {
         (ToolCallBlock::Edit(EditToolCallBlock::new("file.rs", vec![]).with_prefix("Creating ")), crate::glyphs::tool_create_file(), "file.rs"),
     ];
     for (block, glyph, identity) in blocks {
-        let output = block.output(&context(DisplayMode::Collapsed, 80));
+        let output = RenderBlock::ToolCall(block).output(&context(DisplayMode::Collapsed, 80));
         let text = derive_selection_text(&output.lines[0]);
         let painted: String = output.lines[0].content.spans.iter().map(|span| span.content.as_ref()).collect();
         assert!(painted.starts_with(glyph), "{painted}");
+        assert_eq!(painted.matches(glyph).count(), 1, "one integrated symbol: {painted}");
+        assert!(!painted.contains(crate::glyphs::diamond_filled()), "{painted}");
         assert!(painted.contains(identity), "{painted}");
         assert!(!text.is_empty());
     }

@@ -327,10 +327,6 @@ impl BlockContent for MemoryCaptureBlock {
         DisplayMode::Collapsed
     }
 
-    fn has_bullet(&self, _ctx: &BlockContext) -> bool {
-        true
-    }
-
     fn is_groupable(&self) -> bool {
         true
     }
@@ -760,19 +756,6 @@ impl BlockContent for SessionEventBlock {
         }
     }
 
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        // Recap: animated dot while loading; default gray dot when collapsed-idle; accent color when expanded
-        // A hook outcome keeps the default gray, matching its muted text; other events never show a bullet
-        if matches!(self.event, SessionEvent::HookOutcome { .. })
-            || (self.event.recap_summary().is_some()
-                && !ctx.is_running
-                && ctx.mode == DisplayMode::Collapsed)
-        {
-            return None;
-        }
-        self.accent(ctx)
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false // Compact like SystemMessageBlock
     }
@@ -794,20 +777,6 @@ impl BlockContent for SessionEventBlock {
 
     fn default_display_mode(&self) -> DisplayMode {
         DisplayMode::Expanded
-    }
-
-    fn has_bullet(&self, ctx: &BlockContext) -> bool {
-        // Recap and hook outcomes only, gated on the shared tool bullet so they track the tool rows' appearance setting
-        (self.event.recap_summary().is_some()
-            || matches!(self.event, SessionEvent::HookOutcome { .. }))
-            && ctx
-                .appearance
-                .scrollback
-                .blocks
-                .tool
-                .bullet
-                .char()
-                .is_some()
     }
 
     fn is_groupable(&self) -> bool {
@@ -1327,7 +1296,7 @@ mod tests {
         let note = SessionEventBlock::new(SessionEvent::HookAnnotation {
             message: "`web_fetch` blocked by global/qa: no".into(),
         });
-        assert!(outcome.has_bullet(&ctx()));
+        assert!(crate::scrollback::RenderBlock::SessionEvent(outcome.clone()).has_bullet(&ctx()));
         assert!(!note.has_bullet(&ctx()));
         assert!(
             outcome.bullet(&ctx()).is_none(),
@@ -1337,7 +1306,7 @@ mod tests {
         let mut no_bullet = ctx();
         no_bullet.appearance.scrollback.blocks.tool.bullet = crate::appearance::ToolBullet::None;
         assert!(
-            !outcome.has_bullet(&no_bullet),
+            !crate::scrollback::RenderBlock::SessionEvent(outcome.clone()).has_bullet(&no_bullet),
             "a user who turned tool bullets off gets none on hook lines either"
         );
         assert_eq!(
@@ -1366,7 +1335,7 @@ mod tests {
             "recap is navigable so it can be folded"
         );
         assert!(
-            block.has_bullet(&ctx()),
+            crate::scrollback::RenderBlock::SessionEvent(block.clone()).has_bullet(&ctx()),
             "recap shows the shared tool bullet under default appearance"
         );
         assert_eq!(
@@ -1418,7 +1387,7 @@ mod tests {
         assert_eq!(accent.color, theme.gray);
         assert!(accent.animated, "loading sidebar animates");
         assert_eq!(
-            block.bullet(&rc),
+            crate::scrollback::RenderBlock::SessionEvent(block.clone()).bullet(&rc),
             Some(accent),
             "bullet animates while loading"
         );

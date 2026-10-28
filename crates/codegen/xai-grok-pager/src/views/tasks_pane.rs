@@ -164,7 +164,7 @@ pub enum TaskEntry {
         label: String,
         styled: Line<'static>,
         running: bool,
-        start_time: SystemTime,
+        start_time: Option<SystemTime>,
         /// True for `monitor` tool tasks, which sort into their own contiguous group (separate from one-shot bg commands).
         is_monitor: bool,
     },
@@ -1245,7 +1245,7 @@ impl TasksPane {
                 BgTaskStatus::Running => {
                     let frames = crate::glyphs::dot_spinner_frames();
                     let frame_idx = (self.tick / SPINNER_DIVISOR) as usize % frames.len();
-                    let elapsed = format_duration(task.elapsed());
+                    let elapsed = task.elapsed_label();
                     (
                         frames.get(frame_idx).copied().unwrap_or(""),
                         Style::default().fg(theme.accent_running),
@@ -1254,7 +1254,7 @@ impl TasksPane {
                     )
                 }
                 BgTaskStatus::Done => {
-                    let elapsed = format_duration(task.elapsed());
+                    let elapsed = task.elapsed_label();
                     (
                         crate::glyphs::check_mark(),
                         Style::default().fg(theme.accent_success),
@@ -1263,7 +1263,7 @@ impl TasksPane {
                     )
                 }
                 BgTaskStatus::Failed => {
-                    let elapsed = format_duration(task.elapsed());
+                    let elapsed = task.elapsed_label();
                     (
                         crate::glyphs::ballot_x(),
                         Style::default().fg(theme.accent_error),
@@ -1645,7 +1645,7 @@ mod tests {
             cwd: String::new(),
             output_file: String::new(),
             status,
-            start_time: SystemTime::now(),
+            start_time: Some(SystemTime::now()),
             end_time: None,
             exit_code: None,
             signal: None,

@@ -154,6 +154,7 @@ impl ClusterClient {
             ) else {
                 continue;
             };
+            let load_binding = effects::current_actions::prepare(&eff, &mut self.app);
             let (_quit, _meta) = effects::execute(
                 eff,
                 &mut self.tasks,
@@ -161,6 +162,7 @@ impl ClusterClient {
                 &self.app.cwd,
                 &flags,
                 &self.progress_tx,
+                load_binding,
             );
         }
         self.drain_pending_effects();

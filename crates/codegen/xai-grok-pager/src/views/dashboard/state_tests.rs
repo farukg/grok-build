@@ -118,14 +118,6 @@ fn persisted_row_id_invalid() {
 }
 
 #[test]
-fn group_priority_ordering() {
-    assert!(RowState::NeedsInput.group_priority() > RowState::Working.group_priority());
-    assert!(RowState::Working.group_priority() > RowState::Idle.group_priority());
-    assert!(RowState::Idle.group_priority() > RowState::Completed.group_priority());
-    assert!(RowState::Completed.group_priority() > RowState::Failed.group_priority());
-}
-
-#[test]
 fn compact_cwd_strips_home() {
     let p = Path::new("/Users/alice/projects/grok");
     assert_eq!(compact_cwd(p, Some("/Users/alice")), "~/projects/grok");

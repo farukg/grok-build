@@ -8,16 +8,30 @@ use xai_grok_tools::computer::types::SESSION_RESTART_SIGNAL;
 /// Route a `ToolCallUpdate` stdout chunk to the central bg task store.
 ///
 /// Returns `true` if the update was consumed (belongs to a bg task), `false` if it should be passed to the normal tracker.
-pub(super) fn route_bg_task_stdout(
+pub(crate) fn route_bg_task_stdout(
     tcu: &acp::ToolCallUpdate,
     agent: &mut super::super::agent_view::AgentView,
+    meta: &NotificationMeta,
 ) -> bool {
     let session = &mut agent.session;
     let tc_id = tcu.tool_call_id.0.to_string();
 
-    let task_id = match session.bg_tool_call_to_task.get(&tc_id) {
-        Some(tid) => tid.clone(),
-        None => return false,
+    let task_id = if let Some(tasks) = session.tracker.background_tasks_for_tool(&tc_id, meta) {
+        if let [task] = tasks && !session.tracker.has_foreground_tool_projection(&tc_id, meta)
+            && tcu.fields.raw_output.as_ref().and_then(|output| output.get("output_file")).and_then(|file| file.as_str()).is_none_or(|file|
+                file.is_empty() || session.bg_tasks.get(task).is_some_and(|task| task.output_file == file)) { task.clone() } else {
+            let Some(output_file) = tcu.fields.raw_output.as_ref().and_then(|output| output.get("output_file"))
+                .and_then(|file| file.as_str()).filter(|file| !file.is_empty()) else { return false; };
+            let mut matching = tasks.iter().filter(|id| session.bg_tasks.get(*id).is_some_and(|task| task.output_file == output_file));
+            let Some(task) = matching.next() else { return false; };
+            if matching.next().is_some() { return false; }
+            task.clone()
+        }
+    } else {
+        if !session.tracker.legacy_background_tool_is_unambiguous(&tc_id, meta)
+            || session.bg_tasks.values().filter(|task| task.tool_call_id == tc_id).take(2).count() > 1 { return false; }
+        let Some(task) = session.bg_tool_call_to_task.get(&tc_id) else { return false; };
+        task.clone()
     };
 
     // Extract stdout from the raw_output BashOutput
@@ -48,6 +62,9 @@ pub(super) fn route_bg_task_stdout(
             // Don't overwrite with empty stdout (shell clears buffer on completion).
             // `set_stdout` handles the BG_TASK_MAX_STDOUT trim, flips `truncated` on TUI-side overflow, and refreshes the cached `stdout_line_count`
             if !stdout.is_empty() {
+                if !meta.is_replay && agent.session.bg_tasks.get(&task_id).is_some_and(|task| task.status == BgTaskStatus::Running) {
+                    agent.last_active_at = Some(std::time::Instant::now());
+                }
                 agent.set_bg_task_stdout(&task_id, stdout);
                 if chunk_truncated
                     && let Some(bg_task) = agent.session.bg_tasks.get_mut(&task_id)
@@ -70,6 +87,11 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
         return false;
     };
 
+    let meta = NotificationMeta::from_xai(session_notif.meta.as_ref(), &session_notif.update);
+    super::background_delivery::apply(session_notif, meta, app)
+}
+
+pub(super) fn apply_task_backgrounded(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
     let (tool_call_id, task_id, command, cwd, output_file, monitor_description, notif_description) =
         match session_notif.update {
             XaiSessionUpdate::TaskBackgrounded {
@@ -93,7 +115,6 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
         };
 
     // Replayed (`session/load`) restores are historical context, not new activity: mark them so the tasks pane doesn't auto-open on resume
-    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
     let restored_from_replay = meta.is_replay;
 
     let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
@@ -124,7 +145,7 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
     let scrollback = &mut agent.scrollback;
 
     // A demotion (foreground to background) means the execute block already exists in scrollback as a pending tool in the tracker
-    let demotion_eid = session.tracker.pending_tool_entry_id(&tool_call_id);
+    let demotion_eid = session.tracker.background_tool_entry_id(&tool_call_id, meta);
 
     // The structured `monitor_description` field identifies a monitor on the current path
     // Reparented monitors (subagent session sharing) and backends predating that field still bake a "[monitor] <desc>" prefix into the command
@@ -166,7 +187,7 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
         cwd,
         output_file,
         status: BgTaskStatus::Running,
-        start_time: std::time::SystemTime::now(),
+        start_time: None,
         end_time: None,
         exit_code: None,
         signal: None,
@@ -200,16 +221,16 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
             entry.invalidate_cache();
             scrollback.mark_height_dirty(eid);
             scrollback.finish_running(eid);
-            session.tracker.remove_pending_tool(&tool_call_id);
+            session.tracker.background_pending_tool(&tool_call_id, &task_id, meta);
             Some(eid)
         } else if completed_early {
             // Entry gone and the task already completed: the completion block is already in scrollback, nothing left to render
-            session.tracker.remove_pending_tool(&tool_call_id);
+            session.tracker.background_pending_tool(&tool_call_id, &task_id, meta);
             None
         } else {
             // The entry was removed between the tracker lookup and now (compaction, clear, etc.)
             // Create a fresh BgTask so the task still shows in the UI
-            session.tracker.remove_pending_tool(&tool_call_id);
+            session.tracker.background_pending_tool(&tool_call_id, &task_id, meta);
             let block = crate::scrollback::blocks::BgTaskBlock::started(&command, &task_id)
                 .with_description(description.clone());
             let fallback = scrollback.push_block(RenderBlock::BgTask(block));
@@ -229,10 +250,8 @@ pub(super) fn handle_task_backgrounded(notif: &acp::ExtNotification, app: &mut A
 
     bg_task.description = description;
 
-    if completed_early {
-        if let Some(existing) = session.bg_tasks.get_mut(&task_id) {
-            existing.absorb_late_backgrounded(bg_task, entry_id);
-        }
+    if let Some(existing) = session.bg_tasks.get_mut(&task_id) {
+        existing.absorb_late_backgrounded(bg_task, entry_id);
     } else {
         bg_task.scrollback_entry_id = entry_id;
         session.bg_tasks.insert(task_id.clone(), bg_task);
@@ -267,6 +286,7 @@ pub(super) fn handle_monitor_event(notif: &acp::ExtNotification, app: &mut AppVi
 
     // Monitor events append stdout; an exact-id re-delivery must not append the line twice.
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.accepts_current_source(&meta) { return false; }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -290,6 +310,11 @@ pub(super) fn handle_scheduled_task_created(
     let Ok(session_notif) = serde_json::from_str::<SessionNotification>(notif.params.get()) else {
         return false;
     };
+    let meta = NotificationMeta::from_xai(session_notif.meta.as_ref(), &session_notif.update);
+    apply_scheduled_task_created(session_notif, &meta, app)
+}
+
+pub(super) fn apply_scheduled_task_created(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
     let (task_id, prompt, human_schedule, next_fire_at) = match session_notif.update {
         XaiSessionUpdate::ScheduledTaskCreated {
             task_id,
@@ -312,7 +337,7 @@ pub(super) fn handle_scheduled_task_created(
 
     // Scheduler re-announces (actor restart) re-deliver rows this client may already hold; the
     // task_id merge below is idempotent, but an exact-id duplicate is still not new activity.
-    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.accepts_current_source(meta) { return false; }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -380,6 +405,7 @@ pub(super) fn handle_scheduled_task_fired(notif: &acp::ExtNotification, app: &mu
         .expect("find_session_match returned an existing AgentId");
 
     let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.accepts_current_source(&meta) { return false; }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -425,6 +451,11 @@ pub(super) fn handle_scheduled_task_deleted(
     let Ok(session_notif) = serde_json::from_str::<SessionNotification>(notif.params.get()) else {
         return false;
     };
+    let meta = NotificationMeta::from_xai(session_notif.meta.as_ref(), &session_notif.update);
+    apply_scheduled_task_deleted(session_notif, &meta, app)
+}
+
+pub(super) fn apply_scheduled_task_deleted(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
     let (task_id, reason) = match session_notif.update {
         XaiSessionUpdate::ScheduledTaskDeleted { task_id, reason } => (task_id, reason),
         _ => return false,
@@ -442,7 +473,7 @@ pub(super) fn handle_scheduled_task_deleted(
 
     // The removal below mutates pane state and may push an expiry notice; check admission first so
     // an exact-id re-delivery cannot re-remove (or re-notice) an already-processed deletion.
-    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
+    if !agent.accepts_current_source(meta) { return false; }
     if !agent.admit_background_lifecycle_event(meta.event_id.as_deref()) {
         tracing::debug!(
             task_id = %task_id,
@@ -538,14 +569,17 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
         return false;
     };
 
+    let meta = NotificationMeta::from_xai(session_notif.meta.as_ref(), &session_notif.update);
+    super::background_delivery::apply(session_notif, meta, app)
+}
+
+pub(super) fn apply_task_completed(session_notif: SessionNotification, meta: &NotificationMeta, app: &mut AppView) -> bool {
     let task_snapshot = match session_notif.update {
         XaiSessionUpdate::TaskCompleted { task_snapshot, .. } => task_snapshot,
         _ => return false,
     };
 
     // Stamps `restored_from_replay` on tombstones inserted below.
-    let meta = NotificationMeta::from_json(session_notif.meta.as_ref().and_then(|v| v.as_object()));
-
     let (matched, is_active, agent) = match resolve_notif_agent(app, &session_notif.session_id) {
         Some(t) => t,
         None => return false,
@@ -605,7 +639,7 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
             };
             bg_task.exit_code = exit_code;
             bg_task.signal = signal.clone();
-            bg_task.end_time = Some(std::time::SystemTime::now());
+            bg_task.apply_snapshot_timing(&task_snapshot);
             bg_task.pending_kill = false;
             bg_task.kill_requested_at = None;
             (
@@ -619,10 +653,6 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
             // Label from the model-supplied description, else from display_command when it differs from the raw command
             // (display_command differs for monitors and isolation-wrapped shells.)
             let command = task_snapshot.command.clone();
-            let elapsed = task_snapshot
-                .end_time
-                .and_then(|end| end.duration_since(task_snapshot.start_time).ok())
-                .unwrap_or_default();
             let description = task_snapshot
                 .description
                 .clone()
@@ -655,6 +685,7 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
                 description.clone(),
                 meta.is_replay,
             );
+            let elapsed = tombstone.elapsed();
             session.bg_tasks.insert(task_id.clone(), tombstone);
 
             (command, elapsed, description, None)
@@ -722,8 +753,7 @@ pub(super) fn handle_task_completed(notif: &acp::ExtNotification, app: &mut AppV
     is_active
 }
 
-/// Parse an rfc3339 wire timestamp into `SystemTime`; `None` when malformed
-/// (the caller then keeps whatever local value it already holds).
+/// Parse an RFC3339 backend timestamp; malformed timestamps remain unknown.
 fn snapshot_system_time(timestamp: &str) -> Option<std::time::SystemTime> {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()
@@ -765,12 +795,14 @@ pub(super) fn apply_background_tasks_snapshot(
 
     for row in tasks {
         let status = snapshot_status(row.status);
-        let start_time =
-            snapshot_system_time(&row.started_at).unwrap_or_else(std::time::SystemTime::now);
+        let start_time = snapshot_system_time(&row.started_at);
         let end_time = row.ended_at.as_deref().and_then(snapshot_system_time);
         match agent.session.bg_tasks.entry(row.task_id.clone()) {
             std::collections::btree_map::Entry::Occupied(mut occupied) => {
                 let task = occupied.get_mut();
+                if task.status != BgTaskStatus::Running && status == BgTaskStatus::Running {
+                    continue;
+                }
                 if task.status != status {
                     task.status = status;
                     changed = true;
@@ -780,8 +812,11 @@ pub(super) fn apply_background_tasks_snapshot(
                         }
                     }
                 }
-                task.start_time = start_time;
-                task.end_time = end_time.or(task.end_time);
+                if task.start_time != start_time || task.end_time != end_time {
+                    task.start_time = start_time;
+                    task.end_time = end_time;
+                    changed = true;
+                }
                 task.exit_code = row.exit_code;
                 task.signal = row.signal.clone();
                 if task.output_file.is_empty()
@@ -856,3 +891,7 @@ pub(super) fn apply_background_tasks_snapshot(
 #[cfg(test)]
 #[path = "background_inline_tests.rs"]
 mod inline_tests;
+
+#[cfg(test)]
+#[path = "background_timing_tests.rs"]
+mod timing_tests;

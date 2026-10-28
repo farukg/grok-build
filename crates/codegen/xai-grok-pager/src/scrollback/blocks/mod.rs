@@ -4,6 +4,7 @@ mod btw;
 mod cancel_cause;
 mod context_info;
 mod injected;
+pub(crate) mod message_symbol;
 pub mod markdown_content;
 pub mod mermaid_content;
 mod quote_bar;

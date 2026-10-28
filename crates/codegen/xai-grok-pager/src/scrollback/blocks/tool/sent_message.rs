@@ -150,8 +150,7 @@ enum MessageDetailStyle {
 pub struct SentMessageToolCallBlock {
     pub presentation: SentMessagePresentation,
     pub input: Option<SentMessageInput>,
-    pub started_at: Option<std::time::Instant>,
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
 }
 
 impl SentMessageToolCallBlock {
@@ -159,8 +158,7 @@ impl SentMessageToolCallBlock {
         Self {
             presentation,
             input,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
         }
     }
 
@@ -217,7 +215,7 @@ impl SentMessageToolCallBlock {
         ])
     }
 
-    /// Never muted. Suffixes name the requested delivery and, for a finished send that stalled, its admission time.
+    /// Never muted. Suffixes name the requested delivery and measured dispatch duration.
     fn expanded_header(&self, theme: &Theme) -> Line<'static> {
         let mut spans = vec![
             Span::styled(HEADER_LABEL, theme.primary().add_modifier(Modifier::BOLD)),
@@ -251,18 +249,11 @@ impl SentMessageToolCallBlock {
     }
 
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        self.elapsed_ms.or_else(|| {
-            self.started_at
-                .map(|start| start.elapsed().as_millis() as i64)
-        })
+        self.execution_clock.elapsed_ms()
     }
 
     pub(crate) fn searchable_text(&self) -> Option<String> {
@@ -433,27 +424,6 @@ impl BlockContent for SentMessageToolCallBlock {
         Some(AccentStyle::static_color(
             self.presentation.accent(&Theme::current(), ctx.is_running),
         ))
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        let theme = Theme::current();
-        match &self.presentation {
-            // A cancelled turn leaves the row Sending with the turn no longer running: gray, no animation.
-            SentMessagePresentation::Sending if ctx.is_running => {
-                Some(AccentStyle::animated_running(ctx, &theme))
-            }
-            SentMessagePresentation::Sending | SentMessagePresentation::Sent
-                if ctx.mode == DisplayMode::Collapsed =>
-            {
-                None
-            }
-            SentMessagePresentation::Sending
-            | SentMessagePresentation::Sent
-            | SentMessagePresentation::Rejected { .. }
-            | SentMessagePresentation::Unconfirmed { .. } => Some(AccentStyle::static_color(
-                self.presentation.accent(&theme, ctx.is_running),
-            )),
-        }
     }
 
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {

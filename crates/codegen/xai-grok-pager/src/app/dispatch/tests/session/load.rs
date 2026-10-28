@@ -1,5 +1,9 @@
 //! Tests for session loading, restore, pickers, and deep search.
 use super::*;
+#[path = "activity_source.rs"]
+mod activity_source;
+#[path = "load_live_continuation.rs"]
+mod load_live_continuation;
 fn expect_agent(app: &AppView, id: AgentId) -> &AgentView {
     let Some(agent) = app.agents.get(&id) else {
         panic!("expected agent {id:?}");
@@ -93,6 +97,7 @@ fn session_title_hydration_auto_leaves_display_name_none() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some(("Auto Title".into(), false)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -119,6 +124,7 @@ fn session_title_hydration_manual_restores_display_name_cold_cache_only() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some(("Disk Title".into(), true)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -134,6 +140,7 @@ fn session_title_hydration_manual_restores_display_name_cold_cache_only() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some(("Stale Disk Title".into(), true)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -165,6 +172,7 @@ fn session_title_hydration_does_not_clobber_live_generated_title() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some(("Stale Disk Title".into(), false)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -194,6 +202,7 @@ fn session_title_hydration_ignores_blank_title() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some(("   ".into(), true)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -216,6 +225,7 @@ fn session_title_hydration_skips_control_only_title() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some(("\u{1b}\u{07}\n\t".into(), true)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -251,6 +261,7 @@ fn session_title_hydration_sanitizes_and_caps_dirty_title() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: Some((dirty, true)),
             last_turn_summary: None,
             last_turn_summary_gen: 0,
@@ -282,6 +293,7 @@ fn last_turn_summary_hydration_is_cold_cache_only() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: None,
             last_turn_summary: Some("From disk".into()),
             last_turn_summary_gen: 0,
@@ -299,6 +311,7 @@ fn last_turn_summary_hydration_is_cold_cache_only() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: None,
             last_turn_summary: Some("Stale disk read".into()),
             last_turn_summary_gen: 0,
@@ -324,6 +337,7 @@ fn last_turn_summary_hydration_does_not_restore_after_rewind_clear() {
     dispatch(
         Action::TaskComplete(TaskResult::SessionMetaFromDisk {
             agent_id: id,
+            activity: None,
             title: None,
             last_turn_summary: Some("Pre-rewind disk summary".into()),
             last_turn_summary_gen: 0,

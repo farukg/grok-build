@@ -2223,8 +2223,8 @@ fn verb_group_header_selection_geometry_tracks_chrome() {
         member_line_at(false).is_none(),
         "collapsed slot must not map hidden member content"
     );
-    // Collapsed Read headers show basename only (`a1.rs`)
-    // The plain-text path scanner therefore never sees the absolute `/tmp/verbgeo/…` string and emits no file link for it
+    // Collapsed Read headers paint the stored path (`/tmp/verbgeo/a1.rs`; no session cwd here)
+    // The plain-text path scanner sees it only on the member's own row, never on the group verb header
     // Folded members still expose no links; expanded members remain selectable (asserted above)
     let member_link_rows = |expanded: bool| {
         let mut buf = Buffer::empty(viewport);
@@ -2623,7 +2623,7 @@ fn tool_header_link_target_overlay_covers_path_after_bullet() {
         header.content.spans.len()
     );
     let path_span = at(&header.content.spans, 2).content.as_ref();
-    assert_eq!(path_span, "foo.rs");
+    assert_eq!(path_span, "src/foo.rs");
     let target = header.link_target.as_ref().expect("link target on header");
     assert_eq!(
         target,
@@ -2751,8 +2751,9 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
             (
                 DisplayMode::Collapsed,
                 80,
-                "main.rs",
-                LinkPresentation::Opaque,
+                // The collapsed header paints the cwd-relative path, which VS Code can resolve itself.
+                "src/nested/main.rs",
+                LinkPresentation::SelfResolvingPath,
             ),
             (
                 DisplayMode::Collapsed,
@@ -2841,16 +2842,20 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
 }
 
 #[test]
-fn basename_headers_stay_grok_owned_for_duplicate_and_outside_targets() {
+fn collapsed_headers_paint_distinguishing_paths_and_keep_file_targets() {
     let cwd = std::path::PathBuf::from("/worktree");
     let terminal = official_vscode_remote_context();
+    // The relative and outside paints resolve on their own, so the terminal
+    // host owns the click; the semantic target stays the anchored absolute path.
     let cases = [
-        ("duplicate-a", "/worktree/src/a/main.rs"),
-        ("duplicate-b", "/worktree/src/b/main.rs"),
-        ("outside", "/opt/service/main.rs"),
+        ("duplicate-a", "/worktree/src/a/main.rs", "src/a/main.rs"),
+        ("duplicate-b", "/worktree/src/b/main.rs", "src/b/main.rs"),
+        ("outside", "/opt/service/main.rs", "/opt/service/main.rs"),
     ];
+    let mut painted_a: Option<String> = None;
+    let mut painted_b: Option<String> = None;
 
-    for (name, target) in cases {
+    for (name, target, expected_paint) in cases {
         for (tool, block) in [
             ("Read", RenderBlock::read(target, None)),
             ("Edit", RenderBlock::edit(target, None)),
@@ -2873,19 +2878,130 @@ fn basename_headers_stay_grok_owned_for_duplicate_and_outside_targets() {
 
             let painted = (0..viewport.height)
                 .map(|row| buffer_row_text(&buf, row).trim_end().to_owned())
-                .find(|row| row.contains("main.rs"))
-                .unwrap_or_else(|| panic!("{tool} {name} painted basename"));
-            assert!(!painted.contains('/'), "{tool} {name}: {painted}");
+                .find(|row| row.contains(expected_paint))
+                .unwrap_or_else(|| panic!("{tool} {name} painted {expected_paint}"));
             assert_eq!(
                 link.target,
                 crate::render::osc8::LinkTarget::File(Arc::from(std::path::Path::new(target))),
                 "{tool} {name} semantic target"
             );
-            assert_eq!(link.presentation, LinkPresentation::Opaque, "{tool} {name}");
+            assert_eq!(
+                link.presentation,
+                LinkPresentation::SelfResolvingPath,
+                "{tool} {name}: {painted}"
+            );
             let policy = file_link_policy(link, &terminal);
-            assert!(policy.osc8_url.is_some(), "{tool} {name}");
-            assert!(policy.open_target.is_some(), "{tool} {name}");
+            assert!(policy.osc8_url.is_none(), "{tool} {name}");
+            assert!(policy.open_target.is_none(), "{tool} {name}");
+            match name {
+                "duplicate-a" => painted_a = Some(painted),
+                "duplicate-b" => painted_b = Some(painted),
+                _ => {}
+            }
         }
+    }
+    let (Some(a), Some(b)) = (painted_a, painted_b) else {
+        panic!("expected both duplicate cases to paint");
+    };
+    assert_ne!(a, b, "same basename in different dirs must stay distinguishable");
+
+    // A shortened paint cannot resolve on its own, so grok owns the URL again.
+    let entry = ScrollbackEntry::new(RenderBlock::read("/worktree/src/a/main.rs", None));
+    let viewport = Rect::new(0, 0, 16, 5);
+    let (result, buf) = render_with_scratch_and_buffer_with_cwd(
+        std::slice::from_ref(&entry),
+        viewport,
+        0,
+        None,
+        Some(&cwd),
+    );
+    let link = result
+        .link_overlay
+        .links()
+        .iter()
+        .find(|link| matches!(&link.target, crate::render::osc8::LinkTarget::File(_)))
+        .expect("narrow Read file target");
+    let _ = (0..viewport.height)
+        .map(|row| buffer_row_text(&buf, row).trim_end().to_owned())
+        .find(|row| row.contains('\u{2026}'))
+        .expect("narrow painted truncation");
+    assert_eq!(link.presentation, LinkPresentation::Opaque);
+    let policy = file_link_policy(link, &terminal);
+    assert!(policy.osc8_url.is_some());
+    assert!(policy.open_target.is_some());
+}
+
+/// The collapsed Read/Edit header composes as [category glyph, verb, fitted
+/// cwd-relative path]: one glyph only, the path fitted to the width left after
+/// the glyph, and the link/selection identity still the anchored file.
+#[test]
+fn collapsed_tool_headers_compose_one_glyph_with_the_fitted_path() {
+    use crate::appearance::AppearanceConfig;
+    use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
+
+    // Pin color support so the category prefix is exactly `{glyph} `.
+    let _theme = crate::theme::cache::pin_theme();
+    let cwd = std::path::PathBuf::from("/repo");
+    let ctx = |width: u16| BlockContext {
+        mode: DisplayMode::Collapsed,
+        is_running: false,
+        width,
+        raw: false,
+        max_lines: None,
+        appearance: AppearanceConfig::default(),
+        is_selected: false,
+        cwd: Some(cwd.clone()),
+    };
+
+    for (glyph, block) in [
+        (crate::glyphs::tool_read_file(), RenderBlock::read("/repo/src/a/main.rs", None)),
+        (crate::glyphs::tool_edit_file(), RenderBlock::edit("/repo/src/a/main.rs", None)),
+    ] {
+        let wide = block.output(&ctx(80));
+        let header = at(&wide.lines, 0);
+        assert_eq!(
+            at(&header.content.spans, 0).content.as_ref(),
+            format!("{glyph} "),
+            "one category glyph from the compositor"
+        );
+        assert_eq!(at(&header.content.spans, 1).content.as_ref(), "");
+        assert_eq!(at(&header.content.spans, 2).content.as_ref(), "src/a/main.rs");
+        assert_eq!(header.chrome_prefix_width, 2);
+        assert_eq!(derive_selection_text(header), "src/a/main.rs");
+        assert_eq!(
+            selectable_cols(&header.content, &header.selectable).map(|cols| cols.start),
+            Some(2),
+            "selection shifts past the glyph"
+        );
+        assert!(
+            matches!(
+                header.link_target.as_ref(),
+                Some(crate::render::osc8::LinkTarget::File(path) if path.as_ref() == std::path::Path::new("/repo/src/a/main.rs"))
+            ),
+            "identity stays the anchored absolute path"
+        );
+
+        // 13 - glyph 2 = 11 columns for the path: front dirs shrink to one letter.
+        let narrow = block.output(&ctx(13));
+        let header = at(&narrow.lines, 0);
+        assert_eq!(at(&header.content.spans, 2).content.as_ref(), "s/a/main.rs");
+        let total: usize = header
+            .content
+            .spans
+            .iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        assert!(total <= 13, "composed header must fit the context width");
+        assert_eq!(
+            header
+                .content
+                .spans
+                .iter()
+                .filter(|s| s.content.as_ref() == format!("{glyph} "))
+                .count(),
+            1,
+            "no duplicate glyph prefix"
+        );
     }
 }
 
@@ -3193,10 +3309,10 @@ fn overlay_pretty_link_url_in_blockquote_wraps_correctly() {
     for frag in group.get(1..).into_iter().flatten() {
         assert_eq!(
             frag.col_start,
-            content_x + indent_width,
-            "OverlayLink on continuation row must start exactly at content_x + indent_width; got col_start={} but expected {}",
+            content_x + 2 + indent_width,
+            "OverlayLink must start after message chrome and quote indentation; got col_start={} but expected {}",
             frag.col_start,
-            content_x + indent_width
+            content_x + 2 + indent_width
         );
     }
 
@@ -3252,9 +3368,9 @@ fn overlay_pretty_link_url_in_list_wraps_correctly() {
     // Continuation OverlayLinks start at content_x (no indent offset)
     for frag in group.get(1..).into_iter().flatten() {
         assert_eq!(
-            frag.col_start, content_x,
-            "OverlayLink on list continuation row must start at content_x (no quote-bar indent); got col_start={} but expected {}",
-            frag.col_start, content_x
+            frag.col_start, content_x + 2,
+            "OverlayLink on list continuation row must start after message chrome; got col_start={} but expected {}",
+            frag.col_start, content_x + 2
         );
     }
 
@@ -3370,9 +3486,9 @@ fn overlay_list_arxiv_pretty_link_wraps_correctly() {
     // Continuation OverlayLinks start at content_x (no indent offset)
     for frag in group.get(1..).into_iter().flatten() {
         assert_eq!(
-            frag.col_start, content_x,
-            "OverlayLink on list continuation row must start at content_x (no quote-bar indent); got col_start={} but expected {}",
-            frag.col_start, content_x
+            frag.col_start, content_x + 2,
+            "OverlayLink on list continuation row must start after message chrome; got col_start={} but expected {}",
+            frag.col_start, content_x + 2
         );
     }
 

@@ -285,7 +285,7 @@ pub(super) fn insert_running_task(agent: &mut AgentView, task_id: &str, command:
                 cwd: "/tmp".into(),
                 output_file: "/tmp/out".into(),
                 status: BgTaskStatus::Running,
-                start_time: std::time::SystemTime::now(),
+                start_time: Some(std::time::SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,
@@ -2407,3 +2407,9 @@ mod models;
 mod mcp;
 mod git_head;
 mod version_mismatch;
+
+mod progress_lifecycle;
+mod terminal_activity_integration;
+mod sampling_lifecycle;
+
+mod tool_execution_timing;

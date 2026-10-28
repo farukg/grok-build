@@ -1818,7 +1818,7 @@ mod tests {
             cwd: "/tmp".into(),
             output_file: "/tmp/out".into(),
             status: crate::app::agent::BgTaskStatus::Done,
-            start_time: std::time::SystemTime::now(),
+            start_time: Some(std::time::SystemTime::now()),
             end_time: None,
             exit_code: Some(0),
             signal: None,

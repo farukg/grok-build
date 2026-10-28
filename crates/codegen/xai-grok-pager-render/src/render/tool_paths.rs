@@ -10,7 +10,10 @@ use super::line_utils::truncate_str;
 /// How a Read/Edit tool header displays its path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolPathSurface {
-    /// Basename only.
+    /// Path from the session cwd, fitted to the header budget: front
+    /// directories shrink to one letter, then the bounded final `…`
+    /// truncation. Without a cwd the stored path is shown, never a relativized
+    /// guess; outside the cwd the truthful anchored path.
     Collapsed,
     /// Relative to session cwd when lexically contained; else normalized.
     Expanded,
@@ -212,7 +215,8 @@ pub fn path_for_tool_surface(
     match surface {
         ToolPathSurface::Collapsed => {
             let budget = width.unwrap_or(usize::MAX).saturating_sub(reserved);
-            path_basename(path, budget)
+            let from_cwd = path_for_expanded_header(path, cwd);
+            crate::location_path::fit_location_path(&from_cwd, budget).into_owned()
         }
         ToolPathSurface::Expanded => path_for_expanded_header(path, cwd),
         ToolPathSurface::Fullscreen => path_for_fullscreen_header(path, cwd),
@@ -279,17 +283,94 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_surface_is_basename() {
+    fn collapsed_surface_shows_fitted_cwd_relative_path() {
+        let cwd = Path::new("/Users/me/project");
+        let deep = "/Users/me/project/crates/codegen/src/main.rs";
+        assert_eq!(
+            path_for_tool_surface(deep, ToolPathSurface::Collapsed, Some(cwd), Some(80), 0),
+            "crates/codegen/src/main.rs"
+        );
+        assert_eq!(
+            path_for_tool_surface(deep, ToolPathSurface::Collapsed, Some(cwd), Some(19), 0),
+            "c/c/src/main.rs"
+        );
         assert_eq!(
             path_for_tool_surface(
                 "/Users/me/project/src/main.rs",
                 ToolPathSurface::Collapsed,
-                None,
+                Some(cwd),
                 Some(80),
                 "Read ".len()
             ),
-            "main.rs"
+            "src/main.rs"
         );
+    }
+
+    #[test]
+    fn collapsed_surface_budget_subtracts_the_reserved_suffix() {
+        let cwd = Path::new("/Users/me/project");
+        assert_eq!(
+            path_for_tool_surface(
+                "/Users/me/project/src/main.rs",
+                ToolPathSurface::Collapsed,
+                Some(cwd),
+                Some(12),
+                5
+            ),
+            "src/ma\u{2026}"
+        );
+    }
+
+    #[test]
+    fn collapsed_surface_outside_cwd_stays_truthful_anchored_path() {
+        let cwd = Path::new("/Users/me/project");
+        assert_eq!(
+            path_for_tool_surface("/etc/hosts", ToolPathSurface::Collapsed, Some(cwd), Some(80), 0),
+            "/etc/hosts"
+        );
+        assert_eq!(
+            path_for_tool_surface(
+                "/opt/service/deep/dir/main.rs",
+                ToolPathSurface::Collapsed,
+                Some(cwd),
+                Some(12),
+                0
+            ),
+            "/o/s/d/dir/\u{2026}"
+        );
+    }
+
+    #[test]
+    fn collapsed_surface_without_cwd_shows_the_stored_path() {
+        assert_eq!(
+            path_for_tool_surface("src/main.rs", ToolPathSurface::Collapsed, None, Some(80), 0),
+            "src/main.rs"
+        );
+        assert_eq!(
+            path_for_tool_surface("/etc/hosts", ToolPathSurface::Collapsed, None, Some(80), 0),
+            "/etc/hosts"
+        );
+    }
+
+    #[test]
+    fn collapsed_surface_distinguishes_same_basename_in_different_dirs() {
+        let cwd = Path::new("/repo");
+        let a = path_for_tool_surface(
+            "/repo/crates/a/main.rs",
+            ToolPathSurface::Collapsed,
+            Some(cwd),
+            Some(12),
+            0,
+        );
+        let b = path_for_tool_surface(
+            "/repo/crates/b/main.rs",
+            ToolPathSurface::Collapsed,
+            Some(cwd),
+            Some(12),
+            0,
+        );
+        assert_eq!(a, "c/a/main.rs");
+        assert_eq!(b, "c/b/main.rs");
     }
 
     #[test]

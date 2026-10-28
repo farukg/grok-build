@@ -1,8 +1,56 @@
 pub use crate::headless::OutputFormat;
-use clap::{ArgAction, Parser, Subcommand, ValueHint};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand, ValueHint};
 use clap_complete::Shell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+#[derive(Debug, Clone, Subcommand)]
+pub enum SessionAuditCommand {
+    /// Print the versioned native decoder capability and build provenance as TOML
+    Capabilities,
+    /// Audit a complete copied sessions directory without modifying any data
+    Tree {
+        #[arg(long, value_hint = ValueHint::DirPath)]
+        sessions_root: PathBuf,
+        /// Lower the native finding budget (maximum 4096)
+        #[arg(long, default_value_t = xai_grok_shell::session::storage::audit::MAX_ISSUES)]
+        max_issues: usize,
+        /// Lower the inventory entry budget (maximum 100000)
+        #[arg(long, default_value_t = xai_grok_shell::session::storage::audit::MAX_INVENTORY_ENTRIES)]
+        max_inventory_entries: usize,
+        /// Lower the conservative TOML response budget (maximum 64 MiB)
+        #[arg(long, default_value_t = xai_grok_shell::session::storage::audit::MAX_RESPONSE_BYTES)]
+        max_response_bytes: usize,
+    },
+}
+
+#[derive(Parser)]
+#[command(name = "session-audit", about = "Read-only native session decoding; no configuration, runtime or provider startup")]
+struct SessionAuditArgs {
+    #[command(subcommand)]
+    command: SessionAuditCommand,
+}
+
+impl SessionAuditCommand {
+    pub fn parse_early_cli() -> Option<Self> {
+        let mut args = std::env::args_os();
+        let executable = args.next()?;
+        let first = args.next()?;
+        let bin = std::path::Path::new(&executable).file_name().and_then(|name| name.to_str())
+            .filter(|name| matches!(*name, "grok" | "agent")).unwrap_or("grok");
+        if first == "session-audit" {
+            return Some(SessionAuditArgs::parse_from(std::iter::once(std::ffi::OsString::from(format!("{bin} session-audit"))).chain(args)).command);
+        }
+        if !std::env::args_os().skip(2).any(|arg| arg == "session-audit") { return None; }
+        let matches = PagerArgs::command().defer(|command| command)
+            .get_matches_from(std::iter::once(std::ffi::OsString::from(bin)).chain(std::iter::once(first)).chain(args));
+        let ("session-audit", subcommand) = matches.subcommand()? else { return None; };
+        match SessionAuditArgs::from_arg_matches(subcommand) {
+            Ok(args) => Some(args.command),
+            Err(error) => error.exit(),
+        }
+    }
+}
+
 /// Top-level commands for the pager binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
@@ -50,6 +98,11 @@ pub enum Command {
     Models,
     /// List, search, or restore sessions
     Sessions(crate::sessions_cmd::SessionsArgs),
+    /// Read-only native session decoding; no configuration, runtime or provider startup
+    SessionAudit {
+        #[command(subcommand)]
+        command: SessionAuditCommand,
+    },
     /// Print persisted token and cost usage for a session
     Usage(crate::usage_cmd::UsageArgs),
     /// Fetch and install managed configuration
@@ -404,6 +457,7 @@ pub struct LeaderArgs {
     version = xai_grok_version::full_version(),
     about = "Grok Build TUI",
     disable_version_flag = true,
+    defer = pager_environment,
     next_display_order = None,
     help_template = "\
 {before-help}{about-with-newline}
@@ -704,7 +758,7 @@ pub struct PagerArgs {
     )]
     pub background_wait_timeout_secs: u64,
     /// Sandbox profile for filesystem and network access.
-    #[arg(long, env = "GROK_SANDBOX", value_name = "PROFILE")]
+    #[arg(long, value_name = "PROFILE")]
     pub sandbox: Option<String>,
     /// Session storage mode: local or writeback.
     #[arg(long = "storage-mode", value_name = "MODE", hide = true)]
@@ -749,7 +803,7 @@ pub struct PagerArgs {
     #[arg(long = "fullscreen", conflicts_with = "minimal")]
     pub fullscreen: bool,
     /// Write sampling events to ~/.grok/logs/sampling.jsonl.
-    #[arg(long = "log-sampling", env = "GROK_LOG_SAMPLING", hide = true)]
+    #[arg(long = "log-sampling", hide = true)]
     pub log_sampling: bool,
     /// Show the login screen even when credentials are already available.
     #[arg(long = "force-login", hide = true)]
@@ -809,6 +863,11 @@ fn strip_cur_dir(path: PathBuf) -> PathBuf {
         .filter(|component| !matches!(component, std::path::Component::CurDir))
         .collect()
 }
+fn pager_environment(command: clap::Command) -> clap::Command {
+    command.mut_arg("sandbox", |arg| arg.env("GROK_SANDBOX"))
+        .mut_arg("log_sampling", |arg| arg.env("GROK_LOG_SAMPLING"))
+}
+
 impl PagerArgs {
     pub fn memory_enabled_override(&self) -> Option<bool> {
         if self.experimental_memory {

@@ -284,14 +284,12 @@ pub fn set_minimal_committed_plan_id(app: &mut AppView, id: Option<String>) {
     app.minimal_state.committed_plan_tool_call_id = id;
 }
 
-/// `AgentView::last_activity` (read).
-pub fn last_activity(v: &AgentView) -> Option<&TurnActivity> {
-    v.last_activity.as_ref()
+pub fn action_display_state(v: &AgentView) -> &crate::app::agent::AgentState {
+    v.wake_display_state().or(v.current_actions_display_state()).unwrap_or(&v.session.state)
 }
 
-/// `AgentView::last_activity` (write).
-pub fn set_last_activity(v: &mut AgentView, val: Option<TurnActivity>) {
-    v.last_activity = val;
+pub fn current_action_started_at(v: &AgentView) -> Option<std::time::Instant> {
+    v.current_action_started_at()
 }
 
 /// `AgentView::extensions_modal`.

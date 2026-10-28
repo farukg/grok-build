@@ -222,8 +222,7 @@ fn cancel_before_first_activity_resets_state_and_discards_orphan_response() {
     assert_eq!(expect_agent(&app, id).prompt.text(), "rewind me");
     assert_eq!(expect_agent(&app, id).scrollback.len(), 0);
     assert!(expect_agent(&app, id).turn_started_at.is_none());
-    assert!(expect_agent(&app, id).activity_started_at.is_none());
-    assert!(expect_agent(&app, id).last_activity.is_none());
+    assert!(expect_agent(&app, id).current_action_started_at().is_none());
     assert!(expect_agent(&app, id).session.in_flight_prompt.is_none());
     assert!(expect_agent(&app, id).session.current_prompt_id.is_none());
     dispatch(

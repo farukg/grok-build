@@ -61,6 +61,19 @@ impl AgentMessageBlock {
         self.content.text()
     }
 
+    pub(crate) fn source_len(&self) -> usize { self.content.with_source(str::len) }
+
+    pub(crate) fn source_tail(&self, offset: usize) -> Option<String> {
+        self.content.with_source(|source| source.get(offset..).map(str::to_owned))
+    }
+
+    pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
+        let Some(tail) = self.source_tail(offset) else { return false; };
+        *self = historical.clone();
+        if !tail.is_empty() { self.push_chunk_deferred(&tail); }
+        true
+    }
+
     /// Whether the source markdown is empty (zero-alloc, unlike `text()`).
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()

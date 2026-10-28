@@ -2786,6 +2786,7 @@ fn writing_tool_call_delta_clears_retry_activity() {
         max_retries: 5,
         reason: "overloaded".into(),
         error_type: None,
+        due_at: None,
     };
     let mut tracker = AcpUpdateTracker::new();
     tracker.set_retry_activity(Some(retrying.clone()));
@@ -3830,7 +3831,7 @@ fn pascal_case_task_tool_call_is_suppressed_from_scrollback() {
         &mut sb,
     );
     assert_eq!(sb.len(), 0, "PascalCase Task tool must be suppressed");
-    assert!(tracker.suppressed_tools.contains_key("tc1"));
+    assert!(tracker.suppressed_tools.contains_key(&ToolKey::Legacy("tc1".into())));
     tracker.handle_update(tool_update_completed("tc1"), &meta(), &mut sb);
     assert_eq!(
         sb.len(),
@@ -3868,7 +3869,7 @@ fn failed_task_tool_renders_despite_suppression() {
     assert!(tracker.handle_update(failed, &meta(), &mut sb));
     assert_eq!(sb.len(), 1, "failed spawn must render in scrollback");
     assert!(
-        !tracker.suppressed_tools.contains_key("tc1"),
+        !tracker.suppressed_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "failure consumes the suppression stash"
     );
     assert!(
@@ -3896,7 +3897,7 @@ fn failed_bg_plumbing_tool_stays_hidden() {
     assert!(!tracker.handle_update(failed, &meta(), &mut sb));
     assert_eq!(sb.len(), 0, "failed bg poll must stay suppressed");
     assert!(
-        !tracker.suppressed_tools.contains_key("tc1"),
+        !tracker.suppressed_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "terminal status must still clear the stash"
     );
     let pre_failed = acp::SessionUpdate::ToolCall(
@@ -3925,7 +3926,7 @@ fn pre_failed_task_tool_renders_despite_suppression() {
     assert!(tracker.handle_update(failed_call, &meta(), &mut sb));
     assert_eq!(sb.len(), 1, "pre-failed spawn must render in scrollback");
     assert!(
-        !tracker.suppressed_tools.contains_key("tc1"),
+        !tracker.suppressed_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "pre-failed spawn is never stashed"
     );
     assert!(
@@ -3960,7 +3961,7 @@ fn failed_update_racing_ahead_of_suppressed_call_renders() {
         "the orphan must be consumed"
     );
     assert!(
-        !tracker.suppressed_tools.contains_key("tc1"),
+        !tracker.suppressed_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "an already-failed spawn is never stashed"
     );
     assert!(
@@ -3984,7 +3985,7 @@ fn completed_update_racing_ahead_of_suppressed_call_stays_hidden() {
         "the orphan must be consumed"
     );
     assert!(
-        !tracker.suppressed_tools.contains_key("tc1"),
+        !tracker.suppressed_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "a terminal call is never stashed"
     );
     assert!(
@@ -4262,7 +4263,7 @@ fn eager_execute_function_name_is_loading_placeholder_not_label() {
         other => panic!("expected refined Execute, got {other:?}"),
     }
     assert!(tracker.bg_deferred_tools.contains_key("tc1"));
-    assert!(tracker.pending_tools.contains_key("tc1"));
+    assert!(tracker.pending_tools.contains_key(&ToolKey::Legacy("tc1".into())));
 }
 /// `raw_input.command: ""` must still map Other+function-name to loading Execute (not leave a bold `run_terminal_command` Other label).
 #[test]
@@ -4320,7 +4321,7 @@ fn real_bash_command_is_not_dropped_on_bg_deferral() {
         1,
         "real command=bash must be kept for demotion, not dropped as placeholder"
     );
-    assert!(tracker.pending_tools.contains_key("tc1"));
+    assert!(tracker.pending_tools.contains_key(&ToolKey::Legacy("tc1".into())));
     assert!(tracker.bg_deferred_tools.contains_key("tc1"));
 }
 /// A completed function-name `Other` tool call that still carries BashOutput must preserve the command output and exit-code error.
@@ -4381,7 +4382,7 @@ fn bg_tool_late_detection_defers_existing_entry() {
     );
     assert_eq!(sb.len(), 1, "Execute block should be created");
     assert!(
-        tracker.pending_tools.get("tc1").unwrap().entry_id.is_some(),
+        tracker.pending_tools.get(&ToolKey::Legacy("tc1".into())).unwrap().entry_id.is_some(),
         "entry_id should be set"
     );
     let modified = tracker.handle_update(
@@ -4391,7 +4392,7 @@ fn bg_tool_late_detection_defers_existing_entry() {
     );
     assert!(!modified, "late bg detection should suppress the update");
     assert!(
-        tracker.pending_tools.contains_key("tc1"),
+        tracker.pending_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "tool must stay in pending_tools so demotion handler can find entry_id"
     );
     assert!(
@@ -4520,7 +4521,7 @@ fn finish_turn_finishes_bg_deferred_tool_entries() {
         "tool should be in bg_deferred_tools",
     );
     assert!(
-        tracker.pending_tools.contains_key("tc1"),
+        tracker.pending_tools.contains_key(&ToolKey::Legacy("tc1".into())),
         "tool should still be in pending_tools",
     );
     tracker.finish_turn(&mut sb);

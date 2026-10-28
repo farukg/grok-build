@@ -1032,7 +1032,8 @@ impl AgentView {
         };
         let turn_status_parked = if dock_covers_cues { false } else { parked };
         let wake_display_state = self.wake_display_state();
-        let display_state = wake_display_state.unwrap_or(&self.session.state);
+        let source_display_state = self.current_actions_display_state();
+        let display_state = wake_display_state.or(source_display_state).unwrap_or(&self.session.state);
         let send_now_gap = self.send_now_awaiting_current() && display_state.is_idle();
         let status_state = if send_now_gap {
             crate::app::agent::AgentState::TurnRunning
@@ -2060,41 +2061,6 @@ impl AgentView {
             let tick = self.scrollback.animation_tick();
             let live = self.resolve_turn_activity();
             let activity = if send_now_gap { None } else { live };
-            if crate::acp::tracker::is_phase_transition(
-                self.last_activity.as_ref(),
-                activity.as_ref(),
-            ) {
-                if let Some(prev) = &self.last_activity {
-                    let phase_ms = self
-                        .activity_started_at
-                        .map(|t| t.elapsed().as_millis() as u64)
-                        .unwrap_or(0);
-                    let prev_label = prev.as_label();
-                    let next_label = activity.as_ref().map(|a| a.as_label()).unwrap_or("idle");
-                    let sid = self.session.session_id.as_ref().map(|s| s.0.as_ref());
-                    crate::unified_log::debug(
-                        "turn.phase_transition",
-                        sid,
-                        Some(serde_json::json!({
-                            "from": prev_label,
-                            "to": next_label,
-                            "phase_elapsed_ms": phase_ms,
-                        })),
-                    );
-                }
-                let hook_wait_started = matches!(
-                    activity,
-                    Some(crate::acp::tracker::TurnActivity::Waiting(
-                        crate::acp::tracker::WaitingReason::Hooks { .. }
-                    ))
-                )
-                .then(|| self.session.tracker.hooks_running_since())
-                .flatten();
-                self.activity_started_at = Some(hook_wait_started.unwrap_or_else(Instant::now));
-            }
-            if activity != self.last_activity {
-                self.last_activity = activity.clone();
-            }
             self.hit_plan_approval_status.clear();
             if let Some(ref pav) = self.plan_approval_view {
                 let diamond_color = crate::views::turn_status::pending_diamond_color(
@@ -2155,10 +2121,10 @@ impl AgentView {
                         state: &status_state,
                         activity: &activity,
                         turn_elapsed: self.turn_elapsed(),
-                        activity_started_at: self.activity_started_at,
+                        activity_started_at: activity.as_ref().and_then(|_| self.current_action_started_at()),
                         tick,
                         drain_blocked: turn_status_drain_blocked,
-                        buttons: Some(turn_status::MouseButtons {
+                        buttons: (source_display_state.is_none() || wake_display_state.is_some()).then_some(turn_status::MouseButtons {
                             cancel_hovered: self.hit_cancel_button.hovered,
                             bg_hovered: self.hit_bg_button.hovered,
                             watching_hovered: self.hit_watching_cue.hovered,

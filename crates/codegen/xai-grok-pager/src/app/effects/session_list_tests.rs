@@ -433,3 +433,29 @@ fn nonleader_roster_response_preserves_root_fields_and_child_parentage() {
     assert_eq!(rows[1].session_kind.as_deref(), Some("subagent"));
     assert_eq!(rows[1].parent_session_id.as_deref(), Some("parent"));
 }
+
+#[test]
+fn list_activity_preserves_exact_wire_provenance_and_legacy_absence() {
+    let updated = chrono::Utc::now().to_rfc3339();
+    let active = "2000-01-01T00:00:00.123Z";
+    for row in [
+        serde_json::json!({"sessionId": "top", "summary": "title", "source": "local", "cwd": "/repo", "updatedAt": updated, "lastActiveAt": active}),
+        serde_json::json!({"sessionId": "acp", "summary": "title", "source": "local", "cwd": "/repo", "updatedAt": updated, "_meta": {"lastActiveAt": active}}),
+    ] {
+        let entries = parse(serde_json::json!({"sessions": [row]}));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].last_active_at.unwrap().timestamp_millis(), 946_684_800_123);
+    }
+    for activity in [None, Some(Value::Null)] {
+        let mut entry = row("legacy", "local");
+        if let Some(activity) = activity {
+            entry["lastActiveAt"] = activity;
+        }
+        let entries = parse(serde_json::json!({"sessions": [entry]}));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].last_active_at, None);
+    }
+    let entries = parse(serde_json::json!({"sessions": [conversation_row("unknown")]}));
+    assert_eq!(entries[0].last_active_at, None);
+    assert_eq!(entries[0].updated_at, chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
+}

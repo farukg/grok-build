@@ -850,8 +850,10 @@ impl Renderable for EntryRenderer<'_> {
 
         // Post-pass: adjust bullet color based on block state. The running wave is skipped so the entry reads as "paused
         // on you", not "loading".
-        if skip_rows == 0 && self.entry.block.has_bullet(&ctx) {
-            let bullet_style = self.entry.block.bullet(&ctx);
+        if skip_rows == 0
+            && let Some(symbol) = self.entry.message_symbol(&ctx).filter(|symbol| symbol.is_visible(&ctx))
+        {
+            let bullet_style = symbol.style(&ctx);
             let bullet_y = content_area.y + if has_vpad { 1 } else { 0 };
 
             if bullet_y >= max_row {
@@ -1039,10 +1041,8 @@ mod tests {
     }
 
     #[test]
-    fn pending_user_input_keeps_diamond_bullet_with_static_color() {
-        // While a tool is blocked on a permission / question we keep the default Diamond bullet but freeze its color
-        // There is no character swap and no wave brightness animation
-        // The bullet must read the same glyph at every tick so the eye sees "paused on you", not the running-wave loading cue
+    fn pending_user_input_keeps_category_glyph_with_static_color() {
+        // Permission/question waits retain the category glyph and freeze its color.
         use crate::scrollback::blocks::tool::{OtherToolCallBlock, ToolCallBlock};
 
         let theme = Theme::current();
@@ -1062,8 +1062,8 @@ mod tests {
             let cell = buf.cell((3, 0)).unwrap();
             assert_eq!(
                 cell.symbol(),
-                "◆",
-                "pending tool must keep the Diamond bullet at tick {tick}"
+                crate::glyphs::history_tool(),
+                "pending tool must keep its category glyph at tick {tick}"
             );
             match first_fg {
                 None => first_fg = Some(cell.fg),
@@ -1076,9 +1076,8 @@ mod tests {
     }
 
     #[test]
-    fn non_pending_running_tool_keeps_default_bullet() {
-        // Sanity check: when is_pending_user_input is false we leave the normal Diamond bullet alone
-        // The running wave animation runs on top of it as before
+    fn non_pending_running_tool_keeps_category_glyph() {
+        // Running recolors the category glyph without replacing it.
         use crate::scrollback::blocks::tool::{OtherToolCallBlock, ToolCallBlock};
 
         let theme = Theme::current();
@@ -1092,7 +1091,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme).with_tick(7);
         renderer.render(area, &mut buf);
 
-        assert_eq!(buf.cell((3, 0)).unwrap().symbol(), "◆");
+        assert_eq!(buf.cell((3, 0)).unwrap().symbol(), crate::glyphs::history_tool());
     }
 
     /// Collect the symbols from a row range in the buffer into a String.

@@ -160,6 +160,7 @@ fn g_switches_and_persists_the_effective_display_scope() {
     let root = dir.path().join("panel-settings");
     let mut agent = view(&root, Some("sess-a"));
     open_f7(&mut agent);
+    let _ = press(&mut agent, KeyCode::End);
     assert!(screen(&draw(&mut agent)).contains("display: global"));
 
     assert!(matches!(
@@ -177,6 +178,7 @@ fn g_switches_and_persists_the_effective_display_scope() {
     assert_eq!(stored(&read_toml(&session_file(&root, "sess-a")), "scope", "message_display"), Some("global"));
     let mut restored = view(&root, Some("sess-a"));
     open_f7(&mut restored);
+    let _ = press(&mut restored, KeyCode::End);
     assert!(screen(&draw(&mut restored)).contains("display: global"));
     assert!(!global_file(&root).exists(), "switching scope changes no global value");
 }
@@ -205,6 +207,7 @@ fn g_says_why_a_view_without_a_session_cannot_save_to_one() {
 fn a_view_that_keeps_no_settings_says_so_and_still_works() {
     let _theme = crate::theme::cache::pin_theme();
     let mut agent = open_sidebar();
+    let _ = press(&mut agent, KeyCode::End);
     assert!(screen(&draw(&mut agent)).contains("not saved"));
     let _ = toggle_display_scope(&mut agent);
     assert!(toast(&agent).contains("not stored"), "{}", toast(&agent));
@@ -260,7 +263,7 @@ fn section_folds_stay_global_while_display_values_use_session_scope() {
     open_f7(&mut agent);
     let _ = toggle_display_scope(&mut agent);
     focus_row(&mut agent, "Message display");
-    let _ = press(&mut agent, KeyCode::Char(' '));
+    let _ = press(&mut agent, KeyCode::Left);
     assert!(!screen(&draw(&mut agent)).contains("File reads"));
     assert_eq!(
         stored(&read_toml(&global_file(&root)), "sidebar", "message_display"),
@@ -286,6 +289,34 @@ fn message_display_table(file: &Path) -> toml::map::Map<String, toml::Value> {
         .and_then(toml::Value::as_table)
         .cloned()
         .unwrap_or_default()
+}
+
+#[test]
+fn the_display_title_choice_is_stored_in_the_effective_display_scope() {
+    let _theme = crate::theme::cache::pin_theme();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("panel-settings");
+    let leaves = MessageKind::settings_kinds().len() - 1;
+    let mut agent = view(&root, Some("sess-a"));
+    open_f7(&mut agent);
+    focus_row(&mut agent, "Message display");
+    let _ = press(&mut agent, KeyCode::Char(' '));
+    for &kind in MessageKind::settings_kinds() {
+        if kind == MessageKind::Injected {
+            continue;
+        }
+        assert_eq!(form(&agent, kind), Some(DisplayForm::Collapsed), "{kind:?}");
+    }
+    let global = message_display_table(&global_file(&root));
+    assert_eq!(global.len(), leaves, "every leaf kind is stored as chosen: {global:?}");
+    assert!(global.values().all(|value| value.as_str() == Some("collapsed")));
+
+    let _ = toggle_display_scope(&mut agent);
+    focus_row(&mut agent, "Message display");
+    let _ = press(&mut agent, KeyCode::Char(' '));
+    let session = message_display_table(&session_file(&root, "sess-a"));
+    assert_eq!(session.len(), leaves);
+    assert!(session.values().all(|value| value.as_str() == Some("expanded")));
 }
 
 #[test]
@@ -466,6 +497,7 @@ fn moving_a_view_to_another_session_applies_that_sessions_settings() {
         "global stays"
     );
     open_f7(&mut agent);
+    let _ = press(&mut agent, KeyCode::End);
     assert!(screen(&draw(&mut agent)).contains("display: global"));
 }
 

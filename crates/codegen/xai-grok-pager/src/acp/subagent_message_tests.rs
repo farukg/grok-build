@@ -15,6 +15,28 @@ const LABEL: &str = "Explore \u{201c}find callers\u{201d}";
 /// Distinct from every subagent id below: the registry is keyed by the tool's id, not the child session.
 const CHILD_SID: &str = "child-sid";
 
+fn uncertain_output() -> SendSubagentMessageOutput {
+    use xai_grok_tools::implementations::grok_build::task::{
+        native_recovery::{MessageRecoveryRef, payload_digest, parent_message_delivery_id, parent_message_prompt_id},
+        root_control::AgentMessageGeneration,
+        types::{ActiveAgentMessageOperation, ActiveMessageReceiver},
+    };
+    let message_id = "019410c7-4673-7000-8000-000000000001";
+    SendSubagentMessageOutput::AdmissionUncertain {
+        recovery_ref: MessageRecoveryRef {
+            delivery_id: parent_message_delivery_id(message_id),
+            message_id: message_id.into(),
+            prompt_id: parent_message_prompt_id(message_id),
+            receiver: ActiveMessageReceiver {
+                session_id: CHILD_SID.into(),
+                generation: AgentMessageGeneration::mint(42),
+            },
+            operation: ActiveAgentMessageOperation::Steer,
+            payload_digest: payload_digest("follow up"),
+        }.into(),
+    }
+}
+
 fn raw_output(output: SendSubagentMessageOutput) -> serde_json::Value {
     serde_json::to_value(ToolOutput::SendSubagentMessage(output)).expect("serialize tool output")
 }
@@ -365,7 +387,7 @@ fn typed_outcomes_map_exhaustively_to_delivery_presentations() {
             "Message rejected \u{b7} subagent sub-123",
         ),
         (
-            Output::AdmissionUncertain,
+            uncertain_output(),
             "Message unconfirmed \u{b7} subagent sub-123",
         ),
         (
@@ -627,7 +649,7 @@ fn pager_routes_every_terminal_category_to_the_dedicated_block() {
             max_bytes: 8,
             observed_bytes: 9,
         },
-        Output::AdmissionUncertain,
+        uncertain_output(),
         Output::NotAcceptedBeforeDeadline,
         Output::ChannelClosed,
     ];

@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 
 use crate::appearance::AppearanceConfig;
@@ -78,14 +77,9 @@ fn phase_mark(state: &str) -> &'static str {
 impl BlockContent for WorkflowBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
-        let bold = if ctx.is_selected {
-            theme.primary().add_modifier(Modifier::BOLD)
-        } else {
-            theme.muted().add_modifier(Modifier::BOLD)
-        };
         let muted = theme.muted();
 
-        let mut spans = vec![Span::styled(format!("{} ", crate::glyphs::history_workflow()), bold)];
+        let mut spans = Vec::new();
         let verb = match &self.status {
             WorkflowBlockStatus::Running => format!("{}: ", self.name),
             WorkflowBlockStatus::Done { elapsed } => {
@@ -169,29 +163,6 @@ impl BlockContent for WorkflowBlock {
         }
     }
 
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        let theme = Theme::current();
-        match &self.status {
-            WorkflowBlockStatus::Running => {
-                if ctx.is_running {
-                    Some(AccentStyle::animated_running(ctx, &theme))
-                } else {
-                    None
-                }
-            }
-            WorkflowBlockStatus::Done { .. } => {
-                Some(AccentStyle::static_color(theme.accent_success))
-            }
-            WorkflowBlockStatus::Failed { .. } => {
-                Some(AccentStyle::static_color(theme.accent_error))
-            }
-            WorkflowBlockStatus::Cancelled { .. } => {
-                Some(AccentStyle::static_color(theme.gray_dim))
-            }
-            WorkflowBlockStatus::Paused { .. } => Some(AccentStyle::static_color(theme.warning)),
-        }
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false
     }
@@ -209,10 +180,6 @@ impl BlockContent for WorkflowBlock {
     }
 
     fn is_selectable(&self) -> bool {
-        true
-    }
-
-    fn has_bullet(&self, _ctx: &BlockContext) -> bool {
         true
     }
 
@@ -320,7 +287,8 @@ mod tests {
             elapsed: Duration::from_secs(1),
         };
         let theme = Theme::current();
-        let bullet = block.bullet(&test_ctx()).expect("terminal bullet");
+        let bullet = crate::scrollback::RenderBlock::Workflow(block.clone())
+            .bullet(&test_ctx()).expect("terminal bullet");
         assert_eq!(bullet, AccentStyle::static_color(theme.gray_dim));
         assert!(block.accent(&test_ctx()).is_none());
     }

@@ -437,6 +437,56 @@ pub fn history_workflow() -> &'static str {
     if is_legacy_windows_console() { "=" } else { "≋" }
 }
 
+pub fn history_user() -> &'static str {
+    if is_legacy_windows_console() { ">" } else { "❯" }
+}
+
+pub fn history_assistant() -> &'static str {
+    if is_legacy_windows_console() { "*" } else { "✦" }
+}
+
+pub fn history_thinking() -> &'static str {
+    if is_legacy_windows_console() { "~" } else { "∴" }
+}
+
+pub fn history_message() -> &'static str { "→" }
+
+pub fn history_btw() -> &'static str { "?" }
+
+pub fn history_integration() -> &'static str {
+    if is_legacy_windows_console() { "&" } else { "⇄" }
+}
+
+pub fn history_tool() -> &'static str {
+    if is_legacy_windows_console() { ":" } else { "⚒" }
+}
+
+pub fn history_system() -> &'static str {
+    if is_legacy_windows_console() { "i" } else { "ⓘ" }
+}
+
+pub fn history_injected() -> &'static str {
+    if is_legacy_windows_console() { "+" } else { "↪" }
+}
+
+pub fn history_instructions() -> &'static str {
+    if is_legacy_windows_console() { "#" } else { "≡" }
+}
+
+pub fn history_reminder() -> &'static str {
+    if is_legacy_windows_console() { "!" } else { "↻" }
+}
+
+pub fn history_notification() -> &'static str { "!" }
+
+pub fn history_summary() -> &'static str {
+    if is_legacy_windows_console() { "=" } else { "▥" }
+}
+
+pub fn history_environment() -> &'static str {
+    if is_legacy_windows_console() { "/" } else { "⌂" }
+}
+
 /// One funnel for toast chrome that legacy ConHost cannot render. Non-legacy platforms return the borrow unchanged.
 pub fn legacy_glyph_fallback(s: &str) -> Cow<'_, str> {
     if !is_legacy_windows_console() {
@@ -627,6 +677,20 @@ mod tests {
             ("⋈", "&"),
             ("◷", "o"),
             ("≋", "="),
+            ("❯", ">"),
+            ("✦", "*"),
+            ("∴", "~"),
+            ("⇄", "&"),
+            ("→", "→"),
+            ("?", "?"),
+            ("⚒", ":"),
+            ("ⓘ", "i"),
+            ("↪", "+"),
+            ("≡", "#"),
+            ("↻", "!"),
+            ("!", "!"),
+            ("▥", "="),
+            ("⌂", "/"),
         ] {
             assert_eq!(fancy.width(), 1, "tool glyph {fancy:?} must be 1 column");
             assert_eq!(

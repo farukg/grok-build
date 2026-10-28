@@ -164,21 +164,6 @@ impl RowState {
         )
     }
 
-    /// Sort priority used inside a state group: higher = floats up.
-    /// Pinned rows always float to the absolute top regardless of state.
-    pub fn group_priority(self) -> u8 {
-        match self {
-            Self::NeedsInput => 6,
-            Self::Working => 5,
-            Self::Idle => 3,
-            // Below Idle (these aren't loaded here, so they're less immediately
-            // actionable) but above Done/Failed (they're still live, resumable sessions)
-            Self::Inactive => 2,
-            Self::Completed => 1,
-            Self::Failed => 0,
-        }
-    }
-
     /// Human-readable group header.
     pub fn group_label(self) -> &'static str {
         match self {

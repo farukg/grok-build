@@ -113,6 +113,26 @@ pub(crate) enum RetryLabelStyle {
     Compact,
 }
 
+/// Remaining time to the scheduler's next-attempt deadline, derived on read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RetryCountdown {
+    /// The deadline has passed; the next attempt has not observably started yet.
+    Due,
+    /// Time left until the deadline.
+    In(std::time::Duration),
+}
+
+/// Countdown for a retry activity's deadline anchor; `None` when no deadline is known.
+pub(crate) fn retry_countdown(due_at: Option<std::time::Instant>) -> Option<RetryCountdown> {
+    let due = due_at?;
+    let remaining = due.saturating_duration_since(std::time::Instant::now());
+    Some(if remaining.is_zero() {
+        RetryCountdown::Due
+    } else {
+        RetryCountdown::In(remaining)
+    })
+}
+
 /// `{headline} | Retrying …` using [`format_request_failure`] headlines, else the bare retry clause.
 pub(crate) fn format_retry_activity_label(
     attempt: u32,
@@ -120,19 +140,40 @@ pub(crate) fn format_retry_activity_label(
     reason: &str,
     error_type: Option<&str>,
     style: RetryLabelStyle,
+    countdown: Option<RetryCountdown>,
 ) -> String {
-    let base = retry_clause(attempt, max_retries, style);
+    let base = retry_clause(attempt, max_retries, style, countdown);
     match classified_retry_headline(reason, error_type) {
         Some(headline) => format!("{headline} | {base}"),
         None => base,
     }
 }
 
-pub(crate) fn retry_clause(attempt: u32, max_retries: u32, style: RetryLabelStyle) -> String {
+pub(crate) fn retry_clause(
+    attempt: u32,
+    max_retries: u32,
+    style: RetryLabelStyle,
+    countdown: Option<RetryCountdown>,
+) -> String {
     // Longer headline plus U+2026 wraps this status row into the prompt.
-    match style {
+    let base = match style {
         RetryLabelStyle::Status => format!("Retrying (attempt {attempt})..."),
         RetryLabelStyle::Compact => format!("Retrying ({attempt}/{max_retries})"),
+    };
+    append_retry_countdown(base, countdown)
+}
+
+pub(crate) fn retry_wait_label(due_at: Option<std::time::Instant>) -> String {
+    append_retry_countdown("Waiting for retry…".to_owned(), retry_countdown(due_at))
+}
+
+fn append_retry_countdown(base: String, countdown: Option<RetryCountdown>) -> String {
+    match countdown {
+        Some(RetryCountdown::Due) => format!("{base} (attempt due)"),
+        Some(RetryCountdown::In(remaining)) => {
+            format!("{base} (next try in {})", crate::util::format_duration(remaining))
+        }
+        None => base,
     }
 }
 
@@ -981,11 +1022,11 @@ mod tests {
     fn retry_activity_label_uses_request_failure_headline() {
         let dns = "request error: error sending request for url (https://api.x.ai/v1/responses): client error (Connect): dns error: failed to lookup address information: Temporary failure in name resolution";
         assert_eq!(
-            format_retry_activity_label(8, 10, dns, None, RetryLabelStyle::Status),
+            format_retry_activity_label(8, 10, dns, None, RetryLabelStyle::Status, None),
             "Connection failed | Retrying (attempt 8)..."
         );
         assert!(
-            !format_retry_activity_label(8, 10, dns, None, RetryLabelStyle::Status)
+            !format_retry_activity_label(8, 10, dns, None, RetryLabelStyle::Status, None)
                 .contains("http")
         );
         assert_eq!(
@@ -994,12 +1035,13 @@ mod tests {
                 5,
                 "API error (status 429 Too Many Requests): rate limit exceeded",
                 None,
-                RetryLabelStyle::Compact
+                RetryLabelStyle::Compact,
+                None
             ),
             "Rate limited (429) | Retrying (2/5)"
         );
         assert_eq!(
-            format_retry_activity_label(2, 5, "", None, RetryLabelStyle::Status),
+            format_retry_activity_label(2, 5, "", None, RetryLabelStyle::Status, None),
             "Retrying (attempt 2)..."
         );
         assert_eq!(
@@ -1008,12 +1050,13 @@ mod tests {
                 3,
                 "Re-authenticated after 401; retrying request",
                 None,
-                RetryLabelStyle::Status
+                RetryLabelStyle::Status,
+                None
             ),
             "Retrying (attempt 1)..."
         );
         assert_eq!(
-            format_retry_activity_label(3, 5, "weird dump", Some("http"), RetryLabelStyle::Status),
+            format_retry_activity_label(3, 5, "weird dump", Some("http"), RetryLabelStyle::Status, None),
             "Connection failed | Retrying (attempt 3)..."
         );
         assert_eq!(
@@ -1022,12 +1065,13 @@ mod tests {
                 5,
                 "slow down",
                 Some("rate_limited"),
-                RetryLabelStyle::Compact
+                RetryLabelStyle::Compact,
+                None
             ),
             "Rate limited | Retrying (2/5)"
         );
         assert_eq!(
-            format_retry_activity_label(1, 3, dns, Some("a_future_kind"), RetryLabelStyle::Status),
+            format_retry_activity_label(1, 3, dns, Some("a_future_kind"), RetryLabelStyle::Status, None),
             "Retrying (attempt 1)..."
         );
         assert_eq!(
@@ -1038,6 +1082,25 @@ mod tests {
             )
             .headline,
             "Request failed"
+        );
+    }
+
+    #[test]
+    fn retry_clause_appends_scheduler_countdown_and_due_state() {
+        // Half-second margins keep the truncated-second buckets stable while the test runs.
+        let soon = std::time::Instant::now() + std::time::Duration::from_millis(12_500);
+        assert_eq!(
+            retry_clause(2, 5, RetryLabelStyle::Status, retry_countdown(Some(soon))),
+            "Retrying (attempt 2)... (next try in 12s)"
+        );
+        let past = std::time::Instant::now() - std::time::Duration::from_secs(5);
+        assert_eq!(
+            retry_clause(2, 5, RetryLabelStyle::Compact, retry_countdown(Some(past))),
+            "Retrying (2/5) (attempt due)"
+        );
+        assert_eq!(
+            retry_clause(2, 5, RetryLabelStyle::Status, retry_countdown(None)),
+            "Retrying (attempt 2)..."
         );
     }
 }

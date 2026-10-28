@@ -15,24 +15,18 @@ pub struct ListDirToolCallBlock {
     pub path: String,
     pub output: String,
     pub error: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Whether this ordinary list targets a memory v2 scope.
     pub is_memory_activity: bool,
 }
 
 impl ListDirToolCallBlock {
-    /// Pre-completed blocks have no meaningful local timing; `started_at` is `None`.
-    /// Timing is only set for blocks that enter a running UI state (via `set_last_running(true)` in `ScrollbackState`).
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             output: String::new(),
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             is_memory_activity: false,
         }
     }
@@ -56,35 +50,16 @@ impl ListDirToolCallBlock {
         self.error.is_none()
     }
 
-    /// Set error; compute elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
-    /// Finalize elapsed time from `started_at`.
-    ///
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     pub fn set_output(&mut self, output: impl Into<String>) {
@@ -104,7 +79,7 @@ impl ListDirToolCallBlock {
             theme.fg(theme.path)
         };
 
-        let prefix = format!("{} ", crate::glyphs::tool_list_dir());
+        let prefix = String::new();
         let entry_count = self.output.lines().filter(|l| !l.trim().is_empty()).count();
         let suffix = if self.error.is_none() && entry_count > 0 {
             let s = if entry_count == 1 { "y" } else { "ies" };
@@ -196,15 +171,6 @@ impl BlockContent for ListDirToolCallBlock {
         None // ListDir blocks never have an accent line
     }
 
-    fn bullet(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else {
-            None
-        }
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false
     }
@@ -272,13 +238,13 @@ mod tests {
         let block = ListDirToolCallBlock::new("src").with_output("a.rs\nb.rs\nsub/\n");
         assert_eq!(
             header_text(&block),
-            format!("{} src (3 entries)", crate::glyphs::tool_list_dir())
+            "src (3 entries)".to_owned()
         );
 
         let single = ListDirToolCallBlock::new("src").with_output("lonely.rs\n");
         assert_eq!(
             header_text(&single),
-            format!("{} src (1 entry)", crate::glyphs::tool_list_dir())
+            "src (1 entry)".to_owned()
         );
     }
 
@@ -287,13 +253,13 @@ mod tests {
         let empty = ListDirToolCallBlock::new("src");
         assert_eq!(
             header_text(&empty),
-            format!("{} src", crate::glyphs::tool_list_dir())
+            "src".to_owned()
         );
 
         let failed = ListDirToolCallBlock::new("gone").with_error("no such directory");
         assert_eq!(
             header_text(&failed),
-            format!("{} gone", crate::glyphs::tool_list_dir())
+            "gone".to_owned()
         );
     }
 }

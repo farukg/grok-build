@@ -66,6 +66,35 @@ pub struct RosterEntry {
     pub origin: RosterOrigin,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionActivitySnapshot {
+    pub session_id: agent_client_protocol::SessionId,
+    pub last_change_unix_ms: i64,
+}
+
+impl SessionActivitySnapshot {
+    pub(crate) fn from_picker_entry(entry: &crate::app::app_view::SessionPickerEntry) -> Self {
+        Self {
+            session_id: agent_client_protocol::SessionId::new(entry.id.clone()),
+            last_change_unix_ms: entry.last_active_at.unwrap_or(entry.updated_at).timestamp_millis(),
+        }
+    }
+
+    pub(crate) fn instant(&self) -> Option<std::time::Instant> {
+        let millis = u64::try_from(self.last_change_unix_ms).ok().filter(|ms| *ms > 0)?;
+        let wall = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis))?;
+        static CLOCK: std::sync::OnceLock<(std::time::Instant, std::time::SystemTime)> =
+            std::sync::OnceLock::new();
+        let (instant, system) = CLOCK.get_or_init(|| {
+            (std::time::Instant::now(), std::time::SystemTime::now())
+        });
+        match system.duration_since(wall) {
+            Ok(age) => instant.checked_sub(age),
+            Err(future) => instant.checked_add(future.duration()),
+        }
+    }
+}
+
 /// `RosterEntry::session_kind` value marking a subagent child session (the dashboard's
 /// subagent lane lists exactly these rows).
 pub const SESSION_KIND_SUBAGENT: &str = "subagent";

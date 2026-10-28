@@ -7,7 +7,6 @@
 
 use std::time::Duration;
 
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -208,11 +207,6 @@ fn quoted_desc(desc: &str, max_width: usize) -> String {
 impl BlockContent for SubagentBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
-        let bold = if ctx.is_selected {
-            theme.primary().add_modifier(Modifier::BOLD)
-        } else {
-            theme.muted().add_modifier(Modifier::BOLD)
-        };
         let muted = theme.muted();
         // Bullet-aware budget: the bullet glyph `RenderBlock::output` prepends occupies the
         // first cells of the row, so the summary must fit inside the content width.
@@ -232,11 +226,10 @@ impl BlockContent for SubagentBlock {
                     self.role.as_deref(),
                     self.model.as_deref(),
                 );
-                let overhead = crate::glyphs::history_subagent().width() + 1 + verb.width()
+                let overhead = verb.width()
                     + meta.width() + activity_suffix.width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(overhead));
                 let mut spans = vec![
-                    Span::styled(format!("{} ", crate::glyphs::history_subagent()), bold),
                     Span::styled(verb, muted),
                     Span::styled(desc, muted),
                 ];
@@ -249,11 +242,9 @@ impl BlockContent for SubagentBlock {
             // Completed: Subagent completed in Xs: "description"
             (SubagentBlockKind::Completed { elapsed }, _) => {
                 let time_str = format_duration(*elapsed);
-                let prefix_len = crate::glyphs::history_subagent().width() + 1
-                    + format!("completed in {time_str}: ").width();
+                let prefix_len = format!("completed in {time_str}: ").width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled(format!("{} ", crate::glyphs::history_subagent()), bold),
                     Span::styled(format!("completed in {time_str}: "), muted),
                     Span::styled(desc, muted),
                 ])
@@ -265,11 +256,9 @@ impl BlockContent for SubagentBlock {
                     .as_deref()
                     .map(|e| format!(" ({e})"))
                     .unwrap_or_default();
-                let prefix_len = crate::glyphs::history_subagent().width() + 1
-                    + format!("failed in {time_str}{detail}: ").width();
+                let prefix_len = format!("failed in {time_str}{detail}: ").width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled(format!("{} ", crate::glyphs::history_subagent()), bold),
                     Span::styled(format!("failed in {time_str}{detail}: "), muted),
                     Span::styled(desc, muted),
                 ])
@@ -277,11 +266,9 @@ impl BlockContent for SubagentBlock {
             // Cancelled: Subagent cancelled in Xs: "description"
             (SubagentBlockKind::Cancelled { elapsed }, _) => {
                 let time_str = format_duration(*elapsed);
-                let prefix_len = crate::glyphs::history_subagent().width() + 1
-                    + format!("cancelled in {time_str}: ").width();
+                let prefix_len = format!("cancelled in {time_str}: ").width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled(format!("{} ", crate::glyphs::history_subagent()), bold),
                     Span::styled(format!("cancelled in {time_str}: "), muted),
                     Span::styled(desc, muted),
                 ])
@@ -310,26 +297,6 @@ impl BlockContent for SubagentBlock {
         }
     }
 
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        let theme = Theme::current();
-        match &self.kind {
-            SubagentBlockKind::Started => {
-                if ctx.is_running {
-                    Some(AccentStyle::animated_running(ctx, &theme))
-                } else {
-                    // Finished: gray bullet (same as bg task "started" after completion)
-                    None
-                }
-            }
-            SubagentBlockKind::Completed { .. } => {
-                Some(AccentStyle::static_color(theme.accent_success))
-            }
-            SubagentBlockKind::Failed { .. } | SubagentBlockKind::Cancelled { .. } => {
-                Some(AccentStyle::static_color(theme.accent_error))
-            }
-        }
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false
     }
@@ -355,10 +322,6 @@ impl BlockContent for SubagentBlock {
     }
 
     fn is_selectable(&self) -> bool {
-        true
-    }
-
-    fn has_bullet(&self, _ctx: &BlockContext) -> bool {
         true
     }
 

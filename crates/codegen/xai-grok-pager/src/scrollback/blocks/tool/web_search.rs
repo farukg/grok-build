@@ -25,9 +25,7 @@ pub struct WebSearchToolCallBlock {
     pub citations: Vec<String>,
     /// Error message if the tool call failed (None means success).
     pub error: Option<String>,
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Header label override (default: "Web Search ").
     pub label: Option<String>,
     /// True for X search (backend); suppresses the content body since structured post results are not exposed to the TUI client.
@@ -41,8 +39,7 @@ impl WebSearchToolCallBlock {
             content: None,
             citations: Vec::new(),
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             label: None,
             is_x_search: false,
         }
@@ -62,28 +59,15 @@ impl WebSearchToolCallBlock {
     }
 
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        self.elapsed_ms.or_else(|| {
-            self.started_at
-                .map(|start| start.elapsed().as_millis() as i64)
-        })
+        self.execution_clock.elapsed_ms()
     }
 
     /// Render the header line: Web Search `query` `(N sources)`. The suffix is therefore always visible.
@@ -101,7 +85,7 @@ impl WebSearchToolCallBlock {
         };
 
         let provider = if self.is_x_search { "X " } else { "" };
-        let prefix = format!("{} {provider}", crate::glyphs::tool_web_search());
+        let prefix = provider.to_owned();
 
         match max_width {
             Some(w) => {
@@ -283,17 +267,6 @@ impl BlockContent for WebSearchToolCallBlock {
             Some(AccentStyle::animated(theme.accent_running))
         } else {
             Some(AccentStyle::static_color(theme.accent_tool))
-        }
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else if ctx.mode == DisplayMode::Collapsed {
-            None
-        } else {
-            self.accent(ctx)
         }
     }
 

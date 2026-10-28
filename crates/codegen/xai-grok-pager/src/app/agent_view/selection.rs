@@ -1048,7 +1048,7 @@ impl AgentView {
                 cwd: Some(self.session.cwd.clone()),
             };
 
-            if let Some(text) = entry.block.copy_visible_text_in_state(&ctx)
+            if let Some(text) = entry.copy_visible_text_in_state(&ctx)
                 && !text.is_empty()
             {
                 parts.push(text);

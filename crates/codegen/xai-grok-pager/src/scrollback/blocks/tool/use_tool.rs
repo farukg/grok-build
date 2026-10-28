@@ -23,10 +23,7 @@ pub struct UseToolCallBlock {
     pub output: Option<String>,
     /// Error message if the tool call failed.
     pub error: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
 }
 
 impl UseToolCallBlock {
@@ -36,8 +33,7 @@ impl UseToolCallBlock {
             input_args: Vec::new(),
             output: None,
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
         }
     }
 
@@ -51,28 +47,15 @@ impl UseToolCallBlock {
     }
 
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        self.elapsed_ms.or_else(|| {
-            self.started_at
-                .map(|start| start.elapsed().as_millis() as i64)
-        })
+        self.execution_clock.elapsed_ms()
     }
 
     pub fn copy_text(&self) -> String {
@@ -197,17 +180,6 @@ impl BlockContent for UseToolCallBlock {
             Some(AccentStyle::animated(theme.accent_running))
         } else {
             Some(AccentStyle::static_color(theme.accent_tool))
-        }
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else if ctx.mode == DisplayMode::Collapsed {
-            None
-        } else {
-            self.accent(ctx)
         }
     }
 

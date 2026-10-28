@@ -269,15 +269,17 @@ impl ToolUsageStats {
             match &entry.block {
                 crate::scrollback::block::RenderBlock::ToolCall(tc) => {
                     let category = ToolCategory::from_tool_block(tc);
-                    let status = if entry.is_running {
-                        BlockStatus::Running
-                    } else if matches!(tc, ToolCallBlock::SentMessage(message) if message.is_unconfirmed())
-                    {
-                        BlockStatus::Unconfirmed
-                    } else if Self::tool_block_is_failure(tc) {
-                        BlockStatus::Failed
-                    } else {
-                        BlockStatus::Success
+                    let status = match entry.tool_completion() {
+                        crate::scrollback::types::ToolCompletion::Completed => {
+                            if matches!(tc, ToolCallBlock::SentMessage(message) if message.is_unconfirmed()) {
+                                BlockStatus::Unconfirmed
+                            } else { BlockStatus::Success }
+                        }
+                        crate::scrollback::types::ToolCompletion::Failed
+                        | crate::scrollback::types::ToolCompletion::Cancelled => BlockStatus::Failed,
+                        crate::scrollback::types::ToolCompletion::Unconfirmed => {
+                            if entry.is_running { BlockStatus::Running } else { BlockStatus::Unconfirmed }
+                        }
                     };
 
                     let elapsed = Self::tool_block_elapsed_ms(tc);
@@ -342,41 +344,8 @@ impl ToolUsageStats {
         stats
     }
 
-    /// Check if a tool block completed with a definite failure.
-    fn tool_block_is_failure(tc: &ToolCallBlock) -> bool {
-        match tc {
-            ToolCallBlock::Execute(b) => !b.is_success(),
-            ToolCallBlock::Read(b) => !b.is_success(),
-            ToolCallBlock::Edit(b) => !b.is_success(),
-            ToolCallBlock::Search(b) => !b.is_success(),
-            ToolCallBlock::ListDir(b) => !b.is_success(),
-            ToolCallBlock::WebFetch(b) => !b.is_success(),
-            ToolCallBlock::WebSearch(b) => !b.is_success(),
-            ToolCallBlock::IntegrationSearch(b) => !b.is_success(),
-            ToolCallBlock::UseTool(b) => !b.is_success(),
-            ToolCallBlock::MemorySearch(b) => !b.is_success(),
-            ToolCallBlock::SentMessage(b) => b.is_failure(),
-            ToolCallBlock::Skill(b) => !b.is_success(),
-            ToolCallBlock::Other(b) => !b.is_success(),
-        }
-    }
-
     fn tool_block_elapsed_ms(tc: &ToolCallBlock) -> Option<i64> {
-        match tc {
-            ToolCallBlock::Execute(b) => b.elapsed_ms(),
-            ToolCallBlock::Read(b) => b.elapsed_ms(),
-            ToolCallBlock::Edit(b) => b.elapsed_ms(),
-            ToolCallBlock::Search(b) => b.elapsed_ms(),
-            ToolCallBlock::ListDir(b) => b.elapsed_ms(),
-            ToolCallBlock::WebFetch(b) => b.elapsed_ms(),
-            ToolCallBlock::WebSearch(b) => b.elapsed_ms(),
-            ToolCallBlock::IntegrationSearch(b) => b.elapsed_ms(),
-            ToolCallBlock::UseTool(b) => b.elapsed_ms(),
-            ToolCallBlock::MemorySearch(b) => b.elapsed_ms(),
-            ToolCallBlock::SentMessage(b) => b.elapsed_ms(),
-            ToolCallBlock::Skill(b) => b.elapsed_ms(),
-            ToolCallBlock::Other(b) => b.elapsed_ms(),
-        }
+        tc.execution_clock().elapsed_ms()
     }
 
     /// Get categories sorted by count (descending).
@@ -395,6 +364,21 @@ mod tests {
         EditToolCallBlock, ExecuteToolCallBlock, ReadToolCallBlock, ToolCallBlock,
     };
     use crate::scrollback::state::ScrollbackState;
+
+    fn canonical_execute_statuses() -> ScrollbackState {
+        let mut scrollback = ScrollbackState::new();
+        let mut tracker = crate::acp::tracker::AcpUpdateTracker::new();
+        for (id, command, status) in [
+            ("success", "echo hello", agent_client_protocol::ToolCallStatus::Completed),
+            ("failed", "bad_command", agent_client_protocol::ToolCallStatus::Failed),
+        ] {
+            tracker.handle_update(agent_client_protocol::SessionUpdate::ToolCall(
+                agent_client_protocol::ToolCall::new(id, command)
+                    .kind(agent_client_protocol::ToolKind::Execute).status(status)),
+                &crate::acp::meta::NotificationMeta::default(), &mut scrollback);
+        }
+        scrollback
+    }
 
     #[test]
     fn test_category_stats_percent() {
@@ -480,17 +464,7 @@ mod tests {
 
     #[test]
     fn test_from_scrollback_failed_blocks() {
-        let mut scrollback = ScrollbackState::new();
-
-        // Push execute blocks: one with error, one without
-        let mut success_block = ExecuteToolCallBlock::new("echo hello");
-        success_block.finish();
-        scrollback.push_block(RenderBlock::ToolCall(ToolCallBlock::Execute(success_block)));
-
-        let mut failed_block =
-            ExecuteToolCallBlock::new("bad_command").with_error("command not found");
-        failed_block.finish();
-        scrollback.push_block(RenderBlock::ToolCall(ToolCallBlock::Execute(failed_block)));
+        let scrollback = canonical_execute_statuses();
 
         let stats = ToolUsageStats::from_scrollback(&scrollback);
 
@@ -549,16 +523,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_block_is_failure() {
-        let success = ExecuteToolCallBlock::new("echo test");
-        assert!(!ToolUsageStats::tool_block_is_failure(
-            &ToolCallBlock::Execute(success)
-        ));
-
-        let mut failed = ExecuteToolCallBlock::new("bad");
-        failed.set_error(Some("error".into()));
-        assert!(ToolUsageStats::tool_block_is_failure(
-            &ToolCallBlock::Execute(failed)
-        ));
+    fn canonical_tool_status_classifies_usage_outcomes() {
+        let scrollback = canonical_execute_statuses();
+        let stats = ToolUsageStats::from_scrollback(&scrollback);
+        let execute = &stats.categories[&ToolCategory::Execute];
+        assert_eq!(execute.by_status.get(&BlockStatus::Success), Some(&1));
+        assert_eq!(execute.failed_count(), 1);
     }
 }

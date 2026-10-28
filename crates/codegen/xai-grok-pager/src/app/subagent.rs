@@ -507,14 +507,13 @@ fn replay_inherited_updates(
                     .handle_update(update, &meta, &mut child_view.scrollback);
             }
             ReplayedUpdate::Xai(update, meta) => {
-                if !crate::app::acp_handler::admit_compact_lifecycle(child_view, &update, meta.as_ref()) {
-                    return;
-                }
                 // Same window as `session/load`: historical xAI events must not start live commands
                 // (family-switch compact) or defer compact outcomes to a turn that never comes.
                 let was_loading = child_view.session.loading_replay;
                 child_view.session.loading_replay = true;
-                crate::app::acp_handler::apply_child_view_session_event(child_view, &update, false);
+                if crate::app::acp_handler::admit_compact_lifecycle(child_view, &update, meta.as_ref()) {
+                    crate::app::acp_handler::apply_child_view_session_event(child_view, &update, false);
+                }
                 child_view.session.loading_replay = was_loading;
             }
         }
@@ -1077,11 +1076,13 @@ pub(crate) fn format_activity_label(activity: &crate::acp::tracker::TurnActivity
         TurnActivity::Retrying {
             attempt,
             max_retries,
+            due_at,
             ..
         } => crate::app::error_display::retry_clause(
             *attempt,
             *max_retries,
             crate::app::error_display::RetryLabelStyle::Compact,
+            crate::app::error_display::retry_countdown(*due_at),
         ),
         TurnActivity::WritingToolCall(writing) => writing.label(),
         TurnActivity::Waiting(reason) => reason.label(),

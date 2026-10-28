@@ -456,16 +456,63 @@ pub(crate) fn deliver_doctor_message(app: &mut AppView, preferred: AgentId, mess
     });
 }
 pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec<Effect> {
+    if let TaskResult::WithPublication { agent_id, binding, snapshot, cut, result } = result {
+        use xai_grok_shell::session::current_actions::CurrentActionsSnapshot;
+        if !app.agents.get(&agent_id).is_some_and(|view| view.current_actions_binding().as_ref() == Some(&binding)) { return Vec::new(); }
+        let publication = crate::app::effects::current_actions::LoadPublication { binding, snapshot, cut };
+        let context = publication.context();
+        let crate::app::effects::current_actions::LoadPublication { binding, snapshot, cut } = publication;
+        let capture = match &snapshot {
+            CurrentActionsSnapshot::Current(current) => Some(current.clone()),
+            CurrentActionsSnapshot::Unavailable => None,
+        };
+        let succeeded = crate::app::effects::current_actions::load_succeeded(&result);
+        let effects = dispatch_task_result(TaskResult::WithCurrentActions { agent_id, context, snapshot, result }, app);
+        if succeeded && let Some(current) = capture && let Some(view) = app.agents.get_mut(&agent_id) {
+            view.complete_publication_load(&binding, &current, &cut);
+        }
+        return effects;
+    }
+    let mut tagged = &result;
+    loop {
+        if let TaskResult::WithCurrentActions { agent_id, context, result, .. } = tagged {
+            if !app.agents.get(agent_id).is_some_and(|view| view.current_actions_binding().as_ref() == Some(context.binding())) { return Vec::new(); }
+            if let crate::app::agent_view::CurrentActionsReadContext::Observe(context) = context
+                && !app.agents.get(agent_id).is_some_and(|view| view.accepts_current_actions_context(context)) { return Vec::new(); }
+            tagged = result;
+        } else if let TaskResult::WithPublication { agent_id, binding, result, .. } = tagged {
+            if !app.agents.get(agent_id).is_some_and(|view| view.current_actions_binding().as_ref() == Some(binding)) { return Vec::new(); }
+            tagged = result;
+        } else if let TaskResult::WithPinnedMemoryMode { result, .. } = tagged { tagged = result; }
+        else { break; }
+    }
     let result = match result {
-        TaskResult::WithPinnedMemoryMode {
-            agent_id,
-            memory_mode,
-            result,
-        } => {
-            if let Some(agent) = app.agents.get_mut(&agent_id) {
-                agent.memory_mode = memory_mode;
+        TaskResult::WithCurrentActions { agent_id, context, snapshot, result } => {
+            use crate::app::agent_view::CurrentActionsReadContext;
+            match context {
+                CurrentActionsReadContext::Attach(context) => {
+                    let valid = match &snapshot {
+                        xai_grok_shell::session::current_actions::CurrentActionsSnapshot::Current(current) => {
+                            current.binding == context.binding && current.version.incarnation == context.incarnation
+                        }
+                        xai_grok_shell::session::current_actions::CurrentActionsSnapshot::Unavailable => true,
+                    };
+                    if !valid || snapshot.validate().is_err() || !app.agents.get_mut(&agent_id).is_some_and(|view| view.bind_current_actions(context.clone())) { return Vec::new(); }
+                    crate::app::acp_handler::current_actions::apply_snapshot(app, agent_id, &context, snapshot);
+                }
+                CurrentActionsReadContext::Observe(context) => {
+                    if !app.agents.get(&agent_id).is_some_and(|view| view.accepts_current_actions_context(&context)) { return Vec::new(); }
+                    crate::app::acp_handler::current_actions::apply_snapshot(app, agent_id, &context, snapshot);
+                }
+                CurrentActionsReadContext::Unavailable(binding) => {
+                    if let Some(view) = app.agents.get_mut(&agent_id) { view.current_actions_unavailable_for_binding(&binding); }
+                }
             }
-            *result
+            return dispatch_task_result(*result, app);
+        }
+        TaskResult::WithPinnedMemoryMode { agent_id, memory_mode, result } => {
+            if let Some(agent) = app.agents.get_mut(&agent_id) { agent.memory_mode = memory_mode; }
+            return dispatch_task_result(*result, app);
         }
         result => result,
     };
@@ -483,9 +530,12 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         crate::app::workspace_sync::request(app);
     }
     match result {
-        TaskResult::WithPinnedMemoryMode { .. } => {
-            unreachable!("pinned memory mode wrapper is removed before task-result dispatch")
+        TaskResult::QueueInterjectComplete { operation, binding_epoch, result } => {
+            app.apply_queue_send_now_reply(operation, binding_epoch, result);
+            Vec::new()
         }
+        TaskResult::WithCurrentActions { .. } | TaskResult::WithPinnedMemoryMode { .. }
+        | TaskResult::WithPublication { .. } => Vec::new(),
         TaskResult::SessionCreated {
             agent_id,
             session_id,
@@ -640,11 +690,15 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         ),
         TaskResult::SessionMetaFromDisk {
             agent_id,
+            activity,
             title,
             last_turn_summary,
             last_turn_summary_gen,
         } => {
             if let Some(agent) = app.agents.get_mut(&agent_id) {
+                if let Some(activity) = activity {
+                    agent.restore_session_activity(&activity);
+                }
                 if let Some((raw, is_manual)) = title
                     && let Some(t) =
                         xai_grok_shell::session::persistence::sanitize_and_cap_title(&raw)
@@ -855,7 +909,16 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             http_status,
             prompt_id,
         } => {
-            let effects = handle_prompt_response(app, agent_id, result, http_status, prompt_id);
+            let matches_owner = app.agents.get(&agent_id).is_some_and(|view|
+                prompt_id.is_some() && prompt_id.as_deref() == view.session.current_prompt_id.as_deref());
+            let effects = if matches_owner {
+                crate::app::agent_view::load_continuation::with_load_delivery(app, agent_id,
+                    crate::app::agent_view::load_continuation::LoadDelivery::Live, |app| {
+                        if let Some(view) = app.agents.get_mut(&agent_id)
+                            && let Some(prompt) = view.session.current_prompt_id.clone() { view.settle_current_actions_prompt_rpc(&prompt); }
+                        handle_prompt_response(app, agent_id, result, http_status, prompt_id)
+                    })
+            } else { handle_prompt_response(app, agent_id, result, http_status, prompt_id) };
             app.refresh_status_line_for(agent_id);
             effects
         }
@@ -1032,7 +1095,14 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             vec![]
         }
         TaskResult::CompactComplete { agent_id, invocation_id, result } => {
-            handle_compact_complete(app, agent_id, invocation_id, result)
+            let matches_owner = app.agents.get(&agent_id).is_some_and(|view| view.compact_invocations.get(&invocation_id)
+                .is_some_and(|invocation| invocation.binding_epoch == view.session_binding_epoch
+                    && invocation.settlement != crate::app::agent::CompactInvocationSettlement::RpcSettled));
+            if matches_owner {
+                crate::app::agent_view::load_continuation::with_load_delivery(app, agent_id,
+                    crate::app::agent_view::load_continuation::LoadDelivery::Live,
+                    |app| handle_compact_complete(app, agent_id, invocation_id, result))
+            } else { handle_compact_complete(app, agent_id, invocation_id, result) }
         }
         TaskResult::MemoryFlushComplete { agent_id, result } => handle_memory_command_complete(
             app,

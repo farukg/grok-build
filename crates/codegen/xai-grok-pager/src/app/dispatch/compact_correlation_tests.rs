@@ -128,7 +128,7 @@ fn correlated_rejection_precedes_new_inline_automatic_ownership() {
             assert!(agent.session.in_flight_prompt.is_none());
             assert!(agent.session.compact_held_prompt.is_some());
             let started = agent.turn_started_at;
-            let activity_started = agent.activity_started_at;
+            let activity_started = agent.current_action_started_at();
             let before = events(&app).len();
             for phase in [CompactPhase::Queued, CompactPhase::Executing] {
                 notify_manual(&mut app, manual, SessionUpdate::AutoCompactStarted {
@@ -145,7 +145,7 @@ fn correlated_rejection_precedes_new_inline_automatic_ownership() {
             assert_eq!(events(&app).len(), before);
             assert_eq!(agent.session.turn_activity(), Some(TurnActivity::AutoCompacting));
             assert_eq!(agent.turn_started_at, started);
-            assert_eq!(agent.activity_started_at, activity_started);
+            assert_eq!(agent.current_action_started_at(), activity_started);
             assert_eq!(agent.session.current_prompt_id.as_deref(), Some(prompt_id.as_str()));
             assert!(agent.session.compact_held_prompt.is_some());
             notify(&mut app, terminals()[0].clone());

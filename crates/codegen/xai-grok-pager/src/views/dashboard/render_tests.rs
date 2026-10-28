@@ -2578,16 +2578,14 @@ fn idle_overflow_is_focusable_when_capped() {
     );
 }
 
-/// Pinned top-level agents are lifted into a dedicated "Pinned" section at the very top (above the state groups).
-/// A pinned (e.g. idle) agent thus reads as pinned rather than landing under its state header.
-/// The pinned rows are NOT counted in the state-group headers.
+/// An already-leading pin run keeps its section without changing the input row order.
 #[test]
-fn render_rows_emits_pinned_section_at_top() {
+fn render_rows_sections_only_already_leading_pins() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 80, 30));
     let mut state = DashboardState::new();
     assert_eq!(state.grouping, Grouping::State);
-    // Input is pre-sorted (pinned first), as `sort_rows` guarantees.
-    let mut pinned = header_test_row(1, RowState::Idle, "pinned idle row");
+    // The running pin already leads in activity order.
+    let mut pinned = header_test_row(1, RowState::Working, "pinned working row");
     pinned.pinned = true;
     let rows = vec![
         pinned,
@@ -2616,13 +2614,13 @@ fn render_rows_emits_pinned_section_at_top() {
         "unpinned idle row must keep its own `Idle 1` header, got: {content:?}",
     );
     assert!(
-        content.contains("pinned idle row"),
+        content.contains("pinned working row"),
         "pinned row label renders"
     );
 }
 
 #[test]
-fn pinned_rows_render_in_manual_order_after_activity_changes() {
+fn pinned_rows_render_in_activity_order_without_moving_selection() {
     for grouping in [Grouping::State, Grouping::Directory] {
         for width in [30, 100] {
             let mut first = header_test_row(2, RowState::Idle, "first pin");
@@ -2637,6 +2635,9 @@ fn pinned_rows_render_in_manual_order_after_activity_changes() {
                 second,
                 header_test_row(3, RowState::Working, "unpinned"),
             ];
+            for (row, seconds) in rows.iter_mut().zip([1_000, 2_000, 1_500]) {
+                row.last_change_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+            }
             let mut state = DashboardState::new();
             state.grouping = grouping;
             state.selected = reorder.first().cloned();
@@ -2661,7 +2662,11 @@ fn pinned_rows_render_in_manual_order_after_activity_changes() {
                 let first = text.find("first pin").expect("first pin rendered");
                 let second = text.find("second pin").expect("second pin rendered");
                 let unpinned = text.find("unpinned").expect("unpinned row rendered");
-                assert!(first < second && second < unpinned, "{text}");
+                match activity {
+                    RowState::Working => assert!(second < unpinned && unpinned < first, "{text}"),
+                    RowState::Idle => assert!(unpinned < second && second < first, "{text}"),
+                    RowState::NeedsInput | RowState::Inactive | RowState::Completed | RowState::Failed => unreachable!(),
+                }
                 assert_eq!(reorder.first(), state.selected.as_ref());
             }
         }
@@ -2707,8 +2712,7 @@ fn render_rows_groups_off_uses_divider_not_pinned_header() {
 }
 
 /// State group headers are emitted at every top-level state transition when grouping is `State`.
-/// The renderer must paint the headers in NeedsInput, Working, Idle, Completed, Failed order
-/// (matching `RowState::group_priority`).
+/// The renderer preserves its caller's row order rather than applying another status sort.
 #[test]
 fn render_rows_emits_group_headers_in_state_order() {
     // Rows are 3 cells tall, headers 2 cells; 5 of each needs 25 cells of vertical room

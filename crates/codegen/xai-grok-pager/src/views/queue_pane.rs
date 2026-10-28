@@ -415,6 +415,11 @@ impl RowActionButton {
     }
 }
 
+pub(crate) struct QueueAdmissionDisplay {
+    pub(crate) label: &'static str,
+    pub(crate) edited_text: Option<String>,
+}
+
 /// Self-contained queue pane component. Does NOT own the queue data: entries are rebuilt each frame
 /// from `AgentSession::pending_prompts`. Owns `ListPaneState` for scroll, selection, and rendering
 /// state.
@@ -435,6 +440,7 @@ pub struct QueuePane {
     prev_len: usize,
     /// How rows get their capabilities; applied on every `sync_from_merged` rebuild.
     mutation: QueueMutation,
+    admission_labels: std::collections::HashMap<String, QueueAdmissionDisplay>,
     /// `[Send now]` (force-interject) action button.
     send_now: RowActionButton,
     /// `[cancel]` (row delete) action button.
@@ -477,6 +483,7 @@ impl QueuePane {
             overlay: OverlayState::hidden(),
             prev_len: 0,
             mutation: QueueMutation::PerRowKind,
+            admission_labels: Default::default(),
             send_now: RowActionButton::default(),
             delete_button: RowActionButton::default(),
             edit_button: RowActionButton::default(),
@@ -488,6 +495,10 @@ impl QueuePane {
     /// Takes effect at the next `sync_from_merged`, which every queue change triggers.
     pub(crate) fn set_mutation(&mut self, mutation: QueueMutation) {
         self.mutation = mutation;
+    }
+
+    pub(crate) fn set_admission_labels(&mut self, labels: std::collections::HashMap<String, QueueAdmissionDisplay>) {
+        self.admission_labels = labels;
     }
 
     pub(crate) fn mutation(&self) -> QueueMutation {
@@ -892,6 +903,24 @@ impl QueuePane {
         };
         self.list_state
             .prepare_layout(&self.entries, list_area.width, list_area.height);
+        for index in self.list_state.visible_range() {
+            let Some(entry) = self.entries.get_mut(index) else { continue; };
+            let Some(display) = entry.server_id.as_ref().and_then(|id| self.admission_labels.get(id)) else { continue; };
+            let (first_line, line_count) = match &display.edited_text {
+                Some(text) => {
+                    entry.text = text.clone();
+                    (text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or(""), text.lines().count())
+                }
+                None => (entry.first_line.as_str(), entry.line_count),
+            };
+            entry.styled = QueuedPromptEntry::build_styled(
+                &format!("[{}] {first_line}", display.label),
+                line_count,
+                entry.kind,
+                Some(content_width),
+                entry.capabilities,
+            );
+        }
         ListPane::new(&self.entries)
             .focused(focused)
             .style(self.list_style)

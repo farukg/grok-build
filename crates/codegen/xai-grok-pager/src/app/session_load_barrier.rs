@@ -54,7 +54,8 @@ pub(super) fn session_load_agent_id(result: &TaskResult) -> Option<AgentId> {
     match result {
         TaskResult::SessionLoaded { agent_id, .. }
         | TaskResult::SessionLoadFailed { agent_id, .. } => Some(*agent_id),
-        TaskResult::WithPinnedMemoryMode { result, .. } => session_load_agent_id(result),
+        TaskResult::WithPinnedMemoryMode { result, .. } | TaskResult::WithCurrentActions { result, .. }
+        | TaskResult::WithPublication { result, .. } => session_load_agent_id(result),
         _ => None,
     }
 }
@@ -62,7 +63,8 @@ fn session_load_session_id(result: &TaskResult) -> Option<&acp::SessionId> {
     match result {
         TaskResult::SessionLoaded { session_id, .. }
         | TaskResult::SessionLoadFailed { session_id, .. } => Some(session_id),
-        TaskResult::WithPinnedMemoryMode { result, .. } => session_load_session_id(result),
+        TaskResult::WithPinnedMemoryMode { result, .. } | TaskResult::WithCurrentActions { result, .. }
+        | TaskResult::WithPublication { result, .. } => session_load_session_id(result),
         _ => None,
     }
 }
@@ -104,16 +106,11 @@ fn classify_ext_notification(
         return AcpLoadBacklog::Unrelated;
     }
     #[derive(Deserialize)]
-    struct MetaPeek {
-        #[serde(default, rename = "isReplay")]
-        is_replay: bool,
-    }
-    #[derive(Deserialize)]
     struct ParamsPeek {
         #[serde(rename = "sessionId")]
         session_id: Option<String>,
         #[serde(default, rename = "_meta")]
-        meta: Option<MetaPeek>,
+        meta: Option<acp::Meta>,
     }
     let Ok(params) = serde_json::from_str::<ParamsPeek>(notif.params.get()) else {
         return AcpLoadBacklog::Unrelated;
@@ -124,7 +121,7 @@ fn classify_ext_notification(
     if sid != load_session_id.0.as_ref() {
         return AcpLoadBacklog::Unrelated;
     }
-    if params.meta.is_some_and(|m| m.is_replay) {
+    if NotificationMeta::from_json(params.meta.as_ref()).is_replay {
         AcpLoadBacklog::ReplayHead
     } else {
         AcpLoadBacklog::LiveHead

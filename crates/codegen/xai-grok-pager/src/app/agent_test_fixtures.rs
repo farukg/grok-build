@@ -28,7 +28,7 @@ pub(crate) fn running_bg_task(task_id: &str, is_monitor: bool) -> BgTaskState {
         cwd: String::new(),
         output_file: String::new(),
         status: BgTaskStatus::Running,
-        start_time: std::time::SystemTime::now(),
+        start_time: Some(std::time::SystemTime::now()),
         end_time: None,
         exit_code: None,
         signal: None,

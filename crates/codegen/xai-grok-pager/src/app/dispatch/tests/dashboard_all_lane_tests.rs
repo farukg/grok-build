@@ -1,4 +1,7 @@
 //! Dashboard All-lane, scope, and paging dispatch tests, driven through the router.
+#[path = "dashboard_order_tests.rs"]
+mod order_tests;
+
 use super::*;
 use crate::app::actions::Direction;
 

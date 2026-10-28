@@ -696,3 +696,6 @@
             "terminal status drops the live block id (kept only as history)"
         );
     }
+
+#[path = "goal_timing_ingress_tests.rs"]
+mod timing;

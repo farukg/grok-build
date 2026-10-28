@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Local};
 
 use super::block::{BlockContent, RenderBlock};
-use super::types::{BlockContext, BlockOutput, DisplayMode, RenderedBlockOutput};
+use super::types::{BlockContext, BlockOutput, DisplayMode, RenderedBlockOutput, ToolCompletion};
 use crate::appearance::AppearanceConfig;
 use crate::theme::{ThemeKind, cache as theme_cache};
 
@@ -60,6 +60,8 @@ pub struct ScrollbackEntry {
     pub id: EntryId,
 
     pub block: RenderBlock,
+
+    tool_completion: ToolCompletion,
 
     /// Whether block is still running (for animation, auto-collapse).
     pub is_running: bool,
@@ -172,6 +174,7 @@ impl ScrollbackEntry {
         Self {
             id,
             block,
+            tool_completion: ToolCompletion::Unconfirmed,
             is_running: false,
             is_pending_user_input: false,
             display_mode,
@@ -209,6 +212,7 @@ impl ScrollbackEntry {
         Self {
             id,
             block,
+            tool_completion: ToolCompletion::Unconfirmed,
             is_running: true,
             is_pending_user_input: false,
             display_mode,
@@ -280,6 +284,30 @@ impl ScrollbackEntry {
         self.is_running = false;
         self.is_pending_user_input = false;
         self.invalidate_cache();
+    }
+
+    pub(crate) fn tool_completion(&self) -> ToolCompletion {
+        self.tool_completion
+    }
+
+    pub(crate) fn set_tool_completion(&mut self, completion: ToolCompletion) -> bool {
+        if !matches!(self.block, RenderBlock::ToolCall(_)) || self.tool_completion == completion {
+            return false;
+        }
+        self.tool_completion = completion;
+        self.invalidate_cache();
+        true
+    }
+
+    pub(crate) fn copy_visible_text_in_state(&self, ctx: &BlockContext) -> Option<String> {
+        self.block.copy_visible_text_with_completion(ctx, self.tool_completion)
+    }
+
+    pub(crate) fn message_symbol(
+        &self,
+        ctx: &BlockContext,
+    ) -> Option<super::blocks::message_symbol::MessageSymbol> {
+        self.block.message_symbol_with_completion(ctx, self.tool_completion)
     }
 
     /// Invalidate cached output after a content change.
@@ -405,7 +433,7 @@ impl ScrollbackEntry {
             is_selected: effective_selected,
             cwd: cwd_key.clone(),
         };
-        let rendered = Rc::new(self.block.rendered_output(&ctx));
+        let rendered = Rc::new(self.block.rendered_output_with_completion(&ctx, self.tool_completion));
         let header = OutputTree::identified(Rc::clone(&rendered), self.selection_identity(),
             super::selection_identity::SelectablePart::Block);
         let tree = if self.display_mode != DisplayMode::Collapsed
@@ -476,7 +504,7 @@ impl ScrollbackEntry {
 
         // Force Truncated for sticky-header height; include cwd (header wrap).
         let ctx = self.context_with_mode(content_width, DisplayMode::Truncated, appearance, cwd);
-        let output = self.block.output(&ctx);
+        let output = self.block.rendered_output_with_completion(&ctx, self.tool_completion).output;
         let has_vpad = self.block.has_vpad(&ctx);
         let content_height = output.len() as u16;
         let vpad = if has_vpad { 2 } else { 0 };
@@ -647,7 +675,7 @@ impl ScrollbackEntry {
             self.ensure_cached(ctx.width, &ctx.appearance, false, ctx.cwd.as_deref());
             return self.cached_tree();
         }
-        let header = OutputTree::identified(Rc::new(self.block.rendered_output(ctx)), self.selection_identity(),
+        let header = OutputTree::identified(Rc::new(self.block.rendered_output_with_completion(ctx, self.tool_completion)), self.selection_identity(),
             super::selection_identity::SelectablePart::Block);
         if !self.block.is_bg_task() && !self.block.is_subagent() { return header; }
         self.inline_width.set(Some(ctx.width));

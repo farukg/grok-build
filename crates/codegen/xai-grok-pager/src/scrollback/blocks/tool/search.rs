@@ -74,16 +74,12 @@ pub struct SearchToolCallBlock {
     /// Error message if the tool call failed (`None` means success).
     pub error: Option<String>,
     pub meta: SearchInputMeta,
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Whether this ordinary search targets a memory v2 scope.
     pub is_memory_activity: bool,
 }
 
 impl SearchToolCallBlock {
-    /// Pre-completed blocks have no meaningful local timing, so `started_at` is `None`.
-    /// Timing is only set for blocks that enter a running UI state (via `set_last_running(true)` in `ScrollbackState`).
     pub fn new(pattern: impl Into<String>) -> Self {
         Self {
             pattern: pattern.into(),
@@ -92,8 +88,7 @@ impl SearchToolCallBlock {
             file_paths: Vec::new(),
             error: None,
             meta: SearchInputMeta::default(),
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             is_memory_activity: false,
         }
     }
@@ -118,35 +113,16 @@ impl SearchToolCallBlock {
         self.error.is_none()
     }
 
-    /// Set the error, computing the elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
-    /// Finalize elapsed time from `started_at`.
-    ///
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     pub fn set_file_matches(&mut self, match_count: usize, file_matches: Vec<SearchFileMatch>) {
@@ -231,7 +207,7 @@ impl SearchToolCallBlock {
         };
 
         let mut spans = vec![Span::styled(
-            format!("{} ", crate::glyphs::tool_search()),
+            String::new(),
             bold_style,
         )];
 
@@ -537,15 +513,6 @@ impl BlockContent for SearchToolCallBlock {
 
     fn accent(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
         None // Search blocks never have an accent line
-    }
-
-    fn bullet(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else {
-            None
-        }
     }
 
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {

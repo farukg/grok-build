@@ -112,6 +112,29 @@ impl Selectable {
     }
 }
 
+/// Confirmed tool outcome, independent of whether its entry is still running.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolCompletion {
+    #[default]
+    Unconfirmed,
+    Completed,
+    Failed,
+    /// Native cancellation is distinct from ACP's Failed status.
+    Cancelled,
+}
+
+impl From<agent_client_protocol::ToolCallStatus> for ToolCompletion {
+    fn from(status: agent_client_protocol::ToolCallStatus) -> Self {
+        use agent_client_protocol::ToolCallStatus;
+        match status {
+            ToolCallStatus::Completed => Self::Completed,
+            ToolCallStatus::Failed => Self::Failed,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress => Self::Unconfirmed,
+            _ => Self::Unconfirmed,
+        }
+    }
+}
+
 /// Context passed to block methods for rendering decisions.
 #[derive(Debug, Clone)]
 pub struct BlockContext {
@@ -137,9 +160,7 @@ impl BlockContext {
             .blocks
             .tool
             .bullet
-            .char()
-            .map(|c| unicode_width::UnicodeWidthStr::width(c) + 1)
-            .unwrap_or(0)
+            .prefix_width()
     }
 
     /// Effective content width after subtracting the bullet prefix (if enabled).
@@ -184,6 +205,8 @@ pub struct BlockLine {
     /// logical pre-wrap content, so hyperlink column mapping must exclude it when rebuilding pre-wrap coordinates from
     /// post-wrap segments.
     pub indent_width: usize,
+    /// Single-span message chrome absent from logical source and pre-wrap hyperlink columns.
+    pub chrome_prefix_width: usize,
 }
 
 impl Default for BlockLine {
@@ -200,6 +223,7 @@ impl Default for BlockLine {
             joiner: None,
             link_target: None,
             indent_width: 0,
+            chrome_prefix_width: 0,
         }
     }
 }
@@ -727,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn block_line_exhaustive_literal_keeps_legacy_shape() {
+    fn block_line_explicit_geometry_fields() {
         let _line = BlockLine {
             content: Line::default(),
             background: None,
@@ -740,6 +764,7 @@ mod tests {
             joiner: None,
             link_target: None,
             indent_width: 0,
+            chrome_prefix_width: 0,
         };
     }
 

@@ -2,6 +2,7 @@
 //! This module takes [`Effect`] values produced by [`super::dispatch`] and spawns them as async tasks on a [`JoinSet`].
 //! When tasks complete, the event loop converts their output into [`TaskResult`] and feeds it back through dispatch.
 mod helpers;
+pub(crate) mod current_actions;
 mod remove_context_items;
 mod request_snapshot;
 mod session_list;
@@ -148,6 +149,7 @@ pub(crate) fn execute(
     cwd: &Path,
     session_flags: &SessionFlags,
     progress_tx: &tokio::sync::mpsc::UnboundedSender<RestoreProgressMsg>,
+    load_binding: Option<xai_grok_shell::session::current_actions::SnapshotBinding>,
 ) -> (bool, EffectMeta) {
     let mut meta = EffectMeta::default();
     let effect_is_send_now = matches!(effect, Effect::SendPromptNow { .. });
@@ -516,6 +518,9 @@ pub(crate) fn execute(
         Effect::LoadSession { agent_id, session_id, session_cwd, chat_kind } => {
             let tx = acp_tx.clone();
             let mut meta = session_flags.to_meta();
+            let tagged = load_binding.as_ref().map(|binding| xai_grok_shell::extensions::current_actions::stamp_load_binding(
+                meta.get_or_insert_with(acp::Meta::new), binding,
+            )).transpose();
             let is_chat_path = chat_kind || session_flags.chat_mode;
             finalize_chat_session_meta(&mut meta, is_chat_path, session_flags);
             if let Some(rc) = session_flags.restore_code {
@@ -526,6 +531,11 @@ pub(crate) fn execute(
             let acp_session_id = acp::SessionId::new(session_id);
             tasks
                 .spawn(async move {
+                    if let Err(error) = tagged {
+                        return current_actions::publication_result(agent_id, load_binding, None, TaskResult::SessionLoadFailed {
+                            agent_id, session_id: acp_session_id, error: error.to_string(),
+                        });
+                    }
                     let mcp_servers = discover_mcp_servers(cwd.clone()).await;
                     let _phase = startup::phase_scope(StartupPhase::SessionCreate);
                     ulog::info("session.load.start", Some(&acp_session_id.0), None);
@@ -558,9 +568,10 @@ pub(crate) fn execute(
                             let running_prompt_id = parse_session_load_running_prompt_id(
                                 resp.meta.as_ref(),
                             );
-                            TaskResult::WithPinnedMemoryMode {
+                            let response_meta = resp.meta;
+                            current_actions::publication_result(agent_id, load_binding, response_meta.as_ref(), TaskResult::WithPinnedMemoryMode {
                                 agent_id,
-                                memory_mode: parse_session_memory_mode(resp.meta.as_ref()),
+                                memory_mode: parse_session_memory_mode(response_meta.as_ref()),
                                 result: Box::new(TaskResult::SessionLoaded {
                                     agent_id,
                                     session_id: acp_session_id,
@@ -571,7 +582,7 @@ pub(crate) fn execute(
                                     restore_degree,
                                     running_prompt_id,
                                 }),
-                            }
+                            })
                         }
                         Err(e) => {
                             let error = e.to_string();
@@ -582,11 +593,11 @@ pub(crate) fn execute(
                                     serde_json::json!({"elapsed_ms": load_elapsed_ms, "error": &error}),
                                 ),
                             );
-                            TaskResult::SessionLoadFailed {
+                            current_actions::publication_result(agent_id, load_binding, None, TaskResult::SessionLoadFailed {
                                 agent_id,
                                 session_id: acp_session_id,
                                 error: sanitize_user_error(&error),
-                            }
+                            })
                         }
                     }
                 });
@@ -1646,34 +1657,27 @@ pub(crate) fn execute(
                     TaskResult::CancelComplete
                 });
         }
-        Effect::QueueInterject { session_id, id, expected_version, new_text } => {
+        Effect::QueueInterject { request, binding_epoch } => {
             let tx = acp_tx.clone();
-            tasks
-                .spawn(async move {
-                    let mut params = serde_json::json!({
-                    "sessionId": session_id.0.to_string(),
-                    "id": id,
-                    "expectedVersion": expected_version,
-                });
-                    if let Some(new_text) = new_text
-                        && let Some(obj) = params.as_object_mut()
-                    {
-                        obj.insert(
-                            "newText".into(),
-                            serde_json::Value::String(new_text),
+            tasks.spawn(async move {
+                use crate::app::agent_view::queue::QueueTransport;
+                let operation = request.operation.clone();
+                let result = match serde_json::value::to_raw_value(&request) {
+                    Ok(params) => {
+                        let request = acp::ExtRequest::new(
+                            xai_grok_shell::extensions::interject::QUEUE_INTERJECT_METHOD,
+                            params.into(),
                         );
+                        match acp_send(request, &tx).await {
+                            Ok(response) => serde_json::from_str(response.0.get())
+                                .map_err(|_| QueueTransport::InvalidReply),
+                            Err(_) => Err(QueueTransport::Disconnected),
+                        }
                     }
-                    let notification = acp::ExtNotification::new(
-                        "x.ai/queue/interject",
-                        serde_json::value::to_raw_value(&params)
-                            .expect("serialize queue/interject params")
-                            .into(),
-                    );
-                    if let Err(e) = acp_send(notification, &tx).await {
-                        tracing::warn!("Failed to send queue/interject notification: {e}");
-                    }
-                    TaskResult::CancelComplete
-                });
+                    Err(_) => Err(QueueTransport::Encode),
+                };
+                TaskResult::QueueInterjectComplete { operation, binding_epoch, result }
+            });
         }
         Effect::SetSessionMode { session_id, mode_id } => {
             let tx = acp_tx.clone();
@@ -4958,10 +4962,14 @@ pub(crate) fn execute(
                     };
                     let path = xai_grok_shell::session::persistence::session_dir(&info)
                         .join("summary.json");
-                    type DiskTitle = (Option<(String, bool)>, Option<String>);
-                    let (title, last_turn_summary) = tokio::task::spawn_blocking(move || -> Option<
-                            DiskTitle,
-                        > {
+                    #[derive(Default)]
+                    struct DiskMeta {
+                        title: Option<(String, bool)>,
+                        last_turn_summary: Option<String>,
+                        activity: Option<crate::app::roster::SessionActivitySnapshot>,
+                    }
+                    let DiskMeta { title, last_turn_summary, activity } =
+                        tokio::task::spawn_blocking(move || -> Option<DiskMeta> {
                             let raw = std::fs::read_to_string(path).ok()?;
                             let summary: xai_grok_shell::session::persistence::Summary = serde_json::from_str(
                                     &raw,
@@ -4972,14 +4980,19 @@ pub(crate) fn execute(
                             let title = manual
                                 .or_else(|| summary.display_title_opt())
                                 .map(|t| (t, is_manual));
-                            Some((title, summary.last_turn_summary))
+                            let activity = crate::app::roster::SessionActivitySnapshot {
+                                session_id: info.id,
+                                last_change_unix_ms: summary.last_change_unix_ms(),
+                            };
+                            Some(DiskMeta { title, last_turn_summary: summary.last_turn_summary, activity: Some(activity) })
                         })
                         .await
                         .ok()
                         .flatten()
-                        .unwrap_or((None, None));
+                        .unwrap_or_default();
                     TaskResult::SessionMetaFromDisk {
                         agent_id,
+                        activity,
                         title,
                         last_turn_summary,
                         last_turn_summary_gen,

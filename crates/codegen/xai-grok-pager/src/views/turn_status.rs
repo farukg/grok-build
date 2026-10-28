@@ -533,6 +533,7 @@ fn compute_activity(
                 max_retries,
                 reason,
                 error_type,
+                due_at,
             }),
         ) => (
             Style::default().fg(theme.warning),
@@ -542,6 +543,7 @@ fn compute_activity(
                 reason,
                 error_type.as_deref(),
                 crate::app::error_display::RetryLabelStyle::Status,
+                crate::app::error_display::retry_countdown(*due_at),
             ),
             false,
         ),
@@ -578,6 +580,11 @@ fn compute_activity(
         ) => (
             Style::default().fg(theme.gray),
             format!("{}…", command.display_name()),
+            false,
+        ),
+        (AgentState::CommandRunning { command: AgentCommand::Compact, .. }, Some(TurnActivity::Waiting(reason))) => (
+            Style::default().fg(theme.text_secondary),
+            reason.label(),
             false,
         ),
         (AgentState::CommandRunning { command, .. }, _) => (

@@ -392,6 +392,95 @@ impl ScrollbackState {
         self.bump_content_generation();
     }
 
+    pub(crate) fn stream_source_len(&self, entry: EntryId) -> Option<usize> {
+        match &self.get_by_id(entry)?.block {
+            RenderBlock::AgentMessage(block) => Some(block.source_len()),
+            RenderBlock::Thinking(block) => Some(block.source_len()),
+            RenderBlock::Stub(_) | RenderBlock::UserPrompt(_) | RenderBlock::ToolCall(_) | RenderBlock::System(_)
+            | RenderBlock::SessionEvent(_) | RenderBlock::BgTask(_) | RenderBlock::Subagent(_) | RenderBlock::Workflow(_)
+            | RenderBlock::Btw(_) | RenderBlock::ContextInfo(_) | RenderBlock::MemoryCapture(_) | RenderBlock::Injected(_) => None,
+        }
+    }
+
+    pub(crate) fn merge_live_streams(&self, live: &mut ScrollbackState, replacements: &std::collections::HashMap<EntryId, Vec<EntryId>>, tails: &std::collections::HashMap<EntryId, usize>) {
+        for (history, current) in replacements {
+            let Some(historical) = self.get_by_id(*history) else { continue; };
+            for current in current {
+                let Some(offset) = tails.get(current) else { continue; };
+                let Some(entry) = live.get_by_id_mut(*current) else { continue; };
+                let merged = match &mut entry.block {
+                    RenderBlock::AgentMessage(current) => if let RenderBlock::AgentMessage(historical) = &historical.block {
+                        current.merge_replayed_source(historical, *offset)
+                    } else { false },
+                    RenderBlock::Thinking(current) => if let RenderBlock::Thinking(historical) = &historical.block {
+                        current.merge_replayed_source(historical, *offset)
+                    } else { false },
+                    RenderBlock::Stub(_) | RenderBlock::UserPrompt(_) | RenderBlock::ToolCall(_) | RenderBlock::System(_)
+                    | RenderBlock::SessionEvent(_) | RenderBlock::BgTask(_) | RenderBlock::Subagent(_) | RenderBlock::Workflow(_)
+                    | RenderBlock::Btw(_) | RenderBlock::ContextInfo(_) | RenderBlock::MemoryCapture(_) | RenderBlock::Injected(_) => false,
+                };
+                if merged { entry.invalidate_cache(); live.mark_structurally_dirty(*current); }
+            }
+        }
+    }
+
+    pub(crate) fn entry_ids_since(&self, floor: u64) -> Vec<EntryId> {
+        let mut entries: Vec<_> = self.entries.keys().rev().take_while(|id| id.value() >= floor).copied().collect();
+        entries.reverse();
+        entries
+    }
+
+    pub(crate) fn merge_live_reconstruction(
+        &mut self,
+        mut live: ScrollbackState,
+        mut replacements: std::collections::HashMap<EntryId, Vec<EntryId>>,
+        original_floor: u64,
+        retained: HashSet<EntryId>,
+    ) {
+        let background: std::collections::HashMap<_, _> = live.entries.iter().filter_map(|(id, entry)| if let RenderBlock::BgTask(task) = &entry.block {
+            Some(((task.task_id.clone(), std::mem::discriminant(&task.kind)), *id))
+        } else { None }).collect();
+        for (id, entry) in &self.entries {
+            if let RenderBlock::BgTask(task) = &entry.block
+                && let Some(current) = background.get(&(task.task_id.clone(), std::mem::discriminant(&task.kind))) {
+                replacements.entry(*id).or_default().push(*current);
+            }
+        }
+        replacements.retain(|_, entries| {
+            entries.retain(|id| live.entries.contains_key(id));
+            entries.sort_by_key(|id| live.entries.get_index_of(id));
+            !entries.is_empty()
+        });
+        let mut entries = IndexMap::new();
+        for (id, historical) in std::mem::take(&mut self.entries) {
+            if let Some(current) = replacements.get(&id) {
+                for current in current {
+                    if let Some(entry) = live.entries.shift_remove(current) { entries.insert(*current, entry); }
+                }
+            } else {
+                entries.insert(id, historical);
+            }
+        }
+        live.entries.retain(|id, _| id.value() >= original_floor || retained.contains(id));
+        entries.extend(std::mem::take(&mut live.entries));
+        let floor = self.next_id.max(live.next_id);
+        let generations = self.invalidation_generations();
+        let committed = std::mem::take(&mut self.committed);
+        let permission_opened = std::mem::take(&mut self.permission_opened);
+        *self = live;
+        self.entries = entries;
+        self.running = self.entries.iter().filter_map(|(id, entry)| entry.is_running.then_some(*id)).collect();
+        self.raise_invalidation_floor(generations);
+        self.committed.extend(committed);
+        self.permission_opened.extend(permission_opened);
+        self.next_id = floor;
+        self.dirty_heights = self.entries.keys().copied().collect();
+        self.rebuild_turns();
+        self.gaps_may_be_dirty = true;
+        self.invalidate_layout_cache();
+        self.commit_scan_cursor = 0;
+    }
+
     /// Update the appearance configuration.
     pub fn set_appearance(&mut self, appearance: AppearanceConfig) {
         crate::render::bidi::set_enabled(appearance.scrollback.display.rtl_bidi);
@@ -986,8 +1075,6 @@ impl ScrollbackState {
     }
 
     /// Mark the last entry as running.
-    /// When entering running state (`running = true`), also starts timing on tool call blocks via `ToolCallBlock::start_timing()`.
-    /// This is the single point where block timing begins; constructors default to `started_at = None`.
     pub fn set_last_running(&mut self, running: bool) {
         if let Some(id) = self.entries.last().map(|(_, entry)| entry.id) {
             self.set_entry_running(id, running);
@@ -1002,9 +1089,6 @@ impl ScrollbackState {
         entry.is_running = running;
         entry.invalidate_cache();
         if running && !was_running {
-            if let RenderBlock::ToolCall(ref mut tc) = entry.block {
-                tc.start_timing();
-            }
             self.running.insert(entry.id);
         } else if !running && was_running {
             self.running.remove(&entry.id);
@@ -1026,14 +1110,30 @@ impl ScrollbackState {
         self.entries.get_mut(&id).map(|entry| { entry.bind_selection_source(binding); entry })
     }
 
+    /// Store an actual tool outcome; stopping an entry alone does not confirm completion.
+    pub(crate) fn set_tool_completion(
+        &mut self,
+        id: EntryId,
+        completion: super::types::ToolCompletion,
+    ) -> bool {
+        let changed = self.get_by_id_mut(id)
+            .is_some_and(|entry| entry.set_tool_completion(completion));
+        if changed {
+            self.dirty_heights.insert(id);
+            self.gaps_may_be_dirty = true;
+            self.bump_content_generation();
+        }
+        changed
+    }
+
     /// The escalation fires only on that rising edge, so a user's collapse of an already-untrusted block sticks. A row
     /// already awaiting a permission then opens once if the new Edit has hunks, unless the fold is pinned. Stamps
-    /// `started_at` on the new block and invalidates the entry's render cache.
+    /// the execution clock on the new block and invalidates the entry's render cache.
     pub(crate) fn replace_tool_block(
         &mut self,
         entry_id: EntryId,
         mut block: RenderBlock,
-        started_at: Option<Instant>,
+        execution_clock: Option<crate::acp::tool_clock::ToolExecutionClock>,
     ) -> bool {
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
         // Resolved before the mutable borrow: the mode the NEW block's kind resolves to.
@@ -1043,9 +1143,9 @@ impl ScrollbackState {
             return false;
         };
         if let RenderBlock::ToolCall(new_tc) = &mut block
-            && let Some(t) = started_at
+            && let Some(clock) = execution_clock
         {
-            new_tc.set_started_at(t);
+            new_tc.set_execution_clock(clock);
         }
         let kind_changed = verb_group::verb_group_kind_changed(&entry.block, &block);
         let (is_same_kind, untrusted_rising) = match (&entry.block, &block) {

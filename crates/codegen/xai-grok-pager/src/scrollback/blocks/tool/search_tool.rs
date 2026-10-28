@@ -33,9 +33,7 @@ pub struct SearchToolCallBlock {
     pub content: Option<String>,
     /// Error message if the tool call failed.
     pub error: Option<String>,
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
 }
 
 pub fn discovered_tool_action(tool: &DiscoveredTool) -> &str {
@@ -54,8 +52,7 @@ impl SearchToolCallBlock {
             results: Vec::new(),
             content: None,
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
         }
     }
 
@@ -69,28 +66,15 @@ impl SearchToolCallBlock {
     }
 
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        self.elapsed_ms.or_else(|| {
-            self.started_at
-                .map(|start| start.elapsed().as_millis() as i64)
-        })
+        self.execution_clock.elapsed_ms()
     }
 
     pub fn copy_text(&self) -> String {
@@ -127,7 +111,7 @@ impl SearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = format!("{} ", crate::glyphs::tool_integration_search());
+        let prefix = String::new();
 
         match max_width {
             Some(w) => {
@@ -266,17 +250,6 @@ impl BlockContent for SearchToolCallBlock {
             Some(AccentStyle::animated(theme.accent_running))
         } else {
             Some(AccentStyle::static_color(theme.accent_tool))
-        }
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else if ctx.mode == DisplayMode::Collapsed {
-            None
-        } else {
-            self.accent(ctx)
         }
     }
 

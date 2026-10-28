@@ -12,7 +12,7 @@ fn cumulative_wire_stdout_revisions_distinguish_equal_length_replacements_and_fi
     for stdout in ["AAAA", "BBBB"] {
         let update = acp_fixtures::tool_call_update("call", acp::ToolCallUpdateFields::new()
             .raw_output(Some(serde_json::json!({"type":"Bash", "output_for_prompt":stdout}))));
-        assert!(route_bg_task_stdout(&update, &mut view));
+        assert!(route_bg_task_stdout(&update, &mut view, &NotificationMeta::default()));
         assert_eq!(view.session.bg_tasks.get("task").unwrap().stdout, stdout);
         let next = view.inline_sources.task_revision("task");
         assert_ne!(next, revision);
@@ -20,7 +20,7 @@ fn cumulative_wire_stdout_revisions_distinguish_equal_length_replacements_and_fi
     }
     let update = acp_fixtures::tool_call_update("call", acp::ToolCallUpdateFields::new()
         .raw_output(Some(serde_json::json!({"type":"Bash", "output_for_prompt":""}))));
-    assert!(route_bg_task_stdout(&update, &mut view));
+    assert!(route_bg_task_stdout(&update, &mut view, &NotificationMeta::default()));
     assert_eq!(view.session.bg_tasks.get("task").unwrap().stdout, "BBBB");
     assert_eq!(view.inline_sources.task_revision("task"), revision);
     view.append_bg_task_stdout("task", "monitor event");

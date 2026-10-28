@@ -15,10 +15,7 @@ pub struct OtherToolCallBlock {
     /// Error message if the tool call failed; `None` means success.
     pub error: Option<String>,
     pub output: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Image references detected in the tool output.
     image_refs: Vec<crate::prompt_images::ScrollbackImageRef>,
     /// Video references detected in the tool output.
@@ -26,16 +23,13 @@ pub struct OtherToolCallBlock {
 }
 
 impl OtherToolCallBlock {
-    /// Pre-completed blocks have no meaningful local timing, so `started_at` is `None`.
-    /// Timing is only set for blocks that enter a running UI state (via `set_last_running(true)` in `ScrollbackState`).
     pub fn new(name: impl Into<String>, summary: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             summary: summary.into(),
             error: None,
             output: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             image_refs: Vec::new(),
             video_refs: Vec::new(),
         }
@@ -89,35 +83,16 @@ impl OtherToolCallBlock {
         None
     }
 
-    /// Set error (mutable); computes elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
-    /// Finalize elapsed time from `started_at`.
-    ///
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     /// Render collapsed line: `Label` `content` or `Name`. Otherwise renders the full name in bold.
@@ -130,7 +105,7 @@ impl OtherToolCallBlock {
         let bold_style = text_style.add_modifier(ratatui::style::Modifier::BOLD);
 
         let mut spans = if self.name == "Skill" {
-            vec![Span::styled(format!("{} ", crate::glyphs::tool_skill()), bold_style)]
+            Vec::new()
         } else if let Some((label, content)) = self.name.split_once(": ") {
             vec![
                 Span::styled(format!("{} ", label), bold_style),
@@ -147,12 +122,13 @@ impl OtherToolCallBlock {
                     .iter()
                     .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                     .sum();
-                let summary = format!("  {}", self.summary);
+                let summary = if spans.is_empty() { self.summary.clone() } else { format!("  {}", self.summary) };
                 if used + summary.len() <= w {
                     spans.push(Span::styled(summary, theme.muted()));
                 }
             } else {
-                spans.push(Span::styled(format!("  {}", self.summary), theme.muted()));
+                let summary = if spans.is_empty() { self.summary.clone() } else { format!("  {}", self.summary) };
+                spans.push(Span::styled(summary, theme.muted()));
             }
         }
 
@@ -326,18 +302,6 @@ impl BlockContent for OtherToolCallBlock {
             Some(AccentStyle::animated(theme.accent_running))
         } else {
             Some(AccentStyle::static_color(theme.accent_tool))
-        }
-    }
-
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        // Failed: red bullet. Running/expanded: accent color. Collapsed: default.
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else if ctx.mode == DisplayMode::Collapsed {
-            None // default gray
-        } else {
-            self.accent(ctx) // inherit from accent when expanded/running
         }
     }
 

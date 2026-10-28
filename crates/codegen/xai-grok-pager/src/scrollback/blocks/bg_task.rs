@@ -4,7 +4,6 @@
 
 use std::time::Duration;
 
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 
 use crate::appearance::AppearanceConfig;
@@ -21,10 +20,10 @@ pub enum BgTaskKind {
     /// Task was started (process is running).
     Started,
     /// Task completed successfully.
-    Completed { elapsed: Duration },
+    Completed { elapsed: Option<Duration> },
     /// Task failed (non-zero exit, signal, timeout, etc.).
     Failed {
-        elapsed: Duration,
+        elapsed: Option<Duration>,
         exit_code: Option<i32>,
         signal: Option<String>,
     },
@@ -44,6 +43,10 @@ pub struct BgTaskBlock {
 }
 
 impl BgTaskBlock {
+    pub fn format_elapsed(elapsed: Option<Duration>) -> String {
+        elapsed.map(format_duration).unwrap_or_else(|| "unknown".into())
+    }
+
     pub fn started(command: impl Into<String>, task_id: impl Into<String>) -> Self {
         Self {
             command: command.into(),
@@ -56,12 +59,12 @@ impl BgTaskBlock {
     pub fn completed(
         command: impl Into<String>,
         task_id: impl Into<String>,
-        elapsed: Duration,
+        elapsed: impl Into<Option<Duration>>,
     ) -> Self {
         Self {
             command: command.into(),
             task_id: task_id.into(),
-            kind: BgTaskKind::Completed { elapsed },
+            kind: BgTaskKind::Completed { elapsed: elapsed.into() },
             description: None,
         }
     }
@@ -69,7 +72,7 @@ impl BgTaskBlock {
     pub fn failed(
         command: impl Into<String>,
         task_id: impl Into<String>,
-        elapsed: Duration,
+        elapsed: impl Into<Option<Duration>>,
         exit_code: Option<i32>,
         signal: Option<String>,
     ) -> Self {
@@ -77,7 +80,7 @@ impl BgTaskBlock {
             command: command.into(),
             task_id: task_id.into(),
             kind: BgTaskKind::Failed {
-                elapsed,
+                elapsed: elapsed.into(),
                 exit_code,
                 signal,
             },
@@ -95,19 +98,19 @@ impl BgTaskBlock {
     }
 
     /// Mark a Started block as completed.
-    pub fn mark_completed(&mut self, elapsed: Duration) {
-        self.kind = BgTaskKind::Completed { elapsed };
+    pub fn mark_completed(&mut self, elapsed: impl Into<Option<Duration>>) {
+        self.kind = BgTaskKind::Completed { elapsed: elapsed.into() };
     }
 
     /// Mark a Started block as failed.
     pub fn mark_failed(
         &mut self,
-        elapsed: Duration,
+        elapsed: impl Into<Option<Duration>>,
         exit_code: Option<i32>,
         signal: Option<String>,
     ) {
         self.kind = BgTaskKind::Failed {
-            elapsed,
+            elapsed: elapsed.into(),
             exit_code,
             signal,
         };
@@ -176,14 +179,6 @@ impl BgTaskBlock {
 impl BlockContent for BgTaskBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
-        // When selected, lift only the bold "Task" label to `text_primary` so it reads as undimmed
-        // This mirrors `read.rs` / `search.rs`, which bump only the label and leave the rest at `muted`
-        // The detail text (verb and description) stays muted in every state
-        let bold = if ctx.is_selected {
-            theme.primary().add_modifier(Modifier::BOLD)
-        } else {
-            theme.muted().add_modifier(Modifier::BOLD)
-        };
         let muted = theme.muted();
 
         // Collapse newlines for single-line display (ratatui drops '\n' as zero-width, merging adjacent lines without spacing)
@@ -197,14 +192,12 @@ impl BlockContent for BgTaskBlock {
         };
         let line = match &self.kind {
             BgTaskKind::Started => Line::from(vec![
-                Span::styled(format!("{} ", crate::glyphs::history_task()), bold),
                 Span::styled("started: ", muted),
                 Span::styled(display, muted),
             ]),
             BgTaskKind::Completed { elapsed } => Line::from(vec![
-                Span::styled(format!("{} ", crate::glyphs::history_task()), bold),
                 Span::styled(
-                    format!("completed in {}: ", format_duration(*elapsed)),
+                    format!("completed in {}: ", Self::format_elapsed(*elapsed)),
                     muted,
                 ),
                 Span::styled(display, muted),
@@ -229,8 +222,7 @@ impl BlockContent for BgTaskBlock {
                     }
                 };
                 Line::from(vec![
-                    Span::styled(format!("{} ", crate::glyphs::history_task()), bold),
-                    Span::styled(format!("{verb} in {}: ", format_duration(*elapsed)), muted),
+                    Span::styled(format!("{verb} in {}: ", Self::format_elapsed(*elapsed)), muted),
                     Span::styled(format!("{}{}", display, detail), muted),
                 ])
             }
@@ -257,22 +249,6 @@ impl BlockContent for BgTaskBlock {
         }
     }
 
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        let theme = Theme::current();
-        match &self.kind {
-            BgTaskKind::Started => {
-                if ctx.is_running {
-                    Some(AccentStyle::animated_running(ctx, &theme))
-                } else {
-                    // Normal gray after finish_running() is called
-                    None
-                }
-            }
-            BgTaskKind::Completed { .. } => Some(AccentStyle::static_color(theme.accent_success)),
-            BgTaskKind::Failed { .. } => Some(AccentStyle::static_color(theme.accent_error)),
-        }
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false
     }
@@ -291,10 +267,6 @@ impl BlockContent for BgTaskBlock {
     }
 
     fn is_selectable(&self) -> bool {
-        true
-    }
-
-    fn has_bullet(&self, _ctx: &BlockContext) -> bool {
         true
     }
 

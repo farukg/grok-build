@@ -326,8 +326,6 @@ fn cancel_agent_turn(
 /// prompts (each gets Cancelled), the cancel panel, and the bash-mode focus reset.
 pub(super) fn finish_turn_view(agent: &mut AgentView, end: TurnEnd) {
     agent.mark_turn_finished(end);
-    agent.activity_started_at = None;
-    agent.last_activity = None;
     drain_permission_queue(agent);
     agent.cancel_turn_view = None;
     agent.cancel_turn_buttons.clear();
@@ -387,8 +385,6 @@ pub(super) fn rewind_in_flight_prompt(
     agent.session.finish_turn(&mut agent.scrollback);
     agent.prompt_ack = None;
     agent.turn_started_at = None;
-    agent.activity_started_at = None;
-    agent.last_activity = None;
 }
 
 /// Build `Effect::CancelTurn`, consuming the gesture hint and arming the resend reconcile (skipped for a rewind, which leaves no cancelling state).

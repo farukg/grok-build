@@ -161,3 +161,44 @@ fn content_text(tool_call: &acp::ToolCall) -> Option<String> {
 #[cfg(test)]
 #[path = "subagent_message_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod recovery_presentation_tests {
+    use super::*;
+    use xai_grok_tools::implementations::grok_build::task::{native_recovery::MessageRecoveryRef, root_control::AgentMessageGeneration, types::{ActiveAgentMessageOperation, ActiveMessageReceiver}};
+
+    #[test]
+    fn unconfirmed_native_output_preserves_exact_observe_reference_in_the_real_block() {
+        let reference = MessageRecoveryRef {
+            delivery_id: "parent-message/exact-message".into(), message_id: "exact-message".into(),
+            prompt_id: "parent-message-exact-message".into(), payload_digest: "ab".repeat(32),
+            receiver: ActiveMessageReceiver { session_id: "exact-receiver".into(), generation: AgentMessageGeneration::mint(42) },
+            operation: ActiveAgentMessageOperation::Queue,
+        };
+        let wire = serde_json::to_string(&reference).unwrap();
+        let call = acp::ToolCall::new("native-message", SEND_SUBAGENT_MESSAGE_TOOL_NAME)
+            .status(acp::ToolCallStatus::Completed)
+            .raw_input(Some(serde_json::json!({"subagent_id":"exact-receiver","text":"literal message"})))
+            .raw_output(Some(serde_json::to_value(ToolOutput::SendSubagentMessage(
+                SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: reference.into() },
+            )).unwrap()));
+        let RenderBlock::ToolCall(ToolCallBlock::SentMessage(block)) = to_block(&call, &SubagentLabelRegistry::default()) else {
+            panic!("native message block");
+        };
+        let SentMessagePresentation::Unconfirmed { reason } = block.presentation else { panic!("uncertainty must not become rejection"); };
+        assert!(reason.contains(&wire));
+        assert!(reason.contains("Observe"));
+        assert!(!reason.to_lowercase().contains("resend"));
+    }
+    #[test]
+    fn stored_uncorrelated_output_is_not_relabelled_as_a_rejection() {
+        let call = acp::ToolCall::new("historical-message", SEND_SUBAGENT_MESSAGE_TOOL_NAME)
+            .status(acp::ToolCallStatus::Completed)
+            .raw_input(Some(serde_json::json!({"subagent_id":"receiver","text":"old literal message"})))
+            .raw_output(Some(serde_json::json!({"type":"SendSubagentMessage","outcome":"admission_uncertain"})));
+        let RenderBlock::ToolCall(ToolCallBlock::SentMessage(block)) = to_block(&call, &SubagentLabelRegistry::default()) else { panic!("stored message block"); };
+        assert!(matches!(block.presentation, SentMessagePresentation::Unconfirmed { reason }
+            if reason.contains("no recovery reference was recorded") && !reason.to_lowercase().contains("resend")));
+    }
+
+}

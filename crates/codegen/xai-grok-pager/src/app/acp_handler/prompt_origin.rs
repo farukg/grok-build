@@ -70,21 +70,53 @@ pub(crate) fn should_adopt_running_prompt(prompt_id: &str) -> bool {
     !is_server_initiated_prompt(prompt_id) || is_scheduler_fired_prompt(prompt_id)
 }
 
-/// `TurnCancelling` with no id, or this id, stays cancelling. Ended and superseded ids do not replace the current turn.
-/// A command in flight is left alone. Returns false when the update belongs to a turn that already ended.
-/// `turn_start_ms` is this chunk's `turnStartMs`, not the view's stamp.
+/// Commit a live prompt after the ingress has admitted its turn identity.
 pub(super) fn note_child_live_prompt(
     child: &mut AgentView,
     prompt_id: Option<&str>,
-    turn_start_ms: Option<i64>,
-    is_replay: bool,
-) -> bool {
-    if is_replay || child.session.loading_replay {
-        return true;
+) {
+    if child.session.loading_replay {
+        return;
     }
+    let Some(pid) = prompt_id.filter(|pid| !pid.is_empty()) else {
+        return;
+    };
+    if child.session.state.command_in_flight().is_some() {
+        return;
+    }
+    let same = child.session.current_prompt_id.as_deref() == Some(pid);
+    let missing = child.session.current_prompt_id.is_none();
+    if matches!(child.session.state, AgentState::TurnCancelling) {
+        if !same {
+            adopt_child_prompt_id(child, pid);
+        }
+        if same || missing {
+            return;
+        }
+        child.session.state = AgentState::TurnRunning;
+        return;
+    }
+    if !same {
+        adopt_child_prompt_id(child, pid);
+    }
+    if !child.session.state.is_turn_running() {
+        child.session.state = AgentState::TurnRunning;
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum ChildPromptAdmission<'a> {
+    Apply,
+    Drop,
+    Closed(Option<&'a str>),
+}
+
+pub(super) fn child_prompt_admission<'a>(
+    child: &AgentView,
+    prompt_id: Option<&'a str>,
+    turn_start_ms: Option<i64>,
+) -> ChildPromptAdmission<'a> {
     let prompt_id = prompt_id.filter(|pid| !pid.is_empty());
-    // Same start as the closed nameless turn. A late id matches while the
-    // stored prompt is still None; that id is recorded so a later prompt does not.
     let is_closed_turn = child
         .unidentified_child_turn_closed_ms
         .is_some_and(|closed_start| {
@@ -93,13 +125,7 @@ pub(super) fn note_child_live_prompt(
                 && (closed_pid.is_none() || prompt_id.is_none() || closed_pid == prompt_id)
         });
     if is_closed_turn {
-        if let Some(pid) = prompt_id {
-            child.ended_child_prompt_ids.insert(pid.to_owned());
-            if child.unidentified_child_turn_closed_prompt.is_none() {
-                child.unidentified_child_turn_closed_prompt = Some(pid.to_owned());
-            }
-        }
-        return false;
+        return ChildPromptAdmission::Closed(prompt_id);
     }
     let Some(pid) = prompt_id else {
         // A nameless leftover keeps the previous turn's start. Once a named
@@ -110,36 +136,16 @@ pub(super) fn note_child_live_prompt(
             && child.turn_start_ms_prompt.as_deref() == Some(live_pid)
             && child.turn_start_ms.is_some_and(|live| live != chunk_start)
         {
-            return false;
+            return ChildPromptAdmission::Drop;
         }
-        return true;
+        return ChildPromptAdmission::Apply;
     };
     if child.ended_child_prompt_ids.contains(pid) || child.superseded_child_prompt_ids.contains(pid)
+        || (child.session.current_prompt_id.as_deref() != Some(pid) && child.is_self_originated_prompt(pid))
     {
-        return false;
+        return ChildPromptAdmission::Drop;
     }
-    if child.session.state.command_in_flight().is_some() {
-        return true;
-    }
-    let same = child.session.current_prompt_id.as_deref() == Some(pid);
-    let missing = child.session.current_prompt_id.is_none();
-    if matches!(child.session.state, AgentState::TurnCancelling) {
-        if !same {
-            adopt_child_prompt_id(child, pid);
-        }
-        if same || missing {
-            return true;
-        }
-        child.session.state = AgentState::TurnRunning;
-        return true;
-    }
-    if !same {
-        adopt_child_prompt_id(child, pid);
-    }
-    if !child.session.state.is_turn_running() {
-        child.session.state = AgentState::TurnRunning;
-    }
-    true
+    ChildPromptAdmission::Apply
 }
 
 fn adopt_child_prompt_id(child: &mut AgentView, pid: &str) {

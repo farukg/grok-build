@@ -813,11 +813,7 @@ fn build_dashboard_lines<'a>(
     search_active: bool,
 ) -> Vec<DashboardLine<'a>> {
     let groups_on = matches!(grouping, Grouping::State);
-    let emit_state_headers = groups_on && !matches!(filter, Filter::State(_));
-
-    // Pinned top-level agents are sorted to the front (see `sort_rows`), so they form a contiguous prefix
-    // Split that prefix off as a dedicated "Pinned" section above the state / directory groups
-    // That way a pinned (say) idle agent reads as pinned rather than landing under an "Idle" header
+    // Only an already-leading pin run gets a section; pins never move rows ahead of activity order.
     let mut pinned_end = 0usize;
     let mut pinned_count = 0usize;
     {
@@ -850,6 +846,28 @@ fn build_dashboard_lines<'a>(
     }
 
     let rest = rows.get(pinned_end..).unwrap_or(&[]);
+    // Interleaved activity must not create duplicate keyboard identities for state headers.
+    let emit_state_headers = groups_on && !matches!(filter, Filter::State(_)) && {
+        let mut seen_states = 0u8;
+        let mut previous = None;
+        rest.iter().all(|row| {
+            if previous == Some(row.state) {
+                return true;
+            }
+            previous = Some(row.state);
+            let bit = match row.state {
+                RowState::NeedsInput => 1,
+                RowState::Working => 2,
+                RowState::Idle => 4,
+                RowState::Inactive => 8,
+                RowState::Completed => 16,
+                RowState::Failed => 32,
+            };
+            let unseen = seen_states & bit == 0;
+            seen_states |= bit;
+            unseen
+        })
+    };
     if !emit_state_headers {
         out.extend(rest.iter().map(DashboardLine::Row));
         return out;

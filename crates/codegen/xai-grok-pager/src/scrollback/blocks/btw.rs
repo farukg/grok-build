@@ -72,10 +72,6 @@ impl BlockContent for BtwBlock {
         None
     }
 
-    fn has_bullet(&self, _ctx: &BlockContext) -> bool {
-        true
-    }
-
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false
     }

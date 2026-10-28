@@ -521,7 +521,7 @@ impl Default for ToolConfig {
         Self {
             muted_collapsed: true,
             dim_details: true,
-            bullet: ToolBullet::Diamond,
+            bullet: ToolBullet::Category,
             terminal_coloring: super::TerminalColoring::Terminal,
         }
     }
@@ -530,6 +530,8 @@ impl Default for ToolConfig {
 /// Header icon. When collapsed and `muted_collapsed` is on, the color blends with the muted palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolBullet {
+    /// The message category's native glyph.
+    Category,
     /// No bullet (default).
     #[default]
     None,
@@ -548,17 +550,24 @@ pub enum ToolBullet {
 }
 
 impl ToolBullet {
-    /// The display character for this bullet, or `None` for no bullet.
+    pub fn prefix_width(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Category | Self::Dot | Self::SmallCircle | Self::Circle
+            | Self::SmallTriangle | Self::Triangle | Self::Diamond => 2,
+        }
+    }
+
+    /// Fixed override character; category glyphs require a typed message.
     pub fn char(&self) -> Option<&'static str> {
         match self {
-            Self::None => Option::None,
+            Self::None | Self::Category => Option::None,
             Self::Dot => Some("·"),
             Self::SmallCircle => Some("•"),
             Self::Circle => Some(crate::glyphs::filled_dot()),
             Self::SmallTriangle => Some("▸"),
             Self::Triangle => Some("▶"),
-            // `glyphs` degrades the default scrollback bullet to the CP437 `♦` on legacy Windows consoles that can't render U+25C6
-            // Tool calls, thinking, the running-subagent block, etc. all use it.
+            // Legacy ConHost needs the CP437 diamond.
             Self::Diamond => Some(crate::glyphs::diamond_filled()),
         }
     }
@@ -901,6 +910,8 @@ pub enum RawFollowIndicator {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum RawToolBullet {
+    /// The message category's native glyph (the tool config default).
+    Category,
     /// No bullet.
     #[default]
     None,
@@ -1093,9 +1104,11 @@ pub struct RawToolConfig {
     /// Read "(1-50)", Search "(N matches)", Edit "(N edits)", Thinking "for Xs".
     /// When false, they use the normal muted gray.
     pub dim_details: bool,
-    /// Bullet/icon before tool call headers.
-    /// "none", "dot" (·), "small-circle" (•), "circle" (●),
-    /// "small-triangle" (▸), "triangle" (▶), "diamond" (◆).
+    /// Leading message icon: "category" (default) selects each message category's glyph and lifecycle color.
+    /// Running icons use the existing wave; monochrome shows a textual lifecycle label.
+    /// "none" hides it; "dot" (·), "small-circle" (•), "circle" (●),
+    /// "small-triangle" (▸), "triangle" (▶), and "diamond" (◆) override the glyph.
+    /// Prompt prefixes use prompt.show_prefix.
     pub bullet: RawToolBullet,
     /// Which color source paints captured terminal text such as command output and `.log` reads.
     /// "terminal" keeps the colors the tool emitted, "syntax" colors by the path's grammar (DSL when it names none), "both" keeps tool colors and colors the rest by grammar.
@@ -1108,7 +1121,7 @@ impl Default for RawToolConfig {
         Self {
             muted_collapsed: true,
             dim_details: true,
-            bullet: RawToolBullet::Diamond,
+            bullet: RawToolBullet::Category,
             terminal_coloring: super::TerminalColoring::Terminal,
         }
     }
@@ -1297,6 +1310,7 @@ impl From<RawFollowIndicator> for FollowIndicator {
 impl From<RawToolBullet> for ToolBullet {
     fn from(raw: RawToolBullet) -> Self {
         match raw {
+            RawToolBullet::Category => Self::Category,
             RawToolBullet::None => Self::None,
             RawToolBullet::Dot => Self::Dot,
             RawToolBullet::SmallCircle => Self::SmallCircle,

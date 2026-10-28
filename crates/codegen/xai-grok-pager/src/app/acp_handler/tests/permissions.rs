@@ -287,7 +287,7 @@
             cwd: "/tmp".into(),
             output_file: "/tmp/out".into(),
             status: crate::app::agent::BgTaskStatus::Running,
-            start_time: std::time::SystemTime::now(),
+            start_time: Some(std::time::SystemTime::now()),
             end_time: None,
             exit_code: None,
             signal: None,

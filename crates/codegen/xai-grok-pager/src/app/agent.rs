@@ -24,6 +24,8 @@ pub use xai_grok_shell::session::acp_types::CompactInvocationId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactInvocationSettlement {
     AwaitingRpc,
+    Queued,
+    Executing,
     LifecycleObserved,
     RpcSettled,
 }
@@ -200,7 +202,8 @@ pub struct BgTaskState {
     pub cwd: String,
     pub output_file: String,
     pub status: BgTaskStatus,
-    pub start_time: SystemTime,
+    /// Actual backend start, absent until a snapshot supplies it.
+    pub start_time: Option<SystemTime>,
     pub end_time: Option<SystemTime>,
     pub exit_code: Option<i32>,
     pub signal: Option<String>,
@@ -231,11 +234,30 @@ pub struct BgTaskState {
     pub restored_from_replay: bool,
 }
 impl BgTaskState {
-    /// Elapsed duration (from start to end, or start to now if running).
-    pub fn elapsed(&self) -> Duration {
-        let end = self.end_time.unwrap_or_else(SystemTime::now);
-        end.duration_since(self.start_time)
-            .unwrap_or(Duration::ZERO)
+    /// Backend interval; missing or invalid timestamps remain unknown.
+    pub fn elapsed(&self) -> Option<Duration> {
+        let start = self.start_time?;
+        let end = match self.status {
+            BgTaskStatus::Running => SystemTime::now(),
+            BgTaskStatus::Done | BgTaskStatus::Failed => self.end_time?,
+        };
+        end.duration_since(start).ok()
+    }
+
+    pub fn elapsed_label(&self) -> String {
+        crate::scrollback::blocks::BgTaskBlock::format_elapsed(self.elapsed())
+    }
+
+    pub fn apply_snapshot_timing(&mut self, snapshot: &xai_grok_tools::types::TaskSnapshot) {
+        // Cold reconciliation stamps its observation, not the dead process's interval.
+        if snapshot.signal.as_deref()
+            == Some(xai_grok_tools::computer::types::SESSION_RESTART_SIGNAL)
+        {
+            self.end_time = None;
+            return;
+        }
+        self.start_time = Some(snapshot.start_time);
+        self.end_time = snapshot.end_time;
     }
     /// Replace `stdout` with `new_stdout`.
     /// If `new_stdout` exceeds `BG_TASK_MAX_STDOUT`, keeps the head (snapped to a char boundary so UTF-8 stays valid) and sets `truncated = true`.
@@ -299,8 +321,8 @@ impl BgTaskState {
             cwd: snapshot.cwd.clone(),
             output_file: snapshot.output_file.to_string_lossy().into_owned(),
             status,
-            start_time: snapshot.start_time,
-            end_time: Some(snapshot.end_time.unwrap_or_else(SystemTime::now)),
+            start_time: None,
+            end_time: None,
             exit_code: snapshot.exit_code,
             signal: snapshot.signal.clone(),
             stdout: String::new(),
@@ -312,6 +334,7 @@ impl BgTaskState {
             is_monitor,
             restored_from_replay,
         };
+        tombstone.apply_snapshot_timing(snapshot);
         if !snapshot.output.is_empty() {
             let end = crate::render::line_utils::floor_char_boundary(
                 &snapshot.output,
@@ -326,8 +349,8 @@ impl BgTaskState {
         }
         tombstone
     }
-    /// Fold a late `TaskBackgrounded` into an already-terminal entry: keep the terminal status, exit, and timing.
-    /// Backfill only what the completion snapshot couldn't know: blank fields, demoted-Execute stdout, the scrollback entry.
+    /// Merge backgrounding metadata without replacing snapshot status or timing.
+    /// Backfill blank fields, demoted-Execute stdout, and the scrollback entry.
     pub fn absorb_late_backgrounded(&mut self, fresh: BgTaskState, entry_id: Option<EntryId>) {
         self.tool_call_id = fresh.tool_call_id;
         if self.command.trim().is_empty() {
@@ -533,8 +556,7 @@ pub struct GoalDisplayState {
     /// Wall-clock instant when this state was last updated from a GoalUpdated notification.
     /// Used to compute the local elapsed delta between notifications so the pager can tick elapsed_ms at render frequency.
     pub received_at: std::time::Instant,
-    /// Monotonic floor for the displayed elapsed time, carried across `GoalUpdated` rebuilds (seeded in `acp_handler` from the prior state).
-    /// Without it the timer ticks backward when a notification's authoritative base is below the value the pager already extrapolated to.
+    /// Active-only display floor; paused and terminal durations always use `elapsed_ms`.
     /// See [`Self::live_elapsed_ms`].
     pub elapsed_floor_ms: u64,
 }
@@ -593,16 +615,39 @@ impl GoalDisplayState {
             self.tokens_used
         }
     }
+    pub fn retain_active_elapsed_floor(&mut self, previous: Option<&Self>) {
+        self.elapsed_floor_ms = self.elapsed_ms;
+        if self.status == GoalDisplayStatus::Active
+            && let Some(previous) = previous
+            && previous.status == GoalDisplayStatus::Active
+            && previous.goal_id == self.goal_id
+        {
+            self.elapsed_floor_ms = self.elapsed_ms.max(previous.live_elapsed_ms());
+        }
+    }
+
     /// Return elapsed_ms adjusted with the local wall-clock delta since the last GoalUpdated notification.
     /// This makes the timer tick smoothly at render frequency without requiring the shell to emit notifications every second.
     pub fn live_elapsed_ms(&self) -> u64 {
-        let live = if self.status == GoalDisplayStatus::Active {
-            self.elapsed_ms
-                .saturating_add(self.received_at.elapsed().as_millis() as u64)
-        } else {
-            self.elapsed_ms
-        };
-        live.max(self.elapsed_floor_ms)
+        match self.status {
+            GoalDisplayStatus::Active => self.active_elapsed_ms_at(Instant::now()),
+            GoalDisplayStatus::UserPaused
+            | GoalDisplayStatus::BackOffPaused
+            | GoalDisplayStatus::NoProgressPaused
+            | GoalDisplayStatus::InfraPaused
+            | GoalDisplayStatus::Failed
+            | GoalDisplayStatus::Interrupted
+            | GoalDisplayStatus::Blocked
+            | GoalDisplayStatus::BudgetLimited
+            | GoalDisplayStatus::Complete => self.elapsed_ms,
+        }
+    }
+
+    fn active_elapsed_ms_at(&self, now: Instant) -> u64 {
+        self.elapsed_ms
+            .saturating_add(u64::try_from(now.saturating_duration_since(self.received_at).as_millis())
+                .unwrap_or(u64::MAX))
+            .max(self.elapsed_floor_ms)
     }
 }
 /// What the agent is currently doing.
@@ -2001,7 +2046,8 @@ mod tests {
         let mut tombstone =
             BgTaskState::tombstone_from_snapshot(&snapshot, BgTaskStatus::Done, None, false);
         assert_eq!(tombstone.status, BgTaskStatus::Done);
-        assert!(tombstone.end_time.is_some(), "end_time falls back to now");
+        assert_eq!(tombstone.end_time, snapshot.end_time);
+        assert_eq!(tombstone.elapsed(), None, "missing backend end stays unknown");
         let mut fresh =
             BgTaskState::tombstone_from_snapshot(&snapshot, BgTaskStatus::Running, None, false);
         fresh.tool_call_id = "tc-1".into();
@@ -2017,3 +2063,7 @@ mod tests {
         assert_eq!(tombstone.stdout_line_count, 1);
     }
 }
+
+#[cfg(test)]
+#[path = "agent_goal_timing_tests.rs"]
+mod goal_timing_tests;

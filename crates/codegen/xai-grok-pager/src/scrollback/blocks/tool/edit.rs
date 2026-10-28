@@ -749,10 +749,7 @@ pub struct EditToolCallBlock {
     pub edit_count: usize,
     /// Error message if the tool call failed (None = success).
     pub error: Option<String>,
-    /// When the tool started running.
-    pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion.
-    pub elapsed_ms: Option<i64>,
+    pub(crate) execution_clock: crate::acp::tool_clock::ToolExecutionClock,
     /// Header prefix (e.g. "Edit " or "Creating ").
     pub prefix: &'static str,
     pub display_name: Option<String>,
@@ -784,8 +781,6 @@ fn workflow_script_name(path: &str) -> Option<String> {
 }
 
 impl EditToolCallBlock {
-    /// Pre-completed blocks have no meaningful local timing, so `started_at` is `None`.
-    /// Timing is only set for blocks that enter a running UI state (via `set_last_running(true)` in `ScrollbackState`).
     pub fn new(path: impl Into<String>, hunks: Vec<DiffHunk>) -> Self {
         let path = path.into();
         let edit_count = hunks.len().max(1);
@@ -796,8 +791,7 @@ impl EditToolCallBlock {
             hunks,
             edit_count,
             error: None,
-            started_at: None,
-            elapsed_ms: None,
+            execution_clock: Default::default(),
             prefix: if display_name.is_some() {
                 "Editing workflow "
             } else {
@@ -842,34 +836,16 @@ impl EditToolCallBlock {
         self.error.is_none()
     }
 
-    /// Set error (mutable); computes elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
-        if self.elapsed_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
         self.error = error;
     }
 
-    /// Finalize elapsed time from `started_at`.
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
-        if self.elapsed_ms.is_some() {
-            return;
-        }
-        if let Some(start) = self.started_at {
-            self.elapsed_ms = Some(start.elapsed().as_millis() as i64);
-        }
+        self.execution_clock.close();
     }
 
     pub fn elapsed_ms(&self) -> Option<i64> {
-        match self.elapsed_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+        self.execution_clock.elapsed_ms()
     }
 
     pub fn with_edit_count(mut self, count: usize) -> Self {
@@ -938,14 +914,9 @@ impl EditToolCallBlock {
             theme.muted()
         };
 
-        let glyph_prefix = format!("{} ", if self.prefix.starts_with("Creating ") {
-            crate::glyphs::tool_create_file()
-        } else {
-            crate::glyphs::tool_edit_file()
-        });
         let prefix = match surface {
             crate::render::tool_paths::ToolPathSurface::Collapsed
-            | crate::render::tool_paths::ToolPathSurface::Expanded => glyph_prefix.as_str(),
+            | crate::render::tool_paths::ToolPathSurface::Expanded => "",
             crate::render::tool_paths::ToolPathSurface::Fullscreen => self.prefix,
         };
 
@@ -1283,15 +1254,7 @@ impl EditToolCallBlock {
                     cwd,
                     None,
                 );
-                let bullet_indent = ctx
-                    .appearance
-                    .scrollback
-                    .blocks
-                    .tool
-                    .bullet
-                    .char()
-                    .map(|c| unicode_width::UnicodeWidthStr::width(c) + 1)
-                    .unwrap_or(0);
+                let bullet_indent = ctx.bullet_indent();
                 let wrapped_header = wrap_edit_header(header, ctx.width as usize, bullet_indent);
                 let mut lines: Vec<BlockLine> = Vec::with_capacity(wrapped_header.len());
                 let mut boundary_entries = Vec::new();
@@ -1392,16 +1355,6 @@ impl BlockContent for EditToolCallBlock {
             .edit
             .accent
             .map(AccentStyle::static_color)
-    }
-
-    fn bullet(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
-        // Failed edit: red bullet. Successful: default (gray/primary).
-        if self.error.is_some() {
-            let theme = Theme::current();
-            Some(AccentStyle::static_color(theme.accent_error))
-        } else {
-            None
-        }
     }
 
     fn accent_background(&self, ctx: &BlockContext) -> bool {
@@ -1576,7 +1529,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} src/main.rs", crate::glyphs::tool_edit_file()));
+        assert_eq!(text, "src/main.rs".to_owned());
     }
 
     #[test]
@@ -1594,7 +1547,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} main.rs (3 edits)", crate::glyphs::tool_edit_file()));
+        assert_eq!(text, "src/main.rs (3 edits)".to_owned());
     }
 
     #[test]
@@ -1611,7 +1564,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} cc-deep-research", crate::glyphs::tool_edit_file()));
+        assert_eq!(text, "cc-deep-research".to_owned());
         assert!(
             block
                 .path_link_target(Some(Path::new("/repo")))
@@ -1632,7 +1585,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} triage", crate::glyphs::tool_create_file()));
+        assert_eq!(text, "triage".to_owned());
 
         let block = EditToolCallBlock::new("scripts/build.rhai", vec![]);
         assert_eq!(block.prefix, "Edit ");
@@ -1655,14 +1608,14 @@ mod tests {
             None,
             Some(80),
         );
-        // Spans: ["Edit ", basename, " +1", "/", "-1"]; path stays span 1 so the collapsed arm's selection/link invariant holds
+        // Spans: [verb, path, " +1", "/", "-1"]; path stays span 1 so the collapsed arm's selection/link invariant holds
         // Sole pin of the exact diffstat suffix format
         assert_eq!(header.spans.len(), 5);
         let [s0, s1, s2, s3, s4] = header.spans.as_slice() else {
             panic!("expected 5 header spans: {:?}", header.spans);
         };
-        assert_eq!(s0.content.as_ref(), format!("{} ", crate::glyphs::tool_edit_file()));
-        assert_eq!(s1.content.as_ref(), "foo.rs");
+        assert_eq!(s0.content.as_ref(), "".to_owned());
+        assert_eq!(s1.content.as_ref(), "/Users/me/project/src/foo.rs");
         assert_eq!(s2.content.as_ref(), " +1");
         assert_eq!(s2.style.fg, Some(theme.diff_insert_fg));
         assert_eq!(s3.content.as_ref(), "/");
@@ -1700,7 +1653,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} foo.rs", crate::glyphs::tool_edit_file()));
+        assert_eq!(text, "src/foo.rs".to_owned());
 
         let block = block.with_edit_count(3);
         let header = block.header_line(
@@ -1713,7 +1666,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} foo.rs (3 edits)", crate::glyphs::tool_edit_file()));
+        assert_eq!(text, "src/foo.rs (3 edits)".to_owned());
     }
 
     #[test]
@@ -1734,7 +1687,7 @@ mod tests {
         assert_eq!(output.lines.len(), 1, "collapsed shows the header only");
         // Exact suffix format is pinned by header_diffstat_spans_use_diff_colors.
         let text = line_to_string(&nth(&output.lines, 0).content);
-        assert!(text.starts_with(&format!("{} foo.rs", crate::glyphs::tool_edit_file())), "header line: {text:?}");
+        assert!(text.starts_with(&"src/foo.rs".to_owned()), "header line: {text:?}");
         assert!(!text.contains("let y"), "no diff body while collapsed");
     }
 
@@ -1754,7 +1707,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, format!("{} src/foo.rs", crate::glyphs::tool_edit_file()));
+        assert_eq!(text, "src/foo.rs".to_owned());
 
         let mut ctx = test_ctx();
         ctx.mode = DisplayMode::Expanded;
@@ -1770,7 +1723,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_selection_matches_painted_basename() {
+    fn collapsed_selection_matches_painted_path() {
         use crate::scrollback::types::derive_selection_text;
 
         let block = EditToolCallBlock::new("/Users/me/project/src/foo.rs", vec![]);
@@ -1778,9 +1731,74 @@ mod tests {
         ctx.mode = DisplayMode::Collapsed;
         let output = block.output(&ctx);
         let header = nth(&output.lines, 0);
-        assert_eq!(nth(&header.content.spans, 1).content.as_ref(), "foo.rs");
-        assert_eq!(derive_selection_text(header), "foo.rs");
+        assert_eq!(
+            nth(&header.content.spans, 1).content.as_ref(),
+            "/Users/me/project/src/foo.rs"
+        );
+        assert_eq!(derive_selection_text(header), "/Users/me/project/src/foo.rs");
         assert!(header.selection_text.is_none());
+    }
+
+    #[test]
+    fn collapsed_header_fits_path_after_the_suffix_budget() {
+        let theme = Theme::current();
+        let block = EditToolCallBlock::new("/repo/crates/codegen/src/foo.rs", vec![make_hunk()]);
+        let header = block.header_line(
+            &theme,
+            false,
+            true,
+            false,
+            ToolPathSurface::Collapsed,
+            Some(Path::new("/repo")),
+            Some(20),
+        );
+        // Reserved: " +1" + "/" + "-1" = 6 columns, leaving 14 for the path.
+        assert_eq!(nth(&header.spans, 1).content.as_ref(), "c/c/src/foo.rs");
+        let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "c/c/src/foo.rs +1/-1".to_owned());
+    }
+
+    #[test]
+    fn collapsed_header_distinguishes_same_basename_and_keeps_create_prefix() {
+        let mut ctx = test_ctx();
+        ctx.mode = DisplayMode::Collapsed;
+        ctx.cwd = Some(std::path::PathBuf::from("/repo"));
+
+        let a = EditToolCallBlock::new("/repo/src/a/main.rs", vec![]).output(&ctx);
+        let b = EditToolCallBlock::new("/repo/lib/b/main.rs", vec![]).output(&ctx);
+        assert_eq!(nth(&nth(&a.lines, 0).content.spans, 1).content.as_ref(), "src/a/main.rs");
+        assert_eq!(nth(&nth(&b.lines, 0).content.spans, 1).content.as_ref(), "lib/b/main.rs");
+
+        // Creation keeps its own header spelling; only the preamble verb differs.
+        let creating = EditToolCallBlock::new("/repo/src/new_file.rs", vec![]).with_prefix("Creating ");
+        let collapsed = creating.output(&ctx);
+        assert_eq!(nth(&nth(&collapsed.lines, 0).content.spans, 1).content.as_ref(), "src/new_file.rs");
+        let preamble = creating.preamble(&ctx).unwrap();
+        let preamble_text: String = preamble
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(preamble_text, "Creating /repo/src/new_file.rs");
+    }
+
+    #[test]
+    fn expanded_narrow_header_wraps_the_full_relative_path() {
+        let mut ctx = test_ctx();
+        ctx.mode = DisplayMode::Expanded;
+        ctx.width = 20;
+        ctx.cwd = Some(std::path::PathBuf::from("/repo"));
+        let block = EditToolCallBlock::new("/repo/crates/codegen/src/foo.rs", vec![]);
+        let output = block.output(&ctx);
+        let header_rows: String = output
+            .lines
+            .iter()
+            .take_while(|line| line.selection_range == Some(TOOL_HEADER_RANGE))
+            .flat_map(|line| line.content.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(header_rows, "crates/codegen/src/foo.rs");
     }
 
     #[test]
@@ -1810,7 +1828,7 @@ mod tests {
             nth(&nth(&collapsed.lines, 0).content.spans, 1)
                 .content
                 .as_ref(),
-            "foo.rs"
+            "src/foo.rs"
         );
         assert_eq!(nth(&collapsed.lines, 0).link_target.as_ref(), Some(&target));
 

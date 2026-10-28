@@ -127,8 +127,6 @@ pub struct ThinkingBlock {
     /// Optional elapsed time in milliseconds (from server).
     /// When set, collapsed view shows "Thought for Xs".
     elapsed_time_ms: Option<i64>,
-    /// When the thinking block started (local timestamp for live elapsed).
-    started_at: Option<std::time::Instant>,
 }
 impl ThinkingBlock {
     /// Create a new thinking block with complete text.
@@ -136,7 +134,6 @@ impl ThinkingBlock {
         Self {
             content: MarkdownContent::new(text),
             elapsed_time_ms: None,
-            started_at: None,
         }
     }
 
@@ -145,17 +142,6 @@ impl ThinkingBlock {
         Self {
             content: MarkdownContent::streaming(),
             elapsed_time_ms: None,
-            started_at: Some(std::time::Instant::now()),
-        }
-    }
-
-    /// Create an empty streaming block for historical replay. A local wall-clock timer would then freeze to ~0ms in
-    /// [`finish`] and render a bogus "Thought for 0.0s".
-    pub fn streaming_replay() -> Self {
-        Self {
-            content: MarkdownContent::streaming(),
-            elapsed_time_ms: None,
-            started_at: None,
         }
     }
 
@@ -169,18 +155,8 @@ impl ThinkingBlock {
         self.content.push_chunk_deferred(chunk);
     }
 
-    /// Finish streaming and do a full re-render for safety.
-    /// Freezes the local elapsed time from `started_at`.
-    /// The collapsed view then shows the actual wall-clock duration the user experienced, not the server-reported delta.
     pub fn finish(&mut self) {
         self.content.finish();
-        // Freeze local elapsed if no server time has been set.
-        // The local timer (started_at to now) captures the full duration from block creation to finish, which is what the user perceives
-        if self.elapsed_time_ms.is_none()
-            && let Some(start) = self.started_at
-        {
-            self.elapsed_time_ms = Some(start.elapsed().as_millis() as i64);
-        }
     }
 
     /// Get the source text.
@@ -188,16 +164,19 @@ impl ThinkingBlock {
         self.content.text()
     }
 
-    /// Get the elapsed thinking time in milliseconds.
-    ///
-    /// Returns server-reported time if available, otherwise live elapsed from `started_at` (for running thinking blocks).
-    pub fn elapsed_time_ms(&self) -> Option<i64> {
-        match self.elapsed_time_ms {
-            Some(ms) => Some(ms),
-            None => self
-                .started_at
-                .map(|start| start.elapsed().as_millis() as i64),
-        }
+    pub fn elapsed_time_ms(&self) -> Option<i64> { self.elapsed_time_ms }
+
+    pub(crate) fn source_len(&self) -> usize { self.content.with_source(str::len) }
+
+    pub(crate) fn source_tail(&self, offset: usize) -> Option<String> {
+        self.content.with_source(|source| source.get(offset..).map(str::to_owned))
+    }
+
+    pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
+        let Some(tail) = self.source_tail(offset) else { return false; };
+        self.content = historical.content.clone();
+        if !tail.is_empty() { self.content.push_chunk_deferred(&tail); }
+        true
     }
 
     /// Set the elapsed time (in milliseconds).
@@ -496,19 +475,6 @@ impl BlockContent for ThinkingBlock {
         self.rail_style(ctx)
     }
 
-    /// Thinking bullet: default (None) when not running, animated when running.
-    /// This means collapsed thinking shows gray bullet, running thinking syncs with accent.
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        if ctx.is_running {
-            // Sync bullet with the rail animation when running — via
-            // `rail_style`, not `accent`, so the in-body rail mode keeps the
-            // animated bullet.
-            self.rail_style(ctx)
-        } else {
-            None // default gray/primary
-        }
-    }
-
     fn background(&self, _ctx: &BlockContext) -> BlockBackground {
         BlockBackground::None
     }
@@ -546,20 +512,6 @@ impl BlockContent for ThinkingBlock {
 
     fn finished_display_mode(&self) -> Option<DisplayMode> {
         Some(DisplayMode::Collapsed)
-    }
-
-    fn has_bullet(&self, ctx: &BlockContext) -> bool {
-        let cfg = &ctx.appearance.scrollback.blocks.thinking;
-        let has_header_visible = ctx.mode == DisplayMode::Collapsed || cfg.header;
-        has_header_visible
-            && ctx
-                .appearance
-                .scrollback
-                .blocks
-                .tool
-                .bullet
-                .char()
-                .is_some()
     }
 
     fn is_groupable(&self) -> bool {

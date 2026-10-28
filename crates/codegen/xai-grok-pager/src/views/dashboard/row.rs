@@ -40,7 +40,7 @@ pub struct DashboardRow {
     /// Wall-clock moment of the row's last change. A wall-clock [`SystemTime`]: roster timestamps can
     /// predate this process, even the machine's boot, which an [`Instant`] cannot represent.
     pub last_change_at: SystemTime,
-    /// True when this row is pinned (always floats above non-pinned).
+    /// True when this row is pinned; activity ordering still applies.
     pub pinned: bool,
     /// Optional row badges (e.g. `worktree`, `needs-input`).
     pub badges: Vec<RowBadge>,
@@ -73,12 +73,12 @@ impl RowBadge {
         }
     }
 }
-/// Process-wide fallback anchor for the age column when an agent lacks both `turn_started_at` and `last_active_at`.
-/// Rare: `AgentView::new` always stamps the latter, but a future caller could omit it.
-/// Initialised lazily on first call so the fallback stays frozen instead of re-anchoring every frame.
-fn fallback_epoch() -> Instant {
-    static FALLBACK: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    *FALLBACK.get_or_init(Instant::now)
+/// Missing wire timestamps must not become fresh activity on each repaint.
+fn activity_time_from_unix_ms(unix_ms: i64) -> SystemTime {
+    u64::try_from(unix_ms)
+        .ok()
+        .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis)))
+        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 /// Which sessions the dashboard lists. The default lane shows top-level sessions (today's
 /// dashboard); the subagent lane shows the other running sessions — subagent children —
@@ -231,25 +231,25 @@ pub(crate) fn build_rows_with_workspace(
             agents, pinned, lane_reorder, inputs.grouping(), filter, home, roster, lane, scope,
         );
     }
-    let (mut rows, reorder) = workspace_member_rows(agents, inputs, home, child_rows);
+    let mut rows = workspace_member_rows(agents, inputs, home, child_rows, roster);
     if lane == SessionLane::All {
         rows.extend(subagent_rows(agents, pinned, home, roster));
         dedupe_session_ids(&mut rows);
     }
     apply_scope(&mut rows, scope);
     apply_filter(&mut rows, filter, home);
-    sort_rows(&mut rows, inputs.grouping(), &reorder);
+    sort_rows(&mut rows, inputs.grouping(), lane_reorder);
     rows
 }
 
-/// Live-root and store-member root rows (the `Main` lane's source set) plus the workspace
-/// manual order that sorts them.
+/// Live-root and store-member root rows (the `Main` lane's source set).
 fn workspace_member_rows(
     agents: &SessionViews,
     inputs: WorkspaceRowInputs<'_>,
     home: Option<&str>,
     child_rows: &std::collections::BTreeMap<String, DashboardRowId>,
-) -> (Vec<DashboardRow>, Vec<DashboardRowId>) {
+    roster: &[RosterEntry],
+) -> Vec<DashboardRow> {
     let live_by_session: HashMap<&str, (AgentId, &AgentView)> = agents
         .roots()
         .filter_map(|(id, agent)| {
@@ -260,20 +260,10 @@ fn workspace_member_rows(
                 .map(|session_id| (session_id.0.as_ref(), (id, agent)))
         })
         .collect();
-    let reorder = inputs
-        .workspace
-        .map(|workspace| workspace.manual_order())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|key| {
-            live_by_session.get(key.session_id.as_ref()).map_or_else(
-                || DashboardRowId::Workspace {
-                    session_id: key.session_id.to_string(),
-                },
-                |(id, _)| DashboardRowId::TopLevel(*id),
-            )
-        })
-        .collect::<Vec<_>>();
+    let roster_by_session: HashMap<&str, &RosterEntry> = roster
+        .iter()
+        .map(|entry| (entry.session_id.as_str(), entry))
+        .collect();
     let mut rows = inputs
         .workspace
         .into_iter()
@@ -289,7 +279,24 @@ fn workspace_member_rows(
             if let Some((id, agent)) = live {
                 return Some(top_level_row(id, agent, is_pinned, home));
             }
-            Some(workspace_member_row(member, is_pinned, home))
+            let mut row = workspace_member_row(member, is_pinned, home);
+            if let Some(entry) = roster_by_session.get(member.session_id.as_ref()) {
+                row.state = match roster_activity_to_state(entry.activity) {
+                    // Committed workspace roots keep their existing Idle-section visibility.
+                    RowState::Inactive => RowState::Idle,
+                    state @ (RowState::NeedsInput
+                    | RowState::Working
+                    | RowState::Idle
+                    | RowState::Completed
+                    | RowState::Failed) => state,
+                };
+                row.activity = roster_activity_label(row.state);
+                row.last_change_at = activity_time_from_unix_ms(entry.last_change_unix_ms);
+                if row.state == RowState::NeedsInput {
+                    row.badges.push(RowBadge::NeedsInput);
+                }
+            }
+            Some(row)
         })
         .collect::<Vec<_>>();
     rows.extend(inputs.provisional.iter().filter_map(|id| {
@@ -303,7 +310,7 @@ fn workspace_member_rows(
         }
         Some(top_level_row(*id, agent, false, home))
     }));
-    (rows, reorder)
+    rows
 }
 
 /// The subagent lane's row set before filter and sort: locally-attached child views plus
@@ -393,7 +400,7 @@ fn workspace_member_row(
             super::state::compact_cwd(&cwd, home)
         },
         cwd,
-        last_change_at: crate::util::system_time_from_unix_ms(member.last_change_unix_ms),
+        last_change_at: activity_time_from_unix_ms(member.last_change_unix_ms),
         pinned,
         badges,
         context_pct: None,
@@ -438,6 +445,13 @@ pub fn roster_activity_to_state(activity: RosterActivity) -> RowState {
         RosterActivity::Idle | RosterActivity::Dormant => RowState::Inactive,
         RosterActivity::Completed => RowState::Completed,
         RosterActivity::Dead => RowState::Failed,
+    }
+}
+fn roster_activity_label(state: RowState) -> Option<String> {
+    match state {
+        RowState::NeedsInput => Some("Awaiting input".to_owned()),
+        RowState::Working => Some("Working".to_owned()),
+        RowState::Idle | RowState::Inactive | RowState::Completed | RowState::Failed => None,
     }
 }
 /// Append "roster-only" rows for leader sessions not represented by a local `AgentView`.
@@ -502,11 +516,7 @@ fn append_roster_rows(
             })
             .unwrap_or_else(|| sanitize(&entry.session_id));
         let state = roster_activity_to_state(entry.activity);
-        let activity = match state {
-            RowState::NeedsInput => Some("Awaiting input".to_string()),
-            RowState::Working => Some("Working".to_string()),
-            _ => None,
-        };
+        let activity = roster_activity_label(state);
         let mut badges = Vec::new();
         if entry.is_worktree {
             badges.push(RowBadge::Worktree);
@@ -516,6 +526,9 @@ fn append_roster_rows(
         }
         let cwd_display = super::state::compact_cwd(&cwd, home);
         let is_pinned = pinned.contains(&id);
+        if is_pinned {
+            badges.push(RowBadge::Pinned);
+        }
         let subtitle = None;
         rows.push(DashboardRow {
             id,
@@ -533,7 +546,7 @@ fn append_roster_rows(
                 .map(sanitize),
             cwd_display,
             cwd,
-            last_change_at: crate::util::system_time_from_unix_ms(entry.last_change_unix_ms),
+            last_change_at: activity_time_from_unix_ms(entry.last_change_unix_ms),
             pinned: is_pinned,
             badges,
             context_pct: None,
@@ -667,19 +680,19 @@ fn top_level_row(id: AgentId, agent: &AgentView, pinned: bool, home: Option<&str
     }
 }
 /// Wall-clock anchor used by both dashboard rows and workspace metadata sync.
-pub(crate) fn top_level_last_change_at(agent: &AgentView, state: RowState) -> SystemTime {
-    let anchor: Instant = match state {
-        RowState::Working => agent
-            .turn_started_at
-            .or(agent.last_active_at)
-            .unwrap_or_else(fallback_epoch),
-        RowState::NeedsInput
-        | RowState::Idle
-        | RowState::Inactive
-        | RowState::Completed
-        | RowState::Failed => agent.last_active_at.unwrap_or_else(fallback_epoch),
+pub(crate) fn top_level_last_change_at(agent: &AgentView, _state: RowState) -> SystemTime {
+    let Some(activity) = agent.last_active_at else {
+        return SystemTime::UNIX_EPOCH;
     };
-    crate::util::system_time_from_instant(anchor)
+    // A shared projection keeps equal monotonic timestamps equal across row rebuilds.
+    static CLOCK: std::sync::OnceLock<(Instant, SystemTime)> = std::sync::OnceLock::new();
+    let (monotonic, wall) = CLOCK.get_or_init(|| (Instant::now(), SystemTime::now()));
+    if activity >= *monotonic {
+        wall.checked_add(activity.duration_since(*monotonic))
+    } else {
+        wall.checked_sub(monotonic.duration_since(activity))
+    }
+    .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 /// Basename of a directory (the leaf folder name), or `None` for the filesystem root / an empty path.
 fn cwd_basename(cwd: &std::path::Path) -> Option<String> {
@@ -760,114 +773,54 @@ pub fn apply_filter(rows: &mut Vec<DashboardRow>, filter: &Filter, _home: Option
         }
     });
 }
-/// Pinned rows keep manual order across activity and grouping changes.
-/// Unpinned rows reorder only within their state or directory group.
+/// Every lane uses running first, then newest activity, then stable session identity.
+/// Layout preferences remain persisted but cannot override activity order.
 pub fn sort_rows(
     rows: &mut [DashboardRow],
-    grouping: super::state::Grouping,
-    reorder: &[DashboardRowId],
+    _grouping: super::state::Grouping,
+    _reorder: &[DashboardRowId],
 ) {
-    use super::state::Grouping;
-    match grouping {
-        Grouping::State => sort_within_groups(rows, reorder),
-        Grouping::Directory => sort_within_directory_groups(rows, reorder),
-    }
+    rows.sort_unstable_by(sort_row_key);
 }
-fn sort_within_groups(rows: &mut [DashboardRow], reorder: &[DashboardRowId]) {
-    let mut keyed: Vec<(RowKey, DashboardRow)> = rows
-        .iter()
-        .cloned()
-        .map(|row| {
-            let key = row_key(&row, reorder);
-            (key, row)
-        })
-        .collect();
-    keyed.sort_by(|(left, _), (right, _)| sort_row_key(left, right, true));
-    for (slot, (_, row)) in rows.iter_mut().zip(keyed) {
-        *slot = row;
-    }
-}
-fn sort_within_directory_groups(rows: &mut [DashboardRow], reorder: &[DashboardRowId]) {
-    let mut keyed: Vec<(String, RowKey, DashboardRow)> = rows
-        .iter()
-        .cloned()
-        .map(|row| {
-            let cwd = row.cwd_display.clone();
-            let key = row_key(&row, reorder);
-            (cwd, key, row)
-        })
-        .collect();
-    keyed.sort_by(|(left_cwd, left, _), (right_cwd, right, _)| {
-        if left.pinned || right.pinned {
-            return sort_row_key(left, right, false);
-        }
-        left_cwd
-            .cmp(right_cwd)
-            .then_with(|| sort_row_key(left, right, false))
-    });
-    for (slot, (_, _, row)) in rows.iter_mut().zip(keyed) {
-        *slot = row;
-    }
-}
-fn row_key(row: &DashboardRow, reorder: &[DashboardRowId]) -> RowKey {
-    RowKey {
-        pinned: row.pinned,
-        state: row.state.group_priority(),
-        last_change_at: row.last_change_at,
-        reorder_idx: reorder.iter().position(|id| *id == row.id),
-        session_id: row.session_id.clone(),
-        id: row.id.clone(),
-    }
-}
-#[derive(Debug, Clone)]
-struct RowKey {
-    pinned: bool,
-    state: u8,
-    last_change_at: SystemTime,
-    reorder_idx: Option<usize>,
-    session_id: Option<String>,
-    /// Final tiebreak: when every other field is equal, fall back to the row id so the order is deterministic across rebuilds.
-    /// This avoids relying on `sort_by`'s stable-on-equal pass-through.
-    id: DashboardRowId,
-}
-/// `state_before_reorder` restricts manual ordering of unpinned rows to the same state.
-fn sort_row_key(a: &RowKey, b: &RowKey, state_before_reorder: bool) -> std::cmp::Ordering {
+
+fn sort_row_key(left: &DashboardRow, right: &DashboardRow) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    if a.pinned != b.pinned {
-        return b.pinned.cmp(&a.pinned);
-    }
-    let by_reorder = |a: &RowKey, b: &RowKey| match (a.reorder_idx, b.reorder_idx) {
-        (Some(x), Some(y)) => x.cmp(&y),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => Ordering::Equal,
+    use RowState::{Completed, Failed, Idle, Inactive, NeedsInput, Working};
+    let activity = match (left.state, right.state) {
+        (Working, Working) => Ordering::Equal,
+        (Working, NeedsInput | Idle | Inactive | Completed | Failed) => Ordering::Less,
+        (NeedsInput | Idle | Inactive | Completed | Failed, Working) => Ordering::Greater,
+        (
+            NeedsInput | Idle | Inactive | Completed | Failed,
+            NeedsInput | Idle | Inactive | Completed | Failed,
+        ) => Ordering::Equal,
     };
-    if a.pinned {
-        return by_reorder(a, b)
-            .then_with(|| a.session_id.cmp(&b.session_id))
-            .then_with(|| a.id.cmp(&b.id));
+    activity.then_with(|| row_key(left).cmp(&row_key(right)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ActivityTime {
+    Unknown,
+    Known(SystemTime),
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RowKey<'a> {
+    last_change_at: std::cmp::Reverse<ActivityTime>,
+    session_id: Option<&'a str>,
+    id: &'a DashboardRowId,
+}
+
+fn row_key(row: &DashboardRow) -> RowKey<'_> {
+    RowKey {
+        last_change_at: std::cmp::Reverse(if row.last_change_at == SystemTime::UNIX_EPOCH {
+            ActivityTime::Unknown
+        } else {
+            ActivityTime::Known(row.last_change_at)
+        }),
+        session_id: row.session_id.as_deref(),
+        id: &row.id,
     }
-    let by_state = |a: &RowKey, b: &RowKey| b.state.cmp(&a.state);
-    if state_before_reorder {
-        if a.state != b.state {
-            return by_state(a, b);
-        }
-        match by_reorder(a, b) {
-            Ordering::Equal => {}
-            ord => return ord,
-        }
-    } else {
-        match by_reorder(a, b) {
-            Ordering::Equal => {}
-            ord => return ord,
-        }
-        if a.state != b.state {
-            return by_state(a, b);
-        }
-    }
-    b.last_change_at
-        .cmp(&a.last_change_at)
-        .then_with(|| a.id.cmp(&b.id))
 }
 #[cfg(test)]
 mod tests {
@@ -1119,9 +1072,8 @@ mod tests {
             context_pct: None,
         }
     }
-    /// Sort: pinned floats above non-pinned regardless of state.
     #[test]
-    fn sort_pinned_first() {
+    fn sort_running_before_inactive_pins() {
         let mut rows = vec![
             DashboardRow {
                 pinned: false,
@@ -1135,24 +1087,25 @@ mod tests {
             },
         ];
         sort_rows(&mut rows, super::super::state::Grouping::State, &[]);
-        assert!(nth(&rows, 0).pinned);
-        assert!(!nth(&rows, 1).pinned);
+        assert_eq!(nth(&rows, 0).state, RowState::Working);
+        assert!(!nth(&rows, 0).pinned);
+        assert!(nth(&rows, 1).pinned);
     }
     #[test]
-    fn sort_state_priority_within_group() {
+    fn sort_running_before_waiting_then_recent() {
         let mut rows = vec![
             make_row_with_id(DashboardRowId::TopLevel(AgentId(1)), RowState::Idle),
             make_row_with_id(DashboardRowId::TopLevel(AgentId(2)), RowState::NeedsInput),
             make_row_with_id(DashboardRowId::TopLevel(AgentId(3)), RowState::Working),
         ];
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.last_change_at = UNIX_EPOCH + Duration::from_secs(1_000 + index as u64);
+        }
         sort_rows(&mut rows, super::super::state::Grouping::State, &[]);
-        assert_eq!(nth(&rows, 0).state, RowState::NeedsInput);
-        assert_eq!(nth(&rows, 1).state, RowState::Working);
+        assert_eq!(nth(&rows, 0).state, RowState::Working);
+        assert_eq!(nth(&rows, 1).state, RowState::NeedsInput);
         assert_eq!(nth(&rows, 2).state, RowState::Idle);
     }
-    /// Renamed from `sort_deterministic_with_equal_keys`. The original name implied a tiebreak
-    /// guarantee that `sort_row_key` does NOT provide; documents the actual behavioural contract:
-    /// idempotent on identical inputs.
     #[test]
     fn sort_is_idempotent_for_identical_inputs() {
         let now = SystemTime::now();
@@ -1255,17 +1208,15 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(nth(&rows, 0).state, RowState::Idle);
     }
-    /// Sort: explicit reorderings (Shift+↑/↓) float a row to its declared position WITHIN its state group.
-    /// Two Working rows: the older one (id2) is reordered above the more-recent one (id1).
     #[test]
-    fn sort_reorder_floats_within_state_group() {
+    fn saved_reorder_cannot_override_recency() {
         let id1 = DashboardRowId::TopLevel(AgentId(1));
         let id2 = DashboardRowId::TopLevel(AgentId(2));
         let newer = SystemTime::now();
         let older = newer - Duration::from_secs(60);
         let mut rows = vec![
             DashboardRow {
-                last_change_at: newer, // recency would put id1 first
+                last_change_at: newer,
                 ..make_row_with_id(id1.clone(), RowState::Working)
             },
             DashboardRow {
@@ -1278,13 +1229,11 @@ mod tests {
             super::super::state::Grouping::State,
             std::slice::from_ref(&id2),
         );
-        assert_eq!(nth(&rows, 0).id, id2, "reorder must float id2 to the top");
-        assert_eq!(nth(&rows, 1).id, id1);
+        assert_eq!(nth(&rows, 0).id, id1);
+        assert_eq!(nth(&rows, 1).id, id2);
     }
-    /// Regression: reordering must NOT split a state group. The renderer would otherwise emit `Idle →
-    /// Working → Idle` headers. The reorder only floats the Idle row WITHIN the Idle group.
     #[test]
-    fn reorder_does_not_split_state_groups() {
+    fn saved_reorder_cannot_cross_running_boundary() {
         let w1 = DashboardRowId::TopLevel(AgentId(1));
         let i1 = DashboardRowId::TopLevel(AgentId(2));
         let w2 = DashboardRowId::TopLevel(AgentId(3));
@@ -1295,6 +1244,9 @@ mod tests {
             make_row_with_id(w2, RowState::Working),
             make_row_with_id(i2.clone(), RowState::Idle),
         ];
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.last_change_at = UNIX_EPOCH + Duration::from_secs(1_000 + index as u64);
+        }
         sort_rows(
             &mut rows,
             super::super::state::Grouping::State,
@@ -1316,10 +1268,10 @@ mod tests {
             .filter(|r| r.state == RowState::Idle)
             .map(|r| r.id.clone())
             .collect();
-        assert_eq!(idle_order, vec![i1, i2], "reorder must order within Idle");
+        assert_eq!(idle_order, vec![i2, i1], "newer activity wins over saved order");
     }
     #[test]
-    fn pinned_manual_order_survives_activity_changes() {
+    fn pinned_manual_order_cannot_override_activity_changes() {
         for grouping in [
             super::super::state::Grouping::State,
             super::super::state::Grouping::Directory,
@@ -1347,12 +1299,12 @@ mod tests {
                 RowState::NeedsInput,
                 RowState::Idle,
             ] {
-                let row = rows.last_mut().expect("second pinned row");
+                let row = rows.iter_mut().find(|row| row.id == reorder[1]).expect("second pinned row");
                 row.state = state;
                 row.last_change_at += Duration::from_secs(60);
                 sort_rows(&mut rows, grouping, &reorder);
                 assert_eq!(
-                    reorder,
+                    vec![reorder[1].clone(), reorder[0].clone()],
                     rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
                 );
             }
@@ -1395,7 +1347,7 @@ mod tests {
         }
     }
     #[test]
-    fn pinned_session_order_survives_roster_activity_changes() {
+    fn pinned_roster_uses_runtime_state_then_activity() {
         let mut local = crate::app::agent_view::test_fixtures::make_agent();
         local.session.session_id = Some(acp::SessionId::new("z-local"));
         local.display_name = Some("Local".to_owned());
@@ -1425,14 +1377,19 @@ mod tests {
                 RowScope::all(),
                 );
                 assert_eq!(
-                    vec![roster_id.clone(), local_id.clone()],
+                    match activity {
+                        RosterActivity::Working => vec![roster_id.clone(), local_id.clone()],
+                        RosterActivity::Dormant => vec![local_id.clone(), roster_id.clone()],
+                        RosterActivity::Idle | RosterActivity::NeedsInput
+                        | RosterActivity::Completed | RosterActivity::Dead => unreachable!(),
+                    },
                     rows.into_iter().map(|row| row.id).collect::<Vec<_>>(),
                 );
             }
         }
     }
     #[test]
-    fn pinned_workspace_order_survives_session_loading() {
+    fn pinned_workspace_load_uses_live_activity_not_manual_rank() {
         for grouping in [
             xai_grok_dashboard_store::Grouping::State,
             xai_grok_dashboard_store::Grouping::Directory,
@@ -1450,11 +1407,6 @@ mod tests {
                 }
                 let mut snapshot = workspace_snapshot(vec![a, z]);
                 snapshot.grouping = grouping.clone();
-                let expected = if manual_order {
-                    vec!["z", "a"]
-                } else {
-                    vec!["a", "z"]
-                };
                 let mut agents = crate::app::session_views::SessionViews::new();
                 for loaded in [false, true, false] {
                     if loaded {
@@ -1468,7 +1420,7 @@ mod tests {
                     }
                     let rows = workspace_rows(&agents, &snapshot);
                     assert_eq!(
-                        expected,
+                        if loaded { vec!["z", "a"] } else { vec!["a", "z"] },
                         rows.iter()
                             .map(|row| row.session_id.as_deref().expect("saved session"))
                             .collect::<Vec<_>>(),
@@ -1966,7 +1918,7 @@ mod tests {
             cwd: String::new(),
             output_file: String::new(),
             status,
-            start_time: std::time::SystemTime::now(),
+            start_time: Some(std::time::SystemTime::now()),
             end_time: None,
             exit_code: None,
             signal: None,
@@ -2104,25 +2056,26 @@ mod tests {
             assert_eq!(nth(&rows, 0).state, expected, "activity={activity:?}");
         }
     }
-    /// In state grouping, `Inactive` sorts below `Idle`: not loaded here, so less immediately actionable.
-    /// It sorts above `Done` / `Failed`: still live, resumable sessions.
     #[test]
-    fn sort_rows_places_inactive_between_idle_and_done() {
+    fn settled_states_are_ordered_by_activity_not_status() {
         let mut rows = vec![
             make_row("done", RowState::Completed),
             make_row("inactive", RowState::Inactive),
             make_row("idle", RowState::Idle),
             make_row("failed", RowState::Failed),
         ];
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.last_change_at = UNIX_EPOCH + Duration::from_secs(1_000 + index as u64);
+        }
         sort_rows(&mut rows, super::super::state::Grouping::State, &[]);
         let order: Vec<RowState> = rows.iter().map(|r| r.state).collect();
         assert_eq!(
             order,
             vec![
+                RowState::Failed,
                 RowState::Idle,
                 RowState::Inactive,
                 RowState::Completed,
-                RowState::Failed,
             ],
         );
     }
@@ -2161,7 +2114,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_manual_order_is_global_and_survives_filtering() {
+    fn workspace_saved_manual_order_cannot_override_activity_ties() {
         let mut a = workspace_member("a", "Alpha", None);
         a.order_rank = Some(2 * xai_grok_dashboard_store::RANK_GAP);
         let b = workspace_member("b", "Beta", None);
@@ -2173,7 +2126,7 @@ mod tests {
             rows.iter()
                 .map(|row| row.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Charlie", "Alpha", "Beta"]
+            vec!["Alpha", "Beta", "Charlie"]
         );
         let workspace = crate::app::workspace_layout::WorkspaceView::from_snapshot(&snapshot);
         let rows = build_rows_with_workspace(
@@ -2195,7 +2148,7 @@ mod tests {
             rows.iter()
                 .map(|row| row.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Charlie", "Alpha"]
+            vec!["Alpha", "Charlie"]
         );
     }
     #[test]

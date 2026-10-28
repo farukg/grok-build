@@ -202,10 +202,6 @@ impl BlockContent for ToolCallBlock {
         delegate_tool!(self, accent(ctx))
     }
 
-    fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        delegate_tool!(self, bullet(ctx))
-    }
-
     fn accent_background(&self, ctx: &BlockContext) -> bool {
         delegate_tool!(self, accent_background(ctx))
     }
@@ -246,16 +242,6 @@ impl BlockContent for ToolCallBlock {
         delegate_tool!(self, is_selectable())
     }
 
-    fn has_bullet(&self, ctx: &BlockContext) -> bool {
-        ctx.appearance
-            .scrollback
-            .blocks
-            .tool
-            .bullet
-            .char()
-            .is_some()
-    }
-
     fn is_groupable(&self) -> bool {
         true
     }
@@ -282,66 +268,6 @@ impl BlockContent for ToolCallBlock {
 }
 
 impl ToolCallBlock {
-    /// Transfer timing data from another block of the same variant.
-    /// Used when a running block is replaced with its completed version (e.g., in the `handle_tool_call_update` completion path).
-    /// The new block inherits `started_at` from the old block so `finish()` can compute real elapsed time.
-    pub fn transfer_timing_from(&mut self, old: &ToolCallBlock) {
-        match (self, old) {
-            (ToolCallBlock::Execute(new), ToolCallBlock::Execute(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::Read(new), ToolCallBlock::Read(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::Edit(new), ToolCallBlock::Edit(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::Search(new), ToolCallBlock::Search(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::ListDir(new), ToolCallBlock::ListDir(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::WebFetch(new), ToolCallBlock::WebFetch(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::WebSearch(new), ToolCallBlock::WebSearch(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::IntegrationSearch(new), ToolCallBlock::IntegrationSearch(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::UseTool(new), ToolCallBlock::UseTool(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::SentMessage(new), ToolCallBlock::SentMessage(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::Skill(new), ToolCallBlock::Skill(old)) => {
-                new.started_at = old.started_at;
-            }
-            (ToolCallBlock::Other(new), ToolCallBlock::Other(old)) => {
-                new.started_at = old.started_at;
-            }
-            (
-                ToolCallBlock::Execute(_)
-                | ToolCallBlock::Read(_)
-                | ToolCallBlock::Edit(_)
-                | ToolCallBlock::ListDir(_)
-                | ToolCallBlock::Search(_)
-                | ToolCallBlock::WebFetch(_)
-                | ToolCallBlock::WebSearch(_)
-                | ToolCallBlock::IntegrationSearch(_)
-                | ToolCallBlock::UseTool(_)
-                | ToolCallBlock::MemorySearch(_)
-                | ToolCallBlock::SentMessage(_)
-                | ToolCallBlock::Skill(_)
-                | ToolCallBlock::Other(_),
-                _,
-            ) => {}
-        }
-    }
-
     /// Whether the tool call finished without an error.
     pub fn is_success(&self) -> bool {
         match self {
@@ -361,96 +287,39 @@ impl ToolCallBlock {
         }
     }
 
-    /// Set `started_at` on the inner variant block.
-    /// Unlike `transfer_timing_from`, this works across variant boundaries.
-    /// For example, it can set `started_at` on a `Search` block from a value captured when the block was still `Other`.
-    pub fn set_started_at(&mut self, instant: std::time::Instant) {
+    pub(crate) fn set_execution_clock(&mut self, clock: crate::acp::tool_clock::ToolExecutionClock) {
         match self {
-            ToolCallBlock::Execute(b) => b.started_at = Some(instant),
-            ToolCallBlock::Read(b) => b.started_at = Some(instant),
-            ToolCallBlock::Edit(b) => b.started_at = Some(instant),
-            ToolCallBlock::Search(b) => b.started_at = Some(instant),
-            ToolCallBlock::ListDir(b) => b.started_at = Some(instant),
-            ToolCallBlock::WebFetch(b) => b.started_at = Some(instant),
-            ToolCallBlock::WebSearch(b) => b.started_at = Some(instant),
-            ToolCallBlock::IntegrationSearch(b) => b.started_at = Some(instant),
-            ToolCallBlock::UseTool(b) => b.started_at = Some(instant),
-            ToolCallBlock::MemorySearch(b) => b.started_at = Some(instant),
-            ToolCallBlock::SentMessage(b) => b.started_at = Some(instant),
-            ToolCallBlock::Skill(b) => b.started_at = Some(instant),
-            ToolCallBlock::Other(b) => b.started_at = Some(instant),
+            ToolCallBlock::Execute(b) => b.execution_clock = clock,
+            ToolCallBlock::Read(b) => b.execution_clock = clock,
+            ToolCallBlock::Edit(b) => b.execution_clock = clock,
+            ToolCallBlock::Search(b) => b.execution_clock = clock,
+            ToolCallBlock::ListDir(b) => b.execution_clock = clock,
+            ToolCallBlock::WebFetch(b) => b.execution_clock = clock,
+            ToolCallBlock::WebSearch(b) => b.execution_clock = clock,
+            ToolCallBlock::IntegrationSearch(b) => b.execution_clock = clock,
+            ToolCallBlock::UseTool(b) => b.execution_clock = clock,
+            ToolCallBlock::MemorySearch(b) => b.execution_clock = clock,
+            ToolCallBlock::SentMessage(b) => b.execution_clock = clock,
+            ToolCallBlock::Skill(b) => b.execution_clock = clock,
+            ToolCallBlock::Other(b) => b.execution_clock = clock,
         }
     }
 
-    /// Start timing for this block (sets `started_at = now`). Only blocks that actually run in the UI get meaningful
-    /// timing.
-    pub fn start_timing(&mut self) {
+    pub(crate) fn execution_clock(&self) -> &crate::acp::tool_clock::ToolExecutionClock {
         match self {
-            ToolCallBlock::Execute(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::Read(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::Edit(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::Search(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::ListDir(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::WebFetch(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::WebSearch(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::IntegrationSearch(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::UseTool(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::MemorySearch(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::SentMessage(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::Skill(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
-            ToolCallBlock::Other(b) => {
-                if b.started_at.is_none() {
-                    b.started_at = Some(std::time::Instant::now());
-                }
-            }
+            ToolCallBlock::Execute(b) => &b.execution_clock,
+            ToolCallBlock::Read(b) => &b.execution_clock,
+            ToolCallBlock::Edit(b) => &b.execution_clock,
+            ToolCallBlock::Search(b) => &b.execution_clock,
+            ToolCallBlock::ListDir(b) => &b.execution_clock,
+            ToolCallBlock::WebFetch(b) => &b.execution_clock,
+            ToolCallBlock::WebSearch(b) => &b.execution_clock,
+            ToolCallBlock::IntegrationSearch(b) => &b.execution_clock,
+            ToolCallBlock::UseTool(b) => &b.execution_clock,
+            ToolCallBlock::MemorySearch(b) => &b.execution_clock,
+            ToolCallBlock::SentMessage(b) => &b.execution_clock,
+            ToolCallBlock::Skill(b) => &b.execution_clock,
+            ToolCallBlock::Other(b) => &b.execution_clock,
         }
     }
 

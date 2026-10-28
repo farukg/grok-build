@@ -169,7 +169,7 @@ mod prompt;
 mod prompt_stash;
 pub(in crate::app) use prompt_stash::prompt_history_text;
 pub use prompt_stash::{PromptStashEntry, StashCause};
-mod queue;
+pub(crate) mod queue;
 pub(in crate::app) use queue::QueueRowSendNow;
 mod render;
 pub use render::{AppRenderParams, OverlayHeader, SessionNav};
@@ -195,6 +195,10 @@ pub(crate) mod removal_test_support;
 pub(crate) mod removal_verdict;
 mod selection;
 mod session;
+pub(crate) mod load_continuation;
+pub(crate) mod current_actions;
+mod publication;
+pub use current_actions::{CurrentActionsContext, CurrentActionsReadContext};
 pub(crate) use session::stamp_child_role_for_session;
 mod session_mode;
 mod shell_completion;
@@ -619,6 +623,7 @@ pub(crate) struct SessionReload {
     /// Reconnect generation (from `ConnectionStatus::Connected`) this reload
     /// was opened for; finalization is rejected for any other generation.
     generation: u64,
+    binding_epoch: u32,
     /// Pre-outage transcript, tracker, todo, and workflow state: the same
     /// [`ReplayRebuiltState`] every replay detaches, stashed for restore-on-failure.
     /// restore-on-failure.
@@ -632,12 +637,6 @@ pub(crate) struct SessionReload {
     /// rationale).
     last_applied_event_seq: Option<u64>,
     last_applied_xai_event_seq: Option<u64>,
-    /// Exact-id dedup memory as of window open. The window itself starts with
-    /// a cleared memory (replayed lifecycle must re-apply onto the rebuilt
-    /// transcript even if this client already applied it live pre-reload); the
-    /// captured copy is restored only when the reload fails and the pre-reload
-    /// transcript comes back.
-    applied_background_event_ids: VecDeque<String>,
     /// Whether any `isReplay` update applied during this window. False means
     /// the agent resolved the cursor and sent only a live post-cursor tail.
     saw_replay: bool,
@@ -652,8 +651,7 @@ pub(crate) struct SessionReload {
 /// The `AgentView` state a session replay rebuilds from disk, detached by [`AgentView::take_replay_rebuilt_state`] (see its doc for the contract).
 /// [`AgentView::take_replay_rebuilt_state`] (see its doc for the contract).
 pub(crate) struct ReplayRebuiltState {
-    pub(crate) scrollback: ScrollbackState,
-    pub(crate) tracker: crate::acp::tracker::AcpUpdateTracker,
+    pub(crate) transcript: load_continuation::ReplayTranscript,
     pub(crate) todo: TodoPane,
     pub(crate) workflow_blocks:
         std::collections::HashMap<String, crate::scrollback::entry::EntryId>,
@@ -817,6 +815,10 @@ pub struct AgentView {
         crate::app::deferred_subagent_finishes::DeferredSubagentFinishes,
     /// Open reconnect reload window, if any. See [`SessionReload`].
     pub(crate) session_reload: Option<SessionReload>,
+    pub(crate) current_actions: current_actions::CurrentActionsProjection,
+    pub(crate) current_actions_generation: u64,
+    pub(crate) publication_load: publication::PublicationLoad,
+    pub(crate) load_reconstruction: load_continuation::LoadReconstruction,
     /// Unexpected-replay drops since the last reload window opened. Gates the drop log to one `warn!` per incident (a late replay is one line per event, thousands for a large transcript).
     /// drop log to one `warn!` per incident (a late replay is one line per
     /// event, thousands for a large transcript).
@@ -982,21 +984,13 @@ pub struct AgentView {
     /// Original images for a painted interjection, restored if the send fails.
     pub interjection_retry_images:
         std::collections::HashMap<String, Vec<crate::prompt_images::PastedImage>>,
-    /// Local wall-clock time when the most recent turn finished
-    /// (success, failure, or cancellation). Used by the dashboard modal to display "Nm ago" idle markers. Initialised to the agent-creation time in [`AgentView::new`] so newly-created agents that have never run a turn still show a sensible relative time.
+    /// Last observed session activity or restored persisted activity; unknown until either arrives.
     pub last_active_at: Option<Instant>,
     pub current_branch: Option<String>,
     pub is_worktree: bool,
     pub main_repo: Option<String>,
     /// Human-readable worktree label from the worktree metadata DB, when this agent's cwd is a managed worktree. Refreshed off the git caches when the dashboard opens; drives the dashboard row's worktree-name subtitle. `None` for non-worktree agents.
     pub worktree_label: Option<String>,
-    /// Local wall-clock time when the current activity phase started.
-    /// Reset on each activity transition (thinking → responding → tool, etc.).
-    /// Used for the `(5s)` phase timer in the turn status line.
-    pub activity_started_at: Option<Instant>,
-    /// Last observed [`TurnActivity`]; used to detect phase transitions
-    /// and reset `activity_started_at`.
-    pub(crate) last_activity: Option<crate::acp::tracker::TurnActivity>,
     /// Cached pane areas from last render, for mouse hit-testing.
     pub pane_areas: PaneAreas,
     /// Entry index currently hovered by the mouse (for dimmed selection box).
@@ -1546,6 +1540,7 @@ pub struct AgentView {
     /// (a rapid double-Enter on a queued bash command could "disappear": the interject overtook the row, the no-op dropped the send-now, and the armed cancel expectation hid the still-queued row).
     /// Parked here and fired from the confirming `x.ai/queue/changed`
     pub(crate) send_now_awaiting_confirm: Option<String>,
+    pub(crate) queue_operations: std::collections::HashMap<String, queue::QueueSendNow>,
     /// User blocks painted at send-now dispatch, keyed by prompt id; the turn-start adoption consumes an entry to reuse its block. The flag marks an edit-interject override (fresher than the mirror text the adoption captures). Cleared on session reload.
     pub(crate) send_now_painted_blocks:
         std::collections::HashMap<String, (crate::scrollback::EntryId, bool)>,
@@ -2429,7 +2424,7 @@ pub(crate) mod test_fixtures {
                 cwd: String::new(),
                 output_file: String::new(),
                 status: crate::app::agent::BgTaskStatus::Running,
-                start_time: std::time::SystemTime::now(),
+                start_time: Some(std::time::SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,

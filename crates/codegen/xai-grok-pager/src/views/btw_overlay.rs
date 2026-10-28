@@ -441,9 +441,9 @@ pub fn render_btw_panel(
                     .map(|(idx, bl)| {
                         let visible_offset = (idx - content_skip) as u16;
                         let screen_row = body_y + visible_offset;
-                        (screen_row, &bl.content, bl.joiner.as_deref())
+                        (screen_row, &bl.content, bl.joiner.as_deref(), bl.chrome_prefix_width)
                     })
-                    .take_while(|(screen_row, _, _)| *screen_row < max_screen_y);
+                    .take_while(|(screen_row, _, _, _)| *screen_row < max_screen_y);
                 scan_lines_for_url_overlays(visible_lines, content_x, media_paths, overlay);
             }
         }

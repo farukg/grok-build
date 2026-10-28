@@ -331,7 +331,7 @@ pub async fn spawn_grok_shell(
 
     let spawn_fn: Box<dyn FnOnce(AcpClientTx) -> Result<Rc<MvpAgent>> + Send + 'static> = {
         Box::new(move |client_tx| {
-            let gateway = AcpGatewaySender::new(client_tx);
+            let gateway = AcpGatewaySender::new(client_tx).with_local_receiver_settlement()?;
 
             let _t = xai_grok_telemetry::instrumentation::timer("startup.worker_spawn.agent_build");
             let mut agent =

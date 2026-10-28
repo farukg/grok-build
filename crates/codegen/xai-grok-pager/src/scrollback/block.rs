@@ -9,6 +9,7 @@ use crate::prompt_images::{InlineMediaInfo, ScrollbackImageRef, ScrollbackVideoR
 use xai_grok_pager_diff::DiffHunk;
 
 use super::blocks::mermaid_content::DiagramAffordance;
+use super::blocks::message_symbol::SymbolLayout;
 use super::blocks::{
     AgentMessageBlock, BgTaskBlock, BtwBlock, ContextInfoBlock, EditToolCallBlock,
     ExecuteToolCallBlock, InjectedBlock, LineRange, ListDirToolCallBlock, MemoryCaptureBlock,
@@ -18,7 +19,7 @@ use super::blocks::{
 };
 use super::types::{
     AccentStyle, BlockBackground, BlockContext, BlockOutput, DisplayMode, RenderedBlockOutput,
-    Selectable, SelectionBoundaries, derive_selection_text,
+    Selectable, SelectionBoundaries, ToolCompletion, derive_selection_text,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -378,8 +379,7 @@ pub trait BlockContent {
     /// Returns `Some(AccentStyle)` with color and animation info.
     fn accent(&self, ctx: &BlockContext) -> Option<AccentStyle>;
 
-    /// Bullet/icon color style. Default: delegates to `accent()`, so the bullet matches the accent color. a failed Read
-    /// has no accent but a red bullet.
+    /// Leading icon style; RenderBlock resolves message lifecycle independently of the accent rail.
     fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
         self.accent(ctx)
     }
@@ -453,9 +453,7 @@ pub trait BlockContent {
         true
     }
 
-    /// Whether this block should display a bullet/icon prefix.
-    /// Default: `false`. Override to opt in (e.g., ToolCallBlock when the bullet is configured, ThinkingBlock when collapsed).
-    /// The bullet character and color are determined by the appearance config and accent style.
+    /// Whether the composed output has visible leading message chrome.
     fn has_bullet(&self, _ctx: &BlockContext) -> bool {
         false
     }
@@ -528,34 +526,45 @@ pub trait BlockContent {
     }
 }
 
-/// Prepend a bullet/icon span to the first line of a block's output. Called by `RenderBlock::output()` when
-/// `has_bullet()` returns true. The bullet character comes from the appearance config. The color comes from the
-/// block's `bullet()` method. `None` defaults to gray when collapsed, primary when expanded.
-pub fn prepend_bullet(output: &mut BlockOutput, ctx: &BlockContext, bullet: Option<AccentStyle>) {
-    let tool_cfg = &ctx.appearance.scrollback.blocks.tool;
-    let Some(bullet_str) = tool_cfg.bullet.char() else {
+/// Prefix chrome is excluded from content selection and link coordinates.
+pub(crate) fn prepend_bullet(
+    output: &mut BlockOutput,
+    ctx: &BlockContext,
+    prefix: &str,
+    bullet: Option<AccentStyle>,
+    layout: SymbolLayout,
+) {
+    if prefix.is_empty() {
         return;
-    };
-    let Some(first_line) = output.lines.first_mut() else {
-        return;
-    };
-
+    }
+    if output.lines.is_empty() {
+        output.lines.push(super::types::BlockLine::separator(ratatui::text::Line::default()));
+    }
     let theme = crate::theme::Theme::current();
-
-    let color = match bullet {
-        Some(style) => style.color,
-        None => {
-            if ctx.mode == DisplayMode::Collapsed {
-                theme.gray
-            } else {
-                theme.gray_bright
-            }
-        }
+    let color = bullet.map(|style| style.color).unwrap_or_else(|| {
+        if ctx.mode == DisplayMode::Collapsed { theme.gray } else { theme.gray_bright }
+    });
+    let width = unicode_width::UnicodeWidthStr::width(prefix);
+    let padding = match layout {
+        SymbolLayout::Header => String::new(),
+        SymbolLayout::Body => " ".repeat(width),
     };
-
-    let bullet_span = Span::styled(format!("{bullet_str} "), Style::default().fg(color));
-    first_line.content.spans.insert(0, bullet_span);
-    crate::scrollback::types::shift_selection_metadata_for_prefix(first_line, 1);
+    for (index, line) in output.lines.iter_mut().enumerate() {
+        let chrome = if index == 0 {
+            prefix
+        } else {
+            match layout {
+                SymbolLayout::Header => break,
+                SymbolLayout::Body => padding.as_str(),
+            }
+        };
+        line.content.spans.insert(0, Span::styled(chrome.to_owned(), Style::default().fg(color)));
+        crate::scrollback::types::shift_selection_metadata_for_prefix(line, 1);
+        line.chrome_prefix_width += width;
+        if line.bg_start_col > 0 {
+            line.bg_start_col = line.bg_start_col.saturating_add(u16::try_from(width).unwrap_or(u16::MAX));
+        }
+    }
 }
 
 /// A stub block that just renders plain text.
@@ -722,15 +731,51 @@ pub(crate) fn join_searchable(parts: impl IntoIterator<Item = Option<String>>) -
 
 impl RenderBlock {
     pub(crate) fn rendered_output(&self, ctx: &BlockContext) -> RenderedBlockOutput {
-        let mut rendered = match self {
-            RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) => edit.rendered_output(ctx),
-            RenderBlock::ToolCall(ToolCallBlock::SentMessage(message)) => {
-                message.rendered_output(ctx)
+        self.rendered_output_with_completion(ctx, ToolCompletion::Unconfirmed)
+    }
+
+    pub(crate) fn rendered_output_with_completion(
+        &self,
+        ctx: &BlockContext,
+        completion: ToolCompletion,
+    ) -> RenderedBlockOutput {
+        let symbol = self.message_symbol_with_completion(ctx, completion);
+        let prefix = symbol.as_ref().map(|symbol| symbol.prefix(ctx)).unwrap_or_default();
+        let content_ctx = self.symbol_context(ctx, &prefix);
+        let mut rendered = if content_ctx.width == 0 {
+            RenderedBlockOutput::from(BlockOutput {
+                lines: vec![super::types::BlockLine::separator(ratatui::text::Line::default())],
+            })
+        } else {
+            match self {
+                RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) => edit.rendered_output(&content_ctx),
+                RenderBlock::ToolCall(ToolCallBlock::SentMessage(message)) => {
+                    message.rendered_output(&content_ctx)
+                }
+                RenderBlock::Stub(_) | RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_)
+                | RenderBlock::Thinking(_) | RenderBlock::System(_) | RenderBlock::SessionEvent(_)
+                | RenderBlock::BgTask(_) | RenderBlock::Subagent(_) | RenderBlock::Workflow(_)
+                | RenderBlock::Btw(_) | RenderBlock::ContextInfo(_) | RenderBlock::MemoryCapture(_)
+                | RenderBlock::Injected(_)
+                | RenderBlock::ToolCall(ToolCallBlock::Execute(_) | ToolCallBlock::Read(_)
+                    | ToolCallBlock::ListDir(_) | ToolCallBlock::Search(_) | ToolCallBlock::WebFetch(_)
+                    | ToolCallBlock::WebSearch(_) | ToolCallBlock::IntegrationSearch(_)
+                    | ToolCallBlock::UseTool(_) | ToolCallBlock::MemorySearch(_)
+                    | ToolCallBlock::Skill(_) | ToolCallBlock::Other(_)) => {
+                        RenderedBlockOutput::from(delegate_block!(self, output(&content_ctx)))
+                    }
             }
-            _ => return RenderedBlockOutput::from(self.output(ctx)),
         };
-        if self.has_bullet(ctx) {
-            prepend_bullet(&mut rendered.output, ctx, self.bullet(ctx));
+        if ctx.mode == DisplayMode::Collapsed {
+            rendered.output.lines.truncate(1);
+            if let Some(line) = rendered.output.lines.first_mut() {
+                line.content = crate::render::line_utils::truncate_line(
+                    std::mem::take(&mut line.content), usize::from(content_ctx.width),
+                );
+            }
+        }
+        if let Some(symbol) = symbol {
+            prepend_bullet(&mut rendered.output, ctx, &prefix, symbol.style(ctx), symbol.layout);
         }
         rendered
     }
@@ -738,15 +783,7 @@ impl RenderBlock {
 
 impl BlockContent for RenderBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
-        let mut output = delegate_block!(self, output(ctx));
-        if ctx.mode == DisplayMode::Collapsed && output.lines.len() > 1 {
-            output.lines.truncate(1);
-        }
-        if delegate_block!(self, has_bullet(ctx)) {
-            let bullet = delegate_block!(self, bullet(ctx));
-            prepend_bullet(&mut output, ctx, bullet);
-        }
-        output
+        self.rendered_output(ctx).output
     }
 
     fn accent(&self, ctx: &BlockContext) -> Option<AccentStyle> {
@@ -754,7 +791,7 @@ impl BlockContent for RenderBlock {
     }
 
     fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
-        delegate_block!(self, bullet(ctx))
+        self.message_symbol(ctx).and_then(|symbol| symbol.style(ctx))
     }
 
     fn accent_background(&self, ctx: &BlockContext) -> bool {
@@ -798,7 +835,7 @@ impl BlockContent for RenderBlock {
     }
 
     fn has_bullet(&self, ctx: &BlockContext) -> bool {
-        delegate_block!(self, has_bullet(ctx))
+        self.message_symbol(ctx).is_some_and(|symbol| symbol.is_visible(ctx))
     }
 
     fn is_groupable(&self) -> bool {
@@ -821,12 +858,13 @@ impl BlockContent for RenderBlock {
         delegate_block!(self, inline_media())
     }
 
-    fn inline_media_placements(&self, ctx: &BlockContext) -> Vec<AnchoredMedia> {
-        delegate_block!(self, inline_media_placements(ctx))
-    }
-
     fn diagram_affordances(&self, ctx: &BlockContext) -> Vec<DiagramAffordance> {
-        delegate_block!(self, diagram_affordances(ctx))
+        if self.estimate_extra_rows() == 0 {
+            return Vec::new();
+        }
+        let prefix = self.message_symbol(ctx).map(|symbol| symbol.prefix(ctx)).unwrap_or_default();
+        let content_ctx = self.symbol_context(ctx, &prefix);
+        delegate_block!(self, diagram_affordances(&content_ctx))
     }
 
     fn estimate_extra_rows(&self) -> u16 {
@@ -1005,13 +1043,6 @@ impl RenderBlock {
         RenderBlock::Thinking(ThinkingBlock::streaming())
     }
 
-    /// Create an empty streaming thinking block for historical replay.
-    /// Does not start a local elapsed timer; the collapsed "Thought for Xs" duration comes from the server-reported elapsed instead.
-    /// See [`ThinkingBlock::streaming_replay`].
-    pub fn thinking_streaming_replay() -> Self {
-        RenderBlock::Thinking(ThinkingBlock::streaming_replay())
-    }
-
     pub fn system(text: impl Into<String>) -> Self {
         RenderBlock::System(SystemMessageBlock::new(text))
     }
@@ -1049,7 +1080,7 @@ impl RenderBlock {
     pub fn bg_task_completed(
         command: impl Into<String>,
         task_id: impl Into<String>,
-        elapsed: std::time::Duration,
+        elapsed: impl Into<Option<std::time::Duration>>,
     ) -> Self {
         RenderBlock::BgTask(BgTaskBlock::completed(command, task_id, elapsed))
     }
@@ -1058,7 +1089,7 @@ impl RenderBlock {
     pub fn bg_task_failed(
         command: impl Into<String>,
         task_id: impl Into<String>,
-        elapsed: std::time::Duration,
+        elapsed: impl Into<Option<std::time::Duration>>,
         exit_code: Option<i32>,
         signal: Option<String>,
     ) -> Self {
@@ -1306,7 +1337,15 @@ impl RenderBlock {
     }
 
     pub fn copy_visible_text_in_state(&self, ctx: &BlockContext) -> Option<String> {
-        let rendered = self.rendered_output(ctx);
+        self.copy_visible_text_with_completion(ctx, ToolCompletion::Unconfirmed)
+    }
+
+    pub(crate) fn copy_visible_text_with_completion(
+        &self,
+        ctx: &BlockContext,
+        completion: ToolCompletion,
+    ) -> Option<String> {
+        let rendered = self.rendered_output_with_completion(ctx, completion);
         plain_text_from_output(&rendered.output, &rendered.boundaries)
     }
 
@@ -1711,7 +1750,7 @@ mod tests {
                     .with_selection_text(Some("body".to_string())),
             ],
         };
-        prepend_bullet(&mut output, &ctx(DisplayMode::Expanded, false), None);
+        prepend_bullet(&mut output, &ctx(DisplayMode::Expanded, false), "◆ ", None, SymbolLayout::Header);
         let Some(line) = output.lines.first() else {
             panic!("expected a prepended line: {output:?}");
         };

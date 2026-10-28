@@ -16,7 +16,6 @@ use crate::app::agent_view::{AgentView, PromptInputMode};
 #[cfg(feature = "local-workspace")]
 use crate::app::app_view::ActiveView;
 use crate::app::app_view::AppView;
-use crate::app::cancel_latency::TurnEnd;
 use crate::app::dispatch::ctx::{
     SwitchCause, get_active_agent, get_active_agent_mut, switch_to_agent, with_active_agent,
 };
@@ -346,7 +345,8 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
             let data = entries
                 .as_ref()
                 .and_then(|s| s.get(index))
-                .map(|e| (e.id.clone(), e.source.clone(), e.cwd.clone()));
+                .map(|e| (e.id.clone(), e.source.clone(), e.cwd.clone(),
+                    crate::app::roster::SessionActivitySnapshot::from_picker_entry(e)));
             agent.active_modal = None;
             picker_dismissed = true;
             data
@@ -359,7 +359,7 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
     if picker_dismissed {
         invalidate_picker_fetch_on_dismiss(app);
     }
-    let (session_id, source, cwd) = match entry_data {
+    let (session_id, source, cwd, activity) = match entry_data {
         Some(d) => d,
         None => {
             let sessions = match app.session_picker_entries.take() {
@@ -373,7 +373,8 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
                 Some(e) => e,
                 None => return vec![],
             };
-            let d = (entry.id.clone(), entry.source.clone(), entry.cwd.clone());
+            let d = (entry.id.clone(), entry.source.clone(), entry.cwd.clone(),
+                crate::app::roster::SessionActivitySnapshot::from_picker_entry(entry));
             app.session_picker_loading = false;
             app.session_picker_state.set_query("");
             app.session_picker_state.search_active = false;
@@ -383,6 +384,23 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
             d
         }
     };
+    if crate::app::foreign_sessions::is_foreign_picker_source(&source) {
+        return dispatch_picked_session(app, session_id, source, cwd);
+    }
+    let effects = dispatch_picked_session(app, session_id, source, cwd);
+    if let Some(id) = app.agents.find_by_session_id(activity.session_id.0.as_ref())
+        && let Some(agent) = app.agents.get_mut(&id)
+    {
+        agent.restore_session_activity(&activity);
+    }
+    effects
+}
+fn dispatch_picked_session(
+    app: &mut AppView,
+    session_id: String,
+    source: String,
+    cwd: String,
+) -> Vec<Effect> {
     if let Some(foreign_source) =
         crate::app::foreign_sessions::ForeignPickerSource::from_picker_source(&source)
     {
@@ -1245,6 +1263,11 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         agent_id,
         session_id,
     );
+    if app.agents.get(&agent_id).is_some_and(|agent| {
+        agent.session.session_id.as_ref().is_some_and(|bound| bound != &session_id)
+    }) {
+        return vec![];
+    }
     if app
         .agents
         .get_mut(&agent_id)
@@ -1254,15 +1277,22 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
     }
     let identity_rebind = super::super::dashboard::WorkspaceIdentityRebind::capture(app);
     crate::app::workspace_sync::allow_loaded_session(app, session_id.0.as_ref());
+    let activity = app.dashboard_roster().iter()
+        .find(|entry| entry.session_id == session_id.0.as_ref())
+        .map(|entry| crate::app::roster::SessionActivitySnapshot {
+            session_id: session_id.clone(),
+            last_change_unix_ms: entry.last_change_unix_ms,
+        });
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         let hydrate_sid = session_id.clone();
         agent.bind_session_id(session_id);
         agent.scrollback.end_batch();
-        agent.session.loading_replay = false;
+        let loaded_turn = agent.finish_loaded_reconstruction();
         agent.arm_late_replay_grace();
         agent.session.restore_degree = restore_degree;
-        agent.session.finish_turn(&mut agent.scrollback);
-        agent.mark_turn_finished(TurnEnd::Aborted);
+        if let Some(activity) = activity {
+            agent.restore_session_activity(&activity);
+        }
         if let Some(placeholder_id) = agent.loading_placeholder_id.take() {
             agent.scrollback.remove_entry(placeholder_id);
         }
@@ -1303,15 +1333,18 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
             );
             agent.scrollback.push_block(RenderBlock::system(banner));
         }
-        let adopting = running_prompt_id
-            .as_deref()
-            .is_some_and(|pid| agent.should_adopt_running_prompt(pid));
-        let preserve = running_prompt_id.as_deref().filter(|_| adopting);
-        agent.reset_follow_ups_for_reload_preserving(preserve);
-        if adopting && let Some(running_pid) = running_prompt_id {
-            agent.adopt_running_prompt(running_pid);
-        } else {
-            agent.scrollback.finish_all_running();
+        match loaded_turn {
+            crate::app::agent_view::load_continuation::LoadedTurn::Reconstructed => {
+                let adopting = running_prompt_id
+                    .as_deref()
+                    .is_some_and(|pid| agent.should_adopt_running_prompt(pid));
+                let preserve = running_prompt_id.as_deref().filter(|_| adopting);
+                agent.reset_follow_ups_for_reload_preserving(preserve);
+                if adopting && let Some(running_pid) = running_prompt_id {
+                    agent.adopt_running_prompt(running_pid);
+                }
+            }
+            crate::app::agent_view::load_continuation::LoadedTurn::Continued => {}
         }
         let mut effects = Vec::new();
         if let Some(directive) = agent.pending_first_prompt.take() {
@@ -1389,21 +1422,29 @@ pub(in crate::app::dispatch) fn handle_session_load_failed(
     error: String,
 ) -> Vec<Effect> {
     tracing::error!(agent = ?agent_id, session = ?session_id, error = %error, "Session load failed");
+    if app.agents.get(&agent_id).is_some_and(|agent| {
+        agent.session.session_id.as_ref().is_some_and(|bound| bound != &session_id)
+    }) {
+        return vec![];
+    }
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         if defer_to_open_reload_window(agent, agent_id, "SessionLoadFailed") {
             return vec![];
         }
         agent.pending_extensions_fetch = false;
         agent.session.prompt_history_loading = false;
-        agent.session.finish_command();
-        agent.mark_turn_finished(TurnEnd::Aborted);
         agent.scrollback.end_batch();
-        agent.session.loading_replay = false;
+        match agent.finish_loaded_reconstruction() {
+            crate::app::agent_view::load_continuation::LoadedTurn::Reconstructed => {
+                agent.session.finish_command();
+                agent.unbind_session_id();
+                agent.load_failed = true;
+                restore_prompts_held_during_load(agent);
+            }
+            crate::app::agent_view::load_continuation::LoadedTurn::Continued => {}
+        }
         agent.pending_first_prompt = None;
         agent.pending_fork_banner = None;
-        agent.unbind_session_id();
-        agent.load_failed = true;
-        restore_prompts_held_during_load(agent);
         agent
             .scrollback
             .push_block(RenderBlock::session_event(SessionEvent::TurnFailed {
@@ -1627,7 +1668,7 @@ pub(in crate::app::dispatch) fn handle_session_restore_failed(
             return vec![];
         }
         agent.pending_extensions_fetch = false;
-        agent.session.loading_replay = false;
+        agent.finish_loaded_reconstruction();
         agent.session.prompt_history_loading = false;
         agent
             .scrollback

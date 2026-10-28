@@ -55,14 +55,14 @@ fn busy_compact_original_results_settle_once_before_or_after_foreground_ends() {
                 complete_foreground(&mut app, prompt_id.clone(), acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
             let started = app.agents.get(&id).unwrap().turn_started_at;
-            let activity = app.agents.get(&id).unwrap().activity_started_at;
+            let activity = app.agents.get(&id).unwrap().current_action_started_at();
             dispatch(Action::TaskComplete(TaskResult::CompactComplete {
                 agent_id: id, invocation_id, result: outcome.clone(),
             }), &mut app);
             let agent = &app.agents.get(&id).unwrap();
             assert_eq!(agent.session.state.is_turn_running(), !foreground_ends_first);
             assert_eq!(agent.turn_started_at, started);
-            assert_eq!(agent.activity_started_at, activity);
+            assert_eq!(agent.current_action_started_at(), activity);
             if !foreground_ends_first {
                 assert_eq!(agent.session.current_prompt_id.as_deref(), Some(prompt_id.as_str()));
                 assert!(agent.session.in_flight_prompt.is_some());

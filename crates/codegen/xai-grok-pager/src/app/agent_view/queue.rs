@@ -45,7 +45,197 @@ impl SendNowDeferral {
     }
 }
 
+use xai_grok_shell::extensions::interject::{QueueAction, QueueOperation, QueueRequest, QueueResponse, QueueResult};
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum QueueTransport {
+    Encode,
+    Disconnected,
+    InvalidReply,
+}
+
+impl QueueTransport {
+    pub(crate) fn notice(self) -> &'static str {
+        match self {
+            Self::Encode => "request could not be encoded; outcome unconfirmed",
+            Self::Disconnected => "transport failed; outcome unconfirmed",
+            Self::InvalidReply => "invalid reply; outcome unconfirmed",
+        }
+    }
+}
+
+pub(crate) enum QueueAdmission {
+    Awaiting,
+    Answered(QueueResult),
+    Unconfirmed(QueueTransport),
+}
+
+pub(crate) struct QueueSendNow {
+    pub(crate) request: QueueRequest,
+    pub(crate) binding_epoch: u64,
+    pub(crate) row: crate::app::prompt_queue::QueueEntryWire,
+    pub(crate) admission: QueueAdmission,
+}
+
+impl QueueSendNow {
+    fn target_version(&self) -> u64 {
+        match &self.admission {
+            QueueAdmission::Answered(QueueResult::Rejected { .. }) => self.request.operation.expected_version,
+            QueueAdmission::Awaiting | QueueAdmission::Unconfirmed(_)
+            | QueueAdmission::Answered(QueueResult::Queued { .. } | QueueResult::GoalInterjection { .. }
+                | QueueResult::Started { .. } | QueueResult::Unconfirmed) => self.row.version,
+        }
+    }
+
+    pub(crate) fn label(&self) -> &'static str {
+        match &self.admission {
+            QueueAdmission::Awaiting => "send now: pending",
+            QueueAdmission::Answered(result) => match result {
+                QueueResult::Queued { .. } => "send now: queued, awaiting start",
+                QueueResult::GoalInterjection { .. } => "send now: queued for goal",
+                QueueResult::Started { .. } => "send now: started",
+                QueueResult::Rejected { reason, .. } => reason.notice(),
+                QueueResult::Unconfirmed => "send now: unconfirmed; Enter observes",
+            },
+            QueueAdmission::Unconfirmed(reason) => reason.notice(),
+        }
+    }
+}
+
 impl AgentView {
+    pub(crate) fn refresh_queue_admission(&mut self) {
+        self.queue.set_admission_labels(self.queue_operations.iter().filter(|(id, operation)| {
+            self.shared_queue.iter().any(|row| row.id == **id && row.version == operation.row.version)
+        }).map(|(id, operation)| {
+            let edited_text = match &operation.request.action {
+                QueueAction::Prioritize { new_text } => new_text.clone(),
+                QueueAction::Observe => None,
+            };
+            (id.clone(), crate::views::queue_pane::QueueAdmissionDisplay { label: operation.label(), edited_text })
+        }).collect());
+    }
+
+    pub(crate) fn begin_queue_send_now(
+        &mut self,
+        id: String,
+        expected_version: u64,
+        new_text: Option<String>,
+    ) -> Option<crate::app::actions::Effect> {
+        let session_id = self.session.session_id.as_ref()?.0.to_string();
+        let new_text = new_text.filter(|text| !text.trim().is_empty());
+        if let Some(pending) = self.queue_operations.get_mut(&id)
+            && pending.binding_epoch == self.session_binding_epoch
+            && pending.target_version() == expected_version
+        {
+            match &pending.admission {
+                QueueAdmission::Awaiting => return None,
+                QueueAdmission::Answered(QueueResult::GoalInterjection { .. } | QueueResult::Started { .. } | QueueResult::Rejected { .. }) => return None,
+                QueueAdmission::Answered(QueueResult::Queued { .. } | QueueResult::Unconfirmed) | QueueAdmission::Unconfirmed(_) => {
+                    let request = QueueRequest {
+                        operation: pending.request.operation.clone(),
+                        action: QueueAction::Observe,
+                        owner: pending.request.owner.clone(),
+                    };
+                    pending.admission = QueueAdmission::Awaiting;
+                    self.refresh_queue_admission();
+                    self.sync_queue_pane();
+                    return Some(crate::app::actions::Effect::QueueInterject {
+                        request,
+                        binding_epoch: self.session_binding_epoch,
+                    });
+                }
+            }
+        }
+        let row = self.shared_queue.iter().find(|row| row.id == id && row.version == expected_version)?.clone();
+        let request = QueueRequest {
+            operation: QueueOperation { session_id, id: id.clone(), expected_version, operation_id: uuid::Uuid::new_v4() },
+            action: QueueAction::Prioritize { new_text },
+            owner: row.owner.clone(),
+        };
+        self.queue_operations.insert(id, QueueSendNow {
+            request: request.clone(),
+            binding_epoch: self.session_binding_epoch,
+            row,
+            admission: QueueAdmission::Awaiting,
+        });
+        self.refresh_queue_admission();
+        self.sync_queue_pane();
+        Some(crate::app::actions::Effect::QueueInterject { request, binding_epoch: self.session_binding_epoch })
+    }
+
+    pub(crate) fn apply_queue_send_now_result(
+        &mut self,
+        operation: QueueOperation,
+        binding_epoch: u64,
+        result: Result<QueueResponse, QueueTransport>,
+    ) -> Option<crate::app::prompt_queue::QueueEntryWire> {
+        if self.session_binding_epoch != binding_epoch
+            || self.session.session_id.as_ref().map(|id| id.0.as_ref()) != Some(operation.session_id.as_str())
+        {
+            return None;
+        }
+        let Some(pending) = self.queue_operations.get_mut(&operation.id) else { return None; };
+        if pending.request.operation != operation || pending.binding_epoch != binding_epoch {
+            return None;
+        }
+        // A duplicate reply cannot regress a settled admission or a later queue version.
+        if !matches!(pending.admission, QueueAdmission::Awaiting | QueueAdmission::Unconfirmed(_) | QueueAdmission::Answered(QueueResult::Unconfirmed)) {
+            return None;
+        }
+        let response = match result {
+            Ok(response) if response.operation == operation => response,
+            Ok(_) => {
+                pending.admission = QueueAdmission::Unconfirmed(QueueTransport::InvalidReply);
+                self.refresh_queue_admission();
+                self.sync_queue_pane();
+                return None;
+            }
+            Err(reason) => {
+                pending.admission = QueueAdmission::Unconfirmed(reason);
+                self.refresh_queue_admission();
+                self.sync_queue_pane();
+                return None;
+            }
+        };
+        if let QueueResult::Started { prompt_id } = &response.result
+            && prompt_id != &operation.id
+        {
+            pending.admission = QueueAdmission::Unconfirmed(QueueTransport::InvalidReply);
+            self.refresh_queue_admission();
+            self.sync_queue_pane();
+            return None;
+        }
+        let authoritative = match &response.result {
+            QueueResult::Queued { row } | QueueResult::Rejected { row: Some(row), .. } => Some(row),
+            QueueResult::GoalInterjection { .. } | QueueResult::Started { .. } | QueueResult::Rejected { row: None, .. } | QueueResult::Unconfirmed => None,
+        };
+        if let Some(current) = self.shared_queue.iter().find(|row| row.id == operation.id)
+            && current.version > authoritative.map_or(operation.expected_version, |row| row.version)
+        {
+            return None;
+        }
+        if let Some(row) = authoritative {
+            if row.id != operation.id {
+                pending.admission = QueueAdmission::Unconfirmed(QueueTransport::InvalidReply);
+                self.refresh_queue_admission();
+                self.sync_queue_pane();
+                return None;
+            }
+            pending.row = row.clone();
+            if let Some(current) = self.shared_queue.iter_mut().find(|current| current.id == row.id) {
+                *current = row.clone();
+            }
+        }
+        if matches!(response.result, QueueResult::GoalInterjection { .. } | QueueResult::Started { .. }) {
+            self.shared_queue.retain(|row| row.id != operation.id);
+        }
+        let authoritative = authoritative.cloned();
+        pending.admission = QueueAdmission::Answered(response.result);
+        self.refresh_queue_admission();
+        self.sync_queue_pane();
+        authoritative
+    }
+
     /// Remove a local queue row: fix selection, drop the entry, hide the pane if the merged view emptied.
     /// Returns the removed prompt, if any.
     pub(in crate::app) fn remove_local_queue_row(
@@ -548,16 +738,14 @@ impl AgentView {
         if self.pending_adoption_updates.is_empty() {
             return;
         }
-        for (pid, update, mut meta) in std::mem::take(&mut self.pending_adoption_updates) {
-            if pid == prompt_id {
-                // Forward-only: the xAI rail shares this cursor and may have applied later events during the buffering window
-                // Assigning a buffered (older) id would re-deliver those on reconnect
-                if let (Some(seq), Some(id)) = (meta.event_seq, meta.event_id.take()) {
-                    self.advance_last_seen_event_id(id, Some(seq));
-                }
-                self.session
-                    .handle_update(update, &meta, &mut self.scrollback);
-            }
+        for (pid, update, meta) in std::mem::take(&mut self.pending_adoption_updates) {
+            if pid != prompt_id || meta.is_replay || !self.accepts_current_source(&meta)
+                || !self.live_admission_tracker().accepts_sampling_acp(&update, &meta)
+                || matches!(self.live_admission_tracker().tool_admission(&update, &meta, Some(prompt_id)), crate::acp::tracker::ToolAdmission::Reject) { continue; }
+            self.open_live_load_delivery();
+            self.handle_admitted_acp_update(update, &meta);
+            if let Some(seq) = meta.event_seq { self.last_applied_event_seq = Some(self.last_applied_event_seq.map_or(seq, |last| last.max(seq))); }
+            if let Some(id) = meta.event_id { self.advance_last_seen_event_id(id, meta.event_seq); }
         }
     }
 
@@ -2348,7 +2536,7 @@ mod watcher_tests {
                 cwd: "/tmp".into(),
                 output_file: "/tmp/out".into(),
                 status: crate::app::agent::BgTaskStatus::Running,
-                start_time: std::time::SystemTime::now(),
+                start_time: Some(std::time::SystemTime::now()),
                 end_time: None,
                 exit_code: None,
                 signal: None,

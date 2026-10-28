@@ -66,6 +66,7 @@ fn process_identity(command: Option<&Command>, is_interactive: bool) -> Option<P
             | Command::Memory(_)
             | Command::Models
             | Command::Sessions(_)
+            | Command::SessionAudit { .. }
             | Command::Usage(_)
             | Command::Setup { .. }
             | Command::Share(_)
@@ -106,6 +107,7 @@ fn command_needs_pre_sandbox_policy_heal(command: Option<&Command>) -> bool {
             | Command::Plugin(_)
             | Command::Memory(_)
             | Command::Sessions(_)
+            | Command::SessionAudit { .. }
             | Command::Usage(_)
             | Command::Setup { .. }
             | Command::Share(_)
@@ -2033,20 +2035,46 @@ fn dispatch_doctor_if_requested(args: &PagerArgs) -> bool {
     }
     true
 }
+fn dispatch_session_audit(command: &xai_grok_pager::app::cli::SessionAuditCommand) {
+    use xai_grok_pager::app::cli::SessionAuditCommand;
+    use xai_grok_shell::session::storage::audit;
+    let response = match command {
+        SessionAuditCommand::Capabilities => audit::capability(env!("VERSION_WITH_COMMIT")),
+        SessionAuditCommand::Tree { sessions_root, max_issues, max_inventory_entries, max_response_bytes } => audit::audit_with_limits(sessions_root, env!("VERSION_WITH_COMMIT"), audit::AuditLimits {
+            issues: *max_issues, inventory_entries: *max_inventory_entries, response_bytes: *max_response_bytes, ..audit::AuditLimits::default()
+        }),
+    };
+    let refused = matches!(&response, audit::AuditResponse::Audit { result: audit::AuditResult::Refused, .. } | audit::AuditResponse::Incomplete { .. });
+    let output = match audit::render(&response) {
+        Ok(output) => output,
+        Err(_) => { eprintln!("session_audit_output_failed"); std::process::exit(3); }
+    };
+    let mut stdout = std::io::stdout().lock();
+    if std::io::Write::write_all(&mut stdout, output.as_bytes()).and_then(|()| std::io::Write::flush(&mut stdout)).is_err() {
+        eprintln!("session_audit_output_failed");
+        std::process::exit(3);
+    }
+    if refused { std::process::exit(2); }
+}
+
 fn main() {
     xai_grok_version::set_full_version(env!("VERSION_WITH_COMMIT"));
-    xai_grok_telemetry::startup::mark_process_start();
     if let Some(code) = xai_grok_pager::app::mermaid_worker::maybe_run_render_subprocess() {
         std::process::exit(code);
     }
     if let Some(code) = xai_grok_pager::voice::maybe_run_capture_subprocess() {
         std::process::exit(code);
     }
+    if let Some(command) = xai_grok_pager::app::cli::SessionAuditCommand::parse_early_cli() {
+        dispatch_session_audit(&command);
+        return;
+    }
+    let args = PagerArgs::parse_cli();
+    xai_grok_telemetry::startup::mark_process_start();
     xai_grok_shell::session::install_preserving_file_accelerator();
     set_release_channel(ReleaseChannel::from_label(
         xai_grok_update::channel_name().unwrap_or_default(),
     ));
-    let args = PagerArgs::parse_cli();
     if dispatch_version_if_requested(&args) || dispatch_doctor_if_requested(&args) {
         return;
     }
@@ -2248,6 +2276,9 @@ async fn async_main(mut args: PagerArgs) -> Result<()> {
                     &update_config,
                 )
                 .await;
+            }
+            Command::SessionAudit { .. } => {
+                return Err(anyhow::anyhow!("session_audit_requires_synchronous_dispatch"));
             }
             Command::Doctor(_) => {
                 unreachable!("doctor was consumed before runtime startup")

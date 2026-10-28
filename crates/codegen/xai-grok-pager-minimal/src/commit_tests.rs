@@ -914,14 +914,7 @@ fn no_block_spends_the_accent_column() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     let rail = xai_grok_pager::glyphs::accent_bar();
-    let bullet = appearance
-        .scrollback
-        .blocks
-        .tool
-        .bullet
-        .char()
-        .expect("minimal keeps the tool bullet")
-        .to_string();
+    let bullet = xai_grok_pager::glyphs::history_thinking().to_string();
     minimal_api::set_show_thinking_blocks(true);
     for mode in [
         DisplayMode::Collapsed,

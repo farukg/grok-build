@@ -48,7 +48,7 @@ fn context_fixture() -> xai_grok_shell::session::ContextInfo {
     }
 }
 
-fn seed_automatic(app: &mut AppView, id: AgentId, sid: &str) -> (Instant, Instant) {
+fn seed_automatic(app: &mut AppView, id: AgentId, sid: &str) -> (Instant, Option<Instant>) {
     let agent = app.agents.get_mut(&id).unwrap();
     agent.session.start_command(AgentCommand::Compact);
     let now = match agent.session.state {
@@ -63,7 +63,6 @@ fn seed_automatic(app: &mut AppView, id: AgentId, sid: &str) -> (Instant, Instan
     });
     agent.session.models.override_context_window(131_072);
     agent.turn_started_at = Some(now);
-    agent.activity_started_at = Some(now);
     deliver(app, "x.ai/session_notification", &notification(sid, started(CompactPhase::Executing), None));
     let agent = app.agents.get_mut(&id).unwrap();
     agent.context_state = Some(context_fixture());
@@ -71,14 +70,14 @@ fn seed_automatic(app: &mut AppView, id: AgentId, sid: &str) -> (Instant, Instan
         content: format!("{sid}-todo"), priority: Default::default(),
         status: xai_grok_shell::tools::TodoStatus::Pending, meta: None,
     }]);
-    (agent.turn_started_at.unwrap(), agent.activity_started_at.unwrap())
+    (agent.turn_started_at.unwrap(), agent.current_action_started_at())
 }
 
-fn assert_automatic(app: &AppView, id: AgentId, sid: &str, timers: (Instant, Instant)) {
+fn assert_automatic(app: &AppView, id: AgentId, sid: &str, timers: (Instant, Option<Instant>)) {
     let agent = app.agents.get(&id).unwrap();
     assert_eq!(agent.session.turn_activity(), Some(TurnActivity::AutoCompacting));
     assert_eq!(agent.turn_started_at, Some(timers.0));
-    assert_eq!(agent.activity_started_at, Some(timers.1));
+    assert_eq!(agent.current_action_started_at(), timers.1);
     assert!(matches!(agent.session.state, AgentState::CommandRunning {
         command: AgentCommand::Compact, started_at,
     } if started_at == timers.0));
@@ -193,7 +192,7 @@ fn assert_historical_markers(app: &AppView, child: AgentId) {
         "historical tagged manual lifecycle does not restore RPC-only manual markers");
     assert!(child.session.state.is_idle());
     assert!(child.turn_started_at.is_none());
-    assert!(child.activity_started_at.is_none());
+    assert!(child.current_action_started_at().is_none());
     assert!(child.session.in_flight_prompt.is_none());
     assert!(child.session.compact_held_prompt.is_none());
     assert!(child.todo.todos().is_empty());

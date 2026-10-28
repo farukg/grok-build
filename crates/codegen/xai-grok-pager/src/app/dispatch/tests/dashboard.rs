@@ -2685,7 +2685,7 @@ fn workspace_layout_on_provisional_row_toasts() {
     assert!(dispatch(Action::DashboardReorderDown, &mut app).is_empty());
     assert_eq!(
         app.dashboard.as_ref().unwrap().error_toast.as_deref(),
-        Some("Session isn't saved to the workspace yet"),
+        Some("Sessions are ordered by running state and last activity"),
     );
     assert_eq!(
         app.workspace_membership.effective_manual_order(),
@@ -2725,7 +2725,7 @@ fn workspace_layout_on_vanished_row_toasts_no_longer_in_workspace() {
     assert!(dispatch(Action::DashboardReorderUp, &mut app).is_empty());
     assert_eq!(
         app.dashboard.as_ref().unwrap().error_toast.as_deref(),
-        Some("Session is no longer in the workspace"),
+        Some("Sessions are ordered by running state and last activity"),
     );
 }
 #[test]
@@ -5548,10 +5548,12 @@ fn workspace_child_layout_actions_survive_restart_without_changing_root_membersh
     ] {
         app.dashboard.as_mut().unwrap().focus_row(DashboardRowId::Roster { session_id: id.into() });
         let effects = dispatch(action, &mut app);
-        let [Effect::PersistDashboardChildLayout(update)] = effects.as_slice() else {
-            panic!("child layout must use scoped persistence: {effects:?}");
-        };
-        update.write_to_path(&config).unwrap();
+        match effects.as_slice() {
+            [Effect::PersistDashboardChildLayout(update)] => update.write_to_path(&config).unwrap(),
+            [] => assert_eq!(app.dashboard.as_ref().unwrap().error_toast.as_deref(),
+                Some("Sessions are ordered by running state and last activity")),
+            effects => panic!("unexpected child layout effects: {effects:?}"),
+        }
         assert_eq!(app.workspace_membership.effective_manual_order(), membership_order);
         assert_eq!(app.workspace_membership.snapshot().unwrap().members.len(), 1);
         assert_eq!(app.workspace_membership.snapshot(), Some(&snapshot));
@@ -5560,10 +5562,7 @@ fn workspace_child_layout_actions_survive_restart_without_changing_root_membersh
     let restarted = make_app();
     let dashboard = restarted.dashboard.as_ref().unwrap();
     assert!(dashboard.pinned.contains(&DashboardRowId::Roster { session_id: "child-a".into() }));
-    assert_eq!(dashboard.reorder, vec![
-        DashboardRowId::Roster { session_id: "child-b".into() },
-        DashboardRowId::Roster { session_id: "child-a".into() },
-    ]);
+    assert!(dashboard.reorder.is_empty());
     assert_eq!(restarted.workspace_membership.effective_manual_order(), membership_order);
     assert_eq!(restarted.workspace_membership.snapshot().unwrap().members.len(), 1);
     assert_eq!(restarted.workspace_membership.snapshot(), Some(&snapshot));

@@ -2580,78 +2580,12 @@ pub(super) fn dispatch_dashboard_select(app: &mut AppView, next: bool) {
     }
     d.clear_manual_scroll();
 }
-pub(super) fn dispatch_dashboard_reorder(app: &mut AppView, up: bool) -> Vec<Effect> {
-    if workspace_lane_enabled(app)
-        && app
-            .dashboard
-            .as_ref()
-            .and_then(|d| d.selected.clone())
-            .is_some_and(|row| !row_is_child(app, &row))
-    {
-        let Some(selected) = app.dashboard.as_ref().and_then(|d| d.selected.clone()) else {
-            return vec![];
-        };
-        let selected = match workspace_layout_target(app, &selected) {
-            Ok(LayoutTarget { key, .. }) => key,
-            Err(refusal) => {
-                refuse_workspace_layout(app, refusal);
-                return vec![];
-            }
-        };
-        let mut order = app.workspace_membership.effective_manual_order();
-        let position = order.iter().position(|key| *key == selected);
-        if up {
-            match position {
-                Some(0) => {
-                    order.remove(0);
-                }
-                Some(index) => order.swap(index, index - 1),
-                None => order.insert(0, selected),
-            }
-        } else {
-            match position {
-                Some(index) if index + 1 < order.len() => order.swap(index, index + 1),
-                Some(_) => {}
-                None => order.push(selected),
-            }
-        }
-        if let Err(error) = app.workspace_membership.request_manual_order(order) {
-            refuse_workspace_layout(app, error);
-            return vec![];
-        }
-        return crate::app::workspace_sync::drain(app);
+pub(super) fn dispatch_dashboard_reorder(app: &mut AppView, _up: bool) -> Vec<Effect> {
+    if let Some(dashboard) = app.dashboard.as_mut() {
+        dashboard.error_toast =
+            Some("Sessions are ordered by running state and last activity".to_owned());
     }
-    let Some(d) = app.dashboard.as_mut() else {
-        return vec![];
-    };
-    let Some(sel) = d.selected.clone() else {
-        return vec![];
-    };
-    let pos = d.reorder.iter().position(|r| *r == sel);
-    if up {
-        match pos {
-            Some(0) => {
-                d.reorder.remove(0);
-            }
-            Some(i) => {
-                d.reorder.swap(i, i - 1);
-            }
-            None => {
-                d.reorder.insert(0, sel);
-            }
-        }
-    } else {
-        match pos {
-            Some(i) if i + 1 < d.reorder.len() => {
-                d.reorder.swap(i, i + 1);
-            }
-            Some(_) => {}
-            None => {
-                d.reorder.push(sel);
-            }
-        }
-    }
-    dispatch_dashboard_persist(app)
+    vec![]
 }
 fn dispatch_dashboard_persist(app: &mut AppView) -> Vec<Effect> {
     // The child layout owns its own scoped write in the Subagents lane, and in the All lane
