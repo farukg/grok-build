@@ -1,6 +1,6 @@
 # Fork status
 
-Current delivery status: 2026-10-27. The fork is published at GitLab
+Current delivery status: 2026-10-28. The fork is published at GitLab
 `org/forks/grok-build` (`gitlab`) and GitHub `farukg/grok-build` (`origin`);
 `xai-org/grok-build` is upstream.
 
@@ -19,10 +19,10 @@ expire after 30 days. On the isolated proof commit below, Cargo took 5m 15s on
 the first successful run and 36.78s on the repeated same-source run (about 8.6x
 faster). This measures warm-cache reuse, with no claim about changed-source timing.
 
-The glue script `sigma-ops.d/stage-grok-release.sh --from gitlab` selects the
-latest successful GitLab release artifact; `--from github` selects GitHub.
-`--branch <branch>` selects the source branch (default `main`). `--run-id` and
-`--commit` retain exact pipeline/run and source selection within that branch.
+The glue script `sigma-ops.d/stage-grok-release.sh` needs no arguments: it selects
+the newest successful GitLab `main` release artifact by default. `--from github`
+selects GitHub, and `--branch <branch>` overrides `main`. Optional `--run-id` and
+`--commit` constrain selection to an exact pipeline/run and source within that branch.
 Staging remains an explicit operation and preserves running sessions.
 
 ## Isolated GitLab build proof
@@ -41,45 +41,22 @@ attempts. The repeat retained incremental state and completed Cargo in 36.78s.
 The proof covers compilation and artifact delivery; product tests and runtime/PTY
 acceptance remain unverified.
 
-Current `main` source `7df297304fbce8c34be194c57cb8d99806bc8654` passed GitLab
-[pipeline 10858](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/pipelines/10858),
-`linux-release` job `84561`, on 2026-10-27. The job uploaded its release artifact.
-Sampler defaults, reasoning-item conversion, Context notification return types and
-Pager API/trait integrations were repaired from the preceding CI diagnostics.
-The final trace reports no warnings in the fork's own code; Cargo retains its
-future-Rust compatibility notice for third-party `nix` versions 0.29.0, 0.30.1
-and 0.31.3. This proves release compilation and artifact delivery for that exact source;
-product tests and interactive/runtime acceptance remain open.
+## Release, cache and installed-artifact evidence
 
-## Current staged artifact
+These are recorded historical observations, not a fresh remote or running-binary query.
 
-The verified staging command is
-`stage-grok-release.sh --from gitlab --branch main --run-id 10858 --commit 7df297304fbce8c34be194c57cb8d99806bc8654`.
-It selected pipeline `10858`, job `84561`, downloaded the release tarball and
-checksum, and passed checksum validation. `sig deploy stage grok` reported
-1 promoted, 0 unchanged, 0 skipped-not-built. The installed CLI returned
-`grok 1.0.45 (7df297304fbc) [alpha]` from `--version`.
-Running sessions keep their existing executable until manually restarted.
-This operation verified artifact selection, checksum and installed version;
-product tests and interactive/runtime acceptance remain open.
+| State | Exact evidence | Boundary |
+|---|---|---|
+| Last evidenced successful main release | `4675dcfaddc7a4f73b73eb39d2600109a8c21d08`, GitLab pipeline `10893` SUCCESS, `linux-release` job `84912`; continuation ledger and F7 publication report | Earlier Todo projection-cache repair delivered; not a build of the current working tree or proof of installation. |
+| Downloaded/cached release | Same `4675dcfa` artifact exported successfully to `/tmp/grok-release-4675dcfaddc7`; binary SHA-256 `b9ade631be1cad3545a18002d04fb9e726d6e5477cc9db23e7a23fdbd1668b19` | Export only; binary was not executed or installed. |
+| Earlier downloaded F7 artifact | `c183b5a0676c452e331aed75626b64b416be344b`, pipeline `10888`, successful release job `84874`, checksum-validated cache `/tmp/grok-release-c183b5a0676c` | No execution/install; overall pipeline was then still running. |
+| Last explicit staging/version record in this status | `7df297304fbce8c34be194c57cb8d99806bc8654`, pipeline `10858`, successful job `84561`; checksum validated, deployment reported 1 promoted, installed CLI reported `grok 1.0.45 (7df297304fbc) [alpha]` | Historical staging only, not the latest successful release or a claim about today's running sessions. |
+| User-confirmed old-session paint repair | `0b1c204ebd954fbd58c5c78519a459de6bacf980`, successful pipeline `10880`; Faruk confirmed old-session loading/navigation | This specific defect is closed. No repeat user test is required; this confirmation does not identify an installed `4675dcfa` artifact. |
 
-The CI changes from the isolated proof are integrated on `main`. The completed
-proof worktree has been removed; the published proof branch and job artifacts
-remain available.
-
-## Last verified main artifact
-
-Source/artifact commit `7df297304fbce8c34be194c57cb8d99806bc8654` passed
-[GitLab pipeline 10858](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/pipelines/10858).
-The successful [job 84561](https://gitlab.myicecreamlab.com/org/forks/grok-build/-/jobs/84561)
-uploaded `grok-x86_64-linux-7df29730.zip` (73,630,232 bytes), retained until
-2026-11-26. This source includes the current Request Inspector and accumulated
-Context/Display, navigation and inline-output source work. Its tests and interactive
-behavior remain unverified. Staging provenance is recorded separately above.
-
-Docs-only commits after this source do not change the compiled artifact. Keep
-artifact provenance tied to the exact successful pipeline and source commit.
-Older GitHub/main build records are preserved in Git history before this update.
+No later staging or running-binary identity is established by the supplied reports.
+Docs-only commits do not change an artifact's source identity. Earlier build, staging,
+fold and intermediate delivery details remain retrievable in Git history rather than
+serving as current-main claims here.
 
 **Effective policy: local builds, checks, tests, formatters, validation scripts
 and hooks remain disabled. Release-artifact builds run in GitLab; GitHub offers
@@ -87,12 +64,15 @@ manual release builds. This CI-infrastructure scope authorizes scoped commits on
 `main` and publication to GitLab.** No force push is authorized on any branch.
 Historical local results and older handoff instructions do not override this policy.
 
-The [owner-takeover plan](plan/owner-takeover.md) owns active delivery and acceptance
-details; its existing [handoff](handoff/2026-10-24/owner-handoff/handoff.md) and
-[Wave B references](handoff/2026-10-24/wave-b/) retain requirements and history.
-Current evidence supersedes their older local-verification and gateway-owner text.
+The canonical Sigma [F7/request-display plan](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-f7-request-display.plan.md)
+owns active delivery ordering and acceptance. Existing thematic fork designs retain
+their requirements ownership. The [owner-takeover plan](plan/owner-takeover.md),
+its [handoff](handoff/2026-10-24/owner-handoff/handoff.md) and
+[Wave B references](handoff/2026-10-24/wave-b/) retain source and historical evidence,
+not a competing current delivery queue. Current evidence supersedes older
+local-verification and gateway-owner instructions.
 
-## Local follow-up source work (2026-10-26)
+## Earlier source scope (2026-10-26; not current acceptance)
 
 F6 selection safety now binds removal confirmations to the original agent, session,
 stable row and exact context refs. F6 rewind requires an explicitly selected numbered
@@ -125,6 +105,18 @@ of all synthetic request records remains open; see the current
 change is included in release-build pipeline `10858`; runtime model-request
 acceptance remains open.
 
+## Planned instructions/cache follow-up (2026-10-28)
+
+The [repository handoff](handoff/2026-10-28/instructions-cache/handoff.md) records
+planned managed §MOD instruction roles, selectable content/budgets and cache/usage
+support, not an implemented or release-ready feature. The detailed
+[F7 Context controls, full-content viewing and normal-composer editing contract](design/f6-f7.md#planned-f7-instruction-controls-and-content-editing)
+owns planned UX, Shell authority, Source/PREVIEW/SENT evidence and future acceptance.
+This is user-authorized planning, not implementation authorization for the full lane. Planning remains with
+[GRB-001 S-N/O/P/R/T](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-001-tui-parity-milestones.plan.md#instructions-cache)
+and the [active continuation](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-f7-request-display.plan.md#planned-instructions-and-cache-follow-up);
+the current feature pause and actual-request viewer exclusions are unchanged.
+
 ## Current source disposition and open gates
 
 - R: local terminal execution identity, shutdown enrollment/kill settlement and
@@ -145,11 +137,44 @@ acceptance remains open.
   schema/pass-through, correlated producer availability and consumer-first rollout
   acceptance are unverified. SIG delivery-outage diagnosis is separate; no shared
   restart is authorized.
-- Source closure and release compilation have separate evidence. Source/artifact
-  commit `7df297304fbce8c34be194c57cb8d99806bc8654` passed GitLab pipeline `10858`.
-  Tests, process restarts and runtime/PTY verification were outside this publication
-  and CI-repair operation. The currently running binary remains unverified; local
-  execution restrictions remain in force.
+- Current integrated working-tree source is **SOURCE / UNRUN**, wholly uncompiled
+  for this delivery. Pager publication intake is source-complete: local sender
+  registration, original load/reconnect binding, canonical roles, discard and
+  GenerationEnd intake, response capture and replay closure after regular finalize.
+  This is not paint/render settlement; external transports retain their weaker contract.
+- The original backend review and its three concrete repairs are source-complete:
+  shared handler-receipt custody survives load cancellation, native publication debt
+  precedes actual source mutation, and unbound replay cannot export archived Live
+  authority. Five new backend oracles supplement the eleven retained cases; all UNRUN.
+- Both frontend settlement fences and all 16 existing frontend oracles remain intact.
+  Five new pager publication cases are authored, all UNRUN. The two positive resident
+  harness cases are intentionally ignored in ordinary suites: each must run separately
+  by exact name with `--ignored --test-threads=1` in a fresh CI process. The three
+  negative fixtures do not replace the positive producer-to-pager proof.
+- CI author `01a183c4-7586-7932-8aa1-21163732e323` exclusively owns the existing
+  CI-script follow-up, including mandatory positive harness gates. No script change
+  or execution is part of this status repair.
+- The complete original Cargo-generated root lock from immutable input commit
+  `2ca5c4914a85eafafa92ee2a113f4b19e9c3182d`, pipeline `10911`, job `85053`
+  (`linux-lockfile`) is adopted. That job failed on the expected changed-lock
+  comparison after successful generation, not compilation. Adoption is provenance/
+  byte evidence only; `comparison=identical` on the final canonical inputs is open.
+- Scripts pipeline `10914` at `121ea5f6c909662cef07431f489cf76f52439014`,
+  job `85058`, passed 288 tests. Thirteen native cases remain separate in job `85059`
+  awaiting an exact new fork release. This is neither a fork build nor product acceptance.
+- Remaining gates are actual integrated compiler/borrow/trait/Serde, formatting, SDK
+  and consumer compatibility, all required regressions (including isolated positive
+  harnesses), exact-commit GitLab release, fresh r6 preparation, kernel/client isolation,
+  native acceptance and real application/PTY/visual/performance acceptance. Last actual
+  preparation was r5 with missing canonical `libreadline.so.8` binding; alias-source
+  repair and green scripts do not establish r6. All new product checks remain **UNRUN**.
+  Current running-binary identity is unverified; local execution restrictions remain.
+- Evidence: `/tmp/grok-final-pager-publication-integration.md`,
+  `/tmp/grok-publication-custody-review-repair.md`,
+  `/tmp/grok-readable-governance-publication.md`, `/tmp/grok-f7-todo-publication.md`,
+  `/tmp/grok-lock-10911-adoption.md` and the current section of
+  `/tmp/grok-continuation-worker-ledger.md`. Later completed source reports supersede
+  the ledger's older pending-pager wording; none establishes compiler/runtime success.
 
 ## Historical fold baseline
 
@@ -255,19 +280,16 @@ runtime acceptance is unverified. See the
 
 ## Continuing delivery
 
-The previous integration and staging are complete; the artifact/source identities
-are recorded at the top of this document and in the [owner-takeover plan](plan/owner-takeover.md).
-The F6, reasoning and F7/request-display source snapshot was committed and
-published as `ff78ef952e395a66f883bb9bbf5404a338a648eb`; it has no successful
-matching built/staged artifact. New parallel source edits continue separately.
-The isolated CI proof above uses the last successful GitHub source baseline.
+The next delivery is the assembled source snapshot, followed by normal scoped
+commit/publication and exact-commit GitLab acceptance under the canonical Sigma
+plan. No commit, push, build or execution is performed by this status repair.
+Prior release success proves only its recorded source artifact. The earlier
+integration plan and intermediate snapshots remain historical evidence in Git.
 
-The CI-infrastructure instruction authorizes scoped `main` commits, GitLab project
-creation/publication and GitLab release builds. Local builds, checks, tests,
-formatters and process restarts remain excluded. Active F7/request-display source
-work continues independently under the Grok workspace plan owner; the earlier
-integration plan is source/evidence reference material. Prior build success proves
-its recorded source artifact only. Current runtime acceptance remains open.
+New F6/F7 features and redundancy visualization wait for feedback after the upcoming
+release. Existing planned Instructions/cache work above remains planning only;
+its valid handoff/design/plan references and actual-request viewer exclusions are
+unchanged. No new feature implementation or repeat old-session-paint test is required.
 
 Historical stream references and `plan/grb-001.md` remain useful capability/design
 owners, not authority to restart obsolete branch or local-verification workflows.
@@ -300,7 +322,7 @@ Intermittent model claims of missing tools are reproduced independently of those
 | F6/F7 trees, removal, colours, saved panel settings (GRB-001 M12–M15) | on `main` (f3, f4), CI green 2026-10-19; open points in the stream file | `streams/f6-f7-trees.md` |
 
 This table is the historical stream inventory, not the current delivery queue.
-Use the [owner-takeover plan](plan/owner-takeover.md) for active ordering and gates.
+Use the canonical Sigma [F7/request-display plan](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-f7-request-display.plan.md) for active ordering and gates.
 GRB-001 remains the historical design owner for context-control proposals; this
 inventory does not establish their current implementation or acceptance state.
 
