@@ -93,7 +93,7 @@ impl SessionActor {
         );
     }
 
-    fn notification_completion_ids(&self, notifications: &[PendingNotification]) -> Vec<xai_chat_state::completion::CompletionIdentity> {
+    pub(super) fn notification_completion_ids(&self, notifications: &[PendingNotification]) -> Vec<xai_chat_state::completion::CompletionIdentity> {
         use xai_chat_state::completion::{CompletionTaskKind, TerminalCompletionId};
         notifications.iter().filter_map(|notification| {
             let (task_id, task_kind) = match &notification.source {
@@ -564,8 +564,22 @@ impl SessionActor {
             session = self.session_info.id.0.as_ref(),
             "promoting front of pending_inputs to the running turn",
         );
-        // Promote broadcast before spawn so clients paint (and enable echo-skip) before the user-message chunk can race in
-        self.broadcast_queue_changed_promoting(&state, running_display);
+        // Ordinary prompts publish before spawn so clients establish echo-skip before message chunks.
+        let initial_parent_message = matches!(&initial_child_prompt_ready,
+            Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { .. }));
+        let initial_parent_digest = match &initial_child_prompt_ready {
+            Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { .. }) => {
+                Some(Self::durable_delivery_payload(&prompt_blocks)
+                    .map(|payload| crate::session::delivery_receiver::payload_digest(&payload)))
+            }
+            Some(crate::session::message_delivery::InitialChildPromptSink::Prompt(_)) | None => None,
+        };
+        let deferred_display = if initial_parent_message {
+            Some(running_display)
+        } else {
+            self.broadcast_queue_changed_promoting(&state, running_display);
+            None
+        };
 
         // Bump the epoch here rather than in `handle_prompt`: a cancel reads the slot as soon as
         // `running_task` is set on the next line.
@@ -601,7 +615,79 @@ impl SessionActor {
         if let (Some(initial_child_prompt_ready), Some(publication_release)) =
             (initial_child_prompt_ready, publication_release)
         {
-            let _ = initial_child_prompt_ready.send(publication_release);
+            use crate::session::message_delivery::InitialChildPromptSink;
+            match initial_child_prompt_ready {
+                InitialChildPromptSink::Prompt(ready) => {
+                    let _ = ready.send(crate::session::message_delivery::InitialChildPublication::Prompt(publication_release));
+                }
+                InitialChildPromptSink::ParentMessage { delivery, ready } => {
+                    let Some(task) = state.running_task.as_ref() else { return };
+                    let turn_id = task.prompt_id.clone();
+                    let admission = xai_chat_state::InputAdmission {
+                        parent_task: xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() },
+                        cancellation: task.admission.clone(),
+                    };
+                    let message_id = delivery.message().message_id.clone();
+                    let reservation = initial_parent_digest.and_then(Result::ok).map(|payload_digest| {
+                        crate::session::persistence::ParentMessageTurnReservation {
+                            prompt_id: turn_id.clone(), payload_digest,
+                            turn_id: turn_id.clone(), admission: admission.clone(), delivery: delivery.clone(),
+                        }
+                    });
+                    let reserved = match reservation {
+                        Some(reservation) if !ready.is_closed() => {
+                            let (respond_to, receive) = oneshot::channel();
+                            if self.notifications.persistence_tx.send(PersistenceMsg::ReserveParentMessageTurn {
+                                reservation, respond_to,
+                            }).is_err() {
+                                None
+                            } else {
+                                match receive.await {
+                                    Ok(Ok(proof)) if proof.matches_delivery(&self.session_id_string(), &delivery)
+                                        && proof.matches_turn(&turn_id, &admission) => Some(proof),
+                                    Ok(Ok(_)) => {
+                                        tracing::warn!("initial parent-message reservation identity mismatch");
+                                        None
+                                    }
+                                    Ok(Err(error)) => {
+                                        tracing::warn!(%error, "initial parent-message reservation failed");
+                                        None
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(%error, "initial parent-message reservation acknowledgement lost");
+                                        None
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) | None => None,
+                    };
+                    match reserved {
+                        Some(reservation) if !ready.is_closed() => {
+                            if let Some(display) = deferred_display {
+                                self.broadcast_queue_changed_promoting(&state, display);
+                            }
+                            let publication = reservation.publication(publication_release, self.notifications.persistence_tx.clone());
+                            if let Some(task) = state.running_task.as_mut() {
+                                task.initial_parent_reservation = Some(publication.reservation.clone());
+                            }
+                            let _ = ready.send(publication);
+                            return;
+                        }
+                        Some(_) | None => { drop(publication_release); }
+                    }
+                    admission.cancellation.cancel();
+                    if let Err(error) = self.settle_durable_delivery_turn(
+                        &turn_id, admission.parent_task,
+                        crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { message_id },
+                        crate::session::delivery_receiver::DeliveryProgress::Cancelled {
+                            reason: "initial parent-message reservation was not acknowledged".into(),
+                        },
+                    ).await {
+                        tracing::warn!(%error, "initial reservation teardown unconfirmed");
+                    }
+                }
+            }
         }
     }
 

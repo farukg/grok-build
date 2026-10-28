@@ -1,6 +1,7 @@
 //! Turn execution for `SessionActor`: `handle_prompt`, the sampling loop, and turn-end handling.
 use super::*;
 use crate::session::{InputAuthority, SlashAuthority};
+use crate::session::request_capture::RequestSnapshotId;
 use crate::util::dual_clock::DualClock;
 use tracing::Instrument;
 use xai_grok_tools::implementations::grok_build::task::types::{
@@ -457,6 +458,7 @@ impl SessionActor {
             )))
             .meta(Some(chunk_meta)),
         );
+        let _publication = self.notifications.gateway.begin_publication();
         let notification_meta = self.build_notification_meta();
         let notification = acp::SessionNotification::new(self.session_info.id.clone(), update)
             .meta(notification_meta.as_object().cloned());
@@ -887,6 +889,7 @@ impl SessionActor {
         *self.doom_loop_turn_tally.lock() = Default::default();
         self.retain_timed_out_image_strips_for_new_turn();
         self.turn_stream_drained.lock().clear();
+        self.begin_sampling_turn();
         self.events.begin_turn();
         let model_id = self.current_model_id().await;
         let turn_number = self.chat_state_handle.get_prompt_index().await as u64;
@@ -1031,6 +1034,7 @@ impl SessionActor {
                 let update = acp::SessionUpdate::UserMessageChunk(
                     acp::ContentChunk::new(block.clone()).meta(user_chunk_meta.clone()),
                 );
+                let _publication = self.notifications.gateway.begin_publication();
                 let notification_meta = self.build_notification_meta();
                 let notification =
                     acp::SessionNotification::new(self.session_info.id.clone(), update)
@@ -2807,6 +2811,7 @@ impl SessionActor {
         let mut turn_tools_called: Vec<String> = Vec::new();
         let mut tool_turn_count: usize = 1;
         let mut loop_index: u32 = 0;
+        let mut next_sampling_request = RequestSnapshotId::random();
         let mut identical_tool_calls = IdenticalToolCallRun::default();
         let mut todo_gate_fires: u32 = 0;
         let mut length_salvage_streak = LengthSalvageStreak::default();
@@ -3113,6 +3118,7 @@ impl SessionActor {
             let model_sampler_outcome = self
                 .run_turn_via_sampler(
                     request.clone(),
+                    std::mem::replace(&mut next_sampling_request, RequestSnapshotId::random()),
                     &mut rate_limit_waits,
                     TransientRetryState {
                         step_attempts: transient_retry_attempts,
@@ -3183,7 +3189,9 @@ impl SessionActor {
                     self.tool_context.fail_task_output_usage_closed();
                     return Err(error);
                 }
-                Ok(SamplerTurnOutcome::RetryTransient { kind, status_code }) => {
+                Ok(SamplerTurnOutcome::RetryTransient { error }) => {
+                    let kind = error.kind;
+                    let status_code = error.status_code;
                     if matches!(kind, xai_grok_sampler::SamplingErrorKind::Api) {
                         auth_retry_schedule.reset_incident_keeping_park();
                     }
@@ -3216,16 +3224,21 @@ impl SessionActor {
                         xai_grok_sampler::SamplingErrorKind::Http => "Connection problem",
                         _ => "Server error",
                     };
-                    self.send_xai_notification(XaiSessionUpdate::RetryState(
+                    let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
+                        .map_err(|cause| self.retry_schedule_error(None, &error, delay, cause))?;
+                    self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
                         crate::extensions::notification::RetryState::Retrying {
                             attempt: transient_retry_attempts,
                             max_retries: display_max,
                             reason: format!("{cause}; retrying request"),
                             error_type: Some(kind.as_ref().to_string()),
+                            next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                         },
-                    ))
-                    .await;
-                    sleep(delay).await;
+                    );
+                    deadline.wait().await.map_err(|cause| self.retry_schedule_error(
+                        Some(&next_sampling_request.into()), &error, delay,
+                        xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                    ))?;
                     turn_phases.record_sampling_retries(1);
                     continue;
                 }
@@ -3235,7 +3248,8 @@ impl SessionActor {
                     turn_phases.record_sampling_retries(1);
                     continue;
                 }
-                Ok(SamplerTurnOutcome::RefreshAuthAndResubmit { credential, store }) => {
+                Ok(SamplerTurnOutcome::RefreshAuthAndResubmit { error, store }) => {
+                    let credential = error.credential;
                     if auth_retry_schedule.reset_if_incident_spans_suspend() {
                         tracing::info!("auth 401 retry: incident spanned a suspend; budget reset");
                         xai_grok_telemetry::unified_log::info(
@@ -3261,7 +3275,9 @@ impl SessionActor {
                                     "delay_ms": delay.as_millis() as u64,
                                 })),
                             );
-                            self.send_xai_notification(XaiSessionUpdate::RetryState(
+                            let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
+                                .map_err(|cause| self.retry_schedule_error(None, &error, delay, cause))?;
+                            self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
                                 crate::extensions::notification::RetryState::Retrying {
                                     attempt: resubmit,
                                     max_retries: AuthRetrySchedule::MAX_UNCHARGED_RESUBMITS,
@@ -3269,11 +3285,14 @@ impl SessionActor {
                                              credential); retrying request"
                                         .to_string(),
                                     error_type: None,
+                                    next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                                 },
-                            ))
-                            .await;
-                            pace_uncharged_resubmit(store, self.auth_manager.as_deref(), delay)
-                                .await;
+                            );
+                            pace_uncharged_resubmit(store, self.auth_manager.as_deref(), &deadline)
+                                .await.map_err(|cause| self.retry_schedule_error(
+                                    Some(&next_sampling_request.into()), &error, delay,
+                                    xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                                ))?;
                             turn_phases.record_sampling_retries(1);
                             continue;
                         }
@@ -3294,17 +3313,22 @@ impl SessionActor {
                                     "delay_ms": delay_ms,
                                 })),
                             );
-                            self.send_xai_notification(XaiSessionUpdate::RetryState(
+                            let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(delay)
+                                .map_err(|cause| self.retry_schedule_error(None, &error, delay, cause))?;
+                            self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
                                 crate::extensions::notification::RetryState::Retrying {
                                     attempt,
                                     max_retries: AuthRetrySchedule::MAX_RETRIES,
                                     reason: "Re-authenticated after 401; retrying request"
                                         .to_string(),
                                     error_type: None,
+                                    next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                                 },
-                            ))
-                            .await;
-                            sleep(delay).await;
+                            );
+                            deadline.wait().await.map_err(|cause| self.retry_schedule_error(
+                                Some(&next_sampling_request.into()), &error, delay,
+                                xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                            ))?;
                             turn_phases.record_sampling_retries(1);
                             continue;
                         }
@@ -3515,15 +3539,23 @@ impl SessionActor {
                         "max_retries": MAX_MEDIA_GEN_OVER_CAP_RESAMPLES,
                     })),
                 );
-                self.send_xai_notification(XaiSessionUpdate::RetryState(
+                let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(std::time::Duration::ZERO)
+                    .map_err(|cause| acp::Error::internal_error().data(serde_json::json!({ "retry_schedule": cause })))?;
+                self.schedule_sampling_retry(&next_sampling_request.into(), &deadline,
                     crate::extensions::notification::RetryState::Retrying {
                         attempt: media_gen_resamples,
                         max_retries: MAX_MEDIA_GEN_OVER_CAP_RESAMPLES,
                         reason: "Too many parallel media-gen calls; retrying".to_string(),
                         error_type: None,
+                        next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                     },
-                ))
-                .await;
+                );
+                deadline.wait().await.map_err(|cause| {
+                    self.discard_failed_sampling_request(&next_sampling_request.into());
+                    acp::Error::internal_error().data(serde_json::json!({
+                        "retry_schedule": xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                    }))
+                })?;
                 self.push_system_reminder(&reminder);
                 self.turn_phases.discard_uncommitted_first_token();
                 self.turn_phases.discard_uncommitted_first_meaningful();
@@ -3620,7 +3652,7 @@ impl SessionActor {
                 )
                 .await;
             }
-            self.send_buffered_xai_update(response_completed).await;
+            self.send_buffered_xai_update(response_completed, None).await;
             let schema_complete_at_cap = if stop_reason
                 == Some(xai_grok_sampling_types::StopReason::Length)
                 && tool_calls.is_empty()
@@ -3739,7 +3771,7 @@ impl SessionActor {
                                     pending: input.pending.len(),
                                     in_progress: input.in_progress_unbacked.len()
                                         + input.in_progress_backed.len(),
-                                    reason: reason.as_str(),
+                                    reason: reason.as_str().into(),
                                 });
                             let rendered = self
                                 .tool_bridge_handle()
@@ -3907,7 +3939,7 @@ impl SessionActor {
                 .await;
             let execute_tool_calls_result = {
                 let _tool_phase = turn_phases.begin_tool_blocking();
-                self.execute_tool_calls(tool_call_responses, requested_model)
+                self.execute_tool_calls(tool_call_responses, requested_model, self.sampling_owner(&output_request_id).as_ref())
                     .await
             };
             match execute_tool_calls_result {

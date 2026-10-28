@@ -20,6 +20,7 @@ async fn replay_shrinks_an_oversized_completion() {
         /*target_client_id*/ None,
         /*mark_replay*/ false,
         &mut crate::session::storage::ReplayToolCollapser::new(),
+        None,
     );
 
     let params = next_ext_notification_params(&mut rx).expect("the record must still be sent");
@@ -101,6 +102,7 @@ async fn a_marked_replay_is_fitted_after_its_metadata_is_added() {
         /*target_client_id*/ None,
         /*mark_replay*/ true,
         &mut crate::session::storage::ReplayToolCollapser::new(),
+        None,
     );
 
     let params = next_ext_notification_params(&mut rx).expect("the record must still be sent");
@@ -135,6 +137,7 @@ async fn replay_drops_a_completion_nothing_can_shrink() {
         /*target_client_id*/ None,
         /*mark_replay*/ false,
         &mut crate::session::storage::ReplayToolCollapser::new(),
+        None,
     );
 
     assert!(next_ext_notification_params(&mut rx).is_none());
@@ -152,10 +155,14 @@ async fn replay_forwards_records_within_the_limit_untouched() {
         /*target_client_id*/ None,
         /*mark_replay*/ false,
         &mut crate::session::storage::ReplayToolCollapser::new(),
+        None,
     );
 
     let params = next_ext_notification_params(&mut rx).expect("forwarded");
-    assert_eq!(params, serde_json::to_string(&record).unwrap());
+    let mut expected = record;
+    expected["_meta"] = serde_json::json!({});
+    crate::extensions::current_actions::stamp_delivery(expected["_meta"].as_object_mut().unwrap(), &crate::extensions::current_actions::DeliveryRole::Unavailable).unwrap();
+    assert_eq!(params, serde_json::to_string(&expected).unwrap());
 }
 
 #[tokio::test]
@@ -173,10 +180,14 @@ async fn replay_leaves_other_oversized_records_alone() {
         /*target_client_id*/ None,
         /*mark_replay*/ false,
         &mut crate::session::storage::ReplayToolCollapser::new(),
+        None,
     );
 
     let params = next_ext_notification_params(&mut rx).expect("forwarded");
-    assert_eq!(params, recorded);
+    let mut expected: Value = serde_json::from_str(&recorded).unwrap();
+    expected["_meta"] = serde_json::json!({});
+    crate::extensions::current_actions::stamp_delivery(expected["_meta"].as_object_mut().unwrap(), &crate::extensions::current_actions::DeliveryRole::Unavailable).unwrap();
+    assert_eq!(params, serde_json::to_string(&expected).unwrap());
 }
 
 #[tokio::test]
@@ -185,13 +196,78 @@ async fn parent_replay_does_not_emit_meta_less_unfinished_tool_call() {
     let mut collapser = crate::session::storage::ReplayToolCollapser::new();
     let tool = r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"bash","status":"pending"},"_meta":{"eventId":"s-1"}}}"#;
     let start = r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"ls"},"_meta":{"eventId":"s-2"}}}"#;
-    agent.forward_raw_replay_line(tool, None, None, false, &mut collapser);
-    agent.forward_raw_replay_line(start, None, None, false, &mut collapser);
+    agent.forward_raw_replay_line(tool, None, None, false, &mut collapser, None);
+    agent.forward_raw_replay_line(start, None, None, false, &mut collapser, None);
     assert_eq!(collapser.pending_len(), 1);
     assert!(
         rx.try_recv().is_err(),
         "parent must not synthesize a meta-less ToolCall at EOF"
     );
+}
+
+async fn unbound_replay_erases_archived_authority(cursor: Option<&str>) {
+    use crate::extensions::current_actions::{DeliveryRole, PublicationContext, stamp_delivery, delivery_role};
+    use crate::session::current_actions::SnapshotBinding;
+    let (agent, mut rx) = build_agent_with_gateway();
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = xai_grok_paths::AbsPathBuf::new(dir.path().to_path_buf()).unwrap();
+    let archived = DeliveryRole::Live { context: PublicationContext {
+        binding: SnapshotBinding { session_id: "s".into(), binding_epoch: 7, load_generation: 9 },
+        incarnation: uuid::Uuid::new_v4(),
+    } };
+    let native = acp::SessionNotification::new(acp::SessionId::new("s"), acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new(acp::ContentBlock::from("original native content")),
+    ));
+    let mut records = vec![serde_json::to_value(&native).unwrap(), serde_json::to_value(&native).unwrap(), recorded_completion("original xAI output".into())];
+    let mut lines = Vec::new();
+    for (index, record) in records.iter_mut().enumerate() {
+        record["_meta"] = serde_json::json!({ "eventId": format!("s-{}", index + 1), "promptId": "original-prompt", "agentTimestampMs": 123 });
+        stamp_delivery(record["_meta"].as_object_mut().unwrap(), &archived).unwrap();
+        let method = if index == 2 { "_x.ai/session/update" } else { "session/update" };
+        lines.push(serde_json::json!({ "timestamp": index, "method": method, "params": record }).to_string());
+    }
+    let path = dir.path().join("updates.jsonl");
+    std::fs::write(&path, lines.join("\n")).unwrap();
+    let updates_path = Some(path);
+    let session_id = acp::SessionId::new("s");
+    let replay = agent.replay_session_updates(&session_id, &cwd, &updates_path, None, None, cursor, false, None);
+    let expected = if cursor.is_some() { &records[1..] } else { &records[..] };
+    let receive = async {
+        for original in expected {
+            let delivered = match rx.recv().await.unwrap() {
+                AcpClientMessage::SessionNotification(record) => {
+                    let value = serde_json::to_value(&record.request).unwrap();
+                    record.response_tx.send(Ok(())).unwrap();
+                    value
+                }
+                AcpClientMessage::ExtNotification(record) => {
+                    assert_eq!(record.request.method.as_ref(), "x.ai/session/update");
+                    let value = serde_json::from_str::<Value>(record.request.params.get()).unwrap();
+                    record.response_tx.send(Ok(())).unwrap();
+                    value
+                }
+                _ => panic!("actual native replay notifications only"),
+            };
+            assert_eq!(delivery_role(delivered["_meta"].as_object()).unwrap(), DeliveryRole::Unavailable);
+            let mut expected = original.clone();
+            stamp_delivery(expected["_meta"].as_object_mut().unwrap(), &DeliveryRole::Unavailable).unwrap();
+            if cursor.is_none() { expected["_meta"]["isReplay"] = true.into(); }
+            assert_eq!(delivered, expected, "replay changes authority, not original payload or identities");
+        }
+    };
+    let (result, ()) = tokio::join!(replay, receive);
+    result.unwrap();
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn unbound_full_replay_keeps_original_records_without_archived_live_authority() {
+    unbound_replay_erases_archived_authority(None).await;
+}
+
+#[tokio::test]
+async fn unbound_cursor_replay_keeps_original_records_without_archived_live_authority() {
+    unbound_replay_erases_archived_authority(Some("s-1")).await;
 }
 
 /// Stale-task reconciliation on a cold load builds its completion from a recorded command of any size, so its line is measured like the rest.

@@ -38,6 +38,7 @@ pub(super) async fn dispatch_tool(
         session_id,
         origin,
         xai_grok_tools::types::source_summary::SourceSummarySlot::new(),
+        None,
     )
     .await
 }
@@ -48,6 +49,7 @@ pub(super) async fn dispatch_observed(
     session_id: &str,
     origin: xai_grok_tools::types::tool_call_origin::ToolCallOrigin,
     slot: xai_grok_tools::types::source_summary::SourceSummarySlot,
+    execution: Option<xai_tool_runtime::execution::ToolExecutionObservation>,
 ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
     let mut ctx = xai_tool_runtime::ToolCallContext::new(
         xai_tool_protocol::ToolCallId::new(prepared.tool_call_id.0.as_ref())
@@ -55,6 +57,10 @@ pub(super) async fn dispatch_observed(
     );
     ctx.insert(origin);
     ctx.insert(slot);
+    ctx.insert(prepared.ownership());
+    if let Some(execution) = execution {
+        ctx.insert(execution);
+    }
     workspace_ops
         .call_tool_with_context(
             &prepared.tool_name,

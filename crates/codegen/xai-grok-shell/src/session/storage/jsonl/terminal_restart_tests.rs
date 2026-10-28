@@ -148,6 +148,7 @@ async fn parent_admission_is_durable_without_model_visibility_and_rejects_confli
     let (directory, storage, info) = fixture().await;
     let (lease, _) = storage.claim_receiver(&info).await.unwrap();
     let message = ParentMessageAdmission {
+        custody: Default::default(),
         message_id: "steer-id".into(), sender_session_id: "owning-parent".into(), source: ParentMessageSource::Human,
         effective: ParentMessageOperation::Steer { prompt_id: "active-tool-turn".into(), parent_task: recovery::task("live-instance").parent_task },
         prompt_id: "parent-message-steer-id".into(), text: "held until tool completes".into(),
@@ -180,4 +181,37 @@ async fn parent_admission_is_durable_without_model_visibility_and_rejects_confli
     assert!(matches!(&recovered.completion_delivery.receiver.records[&message.delivery_id()].execution, DeliveryExecution::Interrupted { .. }), "history receipt must repair a crash before the derived processing cache, never replay the input");
     assert!(matches!(restored.append_delivery_commit_aware(&info, &projection, &owner).await.unwrap(), CompletionProjectionAck::AlreadyPresent { .. }));
     assert_eq!(restored.read_chat_history_sync(restored.chat_file(&info), CHAT_FORMAT_VERSION).unwrap().iter().filter(|item| item.text_content() == message.text).count(), 1);
+}
+
+#[tokio::test]
+async fn parent_admission_distinguishes_child_history_hiding_from_explicit_retirement() {
+    use crate::session::delivery_receiver::{ParentAdmissionAuthority, ParentMessageAdmission, ParentMessageOperation, ParentMessageSource};
+    use crate::session::receiver_execution::ReceiverAccess;
+    let (_directory, storage, info) = fixture().await;
+    crate::session::storage::summary_write::mutate_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), |summary| {
+        summary.session_kind = Some("subagent".into());
+        summary.parent_session_id = Some("owning-parent".into());
+        Ok(())
+    }).unwrap();
+    let (lease, summary) = storage.claim_receiver(&info).await.unwrap();
+    assert!(summary.is_hidden());
+    assert_eq!(summary.hidden, None);
+    let admission = ParentMessageAdmission {
+        custody: Default::default(),
+        message_id: "child-wake".into(), sender_session_id: "owning-parent".into(),
+        source: ParentMessageSource::Agent, effective: ParentMessageOperation::Queue,
+        prompt_id: "parent-message-child-wake".into(), text: "one authenticated child input".into(),
+    };
+    storage.admit_parent_message(&info, &admission, ParentAdmissionAuthority::DirectLocal, ReceiverAccess::Owner(&lease)).await.unwrap();
+    assert!(storage.load_summary(&info).await.unwrap().is_hidden());
+    drop(lease);
+    storage.delete_session(&info).await.unwrap();
+    let (lease, retired) = storage.claim_receiver(&info).await.unwrap();
+    assert_eq!(retired.hidden, Some(true));
+    let replacement = ParentMessageAdmission {
+        message_id: "not-a-new-child".into(), prompt_id: "parent-message-not-a-new-child".into(), ..admission
+    };
+    let error = storage.admit_parent_message(&info, &replacement, ParentAdmissionAuthority::DirectLocal, ReceiverAccess::Owner(&lease)).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(!storage.load_summary(&info).await.unwrap().completion_delivery.receiver.records.contains_key(&replacement.delivery_id()));
 }

@@ -205,6 +205,7 @@ pub struct TerminalRunResult {
 /// to use for subsequent queries via `get_task`, `kill_task`, `wait_for_completion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundHandle {
+    pub start_time: Option<std::time::SystemTime>,
     pub task_id: String,
     pub output_file: PathBuf,
     /// PID of the spawned shell process, when available. `None` for backends that do not surface a

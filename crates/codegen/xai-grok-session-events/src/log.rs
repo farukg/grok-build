@@ -2,19 +2,12 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Utc;
-use serde::Serialize;
 
+use crate::decode::EventEntry;
 use crate::types::Event;
-
-#[derive(Serialize)]
-struct EventEntry {
-    ts: String,
-    #[serde(flatten)]
-    event: Event,
-}
 
 const EVENTS_FILE: &str = "events.jsonl";
 
@@ -25,9 +18,24 @@ pub struct EventWriter {
     inner: Arc<EventWriterInner>,
 }
 
+pub enum ToolLifecycleEvent<'a> {
+    Cancelled {
+        tool_call_id: &'a str,
+        owner: &'a xai_tool_protocol::tool_execution::ToolCallOwnership,
+    },
+    Execution {
+        tool_call_id: &'a str,
+        owner: &'a xai_tool_protocol::tool_execution::ToolCallOwnership,
+        timing: &'a xai_tool_protocol::tool_execution::ToolExecutionTiming,
+    },
+}
+
+type ToolLifecycleCallback = dyn Fn(ToolLifecycleEvent<'_>) + Send + Sync;
+
 struct EventWriterInner {
     file: Mutex<Option<File>>,
     error_logged: AtomicBool,
+    tool_lifecycle: OnceLock<Arc<ToolLifecycleCallback>>,
 }
 
 impl EventWriter {
@@ -45,6 +53,7 @@ impl EventWriter {
         Self {
             inner: Arc::new(EventWriterInner {
                 file: Mutex::new(file),
+                tool_lifecycle: OnceLock::new(),
                 error_logged: AtomicBool::new(false),
             }),
         }
@@ -54,12 +63,32 @@ impl EventWriter {
         Self {
             inner: Arc::new(EventWriterInner {
                 file: Mutex::new(None),
+                tool_lifecycle: OnceLock::new(),
                 error_logged: AtomicBool::new(true), // True from the start, so this writer never warns
             }),
         }
     }
 
+    pub fn on_tool_lifecycle(&self, callback: impl FnOnce() -> Arc<ToolLifecycleCallback>) {
+        self.inner.tool_lifecycle.get_or_init(callback);
+    }
+
+    pub fn cancel_tool(
+        &self,
+        tool_call_id: &str,
+        owner: &xai_tool_protocol::tool_execution::ToolCallOwnership,
+    ) {
+        if let Some(callback) = self.inner.tool_lifecycle.get() {
+            callback(ToolLifecycleEvent::Cancelled { tool_call_id, owner });
+        }
+    }
+
     pub fn emit(&self, event: Event) {
+        if let Event::ToolExecution { tool_call_id, owner, timing } = &event
+            && let Some(callback) = self.inner.tool_lifecycle.get()
+        {
+            callback(ToolLifecycleEvent::Execution { tool_call_id, owner, timing });
+        }
         let entry = EventEntry {
             ts: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             event,
@@ -168,6 +197,39 @@ mod tests {
         assert_eq!(fourth.get("type"), Some(&serde_json::json!("turn_ended")));
         assert_eq!(fourth.get("outcome"), Some(&serde_json::json!("completed")));
         assert!(fourth.get("cancellation_category").is_none());
+
+        let entries: Vec<EventEntry> = lines
+            .iter()
+            .map(|line| crate::decode::decode_event_entry(line).unwrap())
+            .collect();
+        for entry in &entries {
+            chrono::DateTime::parse_from_rfc3339(&entry.ts).unwrap();
+        }
+        assert!(matches!(
+            &entries[0].event,
+            Event::TurnStarted { session_id, turn_number: 1, schema_version, .. }
+                if session_id == "test-session" && schema_version == EVENT_SCHEMA_VERSION
+        ));
+        assert!(matches!(&entries[1].event, Event::FirstToken));
+        assert!(matches!(
+            &entries[2].event,
+            Event::ToolCompleted {
+                tool_name,
+                duration_ms: 1500,
+                outcome: ToolOutcome::Success,
+                tool_call_id,
+                source: crate::types::ToolCompletedSource::Shell,
+                rewriting_hook: None,
+            } if tool_name == "bash" && tool_call_id == "call_xyz"
+        ));
+        assert!(matches!(
+            &entries[3].event,
+            Event::TurnEnded {
+                outcome: TurnOutcomeLabel::Completed,
+                cancellation_category: None,
+                cancellation_context: None,
+            }
+        ));
     }
 
     #[test]
@@ -184,3 +246,7 @@ mod tests {
         assert_eq!(lines.len(), 2, "both writes should go to the same file");
     }
 }
+
+#[cfg(test)]
+#[path = "tool_execution_tests.rs"]
+mod tool_execution_tests;

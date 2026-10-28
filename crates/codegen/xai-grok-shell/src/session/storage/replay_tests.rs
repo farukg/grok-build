@@ -1110,6 +1110,7 @@ fn xai_only_transcript_forwards_but_stays_empty() {
             max_retries: 3,
             reason: "overloaded".into(),
             error_type: None,
+            next_attempt_at_ms: None,
         },
     ));
     std::fs::write(dir.join(UPDATES_FILE), format!("{retry}\n")).unwrap();

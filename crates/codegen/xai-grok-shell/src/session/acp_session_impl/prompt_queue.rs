@@ -1,12 +1,69 @@
 use super::*;
 use xai_agent_lifecycle::ShutdownPolicy;
 
-/// Outcome of a queue send-now request ([`SessionActor::handle_interject_queued_prompt`]).
-/// `mutated` reports whether the request changed anything (promoted, steered, or saved an edit).
-#[must_use = "cancel_running_turn means the caller must cancel the running turn"]
-pub(super) struct SendNowOutcome {
-    pub(super) cancel_running_turn: bool,
-    pub(super) mutated: bool,
+use crate::extensions::interject::{QueueRejection, QueueResult};
+
+#[derive(Clone, Copy)]
+pub(super) enum SendNowCancellation {
+    CancelRunning,
+    KeepRunning,
+}
+
+#[must_use]
+pub(super) enum SendNowOutcome {
+    Queued {
+        row: crate::session::prompt_queue::QueueEntryWire,
+        cancellation: SendNowCancellation,
+    },
+    GoalInterjection { running_prompt_id: String },
+    Rejected {
+        reason: QueueRejection,
+        row: Option<crate::session::prompt_queue::QueueEntryWire>,
+    },
+    Unconfirmed { cancellation: SendNowCancellation },
+}
+
+impl SendNowOutcome {
+    pub(super) fn cancel_running_turn(&self) -> bool {
+        match self {
+            Self::Queued { cancellation, .. } | Self::Unconfirmed { cancellation } => {
+                matches!(cancellation, SendNowCancellation::CancelRunning)
+            }
+            Self::GoalInterjection { .. } | Self::Rejected { .. } => false,
+        }
+    }
+
+    pub(super) fn mutated(&self) -> bool {
+        match self {
+            Self::Queued { .. } | Self::GoalInterjection { .. } | Self::Unconfirmed { .. } => true,
+            Self::Rejected { .. } => false,
+        }
+    }
+
+    pub(super) fn result(&self) -> QueueResult {
+        match self {
+            Self::Queued { row, .. } => QueueResult::Queued { row: row.clone() },
+            Self::GoalInterjection { running_prompt_id } => QueueResult::GoalInterjection { running_prompt_id: running_prompt_id.clone() },
+            Self::Rejected { reason, row } => QueueResult::Rejected { reason: reason.clone(), row: row.clone() },
+            Self::Unconfirmed { .. } => QueueResult::Unconfirmed,
+        }
+    }
+}
+
+pub(super) struct PreparedQueuePriority<'a> {
+    id: &'a str,
+    owner: super::queue_mutation::QueueOwner<'a>,
+    new_text: Option<&'a str>,
+    target: Result<usize, QueueRejection>,
+}
+
+impl PreparedQueuePriority<'_> {
+    pub(super) fn replacement_text(&self) -> Option<&str> {
+        match &self.target {
+            Ok(_) => self.new_text,
+            Err(_) => None,
+        }
+    }
 }
 
 /// Running-turn display fields for `x.ai/queue/changed` (clients paint turn-start UI).
@@ -35,7 +92,7 @@ pub(crate) struct QueueInputRequest {
     pub(crate) respond_to: oneshot::Sender<PromptTurnResult>,
     pub(crate) persist_ack: Option<oneshot::Sender<()>>,
     pub(crate) parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
-    pub(crate) initial_child_prompt_ready: Option<oneshot::Sender<oneshot::Sender<()>>>,
+    pub(crate) initial_child_prompt_ready: Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
     pub(crate) traceparent: Option<String>,
 }
 
@@ -311,7 +368,7 @@ impl SessionActor {
             respond_to,
             persist_ack,
             parsed_prompt_tx,
-            initial_child_prompt_ready,
+            initial_child_prompt_ready: initial_child_prompt_ready.map(crate::session::message_delivery::InitialChildPromptSink::Prompt),
             queue_meta,
             queue_mutation_policy,
             send_now: false,
@@ -821,97 +878,116 @@ impl SessionActor {
         owner: Option<&str>,
         new_text: Option<&str>,
     ) -> SendNowOutcome {
+        let owner = match owner {
+            Some(owner) => super::queue_mutation::QueueOwner::Exact(Some(owner)),
+            None => super::queue_mutation::QueueOwner::Unscoped,
+        };
+        self.interject_queued_prompt(id, expected_version, owner, new_text).await
+    }
+
+    pub(super) async fn interject_queued_prompt(
+        &self,
+        id: &str,
+        expected_version: u64,
+        owner: super::queue_mutation::QueueOwner<'_>,
+        new_text: Option<&str>,
+    ) -> SendNowOutcome {
         let mut state = self.state.lock().await;
+        let prepared = Self::prepare_queue_priority(&state, id, expected_version, owner, new_text);
+        self.interject_queued_prompt_locked(&mut state, prepared)
+    }
+
+    pub(super) fn prepare_queue_priority<'a>(
+        state: &State,
+        id: &'a str,
+        expected_version: u64,
+        owner: super::queue_mutation::QueueOwner<'a>,
+        new_text: Option<&'a str>,
+    ) -> PreparedQueuePriority<'a> {
+        let target = if state.running_prompt_id() == Some(id) {
+            Err(QueueRejection::Running)
+        } else {
+            match state.pending_inputs.iter().enumerate().find(|(_, item)| item.prompt_id == id || item.has_queue_id(id)) {
+                None => Err(QueueRejection::Missing),
+                Some((_, item)) if !item.is_queue_editable() => Err(QueueRejection::Protected),
+                Some((position, item)) => match &item.queue_meta {
+                    Some(meta) if meta.version != expected_version => Err(QueueRejection::Stale),
+                    Some(meta) if !owner.matches(meta.owner.as_deref()) => Err(QueueRejection::NotOwner),
+                    Some(_) => Ok(position),
+                    None => Err(QueueRejection::Missing),
+                },
+            }
+        };
+        PreparedQueuePriority { id, owner, new_text, target }
+    }
+
+    pub(super) fn interject_queued_prompt_locked(
+        &self,
+        state: &mut State,
+        prepared: PreparedQueuePriority<'_>,
+    ) -> SendNowOutcome {
+        let PreparedQueuePriority { id, owner, new_text, target } = prepared;
         let running_front_id = state.running_prompt_id().map(str::to_string);
         let turn_running = running_front_id.is_some();
         let goal_active = self.goal_tracker.lock().status()
             == Some(crate::session::goal_tracker::GoalStatus::Active);
         // Sampled early; the insert below never displaces the front.
-        let cancel_decision = Self::send_now_cancels_running_turn(&state, goal_active);
-        let front_awaiting_commit_now = Self::front_awaiting_commit(&state);
-        let row_matches =
-            |item: &InputItem| item.editable_queue_meta_matches(id, expected_version, owner);
-        let running_is_row = running_front_id.as_deref() == Some(id);
-        let pos = if running_is_row {
-            None
-        } else {
-            state.pending_inputs.iter().position(row_matches)
+        let cancel_decision = Self::send_now_cancels_running_turn(state, goal_active);
+        let front_awaiting_commit_now = Self::front_awaiting_commit(state);
+        let row = self.build_queue_wire(state).into_iter().find(|row| row.id == id);
+        let pos = match target {
+            Ok(position) => position,
+            Err(reason) => {
+                self.broadcast_queue_changed(state);
+                return SendNowOutcome::Rejected { reason, row };
+            }
         };
-        let mut cancel_running_turn = false;
-        let mut mutated = false;
-        if let Some(pos) = pos
-            && let Some(mut item) = state.pending_inputs.remove(pos)
-        {
-            mutated = true;
-            // Client-edited text wins (LWW).
-            if let Some(new_text) = new_text.filter(|t| !t.trim().is_empty()) {
-                Self::apply_queued_prompt_edit(&mut item, new_text.to_string(), owner);
-            }
-            let merge_into_goal = turn_running
-                && goal_active
-                && Self::extract_bash_command(&item.prompt_blocks).is_none();
-            if merge_into_goal {
+        let Some(mut item) = state.pending_inputs.remove(pos) else {
+            return SendNowOutcome::Rejected { reason: QueueRejection::Missing, row };
+        };
+        if let Some(new_text) = new_text.filter(|text| !text.trim().is_empty()) {
+            Self::apply_queued_prompt_edit(&mut item, new_text.to_string(), owner.editor());
+        }
+        let merge_into_goal = turn_running
+            && goal_active
+            && !state.finalization_gate.is_active()
+            && Self::extract_bash_command(&item.prompt_blocks).is_none();
+        let outcome = match (merge_into_goal, running_front_id) {
+            (true, Some(running_prompt_id)) => {
                 self.enqueue_prompt_as_planner_steering(&item);
-                self.enqueue_prompt_as_interjection(
-                    item,
-                    crate::session::events::InterjectionSource::Queue,
-                );
-                tracing::info!(
-                    queued_id = %id,
-                    "send-now: queued row will steer the active goal turn"
-                );
-            } else {
-                item.send_now = true;
-                let insert_at = Self::send_now_insert_index(&state, running_front_id.as_deref());
-                state.pending_inputs.insert(insert_at, item);
-                cancel_running_turn = cancel_decision;
-                tracing::info!(queued_id = %id, cancel_running_turn, "send-now: promoted queued prompt to run next");
+                self.enqueue_prompt_as_interjection(item, crate::session::events::InterjectionSource::Queue);
+                SendNowOutcome::GoalInterjection { running_prompt_id }
             }
-            xai_grok_telemetry::unified_log::info(
-                "shell.prompt.send_now_decision",
-                Some(self.session_info.id.0.as_ref()),
-                Some(serde_json::json!({
-                    "prompt_id": id,
-                    "from_queue_row": true,
-                    "cancels_turn": cancel_running_turn,
-                    "goal_active": goal_active,
-                    "merged_as_interjection": merge_into_goal,
-                    "front_awaiting_commit": front_awaiting_commit_now,
-                })),
-            );
-        } else if let Some(new_text) = new_text
-            && !new_text.trim().is_empty()
-            && !running_is_row
-            && let Some(item) = state
-                .pending_inputs
-                .iter_mut()
-                .find(|item| row_matches(item))
-        {
-            // The send-now no-opped but the row is still queued: keep the edit as an LWW write so it isn't silently lost
-            // Stale versions get no fallback (LWW); the running turn is never edited
-            Self::apply_queued_prompt_edit(item, new_text.to_string(), owner);
-            mutated = true;
-            tracing::info!(
-                queued_id = %id,
-                "send-now no-opped; saved the edit to the queued row"
-            );
-        } else {
-            tracing::debug!(
-                queued_id = %id,
-                expected_version,
-                turn_running,
-                "queue send-now no-op (running id / stale / drained / not owner); rebroadcasting"
-            );
-        }
-        if !Self::has_protected_row(&state, id) {
-            state.edit_holds.remove(id);
-        }
-        // Always re-broadcast the authoritative queue so the client reconciles.
-        self.broadcast_queue_changed(&state);
-        SendNowOutcome {
-            cancel_running_turn,
-            mutated,
-        }
+            (false, running_front_id) | (true, running_front_id @ None) => {
+                item.send_now = true;
+                let insert_at = Self::send_now_insert_index(state, running_front_id.as_deref());
+                state.pending_inputs.insert(insert_at, item);
+                let cancellation = if cancel_decision {
+                    SendNowCancellation::CancelRunning
+                } else {
+                    SendNowCancellation::KeepRunning
+                };
+                match self.build_queue_wire(state).into_iter().find(|row| row.id == id) {
+                    Some(row) => SendNowOutcome::Queued { row, cancellation },
+                    None => SendNowOutcome::Unconfirmed { cancellation },
+                }
+            }
+        };
+        xai_grok_telemetry::unified_log::info(
+            "shell.prompt.send_now_decision",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({
+                "prompt_id": id,
+                "from_queue_row": true,
+                "cancels_turn": outcome.cancel_running_turn(),
+                "goal_active": goal_active,
+                "merged_as_interjection": merge_into_goal,
+                "front_awaiting_commit": front_awaiting_commit_now,
+            })),
+        );
+        state.edit_holds.remove(id);
+        self.broadcast_queue_changed(state);
+        outcome
     }
 
     /// Reorder queued prompts to match `ordered_ids`.

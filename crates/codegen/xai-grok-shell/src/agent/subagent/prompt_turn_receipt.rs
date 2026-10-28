@@ -13,7 +13,7 @@ use crate::session::{
     CancelOptions, CancelTrigger, SessionCommand, ShutdownKind, commands::PromptTurnResult,
 };
 use xai_grok_tools::implementations::grok_build::task::types::{
-    InterruptionCause, SubagentResult, SubagentState,
+    InterruptionCause, SubagentResult, SubagentState, ChildCancellation,
 };
 
 pub(super) const ACTIVE_MESSAGE_RECEIPT_CAPACITY: usize = 64;
@@ -213,11 +213,15 @@ impl PromptTurnReceiptDrain {
     }
 }
 
-pub(super) fn cancel_shell_child_turn(cmd_tx: &mpsc::UnboundedSender<SessionCommand>) {
+pub(super) fn cancel_shell_child_turn(cmd_tx: &mpsc::UnboundedSender<SessionCommand>, intent: ChildCancellation) {
+    let trigger = match intent {
+        ChildCancellation::Shutdown => CancelTrigger::Shutdown,
+        ChildCancellation::Authorized => CancelTrigger::Coordinator,
+    };
     let _ = cmd_tx.send(SessionCommand::Cancel(CancelOptions {
         cancel_subagents: true,
         kill_background_tasks: true,
-        trigger: Some(CancelTrigger::Shutdown),
+        trigger: Some(trigger),
         ..Default::default()
     }));
 }
@@ -302,7 +306,7 @@ async fn drain_prompt_turn_receipts(
                 // WHY: Completed deliberately arms no deadline (admitted work may run long); termination relies on the receipt sender always being dropped or sent when the turn ends.
                 if next_disposition != PromptTurnReceiptDisposition::Completed {
                     receipt_stream.close();
-                    cancel_shell_child_turn(child_cmd_tx);
+                    cancel_shell_child_turn(child_cmd_tx, ChildCancellation::Shutdown);
                     deadline = Some(
                         tokio::time::Instant::now() + CANCELLED_RECEIPT_SETTLEMENT_GRACE,
                     );
@@ -312,7 +316,7 @@ async fn drain_prompt_turn_receipts(
             _ = cancel_token.cancelled(), if disposition == Some(PromptTurnReceiptDisposition::Completed) => {
                 receipt_stream.close();
                 disposition = Some(PromptTurnReceiptDisposition::Cancelled);
-                cancel_shell_child_turn(child_cmd_tx);
+                cancel_shell_child_turn(child_cmd_tx, ChildCancellation::Shutdown);
                 deadline = Some(
                     tokio::time::Instant::now() + CANCELLED_RECEIPT_SETTLEMENT_GRACE,
                 );

@@ -146,6 +146,7 @@ impl xai_tool_runtime::Tool for MonitorTool {
         // (same notification that bash background tasks send).
         notification_handle.send_backgrounded(crate::notification::BashExecutionBackgrounded {
             base: crate::notification::BashNotificationBase {
+                start_time: bg_handle.start_time,
                 tool_call_id: ctx.call_id.as_str().to_owned(),
                 // Send the real monitor command (so the block viewer shows the actual script). The human-readable description travels
                 // in `monitor_description` so the pager can render a "Monitor" tag instead of bash-highlighting a "[monitor] …"

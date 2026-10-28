@@ -35,6 +35,10 @@ impl SessionListVisibility {
     }
 }
 
+pub mod audit;
+pub mod update_decoder;
+#[cfg(test)]
+mod update_decoder_tests;
 pub mod jsonl;
 pub mod request_capture;
 pub(crate) mod relocation;
@@ -892,52 +896,17 @@ impl SessionUpdateEnvelope {
     }
 
     pub(crate) fn into_update(self) -> Result<SessionUpdate, serde_json::Error> {
-        if self.method == XAI_SESSION_UPDATE_METHOD {
-            let notification: SessionNotification = serde_json::from_value(self.params)?;
-            Ok(SessionUpdate::Xai(Box::new(notification)))
-        } else {
-            // ACP notification (method == "session/update" or unknown)
-            let notification: acp::SessionNotification = serde_json::from_value(self.params)?;
-            Ok(SessionUpdate::Acp(Box::new(notification)))
-        }
+        update_decoder::decode_envelope(self)
     }
 
     /// Try to parse from a JSON value, handling both envelope format and legacy raw format.
     pub(crate) fn from_value(value: serde_json::Value) -> Result<SessionUpdate, serde_json::Error> {
-        if value.get("method").is_some() {
-            let envelope: SessionUpdateEnvelope = serde_json::from_value(value)?;
-            envelope.into_update()
-        } else {
-            // Backwards compatibility: old format without envelope wrapper
-            let notification: acp::SessionNotification = serde_json::from_value(value)?;
-            Ok(SessionUpdate::Acp(Box::new(notification)))
-        }
+        update_decoder::decode_value(value)
     }
 
     /// Parse a session update directly from a JSON string, avoiding intermediate `Value` allocation.
     pub(crate) fn from_str(line: &str) -> Result<SessionUpdate, serde_json::Error> {
-        #[derive(serde::Deserialize)]
-        struct BorrowedEnvelope<'a> {
-            #[serde(default)]
-            method: Option<&'a str>,
-            #[serde(borrow)]
-            params: &'a serde_json::value::RawValue,
-        }
-
-        if let Ok(envelope) = serde_json::from_str::<BorrowedEnvelope<'_>>(line) {
-            let raw_params = envelope.params.get();
-            return if envelope.method == Some(XAI_SESSION_UPDATE_METHOD) {
-                let notification: SessionNotification = serde_json::from_str(raw_params)?;
-                Ok(SessionUpdate::Xai(Box::new(notification)))
-            } else {
-                let notification: acp::SessionNotification = serde_json::from_str(raw_params)?;
-                Ok(SessionUpdate::Acp(Box::new(notification)))
-            };
-        }
-
-        // Backwards compatibility: legacy format without envelope
-        let notification: acp::SessionNotification = serde_json::from_str(line)?;
-        Ok(SessionUpdate::Acp(Box::new(notification)))
+        update_decoder::decode_for_load(line)
     }
 }
 

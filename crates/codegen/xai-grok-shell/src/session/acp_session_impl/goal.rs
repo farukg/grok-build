@@ -683,9 +683,9 @@ impl SessionActor {
 
         let fail_open = |reason: Reason| {
             self.emit_event(Event::GoalRoleModelFailOpen {
-                role,
+                role: role.into(),
                 skeptic_idx,
-                reason: reason.as_const_str(),
+                reason: reason.as_const_str().into(),
             });
             RoleSpawnOverride::default()
         };
@@ -736,11 +736,11 @@ impl SessionActor {
         }
 
         self.emit_event(Event::GoalRoleModelResolved {
-            role,
+            role: role.into(),
             skeptic_idx,
             model_id: pair.model.clone(),
             agent_type: pair.agent_type.clone(),
-            source: "remote",
+            source: "remote".into(),
         });
         RoleSpawnOverride {
             model: Some(pair.model.clone()),
@@ -1399,7 +1399,9 @@ impl SessionActor {
                 Some(pattern.to_owned()),
             ),
         );
-        self.emit_event(crate::session::events::Event::GoalPrematureStopDetected { pattern });
+        self.emit_event(crate::session::events::Event::GoalPrematureStopDetected {
+            pattern: pattern.into(),
+        });
     }
 
     pub(super) fn consume_strategist_note(&self, delivered_rec: &str) {
@@ -1887,7 +1889,7 @@ impl SessionActor {
                     self.events.emit(
                         crate::session::events::Event::GoalClassifierFailOpen {
                             reason: crate::session::events::GoalClassifierFailOpenReason::GoalNotActiveAtResolve
-                                .as_const_str(),
+                                .as_const_str().into(),
                             attempt: attempts_seen,
                             latency_ms: 0,
                         },
@@ -1912,7 +1914,7 @@ impl SessionActor {
                             crate::session::events::Event::GoalClassifierFailClosed {
                                 reason:
                                     crate::session::events::GoalClassifierFailClosedReason::PendingQueueFull
-                                        .as_const_str(),
+                                        .as_const_str().into(),
                                 attempt: 0,
                             },
                         );
@@ -1941,7 +1943,7 @@ impl SessionActor {
                     .emit(crate::session::events::Event::GoalClassifierFailClosed {
                     reason:
                         crate::session::events::GoalClassifierFailClosedReason::ConcurrentInFlight
-                            .as_const_str(),
+                            .as_const_str().into(),
                     attempt: 0,
                 });
                 let synthetic_info = self
@@ -1994,7 +1996,7 @@ impl SessionActor {
                     .emit(crate::session::events::Event::GoalClassifierFailOpen {
                     reason:
                         crate::session::events::GoalClassifierFailOpenReason::GoalNotActiveAtResolve
-                            .as_const_str(),
+                            .as_const_str().into(),
                     attempt: 0,
                     latency_ms: fire_started.elapsed().as_millis() as u64,
                 });
@@ -2042,7 +2044,7 @@ impl SessionActor {
                     .emit(crate::session::events::Event::GoalClassifierFailOpen {
                     reason:
                         crate::session::events::GoalClassifierFailOpenReason::GoalNotActiveAtResolve
-                            .as_const_str(),
+                            .as_const_str().into(),
                     attempt,
                     latency_ms: fire_started.elapsed().as_millis() as u64,
                 });

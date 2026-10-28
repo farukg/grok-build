@@ -1761,6 +1761,22 @@ pub fn upgrade_legacy_reasoning(
     raw: &serde_json::Value,
     sibling_btc_ids_seen: &mut std::collections::HashSet<String>,
 ) -> Vec<ConversationItem> {
+    upgrade_legacy_reasoning_reporting(raw, sibling_btc_ids_seen, |_| {})
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyReasoningIssue {
+    InvalidRawOutput,
+    InvalidOutputItem { index: usize },
+    InvalidReasoning,
+    InvalidReasoningContent,
+}
+
+pub fn upgrade_legacy_reasoning_reporting(
+    raw: &serde_json::Value,
+    sibling_btc_ids_seen: &mut std::collections::HashSet<String>,
+    mut report: impl FnMut(LegacyReasoningIssue),
+) -> Vec<ConversationItem> {
     let mut siblings: Vec<ConversationItem> = Vec::new();
     let Some(obj) = raw.as_object() else {
         return siblings;
@@ -1778,9 +1794,15 @@ pub fn upgrade_legacy_reasoning(
     // Path A: v1 with `raw_output` (backend-search era)
     // Expand each entry as `rs::OutputItem` and lift Reasoning / backend-tool items to siblings
     // `Message` / `FunctionCall` are already on the assistant row (content / tool_calls), so skip them
+    if let Some(value) = obj.get("raw_output")
+        && !value.is_null() && !value.is_array()
+    {
+        report(LegacyReasoningIssue::InvalidRawOutput);
+    }
     if let Some(raw_output) = obj.get("raw_output").and_then(|v| v.as_array()) {
-        for entry in raw_output {
+        for (index, entry) in raw_output.iter().enumerate() {
             let Ok(item) = serde_json::from_value::<rs::OutputItem>(entry.clone()) else {
+                report(LegacyReasoningIssue::InvalidOutputItem { index });
                 continue;
             };
             match item {
@@ -1818,6 +1840,23 @@ pub fn upgrade_legacy_reasoning(
         // raw_output is the highest-fidelity source; if it was present we ignore singular `reasoning`
         // The two are mutually exclusive in practice and raw_output is the superset
         return siblings;
+    }
+
+    if is_v1_assistant && let Some(value) = obj.get("reasoning") {
+        let invalid = match value {
+            serde_json::Value::Null => false,
+            serde_json::Value::Object(reasoning) => ["text", "encrypted", "id"].iter().any(|key| {
+                reasoning.get(*key).is_some_and(|value| !value.is_null() && !value.is_string())
+            }),
+            serde_json::Value::Bool(_) | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) | serde_json::Value::Array(_) => true,
+        };
+        if invalid {
+            report(LegacyReasoningIssue::InvalidReasoning);
+        }
+    }
+    if is_v0_assistant && obj.get("reasoning_content").is_some_and(|value| !value.is_null() && !value.is_string()) {
+        report(LegacyReasoningIssue::InvalidReasoningContent);
     }
 
     // Path B: v1 with singular `reasoning: ReasoningContent` (earlier clients or chat-completions written as v1)

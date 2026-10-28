@@ -186,7 +186,7 @@ fn emit_immediate_events<S: ActiveAgentMessageEventSink + ?Sized>(
             });
             (Outcome::QuotaExceeded, None)
         }
-        SendSubagentMessageOutput::AdmissionUncertain => (Outcome::AdmissionUncertain, None),
+        SendSubagentMessageOutput::AdmissionUncertain { .. } => (Outcome::AdmissionUncertain, None),
         SendSubagentMessageOutput::NotAcceptedBeforeDeadline => {
             (Outcome::NotAcceptedBeforeDeadline, None)
         }

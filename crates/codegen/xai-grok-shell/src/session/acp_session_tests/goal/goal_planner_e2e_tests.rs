@@ -1296,7 +1296,7 @@ fn spawn_latching_planner_coordinator() -> (
         while let Some(ev) = rx.recv().await {
             match ev {
                 SubagentEvent::Cancel(req)
-                    if matches!(req.target, SubagentCancelTarget::ParentSession) =>
+                    if matches!(req.target, SubagentCancelTarget::ParentSession(_)) =>
                 {
                     latched = true;
                     log_task

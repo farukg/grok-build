@@ -22,6 +22,27 @@ impl ChildManagementRecipe {
         )
     }
 
+    pub(crate) fn binding(&self) -> std::io::Result<String> {
+        let mut reference = self.clone();
+        reference.inherited_mcp_servers.sort();
+        let content = serde_json::to_string(&reference).map_err(std::io::Error::other)?;
+        Ok(xai_grok_tools::implementations::grok_build::task::native_recovery::payload_digest(&content))
+    }
+
+    pub(crate) fn commit_durable(&self, directory: &Path, expected: &str) -> std::io::Result<()> {
+        if self.binding()? != expected {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "native management recipe binding mismatch"));
+        }
+        match Self::load(directory)? {
+            Some(existing) if existing.binding()? == expected => {}
+            Some(_) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "native management recipe changed before admission")),
+            None => self.save(directory)?,
+        }
+        let path = directory.join("child_management.json");
+        std::fs::File::open(&path)?.sync_all()?;
+        crate::session::storage::sync_parent_dir_durable(&path)
+    }
+
     pub(crate) fn save(&self, directory: &Path) -> std::io::Result<()> {
         let content = serde_json::to_string(self).map_err(std::io::Error::other)?;
         crate::util::config::atomic_write_string(&directory.join("child_management.json"), &content)

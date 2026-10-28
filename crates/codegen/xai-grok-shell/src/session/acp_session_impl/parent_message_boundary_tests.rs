@@ -53,6 +53,7 @@ async fn detached_pre_append_admission_excludes_replacement_until_literal_intent
             });
         let mut receiver = receiver_with_storage(directory, storage).await;
         let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer().await;
+        let recovery_ref = delivery.recovery_ref().unwrap();
         let message_id = delivery.message().message_id.clone();
         let original_task = receiver.actor.state.lock().await.running_task.as_ref().unwrap().identity.as_ref().clone();
         let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
@@ -67,7 +68,7 @@ async fn detached_pre_append_admission_excludes_replacement_until_literal_intent
         };
         assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
         assert!(receipts.recv().await.is_none());
-        assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+        assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
         gate.release();
         wait_for_detached_write(receiver._directory.path()).await;
         let (lease, recovered) = reopened.claim_receiver(&receiver.actor.session_info).await.unwrap();
@@ -97,7 +98,8 @@ async fn actual_admission_atomic_write_and_sync_faults_leave_producer_uncertain(
                 .with_parent_admission_probe(move || { fail_next_atomic_write(fault); Ok(()) });
             let mut receiver = receiver_with_storage(directory, storage).await;
             let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer().await;
-            let message_id = delivery.message().message_id.clone();
+            let recovery_ref = delivery.recovery_ref().unwrap();
+        let message_id = delivery.message().message_id.clone();
             let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
             let (_, result, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
             assert!(result.is_err(), "actual atomic admission must fail before creating a proof");
@@ -106,7 +108,7 @@ async fn actual_admission_atomic_write_and_sync_faults_leave_producer_uncertain(
             assert_eq!(failure.fault, fault, "an unrelated earlier failure cannot satisfy the cut");
             ack.send(result).unwrap();
             bounded(admitting).await.unwrap();
-            assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+            assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
             assert!(receipts.recv().await.is_none());
             assert!(receiver.actor.state.lock().await.message_delivery.is_empty());
             stop_persistence(&mut receiver).await;
@@ -253,6 +255,7 @@ async fn unavailable_teardown_owner_cannot_publish_terminal_settlement() {
     tokio::task::LocalSet::new().run_until(async {
         let mut receiver = receiver().await;
         let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer().await;
+        let recovery_ref = delivery.recovery_ref().unwrap();
         let message_id = delivery.message().message_id.clone();
         let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
         let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();

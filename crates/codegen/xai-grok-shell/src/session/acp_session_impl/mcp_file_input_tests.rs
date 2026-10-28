@@ -754,7 +754,7 @@ async fn transport_memory_policy_validates_and_denies_without_model_bookkeeping(
                 let hooks = Arc::new(parking_lot::Mutex::new(Vec::new()));
                 let responder = record_client_hooks(gateway, hooks.clone(), json!({}));
                 actor
-                    .execute_tool_calls(vec![call(json!({"file":logical}))], None)
+                    .execute_tool_calls(vec![call(json!({"file":logical}))], None, None)
                     .await
                     .unwrap();
                 let mut expected_paths = vec![logical.clone()];
@@ -827,6 +827,7 @@ async fn deadline_or_cancelled_preparation_never_dispatches() {
                     call(json!({"file":"/tmp/mcp-source.json"})),
                     &mut deferred,
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -837,6 +838,7 @@ async fn deadline_or_cancelled_preparation_never_dispatches() {
                 actor.prepare_tool_call(
                     call(json!({"file":"/tmp/mcp-source.json"})),
                     &mut deferred,
+                    None,
                     None,
                 ),
             )

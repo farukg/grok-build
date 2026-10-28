@@ -105,7 +105,8 @@ pub(super) async fn actor_under_test(
     let (persistence_tx, persistence_rx) = tokio::sync::mpsc::unbounded_channel();
     drain_persistence(persistence_rx);
 
-    let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+    let (mut actor, mut event_rx) = create_test_actor_ex(0, 256_000, 85, gateway_tx, persistence_tx).await;
+    *actor.current_prompt_id.lock().unwrap() = Some("rate-limit-turn".into());
     actor.sampler_handle = sampler_handle;
     actor.startup_hints.is_subagent = matches!(session, SessionKind::Subagent);
     actor.transient_retry_enabled = transient_retry_enabled;
@@ -123,6 +124,24 @@ pub(super) async fn actor_under_test(
     actor.chat_state_handle.update_sampling_config(cfg);
 
     let actor = Arc::new(actor);
+    let emitter = actor.clone();
+    tokio::task::spawn_local(async move {
+        let mut buffer = crate::agent::update_chunk_merge::ReplayBuffer::new(None);
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                SessionEvent::Notification(notification) => {
+                    if let Some((first, second)) = buffer.consume_chunk(notification) {
+                        emitter.emit_buffered(first).await;
+                        if let Some(second) = second { emitter.emit_buffered(second).await; }
+                    }
+                }
+                SessionEvent::FlushReplay { respond_to } => {
+                    if let Some(notification) = buffer.flush() { emitter.emit_buffered(notification).await; }
+                    if let Some(respond_to) = respond_to { let _ = respond_to.send(()); }
+                }
+            }
+        }
+    });
     {
         // Sampler-event drainer, matching the production run loop.
         let drainer = actor.clone();
@@ -225,6 +244,7 @@ async fn subagent_429_wait_is_owned_and_capped_by_the_pacer() {
                 Duration::from_secs(300),
                 actor.run_turn_via_sampler(
                     request,
+                    crate::session::request_capture::RequestSnapshotId::random(),
                     &mut budget,
                     transient_state(0, true),
                     false,
@@ -279,6 +299,7 @@ async fn paced_wait_notifies_the_client_with_a_retrying_state() {
                 Duration::from_secs(30),
                 actor.run_turn_via_sampler(
                     request,
+                    crate::session::request_capture::RequestSnapshotId::random(),
                     &mut budget,
                     transient_state(0, true),
                     false,
@@ -344,6 +365,7 @@ async fn exhausted_subagent_budget_notifies_exhausted_with_the_attempts_taken() 
                 Duration::from_secs(60),
                 actor.run_turn_via_sampler(
                     request,
+                    crate::session::request_capture::RequestSnapshotId::random(),
                     &mut budget,
                     transient_state(0, true),
                     false,
@@ -415,6 +437,7 @@ async fn main_session_429_is_owned_by_the_sampler_never_the_pacer() {
                     Duration::from_secs(30),
                     actor.run_turn_via_sampler(
                         request,
+                        crate::session::request_capture::RequestSnapshotId::random(),
                         &mut budget,
                         transient_state(0, true),
                         false,
@@ -485,6 +508,7 @@ async fn run_burst(n: usize, cap: usize) -> BurstMetrics {
                     Duration::from_secs(60),
                     actor.run_turn_via_sampler(
                         request,
+                        crate::session::request_capture::RequestSnapshotId::random(),
                         &mut budget,
                         transient_state(0, true),
                         false,

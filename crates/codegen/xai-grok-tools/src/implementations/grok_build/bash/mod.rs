@@ -1895,7 +1895,7 @@ impl xai_tool_runtime::Tool for BashTool {
         let notification_handle = match ctx.extensions.get::<PerCallNotificationSink>() {
             Some(sink) => ToolNotificationHandle::tee(vec![notification_handle, sink.0.clone()]),
             None => notification_handle,
-        };
+        }.with_tool_ownership(ctx.get::<xai_tool_protocol::tool_execution::ToolCallOwnership>().unwrap_or_default());
 
         // Read params
         let params = resources
@@ -2059,6 +2059,7 @@ impl xai_tool_runtime::Tool for BashTool {
 
             // Send backgrounded notification
             let base = BashNotificationBase {
+                start_time: handle.start_time,
                 tool_call_id: tool_call_id.as_str().to_owned(),
                 command: input.command.clone(),
                 output: Vec::new(),
@@ -2147,6 +2148,7 @@ impl xai_tool_runtime::Tool for BashTool {
             if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } = &result.disposition {
                 let auto_backgrounded = matches!(reason, crate::computer::types::BackgroundReason::ForegroundBudget);
                 let base = BashNotificationBase {
+                    start_time: handle.start_time,
                     tool_call_id: tool_call_id.as_str().to_owned(),
                     command: input.command.clone(),
                     output: result.combined_output.as_bytes().to_vec(),
@@ -2203,6 +2205,7 @@ impl xai_tool_runtime::Tool for BashTool {
 
             // Send completion notification
             let base = BashNotificationBase {
+                start_time: None,
                 tool_call_id: tool_call_id.as_str().to_owned(),
                 command: input.command.clone(),
                 output: result.combined_output.as_bytes().to_vec(),
@@ -2559,6 +2562,7 @@ mod tests {
                 return Err(ComputerError::io(err.clone()));
             }
             Ok(BackgroundHandle {
+                start_time: None,
                 task_id: self.bg_task_id.clone(),
                 output_file: self.bg_output_file.clone(),
                 pid: None,
@@ -2777,6 +2781,7 @@ mod tests {
         fn chunk(output: &[u8], total: usize, truncated: bool) -> BashOutputChunk {
             BashOutputChunk {
                 base: BashNotificationBase {
+                    start_time: None,
                     tool_call_id: "t".into(),
                     command: "c".into(),
                     output: output.to_vec(),
@@ -2819,6 +2824,7 @@ mod tests {
         fn chunk(output: &[u8], total: usize) -> BashOutputChunk {
             BashOutputChunk {
                 base: BashNotificationBase {
+                    start_time: None,
                     tool_call_id: "t".into(),
                     command: "c".into(),
                     output: output.to_vec(),
@@ -2857,6 +2863,7 @@ mod tests {
         assert!(total > MAX_PROGRESS_DELTA_BYTES);
         let chunk = BashOutputChunk {
             base: BashNotificationBase {
+                start_time: None,
                 tool_call_id: "t".into(),
                 command: "c".into(),
                 output: payload_str.clone().into_bytes(),
@@ -5314,6 +5321,7 @@ mod tests {
             if let Ok(r) = mock.foreground_result.as_mut() {
                 r.disposition = crate::computer::types::RunDisposition::Backgrounded {
                     handle: BackgroundHandle {
+                        start_time: None,
                         task_id: "execution-9".to_string(),
                         output_file: PathBuf::from("/tmp/actual-execution.log"),
                         pid: Some(4242),

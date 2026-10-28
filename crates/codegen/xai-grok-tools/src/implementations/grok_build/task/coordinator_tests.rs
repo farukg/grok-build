@@ -30,6 +30,10 @@ struct TestControl {
 }
 
 impl ChildControl for TestControl {
+    fn has_initial_message_reservation(&self, delivery: &ActiveAgentMessageDelivery) -> bool {
+        delivery.admission_is_committed()
+    }
+
     type ProgressFuture = std::future::Ready<SubagentProgress>;
 
     fn progress(&self) -> Self::ProgressFuture {
@@ -86,8 +90,9 @@ impl ChildControl for TestControl {
         }
     }
 
-    fn cancel(&self) {
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
         self.cancellation.cancel();
+        ChildCancelOutcome::Accepted
     }
 }
 
@@ -112,6 +117,7 @@ async fn recording_handoff_requires_a_live_transfer_before_positive_settlement()
             admission_gate: None,
             admitted_messages: Some(admitted_messages),
         };
+        let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let admission = control.send_active_message(held.late_delivery).await;
         assert_eq!(
             if closed {
@@ -137,7 +143,7 @@ async fn recording_handoff_requires_a_live_transfer_before_positive_settlement()
         coordinator.finish_active_message(completion);
         assert_eq!(
             if closed {
-                ActiveAgentMessageOutcome::AdmissionUncertain
+                ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref }
             } else {
                 ActiveAgentMessageOutcome::Accepted {
                     message_id: held.message_id,
@@ -254,11 +260,12 @@ impl ChildRunner for TestRunner {
                 agent_address: _,
                 spawner_session_id,
             } = run;
-            let (wake_agent_id, wake_message_source, wake_message_id) = match wake_origin {
-                Some(origin) => (
-                    Some(origin.agent_id),
-                    Some(origin.source),
-                    Some(origin.message_id),
+            let wake_delivery = wake_origin.map(|origin| origin.delivery);
+            let (wake_agent_id, wake_message_source, wake_message_id) = match &wake_delivery {
+                Some(delivery) => (
+                    Some(request.id.clone()),
+                    Some(delivery.source()),
+                    Some(delivery.message().message_id.clone()),
                 ),
                 None => (None, None, None),
             };
@@ -353,6 +360,11 @@ impl ChildRunner for TestRunner {
             let rejects_deferred_start = reject_wake_after_deferred_start
                 && wake_agent_id.is_some()
                 && request.prompt == "first wake";
+            if !rejects_deferred_start {
+                if let Some(delivery) = wake_delivery {
+                    delivery.claim_admission().expect("mock bootstrap claim").commit().handoff(|| ());
+                }
+            }
             let promoted = if rejects_deferred_start {
                 reporter.started_deferred(child).await
             } else {

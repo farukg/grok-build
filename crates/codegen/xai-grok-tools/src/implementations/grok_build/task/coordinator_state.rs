@@ -64,6 +64,20 @@ pub enum SubagentCaller {
     Waiting,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum InitialMessageTerminalOwnership {
+    Message,
+    AdoptionAttempt,
+}
+
+pub use super::types::ChildCancellation;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChildCancelOutcome {
+    Accepted,
+    AttemptEnded,
+}
+
 /// Runtime handle retained while a child is active.
 pub trait ChildControl: 'static {
     type ProgressFuture: Future<Output = SubagentProgress> + 'static;
@@ -71,6 +85,14 @@ pub trait ChildControl: 'static {
     fn progress(&self) -> Self::ProgressFuture;
 
     fn observe_caller(&self, _caller: SubagentCaller) {}
+
+    fn has_initial_message_reservation(&self, _delivery: &ActiveAgentMessageDelivery) -> bool {
+        false
+    }
+
+    fn initial_message_terminal_ownership(&self) -> InitialMessageTerminalOwnership {
+        InitialMessageTerminalOwnership::Message
+    }
 
     /// Admit a coordinator-authorized message to this child. `Admitted` is valid only when
     /// irrevocably claimed durable admission succeeds and its local receipt is handed off.
@@ -82,7 +104,7 @@ pub trait ChildControl: 'static {
         Box::pin(std::future::ready(ActiveMessageAdmission::Unsupported))
     }
 
-    fn cancel(&self);
+    fn cancel(&self, intent: ChildCancellation) -> ChildCancelOutcome;
 }
 
 /// Data reported when runtime initialization has produced a live child.
@@ -100,11 +122,11 @@ pub struct StartedChild<C> {
     pub control: C,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct WakeOrigin {
-    pub agent_id: String,
-    pub source: super::types::ActiveAgentMessageSource,
-    pub message_id: String,
+    pub previous_completion: super::native_recovery::PreviousCompletion,
+    pub mode: super::native_recovery::NativeWakeMode,
+    pub delivery: super::types::ActiveAgentMessageDelivery,
 }
 
 /// Input to one runtime-specific child run.
@@ -317,6 +339,14 @@ pub trait ChildRunner: 'static {
     type RunFuture: Future<Output = ChildRunOutput<Self::CompletionData>> + 'static;
     type ValidateFuture: Future<Output = SubagentValidateTypeOutcome> + 'static;
     type DescribeFuture: Future<Output = SubagentDescribeOutcome> + 'static;
+
+    fn prepare_message_recovery(
+        &self,
+        _request: &super::native_recovery::SubagentMessageRecoveryRequest,
+        _audience: &super::native_recovery::MessageRecoveryAudience,
+    ) -> super::native_recovery::PreparedMessageRecovery {
+        super::native_recovery::PreparedMessageRecovery::Refused
+    }
 
     fn run(&self, request: ChildRunRequest<Self::Control>) -> Self::RunFuture;
 
@@ -663,6 +693,11 @@ pub(super) struct DisplacedCompletedChild {
     pub(super) completed: Box<CompletedChild>,
 }
 
+pub(super) enum PreStartWake {
+    Completed(DisplacedCompletedChild),
+    Published,
+}
+
 /// Set at the cancel sites; a wake rollback reads it because host rejections cancel the token too.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) enum PendingDisposition {
@@ -728,7 +763,7 @@ pub(super) struct PendingChild {
     /// Pre-reparent spawner session for a nested spawn. Human sends from it
     /// stay owned only while that session can be given the live address.
     pub(super) spawner_session_id: Option<String>,
-    pub(super) wake_of: Option<DisplacedCompletedChild>,
+    pub(super) wake_of: Option<PreStartWake>,
 }
 
 pub(super) struct ActiveChild<C> {
@@ -755,7 +790,7 @@ pub(super) struct ActiveChild<C> {
     /// See [`PendingChild::spawner_session_id`].
     pub(super) spawner_session_id: Option<String>,
     pub(super) active_messages: ActiveMessageLifecycle,
-    pub(super) deferred_wake: Option<DisplacedCompletedChild>,
+    pub(super) deferred_wake: Option<PreStartWake>,
     pub(super) control: C,
 }
 
@@ -1007,7 +1042,7 @@ impl<C> ChildRecord<C> {
     pub(super) fn take_failed_pre_start_wake(
         &mut self,
         success: bool,
-    ) -> Option<DisplacedCompletedChild> {
+    ) -> Option<PreStartWake> {
         if success {
             return None;
         }
@@ -1115,8 +1150,8 @@ impl<C: ChildControl> ForegroundChild for ActiveChild<C> {
     }
 
     fn cancel(&mut self) {
+        self.control.cancel(ChildCancellation::Shutdown);
         self.cancellation.cancel();
-        self.control.cancel();
     }
 }
 

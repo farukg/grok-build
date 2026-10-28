@@ -254,10 +254,12 @@ pub(crate) struct AgentTask {
     pub(super) epoch: TurnEpoch,
     pub(super) identity: TaskIdentity,
     pub(super) admission: tokio_util::sync::CancellationToken,
+    pub(super) initial_parent_reservation: Option<Arc<crate::session::persistence::ReservedParentMessageTurn>>,
     pub(super) input_origin: InputOrigin,
     pub(crate) handle: tokio::task::AbortHandle,
     /// Monotonic start of this running turn; complete and cancel both read it.
     pub(crate) started_at: std::time::Instant,
+    current_action: crate::session::current_actions::TurnOwnership,
 }
 
 /// Saturating `Instant` delta in ms. No panic on overflow.
@@ -380,9 +382,11 @@ impl AgentTask {
             epoch,
             identity: TaskIdentity::new(uuid::Uuid::now_v7().to_string()),
             admission: tokio_util::sync::CancellationToken::new(),
+            initial_parent_reservation: None,
             input_origin: InputOrigin::new(PromptOrigin::User),
             handle,
             started_at: std::time::Instant::now(),
+            current_action: Default::default(),
         }
     }
 
@@ -401,11 +405,28 @@ impl AgentTask {
         *session.turn_prompt_mode.lock() = request.prompt_mode;
         let identity = TaskIdentity::new(uuid::Uuid::now_v7().to_string());
         let admission = tokio_util::sync::CancellationToken::new();
+        let current_actions = session.current_actions.clone();
+        let owner = match request.input_origin.policy().analytics {
+            crate::session::AnalyticsClass::HumanPrompt | crate::session::AnalyticsClass::AgentMessage => {
+                if session.startup_hints.is_subagent {
+                    crate::session::current_actions::FrozenOwner::Child { prompt_id: request.prompt_id.clone(), task_id: identity.to_string() }
+                } else {
+                    crate::session::current_actions::FrozenOwner::Root { prompt_id: request.prompt_id.clone(), task_id: identity.to_string() }
+                }
+            }
+            crate::session::AnalyticsClass::RuntimeWake => {
+                crate::session::current_actions::FrozenOwner::Wake { prompt_id: request.prompt_id.clone(), task_id: identity.to_string() }
+            }
+        };
+        current_actions.start_turn(owner, xai_monotonic_clock::MonotonicPoint::default());
+        let source_guard = crate::session::current_actions::TurnRegistration::new(current_actions.clone(), identity.to_string());
+        let current_action = crate::session::current_actions::TurnOwnership::new(current_actions, identity.to_string());
         Self {
             prompt_id: request.prompt_id.clone(),
             epoch,
             identity: identity.clone(),
             admission: admission.clone(),
+            initial_parent_reservation: None,
             input_origin: request.input_origin.clone(),
             handle: xai_grok_telemetry::session_ctx::spawn_local_in_session_ctx(run_task(
                 session,
@@ -415,13 +436,16 @@ impl AgentTask {
                 admission,
                 completion_tx,
                 started_at,
+                source_guard,
             ))
             .abort_handle(),
             started_at,
+            current_action,
         }
     }
 
     pub(super) fn abort(&self) {
+        self.current_action.finish();
         self.admission.cancel();
         if !self.handle.is_finished() {
             self.handle.abort();
@@ -506,8 +530,10 @@ async fn run_task(
     admission: tokio_util::sync::CancellationToken,
     completion_tx: mpsc::UnboundedSender<TurnCompletionMsg>,
     started_at: std::time::Instant,
+    mut source_guard: crate::session::current_actions::TurnRegistration,
 ) {
     let _admission = admission.drop_guard();
+    source_guard.project_anchor(started_at);
     let mut request = request;
     let prompt_id = request.prompt_id.clone();
     let result = if let Some(start_gate) = request.start_gate.take()
@@ -523,8 +549,10 @@ async fn run_task(
             tool_overrides: None,
         })
     } else {
-        session.handle_turn_input(request).await
+        source_guard.begin_execution();
+        source_guard.scope(session.handle_turn_input(request)).await
     };
+    source_guard.backend_finished();
     let elapsed_ms = elapsed_ms_saturating(started_at, std::time::Instant::now());
     let _ = completion_tx.send(TurnCompletionMsg {
         prompt_id,
@@ -607,6 +635,7 @@ mod start_gate_tests {
                     tokio_util::sync::CancellationToken::new(),
                     completion_tx,
                     std::time::Instant::now(),
+                    crate::session::current_actions::TurnRegistration::new(Default::default(), "unadmitted".into()),
                 )
                 .await;
                 let completion = completion_rx.recv().await.expect("turn completion");

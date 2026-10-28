@@ -1,11 +1,15 @@
 //! Executes the existing single-prompt child attempt while its session actor is live.
 use super::*;
 use crate::session::commands::PromptTurnResult as SubagentPromptTurnResult;
+use crate::session::message_delivery::{InitialParentMessageAdmission, ParentMessageHandoff};
+use xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission;
 use std::future::Future;
+pub(super) use crate::session::message_delivery::InitialChildPublication;
+
 #[derive(Debug)]
 pub(super) enum InitialChildPromptReadiness<T> {
     Cancelled,
-    Admitted(oneshot::Sender<()>),
+    Admitted(InitialChildPublication),
     AttemptCompleted(T),
     TimedOut,
 }
@@ -23,7 +27,7 @@ impl<T> InitialChildPromptReadiness<T> {
 /// Deterministic precedence: cancellation, then a successful readiness ack, then the attempt result, then the admission deadline.
 pub(super) async fn wait_initial_child_prompt_readiness<Fut, T>(
     cancelled: impl Future<Output = ()>,
-    readiness: oneshot::Receiver<oneshot::Sender<()>>,
+    readiness: oneshot::Receiver<InitialChildPublication>,
     attempt: &mut Fut,
     timeout: std::time::Duration,
 ) -> InitialChildPromptReadiness<T>
@@ -41,19 +45,62 @@ where
 pub(super) fn subagent_trace_prefix(session_id: &str, turn_number: u64) -> String {
     format!("{session_id}/turn_{turn_number}")
 }
+pub(super) fn artifact_upload_context(
+    bucket: Option<&str>, method: Option<&crate::session::repo_changes::UploadMethod>, prefix: String,
+) -> Option<crate::upload::manifest::ArtifactUploadContext> {
+    bucket.and_then(|_| {
+        method.map(|method| crate::upload::manifest::ArtifactUploadContext {
+            gcs_config: crate::session::repo_changes::TraceExportConfig {
+                bucket_url: bucket.map(str::to_owned),
+                service_account_key: None,
+                prefix_dir: None,
+                gcs_prefix: Some(prefix),
+                absolute_paths: false,
+                archive_name_override: None,
+                upload_method: method.clone(),
+            },
+            artifact_tracker: crate::upload::manifest::new_artifact_tracker(),
+        })
+    })
+}
+
+pub(super) enum InitialChildInput {
+    Prompt(String),
+    ParentMessage {
+        recipe: super::management_recipe::ChildManagementRecipe,
+        publication: Box<crate::session::delivery_receiver::ParentMessagePublication>,
+        custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
+        artifacts: super::native_recovery::InitialArtifactGrant,
+        delivery: ActiveAgentMessageDelivery,
+        parent_telemetry_ctx: xai_grok_telemetry::TelemetryCtx,
+        receiver: ActiveMessageReceiver,
+    },
+}
+
+impl InitialChildInput {
+    fn prompt_id(&self) -> String {
+        match self {
+            Self::Prompt(prompt_id) => prompt_id.clone(),
+            Self::ParentMessage { delivery, .. } => {
+                crate::session::delivery_receiver::parent_message_prompt_id(&delivery.message().message_id)
+            }
+        }
+    }
+}
+
 pub(super) struct OneTurnAttemptInput<'a> {
     pub child_handle: &'a SessionHandle,
     pub request: &'a SubagentRequest,
     pub worktree_path: Option<&'a Path>,
     pub task_prompt_text: &'a str,
-    pub prompt_id: String,
+    pub initial_input: InitialChildInput,
     pub inherited_tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
     pub gcs_bucket_url: Option<&'a str>,
     pub gcs_upload_method: Option<&'a crate::session::repo_changes::UploadMethod>,
     pub turn_number: u64,
     pub cancel_token: CancellationToken,
     pub child_run_started_at: std::time::Instant,
-    pub prompt_admitted: oneshot::Sender<oneshot::Sender<()>>,
+    pub prompt_admitted: oneshot::Sender<InitialChildPublication>,
     #[cfg(test)]
     pub initial_attempt_behavior: InitialAttemptBehavior,
 }
@@ -105,7 +152,7 @@ pub(super) async fn run_one_turn_attempt(
             },
             trace: OneTurnTraceCapture {
                 before_copy_rx,
-                child_prompt_id: input.prompt_id,
+                child_prompt_id: input.initial_input.prompt_id(),
                 turn_started_at: chrono::Utc::now().to_rfc3339(),
                 turn_token_totals: None,
                 turn_number: input.turn_number,
@@ -113,46 +160,95 @@ pub(super) async fn run_one_turn_attempt(
             cancellation_may_hide_usage: false,
         };
     }
-    let child_prompt_id = input.prompt_id;
+    let child_prompt_id = input.initial_input.prompt_id();
     let turn_started_at = chrono::Utc::now().to_rfc3339();
-    let _ = input.child_handle.cmd_tx.send(SessionCommand::Prompt {
-        prompt_id: child_prompt_id.clone(),
-        prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
-            input.task_prompt_text.to_owned(),
-        ))],
-        prompt_mode: crate::session::plan_mode::PromptMode::Agent,
-        artifact_upload_ctx: input.gcs_bucket_url.and_then(|_| {
-            input
-                .gcs_upload_method
-                .map(|method| crate::upload::manifest::ArtifactUploadContext {
-                    gcs_config: crate::session::repo_changes::TraceExportConfig {
-                        bucket_url: input.gcs_bucket_url.map(str::to_owned),
-                        service_account_key: None,
-                        prefix_dir: None,
-                        gcs_prefix: Some(subagent_trace_prefix(
-                            &input.request.id,
-                            input.turn_number,
-                        )),
-                        absolute_paths: false,
-                        archive_name_override: None,
-                        upload_method: method.clone(),
+    let dispatch = match input.initial_input {
+        InitialChildInput::Prompt(_) => input.child_handle.cmd_tx
+            .send(
+                SessionCommand::Prompt {
+                    prompt_id: child_prompt_id.clone(),
+                    prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        input.task_prompt_text.to_owned(),
+                    ))],
+                    prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+                    artifact_upload_ctx: artifact_upload_context(input.gcs_bucket_url, input.gcs_upload_method,
+                        subagent_trace_prefix(&input.request.id, input.turn_number)),
+                    client_identifier: None,
+                    screen_mode: None,
+                    verbatim: true,
+                    traceparent: xai_grok_otel::current_traceparent(),
+                    json_schema: input.request.runtime_overrides.output_schema.clone(),
+                    send_now: false,
+                    admission: None,
+                    tool_overrides_update: None,
+                    respond_to: prompt_tx,
+                    prompt_admitted: Some(input.prompt_admitted),
+                    persist_ack: None,
+                    parsed_prompt_tx: None,
+                },
+            )
+            .map_err(|_| "initial prompt owner closed"),
+        InitialChildInput::ParentMessage {
+            custody, recipe, publication, artifacts, delivery,
+            parent_telemetry_ctx,
+            receiver,
+        } => {
+            let (respond_to, admitted) = oneshot::channel();
+            let (reservation_tx, reservation_rx) = oneshot::channel();
+            let expected_delivery = delivery.clone();
+            let sent = input.child_handle.cmd_tx.send(SessionCommand::ParentAgentMessage {
+                delivery,
+                receipt_sink: ParentMessageHandoff::Initial(
+                    InitialParentMessageAdmission {
+                        publication, recipe, receiver,
+                        respond_to: prompt_tx,
+                        prompt_admitted: reservation_tx,
+                        artifacts,
+                        json_schema: custody.launch.runtime_overrides.output_schema.clone(),
+                        traceparent: custody.launch.traceparent.clone(),
+                        custody,
                     },
-                    artifact_tracker: crate::upload::manifest::new_artifact_tracker(),
-                })
-        }),
-        client_identifier: None,
-        screen_mode: None,
-        verbatim: true,
-        traceparent: xai_grok_otel::current_traceparent(),
-        json_schema: input.request.runtime_overrides.output_schema.clone(),
-        send_now: false,
-        admission: None,
-        tool_overrides_update: None,
-        respond_to: prompt_tx,
-        prompt_admitted: Some(input.prompt_admitted),
-        persist_ack: None,
-        parsed_prompt_tx: None,
-    });
+                ),
+                parent_telemetry_ctx,
+                respond_to,
+            });
+            match sent {
+                Err(_) => Err("initial parent-message owner closed"),
+                Ok(()) => match admitted.await {
+                    Ok(ActiveMessageAdmission::Admitted) => match reservation_rx.await {
+                        Ok(ready) if ready.reservation.matches_delivery(
+                            input.child_handle.info.id.0.as_ref(), &expected_delivery,
+                        ) => input.prompt_admitted.send(InitialChildPublication::ParentMessage(ready))
+                            .map_err(|_| "initial parent-message publication owner closed"),
+                        Ok(_) => Err("initial parent-message reservation identity mismatch"),
+                        Err(_) => Err("initial parent-message reservation unconfirmed"),
+                    },
+                    Ok(ActiveMessageAdmission::Rejected) => {
+                        Err("initial parent-message admission rejected")
+                    }
+                    Ok(ActiveMessageAdmission::Unsupported) => {
+                        Err("initial parent-message admission unsupported")
+                    }
+                    Ok(ActiveMessageAdmission::ChannelClosed) | Err(_) => {
+                        Err("initial parent-message admission unconfirmed")
+                    }
+                },
+            }
+        }
+    };
+    if let Err(message) = dispatch {
+        return OneTurnAttemptOutcome {
+            result: failure_result(input.request, message),
+            trace: OneTurnTraceCapture {
+                before_copy_rx,
+                child_prompt_id,
+                turn_started_at,
+                turn_token_totals: None,
+                turn_number: input.turn_number,
+            },
+            cancellation_may_hide_usage: false,
+        };
+    }
     let mut turn_token_totals = None;
     let wait_outcome =
         await_subagent_turn_or_cancellation(prompt_rx, input.cancel_token.clone()).await;
@@ -404,7 +500,7 @@ mod initial_child_prompt_readiness_tests {
     #[tokio::test]
     async fn simultaneous_readiness_and_attempt_prefers_readiness() {
         let (tx, rx) = oneshot::channel();
-        tx.send(oneshot::channel().0)
+        tx.send(super::InitialChildPublication::Prompt(oneshot::channel().0))
             .expect("readiness already has a waiter");
         let mut attempt = Box::pin(async { "attempt" });
         let outcome = wait_initial_child_prompt_readiness(
@@ -422,7 +518,7 @@ mod initial_child_prompt_readiness_tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let (tx, rx) = oneshot::channel();
-        tx.send(oneshot::channel().0)
+        tx.send(super::InitialChildPublication::Prompt(oneshot::channel().0))
             .expect("readiness already has a waiter");
         let mut attempt = Box::pin(std::future::pending::<()>());
         let outcome = wait_initial_child_prompt_readiness(
@@ -436,7 +532,7 @@ mod initial_child_prompt_readiness_tests {
     }
     #[tokio::test]
     async fn attempt_without_ack_keeps_the_real_result() {
-        let (_tx, rx) = oneshot::channel::<oneshot::Sender<()>>();
+        let (_tx, rx) = oneshot::channel::<super::InitialChildPublication>();
         let mut attempt = Box::pin(async { 7u8 });
         let outcome = wait_initial_child_prompt_readiness(
             std::future::pending::<()>(),
@@ -452,7 +548,7 @@ mod initial_child_prompt_readiness_tests {
     }
     #[tokio::test]
     async fn zero_timeout_without_ready_branches_times_out() {
-        let (_tx, rx) = oneshot::channel::<oneshot::Sender<()>>();
+        let (_tx, rx) = oneshot::channel::<super::InitialChildPublication>();
         let mut attempt = Box::pin(std::future::pending::<()>());
         let outcome = wait_initial_child_prompt_readiness(
             std::future::pending::<()>(),
@@ -477,7 +573,7 @@ mod initial_child_prompt_readiness_tests {
             UnpromotedChildDisposition::Cancelled
         );
         assert_eq!(
-            InitialChildPromptReadiness::<()>::Admitted(oneshot::channel().0)
+            InitialChildPromptReadiness::<()>::Admitted(super::InitialChildPublication::Prompt(oneshot::channel().0))
                 .unpromoted_disposition(),
             UnpromotedChildDisposition::Cancelled
         );

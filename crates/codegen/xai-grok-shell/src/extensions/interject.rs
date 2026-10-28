@@ -48,6 +48,144 @@ pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     })))
 }
 
+pub const QUEUE_INTERJECT_METHOD: &str = "x.ai/queue/interject";
+pub const MAX_QUEUE_REQUEST_BYTES: usize = crate::leader::protocol::MAX_MESSAGE_SIZE as usize;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueCaller {
+    session_id: acp::SessionId,
+}
+
+impl QueueCaller {
+    pub(crate) fn from_session_control(session: &crate::session::SessionHandle) -> Self {
+        Self { session_id: session.info.id.clone() }
+    }
+
+    pub(crate) fn controls(&self, session_id: &acp::SessionId) -> bool {
+        self.session_id == *session_id
+    }
+
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.session_id.0.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_session(session_id: &str) -> Self {
+        Self { session_id: acp::SessionId::new(session_id.to_owned()) }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueOperation {
+    pub session_id: String,
+    pub id: String,
+    pub expected_version: u64,
+    pub operation_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum QueueAction {
+    Prioritize {
+        #[serde(rename = "newText")]
+        new_text: Option<String>,
+    },
+    Observe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QueueRequest {
+    #[serde(flatten)]
+    pub operation: QueueOperation,
+    #[serde(flatten)]
+    pub action: QueueAction,
+    pub owner: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueRejection {
+    WrongSession,
+    Running,
+    Missing,
+    Protected,
+    Stale,
+    NotOwner,
+    OperationConflict,
+    Unauthorized,
+    Capacity,
+    PayloadTooLarge,
+}
+
+impl QueueRejection {
+    pub fn notice(&self) -> &'static str {
+        match self {
+            Self::WrongSession => "send now rejected: wrong session",
+            Self::Running => "send now rejected: row already running",
+            Self::Missing => "send now rejected: row no longer queued",
+            Self::Protected => "send now rejected: protected origin",
+            Self::Stale => "send now rejected: queue version changed",
+            Self::NotOwner => "send now rejected: queue owner changed",
+            Self::OperationConflict => "send now rejected: operation identity conflict",
+            Self::Unauthorized => "send now rejected: session control not granted",
+            Self::Capacity => "send now rejected: operation receipt capacity reached; existing operations remain observable",
+            Self::PayloadTooLarge => "send now rejected: request exceeds the 64 MiB ACP limit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum QueueResult {
+    Queued { row: crate::session::prompt_queue::QueueEntryWire },
+    GoalInterjection { running_prompt_id: String },
+    Started { prompt_id: String },
+    Rejected {
+        reason: QueueRejection,
+        row: Option<crate::session::prompt_queue::QueueEntryWire>,
+    },
+    Unconfirmed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QueueResponse {
+    pub operation: QueueOperation,
+    pub result: QueueResult,
+}
+
+pub(crate) fn validate_queue_request_size(raw: &str) -> Result<(), acp::Error> {
+    if raw.len() > MAX_QUEUE_REQUEST_BYTES {
+        return Err(acp::Error::invalid_params().data(format!(
+            "queue request exceeds {MAX_QUEUE_REQUEST_BYTES} protocol bytes; no operation admitted"
+        )));
+    }
+    Ok(())
+}
+
+pub async fn handle_queue(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    validate_queue_request_size(args.params.get())?;
+    let request: QueueRequest = parse_params(args)?;
+    let sid = acp::SessionId::new(request.operation.session_id.clone());
+    let Some(session) = agent.session_handle_waiting_for_load(&sid).await else {
+        return super::to_raw_response(&QueueResponse {
+            operation: request.operation,
+            result: QueueResult::Unconfirmed,
+        });
+    };
+    let caller = QueueCaller::from_session_control(&session);
+    let operation = request.operation.clone();
+    let (respond_to, receive) = tokio::sync::oneshot::channel();
+    let response = match session.cmd_tx.send(SessionCommand::QueueSendNow { caller, request, respond_to }) {
+        Ok(()) => receive.await.unwrap_or(QueueResponse {
+            operation,
+            result: QueueResult::Unconfirmed,
+        }),
+        Err(_) => QueueResponse { operation, result: QueueResult::Unconfirmed },
+    };
+    super::to_raw_response(&response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

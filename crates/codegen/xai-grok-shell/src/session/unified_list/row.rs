@@ -52,6 +52,7 @@ impl UnifiedRow {
             cwd: legacy.cwd,
             title: (!title.is_empty()).then_some(title),
             updated_at,
+            last_active_at: legacy.last_active_at,
             meta: Self::envelope(kind, facets),
         }
     }
@@ -148,6 +149,8 @@ pub struct SessionInfo {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_active_at: Option<String>,
     #[serde(rename = "_meta")]
     pub meta: RowMeta,
 }
@@ -168,9 +171,14 @@ impl TryFrom<SessionInfo> for acp::SessionInfo {
             cwd,
             title,
             updated_at,
+            last_active_at,
             meta,
         } = info;
-        let meta = super::to_meta(serde_json::to_value(&meta));
+        let mut meta = super::to_meta(serde_json::to_value(&meta));
+        if let Some(last_active_at) = last_active_at {
+            meta.get_or_insert_with(Default::default)
+                .insert("lastActiveAt".into(), serde_json::Value::String(last_active_at));
+        }
         Ok(
             acp::SessionInfo::new(acp::SessionId::new(session_id), PathBuf::from(cwd))
                 .title(title)
@@ -228,6 +236,34 @@ mod tests {
             bare.get("sessionId").and_then(|v| v.as_str()),
             Some("conv_abc123")
         );
+    }
+
+    #[test]
+    fn list_dtos_preserve_exact_activity_separately_from_effective_updated_time() {
+        for active in [None, Some("2026-01-01T00:00:00.123Z".to_owned())] {
+            let merged = MergedSession {
+                session_id: "activity-provenance".into(),
+                summary: "title".into(),
+                cwd: "/repo".into(),
+                updated_at: "2026-10-01T00:00:00Z".into(),
+                last_active_at: active.clone(),
+                ..MergedSession::default()
+            };
+            let row = merged_session_to_row(merged, facet_registry());
+            let ext = serde_json::to_value(row.clone().into_ext_superset()).unwrap();
+            let info = row.into_session_info();
+            let dto = serde_json::to_value(&info).unwrap();
+            let acp = serde_json::to_value(acp::SessionInfo::try_from(info).unwrap()).unwrap();
+            assert_eq!(ext.get("lastActiveAt").and_then(serde_json::Value::as_str), active.as_deref());
+            assert_eq!(dto.get("lastActiveAt").and_then(serde_json::Value::as_str), active.as_deref());
+            assert_eq!(acp["_meta"].get("lastActiveAt").and_then(serde_json::Value::as_str), active.as_deref());
+            let expected_updated = match active {
+                Some(_) => "2026-01-01T00:00:00.123+00:00",
+                None => "2026-10-01T00:00:00+00:00",
+            };
+            assert_eq!(dto["updatedAt"], expected_updated);
+            assert_eq!(acp["updatedAt"], expected_updated);
+        }
     }
 
     #[test]

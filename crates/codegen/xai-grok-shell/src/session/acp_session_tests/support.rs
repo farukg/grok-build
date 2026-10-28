@@ -441,6 +441,7 @@ async fn create_test_actor_inner(
         rate_limit_waits: crate::session::acp_session::RateLimitWaitConfig::default(),
         max_turns: None,
         pending_interjections: InterjectionBuffer::new(),
+        queue_operations: Default::default(),
         pending_skill_reminders: Mutex::new(Vec::new()),
         idle_flush_timeout: None,
         dream_check_timeout: None,
@@ -549,6 +550,7 @@ async fn create_test_actor_inner(
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
         stream_apply_span: parking_lot::Mutex::new(None),
         current_turn_span_id: parking_lot::Mutex::new(None),
+        current_actions: Default::default(),
         turn_stream_drained: parking_lot::Mutex::new(std::collections::HashMap::new()),
         pending_image_strip: parking_lot::Mutex::new(HashMap::new()),
         image_strip_rewrite_barrier: ImageStripRewriteBarrier::new(),
@@ -749,7 +751,7 @@ pub(crate) async fn prepare_call(
     let mut deferred = Vec::new();
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        actor.prepare_tool_call(call, &mut deferred, None),
+        actor.prepare_tool_call(call, &mut deferred, None, None),
     )
     .await
     .expect("prepare_tool_call must not hang")

@@ -291,6 +291,10 @@ pub enum PersistenceMsg {
         authority: super::delivery_receiver::ParentAdmissionAuthority,
         respond_to: tokio::sync::oneshot::Sender<io::Result<super::delivery_receiver::ParentAdmissionAck>>,
     },
+    ReserveParentMessageTurn {
+        reservation: ParentMessageTurnReservation,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<ReservedParentMessageTurn>>,
+    },
     ReceiveDelivery {
         request: super::delivery_receiver::DeliveryRequest,
         respond_to:
@@ -304,6 +308,17 @@ pub enum PersistenceMsg {
     },
     CancelParentMessages {
         message_ids: Vec<String>,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
+    },
+    ResolveParentMessageTerminal {
+        turn_id: String,
+        parent_task: xai_chat_state::ParentTask,
+        origin: super::delivery_receiver::ReceiverTurnOrigin,
+        respond_to: tokio::sync::oneshot::Sender<super::receiver_execution::InitialMessageTerminalOwnership>,
+    },
+    ReconfirmPublishedParentMessage {
+        reservation: std::sync::Arc<ReservedParentMessageTurn>,
+        launch: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeLaunch>,
         respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
     },
     FinishDeliveryTurn {
@@ -1718,6 +1733,10 @@ enum PendingAppendOutcome {
 #[path = "persistence_request_capture.rs"]
 mod request_capture;
 
+#[path = "persistence_parent_message.rs"]
+mod parent_message;
+pub use parent_message::{ParentMessagePublicationGate, ParentMessageTurnReservation, ReservedParentMessageTurn};
+
 struct SessionPersistence {
     receiver_owner: super::receiver_execution::ReceiverOwner,
     info: Info,
@@ -1765,7 +1784,8 @@ impl SessionPersistence {
             super::receiver_execution::ReceiverOwner::Ready(lease) => {
                 self.storage.recover_deliveries(&self.info, lease).await
             }
-            super::receiver_execution::ReceiverOwner::Running { .. } => {
+            super::receiver_execution::ReceiverOwner::Running { .. }
+            | super::receiver_execution::ReceiverOwner::Adopting { .. } => {
                 self.storage.load_summary(&self.info).await
             }
         }
@@ -2458,6 +2478,11 @@ impl SessionPersistence {
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::AdmitParentMessage { admission, authority, respond_to } => {
+                    let adoption = authority.claim().and_then(|claim| match claim.origin() {
+                        xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::Durable { .. } if authority.native_recipe().is_some() => Some(admission.message_id.clone()),
+                        xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::New
+                        | xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::Durable { .. } => None,
+                    });
                     let result = match self.flush_and_sync().await {
                         Ok(()) => match self.claim_receiver().await {
                             Ok(_) => self.storage.admit_parent_message(&self.info, &admission, authority, self.receiver_owner.access()).await,
@@ -2465,6 +2490,17 @@ impl SessionPersistence {
                         },
                         Err(error) => Err(error),
                     };
+                    let result = result.and_then(|proof| {
+                        if let Some(message_id) = adoption {
+                            self.receiver_owner.begin_adoption(message_id)?;
+                        }
+                        Ok(proof)
+                    });
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
+                PersistenceMsg::ReserveParentMessageTurn { reservation, respond_to } => {
+                    let result = self.reserve_parent_message_turn(reservation).await;
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
@@ -2491,7 +2527,8 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
-                PersistenceMsg::CancelParentMessages { message_ids, respond_to } => {
+                PersistenceMsg::CancelParentMessages { mut message_ids, respond_to } => {
+                    message_ids.retain(|message_id| !self.receiver_owner.retain_parent_message_at_end(message_id));
                     let result = match self.flush_and_sync().await {
                         Ok(()) => match self.claim_receiver().await {
                             Ok(_) => self.storage.cancel_parent_messages(&self.info, &message_ids, self.receiver_owner.access()).await,
@@ -2502,6 +2539,15 @@ impl SessionPersistence {
                     self.observe_io(&result);
                     let _ = respond_to.send(result);
                 }
+                PersistenceMsg::ResolveParentMessageTerminal { turn_id, parent_task, origin, respond_to } => {
+                    let decision = self.receiver_owner.terminal_decision(&turn_id, &parent_task, &origin);
+                    let _ = respond_to.send(decision);
+                }
+                PersistenceMsg::ReconfirmPublishedParentMessage { reservation, launch, respond_to } => {
+                    let result = self.reconfirm_parent_message_publication(&reservation, &launch).await;
+                    self.observe_io(&result);
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::FinishDeliveryTurn {
                     turn_id,
                     parent_task,
@@ -2509,6 +2555,10 @@ impl SessionPersistence {
                     progress,
                     respond_to,
                 } => {
+                    if self.receiver_owner.retain_turn_at_end(&turn_id, &parent_task, &origin) {
+                        let _ = respond_to.send(Ok(Vec::new()));
+                        continue;
+                    }
                     let result = match self.flush_and_sync().await {
                         Ok(()) => {
                             self.storage
@@ -2630,7 +2680,7 @@ impl SessionPersistence {
                                     self.storage.append_notification_commit_aware(&self.info, notification, &admission).await
                                 }
                                 xai_chat_state::InputProjection::Delivery(delivery) => {
-                                    match self.receiver_owner.bind_turn(
+                                    match self.receiver_owner.bind_projection(
                                         &delivery.binding.turn_id,
                                         &admission.parent_task,
                                     ) {
@@ -2652,6 +2702,9 @@ impl SessionPersistence {
                             }
                         }
                     };
+                    if let xai_chat_state::InputProjection::Delivery(delivery) = &projection {
+                        self.receiver_owner.observe_projection(&delivery.binding, &result);
+                    }
                     #[cfg(any(test, feature = "test-support"))]
                     if result.is_ok() {
                         super::admission_crash_tests_support::crash_at(super::admission_crash_tests_support::AdmissionCrashBoundary::InputProjected);
@@ -3473,7 +3526,13 @@ pub(crate) enum ExplicitSessionOpen {
         parent_session_id: Option<String>,
     },
     Wake,
+    #[cfg(test)]
+    WakeWithFault(native_wake_tests_support::ParentInputFault),
 }
+
+#[cfg(test)]
+#[path = "persistence_native_wake_tests_support.rs"]
+pub(crate) mod native_wake_tests_support;
 
 /// Used for subagent child sessions (top-level `sessions/<cwd>/<id>` dirs; only their metadata nests under the parent's session dir).
 /// Skips remote and relay sync; lifecycle notifications are handled by the coordinator.
@@ -3486,8 +3545,20 @@ pub(crate) async fn new_with_explicit_dir(
     open: ExplicitSessionOpen,
 ) -> io::Result<PersistenceHandle> {
     let storage = JsonlStorageAdapter::with_explicit_session_dir(target_dir);
+    #[cfg(test)]
+    let fault = match &open {
+        ExplicitSessionOpen::WakeWithFault(fault) => Some(fault.clone()),
+        ExplicitSessionOpen::New { .. } | ExplicitSessionOpen::Wake => None,
+    };
+    #[cfg(test)]
+    let storage = native_wake_tests_support::configure_storage(storage, fault.clone());
 
-    let is_wake = matches!(open, ExplicitSessionOpen::Wake);
+    let is_wake = match &open {
+        ExplicitSessionOpen::New { .. } => false,
+        ExplicitSessionOpen::Wake => true,
+        #[cfg(test)]
+        ExplicitSessionOpen::WakeWithFault(_) => true,
+    };
     let (identity, next_trace_turn, parent_session_id) = match open {
         ExplicitSessionOpen::New {
             identity,
@@ -3495,6 +3566,8 @@ pub(crate) async fn new_with_explicit_dir(
             parent_session_id,
         } => (identity, next_trace_turn, parent_session_id),
         ExplicitSessionOpen::Wake => (None, None, None),
+        #[cfg(test)]
+        ExplicitSessionOpen::WakeWithFault(_) => (None, None, None),
     };
     let mut summary = if is_wake {
         storage.load_summary(info).await?
@@ -3583,6 +3656,8 @@ pub(crate) async fn new_with_explicit_dir(
         persistence.run().await;
     });
 
+    #[cfg(test)]
+    let handle = native_wake_tests_support::configure_transport(handle, fault);
     Ok(handle)
 }
 

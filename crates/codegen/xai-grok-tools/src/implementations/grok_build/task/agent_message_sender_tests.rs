@@ -15,8 +15,9 @@ fn sender_fixture() -> (
 ) {
     let (active_message_tx, active_message_rx) = mpsc::unbounded_channel();
     let permits = Arc::new(tokio::sync::Semaphore::new(4));
+    let (commands, _command_rx) = mpsc::unbounded_channel();
     let factory =
-        AgentMessageSenderFactory::new(active_message_tx.downgrade(), Arc::clone(&permits), 4);
+        AgentMessageSenderFactory::new(commands.downgrade(), active_message_tx.downgrade(), Arc::clone(&permits), 4);
     let child_id = uuid::Uuid::now_v7().to_string();
     let identity = AgentMessageSender::mint_for_child(Some(&factory), &child_id, true);
     let sender = identity.sender.expect("valid child receives sender");

@@ -125,6 +125,7 @@ pub trait Reminder {
         &self,
         _resources: SharedResources,
         _tool_output: &ToolOutput,
+        _observations: &crate::types::completion_observation::SubagentCompletionObservations,
     ) -> Vec<String> {
         vec![]
     }

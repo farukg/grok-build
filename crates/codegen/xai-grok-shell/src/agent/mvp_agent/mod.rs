@@ -658,8 +658,13 @@ impl RetainedResources {
         true
     }
 }
-/// Per-resident-session `(title, last_turn_summary)` display cache; see `resident_roster_titles`.
-type RosterDisplayCache = HashMap<String, (Option<String>, Option<String>)>;
+#[derive(Clone, Default)]
+struct ResidentRosterMetadata {
+    title: Option<String>,
+    last_turn_summary: Option<String>,
+    last_change_unix_ms: i64,
+}
+type RosterDisplayCache = HashMap<String, ResidentRosterMetadata>;
 pub struct MvpAgent {
     /// LEADER-SAFE(shared): `Send + Sync` mirror of per-session activity for the leader's auto-update checker, which cannot read the `!Send` maps.
     /// Expires when the actor exits.
@@ -668,8 +673,8 @@ pub struct MvpAgent {
     /// LEADER-SAFE(per-session).
     session_registry: SessionRegistry,
     pub(crate) context_policy_authority: crate::session::helpers::context_policy_store::ContextPolicyAuthority,
-    /// `(title, last_turn_summary)` per resident session id, refreshed each `build_roster`.
-    /// Lets the synchronous roster deltas reuse both instead of emitting empty ones; `resident_roster_entry` can't read disk.
+    /// Persisted display metadata per resident session, refreshed each `build_roster`.
+    /// Synchronous roster deltas cannot read disk; absent activity remains unknown.
     resident_roster_titles: RefCell<RosterDisplayCache>,
     pub(crate) initialize_request: OnceLock<acp::InitializeRequest>,
     pub(crate) gateway: GatewaySender,
@@ -1243,6 +1248,7 @@ pub(crate) mod child_management;
 pub(crate) mod reasoning_effort;
 mod sampler_prewarm;
 mod session_setup;
+mod current_actions_publication;
 pub use session_setup::SessionSetupPhase;
 mod subagent_spawn;
 pub(crate) mod test_hooks;
@@ -1356,7 +1362,7 @@ impl MvpAgent {
         &self,
         session_id: &acp::SessionId,
         updates_file_path: &Option<PathBuf>,
-    ) -> Vec<tokio::sync::oneshot::Receiver<xai_acp_lib::AcpResult<()>>> {
+    ) -> Vec<xai_acp_lib::PublicationCompletion<()>> {
         if self.is_resident(session_id) {
             return Vec::new();
         }
@@ -2483,6 +2489,6 @@ mod replay;
 #[cfg(test)]
 mod replay_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod prompt_response_meta_tests;

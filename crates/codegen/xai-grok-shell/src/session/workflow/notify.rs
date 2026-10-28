@@ -87,6 +87,7 @@ impl WorkflowNotifySender {
     }
 
     fn dispatch(&self, update: XaiSessionUpdate, persist: bool) {
+        let _publication = self.gateway.begin_publication();
         let mut meta = None;
         crate::util::event_id::ensure_event_id_meta(&self.session_id.0, &mut meta);
         let notification = XaiSessionNotification {
@@ -108,6 +109,8 @@ impl WorkflowNotifySender {
                 raw.into(),
             );
             self.gateway.forward_fire_and_forget(ext);
+        } else {
+            self.gateway.fail_publication();
         }
     }
 }

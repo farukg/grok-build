@@ -233,7 +233,8 @@ pub async fn route_subagent_resume(
                 }),
                 refused @ (ActiveAgentMessageOutcome::Saturated { .. }
                 | ActiveAgentMessageOutcome::QuotaExceeded { .. }
-                | ActiveAgentMessageOutcome::AdmissionUncertain
+                | ActiveAgentMessageOutcome::AdmissionUncertain { .. }
+                | ActiveAgentMessageOutcome::RecoveryObserved { .. }
                 | ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline
                 | ActiveAgentMessageOutcome::Limit { .. }
                 | ActiveAgentMessageOutcome::ChannelClosed) => {

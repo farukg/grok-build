@@ -818,6 +818,7 @@ async fn parked_429_wait_does_not_drive_refreshes() {
                 Duration::from_secs(300),
                 actor.run_turn_via_sampler(
                     request,
+                    crate::session::request_capture::RequestSnapshotId::random(),
                     &mut budget,
                     transient_state(0, true),
                     false,

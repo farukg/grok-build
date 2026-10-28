@@ -559,6 +559,7 @@ impl SessionActor {
                 self.session_info.id.clone(),
                 id.to_string(),
                 crate::session::pending_interaction::PendingKind::Permission,
+                Some((self.current_actions.clone(), crate::session::current_actions::tool_publication_owner(), xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()))),
             );
             self.permissions
                 .request(PermissionRequest {

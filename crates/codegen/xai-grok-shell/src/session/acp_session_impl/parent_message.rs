@@ -4,6 +4,7 @@ use super::parent_interject::ParentInterjectSignal;
 use super::*;
 use crate::session::telemetry::ActiveAgentMessageSafePointTrigger;
 use std::sync::Arc;
+use crate::session::message_delivery::{InitialParentMessageAdmission, ParentMessageHandoff};
 use xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission;
 use xai_grok_tools::implementations::grok_build::task::types::{
     ActiveAgentMessage, ActiveAgentMessageDelivery, ActiveAgentMessageOperation,
@@ -273,6 +274,76 @@ impl PendingParentAgentMessage {
     }
 }
 
+enum ReservedParentMessageHandoff {
+    Live {
+        permit: mpsc::OwnedPermit<crate::agent::subagent::PromptTurnReceipt>,
+        result_rx: oneshot::Receiver<crate::session::commands::PromptTurnResult>,
+    },
+    Initial {
+        recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe,
+        publication: Box<crate::session::delivery_receiver::ParentMessagePublication>,
+        custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
+        prompt_admitted: oneshot::Sender<crate::session::message_delivery::InitialParentMessageReady>,
+        delivery: ActiveAgentMessageDelivery,
+        artifact_upload_ctx: Option<crate::upload::manifest::ArtifactUploadContext>,
+        json_schema: Option<serde_json::Value>,
+        traceparent: Option<String>,
+    },
+}
+
+enum ParentMessageReceipt {
+    Live {
+        permit: mpsc::OwnedPermit<crate::agent::subagent::PromptTurnReceipt>,
+        result_rx: oneshot::Receiver<crate::session::commands::PromptTurnResult>,
+    },
+    Initial,
+}
+
+impl ReservedParentMessageHandoff {
+    fn into_queued(self, mut item: InputItem) -> (InputItem, ParentMessageReceipt) {
+        let receipt = match self {
+            Self::Live { permit, result_rx } => ParentMessageReceipt::Live { permit, result_rx },
+            Self::Initial { custody: _, recipe: _, publication: _, prompt_admitted, delivery, artifact_upload_ctx, json_schema, traceparent } => {
+                item.initial_child_prompt_ready = Some(crate::session::message_delivery::InitialChildPromptSink::ParentMessage { delivery, ready: prompt_admitted });
+                if let Some(ctx) = artifact_upload_ctx {
+                    item.trace_gcs_config = Some(ctx.gcs_config);
+                    item.artifact_tracker = Some(ctx.artifact_tracker);
+                }
+                item.json_schema = json_schema;
+                item.traceparent = traceparent;
+                ParentMessageReceipt::Initial
+            }
+        };
+        (item, receipt)
+    }
+}
+
+enum ParentMessageStartPolicy {
+    AfterAdmission,
+    AfterAcknowledgement,
+}
+
+impl ParentMessageReceipt {
+    fn send(
+        self,
+        prompt_id: String,
+        telemetry: crate::session::telemetry::ActiveAgentMessageAdmissionTelemetry,
+    ) -> Result<ParentMessageStartPolicy, ()> {
+        match self {
+            Self::Live { permit, result_rx } => {
+                let sender = permit.send(crate::agent::subagent::PromptTurnReceipt {
+                    prompt_id, result: result_rx, telemetry,
+                });
+                if sender.is_closed() {
+                    return Err(());
+                }
+                Ok(ParentMessageStartPolicy::AfterAdmission)
+            }
+            Self::Initial => Ok(ParentMessageStartPolicy::AfterAcknowledgement),
+        }
+    }
+}
+
 fn turn_binding(task: &AgentTask) -> TurnBinding<String, TurnEpoch> {
     TurnBinding::new(task.prompt_id.clone(), task.epoch)
 }
@@ -292,7 +363,7 @@ impl SessionActor {
     pub(super) async fn admit_parent_agent_message(
         self: &Arc<Self>,
         delivery: ActiveAgentMessageDelivery,
-        receipt_sink: mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+        receipt_sink: ParentMessageHandoff,
         parent_telemetry_ctx: xai_grok_telemetry::TelemetryCtx,
         respond_to: oneshot::Sender<ActiveMessageAdmission>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
@@ -319,24 +390,59 @@ impl SessionActor {
         message_source: ActiveAgentMessageSource,
         message: ActiveAgentMessage,
         requested: ActiveAgentMessageOperation,
-        receipt_sink: mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+        receipt_sink: ParentMessageHandoff,
         parent_telemetry_ctx: xai_grok_telemetry::TelemetryCtx,
         respond_to: oneshot::Sender<ActiveMessageAdmission>,
         completion_tx: mpsc::UnboundedSender<super::turn_task::TurnCompletionMsg>,
     ) {
-        let receipt_permit = match receipt_sink.reserve_owned().await {
-            Ok(permit) => permit,
-            Err(_) => {
-                let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
-                return;
+        let (turn_result_tx, handoff) = match receipt_sink {
+            ParentMessageHandoff::Live(sink) => {
+                let permit = match sink.reserve_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
+                        return;
+                    }
+                };
+                let (result_tx, result_rx) = oneshot::channel();
+                (result_tx, ReservedParentMessageHandoff::Live { permit, result_rx })
+            }
+            ParentMessageHandoff::Initial(initial) => {
+                if initial.receiver.session_id != self.session_id_string()
+                    || delivery.as_ref().and_then(ActiveAgentMessageDelivery::receiver) != Some(&initial.receiver)
+                    || initial.respond_to.is_closed()
+                    || initial.prompt_admitted.is_closed()
+                    || delivery.as_ref().and_then(ActiveAgentMessageDelivery::receiver) != Some(&initial.custody.receiver)
+                    || initial.json_schema != initial.custody.launch.runtime_overrides.output_schema
+                    || initial.traceparent != initial.custody.launch.traceparent
+                    || initial.artifacts.reference() != &initial.custody.launch.artifacts
+                {
+                    let _ = respond_to.send(ActiveMessageAdmission::Rejected);
+                    return;
+                }
+                let InitialParentMessageAdmission {
+                    custody, recipe, publication, receiver: _, respond_to, prompt_admitted, artifacts, json_schema, traceparent,
+                } = initial;
+                let Some(initial_delivery) = delivery.clone() else {
+                    let _ = respond_to.send(ActiveMessageAdmission::Rejected);
+                    return;
+                };
+                (respond_to, ReservedParentMessageHandoff::Initial {
+                    custody, recipe, publication, prompt_admitted, delivery: initial_delivery, artifact_upload_ctx: artifacts.into_context(), json_schema, traceparent,
+                })
             }
         };
         self.ensure_prefix_ready().await;
 
-        let prompt_id = format!("parent-message-{}", message.message_id);
-        let (turn_result_tx, turn_result_rx) = oneshot::channel();
+        let prompt_id = crate::session::delivery_receiver::parent_message_prompt_id(&message.message_id);
         let admitted_at = std::time::Instant::now();
         let mut state = self.state.lock().await;
+        if matches!(&handoff, ReservedParentMessageHandoff::Initial { .. })
+            && (state.running_task.is_some() || !state.pending_inputs.is_empty() || delivery.is_none())
+        {
+            let _ = respond_to.send(ActiveMessageAdmission::Rejected);
+            return;
+        }
         if state.message_delivery.has_identity(&message.message_id)
             || contains_queued_identity(&state, &message.message_id)
         {
@@ -388,7 +494,20 @@ impl SessionActor {
                 }
             }
         };
+        let custody = match &handoff {
+            ReservedParentMessageHandoff::Initial { custody, publication, .. } => {
+                crate::session::delivery_receiver::ParentMessageCustody::Initial { custody: custody.clone(), publication: publication.clone() }
+            }
+            ReservedParentMessageHandoff::Live { .. } => match &delivery {
+                Some(delivery) => match delivery.receiver() {
+                    Some(receiver) => crate::session::delivery_receiver::ParentMessageCustody::Live { receiver: receiver.clone(), operation: delivery.operation(), route: delivery.route() },
+                    None => { let _ = respond_to.send(ActiveMessageAdmission::Rejected); return; }
+                },
+                None => crate::session::delivery_receiver::ParentMessageCustody::Legacy,
+            },
+        };
         let admission = ParentMessageAdmission {
+            custody,
             message_id: message.message_id.clone(),
             sender_session_id: message.sender_session_id.clone(),
             source: match message_source { ActiveAgentMessageSource::Agent => ParentMessageSource::Agent, ActiveAgentMessageSource::Human => ParentMessageSource::Human },
@@ -400,7 +519,10 @@ impl SessionActor {
         let expected_delivery = delivery.clone();
         let authority = match delivery {
             Some(delivery) => match delivery.claim_admission() {
-                Some(claim) => ParentAdmissionAuthority::Coordinator(claim),
+                Some(claim) => match &handoff {
+                    ReservedParentMessageHandoff::Initial { recipe, .. } => ParentAdmissionAuthority::native(claim, recipe.clone()),
+                    ReservedParentMessageHandoff::Live { .. } => ParentAdmissionAuthority::Coordinator(claim),
+                },
                 None => {
                     let _ = respond_to.send(ActiveMessageAdmission::Rejected);
                     return;
@@ -416,7 +538,13 @@ impl SessionActor {
         }
         let proof = match persisted_rx.await {
             Ok(Ok(proof)) => proof,
-            Ok(Err(_)) | Err(_) => {
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "parent-message durable admission unconfirmed");
+                let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "parent-message durable admission acknowledgement lost");
                 let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
                 return;
             }
@@ -426,7 +554,8 @@ impl SessionActor {
                 if proof.delivery().message() == expected.message()
                     && proof.delivery().operation() == expected.operation()
                     && proof.delivery().source() == expected.source()
-                    && proof.delivery().route() == expected.route() => {}
+                    && proof.delivery().route() == expected.route()
+                    && proof.delivery().receiver() == expected.receiver() => {}
             (None, ParentAdmissionAck::DirectLocal) => {}
             (Some(_), ParentAdmissionAck::Coordinator(_) | ParentAdmissionAck::DirectLocal)
             | (None, ParentAdmissionAck::Coordinator(_)) => {
@@ -450,41 +579,49 @@ impl SessionActor {
             match effective {
                 ActiveAgentMessageOperation::Queue => {
                     let item = content.into_input(origin, turn_result_tx);
+                    let (item, receipt) = handoff.into_queued(item);
                     self.commit_queued_delivery(
                         &mut state,
                         super::prompt_queue::PreparedDelivery(item),
                     );
+                    receipt.send(prompt_id, telemetry)
                 }
                 ActiveAgentMessageOperation::Steer | ActiveAgentMessageOperation::Interject => {
                     let binding = state.running_task.as_ref().map(turn_binding).ok_or(())?;
+                    let receipt = match handoff {
+                        ReservedParentMessageHandoff::Live { permit, result_rx } => {
+                            ParentMessageReceipt::Live { permit, result_rx }
+                        }
+                        ReservedParentMessageHandoff::Initial { .. } => return Err(()),
+                    };
                     state.message_delivery.admit_pending(
                         &binding,
                         DeliveryMessage::new(message.message_id, origin, content),
                         turn_result_tx,
                     ).map_err(|_| ())?;
+                    receipt.send(prompt_id, telemetry)
                 }
             }
-            let receipt_sender = receipt_permit.send(crate::agent::subagent::PromptTurnReceipt {
-                prompt_id,
-                result: turn_result_rx,
-                telemetry,
-            });
-            if receipt_sender.is_closed() {
-                return Err(());
-            }
-            Ok::<(), ()>(())
         };
         let committed = match proof {
             ParentAdmissionAck::Coordinator(proof) => proof.try_handoff(commit),
             ParentAdmissionAck::DirectLocal => commit(),
         };
-        if committed.is_err() {
-            let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
-            return;
-        }
+        let start_policy = match committed {
+            Ok(policy) => policy,
+            Err(()) => {
+                let _ = respond_to.send(ActiveMessageAdmission::ChannelClosed);
+                return;
+            }
+        };
         drop(state);
 
-        let _ = respond_to.send(ActiveMessageAdmission::Admitted);
+        let acknowledged = respond_to.send(ActiveMessageAdmission::Admitted);
+        match (start_policy, acknowledged) {
+            (ParentMessageStartPolicy::AfterAcknowledgement, Err(_)) => return,
+            (ParentMessageStartPolicy::AfterAdmission, Ok(()) | Err(_))
+            | (ParentMessageStartPolicy::AfterAcknowledgement, Ok(())) => {}
+        }
         Self::maybe_start_running_task(self.clone(), completion_tx).await;
     }
 
@@ -595,6 +732,7 @@ impl SessionActor {
         let committed = state
             .message_delivery
             .finish_delivery(&binding, |messages| {
+                let _publication = self.notifications.gateway.begin_publication();
                 let ordered: Vec<&_> =
                     super::parent_interject::order_for_delivery(messages).collect();
                 let mut notifications = Vec::with_capacity(ordered.len());
@@ -610,6 +748,9 @@ impl SessionActor {
                         .meta(Some(source_meta)),
                     );
                     let mut meta = self.build_notification_meta();
+                    if let Some(meta) = meta.as_object_mut() {
+                        self.current_actions.stamp_delivery(meta);
+                    }
                     if let Some(prompt_id) = &prompt_id {
                         meta["promptId"] = serde_json::json!(prompt_id);
                     }
@@ -794,7 +935,7 @@ impl SessionActor {
             source,
             message,
             operation,
-            receipt_sink,
+            ParentMessageHandoff::Live(receipt_sink),
             xai_grok_telemetry::TelemetryCtx::new(
                 "test-parent".to_owned(),
                 std::sync::Arc::new(tokio::sync::Mutex::new(0)),

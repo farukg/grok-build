@@ -31,6 +31,7 @@ pub async fn collect_response(
     }
 
     Err(SamplingErrorInfo {
+        retry_schedule: None,
         kind: SamplingErrorKind::Api,
         status_code: None,
         message: "stream ended without Completed or Failed".to_string(),

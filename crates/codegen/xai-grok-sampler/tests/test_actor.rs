@@ -441,6 +441,15 @@ async fn retries_on_500_then_succeeds() {
         .iter()
         .any(|e| matches!(e, SamplingEvent::Retrying { .. }));
     assert!(saw_retrying, "expected at least one Retrying event");
+    // The scheduler's actual backoff must travel with the event, not be dropped before the wire.
+    let backoff_ms: Vec<u64> = events
+        .iter()
+        .filter_map(|e| match e {
+            SamplingEvent::Retrying { backoff_ms, .. } => Some(*backoff_ms),
+            _ => None,
+        })
+        .collect();
+    assert!(!backoff_ms.is_empty() && backoff_ms.iter().all(|&ms| ms > 0));
 
     match events.last().unwrap() {
         SamplingEvent::Completed { response, .. } => {
@@ -1625,3 +1634,6 @@ async fn await_event_matching(
         }
     }
 }
+
+#[path = "test_actor/retry_owner_tests.rs"]
+mod retry_owner_tests;

@@ -77,7 +77,7 @@ pub struct RosterEntry {
     pub last_turn_summary: Option<String>,
     /// `true` while a resident actor hosts the session (vs. read from disk).
     pub resident: bool,
-    /// Best-effort last-change timestamp (unix millis). Used for sort order.
+    /// Persisted activity timestamp (unix millis); zero means metadata is not yet known.
     pub last_change_unix_ms: i64,
     pub origin: RosterOrigin,
 }
@@ -102,7 +102,7 @@ pub const SESSIONS_LIST_METHOD: &str = "x.ai/sessions/list";
 pub const SESSIONS_CHANGED_METHOD: &str = "x.ai/sessions/changed";
 
 /// Merge live `resident` rows with on-disk `summaries` into the sorted roster. Pure, so it is unit-testable without disk or a live actor.
-/// Resident rows own the live state but carry no title or last-active time, so each adopts those from its summary. A `Working` row keeps its "now" timestamp instead.
+/// Resident rows own the live state; summaries own titles and activity timestamps, including while working.
 /// Summaries with no resident row become `Dormant`; keying by id dedups them. Headless and explicitly-hidden summaries are excluded, including resident rows whose persisted summary is headless.
 /// Subagent children are kept as `session_kind: "subagent"` rows with their persisted parent link — the dashboard's subagent lane lists them while its default lane filters them out.
 pub(crate) fn merge_roster(
@@ -132,9 +132,7 @@ pub(crate) fn merge_roster(
         // Copied through even when `None`: disk is authoritative
         // A rewind-cleared summary.json also clears a resident row whose cache still holds the old value
         entry.last_turn_summary = summary.last_turn_summary.clone();
-        if entry.activity != RosterActivity::Working {
-            entry.last_change_unix_ms = summary.last_change_unix_ms();
-        }
+        entry.last_change_unix_ms = summary.last_change_unix_ms();
         if summary.is_subagent_kind() {
             entry.session_kind = Some(crate::session::persistence::SUBAGENT_SESSION_KIND.to_string());
             entry.parent_session_id = summary.parent_session_id.clone();
@@ -236,7 +234,7 @@ mod merge_roster_tests {
     }
 
     #[test]
-    fn working_resident_keeps_now_but_adopts_title() {
+    fn working_resident_adopts_actual_activity_and_title() {
         let now = 9_000;
         let out = merge_roster(
             vec![resident("a", RosterActivity::Working, now)],
@@ -246,18 +244,39 @@ mod merge_roster_tests {
             panic!("expected one roster row: {out:?}");
         };
         assert_eq!(row.title.as_deref(), Some("Busy turn"));
-        assert_eq!(row.last_change_unix_ms, now, "Working stays 'now'");
+        assert_eq!(row.last_change_unix_ms, 1_234, "Working adopts persisted activity");
     }
 
     #[test]
-    fn new_resident_without_summary_stays_titleless_now() {
-        let now = 9_000;
-        let out = merge_roster(vec![resident("a", RosterActivity::Idle, now)], vec![]);
+    fn new_resident_without_summary_stays_unknown() {
+        let unknown = 0;
+        let out = merge_roster(vec![resident("a", RosterActivity::Idle, unknown)], vec![]);
         let Some(row) = out.first() else {
             panic!("expected one roster row: {out:?}");
         };
         assert_eq!(row.title, None);
-        assert_eq!(row.last_change_unix_ms, now);
+        assert_eq!(row.last_change_unix_ms, unknown);
+    }
+
+    #[test]
+    fn activity_not_metadata_update_is_authoritative_in_every_state() {
+        for activity in [RosterActivity::Working, RosterActivity::Idle, RosterActivity::NeedsInput,
+            RosterActivity::Dormant, RosterActivity::Completed, RosterActivity::Dead]
+        {
+            let mut active = summary("active", None, 1_234);
+            active.updated_at = chrono::DateTime::from_timestamp_millis(99_000).unwrap();
+            let mut legacy = summary("legacy", None, 1);
+            legacy.last_active_at = None;
+            legacy.updated_at = chrono::DateTime::from_timestamp_millis(4_321).unwrap();
+            let out = merge_roster(
+                vec![resident("active", activity, 0), resident("legacy", activity, 0)],
+                vec![active, legacy],
+            );
+            assert_eq!(out[0].session_id, "legacy");
+            assert_eq!(out[0].last_change_unix_ms, 4_321);
+            assert_eq!(out[1].last_change_unix_ms, 1_234);
+            assert_eq!(out[1].activity, activity);
+        }
     }
 
     #[test]

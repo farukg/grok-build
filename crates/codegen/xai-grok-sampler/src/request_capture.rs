@@ -85,7 +85,7 @@ pub enum LocalRequestEvidence {
         membership: Arc<[ProjectedRequestMember]>,
     },
     /// A local HTTP execution was initiated. Delivery is not confirmed.
-    DispatchStarted,
+    DispatchStarted { started_at: xai_monotonic_clock::MonotonicPoint },
     /// HTTP response headers arrived; even a 2xx does not prove model consumption.
     ResponseHeaders { status: u16 },
     Finished { outcome: LocalAttemptOutcome },

@@ -12,8 +12,12 @@ mod teardown_tests;
 mod correlation_tests;
 #[path = "compaction_boundary_tests.rs"]
 mod boundary_tests;
+#[path = "compaction_progress_tests.rs"]
+mod progress_tests;
 #[path = "injected_sampler_loop_tests.rs"]
 mod injected_sampler_loop_tests;
+#[path = "current_actions_runtime_tests.rs"]
+mod current_actions_runtime_tests;
 
 struct Fixture {
     actor: Arc<SessionActor>,

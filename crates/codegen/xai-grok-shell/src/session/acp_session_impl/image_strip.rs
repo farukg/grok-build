@@ -129,6 +129,7 @@ impl SessionActor {
     /// Retain only work still owned by a timeout from older turns; late events for the cancelled request are otherwise stale.
     pub(crate) fn cancel_active_sampling_requests(&self) {
         self.close_stream_apply_span_any();
+        self.cancel_sampling_requests();
         self.turn_stream_drained.lock().clear();
         self.pending_image_strip
             .lock()

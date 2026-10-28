@@ -118,7 +118,7 @@ async fn bridge_enrollment_preserves_selected_wait_then_projects_an_ordinary_aut
         bridge.send_task_complete(selected);
         bounded(async {
             loop {
-                if actor.state.lock().await.pending_inputs.iter().any(|input| matches!(input.input_origin.as_prompt_origin(), PromptOrigin::TaskCompleted { task_id } if task_id == "selected-monitor")) { break; }
+                if actor.state.lock().await.pending_inputs.iter().any(|input| input.input_origin.completions().iter().any(|id| matches!(id, CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { task_id, .. }, .. } if task_id == "selected-monitor"))) { break; }
                 tokio::task::yield_now().await;
             }
         }).await;
@@ -130,7 +130,7 @@ async fn bridge_enrollment_preserves_selected_wait_then_projects_an_ordinary_aut
         bridge.send_task_complete(automatic);
         bounded(async {
             loop {
-                if actor.state.lock().await.pending_inputs.iter().any(|input| matches!(input.input_origin.as_prompt_origin(), PromptOrigin::TaskCompleted { task_id } if task_id == "ordinary-automatic")) { break; }
+                if actor.state.lock().await.pending_inputs.iter().any(|input| input.input_origin.completions().iter().any(|id| matches!(id, CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { task_id, .. }, .. } if task_id == "ordinary-automatic"))) { break; }
                 tokio::task::yield_now().await;
             }
         }).await;

@@ -749,8 +749,11 @@ pub(crate) async fn spawn_session_actor(
     let queue_exit_reminder_on_approved_exit = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let emit_local_background_tasks = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let background_tasks_snapshot_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let current_actions = crate::session::current_actions::Source::default();
+    current_actions.attach_emitter(gateway.clone(), gateway_enabled.clone(), session_info.id.clone());
     let tools_notification_handle = crate::tools::notification_bridge::spawn_notification_bridge(
         crate::tools::notification_bridge::NotificationBridgeConfig {
+            current_actions: current_actions.clone(),
             gateway: gateway.clone(),
             session_id: session_info.id.clone(),
             hunk_tracker_handle: hunk_tracker_handle_for_bridge.clone(),
@@ -1983,6 +1986,7 @@ pub(crate) async fn spawn_session_actor(
         max_retries: resolved_max_retries,
         rate_limit_waits: RateLimitWaitConfig::with_max_attempts(subagent_rate_limit_max_attempts),
         pending_interjections: InterjectionBuffer::new(),
+        queue_operations: Default::default(),
         pending_skill_reminders: Mutex::new(Vec::new()),
         idle_flush_timeout: memory_config
             .as_ref()
@@ -2119,6 +2123,7 @@ pub(crate) async fn spawn_session_actor(
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
         stream_apply_span: parking_lot::Mutex::new(None),
         current_turn_span_id: parking_lot::Mutex::new(None),
+        current_actions,
         turn_stream_drained: parking_lot::Mutex::new(std::collections::HashMap::new()),
         pending_image_strip: parking_lot::Mutex::new(std::collections::HashMap::new()),
         image_strip_rewrite_barrier: ImageStripRewriteBarrier::new(),
@@ -2131,6 +2136,7 @@ pub(crate) async fn spawn_session_actor(
         workspace_ops: workspace_ops.clone(),
         trace_config_template: std::cell::RefCell::new(None),
     });
+    session.current_actions.attach_replay_queue(session.event_tx.clone());
     drop(actor_build);
     let (actor_setup_timer, actor_setup_span) = spawn_await_step!("actor_setup");
     async {
@@ -2387,6 +2393,7 @@ pub(crate) async fn spawn_session_actor(
                             session_id.clone(),
                             tool_call_id.clone(),
                             crate::session::pending_interaction::PendingKind::Question,
+                            Some((session_for_hooks.current_actions.clone(), crate::session::current_actions::FrozenOwner::Unavailable, xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()))),
                         );
                     tokio::select! {
                         biased;
@@ -2448,6 +2455,7 @@ pub(crate) async fn spawn_session_actor(
             xai_grok_telemetry::session_ctx::log_event_dual(telemetry_enabled, ev);
         });
     }
+    let current_actions = session.current_actions_reader();
     let hosting = SESSIONS_ACTIVE.enter();
     tokio::task::spawn_local(async move {
         let _hosting = hosting;
@@ -2477,6 +2485,7 @@ pub(crate) async fn spawn_session_actor(
         current_prompt_id,
         registry_write_order: Default::default(),
         pending_interactions,
+        current_actions: Some(current_actions),
         active_work: active_work.clone(),
         info: session_info,
         max_turns,

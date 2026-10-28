@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::types::{
     ActiveAgentMessageOutcome, ActiveAgentMessageRequest, ActiveMessageSenderContext,
+    ChildCancellation,
     HandedOffForegroundSubagent, SpawnedSubagentRef, SubagentActiveMessageRequest, SubagentActor,
     SubagentCancelDisposition, SubagentCancelOutcome, SubagentCancelRequest, SubagentCancelTarget,
     SubagentDescribeOutcome, SubagentDescribeRequest, SubagentEvent, SubagentEventSender,
@@ -57,6 +58,14 @@ pub trait SubagentBackend: Send + Sync + 'static {
     async fn send_active_message(
         &self,
         _request: ActiveAgentMessageRequest,
+    ) -> ActiveAgentMessageOutcome {
+        ActiveAgentMessageOutcome::Unsupported
+    }
+
+    async fn recover_message(
+        &self,
+        _reference: super::native_recovery::MessageRecoveryRef,
+        _action: super::native_recovery::MessageRecoveryAction,
     ) -> ActiveAgentMessageOutcome {
         ActiveAgentMessageOutcome::Unsupported
     }
@@ -154,6 +163,19 @@ impl SubagentCoordinatorSender {
 
     pub fn send(&self, event: SubagentEvent) -> Result<(), mpsc::error::SendError<SubagentEvent>> {
         self.tx.send(event)
+    }
+
+    pub async fn recover_message(
+        &self,
+        reference: super::native_recovery::MessageRecoveryRef,
+        action: super::native_recovery::MessageRecoveryAction,
+        sender_context: ActiveMessageSenderContext,
+    ) -> ActiveAgentMessageOutcome {
+        let permit = match self.try_acquire_active_message() {
+            Ok(permit) => permit,
+            Err(max_in_flight) => return ActiveAgentMessageOutcome::Saturated { max_in_flight },
+        };
+        super::native_recovery::dispatch_recovery(&self.tx, permit, reference, action, sender_context).await
     }
 
     fn try_acquire_active_message(&self) -> Result<tokio::sync::OwnedSemaphorePermit, usize> {
@@ -336,16 +358,17 @@ impl ChannelBackend {
     /// cancel.
     pub async fn cancel_parent_session(&self) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
-        if !self.request_cancel_parent_session(respond_to) {
+        if !self.request_cancel_parent_session(ChildCancellation::Authorized, respond_to) {
             return SubagentCancelOutcome::NotFound;
         }
         response_rx.await.unwrap_or(SubagentCancelOutcome::NotFound)
     }
 
-    /// Fire-and-forget ParentSession cancel used by the shell Stop path.
+    /// Fire-and-forget session cancellation with the caller's typed intent.
     /// Returns false when the backend is unbound or the channel is closed.
     pub fn request_cancel_parent_session(
         &self,
+        intent: ChildCancellation,
         respond_to: oneshot::Sender<SubagentCancelOutcome>,
     ) -> bool {
         let Some(parent_session_id) = self.parent_session_id() else {
@@ -355,7 +378,7 @@ impl ChannelBackend {
             .event_sender()
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: Some(parent_session_id),
-                target: SubagentCancelTarget::ParentSession,
+                target: SubagentCancelTarget::ParentSession(intent),
                 respond_to,
             }))
             .is_ok()
@@ -590,6 +613,17 @@ impl SubagentBackend for ChannelBackend {
             return None;
         }
         response_rx.await.ok().flatten()
+    }
+
+    async fn recover_message(
+        &self,
+        reference: super::native_recovery::MessageRecoveryRef,
+        action: super::native_recovery::MessageRecoveryAction,
+    ) -> ActiveAgentMessageOutcome {
+        let (ChannelBackendSender::Coordinator(sender), Some(parent)) = (&self.tx, self.parent_session_id()) else {
+            return ActiveAgentMessageOutcome::Unsupported;
+        };
+        sender.recover_message(reference, action, ActiveMessageSenderContext::RootSession { session_id: Arc::from(parent) }).await
     }
 
     async fn send_active_message(

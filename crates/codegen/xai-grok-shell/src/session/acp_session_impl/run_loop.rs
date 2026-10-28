@@ -545,6 +545,7 @@ pub(super) async fn run_session(
                 session.notifications.gateway.clone(),
                 session.session_info.id.clone(),
                 session.pending_interactions.clone(),
+                session.current_actions.clone(),
                 std::rc::Rc::clone(&session.attach_non_interactive),
             ),
         )
@@ -848,20 +849,15 @@ pub(super) async fn run_session(
                             SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
                         }
                         SessionCommand::Prompt { prompt_id, prompt_blocks, prompt_mode, artifact_upload_ctx, client_identifier, screen_mode, verbatim, traceparent, json_schema, send_now, admission, tool_overrides_update, respond_to, prompt_admitted, persist_ack, parsed_prompt_tx } => {
-                            let origin = super::PromptOrigin::from_prompt_id(&prompt_id);
-                            let (actor_admitted, task_wake_fallback) = match admission {
-                                Some(admission) => {
-                                    let fallback = session
-                                        .admit_task_completion_wake(&origin, admission)
-                                        .await;
-                                    (fallback.is_some(), fallback)
-                                }
-                                None => (true, None),
-                            };
-                            if !actor_admitted {
-                                SessionActor::respond_removed_prompt(respond_to);
+                            if let Some(admission) = admission {
+                                session.admit_task_completion_batch(crate::session::commands::TaskCompletionBatch {
+                                    prompt_id, automatic: true, admissions: vec![admission], respond_to,
+                                }).await;
+                                SessionActor::maybe_drain_notifications(session.clone(), completion_tx.clone()).await;
+                                SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
                                 continue;
                             }
+                            let origin = super::PromptOrigin::from_prompt_id(&prompt_id);
                             session.ensure_prefix_ready().await;
                             // Clear suppression: the user is re-engaging
                             // Synthetic auto-wake prompts skip this; the user has not actually re-engaged, so post-cancel suppression must hold
@@ -902,7 +898,7 @@ pub(super) async fn run_session(
                                     verbatim,
                                     json_schema,
                                     send_now,
-                                    task_wake_fallback,
+                                    task_wake_fallback: None,
                                     tool_overrides_update,
                                     respond_to,
                                     persist_ack,
@@ -1040,10 +1036,11 @@ pub(super) async fn run_session(
                             let _ = respond_to.send(result);
                         }
                         SessionCommand::EmitBackgroundTasksSnapshot {
+                            provenance,
                             respond_to,
                             pending,
                         } => {
-                            session.emit_background_tasks_snapshot(pending).await;
+                            session.emit_background_tasks_snapshot(provenance, pending).await;
                             if let Some(respond_to) = respond_to {
                                 let _ = respond_to.send(());
                             }
@@ -1121,6 +1118,11 @@ pub(super) async fn run_session(
                                     );
                                 }
                             }
+                        }
+                        SessionCommand::TaskCompletionBatch(batch) => {
+                            session.admit_task_completion_batch(batch).await;
+                            SessionActor::maybe_drain_notifications(session.clone(), completion_tx.clone()).await;
+                            SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
                         }
                         SessionCommand::ClassifyTerminalNotification { notification, respond_to } => {
                             let result = session.classify_task_notification(notification).await.map(|surface| match surface {
@@ -1239,11 +1241,28 @@ pub(super) async fn run_session(
                             // Unblocks an editable front that was parked under edit hold.
                             SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
                         }
+                        SessionCommand::QueueSendNow { caller, request, respond_to } => {
+                            let (response, mutation) = session.handle_queue_send_now(caller, request).await;
+                            let _ = respond_to.send(response);
+                            if let Some(send_now) = mutation {
+                                let settled = if send_now.cancel_running_turn() {
+                                    session.cancel_turn_for_send_now(&mut replay_buffer).await.settled
+                                } else {
+                                    true
+                                };
+                                if settled && send_now.mutated() {
+                                    session.release_hook_block_hold("queue_interject").await;
+                                }
+                                if settled {
+                                    SessionActor::maybe_start_running_task(session.clone(), completion_tx.clone()).await;
+                                }
+                            }
+                        }
                         SessionCommand::InterjectQueuedPrompt { id, expected_version, owner, new_text } => {
                             // Send-now: the handler promoted the row; cancel the running turn and start it.
                             let send_now = session.handle_interject_queued_prompt(&id, expected_version, owner.as_deref(), new_text.as_deref()).await;
                             // An unsettled cancel means another finalization owns the turn; its release will re-kick the queue.
-                            let settled = if send_now.cancel_running_turn {
+                            let settled = if send_now.cancel_running_turn() {
                                 session
                                     .cancel_turn_for_send_now(&mut replay_buffer)
                                     .await
@@ -1251,7 +1270,7 @@ pub(super) async fn run_session(
                             } else {
                                 true
                             };
-                            if settled && send_now.mutated {
+                            if settled && send_now.mutated() {
                                 session.release_hook_block_hold("queue_interject").await;
                             }
                             if settled {

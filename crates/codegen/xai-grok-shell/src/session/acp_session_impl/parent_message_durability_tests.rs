@@ -4,7 +4,8 @@ use xai_grok_tools::implementations::grok_build::task::{
     backend::{ChannelBackend, SubagentBackend},
     coordinator::{ChildControl, ChildRunner, ChildRunRequest, ChildRunOutput, StartedChild,
         SendBoxFuture, SubagentProgress, SubagentCoordinator, ChildCompletion,
-        CompletionPreparation, TerminalCommitResult, TerminalVisibilityResult},
+        CompletionPreparation, TerminalCommitResult, TerminalVisibilityResult,
+        ChildCancellation, ChildCancelOutcome},
     types::{ActiveAgentMessageRequest, ActiveAgentMessageOutcome, SubagentRequest,
         SubagentOwner, SubagentValidateTypeOutcome, SubagentDescribeOutcome},
 };
@@ -32,7 +33,9 @@ impl ChildControl for ClaimReceiverControl {
         Box::pin(async move { response.await.unwrap_or(ActiveMessageAdmission::ChannelClosed) })
     }
 
-    fn cancel(&self) {}
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
+        ChildCancelOutcome::Accepted
+    }
 }
 
 struct ClaimReceiverRunner {
@@ -256,7 +259,7 @@ fn dispatch(
     let (receipt_sink, receipts) = mpsc::channel(1);
     let (completion, _completion) = mpsc::unbounded_channel();
     let task = tokio::task::spawn_local(async move {
-        actor.admit_parent_agent_message(delivery, receipt_sink,
+        actor.admit_parent_agent_message(delivery, crate::session::message_delivery::ParentMessageHandoff::Live(receipt_sink),
             xai_grok_telemetry::TelemetryCtx::new("owning-parent".into(), Arc::new(tokio::sync::Mutex::new(0))),
             reply, completion).await;
     });
@@ -285,6 +288,7 @@ async fn real_claim_and_persistence_ack_cuts_preserve_replayable_intent() {
         for cut in [ObservationCut::Deadline, ObservationCut::Cancellation, ObservationCut::ReceiverDrop, ObservationCut::LostAck, ObservationCut::ReceiptClosed, ObservationCut::Complete] {
             let mut receiver = receiver().await;
             let Producer { delivery, reply, outcome, cancellation, _coordinator, _spawn } = producer().await;
+            let recovery_ref = delivery.recovery_ref().unwrap();
             let original = delivery.message().clone();
             let expected_parent = xai_chat_state::ParentTask::Instance {
                 id: receiver.actor.state.lock().await.running_task.as_ref().unwrap().identity.as_ref().clone(),
@@ -317,12 +321,12 @@ async fn real_claim_and_persistence_ack_cuts_preserve_replayable_intent() {
             assert!(persisted_bindings(&receiver).await.is_empty());
             match cut {
                 ObservationCut::Deadline => {
-                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
                     ack.send(proof).unwrap();
                 }
                 ObservationCut::Cancellation => {
                     cancellation.cancel();
-                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
                     ack.send(proof).unwrap();
                 }
                 ObservationCut::ReceiverDrop => {
@@ -330,7 +334,7 @@ async fn real_claim_and_persistence_ack_cuts_preserve_replayable_intent() {
                     assert!(bounded(admitting).await.unwrap_err().is_cancelled());
                     drop(ack);
                     drop(proof);
-                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
                     assert!(receipts.recv().await.is_none());
                     assert!(receiver.actor.state.lock().await.message_delivery.is_empty());
                     receiver._persistence.abort();
@@ -346,12 +350,12 @@ async fn real_claim_and_persistence_ack_cuts_preserve_replayable_intent() {
                 ObservationCut::LostAck => {
                     drop(ack);
                     drop(proof);
-                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
                 }
                 ObservationCut::ReceiptClosed => {
                     receipts.close();
                     ack.send(proof).unwrap();
-                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+                    assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
                 }
                 ObservationCut::Complete => {
                     ack.send(proof).unwrap();
@@ -413,6 +417,7 @@ async fn revoked_before_receiver_claim_never_dispatches_or_persists() {
     tokio::task::LocalSet::new().run_until(async {
         let mut receiver = receiver().await;
         let Producer { delivery, reply, outcome, cancellation: _, _coordinator, _spawn } = producer().await;
+        let recovery_ref = delivery.recovery_ref().unwrap();
         let message_id = delivery.message().message_id.clone();
         assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline);
         let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
@@ -440,8 +445,10 @@ async fn real_claim_storage_refuses_altered_admission_without_positive_settlemen
             storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
             let (lease, _) = storage.claim_receiver(&info).await.unwrap();
             let Producer { delivery, reply, outcome, cancellation: _, _coordinator, _spawn } = producer().await;
+            let recovery_ref = delivery.recovery_ref().unwrap();
             let message = delivery.message().clone();
             let mut admission = ParentMessageAdmission {
+                custody: Default::default(),
                 prompt_id: format!("parent-message-{}", message.message_id), message_id: message.message_id,
                 sender_session_id: message.sender_session_id, text: message.text.to_string(),
                 source: ParentMessageSource::Agent,
@@ -460,7 +467,7 @@ async fn real_claim_storage_refuses_altered_admission_without_positive_settlemen
                 crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await.unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{fault:?}");
             reply.send(ActiveMessageAdmission::ChannelClosed).unwrap();
-            assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
+            assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
             let recovered = storage.load_session(&info).await.unwrap();
             assert!(recovered.summary.completion_delivery.receiver.records.is_empty());
             assert!(recovered.chat_history.is_empty());

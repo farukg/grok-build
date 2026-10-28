@@ -458,15 +458,15 @@ impl MvpAgent {
                 h.yolo_mode,
             )
         };
-        let (title, last_turn_summary) = self
+        let metadata = self
             .resident_roster_titles
             .borrow()
             .get(&session_id)
             .cloned()
             .unwrap_or_default();
         Some(crate::agent::roster::RosterEntry {
-            title,
-            last_turn_summary,
+            title: metadata.title,
+            last_turn_summary: metadata.last_turn_summary,
             session_id,
             cwd,
             is_worktree,
@@ -479,7 +479,7 @@ impl MvpAgent {
             yolo,
             activity: self.resident_activity(id),
             resident: true,
-            last_change_unix_ms: chrono::Utc::now().timestamp_millis(),
+            last_change_unix_ms: metadata.last_change_unix_ms,
             origin: crate::agent::roster::RosterOrigin::Local,
         })
     }
@@ -562,7 +562,11 @@ impl MvpAgent {
             .map(|e| {
                 (
                     e.session_id.clone(),
-                    (e.title.clone(), e.last_turn_summary.clone()),
+                    ResidentRosterMetadata {
+                        title: e.title.clone(),
+                        last_turn_summary: e.last_turn_summary.clone(),
+                        last_change_unix_ms: e.last_change_unix_ms,
+                    },
                 )
             })
             .collect();

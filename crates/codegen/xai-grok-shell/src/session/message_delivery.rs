@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
 use xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission;
-use xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageDelivery;
+use xai_grok_tools::implementations::grok_build::task::types::{
+    ActiveAgentMessageDelivery, ActiveMessageReceiver,
+};
 use xai_message_delivery_core::{
     AgentSource, DeliveryEnvelope, DeliveryIdentity, HumanSource, Operation, OperationSet,
     authorize_operation,
@@ -89,8 +91,59 @@ pub(crate) type AgentDeliveryIdentity = DeliveryIdentity<AgentMessageId, AgentPr
 pub(crate) fn agent_delivery_identity(message_id: String) -> AgentDeliveryIdentity {
     DeliveryIdentity::new(
         AgentMessageId(message_id.clone()),
-        AgentPromptId(format!("parent-message-{message_id}")),
+        AgentPromptId(super::delivery_receiver::parent_message_prompt_id(&message_id)),
     )
+}
+
+pub(crate) enum ParentMessageHandoff {
+    Live(mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>),
+    Initial(InitialParentMessageAdmission),
+}
+
+#[derive(Debug)]
+pub(crate) enum InitialChildPublication {
+    Prompt(oneshot::Sender<()>),
+    ParentMessage(InitialParentMessageReady),
+}
+
+pub(crate) enum InitialChildStartGate {
+    Prompt(oneshot::Sender<()>),
+    ParentMessage(super::persistence::ParentMessagePublicationGate),
+}
+
+impl InitialChildStartGate {
+    pub(crate) fn publish(self) -> Result<(), ()> {
+        match self {
+            Self::Prompt(release) => release.send(()),
+            Self::ParentMessage(gate) => gate.publish(),
+        }
+    }
+}
+
+pub(crate) enum InitialChildPromptSink {
+    Prompt(oneshot::Sender<InitialChildPublication>),
+    ParentMessage {
+        delivery: ActiveAgentMessageDelivery,
+        ready: oneshot::Sender<InitialParentMessageReady>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) struct InitialParentMessageReady {
+    pub(crate) reservation: std::sync::Arc<super::persistence::ReservedParentMessageTurn>,
+    pub(crate) release: super::persistence::ParentMessagePublicationGate,
+}
+
+pub(crate) struct InitialParentMessageAdmission {
+    pub(crate) recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe,
+    pub(crate) publication: Box<super::delivery_receiver::ParentMessagePublication>,
+    pub(crate) custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>,
+    pub(crate) receiver: ActiveMessageReceiver,
+    pub(crate) respond_to: oneshot::Sender<crate::session::commands::PromptTurnResult>,
+    pub(crate) prompt_admitted: oneshot::Sender<InitialParentMessageReady>,
+    pub(crate) artifacts: crate::agent::subagent::native_recovery::InitialArtifactGrant,
+    pub(crate) json_schema: Option<serde_json::Value>,
+    pub(crate) traceparent: Option<String>,
 }
 
 #[derive(Clone)]
@@ -156,7 +209,7 @@ impl MessageDeliveryHandle {
         let (AgentMessageId(message_id), AgentPromptId(prompt_id)) = identity.into_parts();
         if content != message.text
             || message_id != message.message_id
-            || prompt_id != format!("parent-message-{}", message.message_id)
+            || prompt_id != super::delivery_receiver::parent_message_prompt_id(&message.message_id)
         {
             return ActiveMessageAdmission::Rejected;
         }
@@ -171,7 +224,7 @@ impl MessageDeliveryHandle {
             .cmd_tx
             .send(SessionCommand::ParentAgentMessage {
                 delivery,
-                receipt_sink,
+                receipt_sink: ParentMessageHandoff::Live(receipt_sink),
                 parent_telemetry_ctx,
                 respond_to,
             })

@@ -125,9 +125,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             route,
             std::sync::Arc::clone(&lease),
         );
+        delivery.bind_receiver(root.control.session_id(), key.generation);
+        let Some(recovery_ref) = delivery.recovery_ref() else { return; };
         self.active_messages.push(ActiveMessageFuture {
             target: ActiveMessageCompletionTarget::Root(key),
-            message_id,
+            recovery_ref,
             future: root.control.deliver(delivery),
             cancellation: Box::pin(tokio_util::sync::CancellationToken::new().cancelled_owned()),
             deadline: Box::pin(tokio::time::sleep(ACTIVE_MESSAGE_ADMISSION_TIMEOUT)),

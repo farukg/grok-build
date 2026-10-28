@@ -118,9 +118,9 @@ where
     }
     if let Some(ev) = events {
         ev.emit(Event::GoalRoleModelFailOpen {
-            role,
+            role: role.into(),
             skeptic_idx,
-            reason: GoalRoleModelFailOpenReason::SpawnFailed.as_const_str(),
+            reason: GoalRoleModelFailOpenReason::SpawnFailed.as_const_str().into(),
         });
     }
     // Retry on the session harness, using the matching `fallback` render so the prompt names the toolset the retry actually runs on
@@ -475,7 +475,7 @@ fn record_fail_closed(
 ) -> GoalPlannerOutcome {
     let latency_ms = started.elapsed().as_millis() as u64;
     emit_event(Event::GoalPlannerFailClosed {
-        reason: reason.as_const_str(),
+        reason: reason.as_const_str().into(),
         attempt,
         latency_ms,
     });

@@ -55,6 +55,18 @@ pub struct InputSourceNotification {
 #[serde(transparent)]
 pub struct RequestSnapshotId(pub uuid::Uuid);
 
+impl RequestSnapshotId {
+    pub(crate) fn random() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+}
+
+impl From<RequestSnapshotId> for xai_grok_sampler::RequestId {
+    fn from(id: RequestSnapshotId) -> Self {
+        Self::from(id.0.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestOrigin {
     pub session_id: String,

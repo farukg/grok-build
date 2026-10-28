@@ -418,6 +418,16 @@ impl SessionActor {
             parent_task,
             receiver_origin,
         } = binding;
+        if matches!(&receiver_origin, crate::session::delivery_receiver::ReceiverTurnOrigin::ParentMessage { .. }) {
+            let (respond_to, receive) = oneshot::channel();
+            self.notifications.persistence_tx.send(PersistenceMsg::ResolveParentMessageTerminal {
+                turn_id: prompt_id.clone(), parent_task: parent_task.clone(), origin: receiver_origin.clone(), respond_to,
+            }).map_err(|_| acp::Error::internal_error().data("parent terminal authority owner closed"))?;
+            match receive.await.map_err(|_| acp::Error::internal_error().data("parent terminal authority acknowledgement lost"))? {
+                crate::session::receiver_execution::InitialMessageTerminalOwnership::AdoptionAttempt => return Ok(()),
+                crate::session::receiver_execution::InitialMessageTerminalOwnership::Message => {}
+            }
+        }
         let mut extra = crate::session::commands::cancellation_meta(
             cancel_trigger,
             cancellation_category,

@@ -37,6 +37,16 @@ fn tool_overrides_capability() -> serde_json::Value {
         .expect("ToolOverridesCapability is always serializable")
 }
 impl MvpAgent {
+    pub(crate) fn current_actions_snapshot(
+        &self,
+        binding: crate::session::current_actions::SnapshotBinding,
+    ) -> crate::session::current_actions::CurrentActionsSnapshot {
+        let session_id = acp::SessionId::new(binding.session_id.clone());
+        match self.resident_handle(&session_id) {
+            Some(handle) => handle.current_actions(binding),
+            None => crate::session::current_actions::CurrentActionsSnapshot::Unavailable,
+        }
+    }
     pub(crate) async fn set_model_gated(
         &self,
         args: acp::SetSessionModelRequest,
@@ -570,6 +580,8 @@ impl acp::Agent for MvpAgent {
                         .meta(
                             serde_json::json!({
                     "x.ai/fs_notify": true,
+                    (crate::session::current_actions::CAPABILITY): true,
+                    (crate::extensions::current_actions::ORDERED_REPLAY_CAPABILITY): self.gateway.receiver_settlement() == xai_acp_lib::ReceiverSettlement::AppliedOrDiscarded,
                     // Advertised so SDKs can warn when a registration depends on hook behavior this agent doesn't honor
                     "x.ai/hooks": {
                         "blockingEvents": crate::extensions::hooks::ADVERTISED_BLOCKING_EVENTS,
@@ -2059,9 +2071,7 @@ impl acp::Agent for MvpAgent {
         &self,
         args: acp::ExtRequest,
     ) -> Result<acp::ExtResponse, acp::Error> {
-        let request_meta = serde_json::from_str::<serde_json::Value>(args.params.get())
-            .ok()
-            .and_then(|v| v.get("_meta").cloned());
+        let request_meta = crate::extensions::request_meta::trace_meta(&args)?;
         if let Some(meta) = &request_meta {
             xai_grok_otel::link_current_span_to_meta(meta);
         }
@@ -2070,6 +2080,9 @@ impl acp::Agent for MvpAgent {
         let mut backend_no_bridge_err: Option<acp::Error> = None;
         let method = args.method.clone();
         let result = match method.as_ref() {
+            crate::session::current_actions::CAPABILITY => {
+                crate::extensions::current_actions::handle(self, &args)
+            }
             "x.ai/getApiKey" | "x.ai/setApiKey" => {
                 crate::extensions::auth::handle(self, &args).await
             }
@@ -2139,6 +2152,7 @@ impl acp::Agent for MvpAgent {
                 )
             }
             "x.ai/interject" => crate::extensions::interject::handle(self, &args).await,
+            crate::extensions::interject::QUEUE_INTERJECT_METHOD => crate::extensions::interject::handle_queue(self, &args).await,
             "x.ai/feedback" | "x.ai/feedback/dismiss" | "x.ai/feedback/drafts/list"
             | "x.ai/feedback/drafts/get" | "x.ai/feedback/drafts/delete"
             | "x.ai/feedback/drafts/update" | "x.ai/feedback/upload-trace"
@@ -2405,6 +2419,9 @@ impl acp::Agent for MvpAgent {
             }
             s if s.starts_with("x.ai/scheduler/") => {
                 crate::extensions::task::handle_scheduler(self, &args).await
+            }
+            "x.ai/subagent/message/recover" => {
+                crate::extensions::subagent_message::handle_recovery(self, &args, &self.subagent_event_tx).await
             }
             s if s.starts_with("x.ai/subagent/") => {
                 crate::extensions::task::handle_subagent(self, &args).await

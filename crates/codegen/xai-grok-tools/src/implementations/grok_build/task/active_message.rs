@@ -23,7 +23,8 @@ pub enum ActiveMessageTarget {
 }
 
 /// Coordinator-classified relationship between sender and resolved target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ActiveMessageRoute {
     ParentToOwnedDescendant,
     DescendantToParent,
@@ -31,7 +32,8 @@ pub enum ActiveMessageRoute {
 }
 
 /// Closed delivery operation. No bool below the model adapter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ActiveAgentMessageOperation {
     Queue,
     Steer,
@@ -51,7 +53,8 @@ impl From<ActiveAgentMessageOperation> for xai_message_delivery_core::Operation 
 }
 
 /// Principal that caused the coordinator to mint an active-child delivery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ActiveAgentMessageSource {
     Agent,
     Human,
@@ -158,6 +161,13 @@ pub struct ActiveAgentMessage {
     pub text: Arc<str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveMessageReceiver {
+    pub session_id: String,
+    pub generation: super::root_control::AgentMessageGeneration,
+}
+
 /// Coordinator-authorized delivery with revocable admission authority.
 #[derive(Debug, Clone)]
 pub struct ActiveAgentMessageDelivery {
@@ -185,6 +195,38 @@ impl ActiveAgentMessageDelivery {
         }
     }
 
+    pub(crate) fn bind_receiver(
+        &self,
+        session_id: &str,
+        generation: super::root_control::AgentMessageGeneration,
+    ) {
+        self.admission_lease.receiver.get_or_init(|| ActiveMessageReceiver {
+            session_id: session_id.to_owned(),
+            generation,
+        });
+    }
+
+    pub fn recovery_ref(&self) -> Option<super::native_recovery::MessageRecoveryRef> {
+        use super::native_recovery::{parent_message_delivery_id, parent_message_prompt_id, payload_digest};
+        Some(super::native_recovery::MessageRecoveryRef {
+            delivery_id: parent_message_delivery_id(&self.message.message_id),
+            prompt_id: parent_message_prompt_id(&self.message.message_id),
+            message_id: self.message.message_id.clone(), receiver: self.receiver()?.clone(),
+            operation: self.operation, payload_digest: payload_digest(&self.message.text),
+        })
+    }
+
+    pub(crate) fn uncertain_outcome(&self) -> ActiveAgentMessageOutcome {
+        match self.recovery_ref() {
+            Some(recovery_ref) => ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref },
+            None => ActiveAgentMessageOutcome::ChannelClosed,
+        }
+    }
+
+    pub fn receiver(&self) -> Option<&ActiveMessageReceiver> {
+        self.admission_lease.receiver.get()
+    }
+
     pub fn message(&self) -> &ActiveAgentMessage {
         &self.message
     }
@@ -199,6 +241,14 @@ impl ActiveAgentMessageDelivery {
 
     pub fn route(&self) -> ActiveMessageRoute {
         self.route
+    }
+
+    pub(crate) fn admission_is_committed(&self) -> bool {
+        self.admission_lease.settle(ActiveMessageAdmission::Admitted)
+    }
+
+    pub(crate) fn revoke_admission(&self) -> bool {
+        self.admission_lease.revoke()
     }
 
     /// Claim before dispatching durable admission. A lost race authorizes no write.
@@ -217,6 +267,8 @@ pub struct ActiveAgentMessageClaim {
 }
 
 impl ActiveAgentMessageClaim {
+    pub fn origin(&self) -> ActiveMessageAdmissionOrigin { self.delivery.admission_lease.origin }
+
     pub fn delivery(&self) -> &ActiveAgentMessageDelivery {
         &self.delivery
     }
@@ -280,8 +332,13 @@ enum ActiveMessageLeaseState {
     Revoked,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ActiveMessageAdmissionOrigin { New, Durable { publication: super::native_recovery::InitialPublication } }
+
 pub(crate) struct ActiveMessageAdmissionLease {
+    origin: ActiveMessageAdmissionOrigin,
     state: std::sync::atomic::AtomicU8,
+    receiver: std::sync::OnceLock<ActiveMessageReceiver>,
 }
 
 impl std::fmt::Debug for ActiveMessageAdmissionLease {
@@ -297,8 +354,18 @@ impl std::fmt::Debug for ActiveMessageAdmissionLease {
 
 impl ActiveMessageAdmissionLease {
     pub(crate) fn new() -> Arc<Self> {
+        Self::with_origin(ActiveMessageAdmissionOrigin::New)
+    }
+
+    pub(crate) fn for_recovery(publication: super::native_recovery::InitialPublication) -> Arc<Self> {
+        Self::with_origin(ActiveMessageAdmissionOrigin::Durable { publication })
+    }
+
+    fn with_origin(origin: ActiveMessageAdmissionOrigin) -> Arc<Self> {
         Arc::new(Self {
+            origin,
             state: std::sync::atomic::AtomicU8::new(ActiveMessageLeaseState::Open as u8),
+            receiver: std::sync::OnceLock::new(),
         })
     }
 
@@ -321,15 +388,7 @@ impl ActiveMessageAdmissionLease {
             ActiveMessageAdmission::Unsupported
             | ActiveMessageAdmission::ChannelClosed
             | ActiveMessageAdmission::Rejected => match state {
-                value if value == ActiveMessageLeaseState::Open as u8 => self
-                    .state
-                    .compare_exchange(
-                        ActiveMessageLeaseState::Open as u8,
-                        ActiveMessageLeaseState::Revoked as u8,
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Acquire,
-                    )
-                    .is_ok(),
+                value if value == ActiveMessageLeaseState::Open as u8 => self.revoke(),
                 value if value == ActiveMessageLeaseState::Revoked as u8 => true,
                 _ => false,
             },
@@ -337,6 +396,10 @@ impl ActiveMessageAdmissionLease {
     }
 
     pub(crate) fn revoke(&self) -> bool {
+        match self.origin {
+            ActiveMessageAdmissionOrigin::Durable { .. } => return false,
+            ActiveMessageAdmissionOrigin::New => {}
+        }
         match self.state.compare_exchange(
             ActiveMessageLeaseState::Open as u8,
             ActiveMessageLeaseState::Revoked as u8,
@@ -351,7 +414,9 @@ impl ActiveMessageAdmissionLease {
     #[cfg(test)]
     fn from_state(state: ActiveMessageLeaseState) -> Arc<Self> {
         Arc::new(Self {
+            origin: ActiveMessageAdmissionOrigin::New,
             state: std::sync::atomic::AtomicU8::new(state as u8),
+            receiver: std::sync::OnceLock::new(),
         })
     }
 
@@ -399,7 +464,8 @@ pub enum ActiveAgentMessageOutcome {
         limit: usize,
     },
     /// A claimed or committed admission could not be resolved conclusively.
-    AdmissionUncertain,
+    AdmissionUncertain { recovery_ref: super::native_recovery::MessageRecoveryRef },
+    RecoveryObserved { recovery_ref: super::native_recovery::MessageRecoveryRef, state: super::native_recovery::MessageRecoveryState },
     /// The open admission lease was revoked before the deadline.
     NotAcceptedBeforeDeadline,
     Unsupported,

@@ -295,7 +295,7 @@ pub(crate) async fn run_goal_strategist(
     // On a restore failure, emit telemetry (not just a log) so a corrupted contract is observable
     if let Some(reason) = plan_guard.restore() {
         emit_event(Event::GoalStrategistContractRestoreFailed {
-            reason: reason.as_const_str(),
+            reason: reason.as_const_str().into(),
             attempt: inputs.attempt,
         });
     }
@@ -523,7 +523,7 @@ fn record_fail_open(
 ) -> GoalStrategistOutcome {
     let latency_ms = started.elapsed().as_millis() as u64;
     emit_event(Event::GoalStrategistFailed {
-        reason: reason.as_const_str(),
+        reason: reason.as_const_str().into(),
         attempt,
         consecutive_failures,
         latency_ms,

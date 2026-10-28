@@ -3,7 +3,7 @@ use super::*;
 use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest, ChildRunner, SendBoxFuture,
-    SubagentCoordinator, SubagentProgress,
+    SubagentCoordinator, SubagentProgress, ChildCancellation, ChildCancelOutcome,
 };
 use xai_grok_tools::implementations::grok_build::task::types::{
     AgentMessageSenderResource, SubagentDescribeOutcome, SubagentOwner, SubagentRequest,
@@ -19,7 +19,9 @@ impl ChildControl for SenderProbeControl {
     fn progress(&self) -> Self::ProgressFuture {
         std::future::ready(Default::default())
     }
-    fn cancel(&self) {}
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
+        ChildCancelOutcome::Accepted
+    }
 }
 
 impl ChildRunner for SenderProbeRunner {

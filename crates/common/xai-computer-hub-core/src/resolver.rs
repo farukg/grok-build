@@ -173,7 +173,7 @@ where
             }
         };
         let tool_id = self.inner.id();
-        let stream = self.inner.execute(ctx, typed_args).await;
+        let stream = xai_tool_runtime::execution::execute_observed(self.inner.as_ref(), ctx, typed_args).await;
         let mapped = stream.map(move |item| match item {
             ToolStreamItem::Progress(p) => ToolStreamItem::Progress(p),
             ToolStreamItem::Terminal(Ok(out)) => match serde_json::to_value(&out) {

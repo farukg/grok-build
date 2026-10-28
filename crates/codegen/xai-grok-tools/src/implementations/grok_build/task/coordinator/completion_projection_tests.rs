@@ -42,7 +42,7 @@ async fn tool_reminders_reservations_and_foreign_acks_cannot_consume_child_occur
         for _ in 0..2 {
             assert!(
                 TaskCompletionReminder
-                    .collect_reminders(shared.clone(), &output)
+                    .collect_reminders(shared.clone(), &output, &Default::default())
                     .await
                     .is_empty()
             );

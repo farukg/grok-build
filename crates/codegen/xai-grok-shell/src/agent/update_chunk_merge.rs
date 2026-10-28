@@ -359,6 +359,9 @@ fn merge_acp_chunks(
     acp::SessionNotification,
     Option<acp::SessionNotification>,
 ) {
+    if stream_provenance(prev.meta.as_ref()) != stream_provenance(new.meta.as_ref()) {
+        return (true, prev, Some(new));
+    }
     let previous_stream = prev.meta.as_ref().and_then(|meta| meta.get("streamStartMs"));
     let incoming_stream = new.meta.as_ref().and_then(|meta| meta.get("streamStartMs"));
     if previous_stream != incoming_stream {
@@ -434,6 +437,14 @@ fn merge_xai_chunks(
         return (true, prev, Some(new));
     }
 
+    let previous_prompt = prev.meta.as_ref().and_then(|meta| meta.get("promptId"));
+    let incoming_prompt = new.meta.as_ref().and_then(|meta| meta.get("promptId"));
+    if previous_prompt != incoming_prompt {
+        return (true, prev, Some(new));
+    }
+    if stream_provenance(prev.meta.as_ref().and_then(|meta| meta.as_object())) != stream_provenance(new.meta.as_ref().and_then(|meta| meta.as_object())) {
+        return (true, prev, Some(new));
+    }
     let prev_session_id = prev.session_id.clone();
     match (prev.update, new.update) {
         (
@@ -467,7 +478,7 @@ fn merge_xai_chunks(
                     name: prev_name.or(new_name),
                     arguments_delta: merged_args,
                 },
-                meta: None,
+                meta: prev.meta.or(new.meta),
             };
             (false, merged, None)
         }
@@ -499,6 +510,17 @@ fn same_tool_call(
         (Some(a), Some(b)) => a == b,
         _ => prev_idx == new_idx,
     }
+}
+
+/// Prompt, request, and cumulative attempt must all match before concatenation.
+fn stream_provenance(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> (Option<&serde_json::Value>, Option<&serde_json::Value>, Option<&serde_json::Value>) {
+    (
+        meta.and_then(|meta| meta.get("promptId")),
+        meta.and_then(|meta| meta.get("requestId")),
+        meta.and_then(|meta| meta.get("streamEpoch")),
+    )
 }
 
 fn estimate_payload_bytes(n: &SessionNotification) -> u64 {
@@ -1114,3 +1136,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "update_chunk_merge_progress_tests.rs"]
+mod progress_tests;

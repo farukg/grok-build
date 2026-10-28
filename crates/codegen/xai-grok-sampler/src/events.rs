@@ -119,6 +119,11 @@ pub enum SamplingEvent {
         request_id: RequestId,
         attempt: u32,
         max_retries: u32,
+        /// Backoff the scheduler will await before the next attempt; zero when the
+        /// resample is immediate. Consumers must not guess a deadline from it alone.
+        backoff_ms: u64,
+        deadline: crate::retry_deadline::RetryDeadline,
+        next_attempt: crate::request_capture::RequestAttemptId,
         /// Typed retry class so consumers never have to sniff `reason` (e.g. the shell's doom-loop recovery counter).
         kind: SamplingErrorKind,
         reason: String,
@@ -189,6 +194,8 @@ impl SamplingEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamplingErrorInfo {
     pub kind: SamplingErrorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_schedule: Option<RetryScheduleFailureInfo>,
     pub status_code: Option<u16>,
     pub message: String,
     pub is_retryable: bool,
@@ -221,6 +228,13 @@ pub struct SamplingErrorInfo {
     pub credential: SentCredential,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryScheduleFailureInfo {
+    pub requested_backoff: std::time::Duration,
+    pub original: Box<SamplingErrorInfo>,
+    pub cause: xai_grok_sampling_types::error::RetryScheduleCause,
+}
+
 /// Coarse-grained classification of a sampling failure.
 /// Intentionally narrow: context-window-exceeded has NO variant because the sampler lacks the tracked token counts to detect it reliably.
 /// Do not "clean up" with `rename_all`.
@@ -238,6 +252,7 @@ pub enum SamplingErrorKind {
     EmptyResponse,
     MaxTokensTruncation,
     DoomLoopDetected,
+    RetrySchedule,
 }
 /// [`SamplingErrorKind::from_str`] error: the wire string matched no known kind (a newer peer's kind); callers degrade to untyped via `.ok()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +273,7 @@ impl std::str::FromStr for SamplingErrorKind {
             "empty_response" => Self::EmptyResponse,
             "max_tokens_truncation" => Self::MaxTokensTruncation,
             "doom_loop_detected" => Self::DoomLoopDetected,
+            "retry_schedule" => Self::RetrySchedule,
             _ => return Err(UnknownSamplingErrorKind),
         })
     }
@@ -268,7 +284,14 @@ impl From<&SamplingError> for SamplingErrorInfo {
         let is_retryable = err.is_retryable();
         let message = err.to_string();
 
+        let retry_schedule = match err {
+            SamplingError::RetrySchedule { requested_backoff, original, cause } => Some(RetryScheduleFailureInfo {
+                requested_backoff: *requested_backoff, original: Box::new(Self::from(original.as_ref())), cause: *cause,
+            }),
+            _ => None,
+        };
         let (kind, status_code, retry_after_secs, model_metadata) = match err {
+            SamplingError::RetrySchedule { .. } => (SamplingErrorKind::RetrySchedule, None, None, None),
             SamplingError::Auth { .. } => (SamplingErrorKind::Auth, None, None, None),
             SamplingError::InvalidConfiguration(_) | SamplingError::MtlsConfiguration(_) => {
                 (SamplingErrorKind::Api, None, None, None)
@@ -329,6 +352,7 @@ impl From<&SamplingError> for SamplingErrorInfo {
         };
 
         Self {
+            retry_schedule,
             kind,
             status_code,
             message,
@@ -344,6 +368,81 @@ impl From<&SamplingError> for SamplingErrorInfo {
         }
     }
 }
+
+impl SamplingErrorInfo {
+    pub fn retry_schedule_failure(
+        original: Self,
+        requested_backoff: std::time::Duration,
+        cause: xai_grok_sampling_types::error::RetryScheduleCause,
+    ) -> Self {
+        let error = SamplingError::RetrySchedule {
+            original: std::sync::Arc::new(original.to_error()), requested_backoff, cause,
+        };
+        let mut info = Self::from(&error);
+        info.retry_schedule = Some(RetryScheduleFailureInfo {
+            original: Box::new(original), requested_backoff, cause,
+        });
+        info
+    }
+
+    pub fn to_error(&self) -> SamplingError {
+        match self.kind {
+            SamplingErrorKind::RetrySchedule => match &self.retry_schedule {
+                Some(failure) => SamplingError::RetrySchedule {
+                    original: std::sync::Arc::new(failure.original.to_error()),
+                    requested_backoff: failure.requested_backoff, cause: failure.cause,
+                },
+                None => SamplingError::InvalidConfiguration("retry schedule failure is missing its cause"),
+            },
+            SamplingErrorKind::IdleTimeout => SamplingError::IdleTimeout {
+                elapsed_secs: self
+                    .message
+                    .split_whitespace()
+                    .find_map(|tok| tok.strip_suffix('s').and_then(|n| n.parse::<u64>().ok()))
+                    .unwrap_or(0),
+            },
+            SamplingErrorKind::Auth => SamplingError::Auth {
+                message: self.message.clone(),
+                credential: self.credential,
+            },
+            // Must stay Serialization: EventStreamError is retryable, and a response-parse failure is deterministic on retry
+            // `self.message` is the variant's rendered Display, so rebuild via the constructor that owns the prefix-stripping
+            SamplingErrorKind::Serialization => {
+                SamplingError::serialization_from_rendered(&self.message)
+            }
+            SamplingErrorKind::Http => SamplingError::EventStreamError(self.message.clone()),
+            SamplingErrorKind::Api | SamplingErrorKind::RateLimited => {
+                let status = self
+                    .status_code
+                    .and_then(|c| reqwest::StatusCode::from_u16(c).ok())
+                    .unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+                SamplingError::Api {
+                    status,
+                    message: self.message.clone(),
+                    model_metadata: self.model_metadata.clone(),
+                    retry_after_secs: self.retry_after_secs,
+                    should_retry: self.should_retry,
+                    error_code: self.error_code.clone(),
+                }
+            }
+            SamplingErrorKind::EmptyResponse => {
+                if let Some(ctx) = &self.empty_response_context {
+                    SamplingError::EmptyResponse {
+                        context: ctx.clone(),
+                    }
+                } else {
+                    SamplingError::EventStreamError(self.message.clone())
+                }
+            }
+            SamplingErrorKind::MaxTokensTruncation => SamplingError::MaxTokensTruncation,
+            SamplingErrorKind::DoomLoopDetected => SamplingError::DoomLoopDetected {
+                triggers: self.doom_loop_triggers.clone().unwrap_or_default(),
+                aborted_at_chunk: self.doom_loop_aborted_at_chunk,
+            },
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

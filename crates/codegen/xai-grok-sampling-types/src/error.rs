@@ -133,6 +133,51 @@ const SERIALIZATION_DISPLAY_PREFIX: &str = "serialization error: ";
 /// Sharing the const with the `#[error(...)]` template prevents drift.
 pub const MAX_TOKENS_TRUNCATION_MESSAGE: &str = "response truncated by max_tokens";
 
+#[derive(Debug, Clone, Copy, Error, Serialize, Deserialize)]
+#[serde(tag = "cause", content = "detail", rename_all = "snake_case")]
+pub enum RetryScheduleCause {
+    #[error("requested delay overflows Instant")]
+    InstantRange,
+    #[error("{0}")]
+    Deadline(#[source] #[serde(with = "DeadlineErrorWire")] tokio::time::error::DeadlineError),
+    #[error("{0}")]
+    Wait(#[source] #[serde(with = "timer_error_wire")] tokio::time::error::Error),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "tokio::time::error::DeadlineError", rename_all = "snake_case")]
+enum DeadlineErrorWire {
+    MissingRuntime,
+    TimeDisabled,
+    RoundingOverflow,
+    TickOutOfRange,
+}
+
+mod timer_error_wire {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use tokio::time::error::Error;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Fault { Shutdown, AtCapacity, Invalid }
+
+    pub fn serialize<S: Serializer>(error: &Error, serializer: S) -> Result<S::Ok, S::Error> {
+        let fault = if error.is_shutdown() { Fault::Shutdown }
+            else if error.is_at_capacity() { Fault::AtCapacity }
+            else { Fault::Invalid };
+        fault.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Error, D::Error> {
+        Ok(match Fault::deserialize(deserializer)? {
+            Fault::Shutdown => Error::shutdown(),
+            Fault::AtCapacity => Error::at_capacity(),
+            Fault::Invalid => Error::invalid(),
+        })
+    }
+}
+
+
 #[derive(Debug, Error)]
 pub enum SamplingError {
     #[error("{message}")]
@@ -146,6 +191,13 @@ pub enum SamplingError {
     /// The model's mTLS endpoint or local client identity cannot be used safely.
     #[error("invalid mTLS client configuration: {0}")]
     MtlsConfiguration(String),
+    #[error("retry scheduling failed for {requested_backoff:?}: {cause}; original error: {original}")]
+    RetrySchedule {
+        requested_backoff: std::time::Duration,
+        original: std::sync::Arc<SamplingError>,
+        #[source]
+        cause: RetryScheduleCause,
+    },
     #[error("request error: {0}")]
     Http(reqwest::Error),
     #[error("{prefix}{0}", prefix = SERIALIZATION_DISPLAY_PREFIX)]
@@ -406,7 +458,8 @@ impl SamplingError {
             | SamplingError::IdleTimeout { .. }
             | SamplingError::EmptyResponse { .. }
             | SamplingError::MaxTokensTruncation
-            | SamplingError::DoomLoopDetected { .. } => false,
+            | SamplingError::DoomLoopDetected { .. }
+            | SamplingError::RetrySchedule { .. } => false,
         }
     }
 
@@ -424,6 +477,7 @@ impl SamplingError {
             SamplingError::EmptyResponse { .. } => true,
             SamplingError::MaxTokensTruncation => false,
             SamplingError::DoomLoopDetected { .. } => true,
+            SamplingError::RetrySchedule { .. } => false,
         }
     }
 
@@ -488,7 +542,8 @@ impl SamplingError {
             | SamplingError::IdleTimeout { .. }
             | SamplingError::EmptyResponse { .. }
             | SamplingError::MaxTokensTruncation
-            | SamplingError::DoomLoopDetected { .. } => false,
+            | SamplingError::DoomLoopDetected { .. }
+            | SamplingError::RetrySchedule { .. } => false,
         }
     }
 
@@ -511,7 +566,8 @@ impl SamplingError {
             | SamplingError::IdleTimeout { .. }
             | SamplingError::EmptyResponse { .. }
             | SamplingError::MaxTokensTruncation
-            | SamplingError::DoomLoopDetected { .. } => false,
+            | SamplingError::DoomLoopDetected { .. }
+            | SamplingError::RetrySchedule { .. } => false,
         }
     }
 

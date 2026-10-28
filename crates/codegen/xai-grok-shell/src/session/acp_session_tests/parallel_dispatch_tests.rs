@@ -129,7 +129,7 @@ async fn execute_with_captured_active_message_events(
     let (result, events) = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         crate::session::telemetry::capture_product_events(
-            actor.execute_tool_calls(vec![call], None),
+            actor.execute_tool_calls(vec![call], None, None),
         ),
     )
     .await
@@ -168,7 +168,7 @@ fn active_message_outputs_distinguish_uncertain_from_proved_rejection() {
     for (label, output, expected) in [
         (
             "uncertain",
-            SendSubagentMessageOutput::AdmissionUncertain,
+            SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: crate::session::persistence::native_wake_tests_support::wire_reference_fixture().into() },
             "unconfirmed",
         ),
         (
@@ -243,7 +243,7 @@ async fn generic_tool_completion_chokepoint_has_exact_active_message_cardinality
                 (
                     "admission-uncertain",
                     "follow up".to_owned(),
-                    ActiveAgentMessageOutcome::AdmissionUncertain,
+                    ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: crate::session::persistence::native_wake_tests_support::wire_reference_fixture() },
                     vec!["active_agent_message_completed"],
                 ),
                 (

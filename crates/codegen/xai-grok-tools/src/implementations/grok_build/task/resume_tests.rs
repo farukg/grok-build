@@ -7,6 +7,7 @@ use crate::implementations::grok_build::task::backend::{ChannelBackend, Subagent
 use crate::implementations::grok_build::task::coordinator::{
     ActiveMessageAdmission, ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest,
     ChildRunner, SendBoxFuture, StartedChild, SubagentCoordinator, SubagentProgress,
+    ChildCancellation, ChildCancelOutcome,
 };
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageDelivery, CurrentPromptIdResource, SessionIdResource, SubagentDepthCounter,
@@ -31,6 +32,10 @@ struct RecordingControl {
 }
 
 impl ChildControl for RecordingControl {
+    fn has_initial_message_reservation(&self, delivery: &ActiveAgentMessageDelivery) -> bool {
+        delivery.admission_is_committed()
+    }
+
     type ProgressFuture = std::future::Ready<SubagentProgress>;
 
     fn progress(&self) -> Self::ProgressFuture {
@@ -53,7 +58,9 @@ impl ChildControl for RecordingControl {
         }))
     }
 
-    fn cancel(&self) {}
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
+        ChildCancelOutcome::Accepted
+    }
 }
 
 #[tokio::test]
@@ -124,6 +131,9 @@ impl ChildRunner for RecordingRunner {
         Box::pin(async move {
             let request = run.request;
             let _ = runs.send(request.clone());
+            if let Some(origin) = run.wake_origin {
+                origin.delivery.claim_admission().expect("mock bootstrap claim").commit().handoff(|| ());
+            }
             let _ = run
                 .reporter
                 .started(StartedChild {

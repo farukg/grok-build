@@ -69,23 +69,21 @@ fn prefire_lead_percent() -> u64 {
 /// Cheap fingerprint of a conversation prefix for prefire NOTE₁ validity.
 /// A mismatch means the prefix changed (edit / rewind / branch) since pass-1.
 /// The cached NOTE₁ then no longer summarizes the current prefix and must be dropped.
-fn fingerprint_prefix(items: &[ConversationItem]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    items.len().hash(&mut h);
-    for it in items {
-        let tag: u8 = match it {
-            ConversationItem::System(_) => 0,
-            ConversationItem::User(_) => 1,
-            ConversationItem::Assistant(_) => 2,
-            ConversationItem::ToolResult(_) => 3,
-            ConversationItem::BackendToolCall(_) => 4,
-            ConversationItem::Reasoning(_) => 5,
-        };
-        tag.hash(&mut h);
-        it.text_content().hash(&mut h);
+fn fingerprint_prefix(items: &[ConversationItem]) -> Option<u64> {
+    use std::hash::Hasher;
+    struct Fingerprint(std::collections::hash_map::DefaultHasher);
+    impl std::io::Write for Fingerprint {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.write(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    h.finish()
+    let mut fingerprint = Fingerprint(std::collections::hash_map::DefaultHasher::new());
+    serde_json::to_writer(&mut fingerprint, items).ok()?;
+    Some(fingerprint.0.finish())
 }
 /// Outcome of a background prefire pass-1 run, recorded on the `session.prefire_pass1` span as `compaction_prefire_outcome`.
 /// [`PrefireOutcome::as_str`] values are stable telemetry keys (telemetry/dashboards key off them); don't rename the strings.
@@ -313,10 +311,13 @@ impl SessionActor {
         let Some(prefix) = conversation.get(..split.split_idx) else {
             return attempted(PrefireOutcome::SampleFailed, None);
         };
+        let Some(fingerprint) = fingerprint_prefix(prefix) else {
+            return attempted(PrefireOutcome::SampleFailed, None);
+        };
         let cache = AsyncCompactionCache {
             note1,
             prefix_len: split.split_idx,
-            fingerprint: fingerprint_prefix(prefix),
+            fingerprint,
             model_slug,
             pass1_latency_ms,
         };
@@ -374,7 +375,7 @@ impl SessionActor {
         };
         if cache.prefix_len == 0
             || cache.model_slug != model_slug
-            || fingerprint_prefix(prefix) != cache.fingerprint
+            || fingerprint_prefix(prefix) != Some(cache.fingerprint)
         {
             tracing::Span::current().record("compaction_prefire_stale", true);
             tracing::info!(
@@ -618,6 +619,11 @@ impl SessionActor {
         )
     )]
     pub(crate) async fn run_compact(self: &Arc<Self>) -> Result<(), acp::Error> {
+        let _current_action = crate::session::current_actions::CompactRegistration::new(
+            self.current_actions.clone(), crate::session::current_actions::CompactOwner::Inline,
+            crate::session::current_actions::CompactStage::Executing,
+            xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
+        );
         self.run_compact_with_invocation(None).await
     }
 
@@ -701,6 +707,13 @@ impl SessionActor {
             .as_ref()
             .map(|c| c.context_window.get())
             .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+        self.send_manual_compact_notification(invocation_id, crate::extensions::notification::SessionUpdate::AutoCompactStarted {
+            phase: crate::extensions::notification::CompactPhase::Executing,
+            tokens_used: total_tokens,
+            context_window,
+            percentage: xai_token_estimation::usage_percentage_u8(total_tokens, context_window),
+            reason: "Manual compaction".into(),
+        }).await;
         self.maybe_pre_compaction_flush(total_tokens, context_window, "pre_compaction")
             .await;
         if let Err(e) = self
@@ -2449,6 +2462,9 @@ impl SessionActor {
     ) -> Result<(), acp::Error> {
         use crate::extensions::notification::SessionUpdate as XaiSessionUpdate;
         let (_cancel, _cancel_scope) = self.compaction.cancel.enter();
+        let prompt_id = self.current_prompt_id.lock()
+            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?.clone();
+        let _activity = self.compaction.cancel.begin_activity(prompt_id, self.current_actions.clone());
         let _compaction_phase = self.turn_phases.begin_compaction();
         self.record_compaction_variant();
         let tokens_before = self.chat_state_handle.get_total_tokens().await;
@@ -2515,13 +2531,22 @@ impl SessionActor {
                     || e.data.as_ref().and_then(|d| d.as_str()).is_some_and(|s| {
                         s.contains(crate::session::helpers::session_compact::COMPACT_CANCELLED_MSG)
                     });
-                if !cancelled && !self.compaction.is_suppressed() {
-                    self.send_xai_notification(XaiSessionUpdate::AutoCompactFailed {
-                        error: Self::failure_with_retry_guidance(
-                            &crate::sampling::error::acp_error_message(&e),
-                        ),
-                    })
-                    .await;
+                if self.compaction.cancel.activity_needs_terminal() {
+                    let update = if cancelled {
+                        XaiSessionUpdate::AutoCompactCancelled {
+                            reason: crate::extensions::notification::AutoCompactCancelReason::UserCancelled,
+                        }
+                    } else {
+                        let detail = crate::sampling::error::acp_error_message(&e);
+                        XaiSessionUpdate::AutoCompactFailed {
+                            error: if self.compaction.is_suppressed() {
+                                Self::suppress_notification_message(Self::classify_suppress_reason(&detail), &detail)
+                            } else {
+                                Self::failure_with_retry_guidance(&detail)
+                            },
+                        }
+                    };
+                    self.send_xai_notification(update).await;
                 }
                 Err(e)
             }

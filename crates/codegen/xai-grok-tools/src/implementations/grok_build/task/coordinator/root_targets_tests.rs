@@ -421,13 +421,14 @@ async fn root_deadline_arbitrates_real_claim_before_any_handoff() {
             ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
         );
         let held = recv_with_timeout(&mut admissions).await;
+        let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let claim = claimed.then(|| held.late_delivery.clone().claim_admission().unwrap());
         assert!(routes.try_recv().is_err());
         tokio::time::advance(ACTIVE_MESSAGE_ADMISSION_TIMEOUT).await;
         let completion = coordinator.active_messages.next().await.unwrap();
         coordinator.finish_active_message(completion);
         let expected = if claimed {
-            ActiveAgentMessageOutcome::AdmissionUncertain
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
         } else {
             ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline
         };
@@ -464,10 +465,11 @@ async fn root_observer_drop_cannot_revoke_owned_claim() {
             ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
         );
         let held = recv_with_timeout(&mut admissions).await;
+        let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let claim = claimed.then(|| held.late_delivery.clone().claim_admission().unwrap());
         drop(coordinator);
         let expected = if claimed {
-            ActiveAgentMessageOutcome::AdmissionUncertain
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
         } else {
             ActiveAgentMessageOutcome::ChannelClosed
         };
@@ -507,6 +509,7 @@ async fn root_admitted_requires_completed_durable_proof_handoff() {
             },
         );
         let held = recv_with_timeout(&mut admissions).await;
+        let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let proof = held.late_delivery.clone().claim_admission().unwrap().commit();
         assert_eq!(held.message_id, proof.delivery().message().message_id);
         assert_eq!("root-b", proof.delivery().message().sender_session_id);
@@ -532,7 +535,7 @@ async fn root_admitted_requires_completed_durable_proof_handoff() {
                 message_id: held.message_id,
             }
         } else {
-            ActiveAgentMessageOutcome::AdmissionUncertain
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
         };
         assert_eq!(expected, response_outcome(response).await, "{cut:?}");
         assert_eq!(completed, finalize_rx.await.unwrap(), "{cut:?}");
@@ -560,12 +563,13 @@ async fn root_lost_claim_and_ack_remain_uncertain() {
         ActiveMessageSenderContext::RootSession { session_id: Arc::from("root-b") },
     );
     let held = recv_with_timeout(&mut admissions).await;
+    let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
     drop(held.late_delivery.clone().claim_admission().unwrap());
     assert!(held.late_delivery.claim_admission().is_none());
     drop(held.release);
     let completion = coordinator.active_messages.next().await.unwrap();
     coordinator.finish_active_message(completion);
-    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain, response_outcome(response).await);
+    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }, response_outcome(response).await);
     assert!(routes.try_recv().is_err());
     assert!(coordinator.root_active_messages.is_empty());
 }

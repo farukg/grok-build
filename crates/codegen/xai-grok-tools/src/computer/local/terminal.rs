@@ -1663,6 +1663,7 @@ impl LocalTerminalActor {
             .notification_handle
             .send_output_chunk(BashOutputChunk {
                 base: BashNotificationBase {
+                    start_time: Some(process_state.start_wall_time),
                     tool_call_id: request.tool_call_id.clone(),
                     command: request.command.clone(),
                     output: Vec::new(),
@@ -1926,6 +1927,7 @@ impl LocalTerminalActor {
             description: request.description.filter(|d| !d.trim().is_empty()),
         };
 
+        let start_time = Some(process_state.start_wall_time);
         let pid = process_state.child.id();
         if let Some(pid) = pid {
             self.child_exit.watch(pid);
@@ -1933,6 +1935,7 @@ impl LocalTerminalActor {
         self.processes.insert(task_id.clone(), process_state);
 
         let _ = reply.send(Ok(BackgroundHandle {
+            start_time,
             task_id,
             output_file: request.output_file,
             pid,
@@ -2464,6 +2467,7 @@ impl LocalTerminalActor {
                 .notification_handle
                 .send_output_chunk(BashOutputChunk {
                     base: BashNotificationBase {
+                        start_time: Some(process.start_wall_time),
                         tool_call_id: process.tool_call_id.clone(),
                         command: process.command.clone(),
                         output: process.output_buffer.clone(),
@@ -2575,6 +2579,7 @@ impl LocalTerminalActor {
         let mut result = process.to_result();
         result.disposition = RunDisposition::Backgrounded {
             handle: BackgroundHandle {
+                start_time: Some(process.start_wall_time),
                 task_id: task_id.to_string(),
                 output_file: process.output_file.clone(),
                 pid: process.child.id(),
@@ -2649,6 +2654,7 @@ impl LocalTerminalActor {
         process.notification_handle.send_backgrounded(
             crate::notification::BashExecutionBackgrounded {
                 base: crate::notification::BashNotificationBase {
+                    start_time: Some(process.start_wall_time),
                     tool_call_id: process.tool_call_id.clone(),
                     command: process
                         .display_command
@@ -2809,6 +2815,7 @@ impl LocalTerminalActor {
                 };
                 new_handle.send_backgrounded(crate::notification::BashExecutionBackgrounded {
                     base: crate::notification::BashNotificationBase {
+                        start_time: Some(process.start_wall_time),
                         tool_call_id: process.tool_call_id.clone(),
                         command: reparent_command,
                         output: Vec::new(),

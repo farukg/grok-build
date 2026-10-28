@@ -3,6 +3,14 @@ use crate::session::delivery_receiver::{
     DeliveryExecution, DeliveryProgress, DeliveryReceipt, DeliveryRequest, DeliveryResult,
 };
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParentDeliveryObservation {
+    #[serde(flatten)]
+    receipt: DeliveryReceipt,
+    recovery_ref: xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef,
+}
+
 impl SessionActor {
     pub(super) fn durable_delivery_payload(
         blocks: &[acp::ContentBlock],
@@ -15,7 +23,20 @@ impl SessionActor {
     }
 
     pub(super) fn delivery_changed(&self, receipt: &DeliveryReceipt) {
-        if let Ok(params) = serde_json::value::to_raw_value(receipt) {
+        self.publish_delivery_observation(receipt);
+    }
+
+    fn observe_delivery_record(&self, id: &str, record: &crate::session::delivery_receiver::DeliveryRecord) {
+        let receipt = record.receipt(&self.session_id_string(), id,
+            crate::session::receiver_execution::ReceiverPresence::Live);
+        match record.parent_recovery_ref() {
+            Some(recovery_ref) => self.publish_delivery_observation(&ParentDeliveryObservation { receipt, recovery_ref }),
+            None => self.delivery_changed(&receipt),
+        }
+    }
+
+    fn publish_delivery_observation(&self, observation: &impl serde::Serialize) {
+        if let Ok(params) = serde_json::value::to_raw_value(observation) {
             self.notifications
                 .gateway
                 .forward_fire_and_forget(acp::ExtNotification::new(
@@ -104,15 +125,11 @@ impl SessionActor {
                 return;
             }
         };
-        match mode {
+        match &mode {
             crate::session::delivery_receiver::ReceiverResume::Recovery { deliveries } => {
                 for id in deliveries {
-                    if let Some(record) = summary.completion_delivery.receiver.records.get(&id) {
-                        self.delivery_changed(&record.receipt(
-                            &self.session_id_string(),
-                            &id,
-                            crate::session::receiver_execution::ReceiverPresence::Live,
-                        ));
+                    if let Some(record) = summary.completion_delivery.receiver.records.get(id) {
+                        self.observe_delivery_record(id, record);
                     }
                 }
             }
@@ -126,17 +143,17 @@ impl SessionActor {
                 crate::session::delivery_receiver::DeliveryProvenance::External => PromptOrigin::Delivery {
                     delivery_id: delivery_id.clone(), payload_digest: record.digest.clone(),
                 },
-                crate::session::delivery_receiver::DeliveryProvenance::ParentMessage { admission } => match admission.source {
-                    crate::session::delivery_receiver::ParentMessageSource::Agent => PromptOrigin::ParentAgentMessage { message_id: admission.message_id.clone(), sender_session_id: admission.sender_session_id.clone() },
-                    crate::session::delivery_receiver::ParentMessageSource::Human => PromptOrigin::ParentHumanMessage { message_id: admission.message_id.clone(), sender_session_id: admission.sender_session_id.clone() },
+                crate::session::delivery_receiver::DeliveryProvenance::ParentMessage { .. } => {
+                    match &mode {
+                        crate::session::delivery_receiver::ReceiverResume::CurrentQueue => self.observe_delivery_record(delivery_id, record),
+                        crate::session::delivery_receiver::ReceiverResume::Recovery { .. } => {}
+                    }
+                    continue;
                 },
             };
             let exists = self.state.lock().await.pending_inputs.iter().any(|item| item.prompt_id == *prompt_id);
             if exists {
                 continue;
-            }
-            if matches!(&origin, PromptOrigin::ParentAgentMessage { .. } | PromptOrigin::ParentHumanMessage { .. }) {
-                self.state.lock().await.message_delivery.teardown = super::parent_message::ParentTeardownStatus::Open;
             }
             let (respond_to, receive) = oneshot::channel();
             drop(receive);

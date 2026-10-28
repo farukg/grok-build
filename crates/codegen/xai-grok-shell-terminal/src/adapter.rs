@@ -388,7 +388,7 @@ impl AcpTerminalAdapter {
         let total_bytes = partial.output.len();
         TerminalRunResult {
             disposition: RunDisposition::Backgrounded {
-                handle: BackgroundHandle { task_id, output_file: request.output_file.clone(), pid: None },
+                handle: BackgroundHandle { start_time: None, task_id, output_file: request.output_file.clone(), pid: None },
                 reason: BackgroundReason::ForegroundBudget,
             },
             combined_output: partial.output,
@@ -411,7 +411,7 @@ impl AcpTerminalAdapter {
             let ExecutionMode::Foreground { tool_call_id, demote } = std::mem::replace(&mut task.mode, ExecutionMode::Background) else { return None; };
             let result = TerminalRunResult {
                 disposition: RunDisposition::Backgrounded {
-                    handle: BackgroundHandle { task_id: task_id.to_string(), output_file: task.output_file.clone(), pid: None },
+                    handle: BackgroundHandle { start_time: None, task_id: task_id.to_string(), output_file: task.output_file.clone(), pid: None },
                     reason: BackgroundReason::UserRedirect,
                 },
                 combined_output: task.last_output.clone(), exit_code: None, truncated: task.last_truncated,
@@ -420,6 +420,7 @@ impl AcpTerminalAdapter {
             };
             let announcement = xai_grok_tools::notification::BashExecutionBackgrounded {
                 base: xai_grok_tools::notification::BashNotificationBase {
+                    start_time: None,
                     tool_call_id: tool_call_id.clone(),
                     command: task.display_command.clone().unwrap_or_else(|| task.command.clone()),
                     output: Vec::new(), total_bytes: 0, truncated: false, cwd: PathBuf::from(&task.cwd),
@@ -711,6 +712,7 @@ impl AcpTerminalAdapter {
         ));
 
         Ok(BackgroundHandle {
+            start_time: None,
             task_id,
             output_file,
             pid: None,

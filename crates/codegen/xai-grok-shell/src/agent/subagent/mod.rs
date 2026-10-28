@@ -64,6 +64,7 @@ mod attempt_store;
 mod child_runtime;
 mod handle_request;
 pub(crate) mod management_recipe;
+pub(crate) mod native_recovery;
 mod prompt_turn_receipt;
 mod prompt_turn_result;
 mod resume_window;
@@ -154,6 +155,10 @@ pub(crate) struct RunShellChildHarnessConfig {
     hold_wake_start_flush_ack: bool,
     hold_wake_abort_flush_ack: bool,
     reject_deferred_start_commit: bool,
+    #[cfg(test)]
+    parent_input_fault: Option<crate::session::persistence::native_wake_tests_support::ParentInputFault>,
+    #[cfg(test)]
+    initial_traceparent: Option<String>,
 }
 #[cfg(any(test, feature = "test-support"))]
 impl RunShellChildHarnessConfig {
@@ -164,6 +169,10 @@ impl RunShellChildHarnessConfig {
             hold_wake_start_flush_ack: false,
             hold_wake_abort_flush_ack: false,
             reject_deferred_start_commit: false,
+            #[cfg(test)]
+            parent_input_fault: None,
+            #[cfg(test)]
+            initial_traceparent: None,
         }
     }
     fn hold_wake_flush_acks(mut self) -> Self {
@@ -1614,7 +1623,11 @@ fn durable_resume_source_at(
         | SubagentMetaStatus::Failed
         | SubagentMetaStatus::Cancelled => {}
     }
-    Ok(ResumeSourceData {
+    Ok(resume_source_metadata(meta))
+}
+
+fn resume_source_metadata(meta: SubagentMeta) -> ResumeSourceData {
+    ResumeSourceData {
         subagent_id: meta.subagent_id,
         child_session_id: meta.child_session_id,
         child_cwd: meta.child_cwd.unwrap_or_default(),
@@ -1623,7 +1636,7 @@ fn durable_resume_source_at(
         subagent_type: meta.subagent_type,
         persona: meta.persona,
         model_id: meta.effective_model_id,
-    })
+    }
 }
 /// Resolve the MCP pool a child subagent should import from its parent. Inheritance applies to **every** agent source (built-in, user, project, and plugin).
 /// Plugin agents are not excluded: the parent already connected these servers for the session. Agent-owned `mcpServers` (spawned by the child itself) are handled separately and remain blocked for plugins.
@@ -2100,7 +2113,7 @@ async fn cancel_pending_shell_child(
     may_persist_terminal: bool,
     completion_data: &ShellCompletionData,
 ) -> SubagentResult {
-    prompt_turn_receipt::cancel_shell_child_turn(child_cmd_tx);
+    prompt_turn_receipt::cancel_shell_child_turn(child_cmd_tx, ChildCancellation::Shutdown);
     let _ = child_cmd_tx.send(SessionCommand::Shutdown(
         crate::session::ShutdownKind::Graceful,
     ));

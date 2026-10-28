@@ -1,6 +1,7 @@
 use super::{PersistedData, SessionUpdateEnvelope, StorageAdapter};
-use crate::sampling::types::ChatRequestMessage;
-use crate::sampling::{ContentPart, ConversationItem};
+use crate::sampling::ConversationItem;
+#[cfg(test)]
+use crate::sampling::ContentPart;
 use crate::session::info::Info;
 use crate::session::persistence::{CHAT_FORMAT_VERSION, Summary};
 use crate::tools::todo::TodoState;
@@ -15,6 +16,11 @@ use xai_grok_workspace::session::file_state::RewindPoint;
 mod completion;
 mod copy;
 mod delivery_receiver;
+pub mod history_decoder;
+mod history_images;
+pub(crate) use history_images::strip_invalid_images;
+#[cfg(test)]
+use history_images::MAX_LOADED_IMAGE_BYTES;
 #[derive(Clone)]
 enum SessionDirMode {
     FromRoot(PathBuf),
@@ -615,7 +621,9 @@ impl JsonlStorageAdapter {
         self.apply_summary_patch(
             info,
             super::summary_write::SummaryPatch {
-                record_activity: matches!(&disposition, StrictAppendAck::Appended),
+                activity: super::summary_write::SummaryActivity::from_recorded(
+                    matches!(&disposition, StrictAppendAck::Appended),
+                ),
                 chat_messages: matches!(&disposition, StrictAppendAck::Appended)
                     .then_some(super::summary_write::CounterOp::Increment(1)),
                 chat_format_version: Some(CHAT_FORMAT_VERSION),
@@ -796,7 +804,7 @@ impl JsonlStorageAdapter {
         self.apply_summary_patch(
             info,
             super::summary_write::SummaryPatch {
-                record_activity: true,
+                activity: super::summary_write::SummaryActivity::for_update(update),
                 messages: Some(super::summary_write::CounterOp::Increment(1)),
                 completion_mutation: match (durability, update) {
                     (AppendDurability::Durable, super::SessionUpdate::Xai(notification)) => match &notification.update {
@@ -1120,73 +1128,19 @@ impl JsonlStorageAdapter {
                 format!("chat history exceeds the {max_bytes}-byte read limit"),
             ));
         }
-        let mut sibling_btc_ids_seen: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut upgraded_reasoning_count: usize = 0;
-        let mut upgraded_btc_count: usize = 0;
-        let mut skipped_lines: usize = 0;
-        let mut first_skipped: Option<(usize, String)> = None;
-        let mut skip_line = |line_no: usize, error: String| {
-            skipped_lines += 1;
-            if first_skipped.is_none() {
-                first_skipped = Some((line_no, error));
-            }
-        };
-        let mut items = Vec::new();
-        for (line_idx, line) in contents.split(|b| *b == b'\n').enumerate() {
-            let line = line.trim_ascii();
-            if line.is_empty() {
-                continue;
-            }
-            let raw: serde_json::Value = match serde_json::from_slice(line) {
-                Ok(raw) => raw,
-                Err(e) => {
-                    skip_line(line_idx + 1, e.to_string());
-                    continue;
-                }
-            };
-            let item_result = if chat_format_version >= CHAT_FORMAT_VERSION {
-                serde_json::from_value::<ConversationItem>(raw.clone()).or_else(|e| {
-                    serde_json::from_value::<ChatRequestMessage>(raw.clone())
-                        .map(ConversationItem::from)
-                        .map_err(|_| e)
-                })
-            } else {
-                serde_json::from_value::<ChatRequestMessage>(raw.clone())
-                    .map(ConversationItem::from)
-                    .or_else(|e| {
-                        serde_json::from_value::<ConversationItem>(raw.clone()).map_err(|_| e)
-                    })
-            };
-            let item = match item_result {
-                Ok(item) => item,
-                Err(e) => {
-                    skip_line(line_idx + 1, e.to_string());
-                    continue;
-                }
-            };
-            let siblings =
-                xai_grok_sampling_types::upgrade_legacy_reasoning(&raw, &mut sibling_btc_ids_seen);
-            for sib in siblings {
-                match &sib {
-                    ConversationItem::Reasoning(_) => upgraded_reasoning_count += 1,
-                    ConversationItem::BackendToolCall(_) => upgraded_btc_count += 1,
-                    _ => {}
-                }
-                items.push(sib);
-            }
-            if let ConversationItem::BackendToolCall(b) = &item {
-                sibling_btc_ids_seen.insert(b.id().to_string());
-            }
-            items.push(item);
-            if items.len() > max_items {
-                return Err(io::Error::new(
+        let mut decoded = history_decoder::decode_history(&contents, chat_format_version, max_items)
+            .map_err(|_| {
+                io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("chat history exceeds the {max_items}-item limit"),
-                ));
-            }
-        }
-        let stripped = strip_invalid_images(&mut items);
+                )
+            })?;
+        let stripped = decoded.normalize_images();
+        let skipped_lines = decoded.skipped_lines();
+        let first_skipped = decoded.first_skipped();
+        let items = &decoded.items;
+        let upgraded_reasoning_count = decoded.upgraded_reasoning_count;
+        let upgraded_btc_count = decoded.upgraded_btc_count;
         if first_skipped.is_some() || stripped > 0 {
             let quarantine = path.with_extension("jsonl.corrupt");
             if !quarantine.exists()
@@ -1226,7 +1180,7 @@ impl JsonlStorageAdapter {
                 "reconstructed legacy reasoning siblings from pre-sibling-split session"
             );
         }
-        Ok(items)
+        Ok(decoded.items)
     }
     /// Apply a typed [`SummaryPatch`](super::summary_write::SummaryPatch) to this session's `summary.json` under an exclusive sidecar lock.
     /// The read-modify-write thus serializes against every other writer (including a second persistence actor on reconnect, or another process).
@@ -1468,7 +1422,7 @@ impl StorageAdapter for JsonlStorageAdapter {
         self.apply_summary_patch(
             info,
             super::summary_write::SummaryPatch {
-                record_activity: true,
+                activity: super::summary_write::SummaryActivity::Occurred,
                 chat_messages: Some(super::summary_write::CounterOp::Increment(1)),
                 chat_format_version: Some(CHAT_FORMAT_VERSION),
                 ..Default::default()
@@ -2266,82 +2220,6 @@ impl StorageAdapter for JsonlStorageAdapter {
         serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 }
-/// Max decoded size for a data-URI image loaded from persisted history.
-/// Generous (20 MB): fresh images use 5 MB, but loaded ones just need sanity-checking.
-const MAX_LOADED_IMAGE_BYTES: usize = 20 * 1024 * 1024;
-/// Strip data-URI images the API would reject from loaded conversation items, so a poisoned history recovers instead of 400ing on every turn.
-/// The verdicts come from [`persisted_image_reject_reason`](crate::session::image_normalize::persisted_image_reject_reason).
-/// User parts become a text placeholder; `ToolResultItem.images` entries are removed.
-pub(crate) fn strip_invalid_images(items: &mut [ConversationItem]) -> usize {
-    fn invalid(part: &ContentPart) -> bool {
-        match part {
-            ContentPart::Image { url } => url.starts_with("data:") && !is_valid_data_uri_image(url),
-            _ => false,
-        }
-    }
-    let mut stripped = 0usize;
-    for item in items.iter_mut() {
-        match item {
-            ConversationItem::User(user) => {
-                for part in user.content.iter_mut() {
-                    if invalid(part) {
-                        *part = ContentPart::Text {
-                            text: std::sync::Arc::<str>::from(
-                                "[image removed \u{2014} invalid data]",
-                            ),
-                        };
-                        stripped += 1;
-                    }
-                }
-            }
-            ConversationItem::ToolResult(t) => {
-                let before = t.images.len();
-                t.images.retain(|part| !invalid(part));
-                stripped += before - t.images.len();
-            }
-            _ => {}
-        }
-    }
-    stripped
-}
-/// Check that a `data:` URI has a valid `;base64,` header and decodable payload within the size limit.
-fn is_valid_data_uri_image(url: &str) -> bool {
-    use base64::Engine as _;
-    let after_data = match url.strip_prefix("data:") {
-        Some(s) => s,
-        None => return false,
-    };
-    let comma = match after_data.find(',') {
-        Some(i) => i,
-        None => return false,
-    };
-    let Some(header) = after_data.get(..comma) else {
-        return false;
-    };
-    let Some(payload) = after_data.get(comma + 1..) else {
-        return false;
-    };
-    if !header
-        .as_bytes()
-        .windows(7)
-        .any(|w| w.eq_ignore_ascii_case(b";base64"))
-    {
-        return false;
-    }
-    if payload.len() * 3 / 4 > MAX_LOADED_IMAGE_BYTES {
-        return false;
-    }
-    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) else {
-        return false;
-    };
-    match crate::session::image_normalize::persisted_image_reject_reason(&bytes) {
-        None => true,
-        Some(reason) => {
-            tracing::warn!(reason, "stripping unsendable image from loaded history");
-            false
-        }
-    }
-}
 #[cfg(test)]
 mod durable_tests;
 #[cfg(test)]
@@ -2350,3 +2228,6 @@ mod tests;
 mod worktree_heal_tests;
 #[cfg(test)]
 mod roster_visibility_tests;
+
+#[cfg(test)]
+mod history_decoder_tests;

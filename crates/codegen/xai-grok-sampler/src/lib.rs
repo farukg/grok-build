@@ -30,6 +30,7 @@ pub mod request_preview;
 #[cfg(test)]
 mod request_preview_tests;
 pub mod retry;
+pub mod retry_deadline;
 pub mod sampling_log;
 mod shared_http;
 mod span_timing;

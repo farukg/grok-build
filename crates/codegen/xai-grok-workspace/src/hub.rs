@@ -1153,6 +1153,7 @@ mod tests {
         };
         ToolNotification::BashExecutionBackgrounded(BashExecutionBackgrounded {
             base: BashNotificationBase {
+                start_time: None,
                 tool_call_id: task_id.to_owned(),
                 command: "sleep 1".to_owned(),
                 output: Vec::new(),

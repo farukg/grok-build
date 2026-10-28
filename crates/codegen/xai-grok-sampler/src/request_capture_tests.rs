@@ -114,7 +114,7 @@ async fn final_capture_equals_http_body_after_each_provider_serializer() {
             }
             ApiBackend::Messages => {}
         }
-        assert!(matches!(rx.recv().await.unwrap(), SamplingEvent::LocalRequest { evidence: LocalRequestEvidence::DispatchStarted, .. }));
+        assert!(matches!(rx.recv().await.unwrap(), SamplingEvent::LocalRequest { evidence: LocalRequestEvidence::DispatchStarted { .. }, .. }));
         assert!(matches!(rx.recv().await.unwrap(), SamplingEvent::LocalRequest { evidence: LocalRequestEvidence::ResponseHeaders { status: 400 }, .. }));
         task.abort();
     }
@@ -123,7 +123,7 @@ async fn final_capture_equals_http_body_after_each_provider_serializer() {
 #[tokio::test]
 async fn real_retry_loop_shares_body_but_retains_failed_attempts() {
     let (url, _bodies, task) = server(axum::http::StatusCode::SERVICE_UNAVAILABLE).await;
-    let config = SamplerConfig { base_url: url, model: "fixture-model".into(), max_retries: Some(1), ..Default::default() };
+    let config = SamplerConfig { base_url: url, model: "fixture-model".into(), max_retries: Some(2), ..Default::default() };
     let (tx, mut rx) = mpsc::unbounded_channel();
     crate::actor::request_task::run_request_task(
         crate::RequestId::from("retry-fixture"), ConversationRequest::from_items(vec![ConversationItem::user("retry body")]),

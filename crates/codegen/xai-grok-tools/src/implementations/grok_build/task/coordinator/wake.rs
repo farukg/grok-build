@@ -1,7 +1,7 @@
 //! Completed-child wake admission and displacement.
 
 use super::super::admission::{AdmissionDecision, AdmissionError};
-use super::active_message::ParkedSpawnReadyMessage;
+use super::active_message::{ParkedSpawnReadyMessage, SpawnReadyInput};
 use super::agent_quotas::{ActiveMessageQuotaAdmission, TargetIncarnationKey};
 use super::queue::{QueuedCaller, QueuedSpawn, StartOrigin};
 use super::{SubagentCoordinator, SubagentLimitDecision};
@@ -10,7 +10,7 @@ use crate::implementations::grok_build::task::coordinator_state::{
     ChildRunner, DisplacedCompletedChild, MAX_COMPLETED_ENTRIES, WakeOrigin,
 };
 use crate::implementations::grok_build::task::types::{
-    ActiveAgentMessageOutcome, ActiveAgentMessageSource, ActiveMessageRoute,
+    ActiveAgentMessage, ActiveAgentMessageDelivery, ActiveAgentMessageOutcome, ActiveMessageRoute,
     ActiveMessageSenderContext, SubagentActiveMessageRequest,
 };
 
@@ -133,6 +133,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .send(ActiveAgentMessageOutcome::NotFoundOrNotOwned);
             return;
         };
+        let previous_completion = super::super::native_recovery::PreviousCompletion::capture(completed);
         let mut wake_request = completed.request.clone();
         let agent_address = completed.agent_address.clone();
         let spawner_session_id = completed.spawner_session_id.clone();
@@ -152,27 +153,27 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         wake_request.run_in_background = true;
         wake_request.await_to_completion = false;
         wake_request.cancel_token = tokio_util::sync::CancellationToken::new();
-        let message_id = match wake_message_source {
-            ActiveAgentMessageSource::Agent => {
-                format!("parent-agent-message-{}", uuid::Uuid::now_v7())
-            }
-            ActiveAgentMessageSource::Human => {
-                format!("parent-message-{}", uuid::Uuid::now_v7())
-            }
-        };
+        let delivery = ActiveAgentMessageDelivery::new(
+            ActiveAgentMessage {
+                message_id: uuid::Uuid::now_v7().to_string(),
+                sender_session_id: Self::message_sender_session(&sender_context).to_owned(),
+                text: request.text().clone(),
+            },
+            request.operation(),
+            wake_message_source,
+            route,
+            super::super::active_message::ActiveMessageAdmissionLease::new(),
+        );
         let wake_origin = WakeOrigin {
-            agent_id: subagent_id.clone(),
-            source: wake_message_source,
-            message_id: message_id.clone(),
+            previous_completion,
+            mode: super::super::native_recovery::NativeWakeMode::Admit,
+            delivery: delivery.clone(),
         };
         let parked = ParkedSpawnReadyMessage {
             subagent_id: subagent_id.clone(),
             sender_context,
-            route,
-            request,
+            input: SpawnReadyInput::Initial(delivery),
             respond_to: Some(respond_to),
-            deadline: None,
-            initial_message_id: Some(message_id.clone()),
             quota_admission,
             permit: Some(permit),
         };

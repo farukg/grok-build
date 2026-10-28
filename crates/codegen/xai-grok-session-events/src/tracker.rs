@@ -12,6 +12,7 @@ struct ActiveTool {
     tool_name: String,
     tool_call_id: String,
     dispatch_duration_ms: u64,
+    owner: xai_tool_protocol::tool_execution::ToolCallOwnership,
 }
 
 /// One session's event state. It is `!Send` and lives on the session actor.
@@ -102,12 +103,13 @@ impl EventTracker {
 
     /// Marks a tool as active so a cancel can report it.
     /// `dispatch_duration_ms` was measured when the call was dispatched, so a cancel reports it instead of timing the call again.
-    pub fn tool_started(&self, tool_name: String, tool_call_id: String, dispatch_duration_ms: u64) {
+    pub fn tool_started(&self, tool_name: String, tool_call_id: String, dispatch_duration_ms: u64, owner: xai_tool_protocol::tool_execution::ToolCallOwnership) {
         let is_new = self.active_tool.borrow().is_none();
         *self.active_tool.borrow_mut() = Some(ActiveTool {
             tool_name,
             tool_call_id,
             dispatch_duration_ms,
+            owner,
         });
         // A repeat call for the same tool (e.g. after a reauth retry) only refreshes the duration.
         if is_new {
@@ -123,8 +125,11 @@ impl EventTracker {
         self.active_tool.borrow().is_some()
     }
 
-    pub fn tool_finished(&self) {
-        *self.active_tool.borrow_mut() = None;
+    pub fn tool_terminal(&self, owner: &xai_tool_protocol::tool_execution::ToolCallOwnership) {
+        let mut active = self.active_tool.borrow_mut();
+        if active.as_ref().is_some_and(|tool| tool.owner == *owner) {
+            *active = None;
+        }
     }
 
     /// Cancels the in-flight tool and emits `ToolCompleted(cancelled)`.
@@ -132,6 +137,7 @@ impl EventTracker {
     /// A tool cancelled while still dispatching was never marked active, so it gets no `tool_completed` row.
     pub fn cancel_active_tool(&self) {
         if let Some(tool) = self.active_tool.borrow_mut().take() {
+            self.writer.cancel_tool(&tool.tool_call_id, &tool.owner);
             self.emit(Event::ToolCompleted {
                 tool_name: tool.tool_name,
                 duration_ms: tool.dispatch_duration_ms,

@@ -1,4 +1,4 @@
-use super::super::coordinator::ChildCompletion;
+use super::super::coordinator::{ChildCancellation, ChildCancelOutcome};
 use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
 use super::*;
 use crate::implementations::grok_build::task::coordinator::ChildCompletion;
@@ -48,7 +48,9 @@ impl super::super::coordinator::ChildControl for BackendTestControl {
         std::future::ready(super::super::coordinator::SubagentProgress::default())
     }
 
-    fn cancel(&self) {}
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
+        ChildCancelOutcome::Accepted
+    }
 }
 
 struct BackendTestRunner;

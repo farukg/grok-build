@@ -30,10 +30,19 @@ pub(super) struct PreparedStartArtifacts {
     pub(super) parent_prompt_id: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+enum StartPublicationState { Pending, Existing, Published }
+
+impl StartPublicationState {
+    fn is_published(self) -> bool {
+        match self { Self::Published => true, Self::Pending | Self::Existing => false }
+    }
+}
+
 pub(super) struct StartArtifactPublication {
     boundary: PublicationBoundary,
     completion_data: super::ShellCompletionData,
-    durable_publication: bool,
+    publication: StartPublicationState,
     prepared: PreparedStartArtifacts,
     gateway: GatewaySender,
     reporter: xai_grok_tools::implementations::grok_build::task::coordinator::ChildReporter<
@@ -65,7 +74,7 @@ impl StartArtifactPublication {
         Self {
             boundary,
             completion_data,
-            durable_publication: false,
+            publication: StartPublicationState::Pending,
             prepared,
             gateway,
             reporter,
@@ -83,17 +92,30 @@ impl StartArtifactPublication {
 
     pub(super) fn publish_at(&mut self, boundary: PublicationBoundary) -> bool {
         if self.boundary == boundary {
-            self.publish();
+            match self.publication {
+                StartPublicationState::Pending => self.publish(),
+                StartPublicationState::Existing => {
+                    self.publication = StartPublicationState::Published;
+                    self.completion_data.capture_start_artifacts(&self.prepared);
+                }
+                StartPublicationState::Published => {}
+            }
         }
-        self.durable_publication
+        self.publication.is_published()
+    }
+
+    pub(super) fn restore_existing_start(&mut self) {
+        self.boundary = PublicationBoundary::Started;
+        self.publication = StartPublicationState::Existing;
     }
 
     pub(super) fn terminal_persistence_allowed(&mut self) -> bool {
-        if self.boundary == PublicationBoundary::Prepared && !self.durable_publication {
-            self.durable_publication =
-                write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
+        if self.boundary == PublicationBoundary::Prepared && !self.publication.is_published() {
+            if write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta) {
+                self.publication = StartPublicationState::Published;
+            }
         }
-        let allowed = self.boundary == PublicationBoundary::Prepared || self.durable_publication;
+        let allowed = self.boundary == PublicationBoundary::Prepared || self.publication.is_published();
         if allowed {
             self.completion_data.capture_start_artifacts(&self.prepared);
         }
@@ -102,7 +124,7 @@ impl StartArtifactPublication {
 
     pub(super) fn forbid_terminal_persistence(&mut self) {
         self.boundary = PublicationBoundary::Started;
-        self.durable_publication = false;
+        self.publication = StartPublicationState::Pending;
         self.completion_data.forbid_terminal_artifacts();
     }
 
@@ -122,12 +144,12 @@ impl StartArtifactPublication {
             && write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
         #[cfg(not(test))]
         let metadata_written = write_subagent_meta(&self.prepared.meta_dir, &self.prepared.meta);
-        self.durable_publication = metadata_written;
+        self.publication = if metadata_written { StartPublicationState::Published } else { StartPublicationState::Pending };
         if self.boundary == PublicationBoundary::Prepared || metadata_written {
             self.completion_data.capture_start_artifacts(&self.prepared);
         }
         metadata_persist_span.close();
-        if self.durable_publication
+        if self.publication.is_published()
             && let (Some(bucket_url), Some(upload_method)) = (&self.bucket_url, &self.upload_method)
         {
             let gcs_meta = super::SubagentSessionMetadata::from_meta(

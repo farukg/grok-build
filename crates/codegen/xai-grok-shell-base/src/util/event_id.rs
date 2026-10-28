@@ -16,6 +16,11 @@ pub fn generate_event_id(session_id: &str) -> String {
     format!("{}-{}", session_id, count)
 }
 
+/// Exclusive frontier; observing it does not allocate an event.
+pub fn next_event_sequence() -> u64 {
+    EVENT_COUNTER.load(Ordering::SeqCst)
+}
+
 /// Stamp `_meta.eventId` and `agentTimestampMs` onto a notification's meta unless an `eventId` is already present, preserving other meta fields.
 /// The reconnect cursor (`session/load` `_meta.cursor`) can only bound the replay tail when each persisted line is identifiable.
 /// The same id must go out on the live broadcast so clients advance their cursor to ids that exist on disk. Broadcast-only notifications are deliberately left unstamped. A cursor pointing at an id absent from `updates.jsonl` never resolves and forces a full replay on every reconnect.

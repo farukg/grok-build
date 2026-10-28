@@ -260,12 +260,24 @@ impl JsonlStorageAdapter {
         authority: crate::session::delivery_receiver::ParentAdmissionAuthority,
         access: ReceiverAccess<'_>,
     ) -> io::Result<crate::session::delivery_receiver::ParentAdmissionAck> {
-        use crate::session::delivery_receiver::{DeliveryProvenance, DeliveryRecord, ParentAdmissionAck, ParentAdmissionAuthority, ParentMessageOperation, ParentMessageSource, payload_digest};
+        use crate::session::delivery_receiver::{DeliveryProvenance, DeliveryRecord, ParentMessageOperation, ParentMessageSource, payload_digest};
         use xai_grok_tools::implementations::grok_build::task::types::{ActiveAgentMessageOperation, ActiveAgentMessageSource};
-        if let ParentAdmissionAuthority::Coordinator(claim) = &authority {
+        if let Some(claim) = authority.claim() {
             let delivery = claim.delivery();
             let message = delivery.message();
             let source = match delivery.source() { ActiveAgentMessageSource::Agent => ParentMessageSource::Agent, ActiveAgentMessageSource::Human => ParentMessageSource::Human };
+            use crate::session::delivery_receiver::ParentMessageCustody;
+            let custody_matches = match &admission.custody {
+                ParentMessageCustody::Legacy => true,
+                ParentMessageCustody::Live { receiver, operation, route } => delivery.receiver() == Some(receiver) && delivery.operation() == *operation && delivery.route() == *route,
+                ParentMessageCustody::Initial { custody, .. } => delivery.receiver() == Some(&custody.receiver)
+                    && custody.operation == delivery.operation() && custody.route == delivery.route()
+                    && authority.native_recipe().is_some()
+                    && xai_message_delivery_core::AttemptId::parse(&custody.launch.attempt_id).is_some(),
+            };
+            if !custody_matches {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent custody conflicts with producer authority"));
+            }
             let operation_matches = match &admission.effective {
                 ParentMessageOperation::Queue => true,
                 ParentMessageOperation::Steer { .. } => delivery.operation() == ActiveAgentMessageOperation::Steer,
@@ -286,7 +298,7 @@ impl JsonlStorageAdapter {
             }
         };
         if admission.message_id.is_empty() || admission.sender_session_id.is_empty()
-            || admission.prompt_id != format!("parent-message-{}", admission.message_id)
+            || admission.prompt_id != crate::session::delivery_receiver::parent_message_prompt_id(&admission.message_id)
             || !binding_valid
         {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid parent admission binding"));
@@ -296,6 +308,10 @@ impl JsonlStorageAdapter {
             ReceiverAccess::Owner(_) | ReceiverAccess::Observe => {
                 return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent admission requires the receiver execution owner"));
             }
+        };
+        let origin = match authority.claim() {
+            Some(claim) => claim.origin(),
+            None => xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::New,
         };
         let storage = self.clone();
         let info = info.clone();
@@ -311,17 +327,59 @@ impl JsonlStorageAdapter {
             }
             let _chat_lock = Self::lock_append(&storage.chat_file(&info))?;
             mutate_locked(&storage.summary_file(&info), &storage.summary_lock_file(&info), |summary| {
-                if summary.is_hidden() {
+                if summary.hidden == Some(true) {
                     return Err(io::Error::new(io::ErrorKind::PermissionDenied, "parent admission requires a live session"));
                 }
                 let id = admission.delivery_id();
-                let records = &mut summary.completion_delivery.receiver.records;
-                if let Some(record) = records.get(&id) {
-                    return match &record.provenance {
-                        DeliveryProvenance::ParentMessage { admission: previous } if previous == &admission => Ok(()),
-                        DeliveryProvenance::External | DeliveryProvenance::ParentMessage { .. } => Err(io::Error::new(io::ErrorKind::AlreadyExists, "parent-message identity conflicts with durable admission")),
+                if let Some(record) = summary.completion_delivery.receiver.records.get(&id) {
+                    let same = match &record.provenance {
+                        DeliveryProvenance::ParentMessage { admission: previous } => {
+                            previous == &admission
+                        }
+                        DeliveryProvenance::External => false,
                     };
+                    if !same || record.digest != payload_digest(&admission.text)
+                        || !matches!(&record.execution, DeliveryExecution::Queued { payload, prompt_id } if payload == &admission.text && prompt_id == &admission.prompt_id)
+                    {
+                        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "parent-message identity conflicts with durable admission"));
+                    }
+                    match origin {
+                        xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::New => {}
+                        xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::Durable { publication: expected } => {
+                            let crate::session::delivery_receiver::ParentMessageCustody::Initial { custody, publication } = &admission.custody else {
+                                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "native recovery requires initial publication custody"));
+                            };
+                            let presence = crate::agent::subagent::native_recovery::publication_presence(&custody.launch, &info.id.to_string(), &admission.text)?;
+                            if presence != expected {
+                                return Err(io::Error::new(io::ErrorKind::InvalidData, "native publication changed before receiver acquisition"));
+                            }
+                            let recipe = authority.native_recipe().ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "native admission has no management recipe custody"))?;
+                            recipe.commit_durable(&storage.session_dir(&info), &custody.launch.management_recipe_binding)?;
+                            publication.reconcile(summary, &custody.launch, expected)?;
+                        }
+                    }
+                    return Ok(());
                 }
+                match origin {
+                    xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::New => {}
+                    xai_grok_tools::implementations::grok_build::task::types::ActiveMessageAdmissionOrigin::Durable { .. } => {
+                        return Err(io::Error::new(io::ErrorKind::NotFound, "recovery requires the original durable parent admission"));
+                    }
+                }
+                if matches!(&admission.custody, crate::session::delivery_receiver::ParentMessageCustody::Initial { .. })
+                    && summary.completion_delivery.receiver.records.values().any(|record| {
+                        matches!(&record.execution, DeliveryExecution::Queued { .. })
+                            && matches!(&record.provenance, DeliveryProvenance::ParentMessage { admission }
+                                if matches!(&admission.custody, crate::session::delivery_receiver::ParentMessageCustody::Initial { .. }))
+                    })
+                {
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "an admitted native initial delivery requires identity-preserving recovery"));
+                }
+                if let crate::session::delivery_receiver::ParentMessageCustody::Initial { custody, .. } = &admission.custody {
+                    let recipe = authority.native_recipe().ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "native admission has no management recipe custody"))?;
+                    recipe.commit_durable(&storage.session_dir(&info), &custody.launch.management_recipe_binding)?;
+                }
+                let records = &mut summary.completion_delivery.receiver.records;
                 records.insert(id, DeliveryRecord {
                     provenance: DeliveryProvenance::ParentMessage { admission: admission.clone() },
                     digest: payload_digest(&admission.text),
@@ -330,10 +388,7 @@ impl JsonlStorageAdapter {
                 });
                 Ok(())
             })?;
-            Ok(match authority {
-                ParentAdmissionAuthority::Coordinator(claim) => ParentAdmissionAck::Coordinator(claim.commit()),
-                ParentAdmissionAuthority::DirectLocal => ParentAdmissionAck::DirectLocal,
-            })
+            Ok(authority.committed())
         }).await.map_err(io::Error::other)?
     }
 
@@ -380,6 +435,29 @@ impl JsonlStorageAdapter {
         }).await.map_err(io::Error::other)?
     }
 
+    pub(crate) fn observe_receiver_custody(
+        &self, info: &Info,
+    ) -> io::Result<(Summary, ReceiverPresence)> {
+        let _chat_lock = Self::lock_append(&self.chat_file(info))?;
+        let summary_lock = match OpenOptions::new().read(true).open(self.summary_lock_file(info)) {
+            Ok(lock) => { fs2::FileExt::lock_shared(&lock)?; Some(lock) }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let mut summary = self.read_summary_sync(info)?;
+        if summary_lock.is_none() && !summary.completion_delivery.receiver.records.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "receiver synchronization file is missing"));
+        }
+        let presence = self.receiver_presence(info)?;
+        for retained in self.delivery_bindings(info)? {
+            if let Some(record) = summary.completion_delivery.receiver.records.get_mut(&retained.binding.delivery_id) {
+                record.record_projection(&retained.binding).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            }
+        }
+        self.reconcile_delivery_terminals(info, &mut summary, presence)?;
+        Ok((summary, presence))
+    }
+
     pub(super) async fn receive_delivery_owned(
         &self,
         info: &Info,
@@ -414,28 +492,7 @@ impl JsonlStorageAdapter {
             }
             match request.action {
                 DeliveryAction::Observe => {
-                    let summary_lock = match OpenOptions::new()
-                        .read(true)
-                        .open(storage.summary_lock_file(&info))
-                    {
-                        Ok(lock) => {
-                            fs2::FileExt::lock_shared(&lock)?;
-                            Some(lock)
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                        Err(error) => return Err(error),
-                    };
-                    let mut summary = storage.read_summary_sync(&info)?;
-                    if summary_lock.is_none()
-                        && !summary.completion_delivery.receiver.records.is_empty()
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "receiver synchronization file is missing",
-                        ));
-                    }
-                    let presence = storage.receiver_presence(&info)?;
-                    storage.reconcile_delivery_terminals(&info, &mut summary, presence)?;
+                    let (summary, presence) = storage.observe_receiver_custody(&info)?;
                     Ok(summary
                         .completion_delivery
                         .receiver

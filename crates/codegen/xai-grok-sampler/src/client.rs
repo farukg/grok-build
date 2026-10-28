@@ -251,13 +251,12 @@ pub(crate) fn splice_extra_tool_entries(
     }
 }
 
-/// Parse `Retry-After` as integer seconds, capped at 120; HTTP-dates yield `None`.
+/// Parse `Retry-After` as integer seconds; HTTP-dates yield `None`.
 fn extract_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok())
-        .map(|s| s.min(120))
 }
 
 fn extract_should_retry(headers: &reqwest::header::HeaderMap) -> Option<bool> {
@@ -1108,7 +1107,9 @@ impl SamplingClient {
 
     async fn send(&self, request: reqwest::Request) -> Result<reqwest::Response> {
         if let Some(capture) = &self.capture {
-            capture.emit(crate::request_capture::LocalRequestEvidence::DispatchStarted);
+            capture.emit(crate::request_capture::LocalRequestEvidence::DispatchStarted {
+                started_at: xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
+            });
         }
         self.http
             .execute(request)
@@ -1129,7 +1130,9 @@ impl SamplingClient {
     ) -> Result<reqwest::Response> {
         span_timing.record_request_build();
         if let Some(capture) = &self.capture {
-            capture.emit(crate::request_capture::LocalRequestEvidence::DispatchStarted);
+            capture.emit(crate::request_capture::LocalRequestEvidence::DispatchStarted {
+                started_at: xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
+            });
         }
         let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -2290,6 +2293,7 @@ mod tests {
     #[test]
     fn stream_collect_error_preserves_should_retry() {
         let info = SamplingErrorInfo {
+            retry_schedule: None,
             kind: crate::events::SamplingErrorKind::Api,
             status_code: Some(529),
             message: "Overloaded".into(),
@@ -2741,10 +2745,21 @@ mod tests {
     }
 
     #[test]
-    fn extract_retry_after_caps_at_120() {
+    fn extract_retry_after_preserves_provider_seconds() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::RETRY_AFTER, "3600".parse().unwrap());
-        assert_eq!(extract_retry_after(&headers), Some(120));
+        assert_eq!(extract_retry_after(&headers), Some(3600));
+    }
+
+    #[test]
+    fn extract_retry_after_preserves_u64_and_rejects_malformed_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, u64::MAX.to_string().parse().unwrap());
+        assert_eq!(extract_retry_after(&headers), Some(u64::MAX));
+        for malformed in ["-1", "1.5", "18446744073709551616", "invalid"] {
+            headers.insert(reqwest::header::RETRY_AFTER, malformed.parse().unwrap());
+            assert_eq!(extract_retry_after(&headers), None);
+        }
     }
 
     #[test]

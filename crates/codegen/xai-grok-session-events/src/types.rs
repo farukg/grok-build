@@ -1,8 +1,10 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 pub const EVENT_SCHEMA_VERSION: &str = "1.0";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     TurnStarted {
@@ -26,13 +28,19 @@ pub enum Event {
     ToolStarted {
         tool_name: String,
     },
+    ToolExecution {
+        tool_call_id: String,
+        #[serde(default)]
+        owner: xai_tool_protocol::tool_execution::ToolCallOwnership,
+        timing: xai_tool_protocol::tool_execution::ToolExecutionTiming,
+    },
     ToolCompleted {
         tool_name: String,
         duration_ms: u64,
         outcome: ToolOutcome,
-        #[serde(skip_serializing_if = "String::is_empty")]
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         tool_call_id: String,
-        #[serde(skip_serializing_if = "ToolCompletedSource::is_shell")]
+        #[serde(default, skip_serializing_if = "ToolCompletedSource::is_shell")]
         source: ToolCompletedSource,
         #[serde(skip_serializing_if = "Option::is_none")]
         rewriting_hook: Option<String>,
@@ -67,23 +75,23 @@ pub enum Event {
         fires: u32,
         pending: usize,
         in_progress: usize,
-        reason: &'static str,
+        reason: Cow<'static, str>,
     },
     TodoGateExhausted {
         pending: usize,
     },
     LazinessClassifierFired {
         model_id: String,
-        category: &'static str,
+        category: Cow<'static, str>,
         confidence: f32,
     },
     LazinessNudgeFired {
         model_id: String,
-        category: &'static str,
+        category: Cow<'static, str>,
         nudges_remaining: u32,
     },
     LazinessClassifierAborted {
-        reason: &'static str,
+        reason: Cow<'static, str>,
     },
     GoalClassifierFired {
         attempt: u32,
@@ -96,12 +104,12 @@ pub enum Event {
         latency_ms: u64,
     },
     GoalClassifierFailOpen {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         attempt: u32,
         latency_ms: u64,
     },
     GoalClassifierFailClosed {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         attempt: u32,
     },
     GoalClassifierCapReached {
@@ -126,7 +134,7 @@ pub enum Event {
         latency_ms: u64,
     },
     GoalPlannerFailClosed {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         attempt: u32,
         latency_ms: u64,
     },
@@ -142,13 +150,13 @@ pub enum Event {
         latency_ms: u64,
     },
     GoalStrategistFailed {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         attempt: u32,
         consecutive_failures: u32,
         latency_ms: u64,
     },
     GoalStrategistContractRestoreFailed {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         attempt: u32,
     },
     GoalSummarizerFired {
@@ -160,31 +168,31 @@ pub enum Event {
         latency_ms: u64,
     },
     GoalSummarizerFailOpen {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         attempt: u32,
         latency_ms: u64,
     },
 
     GoalRoleModelResolved {
-        role: &'static str,
+        role: Cow<'static, str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         skeptic_idx: Option<u32>,
         model_id: String,
         agent_type: String,
-        source: &'static str,
+        source: Cow<'static, str>,
     },
     GoalRoleModelFailOpen {
-        role: &'static str,
+        role: Cow<'static, str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         skeptic_idx: Option<u32>,
-        reason: &'static str,
+        reason: Cow<'static, str>,
     },
 
     GoalVerifierSkepticVerdict {
         attempt: u32,
         skeptic_idx: u32,
         refuted: bool,
-        confidence: &'static str,
+        confidence: Cow<'static, str>,
         latency_ms: u64,
     },
     GoalVerifierAggregateVerdict {
@@ -194,7 +202,7 @@ pub enum Event {
         achieved: bool,
     },
     GoalPrematureStopDetected {
-        pattern: &'static str,
+        pattern: Cow<'static, str>,
     },
 
     McpConfigResolved {
@@ -255,7 +263,7 @@ pub enum Event {
         total_tools: u32,
         duration_ms: u64,
         is_reinit: bool,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         failed_servers: Vec<String>,
     },
     McpInitCancelled {
@@ -312,7 +320,7 @@ pub enum Event {
     },
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCompletedSource {
     #[default]
@@ -326,14 +334,14 @@ impl ToolCompletedSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterjectionSource {
     Direct,
     Queue,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RedirectKind {
     Interjection,
@@ -341,7 +349,7 @@ pub enum RedirectKind {
     QueuedAfterCancel,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpErrorCategory {
     SpawnFailed,
@@ -351,21 +359,21 @@ pub enum McpErrorCategory {
     ClientError,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpConfigServer {
     pub name: String,
     pub transport: String,
     pub source: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalClassifierVerdictTelemetry {
     Achieved,
     NotAchieved,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalPauseReasonTelemetry {
     User,
@@ -376,7 +384,7 @@ pub enum GoalPauseReasonTelemetry {
     Planner,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[cfg_attr(test, derive(strum::EnumIter))]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -397,7 +405,7 @@ impl ToolOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     WaitingForModel,
@@ -407,7 +415,7 @@ pub enum Phase {
     PermissionPrompt,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionRelationship {
     Primary,
@@ -415,7 +423,7 @@ pub enum SessionRelationship {
     Subagent,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnOutcomeLabel {
     Completed,
@@ -425,7 +433,7 @@ pub enum TurnOutcomeLabel {
     Interrupted,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     Allow,
@@ -670,7 +678,7 @@ mod tests {
         assert_eq!(v.get("latency_ms"), Some(&serde_json::json!(42)));
 
         let failed = Event::GoalSummarizerFailOpen {
-            reason: "transport",
+            reason: "transport".into(),
             attempt: 2,
             latency_ms: 7,
         };
@@ -687,11 +695,11 @@ mod tests {
     #[test]
     fn goal_role_model_resolved_serializes_tag_and_fields() {
         let ev = Event::GoalRoleModelResolved {
-            role: "skeptic",
+            role: "skeptic".into(),
             skeptic_idx: Some(2),
             model_id: "grok-4".to_string(),
             agent_type: "general-purpose".to_string(),
-            source: "remote",
+            source: "remote".into(),
         };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(
@@ -711,11 +719,11 @@ mod tests {
     #[test]
     fn goal_role_model_resolved_omits_skeptic_idx_when_none() {
         let ev = Event::GoalRoleModelResolved {
-            role: "planner",
+            role: "planner".into(),
             skeptic_idx: None,
             model_id: "grok-4".to_string(),
             agent_type: "general-purpose".to_string(),
-            source: "remote",
+            source: "remote".into(),
         };
         let obj = serde_json::to_value(&ev).unwrap();
         assert!(
@@ -728,9 +736,9 @@ mod tests {
     #[test]
     fn goal_role_model_fail_open_omits_skeptic_idx_when_none() {
         let ev = Event::GoalRoleModelFailOpen {
-            role: "strategist",
+            role: "strategist".into(),
             skeptic_idx: None,
-            reason: "model_unauthorized",
+            reason: "model_unauthorized".into(),
         };
         let obj = serde_json::to_value(&ev).unwrap();
         assert!(

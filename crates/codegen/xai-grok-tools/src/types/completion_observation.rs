@@ -34,12 +34,23 @@ impl ObservedCompletion {
         }
     }
 
+    fn matches_task(&self, snapshot: &crate::computer::types::TaskSnapshot) -> bool {
+        match self {
+            Self::Terminal(ObservedTerminalCompletion::Task { snapshot: existing }) => {
+                existing.task_id == snapshot.task_id && existing.owner_session_id == snapshot.owner_session_id && existing.kind == snapshot.kind
+            }
+            Self::Subagent(_) | Self::Terminal(ObservedTerminalCompletion::Workflow { .. }) => false,
+        }
+    }
+
     fn same_identity(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Subagent(a), Self::Subagent(b)) => a.subagent_id == b.subagent_id && a.attempt_id == b.attempt_id,
-            (Self::Terminal(ObservedTerminalCompletion::Task { snapshot: a }), Self::Terminal(ObservedTerminalCompletion::Task { snapshot: b })) => a.task_id == b.task_id && a.owner_session_id == b.owner_session_id && a.kind == b.kind,
+            (Self::Terminal(ObservedTerminalCompletion::Task { .. }), Self::Terminal(ObservedTerminalCompletion::Task { snapshot })) => self.matches_task(snapshot),
             (Self::Terminal(ObservedTerminalCompletion::Workflow { run_id: a, revision: ar }), Self::Terminal(ObservedTerminalCompletion::Workflow { run_id: b, revision: br })) => a == b && ar == br,
-            _ => false,
+            (Self::Subagent(_), Self::Terminal(_)) | (Self::Terminal(_), Self::Subagent(_))
+            | (Self::Terminal(ObservedTerminalCompletion::Task { .. }), Self::Terminal(ObservedTerminalCompletion::Workflow { .. }))
+            | (Self::Terminal(ObservedTerminalCompletion::Workflow { .. }), Self::Terminal(ObservedTerminalCompletion::Task { .. })) => false,
         }
     }
 }
@@ -69,7 +80,10 @@ impl SubagentCompletionObservations {
     }
     pub fn record_task(&self, snapshot: &crate::computer::types::TaskSnapshot) {
         if snapshot.completed {
-            self.extend(vec![ObservedCompletion::Terminal(ObservedTerminalCompletion::Task { snapshot: Box::new(snapshot.clone()) })]);
+            let mut observations = self.0.lock();
+            if !observations.iter().any(|observed| observed.matches_task(snapshot)) {
+                observations.push(ObservedCompletion::Terminal(ObservedTerminalCompletion::Task { snapshot: Box::new(snapshot.clone()) }));
+            }
         }
     }
     pub fn record_workflow(&self, run_id: String, revision: u64) {
@@ -101,4 +115,5 @@ impl SubagentCompletionObservations {
         value.and_then(|value| serde_json::from_value(value).ok()).unwrap_or_default()
     }
     pub fn snapshot(&self) -> Vec<ObservedCompletion> { self.0.lock().clone() }
+    pub(crate) fn take(&self) -> Vec<ObservedCompletion> { std::mem::take(&mut *self.0.lock()) }
 }

@@ -64,6 +64,12 @@ fn build_worker_runtime() -> std::io::Result<tokio::runtime::Runtime> {
 pub(crate) use super::completion_publication::present_child_completion;
 
 struct ShellChildRunner {
+    #[cfg(test)]
+    native_wake_fault: std::cell::RefCell<Option<crate::session::persistence::native_wake_tests_support::ParentInputFault>>,
+    #[cfg(test)]
+    native_wake_artifacts: Option<(String, crate::session::repo_changes::UploadMethod)>,
+    #[cfg(test)]
+    native_coordinator_tx: Option<mpsc::UnboundedSender<xai_grok_tools::implementations::grok_build::task::types::SubagentEvent>>,
     agent_ref: LocalRef<MvpAgent>,
     /// Owned: panics are logged, coordinator teardown aborts stragglers.
     presentations: std::cell::RefCell<Vec<tokio_util::task::AbortOnDropHandle<()>>>,
@@ -134,8 +140,26 @@ impl coordinator::ChildRunner for ShellChildRunner {
             })?;
         super::durable_resume_source(subagent_id, parent_session_id, &cwd).map(|_| ())
     }
+    fn prepare_message_recovery(
+        &self,
+        request: &xai_grok_tools::implementations::grok_build::task::native_recovery::SubagentMessageRecoveryRequest,
+        audience: &xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryAudience,
+    ) -> xai_grok_tools::implementations::grok_build::task::native_recovery::PreparedMessageRecovery {
+        use xai_grok_tools::implementations::grok_build::task::native_recovery::PreparedMessageRecovery;
+        let Some(cwd) = self.agent_ref.get().get_session_cwd(&acp::SessionId::new(audience.parent_session_id())) else {
+            return PreparedMessageRecovery::Refused;
+        };
+        super::native_recovery::prepare(request, audience, &cwd)
+    }
+
     fn run(&self, mut run: coordinator::ChildRunRequest<Self::Control>) -> Self::RunFuture {
         let agent_ref = self.agent_ref.clone();
+        #[cfg(test)]
+        let native_wake_fault = run.wake_origin.as_ref().and_then(|_| self.native_wake_fault.borrow_mut().take());
+        #[cfg(test)]
+        let native_wake_artifacts = run.wake_origin.as_ref().and(self.native_wake_artifacts.clone());
+        #[cfg(test)]
+        let native_coordinator_tx = self.native_coordinator_tx.clone();
         Box::pin(async move {
             let this = agent_ref.get();
             let management_id = acp::SessionId::new(run.request.id.clone());
@@ -188,6 +212,24 @@ impl coordinator::ChildRunner for ShellChildRunner {
                     snapshot_ref: None,
                 };
             };
+            #[cfg(test)]
+            if let Some(sender) = native_coordinator_tx { ctx.subagent_event_tx = sender; }
+            #[cfg(test)]
+            if let Some((bucket, method)) = native_wake_artifacts {
+                ctx.gcs_bucket_url = Some(bucket);
+                ctx.gcs_upload_method = Some(method);
+            }
+            #[cfg(test)]
+            if let Some(fault) = native_wake_fault {
+                let parent_info = crate::session::info::Info { id: acp::SessionId::new(parent_sid.clone()), cwd: ctx.parent_cwd.to_string_lossy().into_owned() };
+                let mut harness = super::RunShellChildHarnessConfig::new(
+                    crate::session::persistence::session_dir(&parent_info).join("subagents").join(&run.request.id),
+                    super::InitialAttemptBehavior::Normal,
+                );
+                harness.parent_input_fault = Some(fault);
+                harness.initial_traceparent = Some("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".into());
+                ctx.run_shell_child_harness = Some(harness);
+            }
             let parent_handle = this.resident_handle(&acp::SessionId::new(parent_sid.clone()));
             if let Some(handle) = parent_handle {
                 let _region = Region::from_span(tracing::info_span!(
@@ -457,6 +499,12 @@ pub(crate) fn spawn_subagent_coordinator(
     limits: xai_grok_tools::implementations::grok_build::task::admission::SubagentLimits,
 ) {
     let runner = ShellChildRunner {
+        #[cfg(test)]
+        native_wake_fault: Default::default(),
+        #[cfg(test)]
+        native_wake_artifacts: None,
+        #[cfg(test)]
+        native_coordinator_tx: None,
         agent_ref,
         presentations: Default::default(),
     };
@@ -506,6 +554,8 @@ pub(crate) fn publish_child_completion(
                 "x.ai/session_notification",
                 params.into(),
             ));
+        } else {
+            gateway.fail_publication();
         }
     }
     let kind = match offer {
@@ -666,6 +716,7 @@ pub(crate) fn emit_subagent_notification(
     update: SessionUpdate,
     parent_cmd_tx: Option<&mpsc::UnboundedSender<SessionCommand>>,
 ) -> bool {
+    let _publication = gateway.begin_publication();
     let mut meta = None;
     crate::util::event_id::ensure_event_id_meta(parent_session_id, &mut meta);
     let notification = SessionNotification {
@@ -690,6 +741,7 @@ pub(crate) fn emit_subagent_notification(
         gateway.forward_fire_and_forget(ext_notification);
         return persist_ok;
     }
+    gateway.fail_publication();
     false
 }
 #[cfg(test)]
@@ -764,3 +816,7 @@ mod address_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/native_crash_adoption.rs"]
+mod native_crash_adoption_tests;

@@ -6,7 +6,12 @@ mod gateway;
 mod line_reader;
 mod message;
 mod normalize;
+mod publication;
+#[cfg(test)]
+mod publication_tests;
 mod stdin_reader;
+
+pub use publication::{PublicationCompletion, PublicationFailure, PublicationGuard, PublicationPrefix, ReceiverSettlement, ReceiverSettlementSelectionError};
 
 pub use self::{
     channel::{AcpAgentChannel, AcpChannel, AcpClientChannel, acp_channels, acp_send},

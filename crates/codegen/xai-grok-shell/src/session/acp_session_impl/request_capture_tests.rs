@@ -122,7 +122,7 @@ async fn capture_only_storage_failure_does_not_poison_primary_persistence() {
         let actor = Arc::new(actor);
         actor.handle_sampling_event(xai_grok_sampler::SamplingEvent::LocalRequest {
             request_id: xai_grok_sampler::RequestId::from(id.0.to_string()),
-            attempt: xai_grok_sampler::request_capture::RequestAttemptId(1), evidence: LocalRequestEvidence::DispatchStarted,
+            attempt: xai_grok_sampler::request_capture::RequestAttemptId(1), evidence: LocalRequestEvidence::DispatchStarted { started_at: Default::default() },
         }).await;
         let message = notifications.recv().await.unwrap();
         let xai_acp_lib::AcpClientMessage::ExtNotification(args) = message else { panic!("capture notification"); };

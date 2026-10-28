@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::session::persistence::{PersistedAgent, PersistenceMsg};
+use crate::session::request_capture::RequestSnapshotId;
 use xai_grok_login::backend::{ActiveAuthBackend, AuthBackend};
 use xai_grok_telemetry::region;
 use xai_grok_telemetry::region::Parent;
@@ -109,7 +110,8 @@ pub(super) fn transient_retry_eligible(error: &xai_grok_sampler::SamplingErrorIn
         | SamplingErrorKind::RateLimited
         | SamplingErrorKind::EmptyResponse
         | SamplingErrorKind::MaxTokensTruncation
-        | SamplingErrorKind::DoomLoopDetected => false,
+        | SamplingErrorKind::DoomLoopDetected
+        | SamplingErrorKind::RetrySchedule => false,
     }
 }
 
@@ -288,6 +290,7 @@ fn error_after_stream_drain(
 
 fn revoked_sampling_info() -> xai_grok_sampler::SamplingErrorInfo {
     xai_grok_sampler::SamplingErrorInfo {
+        retry_schedule: None,
         kind: xai_grok_sampler::SamplingErrorKind::Api,
         status_code: None,
         message: "sampling result revoked by turn cancellation or rewind".to_string(),
@@ -1206,7 +1209,7 @@ impl SessionActor {
     /// Park outcome plus its log line; `dispatch_skipped` marks the already-parked arm.
     fn park_uncharged_401(
         &self,
-        credential: xai_grok_sampling_types::SentCredential,
+        error: xai_grok_sampler::SamplingErrorInfo,
         dispatch_skipped: bool,
     ) -> SamplerFailureRecovery {
         tracing::warn!(
@@ -1220,7 +1223,7 @@ impl SessionActor {
             dispatch_skipped.then(|| serde_json::json!({ "dispatch": "skipped_already_parked" })),
         );
         SamplerFailureRecovery::RefreshAuthAndResubmit {
-            credential,
+            error,
             store: RecoveredStore::SessionToken,
         }
     }
@@ -1237,6 +1240,16 @@ impl SessionActor {
         park: TurnParkState,
     ) -> Result<SamplerFailureRecovery, acp::Error> {
         use xai_grok_sampler::SamplingErrorKind;
+
+        if error.kind == SamplingErrorKind::RetrySchedule {
+            self.log_terminal_failure(error.kind.as_ref(), None, &error.message);
+            self.send_xai_notification(XaiSessionUpdate::RetryState(
+                crate::extensions::notification::RetryState::Failed {
+                    error_type: error.kind.as_ref().to_owned(), message: error.message.clone(),
+                },
+            )).await;
+            return Err(crate::sampling::error::map_retry_schedule_info_to_acp(error));
+        }
 
         // On an in-flight salvage continuation, a max-tokens failure or a probable context overflow is not terminal.
         // Return before the budgeted-child rewrites so the marker survives for workflow children.
@@ -1457,7 +1470,7 @@ impl SessionActor {
             // A parked turn makes at most one recovery attempt (the pre-park one): each dispatch is up to two counted.
             // IdP attempts and `OidcRefresher` escalates five into a process-wide permanent verdict, so 50 parked cycles must not drive refreshes — the escalation-aware proactive loop owns refresh while parked.
             if park.is_parked() && self.uncharged_401_park_eligible(am, error.credential) {
-                return Ok(self.park_uncharged_401(error.credential, true));
+                return Ok(self.park_uncharged_401(error, true));
             }
             if am
                 .try_recover_unauthorized(xai_grok_login::recovery::RecoverySource::Turn)
@@ -1471,7 +1484,7 @@ impl SessionActor {
                 );
                 self.prepare_sampler_for_turn().await;
                 return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
-                    credential: error.credential,
+                    error,
                     store: RecoveredStore::SessionToken,
                 });
             }
@@ -1489,7 +1502,7 @@ impl SessionActor {
             // The 401 says nothing about the missing credential: park instead of failing the turn.
             // Do not add `prepare_sampler_for_turn` here — a prepare's refresh would count against the shared escalation budget.
             if self.uncharged_401_park_eligible(am, error.credential) {
-                return Ok(self.park_uncharged_401(error.credential, false));
+                return Ok(self.park_uncharged_401(error, false));
             }
         }
 
@@ -1499,7 +1512,7 @@ impl SessionActor {
         {
             self.prepare_sampler_for_turn().await;
             return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
-                credential: error.credential,
+                error,
                 store: RecoveredStore::AuthProvider,
             });
         }
@@ -1513,8 +1526,7 @@ impl SessionActor {
                     self.signals_handle().record_idle_timeout();
                 }
                 return Ok(SamplerFailureRecovery::RetryTransient {
-                    kind: error.kind,
-                    status_code: error.status_code,
+                    error,
                 });
             }
             xai_grok_telemetry::unified_log::error(
@@ -1755,6 +1767,7 @@ impl SessionActor {
     pub(crate) async fn run_turn_via_sampler(
         self: &Arc<Self>,
         request: ConversationRequest,
+        mut request_id: RequestSnapshotId,
         budget: &mut RateLimitWaitBudget,
         transient: TransientRetryState,
         mid_salvage_continuation: bool,
@@ -1768,7 +1781,7 @@ impl SessionActor {
 
         if !budget.can_wait() {
             // Nothing will send this request a second time, so move it into the sampler instead of deep-cloning the whole message history on every main-session turn
-            return match self.submit_turn_request(request).await {
+            return match self.submit_turn_request(request, request_id).await {
                 Ok(outcome) => Ok(outcome),
                 Err(info) => {
                     self.recover_from_sampling_failure(
@@ -1784,7 +1797,7 @@ impl SessionActor {
         }
 
         loop {
-            match self.submit_turn_request(request.clone()).await {
+            match self.submit_turn_request(request.clone(), request_id).await {
                 Ok(outcome) => {
                     budget.record_submission_accepted();
                     return Ok(outcome);
@@ -1803,9 +1816,15 @@ impl SessionActor {
                             )
                             .await;
                     };
-                    self.notify_rate_limit_wait(attempt, budget, backoff).await;
+                    request_id = RequestSnapshotId::random();
+                    let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(backoff)
+                        .map_err(|cause| self.retry_schedule_error(None, &info, backoff, cause))?;
+                    self.notify_rate_limit_wait(attempt, budget, backoff, &request_id.into(), &deadline).await;
                     // Esc cancels a turn by aborting its task, so this await point is itself the cancellation point; no select needed
-                    sleep(backoff).await;
+                    deadline.wait().await.map_err(|cause| self.retry_schedule_error(
+                        Some(&request_id.into()), &info, backoff,
+                        xai_grok_sampler::retry_deadline::RetryScheduleCause::Wait(cause),
+                    ))?;
                     // A token can expire across minutes of accumulated waits
                     // (parked turns skip it — see `run_turn_via_sampler`).
                     if !park.is_parked() {
@@ -1820,10 +1839,11 @@ impl SessionActor {
     async fn submit_turn_request(
         self: &Arc<Self>,
         mut request: ConversationRequest,
+        snapshot_id: RequestSnapshotId,
     ) -> Result<SamplerTurnOutcome, xai_grok_sampler::SamplingErrorInfo> {
-        let snapshot_id = crate::session::request_capture::RequestSnapshotId(uuid::Uuid::new_v4());
-        let request_id = xai_grok_sampler::RequestId::from(snapshot_id.0.to_string());
+        let request_id = snapshot_id.into();
         self.begin_request_capture(snapshot_id, &request);
+        self.register_sampling_request(&request_id);
         self.turn_phases.record_sampling_request();
         let _sampling_phase = self.turn_phases.begin_sampling();
         let stream_drained_rx = {
@@ -1933,6 +1953,7 @@ impl SessionActor {
                 // A queued terminal event already released ownership when it was acknowledged above
                 // Without one, release ownership after authoritative metadata accounting
                 if !terminal_event_queued {
+                    self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Completed);
                     self.turn_stream_drained.lock().remove(&request_id);
                 }
                 Ok(SamplerTurnOutcome::Response(
@@ -1952,16 +1973,15 @@ impl SessionActor {
                         "failed-event drain barrier timed out; continuing recovery",
                     )
                     .await
-                } else if self
-                    .turn_stream_drained
-                    .lock()
-                    .remove(&request_id)
-                    .is_some()
-                {
-                    StreamDrainOutcome::Acknowledged
                 } else {
-                    StreamDrainOutcome::Revoked
+                    self.discard_failed_sampling_request(&request_id);
+                    if self.turn_stream_drained.lock().remove(&request_id).is_some() {
+                        StreamDrainOutcome::Acknowledged
+                    } else {
+                        StreamDrainOutcome::Revoked
+                    }
                 };
+                self.discard_failed_sampling_request(&request_id);
                 Err(error_after_stream_drain(outcome, original))
             }
         }
@@ -1990,11 +2010,11 @@ impl SessionActor {
             SamplerFailureRecovery::CompactAndResubmit => {
                 Ok(SamplerTurnOutcome::CompactAndResubmit)
             }
-            SamplerFailureRecovery::RefreshAuthAndResubmit { credential, store } => {
-                Ok(SamplerTurnOutcome::RefreshAuthAndResubmit { credential, store })
+            SamplerFailureRecovery::RefreshAuthAndResubmit { error, store } => {
+                Ok(SamplerTurnOutcome::RefreshAuthAndResubmit { error, store })
             }
-            SamplerFailureRecovery::RetryTransient { kind, status_code } => {
-                Ok(SamplerTurnOutcome::RetryTransient { kind, status_code })
+            SamplerFailureRecovery::RetryTransient { error } => {
+                Ok(SamplerTurnOutcome::RetryTransient { error })
             }
         }
     }
@@ -2005,6 +2025,8 @@ impl SessionActor {
         attempt: u32,
         budget: &RateLimitWaitBudget,
         backoff: Duration,
+        request_id: &xai_grok_sampler::RequestId,
+        deadline: &xai_grok_sampler::retry_deadline::RetryDeadline,
     ) {
         // Debug, not warn: a burst of subagents would otherwise flood the log.
         tracing::debug!(
@@ -2025,7 +2047,7 @@ impl SessionActor {
         );
         // Whole seconds with a one-second floor: a sub-second jittered wait would otherwise render as "waiting 0s"
         let announced = Duration::from_secs(backoff.as_secs_f64().round().max(1.0) as u64);
-        self.send_xai_notification(XaiSessionUpdate::RetryState(
+        self.schedule_sampling_retry(request_id, deadline,
             crate::extensions::notification::RetryState::Retrying {
                 attempt,
                 max_retries: budget.max_attempts(),
@@ -2034,9 +2056,9 @@ impl SessionActor {
                     human_duration(announced)
                 ),
                 error_type: None,
+                next_attempt_at_ms: deadline.projection().wall_deadline_ms,
             },
-        ))
-        .await;
+        );
     }
 
     fn log_rate_limit_budget_spent(
@@ -2434,6 +2456,7 @@ mod stream_drain_tests {
     #[test]
     fn failed_drain_revocation_supersedes_original_error() {
         let original = xai_grok_sampler::SamplingErrorInfo {
+            retry_schedule: None,
             kind: xai_grok_sampler::SamplingErrorKind::RateLimited,
             status_code: Some(429),
             message: "original sampling failure".to_string(),

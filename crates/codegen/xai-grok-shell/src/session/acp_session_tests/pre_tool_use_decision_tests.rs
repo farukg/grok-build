@@ -107,7 +107,7 @@ async fn pre_tool_use_rewrite_runs_silently_and_is_telemetry_tagged() {
 
             tokio::time::timeout(
                 Duration::from_secs(10),
-                actor.execute_tool_calls(vec![read_file_call("call_run_rewrite")], None),
+                actor.execute_tool_calls(vec![read_file_call("call_run_rewrite")], None, None),
             )
             .await
             .expect("execute_tool_calls must not hang")
@@ -594,7 +594,7 @@ async fn pre_tool_use_defer_hook_neither_blocks_nor_prompts() {
 
             tokio::time::timeout(
                 Duration::from_secs(10),
-                actor.execute_tool_calls(vec![read_file_call("call_defer")], None),
+                actor.execute_tool_calls(vec![read_file_call("call_defer")], None, None),
             )
             .await
             .expect("execute_tool_calls must not hang")
@@ -648,7 +648,7 @@ async fn pre_tool_use_additional_context_reaches_the_model_after_the_tool_result
 
             tokio::time::timeout(
                 Duration::from_secs(10),
-                actor.execute_tool_calls(vec![read_file_call("call_context")], None),
+                actor.execute_tool_calls(vec![read_file_call("call_context")], None, None),
             )
             .await
             .expect("execute_tool_calls must not hang")

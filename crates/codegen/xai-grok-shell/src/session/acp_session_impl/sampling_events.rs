@@ -1,12 +1,13 @@
 use super::*;
 
 impl SessionActor {
-    async fn send_thought_chunk(&self, text: String, chunk_index: u64, origin: crate::session::source_binding::OutputSourceOrigin) {
-        self.send_update(
+    async fn send_thought_chunk(&self, text: String, chunk_index: u64, origin: crate::session::source_binding::OutputSourceOrigin, request_id: &xai_grok_sampler::RequestId) {
+        self.send_sampling_update(
             acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
                 acp::TextContent::new(text),
             )).meta(Some(origin.into_meta()))),
             Some(chunk_index),
+            request_id,
         )
         .await;
     }
@@ -109,10 +110,11 @@ impl SessionActor {
         use xai_grok_sampler::{SamplingChannel, SamplingEvent};
 
         let local_request = matches!(&event, SamplingEvent::LocalRequest { .. });
-        let request_owned = self
+        let request_present = self
             .turn_stream_drained
             .lock()
             .contains_key(event.request_id());
+        let request_owned = request_present && !self.sampling_request_discarded(event.request_id());
         let owns_pending_strip = self
             .pending_image_strip
             .lock()
@@ -138,12 +140,21 @@ impl SessionActor {
         ) {
             self.close_stream_apply_span(event.request_id());
         }
-        if !request_owned && !closes_backend_tool && !resolves_pending_strip && !local_request {
+        let closes_stream = request_present && matches!(&event, SamplingEvent::Completed { .. } | SamplingEvent::Failed { .. });
+        if !request_owned && !closes_backend_tool && !resolves_pending_strip && !local_request && !closes_stream {
             return;
         }
 
         match event {
             SamplingEvent::LocalRequest { request_id, attempt, evidence } => {
+                if let xai_grok_sampler::request_capture::LocalRequestEvidence::DispatchStarted { started_at } = &evidence {
+                    self.dispatch_sampling_attempt(&request_id, attempt, *started_at);
+                }
+                if matches!(&evidence, xai_grok_sampler::request_capture::LocalRequestEvidence::Finished {
+                    outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Cancelled,
+                }) && self.sampling_owner(&request_id).is_some_and(|owner| owner.attempt == attempt) {
+                    self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Cancelled);
+                }
                 self.observe_local_request(request_id, attempt, evidence).await;
             }
             SamplingEvent::StreamStarted {
@@ -211,11 +222,12 @@ impl SessionActor {
                     self.emit_event(crate::session::events::Event::PhaseChanged {
                         phase: crate::session::events::Phase::StreamingText,
                     });
-                    self.send_update(
+                    self.send_sampling_update(
                         acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                             acp::ContentBlock::Text(acp::TextContent::new(text)),
                         ).meta(Some(origin.into_meta()))),
                         Some(chunk_index),
+                        &request_id,
                     )
                     .await;
                 }
@@ -248,7 +260,7 @@ impl SessionActor {
                     self.emit_event(crate::session::events::Event::PhaseChanged {
                         phase: crate::session::events::Phase::StreamingReasoning,
                     });
-                    self.send_thought_chunk(text, chunk_index, origin).await;
+                    self.send_thought_chunk(text, chunk_index, origin, &request_id).await;
                 }
                 SamplingChannel::Narration => {
                     // Not appended to the capture. The capture already recorded these deltas as reasoning
@@ -260,13 +272,14 @@ impl SessionActor {
                     // A complete block, unlike streaming text deltas: paragraph breaks on both sides keep it
                     // from gluing onto response text or a sibling narration sharing the message entry
                     // (markdown rendering collapses the extra blank lines)
-                    self.send_update(
+                    self.send_sampling_update(
                         acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
                             acp::ContentBlock::Text(acp::TextContent::new(format!(
                                 "\n\n{text}\n\n"
                             ))),
                         ).meta(Some(origin.into_meta()))),
                         Some(chunk_index),
+                        &request_id,
                     )
                     .await;
                 }
@@ -292,15 +305,19 @@ impl SessionActor {
                 // A tool call is a token (ttft) but not meaningful text output (ttfm).
                 self.record_turn_first_token(Some(&request_id));
 
-                self.send_buffered_xai_update(XaiSessionUpdate::ToolCallDeltaChunk {
-                    tool_call_id: id,
-                    tool_index,
-                    name,
-                    arguments_delta,
-                })
+                self.send_buffered_xai_update(
+                    XaiSessionUpdate::ToolCallDeltaChunk {
+                        tool_call_id: id,
+                        tool_index,
+                        name,
+                        arguments_delta,
+                    },
+                    Some(&request_id),
+                )
                 .await;
             }
             SamplingEvent::ResponseStarted {
+                request_id,
                 message_id,
                 model,
                 input_tokens,
@@ -310,21 +327,31 @@ impl SessionActor {
             } => {
                 // Ride the buffered chunk rail (the same FIFO `event_tx` as `send_update`) so this lands ahead of the response's first agent chunk
                 // That lets partial framing in headless mode emit the real `message_start` id and input usage in order
-                self.send_buffered_xai_update(XaiSessionUpdate::ResponseStarted {
-                    message_id: Some(message_id),
-                    model: Some(model),
-                    input_tokens,
-                    cache_read_input_tokens,
-                    cache_creation_input_tokens,
-                })
+                self.send_buffered_xai_update(
+                    XaiSessionUpdate::ResponseStarted {
+                        message_id: Some(message_id),
+                        model: Some(model),
+                        input_tokens,
+                        cache_read_input_tokens,
+                        cache_creation_input_tokens,
+                    },
+                    Some(&request_id),
+                )
                 .await;
             }
-            SamplingEvent::ReasoningCompleted { signature, .. } => {
+            SamplingEvent::ReasoningCompleted {
+                request_id,
+                signature,
+                ..
+            } => {
                 // Ride the buffered chunk rail so this lands right after the response's thought chunks and before its text
                 // That lets partial framing in headless mode emit `signature_delta` before the thinking block's `content_block_stop`
-                self.send_buffered_xai_update(XaiSessionUpdate::ReasoningCompleted {
-                    signature: Some(signature),
-                })
+                self.send_buffered_xai_update(
+                    XaiSessionUpdate::ReasoningCompleted {
+                        signature: Some(signature),
+                    },
+                    Some(&request_id),
+                )
                 .await;
             }
             SamplingEvent::DoomLoopSignals {
@@ -343,6 +370,7 @@ impl SessionActor {
                 response,
                 metrics: _,
             } => {
+                self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Completed);
                 let request_updates_turn = request_owned;
 
                 // Persist before the drain waiter is released so the next prompt cannot
@@ -438,12 +466,15 @@ impl SessionActor {
                 request_id,
                 attempt,
                 max_retries,
+                backoff_ms: _,
+                deadline,
+                next_attempt,
                 kind,
                 reason,
                 doom_loop_triggers,
                 doom_loop_aborted_at_chunk,
             } => {
-                if !self.turn_stream_drained.lock().contains_key(&request_id) {
+                if !self.advance_sampling_attempt(&request_id, next_attempt) {
                     return;
                 }
                 if kind == xai_grok_sampler::SamplingErrorKind::DoomLoopDetected {
@@ -486,17 +517,18 @@ impl SessionActor {
                         "reason": crate::util::truncate(&reason, 300),
                     })),
                 );
-                self.send_xai_notification(XaiSessionUpdate::RetryState(
+                self.schedule_sampling_retry(&request_id, &deadline,
                     crate::extensions::notification::RetryState::Retrying {
                         attempt,
                         max_retries,
                         reason,
                         error_type: Some(kind.as_ref().to_string()),
+                        next_attempt_at_ms: deadline.projection().wall_deadline_ms,
                     },
-                ))
-                .await;
+                );
             }
             SamplingEvent::Failed { request_id, error } => {
+                self.finish_sampling_request(&request_id, crate::extensions::sampling_lifecycle::SamplingOutcome::Failed);
                 // Persist before releasing the drain waiter / waking the turn.
                 self.apply_pending_image_strip(&request_id).await;
                 if !request_owned {
@@ -557,7 +589,7 @@ impl SessionActor {
                     reference: xai_grok_sampling_types::OutputOrigin::Item { reference: xai_grok_sampling_types::ProviderOutputRef::Item(call_id.clone()) },
                 }.into_meta();
                 meta.insert("backend".to_owned(), serde_json::Value::Bool(true));
-                self.send_update(
+                self.send_sampling_update(
                     acp::SessionUpdate::ToolCall(
                         acp::ToolCall::new(
                             acp::ToolCallId::new(Arc::from(call_id.as_str())),
@@ -571,6 +603,7 @@ impl SessionActor {
                         .meta(Some(meta)),
                     ),
                     None,
+                    &request_id,
                 )
                 .await;
             }

@@ -4,6 +4,8 @@ use super::super::replay_buffer_send_update_tests::{
 use super::*;
 
 fn own_request(actor: &SessionActor, request_id: &xai_grok_sampler::RequestId) {
+    actor.current_prompt_id.lock().unwrap().get_or_insert_with(|| "sampling-test-prompt".into());
+    actor.register_sampling_request(request_id);
     let (tx, _rx) = tokio::sync::oneshot::channel();
     actor.turn_stream_drained.lock().insert(
         request_id.clone(),
@@ -324,6 +326,7 @@ async fn completed_event_clears_slot_keeps_prior_uncommitted_segments() {
 
             // Completion clears the in-progress slot without wiping the capture.
             let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&req);
             actor.turn_stream_drained.lock().insert(
                 req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(tx)),
@@ -386,6 +389,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
             // Install the barrier exactly as `run_turn_via_sampler` does.
             let req = RequestId::random();
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&req);
             actor.turn_stream_drained.lock().insert(
                 req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(tx)),
@@ -476,6 +480,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
             // Request ownership stays until the terminal event applies its side effects
             let late_req = RequestId::random();
             let (late_tx, late_rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&late_req);
             actor.turn_stream_drained.lock().insert(
                 late_req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(late_tx)),
@@ -523,6 +528,9 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
                     request_id: late_req.clone(),
                     attempt: 1,
                     max_retries: 2,
+                    backoff_ms: 250,
+                    deadline: xai_grok_sampler::retry_deadline::RetryDeadline::after(std::time::Duration::from_millis(250)).unwrap(),
+                    next_attempt: xai_grok_sampler::request_capture::RequestAttemptId(2),
                     kind: xai_grok_sampler::SamplingErrorKind::DoomLoopDetected,
                     reason: "queued retry after timeout".to_string(),
                     doom_loop_triggers: Some(vec!["tail_repetition:8@thinking".to_string()]),
@@ -552,6 +560,7 @@ async fn completed_event_releases_stream_drain_barrier_and_timeout_keeps_request
 
             let newer_req = RequestId::random();
             let (newer_tx, _newer_rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&newer_req);
             actor.turn_stream_drained.lock().insert(
                 newer_req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(newer_tx)),
@@ -719,6 +728,9 @@ async fn unowned_retry_does_not_notify_the_next_turn() {
                     request_id: RequestId::random(),
                     attempt: 1,
                     max_retries: 2,
+                    backoff_ms: 250,
+                    deadline: xai_grok_sampler::retry_deadline::RetryDeadline::after(std::time::Duration::from_millis(250)).unwrap(),
+                    next_attempt: xai_grok_sampler::request_capture::RequestAttemptId(2),
                     kind: SamplingErrorKind::DoomLoopDetected,
                     reason: "late retry from cancelled request".to_string(),
                     doom_loop_triggers: Some(vec!["tail_repetition:8@thinking".to_string()]),
@@ -756,6 +768,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
 
             let req = RequestId::random();
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&req);
             actor.turn_stream_drained.lock().insert(
                 req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(tx)),
@@ -789,6 +802,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                 .handle_sampling_event(SamplingEvent::Failed {
                     request_id: req.clone(),
                     error: SamplingErrorInfo {
+                        retry_schedule: None,
                         kind: SamplingErrorKind::MaxTokensTruncation,
                         status_code: None,
                         message: "max output tokens reached".to_string(),
@@ -826,6 +840,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                 .expect("signals snapshot")
                 .error_count;
             let timed_out = RequestId::random();
+            actor.register_sampling_request(&timed_out);
             actor.turn_stream_drained.lock().insert(
                 timed_out.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(None),
@@ -834,6 +849,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                 .handle_sampling_event(SamplingEvent::Failed {
                     request_id: timed_out,
                     error: SamplingErrorInfo {
+                        retry_schedule: None,
                         kind: SamplingErrorKind::Api,
                         status_code: Some(500),
                         message: "late owned failure".to_string(),
@@ -865,6 +881,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
                 .handle_sampling_event(SamplingEvent::Failed {
                     request_id: RequestId::random(),
                     error: SamplingErrorInfo {
+                        retry_schedule: None,
                         kind: SamplingErrorKind::Api,
                         status_code: Some(500),
                         message: "stale failure".to_string(),
@@ -935,6 +952,7 @@ async fn observe_only_confident_completion_stays_warn_only() {
 
             let req = RequestId::random();
             let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&req);
             actor.turn_stream_drained.lock().insert(
                 req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(tx)),
@@ -1037,6 +1055,7 @@ async fn exact_repetition_completion_is_tracked_for_incidence_only() {
             };
             let req = RequestId::random();
             let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&req);
             actor.turn_stream_drained.lock().insert(
                 req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(tx)),
@@ -1093,6 +1112,7 @@ async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
 
             let req = RequestId::random();
             let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+            actor.register_sampling_request(&req);
             actor.turn_stream_drained.lock().insert(
                 req.clone(),
                 crate::session::acp_session::StreamOwnership::with_waiter(Some(tx)),
@@ -1128,6 +1148,9 @@ async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
                     request_id: req.clone(),
                     attempt: 1,
                     max_retries: 2,
+                    backoff_ms: 250,
+                    deadline: xai_grok_sampler::retry_deadline::RetryDeadline::after(std::time::Duration::from_millis(250)).unwrap(),
+                    next_attempt: xai_grok_sampler::request_capture::RequestAttemptId(2),
                     kind: SamplingErrorKind::DoomLoopDetected,
                     reason: "doom loop detected: tail_repetition:8@thinking".to_string(),
                     doom_loop_triggers: Some(vec!["tail_repetition:8@thinking".to_string()]),
@@ -1140,6 +1163,9 @@ async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
                     request_id: req.clone(),
                     attempt: 1,
                     max_retries: 2,
+                    backoff_ms: 250,
+                    deadline: xai_grok_sampler::retry_deadline::RetryDeadline::after(std::time::Duration::from_millis(250)).unwrap(),
+                    next_attempt: xai_grok_sampler::request_capture::RequestAttemptId(2),
                     kind: SamplingErrorKind::DoomLoopDetected,
                     reason: "duplicate queued retry".to_string(),
                     doom_loop_triggers: Some(vec!["tail_repetition:8@thinking".to_string()]),
@@ -1432,6 +1458,7 @@ async fn reasoning_only_doomloop_turn_captures_every_generation_as_segments() {
             // This is the sampler's terminal event once retries are exhausted
             // It carries the same empty-response context the L2 stream attaches for a reasoning-only completion
             let error = SamplingErrorInfo {
+                retry_schedule: None,
                 kind: SamplingErrorKind::EmptyResponse,
                 status_code: None,
                 message: "empty response from model (reasoning_only)".to_string(),

@@ -12,6 +12,12 @@ use wait_interrupt::{
     interrupted_wait_tool_result, record_interruptible_wait_outcome, wait_for_wait_interrupt,
     wait_task_ids_from_args,
 };
+#[path = "tool_cancellation.rs"]
+mod tool_cancellation;
+#[cfg(test)]
+#[path = "tool_execution_tests.rs"]
+mod tool_execution_tests;
+use tool_cancellation::{DispatchCompletionGuard, native_error_outcome};
 #[derive(Default)]
 struct PreToolUseGate {
     hook_ask: Option<HookAsk>,
@@ -336,13 +342,14 @@ impl SessionActor {
         &self,
         tool_calls: Vec<crate::sampling::types::ToolCallResponse>,
         requested_model: Option<String>,
+        sampling_owner: Option<&crate::extensions::sampling_lifecycle::SamplingOwner>,
     ) -> Result<ToolLoop, acp::Error> {
         if let Some(model) = requested_model.as_deref() {
             tracing::Span::current().record("model_id", model);
         }
         let mut final_result: Option<ToolLoop> = None;
         let mut deferred_followups: Vec<ConversationItem> = Vec::new();
-        let tool_calls = self.reject_excess_media_gen_calls(tool_calls).await?;
+        let tool_calls = self.reject_excess_media_gen_calls(tool_calls, sampling_owner).await?;
         if !tool_calls.is_empty() {
             if tool_calls.len() > 1 {
                 let kind_of = |name: &str| self.agent.borrow().tool_bridge().tool_kind(name);
@@ -353,6 +360,7 @@ impl SessionActor {
                         &mut deferred_followups,
                         &mut final_result,
                         requested_model.as_deref(),
+                        sampling_owner,
                     )
                     .await?;
                 }
@@ -362,6 +370,7 @@ impl SessionActor {
                         &mut deferred_followups,
                         &mut final_result,
                         requested_model.as_deref(),
+                        sampling_owner,
                     )
                     .await?;
                 }
@@ -371,6 +380,7 @@ impl SessionActor {
                     &mut deferred_followups,
                     &mut final_result,
                     requested_model.as_deref(),
+                    sampling_owner,
                 )
                 .await?;
             }
@@ -414,6 +424,7 @@ impl SessionActor {
     async fn reject_excess_media_gen_calls(
         &self,
         tool_calls: Vec<crate::sampling::types::ToolCallResponse>,
+        sampling_owner: Option<&crate::extensions::sampling_lifecycle::SamplingOwner>,
     ) -> Result<Vec<crate::sampling::types::ToolCallResponse>, acp::Error> {
         let kind_of = |name: &str| self.agent.borrow().tool_bridge().tool_kind(name);
         let (allowed, rejected) = xai_grok_tools::media_gen_limits::partition_media_gen_batch(
@@ -431,10 +442,19 @@ impl SessionActor {
         for (call, reason) in rejected {
             let tool_name = call.function.name.clone();
             *rejected_by_name.entry(tool_name.clone()).or_default() += 1;
-            let tool_call_id = acp::ToolCallId::new(std::sync::Arc::from(call.id.clone()));
+            let registered = self.register_tool_call(&call, sampling_owner);
+            registered.current_action.scope(async {
+            let tool_call_id = registered.tool_call_id.clone();
             let early_raw_input =
                 serde_json::from_str::<serde_json::Value>(&call.function.arguments).ok();
-            let meta = self.stamp_tool_meta(None, &tool_name, None);
+            let mut meta = self.stamp_tool_meta(None, &tool_name, None);
+            crate::extensions::tool_timing::stamp_ownership(
+                meta.get_or_insert_with(acp::Meta::new),
+                &crate::extensions::tool_timing::ToolCallOwnership::Registered {
+                    invocation_id: registered.invocation_id.as_str().to_owned(),
+                    provider_call_id: call.id.clone(), source: registered.source.clone(),
+                },
+            ).map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
             self.send_update(
                 acp::SessionUpdate::ToolCall(
                     acp::ToolCall::new(tool_call_id.clone(), tool_name.clone())
@@ -446,8 +466,8 @@ impl SessionActor {
                 None,
             )
             .await;
-            self.handle_tool_not_executed(&call.id, &tool_call_id, reason)
-                .await?;
+            self.handle_tool_not_executed(&call.id, &tool_call_id, reason).await
+            }).await?;
         }
         let limits = &self.rebuild_spec.media_gen_batch_limits;
         for (name, rejected_n) in &rejected_by_name {
@@ -487,7 +507,9 @@ impl SessionActor {
         deferred_followups: &mut Vec<ConversationItem>,
         final_result: &mut Option<ToolLoop>,
         requested_model: Option<&str>,
+        sampling_owner: Option<&crate::extensions::sampling_lifecycle::SamplingOwner>,
     ) -> Result<(), acp::Error> {
+        self.install_tool_lifecycle_bridge();
         if self.permissions.is_auto_mode() {
             let conversation = self.chat_state_handle.get_conversation().await;
             super::refresh_classifier_transcript(&self.permissions, &conversation);
@@ -544,24 +566,22 @@ impl SessionActor {
                 .await;
             let call_name = call.function.name.clone();
             match self
-                .prepare_tool_call(call, deferred_followups, requested_model)
+                .prepare_tool_call(call, deferred_followups, requested_model, sampling_owner)
                 .await?
             {
                 Ok(prepared) => {
                     if let Err(error) = mcp_file_budget.admit(&prepared) {
-                        self.handle_tool_not_executed(
+                        prepared.current_action.scope(self.handle_tool_not_executed(
                             &prepared.call_id,
                             &prepared.tool_call_id,
                             error,
-                        )
-                        .await?;
-                        self.events.tool_finished();
+                        )).await?;
+                        self.events.tool_terminal(&prepared.ownership());
                     } else {
                         approved.push(prepared);
                     }
                 }
                 Err(tool_loop) => {
-                    self.events.tool_finished();
                     if let Some((server, tool)) =
                         crate::session::mcp_servers::parse_mcp_tool_name(&call_name)
                     {
@@ -789,8 +809,17 @@ impl SessionActor {
                     .and_then(|p| p.as_ref())
                     .and_then(|path| file_locks.get(path).cloned());
                 let tools_execute_span = tracing::Span::current();
-                async move {
+                let writer = self.events.writer();
+                let publication = prepared.current_action.clone();
+                async move { publication.scope(async move {
                     let exec_start = std::time::Instant::now();
+                    let execution = tool_cancellation::execution_observation(
+                        writer.clone(), Arc::clone(&prepared),
+                    );
+                    let mut completion = DispatchCompletionGuard::new(
+                        writer, &prepared.tool_name, prepared.tool_call_id.0.as_ref(), exec_start,
+                        prepared.ownership(),
+                    );
                     let tool_span = crate::session::telemetry::tool_execution_span(
                         &tools_execute_span,
                         session_id.as_ref(),
@@ -830,6 +859,7 @@ impl SessionActor {
                         let workflow_validate_only_param = workflow_validate_only_param.clone();
                         let latest_slot = std::sync::Arc::clone(&latest_slot);
                         let origin = origin.clone();
+                        let execution = execution.clone();
                         async move {
                             let slot =
                                 xai_grok_tools::types::source_summary::SourceSummarySlot::new();
@@ -846,6 +876,7 @@ impl SessionActor {
                                     &session_id,
                                     origin,
                                     slot,
+                                    Some(execution),
                                 )
                                 .await
                             };
@@ -940,6 +971,7 @@ impl SessionActor {
                             false,
                         )
                     };
+                    completion.settle();
                     if let Some(guard) = wait_guard.as_ref() {
                         let waited = wait_task_ids_from_args(prepared.authored_arguments());
                         let finished = if wait_aborted {
@@ -1001,7 +1033,7 @@ impl SessionActor {
                         })),
                     );
                     (idx, result, duration_ms, projection)
-                }
+                }).await }
             })
             .collect();
         tokio::task::yield_now().await;
@@ -1037,6 +1069,7 @@ impl SessionActor {
                 );
                 continue;
             };
+            prepared.current_action.scope(async {
             self.signals_handle().record_tool_call(&prepared.tool_name);
             let tool_call_id = if prepared.call_id.is_empty() {
                 tracing::warn!(
@@ -1052,6 +1085,7 @@ impl SessionActor {
                 prepared.tool_name.clone(),
                 tool_call_id.clone(),
                 duration_ms,
+                prepared.ownership(),
             );
             let mut post_tool_use_delivery: Option<PostToolUseDelivery> = None;
             let mut post_tool_use_failure_contexts: Vec<
@@ -1077,6 +1111,10 @@ impl SessionActor {
                 external_tool_bodies(&result)
             } else {
                 (None, None)
+            };
+            let execution_outcome = match &result {
+                Ok(_) => crate::session::events::ToolOutcome::Success,
+                Err(error) => native_error_outcome(error.kind),
             };
             let tool_loop = match result {
                 Ok(tool_result) => {
@@ -1200,8 +1238,9 @@ impl SessionActor {
                     &context.text,
                 ));
             }
-            self.events.tool_finished();
+            self.events.tool_terminal(&prepared.ownership());
             let tool_outcome = match &tool_loop {
+                ToolLoop::Continue if execution_outcome == crate::session::events::ToolOutcome::Cancelled => execution_outcome,
                 _ if tool_failed => crate::session::events::ToolOutcome::Error,
                 ToolLoop::Continue => crate::session::events::ToolOutcome::Success,
                 ToolLoop::PermissionReject { .. } => {
@@ -1295,6 +1334,8 @@ impl SessionActor {
                 }
                 _ => {}
             }
+            Ok::<(), acp::Error>(())
+            }).await?;
         }
         Ok(())
     }
@@ -1442,13 +1483,66 @@ impl SessionActor {
             hook_name: rewrite.hook_name,
         }))
     }
+    fn register_tool_call(
+        &self,
+        call: &crate::sampling::types::ToolCallResponse,
+        sampling_owner: Option<&crate::extensions::sampling_lifecycle::SamplingOwner>,
+    ) -> RegisteredToolCall {
+        let tool_call_id = acp::ToolCallId::new(Arc::from(call.id.clone()));
+        let invocation_id = xai_grok_telemetry::events::InvocationId::generate();
+        let source = match sampling_owner {
+            Some(owner) => crate::extensions::tool_timing::ToolCallSource::Sampling {
+                prompt_id: owner.prompt_id.clone(), request_id: owner.request_id.as_str().to_owned(),
+                attempt: owner.attempt.0,
+            },
+            None => crate::extensions::tool_timing::ToolCallSource::Unknown,
+        };
+        let current_action = crate::session::current_actions::ToolRegistration::new(
+            self.current_actions.clone(),
+            crate::extensions::tool_timing::ToolCallOwnership::Registered {
+                invocation_id: invocation_id.as_str().to_owned(), provider_call_id: call.id.clone(), source: source.clone(),
+            },
+            xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()),
+        );
+        RegisteredToolCall { tool_call_id, invocation_id, source, current_action }
+    }
+
     pub(crate) async fn prepare_tool_call(
         &self,
         call: crate::sampling::types::ToolCallResponse,
         deferred_followups: &mut Vec<ConversationItem>,
         requested_model: Option<&str>,
+        sampling_owner: Option<&crate::extensions::sampling_lifecycle::SamplingOwner>,
     ) -> Result<Result<PreparedToolCall, ToolLoop>, acp::Error> {
-        let tool_call_id = acp::ToolCallId::new(Arc::from(call.id.clone()));
+        self.install_tool_lifecycle_bridge();
+        let registered = self.register_tool_call(&call, sampling_owner);
+        let tool_name = call.function.name.clone();
+        let call_id = call.id.clone();
+        let mut completion = DispatchCompletionGuard::preparing(
+            self.events.writer(), &tool_name, &call_id,
+            crate::extensions::tool_timing::ToolCallOwnership::Registered {
+                invocation_id: registered.invocation_id.as_str().to_owned(),
+                provider_call_id: call_id.clone(), source: registered.source.clone(),
+            },
+        );
+        let result = registered.current_action.clone().scope(self.prepare_registered_tool_call(
+            call, deferred_followups, requested_model, registered,
+        )).await;
+        completion.settle();
+        result
+    }
+
+    async fn prepare_registered_tool_call(
+        &self,
+        call: crate::sampling::types::ToolCallResponse,
+        deferred_followups: &mut Vec<ConversationItem>,
+        requested_model: Option<&str>,
+        registered: RegisteredToolCall,
+    ) -> Result<Result<PreparedToolCall, ToolLoop>, acp::Error> {
+        let RegisteredToolCall { tool_call_id, invocation_id, source, current_action } = registered;
+        let ownership = crate::extensions::tool_timing::ToolCallOwnership::Registered {
+            invocation_id: invocation_id.as_str().to_owned(), provider_call_id: call.id.clone(), source: source.clone(),
+        };
         let model_id = crate::session::telemetry::requested_model_snapshot(requested_model);
         let model_id_str = model_id.as_deref().unwrap_or("");
         tracing::info!(
@@ -1476,6 +1570,10 @@ impl SessionActor {
                         .unwrap_or(true)
                 });
             let mut meta = self.stamp_tool_meta(None, &call.function.name, None);
+            crate::extensions::tool_timing::stamp_ownership(
+                meta.get_or_insert_with(acp::Meta::new),
+                &ownership,
+            ).map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
             if let Some(bg) = subagent_background {
                 meta.get_or_insert_with(serde_json::Map::new).insert(
                     "subagentBackground".to_string(),
@@ -1760,6 +1858,10 @@ impl SessionActor {
                 .as_ref()
                 .map(|(t, k, r)| (Some(t.clone()), Some(*k), Some(r.clone())))
                 .unwrap_or((None, None, None));
+            let mut permission_meta = self.stamp_tool_meta(None, &call.function.name, Some(&tool_input));
+            crate::extensions::tool_timing::stamp_ownership(
+                permission_meta.get_or_insert_with(acp::Meta::new), &ownership,
+            ).map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
             let tool_call_update = acp::ToolCallUpdate::new(
                 tool_call_id.clone(),
                 acp::ToolCallUpdateFields::new()
@@ -1767,7 +1869,7 @@ impl SessionActor {
                     .kind(perm_kind)
                     .raw_input(perm_raw_input),
             )
-            .meta(self.stamp_tool_meta(None, &call.function.name, Some(&tool_input)));
+            .meta(permission_meta);
             let (telemetry_access_kind, _access_detail) = match &access_kind {
                 xai_grok_workspace::permission::AccessKind::Read(p) => (
                     xai_grok_telemetry::events::AccessKind::Read,
@@ -1845,6 +1947,7 @@ impl SessionActor {
                         self.session_info.id.clone(),
                         tool_call_id.to_string(),
                         crate::session::pending_interaction::PendingKind::Permission,
+                        Some((self.current_actions.clone(), current_action.owner(), xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::from_std(perm_wait_start)))),
                     );
                 self.permissions
                     .request(PermissionRequest {
@@ -1957,8 +2060,10 @@ impl SessionActor {
                         "User cancelled the execution for tool `{}`",
                         call.function.name
                     );
-                    self.handle_tool_not_executed(&call.id, &tool_call_id, message)
-                        .await?;
+                    self.handle_tool_not_executed_with_outcome(
+                        &call.id, &tool_call_id, message,
+                        crate::session::events::ToolOutcome::PermissionCancelled,
+                    ).await?;
                     return Ok(Err(ToolLoop::Cancelled));
                 }
                 Decision::FollowupMessage(followup_message) => {
@@ -2089,8 +2194,10 @@ impl SessionActor {
                              client disconnected. Plan mode remains active; the approval \
                              will reappear on reconnect."
                             .to_string();
-                        self.handle_tool_not_executed(&call.id, &tool_call_id, message)
-                            .await?;
+                        self.handle_tool_not_executed_with_outcome(
+                            &call.id, &tool_call_id, message,
+                            crate::session::events::ToolOutcome::PermissionCancelled,
+                        ).await?;
                         return Ok(Err(ToolLoop::Cancelled));
                     }
                 }
@@ -2137,7 +2244,6 @@ impl SessionActor {
             let toolset = self.agent.borrow().tool_bridge().toolset();
             crate::session::telemetry::tool_identity(&toolset, &call.function.name)
         };
-        let invocation_id = xai_grok_telemetry::events::InvocationId::generate();
         let prepared = PreparedToolCall {
             call_id: call.id.clone(),
             tool_call_id,
@@ -2147,6 +2253,8 @@ impl SessionActor {
             parsed_args: arguments.authored,
             model_id,
             invocation_id: invocation_id.as_str().to_owned(),
+            source,
+            current_action,
             tool_id,
             tool_version,
             concatenated_json_count,
@@ -2200,6 +2308,7 @@ impl SessionActor {
                 self.session_info.id.clone(),
                 tool_call_id.to_string(),
                 crate::session::pending_interaction::PendingKind::PlanApproval,
+                Some((self.current_actions.clone(), self.current_actions.scoped_owner(), xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()))),
             );
             self.notifications.gateway.ext_method(ext_request).await
         };
@@ -2880,27 +2989,36 @@ impl SessionActor {
         if consumed_ids.is_empty() {
             return;
         }
+        use xai_chat_state::completion::{CompletionIdentity, TerminalCompletionId};
         let mut state = self.state.lock().await;
-        let dropped = state.sweep_pending_inputs(|i| {
-            i.input_origin
-                .completion_id()
-                .is_some_and(|id| consumed_ids.contains(&id))
-        });
+        let running = state.running_prompt_id().map(str::to_owned);
+        let mut kept = VecDeque::with_capacity(state.pending_inputs.len());
+        let mut dropped = Vec::new();
+        for mut input in std::mem::take(&mut state.pending_inputs) {
+            let ids: Vec<_> = input.input_origin.completions().iter().filter(|id| match id {
+                CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { task_id, .. }, .. } => consumed_ids.contains(&task_id.as_str()),
+                CompletionIdentity::Subagent(id) => consumed_ids.contains(&id.subagent_id.as_str()),
+                CompletionIdentity::V2 { terminal: TerminalCompletionId::Workflow { .. }, .. } => false,
+            }).cloned().collect();
+            if running.as_deref() != Some(input.prompt_id.as_str())
+                && (input.input_origin.completion_id().is_some_and(|id| consumed_ids.contains(&id))
+                    || input.input_origin.remove_consumed_completions(&ids))
+            {
+                dropped.push(input);
+            } else {
+                kept.push_back(input);
+            }
+        }
+        state.pending_inputs = kept;
         let dropped_inputs = dropped.len();
         let before_notifications = state.pending_notifications.len();
-        state
-            .pending_notifications
-            .retain(|n| !consumed_ids.contains(&n.source.task_id()));
+        state.pending_notifications.retain(|n| !consumed_ids.contains(&n.source.task_id()));
         let dropped_notifications = before_notifications - state.pending_notifications.len();
         drop(state);
         if let Some(reservations) = &self.tool_context.task_completion_reservations {
-            for task_id in dropped
-                .iter()
-                .filter_map(|input| input.input_origin.completion_id())
-            {
-                reservations.release(task_id);
-            }
+            for task_id in consumed_ids { reservations.release(task_id); }
         }
+        for input in dropped { Self::respond_removed_prompt(input.respond_to); }
         if dropped_inputs > 0 || dropped_notifications > 0 {
             tracing::info!(
                 dropped_inputs,
@@ -3003,12 +3121,9 @@ impl SessionActor {
             model_output_override,
         } = args;
         let (mut result, mut tool_layer_images) = drained.into_parts();
-        let consumed_ids =
-            xai_grok_tools::reminders::task_completion::consumed_completion_ids(&result.output);
-        if !consumed_ids.is_empty() {
-            self.drop_pending_items_for_consumed_completions(&consumed_ids)
-                .await;
-        }
+        let observations = self.tool_bridge_handle()
+            .observe_consumed_task_results(&result.output, &result.completed_subagents).await;
+        result.completed_subagents.extend(observations);
         if let ToolsToolOutput::BackgroundTaskStarted(ref bg) = result.output {
             self.record_goal_turn_task_ids([bg.task_id.clone()]);
         }
@@ -3312,6 +3427,9 @@ impl SessionActor {
             _ => format!("Tool `{requested_tool_name}` failed: {err_str}"),
         };
         let message = mcp_argument_coercion::append_coercion_reminder(message, coercion_note);
+        let meta = err.downcast_ref::<xai_tool_runtime::ToolError>()
+            .filter(|error| native_error_outcome(error.kind) == crate::session::events::ToolOutcome::Cancelled)
+            .map(|_| crate::session::acp_types::ToolTerminalStatus::Cancelled.meta());
         self.send_update(
             acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
                 tool_call_id.clone(),
@@ -3324,7 +3442,7 @@ impl SessionActor {
                         "error": "tool_execution_failed",
                         "message": err_str,
                     }))),
-            )),
+            ).meta(meta)),
             None,
         )
         .await;
@@ -3356,6 +3474,27 @@ impl SessionActor {
         tool_call_id: &acp::ToolCallId,
         reason: String,
     ) -> Result<(), acp::Error> {
+        self.handle_tool_not_executed_with_outcome(
+            model_call_id, tool_call_id, reason, crate::session::events::ToolOutcome::Error,
+        ).await
+    }
+
+    async fn handle_tool_not_executed_with_outcome(
+        &self,
+        model_call_id: &str,
+        tool_call_id: &acp::ToolCallId,
+        reason: String,
+        outcome: crate::session::events::ToolOutcome,
+    ) -> Result<(), acp::Error> {
+        use crate::session::events::ToolOutcome;
+        use crate::session::acp_types::ToolTerminalStatus;
+        let meta = match outcome {
+            ToolOutcome::Cancelled | ToolOutcome::PermissionCancelled => {
+                Some(ToolTerminalStatus::Cancelled.meta())
+            }
+            ToolOutcome::Success | ToolOutcome::Error | ToolOutcome::PermissionRejected
+            | ToolOutcome::Followup | ToolOutcome::HookDenied | ToolOutcome::InvalidTool => None,
+        };
         let tool_update = acp::ToolCallUpdate::new(
             tool_call_id.clone(),
             acp::ToolCallUpdateFields::new()
@@ -3363,7 +3502,7 @@ impl SessionActor {
                 .content(Some(vec![acp::ToolCallContent::from(
                     acp::ContentBlock::Text(acp::TextContent::new(reason.clone())),
                 )])),
-        );
+        ).meta(meta);
         self.send_update(acp::SessionUpdate::ToolCallUpdate(tool_update), None)
             .await;
         let tool_chat = ConversationItem::tool_result(model_call_id.to_owned(), reason);

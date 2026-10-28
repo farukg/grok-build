@@ -14,6 +14,8 @@ pub use super::handle::{PerCallNotificationSink, ToolNotificationHandle};
 #[derive(Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BashNotificationBase {
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub start_time: Option<std::time::SystemTime>,
     /// The tool call ID (used to correlate with the tool call in TUI)
     pub tool_call_id: String,
 
@@ -547,6 +549,7 @@ mod payload_tests {
     #[test]
     fn output_lossy_replaces_invalid_utf8() {
         let base = BashNotificationBase {
+            start_time: None,
             tool_call_id: "tc".into(),
             command: "c".into(),
             output: vec![b'h', b'i', 0xff],
@@ -564,6 +567,7 @@ mod tests {
 
     fn base_with_output(output: Vec<u8>) -> BashNotificationBase {
         BashNotificationBase {
+            start_time: None,
             tool_call_id: "tc-1".into(),
             command: "echo hi".into(),
             output,

@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::cpu_profile::{ControlError, ProfileArtifactFormat};
 
-const MAX_MESSAGE_SIZE: u32 = 64 * 1024 * 1024;
+pub(crate) const MAX_MESSAGE_SIZE: u32 = 64 * 1024 * 1024;
 const FRAME_HEADER_LEN: usize = 4;
 
 #[derive(Debug, thiserror::Error)]

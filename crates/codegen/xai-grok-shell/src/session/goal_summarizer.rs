@@ -319,7 +319,7 @@ fn record_fail_open(
 ) -> GoalSummarizerOutcome {
     let latency_ms = started.elapsed().as_millis() as u64;
     emit_event(Event::GoalSummarizerFailOpen {
-        reason: reason.as_const_str(),
+        reason: reason.as_const_str().into(),
         attempt,
         latency_ms,
     });

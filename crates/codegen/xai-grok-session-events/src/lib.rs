@@ -6,10 +6,12 @@
 
 #![deny(clippy::indexing_slicing)]
 
+pub mod decode;
 pub mod log;
 pub mod tracker;
 pub mod types;
 
+pub use decode::{EventEntry, decode_event, decode_event_entry};
 pub use log::EventWriter;
 pub use tracker::EventTracker;
 pub use types::{

@@ -169,7 +169,7 @@ fn immediate_projection_covers_every_current_tool_outcome() {
             },
             Outcome::QuotaExceeded,
         ),
-        (Send::AdmissionUncertain, Outcome::AdmissionUncertain),
+        (Send::AdmissionUncertain { recovery_ref: crate::session::persistence::native_wake_tests_support::wire_reference_fixture().into() }, Outcome::AdmissionUncertain),
         (
             Send::NotAcceptedBeforeDeadline,
             Outcome::NotAcceptedBeforeDeadline,

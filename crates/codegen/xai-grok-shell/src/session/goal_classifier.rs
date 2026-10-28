@@ -549,7 +549,7 @@ async fn record_fail_open(
 ) -> GoalClassifierOutcome {
     let latency_ms = started.elapsed().as_millis() as u64;
     emit_event(Event::GoalClassifierFailOpen {
-        reason: reason.as_const_str(),
+        reason: reason.as_const_str().into(),
         attempt,
         latency_ms,
     });
@@ -1813,7 +1813,7 @@ pub(crate) async fn run_verification_stage(
             attempt: inputs.attempt,
             skeptic_idx: r.skeptic_idx,
             refuted: r.refuted,
-            confidence: r.confidence.as_const_str(),
+            confidence: r.confidence.as_const_str().into(),
             latency_ms: r.latency_ms,
         });
     }

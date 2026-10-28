@@ -549,6 +549,7 @@ pub enum SessionUpdate {
     },
     /// Notification that a retry is in progress due to a transient error.
     RetryState(RetryState),
+    SamplingLifecycle { lifecycle: crate::extensions::sampling_lifecycle::SamplingLifecycle },
     /// Auto-compact is starting due to context window threshold
     AutoCompactStarted {
         #[serde(default)]
@@ -887,6 +888,8 @@ pub enum SessionUpdate {
     /// A bash command transitioned to background execution.
     /// Sent both for direct `is_background=true` tasks and when a foreground task moves to the background.
     TaskBackgrounded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start_time: Option<std::time::SystemTime>,
         /// The tool_call_id of the bash tool invocation.
         tool_call_id: String,
         /// The background task registry ID.
@@ -1358,6 +1361,10 @@ pub enum RetryState {
         /// Sampler error kind when known; absent on old shells and non-sampler paces.
         #[serde(default)]
         error_type: Option<String>,
+        /// Diagnostic wall projection. Live countdowns require the typed scheduler clock
+        /// in `_meta.samplingLifecycle`; old records may omit both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_attempt_at_ms: Option<i64>,
     },
     /// All retries have been exhausted
     Exhausted {
@@ -1625,6 +1632,44 @@ mod tests {
     fn http_401_needle_is_contained_in_unauthorized_needle() {
         // Pins the sub-needle doc claim.
         assert!(UNAUTHORIZED_NEEDLE.contains(HTTP_401_NEEDLE));
+    }
+
+    #[test]
+    fn retry_state_replaying_parses_without_deadline_and_roundtrips_it() {
+        // Old shells persisted no nextAttemptAtMs; those records must still load.
+        let legacy = serde_json::json!({
+            "type": "retrying",
+            "attempt": 2,
+            "maxRetries": 5,
+            "reason": "overloaded",
+            "errorType": null,
+        });
+        let parsed: RetryState = serde_json::from_value(legacy).unwrap();
+        let RetryState::Retrying {
+            attempt,
+            next_attempt_at_ms,
+            ..
+        } = parsed
+        else {
+            panic!("expected Retrying");
+        };
+        assert_eq!(attempt, 2);
+        assert!(next_attempt_at_ms.is_none());
+
+        let stamped = RetryState::Retrying {
+            attempt: 3,
+            max_retries: 5,
+            reason: "overloaded".into(),
+            error_type: None,
+            next_attempt_at_ms: Some(1_700_000_000_000),
+        };
+        let wire = serde_json::to_value(&stamped).unwrap();
+        assert_eq!(
+            wire.get("nextAttemptAtMs").and_then(serde_json::Value::as_i64),
+            Some(1_700_000_000_000)
+        );
+        let round: RetryState = serde_json::from_value(wire).unwrap();
+        assert_eq!(round, stamped);
     }
 
     #[test]

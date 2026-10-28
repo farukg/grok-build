@@ -128,6 +128,8 @@ pub(super) async fn publish_committed_completion(
     completion: ChildCompletion<ShellCompletionData>,
     gateway: GatewaySender,
 ) -> xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult {
+    let mut publication = gateway.begin_publication();
+    publication.require_delivery();
     let will_wake = will_wake_for(&completion);
     let data = &completion.completion_data;
     let Some(prepared) = data.prepared_producer() else {
@@ -166,6 +168,7 @@ pub(super) async fn publish_committed_completion(
         Ok(_) => xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Published,
         Err(error) => xai_grok_tools::implementations::grok_build::task::coordinator::TerminalVisibilityResult::Deferred { error: error.to_string() },
     };
+    let published = result.is_ok();
     let (notification, text, offer) = match result {
         Ok(published) => (published.notification, published.text, published.offer),
         Err(error) => {
@@ -200,6 +203,9 @@ pub(super) async fn publish_committed_completion(
         }
     };
     super::spawn::publish_child_completion(completion, &gateway, offer, notification, text);
+    if published {
+        publication.enqueued();
+    }
     visibility
 }
 

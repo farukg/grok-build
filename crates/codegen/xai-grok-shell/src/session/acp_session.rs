@@ -125,6 +125,9 @@ use post_tool_use_delivery::*;
 mod image_strip;
 #[path = "acp_session_impl/interjection.rs"]
 mod interjection;
+#[path = "acp_session_impl/sampling_progress.rs"]
+mod sampling_progress;
+
 #[path = "acp_session_impl/sampling_events.rs"]
 mod sampling_events;
 #[path = "acp_session_impl/workflow_write_smoke_check.rs"]
@@ -318,7 +321,7 @@ pub(crate) struct InputItem {
     pub(crate) parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
     /// Fires when this exact row is promoted to the running turn.
     /// Dropped on removal so a queued-but-never-started initial child prompt cannot ack.
-    pub(crate) initial_child_prompt_ready: Option<oneshot::Sender<oneshot::Sender<()>>>,
+    pub(crate) initial_child_prompt_ready: Option<crate::session::message_delivery::InitialChildPromptSink>,
     /// Server-authoritative prompt-queue metadata.
     /// `Some` for user-originated prompts (they appear in the shared queue).
     /// `None` for synthetic / system inputs (auto-wake, nudges, notification drains).
@@ -641,6 +644,13 @@ mod managed_gateway_error_tests {
         );
     }
 }
+struct RegisteredToolCall {
+    tool_call_id: acp::ToolCallId,
+    invocation_id: xai_grok_telemetry::events::InvocationId,
+    source: crate::extensions::tool_timing::ToolCallSource,
+    current_action: super::current_actions::ToolRegistration,
+}
+
 /// Data carried from prepare_tool_call through dispatch_tool to finalize.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedToolCall {
@@ -659,6 +669,8 @@ pub(crate) struct PreparedToolCall {
     model_id: Option<String>,
     /// Host id for this logical invocation. Not the provider call id.
     invocation_id: String,
+    source: crate::extensions::tool_timing::ToolCallSource,
+    current_action: super::current_actions::ToolRegistration,
     /// Qualified registry id, or the opaque class.
     tool_id: String,
     /// Managed behavior version, when the registration has one.
@@ -676,6 +688,14 @@ pub(crate) struct PreparedToolCall {
     additional_context: Vec<xai_grok_hooks::dispatcher::AdditionalContext>,
 }
 impl PreparedToolCall {
+    fn ownership(&self) -> crate::extensions::tool_timing::ToolCallOwnership {
+        crate::extensions::tool_timing::ToolCallOwnership::Registered {
+            invocation_id: self.invocation_id.clone(),
+            provider_call_id: self.call_id.clone(),
+            source: self.source.clone(),
+        }
+    }
+
     /// The tool name hooks see: the resolved dispatch target, else the wire name.
     /// The single source for the resolved name across the dispatch-phase hook events (PostToolUse / PostToolUseFailure) and their telemetry labels.
     pub(crate) fn hook_tool_name(&self) -> &str {
@@ -876,6 +896,7 @@ pub(crate) struct SessionActor {
     /// Pushed by `SessionCommand::Interject` handler, drained at safe points in `process_conversation_turn`.
     /// Internally synchronized.
     pub(crate) pending_interjections: InterjectionBuffer<acp::ImageContent>,
+    pub(super) queue_operations: std::cell::RefCell<queue_mutation::QueueOperations>,
     /// Skill-announcement reminders that arrived while a turn was running.
     /// Flushed at the same safe points as `pending_interjections`, plus on cancel/idle.
     /// The flush also delivers the plan tracker's buffered mid-turn activation reminder (see `activate_plan_mode_mid_turn`).
@@ -1148,6 +1169,7 @@ pub(crate) struct SessionActor {
     pub(crate) streaming_turn_capture: parking_lot::Mutex<StreamingTurnCapture>,
     pub(crate) stream_apply_span: parking_lot::Mutex<Option<StreamApplySpan>>,
     pub(crate) current_turn_span_id: parking_lot::Mutex<Option<tracing::Id>>,
+    pub(crate) current_actions: super::current_actions::Source,
     /// Orders streamed text against tool-call `send_update`s, which allocate the client-visible `eventId` at call time on separate `LocalSet` tasks.
     /// Without the barrier a tool call can land between still-draining text chunks and split the assistant message on every client.
     /// Map presence owns the stream; a timeout clears the waiter without invalidating FIFO events already queued, and turn/cancel boundaries revoke abandoned ownership.
@@ -1772,6 +1794,9 @@ mod prompt_mode_transition_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/prompt_queue_actor_tests.rs"]
 mod prompt_queue_actor_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/queue_send_now_ingress_tests.rs"]
+mod queue_send_now_ingress_tests;
 /// Regression coverage for the per-turn `record_token_usage` path.
 #[cfg(test)]
 #[path = "acp_session_tests/record_response_token_usage_tests.rs"]
@@ -1838,7 +1863,7 @@ mod tool_meta_stamp_tests {
                 );
                 let prepared = fixture
                     .actor
-                    .prepare_tool_call(read_file_call(), &mut Vec::new(), None)
+                    .prepare_tool_call(read_file_call(), &mut Vec::new(), None, None)
                     .await
                     .expect("prepare_tool_call should not error");
                 assert!(prepared.is_ok(), "read_file should prepare cleanly");
@@ -1928,7 +1953,7 @@ mod tool_meta_stamp_tests {
                 });
                 let prepared = fixture
                     .actor
-                    .prepare_tool_call(read_file_call(), &mut Vec::new(), None)
+                    .prepare_tool_call(read_file_call(), &mut Vec::new(), None, None)
                     .await
                     .expect("prepare_tool_call should not error");
                 assert!(prepared.is_ok(), "allowed read_file should prepare cleanly");

@@ -21,6 +21,7 @@ mod resume;
 mod root_targets;
 mod spawn;
 mod wake;
+mod native_recovery;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -61,7 +62,8 @@ pub use super::coordinator_state::{
     LocalBoxFuture, MAX_ACTIVE_MESSAGE_ADMISSIONS, MAX_ACTIVE_MESSAGE_ADMISSIONS_PER_CHILD,
     MAX_COMPLETED_ENTRIES, SendBoxFuture, StartedChild, SubagentCaller, SubagentLimitDecision,
     SubagentLimitNotice, SubagentLimitSink, SubagentProgress, TerminalCommitResult,
-    TerminalVisibilityResult, WakeOrigin,
+    TerminalVisibilityResult, WakeOrigin, InitialMessageTerminalOwnership, ChildCancellation,
+    ChildCancelOutcome,
 };
 use queue::{QUEUED_REAP_INTERVAL, QueuedCaller, SpawnQueue, StartOrigin};
 use wake::PendingWake;
@@ -184,6 +186,7 @@ impl SubagentCoordinatorReceiver {
         let active_message_permits = Arc::new(tokio::sync::Semaphore::new(active_message_capacity));
         let agent_message_sender_factory =
             super::agent_message_sender::AgentMessageSenderFactory::new(
+                tx.downgrade(),
                 active_message_tx.downgrade(),
                 Arc::clone(&active_message_permits),
                 active_message_capacity,
@@ -411,6 +414,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
 
     fn handle_command(&mut self, command: SubagentEvent) {
         match command {
+            SubagentEvent::RecoverMessage(command) => self.recover_message(command),
             SubagentEvent::Spawn(command) => self.handle_spawn(command),
             SubagentEvent::Query(query) => {
                 self.handle_query(
@@ -450,8 +454,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         .respond_to
                         .send(SubagentCancelOutcome::Cancelled { cause });
                 }
-                SubagentCancelTarget::ParentSession => {
-                    let outcome = self.cancel_parent_session(request.parent_session_id.as_deref());
+                SubagentCancelTarget::ParentSession(intent) => {
+                    let outcome = self.cancel_parent_session(request.parent_session_id.as_deref(), intent);
                     let _ = request.respond_to.send(outcome);
                 }
                 SubagentCancelTarget::WorkflowRunId(run_id) => {
@@ -1010,7 +1014,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     let _ = respond_to.send(false);
                     return;
                 };
-                if pending.cancellation.is_cancelled() {
+                if pending.cancellation.is_cancelled()
+                    || (pending.wake_of.is_some() && !defer_admission
+                        && !self.spawn_ready.initial_admission_reserved(&subagent_id, &control))
+                {
                     self.pending.insert(subagent_id.clone(), pending);
                     let _ = respond_to.send(false);
                     // Never becomes active: human parked sends are terminal.
@@ -1081,20 +1088,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     let _ = respond_to.send(false);
                     return;
                 };
-                if is_committed {
+                let admission_committed = self.spawn_ready.initial_admission_reserved(&subagent_id, &child.control);
+                if is_committed && admission_committed {
                     self.activate_wake_incarnation(&subagent_id);
                     self.active.insert(subagent_id.clone(), child);
                     self.admit_spawn_ready_messages(&subagent_id);
                 } else {
                     child.request.surface_completion = false;
                     child.cancellation.cancel();
-                    child.control.cancel();
+                    child.control.cancel(ChildCancellation::Shutdown);
                     child.deferred_wake = Some(displaced);
                     let _ = child.active_messages.start_terminalizing();
                     self.active.insert(subagent_id.clone(), child);
                     self.reject_spawn_ready_ids(std::slice::from_ref(&subagent_id));
                 }
-                let _ = respond_to.send(true);
+                let _ = respond_to.send(!is_committed || admission_committed);
             }
             InternalEvent::Finalizing {
                 subagent_id,
@@ -1204,14 +1212,34 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         // graph advertise target (main's lineage source of truth).
         let spawner_session_id =
             spawner_session_id.or_else(|| self.graph.advertise_target(&id).map(str::to_owned));
-        let identity = super::agent_message_sender::AgentMessageSender::mint_for_child(
-            self.agent_message_sender_factory.as_ref(),
-            &id,
-            !request.owner.is_workflow() && self.runner.supports_agent_message_sender(),
-        );
+        let enabled = !request.owner.is_workflow() && self.runner.supports_agent_message_sender();
+        let identity = match wake_origin.as_ref().map(|origin| &origin.mode) {
+            Some(super::native_recovery::NativeWakeMode::Adopt { custody, attempt_id, .. }) => {
+                super::agent_message_sender::AgentMessageSender::for_identity(
+                    self.agent_message_sender_factory.as_ref(), &id, enabled,
+                    attempt_id.clone(), custody.receiver.generation,
+                )
+            }
+            Some(super::native_recovery::NativeWakeMode::Admit) | None => {
+                super::agent_message_sender::AgentMessageSender::mint_for_child(
+                    self.agent_message_sender_factory.as_ref(), &id, enabled,
+                )
+            }
+        };
         let attempt_id = identity.attempt_id;
         let generation = identity.generation;
         let agent_message_sender = identity.sender;
+        if let Some(origin) = &wake_origin {
+            origin.delivery.bind_receiver(&id, generation);
+        }
+        let wake_of = match wake_of {
+            Some(previous) => Some(super::coordinator_state::PreStartWake::Completed(previous)),
+            None => match wake_origin.as_ref().map(|origin| &origin.mode) {
+                Some(super::native_recovery::NativeWakeMode::Adopt { publication: super::native_recovery::RecoveryPublication::Published, .. }) => Some(super::coordinator_state::PreStartWake::Published),
+                Some(super::native_recovery::NativeWakeMode::Admit)
+                | Some(super::native_recovery::NativeWakeMode::Adopt { publication: super::native_recovery::RecoveryPublication::Unpublished { .. }, .. }) | None => None,
+            },
+        };
         self.pending.insert(
             id.clone(),
             PendingChild {
@@ -1433,7 +1461,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             };
             if let Some(child) = self.active.get_mut(id) {
                 child.cancellation.cancel();
-                child.control.cancel();
+                child.control.cancel(ChildCancellation::Shutdown);
             }
         }
         self.finish_child(id, output);
@@ -1456,16 +1484,27 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             ChildRecord::Pending(child) => child.cancellation.is_cancelled(),
             ChildRecord::Active(child) => child.cancellation.is_cancelled(),
         };
-        if let Some(mut displaced) = record.take_failed_pre_start_wake(output.result.success()) {
-            tracing::warn!(
-                subagent_id = %id,
-                error = ?output.result.error(),
-                "subagent wake failed before start; keeping prior record",
-            );
-            // Host rejections also cancel the token, so only a recorded user or owner cancel counts.
-            displaced.completed.wake_eligible &= disposition.allows_wake();
-            let parent_session_id = displaced.completed.request.parent_session_id.clone();
-            self.restore_displaced_completion(displaced);
+        let terminal_ownership = match &record {
+            ChildRecord::Active(child) => child.control.initial_message_terminal_ownership(),
+            ChildRecord::Pending(_) => InitialMessageTerminalOwnership::Message,
+        };
+        let rollback = match terminal_ownership {
+            InitialMessageTerminalOwnership::Message => record.take_failed_pre_start_wake(output.result.success()),
+            InitialMessageTerminalOwnership::AdoptionAttempt => record.take_failed_pre_start_wake(false)
+                .or(Some(super::coordinator_state::PreStartWake::Published)),
+        };
+        if let Some(rollback) = rollback {
+            let parent_session_id = record.request().parent_session_id.clone();
+            match rollback {
+                super::coordinator_state::PreStartWake::Completed(mut displaced) => {
+                    tracing::warn!(subagent_id = %id, error = ?output.result.error(), "subagent wake failed before start; keeping prior record");
+                    displaced.completed.wake_eligible &= disposition.allows_wake();
+                    self.restore_displaced_completion(displaced);
+                }
+                super::coordinator_state::PreStartWake::Published => {
+                    tracing::warn!(subagent_id = %id, "published native wake adoption unconfirmed; retaining durable custody");
+                }
+            }
             self.running_count_changed();
             self.resolve_teardown_drain_waiters(&parent_session_id);
             self.start_queued_within_capacity();
@@ -1679,9 +1718,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             return SubagentCancelOutcome::NotFound;
         }
         if let Some(child) = self.active.get_mut(id) {
+            match child.control.cancel(ChildCancellation::Authorized) {
+                ChildCancelOutcome::Accepted => {}
+                ChildCancelOutcome::AttemptEnded => return SubagentCancelOutcome::NotFound,
+            }
             child.disposition.interrupt(cause.clone());
             child.cancellation.cancel();
-            child.control.cancel();
             self.reject_spawn_ready_ids(&[id.to_owned()]);
             return SubagentCancelOutcome::Cancelled { cause };
         }
@@ -1727,9 +1769,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             if child.request.parent_prompt_id.as_deref() == Some(parent_prompt_id)
                 && belongs_to_session(&child.request, parent_session_id)
             {
+                child.control.cancel(ChildCancellation::Authorized);
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
-                child.control.cancel();
                 doomed.push(child.request.id.clone());
             }
         }
@@ -1815,7 +1857,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.request.surface_completion = false;
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
-                child.control.cancel();
+                child.control.cancel(ChildCancellation::Shutdown);
                 doomed.push(child.request.id.clone());
                 cancelled += 1;
             }
@@ -1922,7 +1964,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     /// All non-workflow children for the parent session (user Stop / Esc). Requires a concrete
     /// session id — unbound (`None`) is rejected so a wildcard cannot cancel every session on a
     /// shared coordinator.
-    fn cancel_parent_session(&mut self, parent_session_id: Option<&str>) -> SubagentCancelOutcome {
+    fn cancel_parent_session(&mut self, parent_session_id: Option<&str>, intent: ChildCancellation) -> SubagentCancelOutcome {
         let Some(parent_session_id) = parent_session_id else {
             return SubagentCancelOutcome::NotFound;
         };
@@ -1936,9 +1978,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             if child.request.parent_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
             {
+                child.control.cancel(intent);
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
-                child.control.cancel();
                 doomed.push(child.request.id.clone());
             }
         }
@@ -1968,9 +2010,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             if child.request.owner.workflow_run_id() == Some(run_id)
                 && belongs_to_session(&child.request, parent_session_id)
             {
+                child.control.cancel(ChildCancellation::Authorized);
                 child.disposition.interrupt(cause.clone());
                 child.cancellation.cancel();
-                child.control.cancel();
                 doomed.push(child.request.id.clone());
             }
         }
@@ -2173,7 +2215,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     fn cancel_all_children(&self) {
         for child in self.active.values() {
             child.cancellation.cancel();
-            child.control.cancel();
+            child.control.cancel(ChildCancellation::Shutdown);
         }
         for child in self.pending.values() {
             child.cancellation.cancel();

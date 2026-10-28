@@ -698,7 +698,7 @@ async fn cancelled_or_finalizing_deferred_targets_refuse_fresh_ingress_before_ru
         match exit {
             Exit::Rejected => reject_deferred(&mut c, IDS[3]),
             Exit::OwnerCancelled => {
-                c.cancel_parent_session(Some("other"));
+                c.cancel_parent_session(Some("other"), ChildCancellation::Authorized);
             }
             Exit::Finalizing => {
                 let (respond_to, _response) = oneshot::channel();

@@ -774,7 +774,7 @@ mod tests {
                 },
                 acp::ToolCallStatus::Failed,
             ),
-            (AdmissionUncertain, acp::ToolCallStatus::Completed),
+            (AdmissionUncertain { recovery_ref: crate::session::persistence::native_wake_tests_support::wire_reference_fixture().into() }, acp::ToolCallStatus::Completed),
             (NotAcceptedBeforeDeadline, acp::ToolCallStatus::Failed),
             (Unsupported, acp::ToolCallStatus::Failed),
             (

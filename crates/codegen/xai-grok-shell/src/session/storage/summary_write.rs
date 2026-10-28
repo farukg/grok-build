@@ -61,12 +61,16 @@ pub(crate) struct TraceTurnPatch {
     pub request_id: Option<String>,
 }
 
+#[path = "summary_activity.rs"]
+mod activity;
+pub(crate) use activity::SummaryActivity;
+
 /// Only the set fields change; the rest are read fresh under the lock and preserved.
 /// Per-field merge rules (see [`Summary::apply_patch`]): `last_active_at` / `next_trace_turn` / `chat_format_version` are monotonic (never lowered).
 /// Counters apply to the fresh read; everything else is last-writer-wins on that field alone.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SummaryPatch {
-    pub record_activity: bool,
+    pub activity: SummaryActivity,
     pub messages: Option<CounterOp>,
     pub chat_messages: Option<CounterOp>,
     pub chat_format_version: Option<u8>,
@@ -115,12 +119,16 @@ impl Summary {
         if let Some(mutation) = &patch.completion_mutation {
             self.completion_delivery.apply(mutation);
         }
-        if patch.record_activity {
-            // Monotonic: a stale concurrent writer can never move it backwards.
-            self.last_active_at = Some(
-                self.last_active_at
-                    .map_or(now, |existing| existing.max(now)),
-            );
+        match patch.activity {
+            SummaryActivity::Occurred => {
+                // Monotonic: a stale concurrent writer can never move it backwards.
+                self.last_active_at = Some(
+                    self.last_active_at.map_or(now, |existing| existing.max(now)),
+                );
+                self.updated_at = now;
+            }
+            SummaryActivity::Metadata => self.updated_at = now,
+            SummaryActivity::Observation => {}
         }
         if let Some(op) = &patch.messages {
             self.num_messages = op.apply(self.num_messages);
@@ -197,7 +205,6 @@ impl Summary {
                 self.session_summary.clear();
             }
             self.title_is_manual = false;
-            self.updated_at = now;
             return cleared_manual;
         } else if let Some(title) = &patch.generated_title {
             self.set_title(title);
@@ -218,7 +225,6 @@ impl Summary {
                 absent_title_applied = true;
             }
         }
-        self.updated_at = now;
         absent_title_applied
     }
 
@@ -358,7 +364,6 @@ pub(crate) fn stamp_session_identity_if_absent(
         }
         summary.agent_id = Some(identity.agent_id.clone());
         summary.attempt_id = Some(identity.attempt_id.clone());
-        summary.updated_at = chrono::Utc::now();
         write_summary_atomic(summary_path, &summary)?;
         Ok(identity)
     })();
@@ -567,7 +572,7 @@ mod tests {
                     .apply_summary_patch(
                         &info_a,
                         SummaryPatch {
-                            record_activity: true,
+                            activity: SummaryActivity::Occurred,
                             messages: Some(CounterOp::Increment(1)),
                             ..Default::default()
                         },
@@ -627,6 +632,100 @@ mod tests {
             .await
             .unwrap();
         (adapter, info, session_dir.join("summary.json"))
+    }
+
+    #[tokio::test]
+    async fn observational_appends_preserve_activity_and_legacy_fallback() {
+        use crate::extensions::notification::{SessionNotification, SessionUpdate as XaiUpdate};
+        use crate::session::storage::SessionUpdate;
+
+        let dir = TempDir::new().unwrap();
+        let (adapter, info, path) = new_session(&dir).await;
+        for active in [None, chrono::DateTime::from_timestamp_millis(1_234)] {
+            let mut summary = read_summary(&path).unwrap();
+            summary.last_active_at = active;
+            summary.updated_at = chrono::DateTime::from_timestamp_millis(9_876).unwrap();
+            write_summary_atomic(&path, &summary).unwrap();
+            for update in [
+                XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
+                XaiUpdate::SessionSummaryGenerated { session_summary: "loaded title".into() },
+            ] {
+                adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
+                    session_id: info.id.clone(), update, meta: None,
+                }))).await.unwrap();
+                let loaded = read_summary(&path).unwrap();
+                assert_eq!(loaded.last_active_at, active);
+                assert_eq!(loaded.updated_at, summary.updated_at);
+                assert_eq!(loaded.last_change_unix_ms(), summary.last_change_unix_ms());
+            }
+            let message = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new("real output")),
+            ));
+            let replay = acp::SessionNotification::new(info.id.clone(), message.clone())
+                .meta(Some(serde_json::json!({"isReplay": true}).as_object().unwrap().clone()));
+            adapter.append_update(&info, &SessionUpdate::Acp(Box::new(replay))).await.unwrap();
+            let loaded = read_summary(&path).unwrap();
+            assert_eq!(loaded.last_active_at, active);
+            assert_eq!(loaded.updated_at, summary.updated_at);
+            adapter.append_update(&info, &SessionUpdate::Acp(Box::new(
+                acp::SessionNotification::new(info.id.clone(), message),
+            ))).await.unwrap();
+            let live = read_summary(&path).unwrap();
+            assert!(live.last_change_unix_ms() > 9_876);
+            let count = live.num_messages;
+            adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
+                session_id: info.id.clone(),
+                update: XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
+                meta: None,
+            }))).await.unwrap();
+            let observed = read_summary(&path).unwrap();
+            assert_eq!(observed.last_active_at, live.last_active_at);
+            assert_eq!(observed.updated_at, live.updated_at);
+            assert_eq!(observed.num_messages, count + 1, "observations remain persisted");
+            write_summary_atomic(&path, &summary).unwrap();
+            for meta in [
+                serde_json::json!({"activityProvenance": "observation"}),
+                serde_json::json!({"activityProvenance": "invalid"}),
+                serde_json::json!({"activityProvenance": "live", "isReplay": true}),
+            ] {
+                adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
+                    session_id: info.id.clone(),
+                    update: XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
+                    meta: Some(meta),
+                }))).await.unwrap();
+                let replayed = read_summary(&path).unwrap();
+                assert_eq!(replayed.last_active_at, active);
+                assert_eq!(replayed.updated_at, summary.updated_at);
+            }
+            adapter.append_update(&info, &SessionUpdate::Xai(Box::new(SessionNotification {
+                session_id: info.id.clone(),
+                update: XaiUpdate::BackgroundTasks { tasks: Vec::new(), truncated: false },
+                meta: Some(serde_json::json!({"activityProvenance": "live"})),
+            }))).await.unwrap();
+            assert!(read_summary(&path).unwrap().last_change_unix_ms() > 9_876,
+                "a producer-correlated work snapshot remains real activity");
+        }
+    }
+
+    #[tokio::test]
+    async fn loading_identity_does_not_change_activity_or_legacy_fallback() {
+        let dir = TempDir::new().unwrap();
+        let (adapter, info, path) = new_session(&dir).await;
+        for active in [None, chrono::DateTime::from_timestamp_millis(1_234)] {
+            let mut summary = read_summary(&path).unwrap();
+            summary.last_active_at = active;
+            summary.updated_at = chrono::DateTime::from_timestamp_millis(9_876).unwrap();
+            write_summary_atomic(&path, &summary).unwrap();
+            adapter.stamp_session_identity_if_absent(&info, None, |_| {
+                crate::session::persistence::SessionIdentity {
+                    agent_id: "ag1.a1".into(), attempt_id: "at1.a1".into(),
+                }
+            }).await.unwrap();
+            let loaded = read_summary(&path).unwrap();
+            assert_eq!(loaded.last_active_at, active);
+            assert_eq!(loaded.updated_at, summary.updated_at);
+            assert_eq!(loaded.last_change_unix_ms(), summary.last_change_unix_ms());
+        }
     }
 
     #[tokio::test]

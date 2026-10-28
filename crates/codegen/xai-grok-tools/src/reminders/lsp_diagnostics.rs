@@ -18,6 +18,7 @@ impl Reminder for LspDiagnosticsReminder {
         &self,
         resources: SharedResources,
         tool_output: &ToolOutput,
+        _observations: &crate::types::completion_observation::SubagentCompletionObservations,
     ) -> Vec<String> {
         let lsp = {
             let res = resources.lock().await;

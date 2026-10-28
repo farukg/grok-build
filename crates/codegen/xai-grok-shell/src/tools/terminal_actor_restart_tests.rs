@@ -46,7 +46,7 @@ async fn actual_bash_and_monitor_producer_bridge_actor_admission_replays_once_af
                     let (reply, response) = tokio::sync::oneshot::channel();
                     session.send(SessionCommand::GetToolOverrides { respond_to: reply }).unwrap();
                     response.await.unwrap();
-                    if actor.state.lock().await.pending_inputs.iter().any(|input| matches!(input.input_origin.as_prompt_origin(), crate::session::PromptOrigin::TaskCompleted { task_id } if task_id == &background.task_id)) { break; }
+                    if actor.state.lock().await.pending_inputs.iter().any(|input| input.input_origin.completions().iter().any(|id| matches!(id, xai_chat_state::completion::CompletionIdentity::V2 { terminal: xai_chat_state::completion::TerminalCompletionId::Task { task_id, .. }, .. } if task_id == &background.task_id))) { break; }
                     tokio::task::yield_now().await;
                 }
             }).await;
@@ -230,7 +230,7 @@ async fn actual_producer_enrollment_before_goal_admission_restarts_under_the_com
                 loop {
                     let command = admissions.recv().await.unwrap();
                     if let SessionCommand::ClassifyTerminalNotification { respond_to, .. } = command { break respond_to; }
-                    assert!(!matches!(command, SessionCommand::Prompt { .. } | SessionCommand::InjectNotification { .. }), "producer published before actor policy admission");
+                    assert!(!matches!(command, SessionCommand::Prompt { .. } | SessionCommand::TaskCompletionBatch(_) | SessionCommand::InjectNotification { .. }), "producer published before actor policy admission");
                 }
             }).await;
             let state = storage.read_completion_state(&info).await.unwrap();

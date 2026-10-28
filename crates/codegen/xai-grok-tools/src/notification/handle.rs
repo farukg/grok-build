@@ -10,11 +10,13 @@ use super::types::{
     ToolNotification, UserQuestionAsked,
 };
 use crate::types::TaskSnapshot;
+use xai_tool_protocol::tool_execution::ToolCallOwnership;
 
 /// Envelope for consumers that can acknowledge durable notification handling.
 pub struct AcknowledgedToolNotification {
     /// Notification delivered in the same FIFO as unacknowledged events.
     pub notification: ToolNotification,
+    pub tool_ownership: Arc<ToolCallOwnership>,
     /// Completion sender present only when the producer requested acknowledgement.
     pub acknowledgement: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
 }
@@ -108,7 +110,10 @@ enum ToolNotificationTarget {
     Plain(tokio::sync::mpsc::UnboundedSender<ToolNotification>),
     Bounded(tokio::sync::mpsc::Sender<ToolNotification>),
     Capped(Arc<CappedNotificationQueue>),
-    Acknowledged(tokio::sync::mpsc::UnboundedSender<AcknowledgedToolNotification>),
+    Acknowledged {
+        sender: tokio::sync::mpsc::UnboundedSender<AcknowledgedToolNotification>,
+        owner: Arc<ToolCallOwnership>,
+    },
 }
 
 struct CappedNotificationQueue {
@@ -257,7 +262,7 @@ impl ToolNotificationHandle {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         (
             Self {
-                targets: Arc::from([ToolNotificationTarget::Acknowledged(sender)]),
+                targets: Arc::from([ToolNotificationTarget::Acknowledged { sender, owner: Arc::new(ToolCallOwnership::Unknown) }]),
             },
             receiver,
         )
@@ -279,9 +284,21 @@ impl ToolNotificationHandle {
         }
     }
 
+    pub fn with_tool_ownership(self, ownership: Arc<ToolCallOwnership>) -> Self {
+        Self {
+            targets: self.targets.iter().map(|target| match target {
+                ToolNotificationTarget::Acknowledged { sender, .. } => ToolNotificationTarget::Acknowledged {
+                    sender: sender.clone(), owner: ownership.clone(),
+                },
+                ToolNotificationTarget::Plain(_) | ToolNotificationTarget::Bounded(_)
+                | ToolNotificationTarget::Capped(_) => target.clone(),
+            }).collect::<Vec<_>>().into(),
+        }
+    }
+
     pub(crate) fn durable_targets(&self) -> DurableNotificationTargets {
         if self.targets.iter().any(|target| {
-            matches!(target, ToolNotificationTarget::Acknowledged(sender) if !sender.is_closed())
+            matches!(target, ToolNotificationTarget::Acknowledged { sender, .. } if !sender.is_closed())
         }) {
             DurableNotificationTargets::Present
         } else {
@@ -314,9 +331,10 @@ impl ToolNotificationHandle {
                     }
                 }
                 ToolNotificationTarget::Capped(target) => target.push(notification),
-                ToolNotificationTarget::Acknowledged(target) => {
+                ToolNotificationTarget::Acknowledged { sender: target, owner } => {
                     let _ = target.send(AcknowledgedToolNotification {
                         notification,
+                        tool_ownership: owner.clone(),
                         acknowledgement: None,
                     });
                 }
@@ -345,11 +363,12 @@ impl ToolNotificationHandle {
                     }
                 }
                 ToolNotificationTarget::Capped(target) => target.push(notification.clone()),
-                ToolNotificationTarget::Acknowledged(target) => {
+                ToolNotificationTarget::Acknowledged { sender: target, owner } => {
                     let (acknowledgement, receipt) = tokio::sync::oneshot::channel();
                     if target
                         .send(AcknowledgedToolNotification {
                             notification: notification.clone(),
+                            tool_ownership: owner.clone(),
                             acknowledgement: Some(acknowledgement),
                         })
                         .is_ok()
@@ -367,10 +386,11 @@ impl ToolNotificationHandle {
     pub fn enroll_task_completion(&self, snapshot: TaskSnapshot) -> NotificationAcknowledgementBatch {
         let mut batch = NotificationAcknowledgementBatch { receipts: Vec::new(), dispatch_closed: 0 };
         for target in self.targets.iter() {
-            if let ToolNotificationTarget::Acknowledged(target) = target {
+            if let ToolNotificationTarget::Acknowledged { sender: target, owner } = target {
                 let (acknowledgement, receipt) = tokio::sync::oneshot::channel();
                 if target.send(AcknowledgedToolNotification {
                     notification: ToolNotification::TaskCompleted(snapshot.clone()),
+                    tool_ownership: owner.clone(),
                     acknowledgement: Some(acknowledgement),
                 }).is_ok() {
                     batch.receipts.push(receipt);

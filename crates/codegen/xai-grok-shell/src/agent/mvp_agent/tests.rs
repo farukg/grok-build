@@ -14,6 +14,10 @@ mod notification_suppression_load;
 mod request_snapshot_tests;
 #[path = "tests/request_preview_tests.rs"]
 mod request_preview_tests;
+#[path = "tests/current_actions_boundary_tests.rs"]
+mod current_actions_boundary_tests;
+#[path = "tests/ordered_publication_tests.rs"]
+mod ordered_publication_tests;
 /// Build an unsigned JWT with a `tier` claim (header.payload.sig base64url).
 fn jwt_with_tier(tier: u64) -> String {
     use base64::Engine;
@@ -1213,7 +1217,7 @@ fn file_toolset_override_invalid_config_returns_error() {
     assert!(err.unwrap_err().contains("unknown"));
 }
 /// Requires a tokio runtime for SessionSignalsHandle::new().
-pub(super) fn make_test_handle(
+pub(crate) fn make_test_handle(
     model: &str,
     yolo: bool,
     client_id: Option<&str>,
@@ -1239,6 +1243,7 @@ pub(super) fn make_test_handle(
         pending_interactions: std::sync::Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        current_actions: None,
         active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         info: crate::session::info::Info {
             id: acp::SessionId::new("test"),
@@ -2355,7 +2360,7 @@ fn assert_root_views(
         None => assert!(live.iter().all(|root| root.session_id != *sid)),
     }
 }
-fn build_minimal_agent_for_tests() -> MvpAgent {
+pub(crate) fn build_minimal_agent_for_tests() -> MvpAgent {
     use crate::agent::config::Config as AgentConfig;
     use xai_grok_login::{AuthManager, GrokComConfig};
     let temp_dir = tempfile::tempdir().unwrap();

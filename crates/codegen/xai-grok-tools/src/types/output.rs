@@ -1311,7 +1311,7 @@ mod tests {
                 },
                 true,
             ),
-            (AdmissionUncertain, false),
+            (AdmissionUncertain { recovery_ref: crate::implementations::grok_build::task::native_recovery::wire_reference_fixture().into() }, false),
             (NotAcceptedBeforeDeadline, true),
             (Unsupported, true),
             (

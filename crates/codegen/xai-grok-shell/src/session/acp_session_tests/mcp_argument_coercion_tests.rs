@@ -73,7 +73,7 @@ async fn prepare(actor: &SessionActor, name: &str, arguments: &str) -> PreparedT
     let mut deferred = Vec::new();
     match tokio::time::timeout(
         Duration::from_secs(10),
-        actor.prepare_tool_call(call, &mut deferred, None),
+        actor.prepare_tool_call(call, &mut deferred, None, None),
     )
     .await
     .expect("prepare_tool_call must not hang (a hang means a permission prompt was issued)")

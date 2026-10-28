@@ -360,7 +360,8 @@ impl xai_tool_runtime::Tool for BashTool {
             .await
             .require::<NotificationHandle>()?
             .0
-            .clone();
+            .clone()
+            .with_tool_ownership(ctx.get::<xai_tool_protocol::tool_execution::ToolCallOwnership>().unwrap_or_default());
 
         let output_byte_limit = resources
             .lock()
@@ -421,6 +422,7 @@ impl xai_tool_runtime::Tool for BashTool {
         if let crate::computer::types::RunDisposition::Backgrounded { handle, reason } = &result.disposition {
             notification_handle.send_backgrounded(crate::notification::BashExecutionBackgrounded {
                 base: BashNotificationBase {
+                    start_time: handle.start_time,
                     tool_call_id: tool_call_id.clone(), command: input.command.clone(),
                     output: result.combined_output.as_bytes().to_vec(), total_bytes: result.total_bytes,
                     truncated: result.truncated, cwd: cwd.clone(),
@@ -443,6 +445,7 @@ impl xai_tool_runtime::Tool for BashTool {
 
         // --- Send completion notification ---
         let base = BashNotificationBase {
+            start_time: None,
             tool_call_id: tool_call_id.clone(),
             command: input.command.clone(),
             output: result.combined_output.as_bytes().to_vec(),

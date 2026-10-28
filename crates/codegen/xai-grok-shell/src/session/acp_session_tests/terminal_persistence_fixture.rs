@@ -11,8 +11,12 @@ pub(super) fn attach_parent_admissions(actor: &mut SessionActor) {
         let storage = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let (lease, _) = storage.claim_receiver(&info).await.unwrap();
+        let receiver = crate::session::receiver_execution::ReceiverOwner::Ready(lease);
         while let Some(message) = rx.recv().await {
             match message {
+                PersistenceMsg::ResolveParentMessageTerminal { turn_id, parent_task, origin, respond_to } => {
+                    let _ = respond_to.send(receiver.terminal_decision(&turn_id, &parent_task, &origin));
+                }
                 PersistenceMsg::ReadPublishedRequestSources { respond_to } => {
                     let _ = respond_to.send(crate::session::storage::request_capture::published_sources(directory.path()));
                 }
@@ -28,11 +32,11 @@ pub(super) fn attach_parent_admissions(actor: &mut SessionActor) {
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::CancelParentMessages { message_ids, respond_to } => {
-                    let result = storage.cancel_parent_messages(&info, &message_ids, crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await;
+                    let result = storage.cancel_parent_messages(&info, &message_ids, receiver.access()).await;
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::AdmitParentMessage { admission, authority, respond_to } => {
-                    let result = storage.admit_parent_message(&info, &admission, authority, crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await;
+                    let result = storage.admit_parent_message(&info, &admission, authority, receiver.access()).await;
                     let _ = respond_to.send(result);
                 }
                 other => { let _ = capture.send(other); }
@@ -50,8 +54,12 @@ pub(super) fn attach(actor: &mut SessionActor, capture: mpsc::UnboundedSender<Pe
         let storage = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let (lease, _) = storage.claim_receiver(&info).await.unwrap();
+        let receiver = crate::session::receiver_execution::ReceiverOwner::Ready(lease);
         while let Some(message) = rx.recv().await {
             match message {
+                PersistenceMsg::ResolveParentMessageTerminal { turn_id, parent_task, origin, respond_to } => {
+                    let _ = respond_to.send(receiver.terminal_decision(&turn_id, &parent_task, &origin));
+                }
                 PersistenceMsg::ReadPublishedRequestSources { respond_to } => {
                     let _ = respond_to.send(crate::session::storage::request_capture::published_sources(directory.path()));
                 }
@@ -67,11 +75,11 @@ pub(super) fn attach(actor: &mut SessionActor, capture: mpsc::UnboundedSender<Pe
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::CancelParentMessages { message_ids, respond_to } => {
-                    let result = storage.cancel_parent_messages(&info, &message_ids, crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await;
+                    let result = storage.cancel_parent_messages(&info, &message_ids, receiver.access()).await;
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::AdmitParentMessage { admission, authority, respond_to } => {
-                    let result = storage.admit_parent_message(&info, &admission, authority, crate::session::receiver_execution::ReceiverAccess::Owner(&lease)).await;
+                    let result = storage.admit_parent_message(&info, &admission, authority, receiver.access()).await;
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::SuppressTerminalCompletions { ids, reason, respond_to } => {

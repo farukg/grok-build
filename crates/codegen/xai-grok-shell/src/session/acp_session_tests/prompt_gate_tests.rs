@@ -402,7 +402,7 @@ async fn noop_queue_mutations_report_unchanged() {
                 .handle_interject_queued_prompt("ghost", 0, None, None)
                 .await;
             assert!(
-                !send_now.mutated && !send_now.cancel_running_turn,
+                !send_now.mutated() && !send_now.cancel_running_turn(),
                 "a stale send-now must report unchanged"
             );
         })

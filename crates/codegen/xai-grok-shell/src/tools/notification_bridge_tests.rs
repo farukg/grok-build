@@ -1,6 +1,8 @@
 use super::*;
 #[path = "terminal_actor_restart_tests.rs"]
 mod actor_restart;
+#[path = "task_completion_publication_tests.rs"]
+mod consumed_background;
 use xai_grok_tools::computer::types::TaskKind;
 use xai_grok_tools::types::TaskSnapshot;
 
@@ -8,24 +10,23 @@ use xai_grok_tools::types::TaskSnapshot;
 async fn handle_notification_with_admission(
     config: &NotificationBridgeConfig,
     notification: ToolNotification,
-    offsets: &mut HashMap<String, usize>,
+    offsets: &mut HashMap<BashStreamKey, usize>,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
     accepted: bool,
 ) {
-    let notification = handle_notification(config, notification, offsets);
+    let notification = handle_notification(config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, offsets);
     tokio::pin!(notification);
 
     let mut command = tokio::select! {
         _ = &mut notification => panic!("notification completed before requesting admission"),
         command = cmd_rx.recv() => command.expect("expected task-wake prompt"),
     };
-    let SessionCommand::Prompt { admission, .. } = &mut command else {
-        panic!("expected task-wake prompt");
+    let SessionCommand::TaskCompletionBatch(batch) = &mut command else {
+        panic!("expected task-wake batch");
     };
-    admission
-        .take()
-        .expect("expected task-wake admission request")
-        .respond_to
+    assert_eq!(batch.admissions.len(), 1);
+    let (placeholder, _) = tokio::sync::oneshot::channel();
+    std::mem::replace(&mut batch.admissions[0].respond_to, placeholder)
         .send(accepted)
         .expect("notification must still be awaiting admission");
     config
@@ -38,19 +39,21 @@ async fn handle_notification_with_admission(
 async fn handle_notification_with_goal_policy(
     config: &NotificationBridgeConfig,
     notification: ToolNotification,
-    offsets: &mut HashMap<String, usize>,
+    offsets: &mut HashMap<BashStreamKey, usize>,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
 ) {
-    let delivery = handle_notification(config, notification, offsets);
+    let delivery = handle_notification(config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, offsets);
     tokio::pin!(delivery);
     let command = tokio::select! {
         _ = &mut delivery => panic!("goal publication settled before its policy acknowledgement"),
         command = cmd_rx.recv() => command.unwrap(),
     };
-    let SessionCommand::ClassifyTerminalNotification { respond_to, .. } = command else {
-        panic!("goal publication must request the actor's durable policy decision");
+    let SessionCommand::TaskCompletionBatch(mut batch) = command else {
+        panic!("goal publication must use receipt-first batch admission");
     };
-    respond_to.send(Ok(crate::session::commands::TerminalNotificationDecision::Suppressed)).unwrap();
+    assert!(batch.automatic);
+    assert_eq!(batch.admissions.len(), 1);
+    batch.admissions.pop().unwrap().respond_to.send(false).unwrap();
     delivery.await;
 }
 
@@ -67,7 +70,9 @@ fn assert_emit_background_tasks_snapshot(cmd_rx: &mut mpsc::UnboundedReceiver<Se
         .try_recv()
         .expect("expected EmitBackgroundTasksSnapshot")
     {
-        SessionCommand::EmitBackgroundTasksSnapshot { .. } => {}
+        SessionCommand::EmitBackgroundTasksSnapshot { provenance, .. } => {
+            assert!(matches!(provenance, SessionActivityProvenance::Live));
+        }
         _ => panic!("expected EmitBackgroundTasksSnapshot"),
     }
 }
@@ -94,6 +99,7 @@ pub(crate) fn make_test_config_full_raw() -> (
     let (session_cmd_tx, session_cmd_rx) = mpsc::unbounded_channel();
     let (persistence_tx, persistence_rx) = mpsc::unbounded_channel();
     let config = NotificationBridgeConfig {
+        current_actions: Default::default(),
         gateway,
         session_id: acp::SessionId::new("test-session"),
         hunk_tracker_handle: HunkTrackerHandle::noop(),
@@ -188,8 +194,8 @@ async fn acknowledged_terminal_transport_waits_for_the_completion_owner_before_p
         assert!(commands.try_recv().is_err());
         handle.send_task_complete(snapshot);
         let command = tokio::time::timeout(std::time::Duration::from_secs(5), commands.recv()).await.unwrap().unwrap();
-        let SessionCommand::Prompt { admission: Some(admission), .. } = command else { panic!("terminal publication must use the maintained actor admission transport") };
-        admission.respond_to.send(true).unwrap();
+        let SessionCommand::TaskCompletionBatch(mut batch) = command else { panic!("terminal publication must use the maintained actor admission transport") };
+        batch.admissions.pop().unwrap().respond_to.send(true).unwrap();
     }).await;
 }
 
@@ -209,14 +215,10 @@ async fn bash_task_completed_injects_bash_task_completed_source() {
 
     let command = cmd_rx.try_recv().expect("expected Prompt");
     match command {
-        SessionCommand::Prompt {
-            prompt_id,
-            prompt_blocks,
-            verbatim,
-            ..
-        } => {
-            assert!(prompt_id.starts_with("task-completed-"));
-            assert!(verbatim);
+        SessionCommand::TaskCompletionBatch(batch) => {
+            assert!(batch.prompt_id.starts_with("task-completed-"));
+            assert!(batch.automatic);
+            let prompt_blocks = &batch.admissions[0].fallback.prompt_blocks;
             let Some(block) = prompt_blocks.first() else {
                 panic!("expected a prompt block: {prompt_blocks:?}");
             };
@@ -332,7 +334,7 @@ async fn bash_task_completed_auto_wakes_and_reserves_without_goal_loop() {
 
     assert!(matches!(
         cmd_rx.try_recv(),
-        Ok(SessionCommand::Prompt { .. })
+        Ok(SessionCommand::TaskCompletionBatch(_))
     ));
     assert!(matches!(
         cmd_rx.try_recv(),
@@ -387,7 +389,7 @@ async fn task_completed_notification_stamps_will_wake() {
     .await;
     assert!(matches!(
         cmd_rx.recv().await,
-        Some(SessionCommand::Prompt { .. })
+        Some(SessionCommand::TaskCompletionBatch(_))
     ));
     match cmd_rx.recv().await {
         Some(SessionCommand::CopyFile { respond_to }) => drop(respond_to),
@@ -433,7 +435,7 @@ async fn task_completed_notification_stamps_will_wake() {
     );
     assert!(matches!(
         cmd_rx.try_recv(),
-        Ok(SessionCommand::Prompt { .. })
+        Ok(SessionCommand::TaskCompletionBatch(_))
     ));
     assert!(matches!(
         cmd_rx.try_recv(),
@@ -467,6 +469,7 @@ async fn stalled_admission_is_bounded_and_task_completion_still_emits() {
     let mut offsets = HashMap::new();
     let notification = handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(make_task_snapshot("bg-stalled", TaskKind::Bash)),
         &mut offsets,
     );
@@ -474,7 +477,7 @@ async fn stalled_admission_is_bounded_and_task_completion_still_emits() {
 
     tokio::select! {
         _ = &mut notification => panic!("admission should still be waiting"),
-        command = cmd_rx.recv() => assert!(matches!(command, Some(SessionCommand::Prompt { .. }))),
+        command = cmd_rx.recv() => assert!(matches!(command, Some(SessionCommand::TaskCompletionBatch(_)))),
     }
     tokio::time::advance(TASK_WAKE_ADMISSION_TIMEOUT + std::time::Duration::from_millis(1)).await;
     tokio::task::yield_now().await;
@@ -509,6 +512,7 @@ async fn timed_out_monitor_admission_queues_one_fallback_and_late_actor_drops_pr
     let mut offsets = HashMap::new();
     let notification = handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(make_task_snapshot("mon-timeout", TaskKind::Monitor)),
         &mut offsets,
     );
@@ -521,14 +525,11 @@ async fn timed_out_monitor_admission_queues_one_fallback_and_late_actor_drops_pr
     tokio::task::yield_now().await;
     notification.await;
 
-    let SessionCommand::Prompt {
-        admission: Some(admission),
-        respond_to,
-        ..
-    } = prompt
-    else {
-        panic!("expected task wake prompt");
+    let SessionCommand::TaskCompletionBatch(mut batch) = prompt else {
+        panic!("expected task wake batch");
     };
+    let admission = batch.admissions.pop().unwrap();
+    let respond_to = batch.respond_to;
     assert!(matches!(
         admission.fallback.source,
         NotificationSource::MonitorCompleted { ref task_id } if task_id == "mon-timeout"
@@ -571,6 +572,7 @@ async fn task_completed_stamps_will_wake_false_when_session_channel_closed() {
     let mut offsets = HashMap::new();
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(make_task_snapshot("bg-dead", TaskKind::Bash)),
         &mut offsets,
     )
@@ -650,14 +652,10 @@ async fn monitor_task_completed_auto_wakes_with_monitor_ended_message() {
 
     let cmd = cmd_rx.try_recv().expect("expected Prompt auto-wake");
     match cmd {
-        SessionCommand::Prompt {
-            prompt_id,
-            prompt_blocks,
-            verbatim,
-            ..
-        } => {
-            assert_eq!(prompt_id, "task-completed-mon-456");
-            assert!(verbatim);
+        SessionCommand::TaskCompletionBatch(batch) => {
+            assert_eq!(batch.prompt_id, "task-completed-mon-456");
+            assert!(batch.automatic);
+            let prompt_blocks = &batch.admissions[0].fallback.prompt_blocks;
             let Some(block) = prompt_blocks.first() else {
                 panic!("expected a prompt block: {prompt_blocks:?}");
             };
@@ -720,7 +718,7 @@ async fn declined_quiet_monitor_wake_queues_canonical_deferred_completion() {
 
     assert!(matches!(
         cmd_rx.try_recv(),
-        Ok(SessionCommand::Prompt { .. })
+        Ok(SessionCommand::TaskCompletionBatch(_))
     ));
     assert!(matches!(
         cmd_rx.try_recv(),
@@ -757,6 +755,7 @@ async fn monitor_event_skipped_after_task_completed_auto_wake() {
 
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::MonitorEvent(xai_grok_tools::notification::types::MonitorEvent {
             task_id: "mon-done".into(),
             description: "short exit".into(),
@@ -785,6 +784,7 @@ async fn monitor_explicitly_killed_skips_auto_wake() {
 
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
     )
@@ -836,7 +836,8 @@ async fn ui_killed_monitor_auto_wakes_and_tells_model_not_to_restart() {
 
     let command = cmd_rx.try_recv().expect("expected Prompt");
     match command {
-        SessionCommand::Prompt { prompt_blocks, .. } => {
+        SessionCommand::TaskCompletionBatch(batch) => {
+            let prompt_blocks = &batch.admissions[0].fallback.prompt_blocks;
             let Some(block) = prompt_blocks.first() else {
                 panic!("expected a prompt block: {prompt_blocks:?}");
             };
@@ -910,7 +911,7 @@ async fn scheduled_task_created_is_persisted() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     let msg = persistence_rx
         .try_recv()
@@ -953,6 +954,7 @@ async fn bash_output_chunk_forwards_live_without_persisting() {
     let notification =
         ToolNotification::BashOutputChunk(xai_grok_tools::notification::types::BashOutputChunk {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: "call-1".into(),
                 command: "echo hi".into(),
                 output: b"hi\n".to_vec(),
@@ -963,7 +965,7 @@ async fn bash_output_chunk_forwards_live_without_persisting() {
         });
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     assert!(
         persistence_rx.try_recv().is_err(),
@@ -996,8 +998,10 @@ async fn live_in_progress_event_id_is_not_a_prepare_replay_cursor() {
     let (config, mut gateway_rx, mut persistence_rx, _cmd_rx) = make_test_config_full();
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::BashOutputChunk(xai_grok_tools::notification::types::BashOutputChunk {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: "call-cursor".into(),
                 command: "echo hi".into(),
                 output: b"hi\n".to_vec(),
@@ -1040,6 +1044,7 @@ async fn bash_output_chunk_skips_persist_when_gateway_closed() {
     let notification =
         ToolNotification::BashOutputChunk(xai_grok_tools::notification::types::BashOutputChunk {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: "call-closed".into(),
                 command: "echo hi".into(),
                 output: b"hi\n".to_vec(),
@@ -1049,7 +1054,7 @@ async fn bash_output_chunk_skips_persist_when_gateway_closed() {
             },
         });
     let mut offsets = HashMap::new();
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
     assert!(
         persistence_rx.try_recv().is_err(),
         "closed gateway must not persist InProgress bash either"
@@ -1171,6 +1176,7 @@ async fn task_backgrounded_persisted_line_is_stamped() {
     let notification = ToolNotification::BashExecutionBackgrounded(
         xai_grok_tools::notification::types::BashExecutionBackgrounded {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: "call-bg".into(),
                 command: "sleep 100".into(),
                 output: Vec::new(),
@@ -1186,7 +1192,7 @@ async fn task_backgrounded_persisted_line_is_stamped() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     match persistence_rx.try_recv().expect("must persist") {
         PersistenceMsg::Update(crate::session::storage::SessionUpdate::Xai(notif)) => {
@@ -1202,6 +1208,7 @@ async fn task_backgrounded_requests_background_tasks_snapshot() {
     let notification = ToolNotification::BashExecutionBackgrounded(
         xai_grok_tools::notification::types::BashExecutionBackgrounded {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: "call-bg-list".into(),
                 command: "sleep 100".into(),
                 output: Vec::new(),
@@ -1217,7 +1224,7 @@ async fn task_backgrounded_requests_background_tasks_snapshot() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     match persistence_rx.try_recv().expect("must persist incremental") {
         PersistenceMsg::Update(crate::session::storage::SessionUpdate::Xai(notif)) => {
@@ -1249,6 +1256,7 @@ async fn task_completed_requests_background_tasks_snapshot() {
 
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
     )
@@ -1283,7 +1291,7 @@ async fn task_completed_requests_background_tasks_snapshot() {
                 saw_hook = true;
             }
             SessionCommand::EmitBackgroundTasksSnapshot { .. } => saw_snapshot = true,
-            SessionCommand::Prompt { .. }
+            SessionCommand::TaskCompletionBatch(_)
             | SessionCommand::DropMonitorNotifications { .. }
             | SessionCommand::InjectNotification { .. }
             | SessionCommand::CopyFile { .. } => {}
@@ -1298,6 +1306,7 @@ fn backgrounded_notification(task_id: &str) -> ToolNotification {
     ToolNotification::BashExecutionBackgrounded(
         xai_grok_tools::notification::types::BashExecutionBackgrounded {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: format!("call-{task_id}"),
                 command: "sleep 100".into(),
                 output: Vec::new(),
@@ -1318,8 +1327,8 @@ async fn burst_of_backgrounded_events_requests_one_snapshot() {
     let (config, _gateway_rx, _persistence_rx, mut cmd_rx) = make_test_config_full();
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, backgrounded_notification("a"), &mut offsets).await;
-    handle_notification(&config, backgrounded_notification("b"), &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, backgrounded_notification("a"), &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, backgrounded_notification("b"), &mut offsets).await;
 
     assert_emit_background_tasks_snapshot(&mut cmd_rx);
     assert!(
@@ -1337,6 +1346,7 @@ async fn task_completed_persisted_line_is_stamped() {
 
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
     )
@@ -1410,7 +1420,7 @@ async fn scheduled_task_fired_is_not_persisted() {
     );
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     assert!(
         persistence_rx.try_recv().is_err(),
@@ -1458,7 +1468,7 @@ async fn cross_session_monitor_event_is_dropped() {
     let notification = make_monitor_event_notification("mon-foreign", Some("other-session"));
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     assert!(
         cmd_rx.try_recv().is_err(),
@@ -1482,7 +1492,7 @@ async fn same_session_monitor_event_is_injected() {
     let notification = make_monitor_event_notification("mon-own", Some("test-session"));
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     match cmd_rx
         .try_recv()
@@ -1503,7 +1513,7 @@ async fn legacy_monitor_event_without_owner_is_injected() {
     let notification = make_monitor_event_notification("mon-legacy", None);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     assert!(
         matches!(
@@ -1527,7 +1537,7 @@ async fn block_waited_task_skips_auto_wake_prompt() {
     let notification = ToolNotification::TaskCompleted(snapshot);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     // block_waited tasks must NOT inject a synthetic prompt: the blocking caller already received the result directly
     match cmd_rx
@@ -1569,7 +1579,7 @@ async fn explicitly_killed_task_skips_auto_wake_prompt() {
     let notification = ToolNotification::TaskCompleted(snapshot);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     // Model-tool / delivered kill skips auto-wake; UI kill is `ui_killed_task_auto_wakes_and_tells_model_not_to_restart`
     match cmd_rx
@@ -1603,6 +1613,7 @@ async fn teardown_killed_task_skips_auto_wake_prompt() {
 
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
     )
@@ -1652,7 +1663,8 @@ async fn ui_killed_task_auto_wakes_and_tells_model_not_to_restart() {
 
     let command = cmd_rx.try_recv().expect("expected Prompt");
     match command {
-        SessionCommand::Prompt { prompt_blocks, .. } => {
+        SessionCommand::TaskCompletionBatch(batch) => {
+            let prompt_blocks = &batch.admissions[0].fallback.prompt_blocks;
             let Some(block) = prompt_blocks.first() else {
                 panic!("expected a prompt block: {prompt_blocks:?}");
             };
@@ -1693,7 +1705,7 @@ async fn ui_killed_task_gate_armed_defers_to_fallback() {
     .await;
 
     assert!(
-        matches!(cmd_rx.try_recv(), Ok(SessionCommand::Prompt { .. })),
+        matches!(cmd_rx.try_recv(), Ok(SessionCommand::TaskCompletionBatch(_))),
         "gate-armed UI kill must still request admission, not the suppress arm"
     );
     assert_eq!(
@@ -1721,23 +1733,18 @@ async fn bash_task_completed_falls_back_when_auto_wake_disabled() {
     let notification = ToolNotification::TaskCompleted(snapshot);
     let mut offsets = HashMap::new();
 
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
-    // With auto-wake disabled, the completion is delivered by InjectNotification, not Prompt
-    let cmd = cmd_rx.try_recv().expect("expected InjectNotification");
+    let cmd = cmd_rx.try_recv().expect("expected completion batch");
     match cmd {
-        SessionCommand::InjectNotification {
-            prompt_id,
-            prompt_blocks,
-            priority,
-            source,
-            ..
-        } => {
-            assert!(prompt_id.starts_with("bash-completed-"));
-            assert_eq!(priority, NotificationPriority::Later);
+        SessionCommand::TaskCompletionBatch(batch) => {
+            assert!(!batch.automatic);
+            let fallback = &batch.admissions[0].fallback;
+            let prompt_blocks = &fallback.prompt_blocks;
+            assert!(fallback.prompt_id.starts_with("bash-completed-"));
             assert!(matches!(
-                source,
-                NotificationSource::BashTaskCompleted { ref task_id } if task_id == "bg-disabled"
+                &fallback.source,
+                NotificationSource::BashTaskCompleted { task_id } if task_id == "bg-disabled"
             ));
             let Some(block) = prompt_blocks.first() else {
                 panic!("expected a prompt block: {prompt_blocks:?}");
@@ -1784,8 +1791,8 @@ async fn bash_completion_uses_single_task_id_clone() {
         .await;
 
     let cmd = cmd_rx.try_recv().unwrap();
-    if let SessionCommand::Prompt { prompt_id, .. } = cmd {
-        assert_eq!(prompt_id, "task-completed-unique-id-789");
+    if let SessionCommand::TaskCompletionBatch(batch) = cmd {
+        assert_eq!(batch.prompt_id, "task-completed-unique-id-789");
     } else {
         panic!("expected Prompt");
     }
@@ -1820,7 +1827,7 @@ async fn plan_mode_exited_emits_current_mode_update_default() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     // Gateway: one CurrentModeUpdate("default").
     let mut gateway_modes = Vec::new();
@@ -1879,7 +1886,7 @@ async fn plan_mode_exited_does_not_arm_exit_reminder_by_default() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     assert!(
         !config.plan_mode.lock().has_pending_exit_reminder(),
@@ -1922,7 +1929,7 @@ async fn plan_mode_exited_arms_exit_reminder_when_gated() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     assert!(
         config.plan_mode.lock().has_pending_exit_reminder(),
@@ -1954,7 +1961,7 @@ async fn plan_mode_entered_emits_current_mode_update_plan() {
         });
 
     let mut offsets = HashMap::new();
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     let mut gateway_modes = Vec::new();
     while let Ok(msg) = gateway_rx.try_recv() {
@@ -2004,27 +2011,15 @@ fn make_large_bash_snapshot(task_id: &str, output_file: PathBuf) -> TaskSnapshot
     }
 }
 
-/// Extract the auto-wake prompt text emitted on the session command channel.
-fn auto_wake_prompt_text(cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>) -> String {
-    let cmd = cmd_rx.try_recv().expect("expected Prompt");
-    match cmd {
-        SessionCommand::Prompt { prompt_blocks, .. } => match prompt_blocks.first() {
-            Some(acp::ContentBlock::Text(t)) => t.text.clone(),
-            other => panic!("expected text block: {other:?}"),
-        },
-        _ => panic!("expected Prompt"),
-    }
-}
-
-/// Extract the InjectNotification prompt text emitted on the session command channel (auto-wake-disabled fallback path).
-fn inject_notification_prompt_text(cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>) -> String {
-    let cmd = cmd_rx.try_recv().expect("expected InjectNotification");
-    match cmd {
-        SessionCommand::InjectNotification { prompt_blocks, .. } => match prompt_blocks.first() {
-            Some(acp::ContentBlock::Text(t)) => t.text.clone(),
-            other => panic!("expected text block: {other:?}"),
-        },
-        _ => panic!("expected InjectNotification"),
+fn completion_batch_prompt_text(cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>, automatic: bool) -> String {
+    let SessionCommand::TaskCompletionBatch(batch) = cmd_rx.try_recv().expect("expected completion batch") else {
+        panic!("expected completion batch");
+    };
+    assert_eq!(batch.automatic, automatic);
+    assert_eq!(batch.admissions.len(), 1);
+    match batch.admissions[0].fallback.prompt_blocks.first() {
+        Some(acp::ContentBlock::Text(text)) => text.text.clone(),
+        other => panic!("expected text block: {other:?}"),
     }
 }
 
@@ -2049,7 +2044,7 @@ async fn bash_completion_renders_disk_pointer_footer_in_both_branches() {
         true,
     )
     .await;
-    let prompt = auto_wake_prompt_text(&mut cmd_rx_auto);
+    let prompt = completion_batch_prompt_text(&mut cmd_rx_auto, true);
     assert!(
         prompt.contains("[Output truncated"),
         "auto-wake: expected truncation marker, got: {prompt}"
@@ -2077,11 +2072,12 @@ async fn bash_completion_renders_disk_pointer_footer_in_both_branches() {
     let mut offsets = HashMap::new();
     handle_notification(
         &config_no_wake,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
     )
     .await;
-    let prompt = inject_notification_prompt_text(&mut cmd_rx_no_wake);
+    let prompt = completion_batch_prompt_text(&mut cmd_rx_no_wake, false);
     assert!(
         prompt.contains("[Output truncated"),
         "auto-wake-disabled: expected truncation marker, got: {prompt}"
@@ -2115,6 +2111,7 @@ async fn task_completed_notification_is_frame_bounded() {
     let mut offsets = HashMap::new();
     handle_notification(
         &config,
+        &crate::extensions::tool_timing::ToolCallOwnership::Unknown,
         ToolNotification::TaskCompleted(snapshot),
         &mut offsets,
     )
@@ -2149,6 +2146,9 @@ async fn task_completed_notification_is_frame_bounded() {
     );
 }
 
+#[path = "notification_bridge_start_time_tests.rs"]
+mod start_time_tests;
+
 #[tokio::test]
 async fn request_background_tasks_snapshot_skipped_when_emit_local_disabled() {
     let (config, _gateway_rx, _persistence_rx, mut cmd_rx) = make_test_config_full();
@@ -2159,6 +2159,7 @@ async fn request_background_tasks_snapshot_skipped_when_emit_local_disabled() {
     let notification = ToolNotification::BashExecutionBackgrounded(
         xai_grok_tools::notification::types::BashExecutionBackgrounded {
             base: xai_grok_tools::notification::types::BashNotificationBase {
+                start_time: None,
                 tool_call_id: "call-bg-skip".into(),
                 command: "sleep 100".into(),
                 output: Vec::new(),
@@ -2173,7 +2174,7 @@ async fn request_background_tasks_snapshot_skipped_when_emit_local_disabled() {
         },
     );
     let mut offsets = HashMap::new();
-    handle_notification(&config, notification, &mut offsets).await;
+    handle_notification(&config, &crate::extensions::tool_timing::ToolCallOwnership::Unknown, notification, &mut offsets).await;
 
     let mut saw_snapshot = false;
     while let Ok(cmd) = cmd_rx.try_recv() {

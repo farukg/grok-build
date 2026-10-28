@@ -366,7 +366,7 @@ async fn protected_rows_reject_generic_mutations() {
                 !actor
                     .handle_interject_queued_prompt("parent", 0, None, Some("changed again"))
                     .await
-                    .cancel_running_turn
+                    .cancel_running_turn()
             );
             actor.handle_hold_edit("parent".into()).await;
             actor.handle_release_edit("parent").await;
@@ -2658,7 +2658,7 @@ async fn queue_send_now_during_goal_routes_by_kind() {
             let cancel = actor
                 .handle_interject_queued_prompt("q1", 0, Some("A"), None)
                 .await
-                .cancel_running_turn;
+                .cancel_running_turn();
             assert!(!cancel);
             let state = actor.state.lock().await;
             assert_eq!(
@@ -2681,7 +2681,7 @@ async fn queue_send_now_during_goal_routes_by_kind() {
             let cancel = actor
                 .handle_interject_queued_prompt("b1", 0, Some("A"), None)
                 .await
-                .cancel_running_turn;
+                .cancel_running_turn();
             assert!(!cancel);
             let state = actor.state.lock().await;
             assert!(
@@ -2718,7 +2718,7 @@ async fn queue_send_now_promotes_row_and_requests_cancel() {
             let cancel = actor
                 .handle_interject_queued_prompt("b1", 0, Some("A"), Some("ls -la"))
                 .await
-                .cancel_running_turn;
+                .cancel_running_turn();
             assert!(cancel, "promoting a row behind a running turn cancels it");
 
             let state = actor.state.lock().await;
@@ -2762,7 +2762,7 @@ async fn queue_send_now_idle_fronts_row_without_cancel() {
             let cancel = actor
                 .handle_interject_queued_prompt("q2", 0, Some("A"), None)
                 .await
-                .cancel_running_turn;
+                .cancel_running_turn();
             assert!(!cancel, "no running turn — nothing to cancel");
 
             let state = actor.state.lock().await;
@@ -3303,7 +3303,7 @@ async fn queue_send_now_never_cancels_uncommitted_front() {
             let cancel = actor
                 .handle_interject_queued_prompt("m2", 0, Some("client"), None)
                 .await
-                .cancel_running_turn;
+                .cancel_running_turn();
             assert!(!cancel, "an uncommitted front must not be cancelled");
             let state = actor.state.lock().await;
             let order: Vec<&str> = state

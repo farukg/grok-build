@@ -83,6 +83,7 @@ async fn renamed_grep_keeps_its_output_after_a_later_model_request() {
                     search_call("prep", file.to_str().unwrap()),
                     &mut deferred,
                     Some("grok-4.6"),
+                    None,
                 )
                 .await
                 .expect("prepare")
@@ -105,6 +106,7 @@ async fn renamed_grep_keeps_its_output_after_a_later_model_request() {
                 .execute_tool_calls(
                     vec![search_call("grep-1", file.to_str().unwrap())],
                     Some("grok-4.6".into()),
+                    None,
                 )
                 .await
                 .expect("execute");
@@ -474,6 +476,7 @@ async fn execute_tool_calls_records_the_product_row_and_execution_span() {
                         serde_json::json!({"pattern": "needle-keep", "path": note_path}),
                     )],
                     Some(MODEL.into()),
+                    None,
                 )
                 .await
                 .expect("product-off execute");
@@ -523,6 +526,7 @@ async fn execute_tool_calls_records_the_product_row_and_execution_span() {
                         ),
                     ],
                     Some(MODEL.into()),
+                    None,
                 )
                 .await
                 .expect("grep execute");
@@ -555,6 +559,7 @@ async fn execute_tool_calls_records_the_product_row_and_execution_span() {
                         ),
                     ],
                     Some(MODEL.into()),
+                    None,
                 )
                 .await
                 .expect("path execute");
@@ -737,6 +742,7 @@ async fn read_profile_agrees_on_the_product_row_and_span() {
                         ),
                     ],
                     Some(MODEL.into()),
+                    None,
                 )
                 .await
                 .expect("read execute");
@@ -764,6 +770,7 @@ async fn read_profile_agrees_on_the_product_row_and_span() {
                         serde_json::json!({"target_file": window_path}),
                     )],
                     Some(MODEL.into()),
+                    None,
                 )
                 .await
                 .expect("capped read");

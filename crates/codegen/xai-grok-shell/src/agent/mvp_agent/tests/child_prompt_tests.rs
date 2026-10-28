@@ -1184,3 +1184,6 @@ mod unknown_target_tests {
         });
     }
 }
+
+#[path = "native_wake_admission.rs"]
+mod native_wake_admission;

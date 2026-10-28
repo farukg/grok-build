@@ -31,10 +31,10 @@ pub use xai_tool_types::{InterruptionCause, SubagentActor, SubagentState};
 use crate::register_resource;
 
 pub use super::active_message::{
-    ActiveAgentMessage, ActiveAgentMessageClaim, ActiveAgentMessageCommittedAdmission,
+    ActiveAgentMessage, ActiveAgentMessageClaim, ActiveAgentMessageCommittedAdmission, ActiveMessageAdmissionOrigin,
     ActiveAgentMessageDelivery, ActiveAgentMessageOperation,
     ActiveAgentMessageOutcome, ActiveAgentMessageQuotaKind, ActiveAgentMessageRequest,
-    ActiveAgentMessageSource, ActiveMessageRoute, ActiveMessageSenderContext, ActiveMessageTarget,
+    ActiveAgentMessageSource, ActiveMessageReceiver, ActiveMessageRoute, ActiveMessageSenderContext, ActiveMessageTarget,
     AgentAddress, MAX_ACTIVE_AGENT_MESSAGE_BYTES, SubagentActiveMessageRequest,
 };
 pub use super::agent_message_sender::{
@@ -128,6 +128,10 @@ impl Clone for SpawnRootSpan {
 }
 
 impl SpawnRootSpan {
+    pub fn from_traceparent(traceparent: Option<String>) -> Self {
+        Self { span: None, traceparent }
+    }
+
     pub fn new(span: tracing::Span) -> Self {
         let traceparent = xai_grok_otel::span_traceparent(&span);
         Self {
@@ -201,7 +205,7 @@ impl SubagentSpawnRequest {
 
 /// Per-spawn dynamic runtime overrides for a subagent. Optional values inherit from the parent or
 /// role default. Explicit values take precedence over role defaults.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModelOverrideProvenance {
     /// Internal harness, role, persona, or config resolution.
     #[default]
@@ -212,7 +216,7 @@ pub enum ModelOverrideProvenance {
     },
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SubagentRuntimeOverrides {
     /// Override the model (e.g. "test-model").
     pub model: Option<String>,
@@ -739,6 +743,12 @@ impl SubagentSnapshotStatus {
 
 // Cancel protocol
 
+#[derive(Clone, Copy, Debug)]
+pub enum ChildCancellation {
+    Shutdown,
+    Authorized,
+}
+
 #[derive(Debug, Clone)]
 pub enum SubagentCancelTarget {
     SubagentId {
@@ -748,8 +758,8 @@ pub enum SubagentCancelTarget {
     },
     /// Turn-scoped cancel (soft cancel / max-turns).
     ParentPromptId(String),
-    /// User Stop / Esc with cancel_subagents — prior-turn background too.
-    ParentSession,
+    /// Session-scoped cancellation, including prior-turn background children.
+    ParentSession(ChildCancellation),
     WorkflowRunId(String),
 }
 
@@ -1088,6 +1098,7 @@ pub struct SubagentDescribeRequest {
 
 /// Coordinator message enum. Kept exhaustive so every actor command is handled.
 pub enum SubagentEvent {
+    RecoverMessage(super::native_recovery::SubagentMessageRecoveryRequest),
     Spawn(SubagentSpawnRequest),
     Query(SubagentQueryRequest),
     Cancel(SubagentCancelRequest),

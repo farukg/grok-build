@@ -68,6 +68,8 @@ impl<S: AcpSide, C> AcpGatewayReceiver<S, C> {
 pub struct AcpGatewaySender<S: AcpSide> {
     tx: mpsc::UnboundedSender<S::OutMessage>,
     tracing: bool,
+    publications: crate::publication::Publications,
+    receiver_settlement: crate::ReceiverSettlement,
 }
 
 impl<S: AcpSide> Clone for AcpGatewaySender<S> {
@@ -75,17 +77,57 @@ impl<S: AcpSide> Clone for AcpGatewaySender<S> {
         Self {
             tx: self.tx.clone(),
             tracing: self.tracing,
+            publications: self.publications.clone(),
+            receiver_settlement: self.receiver_settlement,
         }
     }
 }
 
 impl<S: AcpSide> AcpGatewaySender<S> {
     pub fn new(tx: mpsc::UnboundedSender<S::OutMessage>) -> Self {
-        Self { tx, tracing: false }
+        Self {
+            tx, tracing: false,
+            publications: Default::default(),
+            receiver_settlement: crate::ReceiverSettlement::TransportOnly,
+        }
     }
 
     pub fn tx(&self) -> mpsc::UnboundedSender<S::OutMessage> {
+        self.publications.start();
         self.tx.clone()
+    }
+
+    /// Requires an in-process receiver that completes notifications only after applying or rejecting them.
+    pub fn with_local_receiver_settlement(mut self) -> Result<Self, crate::ReceiverSettlementSelectionError> {
+        if !self.publications.can_select_receiver() {
+            return Err(crate::ReceiverSettlementSelectionError);
+        }
+        self.receiver_settlement = crate::ReceiverSettlement::AppliedOrDiscarded;
+        Ok(self)
+    }
+
+    pub fn receiver_settlement(&self) -> crate::ReceiverSettlement {
+        self.receiver_settlement
+    }
+
+    pub fn begin_publication(&self) -> crate::PublicationGuard {
+        self.publications.start();
+        match self.receiver_settlement {
+            crate::ReceiverSettlement::TransportOnly => crate::PublicationGuard::untracked(),
+            crate::ReceiverSettlement::AppliedOrDiscarded => self.publications.begin(),
+        }
+    }
+
+    pub fn producer_prefix(&self) -> crate::PublicationPrefix {
+        self.publications.producers()
+    }
+
+    pub fn delivery_prefix(&self) -> crate::PublicationPrefix {
+        self.publications.deliveries()
+    }
+
+    pub fn fail_publication(&self) {
+        self.publications.fail();
     }
 
     pub fn with_tracing(mut self, tracing: bool) -> Self {
@@ -356,6 +398,7 @@ impl<S: AcpSide> AcpGatewaySender<S> {
         T: AcpRequest,
         S::OutMessage: From<AcpArgs<T>>,
     {
+        self.publications.start();
         let (response_tx, response_rx) = oneshot::channel();
         let method = request.method_name();
         let args = AcpArgs {
@@ -373,12 +416,18 @@ impl<S: AcpSide> AcpGatewaySender<S> {
     pub fn forward_with_completion<T>(
         &self,
         request: T,
-    ) -> oneshot::Receiver<AcpResult<T::Response>>
+    ) -> crate::PublicationCompletion<T::Response>
     where
         T: AcpRequest,
+        T::Response: Send + 'static,
         S::OutMessage: From<AcpArgs<T>>,
     {
-        self.enqueue(request, "forward_with_completion").1
+        use futures::FutureExt as _;
+        let completion = self.enqueue(request, "forward_with_completion").1;
+        match self.receiver_settlement {
+            crate::ReceiverSettlement::TransportOnly => completion.boxed(),
+            crate::ReceiverSettlement::AppliedOrDiscarded => self.publications.completion(completion),
+        }
     }
 
     /// Enqueue a request without waiting for the response. Returns whether
@@ -387,9 +436,20 @@ impl<S: AcpSide> AcpGatewaySender<S> {
     pub fn forward_fire_and_forget<T>(&self, request: T) -> bool
     where
         T: AcpRequest,
+        T::Response: Send + 'static,
         S::OutMessage: From<AcpArgs<T>>,
     {
-        self.enqueue(request, "forward_fire_and_forget").0
+        let mut publication = self.begin_publication();
+        publication.require_delivery();
+        let (accepted, completion) = self.enqueue(request, "forward_fire_and_forget");
+        match self.receiver_settlement {
+            crate::ReceiverSettlement::TransportOnly => {}
+            crate::ReceiverSettlement::AppliedOrDiscarded => self.publications.track(completion),
+        }
+        if accepted {
+            publication.enqueued();
+        }
+        accepted
     }
 
     /// Send a request and await the response. Returns a `Send` future.
@@ -408,6 +468,7 @@ impl<S: AcpSide> AcpGatewaySender<S> {
         T: AcpRequest,
         S::OutMessage: From<AcpArgs<T>>,
     {
+        self.publications.start();
         if self.tracing {
             let disclosure = request.trace_disclosure();
             tracing::debug!(

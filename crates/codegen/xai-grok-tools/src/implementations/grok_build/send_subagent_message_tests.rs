@@ -1,3 +1,4 @@
+use crate::implementations::grok_build::task::native_recovery::wire_reference_fixture as reference_fixture;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -5,7 +6,7 @@ use crate::implementations::grok_build::task::backend::{ChannelBackend, Subagent
 use crate::implementations::grok_build::task::coordinator::{
     ActiveMessageAdmission, ChildCompletion, ChildControl, ChildRunOutput, ChildRunRequest,
     ChildRunner, SendBoxFuture, StartedChild, SubagentCoordinator, SubagentCoordinatorReceiver,
-    SubagentProgress,
+    SubagentProgress, ChildCancellation, ChildCancelOutcome,
 };
 use crate::implementations::grok_build::task::types::{
     ActiveAgentMessageDelivery, ActiveAgentMessageOutcome, ActiveMessageRoute, AgentMessageSender,
@@ -56,7 +57,9 @@ impl ChildControl for ToolTestControl {
         }))
     }
 
-    fn cancel(&self) {}
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
+        ChildCancelOutcome::Accepted
+    }
 }
 
 struct ToolTestRunner {
@@ -583,7 +586,7 @@ async fn tool_handoff_preserves_closed_live_and_absent_route_semantics() {
         .await;
         match sink {
             Sink::Closed => {
-                assert_eq!(SendSubagentMessageOutput::AdmissionUncertain, output);
+                assert!(matches!(output, SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: AdmissionCorrelation::Known(recovery_ref) } if recovery_ref.receiver.session_id == child_id));
                 assert!(route_rx.try_recv().is_err());
             }
             Sink::Live => {
@@ -797,7 +800,7 @@ fn disposition_classification_is_closed() {
             Disposition::Rejected,
         ),
         (
-            SendSubagentMessageOutput::AdmissionUncertain,
+            SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: reference_fixture().into() },
             Disposition::Unconfirmed,
         ),
         (
@@ -811,7 +814,7 @@ fn disposition_classification_is_closed() {
 
 #[test]
 fn uncertain_display_string_does_not_claim_failure_or_success() {
-    let display = SendSubagentMessageOutput::AdmissionUncertain
+    let display = SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: reference_fixture().into() }
         .to_string()
         .to_ascii_lowercase();
     assert!(display.contains("could not be confirmed"));
@@ -846,4 +849,27 @@ async fn closed_coordinator_ingress_maps_to_channel_closed() {
         .await,
         SendSubagentMessageOutput::ChannelClosed
     );
+}
+
+
+#[test]
+fn uncertain_output_retains_the_exact_observable_wire_reference() {
+    let reference = reference_fixture();
+    let output = SendSubagentMessageOutput::from(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference.clone() });
+    let wire = serde_json::to_value(&output).unwrap();
+    assert_eq!(wire["recoveryRef"], serde_json::to_value(&reference).unwrap());
+    assert_eq!(serde_json::from_value::<SendSubagentMessageOutput>(wire).unwrap(), output);
+    assert!(output.to_string().contains(&serde_json::to_string(&reference).unwrap()));
+    assert!(!output.to_string().to_lowercase().contains("resend"));
+}
+
+#[test]
+fn stored_uncorrelated_history_remains_unconfirmed_without_inventing_a_reference() {
+    let output: SendSubagentMessageOutput = serde_json::from_value(serde_json::json!({"outcome":"admission_uncertain"})).unwrap();
+    assert!(matches!(&output, SendSubagentMessageOutput::AdmissionUncertain { recovery_ref: AdmissionCorrelation::HistoricalUnavailable }));
+    assert_eq!(output.disposition(), SendSubagentMessageDisposition::Unconfirmed);
+    assert!(output.to_string().contains("no recovery reference was recorded"));
+    assert!(!output.to_string().to_lowercase().contains("resend"));
+    assert!(serde_json::to_value(output).unwrap().get("recoveryRef").is_none());
+    assert!(serde_json::from_value::<SendSubagentMessageOutput>(serde_json::json!({"outcome":"admission_uncertain","recoveryRef":null})).is_err());
 }

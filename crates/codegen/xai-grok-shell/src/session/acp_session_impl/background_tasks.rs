@@ -7,6 +7,7 @@ use super::*;
 use crate::extensions::background_task::{
     SnapshotListOutcome, background_tasks_update, snapshot_list_outcome,
 };
+use crate::session::acp_types::{SESSION_ACTIVITY_PROVENANCE_META_KEY, SessionActivityProvenance};
 
 /// Overall budget for snapshot `list_tasks_metadata` on the session actor.
 /// Local ACP enumeration is sync, but other backends still go through an await;
@@ -22,6 +23,7 @@ impl SessionActor {
     /// an in-arm retry loop.
     pub(super) async fn emit_background_tasks_snapshot(
         &self,
+        provenance: SessionActivityProvenance,
         pending: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) {
         // Always clear coalescing pending so a skipped emit cannot stick true.
@@ -68,11 +70,12 @@ impl SessionActor {
                     session_id = %self.session_info.id,
                     "emitting empty background_tasks snapshot: no terminal backend"
                 );
-                self.broadcast_background_tasks_update(std::iter::empty())
+                self.broadcast_background_tasks_update(std::iter::empty(), provenance)
                     .await;
             }
             SnapshotListOutcome::Tasks(snapshots) => {
-                self.broadcast_background_tasks_update(snapshots).await;
+                self.broadcast_background_tasks_update(snapshots, provenance)
+                    .await;
             }
         }
     }
@@ -80,11 +83,21 @@ impl SessionActor {
     async fn broadcast_background_tasks_update(
         &self,
         snapshots: impl IntoIterator<Item = xai_grok_tools::types::TaskSnapshot>,
+        provenance: SessionActivityProvenance,
     ) {
+        let mut extra_meta = serde_json::Map::new();
+        extra_meta.insert(
+            SESSION_ACTIVITY_PROVENANCE_META_KEY.to_owned(),
+            json!(provenance),
+        );
+        let mut meta = self.build_notification_meta();
+        if let serde_json::Value::Object(fields) = &mut meta {
+            fields.extend(extra_meta.clone());
+        }
         let Some(update) = background_tasks_update(
             snapshots,
             &self.session_info.id,
-            Some(self.build_notification_meta()),
+            Some(meta),
         ) else {
             tracing::warn!(
                 session_id = %self.session_info.id,
@@ -92,6 +105,18 @@ impl SessionActor {
             );
             return;
         };
-        self.send_xai_notification(update).await;
+        if let Err(error) = self.send_xai_notification_with_extra_meta(
+            update,
+            Some(extra_meta),
+            crate::session::storage::jsonl::AppendDurability::Buffered,
+        )
+        .await
+        {
+            tracing::error!(?error, "background_tasks snapshot persistence unavailable");
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "../acp_session_tests/background_activity_tests.rs"]
+mod tests;

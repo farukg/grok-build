@@ -234,6 +234,13 @@ pub enum TerminalNotificationDecision {
     Suppressed,
 }
 #[derive(Debug)]
+pub struct TaskCompletionBatch {
+    pub prompt_id: String,
+    pub automatic: bool,
+    pub admissions: Vec<TaskWakeAdmission>,
+    pub respond_to: oneshot::Sender<PromptTurnResult>,
+}
+#[derive(Debug)]
 pub struct TaskWakeAdmission {
     pub respond_to: oneshot::Sender<bool>,
     pub fallback: TaskWakeFallback,
@@ -250,6 +257,7 @@ pub enum CancelTrigger {
     CtrlC,
     SendNow,
     Shutdown,
+    Coordinator,
     SessionClose,
     SessionDelete,
     Client(String),
@@ -277,7 +285,7 @@ impl CancelTrigger {
         match self {
             Self::Esc | Self::CtrlC | Self::Client(_) => CancelKind::StopGesture,
             Self::SendNow => CancelKind::Replace,
-            Self::Shutdown | Self::SessionClose | Self::SessionDelete => CancelKind::Teardown,
+            Self::Shutdown | Self::Coordinator | Self::SessionClose | Self::SessionDelete => CancelKind::Teardown,
         }
     }
     pub fn as_str(&self) -> &str {
@@ -286,6 +294,7 @@ impl CancelTrigger {
             Self::CtrlC => "ctrl_c",
             Self::SendNow => "send_now",
             Self::Shutdown => "shutdown",
+            Self::Coordinator => "coordinator",
             Self::SessionClose => "session_close",
             Self::SessionDelete => "session_delete",
             Self::Client(s) => s,
@@ -448,7 +457,7 @@ pub enum SessionCommand {
         respond_to: oneshot::Sender<PromptTurnResult>,
         /// Optional initial-child readiness signal.
         /// Carried onto the queued item and resolved only when that exact row is promoted, or closed on removal.
-        prompt_admitted: Option<oneshot::Sender<oneshot::Sender<()>>>,
+        prompt_admitted: Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
         /// Optional oneshot fired once the prompt's persistence is settled, before LLM inference begins.
         /// When a `UserPromptSubmit` hook blocked the prompt it fires immediately: nothing was stored, so there is nothing to flush.
         /// Used by callers that need `chat_history.jsonl` settled before trace snapshots or `session/load`; a blocked prompt never appears there.
@@ -463,7 +472,7 @@ pub enum SessionCommand {
         delivery:
             xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageDelivery,
         #[allow(private_interfaces)]
-        receipt_sink: tokio::sync::mpsc::Sender<crate::agent::subagent::PromptTurnReceipt>,
+        receipt_sink: super::message_delivery::ParentMessageHandoff,
         parent_telemetry_ctx: xai_grok_telemetry::TelemetryCtx,
         respond_to: oneshot::Sender<
             xai_grok_tools::implementations::grok_build::task::coordinator::ActiveMessageAdmission,
@@ -800,6 +809,7 @@ pub enum SessionCommand {
     /// `pending` is the bridge coalesce bit. Live incrementals pass `Some` so
     /// a burst collapses to one emit; load leaves it `None` (forced flush).
     EmitBackgroundTasksSnapshot {
+        provenance: SessionActivityProvenance,
         respond_to: Option<oneshot::Sender<()>>,
         pending: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     },
@@ -840,6 +850,7 @@ pub enum SessionCommand {
         priority: NotificationPriority,
         source: NotificationSource,
     },
+    TaskCompletionBatch(TaskCompletionBatch),
     /// Resolve goal policy at the actor before acknowledging terminal enrollment.
     ClassifyTerminalNotification {
         notification: TaskWakeFallback,
@@ -901,6 +912,12 @@ pub enum SessionCommand {
     /// Re-kicks the promoter so a previously held front can start when the session is idle.
     ReleaseEdit {
         id: String,
+    },
+    /// Correlated priority admission or side-effect-free observation of the same operation.
+    QueueSendNow {
+        caller: crate::extensions::interject::QueueCaller,
+        request: crate::extensions::interject::QueueRequest,
+        respond_to: oneshot::Sender<crate::extensions::interject::QueueResponse>,
     },
     /// Atomically interject a queued (not-yet-running) prompt into the running turn.
     /// The in-flight turn merges it at the next safe point, and the prompt can never both interject *and* later run as its own turn.

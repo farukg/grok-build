@@ -91,6 +91,7 @@ pub(crate) struct HookBatch {
     pub(crate) event_name: String,
     pub(crate) tool_name: Option<String>,
     pub(crate) prompt_id: Option<String>,
+    current_action: crate::session::current_actions::HookRegistration,
 }
 
 impl HookBatch {
@@ -99,6 +100,7 @@ impl HookBatch {
             event_name: envelope.hook_event_name.to_string(),
             tool_name: envelope.payload.tool_name().map(str::to_string),
             prompt_id: envelope.prompt_id.clone(),
+            current_action: Default::default(),
         }
     }
 }
@@ -146,9 +148,10 @@ impl SessionActor {
         envelope: &xai_grok_hooks::event::HookEventEnvelope,
         ctx: &xai_grok_hooks::runner::RunContext<'_>,
     ) -> HookBatch {
-        let batch = HookBatch::from_envelope(envelope);
+        let mut batch = HookBatch::from_envelope(envelope);
         let count = xai_grok_hooks::dispatcher::runnable_count(registry, envelope, ctx);
         if count > 0 {
+            batch.current_action = crate::session::current_actions::HookRegistration::new(self.current_actions.clone(), batch.prompt_id.as_deref(), xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now()));
             self.send_xai_notification_transient(XaiSessionUpdate::HookRunStarted {
                 event_name: batch.event_name.clone(),
                 tool_name: batch.tool_name.clone(),
@@ -164,6 +167,7 @@ impl SessionActor {
         batch: &HookBatch,
         results: &[xai_grok_hooks::result::HookRunResult],
     ) {
+        batch.current_action.finish();
         if results.is_empty()
             || results
                 .iter()
@@ -353,6 +357,7 @@ impl SessionActor {
         // ADVERTISED_BLOCKING_EVENTS; SDK clients dispatch by callback id and answer.
         dispatch_result.merge(self.run_post_tool_use_client_hooks(&envelope).await);
 
+        batch.current_action.finish();
         let mut results = std::mem::take(&mut dispatch_result.results);
         let delivery = plan_post_tool_use_delivery(
             dispatch_result,
@@ -553,6 +558,7 @@ mod notification_hook_filter_tests {
             max_retries: 3,
             reason: "timeout".into(),
             error_type: None,
+            next_attempt_at_ms: None,
         });
         assert!(notification_hook_for_update(&update).is_none());
     }

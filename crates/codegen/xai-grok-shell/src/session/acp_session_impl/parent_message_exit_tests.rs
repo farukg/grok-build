@@ -10,7 +10,7 @@ enum CancelCut { Acknowledged, Precommit, Postrename, LostAck }
 enum Exit { Shutdown, CommandsClosed }
 
 #[derive(Clone, Copy, Debug)]
-enum ParentRoute { Queue, Recovered, Fallback }
+enum ParentRoute { Queue, Fallback }
 
 async fn fixture(cut: CancelCut, barrier: ReceiverBarrier, projection: ReceiverBarrier) -> ReceiverFixture {
     let directory = tempfile::tempdir().unwrap();
@@ -97,7 +97,8 @@ async fn actual_shutdown_and_closed_channel_preserve_unacknowledged_parent_uncer
                     (task.admission.clone(), task.handle.clone(), task.identity.as_ref().clone())
                 };
                 let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer().await;
-                let message_id = delivery.message().message_id.clone();
+                let recovery_ref = delivery.recovery_ref().unwrap();
+        let message_id = delivery.message().message_id.clone();
                 let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
                 let (admission, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
                 assert_eq!(admission.effective, ParentMessageOperation::Steer { prompt_id: "held-tool-turn".into(), parent_task: xai_chat_state::ParentTask::Instance { id: task_id } });
@@ -149,24 +150,17 @@ async fn actual_shutdown_and_closed_channel_preserve_unacknowledged_parent_uncer
 #[tokio::test(flavor = "current_thread")]
 async fn promoted_parent_shutdown_stops_exact_live_task_after_real_projection() {
     tokio::task::LocalSet::new().run_until(async {
-        for route in [ParentRoute::Queue, ParentRoute::Recovered, ParentRoute::Fallback] {
+        for route in [ParentRoute::Queue, ParentRoute::Fallback] {
             for ending in [Exit::Shutdown, Exit::CommandsClosed] {
                 for cut in [CancelCut::Acknowledged, CancelCut::Precommit, CancelCut::Postrename, CancelCut::LostAck] {
                     let mut receiver = fixture(cut, ReceiverBarrier::Forward, ReceiverBarrier::HoldNext).await;
-                    let operation = match route { ParentRoute::Queue | ParentRoute::Recovered => ActiveAgentMessageOperation::Queue, ParentRoute::Fallback => ActiveAgentMessageOperation::Steer };
+                    let operation = match route { ParentRoute::Queue => ActiveAgentMessageOperation::Queue, ParentRoute::Fallback => ActiveAgentMessageOperation::Steer };
                     let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer_with_operation(operation).await;
-                    let message_id = delivery.message().message_id.clone();
+                    let recovery_ref = delivery.recovery_ref().unwrap();
+        let message_id = delivery.message().message_id.clone();
                     let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
                     let (admission, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
                     let receipt = match route {
-                        ParentRoute::Recovered => {
-                            drop(proof); drop(ack);
-                            bounded(admitting).await.unwrap();
-                            assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain);
-                            assert!(receipts.recv().await.is_none());
-                            receiver.actor.resume_durable_deliveries(ReceiverResume::Recovery { deliveries: vec![format!("parent-message/{message_id}")] }).await;
-                            None
-                        }
                         ParentRoute::Queue | ParentRoute::Fallback => {
                             ack.send(proof).unwrap();
                             bounded(admitting).await.unwrap();
@@ -183,7 +177,7 @@ async fn promoted_parent_shutdown_stops_exact_live_task_after_real_projection() 
                             }).await;
                             assert!(outcome.settled);
                         }
-                        ParentRoute::Queue | ParentRoute::Recovered => {
+                        ParentRoute::Queue => {
                             let mut state = receiver.actor.state.lock().await;
                             state.running_task.take().unwrap().abort();
                             state.pending_inputs.retain(|item| item.prompt_id != "held-tool-turn");
@@ -260,6 +254,7 @@ async fn graceful_exit_preserves_promoted_parent_and_its_exact_running_front() {
     tokio::task::LocalSet::new().run_until(async {
         let mut receiver = fixture(CancelCut::Acknowledged, ReceiverBarrier::Forward, ReceiverBarrier::HoldNext).await;
         let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer_with_operation(ActiveAgentMessageOperation::Queue).await;
+        let recovery_ref = delivery.recovery_ref().unwrap();
         let message_id = delivery.message().message_id.clone();
         let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
         let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
@@ -307,6 +302,7 @@ async fn actual_actor_drop_reports_uncertainty_without_cancelling_queued_intent(
         for operation in [ActiveAgentMessageOperation::Steer, ActiveAgentMessageOperation::Interject, ActiveAgentMessageOperation::Queue] {
         let mut receiver = receiver().await;
         let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer_with_operation(operation).await;
+        let recovery_ref = delivery.recovery_ref().unwrap();
         let message_id = delivery.message().message_id.clone();
         let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
         let (_, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
@@ -331,5 +327,30 @@ async fn actual_actor_drop_reports_uncertainty_without_cancelling_queued_intent(
         assert!(matches!(summary.completion_delivery.receiver.records[&format!("parent-message/{message_id}")].execution, DeliveryExecution::Queued { .. }));
         assert!(storage.load_session(&info).await.unwrap().chat_history.iter().all(|item| item.text_content() != "claim-bound text stays behind the tool boundary"));
         }
+    }).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn startup_observes_parent_admission_without_reconstructing_an_ownerless_prompt() {
+    tokio::task::LocalSet::new().run_until(async {
+        let mut receiver = fixture(CancelCut::Acknowledged, ReceiverBarrier::Forward, ReceiverBarrier::HoldNext).await;
+        let Producer { delivery, reply, outcome, _coordinator, _spawn, .. } = producer_with_operation(ActiveAgentMessageOperation::Queue).await;
+        let recovery_ref = delivery.recovery_ref().unwrap();
+        let (admitting, mut receipts) = dispatch(receiver.actor.clone(), delivery, reply);
+        let (admission, proof, ack) = bounded(receiver.acknowledgements.recv()).await.unwrap();
+        drop(proof);
+        drop(ack);
+        bounded(admitting).await.unwrap();
+        assert_eq!(bounded(outcome).await.unwrap(), ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: recovery_ref.clone() });
+        assert!(receipts.recv().await.is_none());
+        receiver.actor.resume_durable_deliveries(ReceiverResume::Recovery { deliveries: vec![recovery_ref.delivery_id.clone()] }).await;
+        let state = receiver.actor.state.lock().await;
+        assert!(state.pending_inputs.iter().all(|item| item.prompt_id != admission.prompt_id));
+        assert!(receiver.projections.try_recv().is_err());
+        drop(state);
+        let storage = JsonlStorageAdapter::with_explicit_session_dir(receiver._directory.path().to_path_buf());
+        let summary = storage.load_summary(&receiver.actor.session_info).await.unwrap();
+        assert!(matches!(&summary.completion_delivery.receiver.records[&recovery_ref.delivery_id].execution,
+            DeliveryExecution::Queued { payload, prompt_id } if payload == &admission.text && prompt_id == &admission.prompt_id));
     }).await;
 }

@@ -16,7 +16,7 @@ use super::prompt_turn_receipt::{
     reduce_prompt_turn_settlement,
 };
 use super::attempt_runner::{
-    OneTurnAttemptInput, canonical_total_tokens, record_subagent_usage,
+    InitialChildInput, OneTurnAttemptInput, canonical_total_tokens, record_subagent_usage,
     run_one_turn_attempt, usage_is_incomplete,
 };
 use super::handle_request::{
@@ -235,6 +235,7 @@ fn wedged_child_handle() -> (
         current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
         active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         pending_interactions: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+        current_actions: None,
         info: SessionInfo {
             id: acp::SessionId::new("test"),
             cwd: "/tmp".to_string(),
@@ -311,7 +312,7 @@ async fn cancelled_attempt_fails_closed_when_the_signals_read_never_answers() {
                 request: &request,
                 worktree_path: None,
                 task_prompt_text: "task",
-                prompt_id: uuid::Uuid::now_v7().to_string(),
+                initial_input: InitialChildInput::Prompt(uuid::Uuid::now_v7().to_string()),
                 inherited_tool_overrides: None,
                 gcs_bucket_url: None,
                 gcs_upload_method: None,

@@ -16,6 +16,7 @@
 //! - `Params<TaskParams>` — whether the model may pick a child model (optional)
 
 mod active_message;
+pub mod native_recovery;
 pub mod admission;
 mod agent_message_sender;
 pub mod backend;

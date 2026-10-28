@@ -17,8 +17,8 @@ const PACE_WAIT_SLICE: std::time::Duration = std::time::Duration::from_secs(1);
 pub(crate) async fn pace_uncharged_resubmit(
     store: RecoveredStore,
     auth_manager: Option<&AuthManager>,
-    delay: std::time::Duration,
-) {
+    deadline: &xai_grok_sampler::retry_deadline::RetryDeadline,
+) -> Result<(), tokio::time::error::Error> {
     use xai_grok_login::backend::{ActiveAuthBackend, AuthBackend};
     match (store, auth_manager) {
         // Only an xAI authority stamps the token on the wire: elsewhere an early
@@ -26,29 +26,23 @@ pub(crate) async fn pace_uncharged_resubmit(
         (RecoveredStore::SessionToken, Some(am))
             if ActiveAuthBackend::default().is_xai_authority() =>
         {
-            let started = tokio::time::Instant::now();
+            let wait = deadline.wait();
+            tokio::pin!(wait);
             loop {
-                if am.current_wire_valid().is_some() {
-                    break;
-                }
-                // Parked turns suppress the refresh dispatches that adopt disk, so
-                // poll for a token another process wrote (`grok login` elsewhere).
-                if am.pick_up_sibling_token() {
-                    continue;
-                }
-                let remaining = delay.saturating_sub(started.elapsed());
-                if remaining.is_zero() {
-                    break;
-                }
-                if am
-                    .wait_for_token_refresh(remaining.min(PACE_WAIT_SLICE))
-                    .await
-                {
-                    break;
+                let wire_valid = am.current_wire_valid().is_some()
+                    || (am.pick_up_sibling_token() && am.current_wire_valid().is_some());
+                let remaining = deadline.remaining();
+                tokio::select! {
+                    biased;
+                    result = &mut wait => return result,
+                    _ = std::future::ready(()), if wire_valid => return Ok(()),
+                    _ = am.wait_for_token_refresh(remaining.min(PACE_WAIT_SLICE)) => {
+                        am.pick_up_sibling_token();
+                    }
                 }
             }
         }
-        _ => tokio::time::sleep(delay).await,
+        _ => return deadline.wait().await,
     }
 }
 

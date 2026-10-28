@@ -8,6 +8,44 @@ use std::path::PathBuf;
 use crate::session::persistence::Summary;
 use crate::util::config::DEFAULT_AUTO_COMPACT_THRESHOLD_PERCENT;
 
+pub const SESSION_ACTIVITY_PROVENANCE_META_KEY: &str = "activityProvenance";
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionActivityProvenance {
+    Live,
+    #[default]
+    Observation,
+}
+
+impl SessionActivityProvenance {
+    pub fn from_snapshot_meta(meta: Option<&serde_json::Value>) -> Self {
+        meta.and_then(|meta| meta.get(SESSION_ACTIVITY_PROVENANCE_META_KEY))
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default()
+    }
+}
+
+pub const TOOL_TERMINAL_STATUS_META_KEY: &str = "toolTerminalStatus";
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolTerminalStatus {
+    Cancelled,
+}
+
+impl ToolTerminalStatus {
+    pub fn meta(self) -> agent_client_protocol::Meta {
+        let mut meta = serde_json::Map::new();
+        match self {
+            Self::Cancelled => {
+                meta.insert(TOOL_TERMINAL_STATUS_META_KEY.into(), "cancelled".into());
+            }
+        }
+        meta
+    }
+}
+
 // ── Session list ───────────────────────────────────────────────────────
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -35,6 +73,15 @@ pub(crate) struct AllSessionOverviewResponse {
 pub struct CompactInvocationId(pub uuid::Uuid);
 
 pub const COMPACT_INVOCATION_META_KEY: &str = "compactInvocationId";
+
+pub const AUTOMATIC_COMPACT_META_KEY: &str = "automaticCompactInvocation";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomaticCompactInvocation {
+    pub id: CompactInvocationId,
+    pub prompt_id: Option<String>,
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompactConversationRequest {

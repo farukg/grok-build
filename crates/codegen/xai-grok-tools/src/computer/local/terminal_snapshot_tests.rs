@@ -54,6 +54,33 @@ async fn snapshot_after_completion(command: &str, output_byte_limit: usize) -> T
     panic!("completed task never reloaded its output from disk");
 }
 
+#[tokio::test]
+async fn background_handle_start_is_the_registry_process_start() {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let backend = LocalTerminalBackend::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let handle = backend.run_background(TerminalRunRequest {
+        command: "printf done".into(),
+        working_directory: tmp.path().to_path_buf(),
+        env: HashMap::new(),
+        timeout: Duration::from_secs(60),
+        output_byte_limit: 10_000,
+        output_file: tmp.path().join("start.log"),
+        notification_handle: ToolNotificationHandle::from_sender(tx),
+        tool_call_id: "start-call".into(),
+        display_command: None,
+        auto_background_on_timeout: false,
+        foreground_block_budget: None,
+        kind: TaskKind::Bash,
+        owner_session_id: None,
+        description: None,
+    }).await.unwrap();
+    let registry = backend.get_task(&handle.task_id).await.unwrap();
+    assert_eq!(handle.start_time, Some(registry.start_time));
+    let completed = backend.wait_for_completion(&handle.task_id, Some(Duration::from_secs(30))).await.unwrap();
+    assert_eq!(handle.start_time, Some(completed.start_time));
+}
+
 /// The in-memory limit applies while a task runs, not to what it reports at
 /// the end. `truncated` stays true because the task did run past that limit.
 #[tokio::test]

@@ -165,6 +165,7 @@ struct ReplayRouting<'a> {
     persist_data: Option<&'a serde_json::Value>,
     target_client_id: Option<&'a serde_json::Value>,
     cursor: Option<&'a str>,
+    binding: Option<&'a crate::session::current_actions::SnapshotBinding>,
 }
 /// The workspace a session runs in, with its MCP servers already merged.
 struct SessionWorkspace {
@@ -943,8 +944,19 @@ impl MvpAgent {
         arguments: acp::LoadSessionRequest,
         op: AttachOperation,
     ) -> Result<acp::LoadSessionResponse, acp::Error> {
+        let current_actions_binding = crate::extensions::current_actions::load_binding(arguments.meta.as_ref())
+            .map_err(|_| acp::Error::invalid_params().data("invalid current-actions load binding"))?;
+        if let Some(binding) = &current_actions_binding
+            && binding.session_id != arguments.session_id.0.as_ref()
+        {
+            return Err(acp::Error::invalid_params().data("current-actions load session mismatch"));
+        }
         let attach_started_at = std::time::Instant::now();
         let load_guard = self.begin_session_load(&arguments.session_id);
+        let publication_context = current_actions_binding.as_ref().and_then(|binding| {
+            self.resident_handle(&arguments.session_id)?.current_actions.as_ref()?
+                .bind_publication(binding.clone()).ok()
+        });
         reject_chat_kind_without_feature(arguments.meta.as_ref())?;
         let live_cwd = AbsPathBuf::new(arguments.cwd.clone())
             .map_err(|e| acp::Error::invalid_params().data(e.to_string()))?;
@@ -1012,6 +1024,7 @@ impl MvpAgent {
             let mut flush_timer = crate::instrumentation_timer!("session.reconnect_flush");
             flush_timer.with_field("session_id", session_id.0.as_ref());
             if let Err(reason) = self.flush_session(&session_id).await {
+                self.gateway.fail_publication();
                 tracing::warn!(
                     session_id = %session_id.0,
                     reason,
@@ -1221,6 +1234,7 @@ impl MvpAgent {
                     persist_data: persist_data.as_ref(),
                     target_client_id: target_client_id.as_ref(),
                     cursor: cursor.as_deref(),
+                    binding: current_actions_binding.as_ref(),
                 },
                 no_replay,
                 gateway_backed,
@@ -1441,7 +1455,11 @@ impl MvpAgent {
             reply.await.map_err(|_| {
                 acp::Error::internal_error().data("saved child model restore did not respond")
             })??;
-            return Ok(acp::LoadSessionResponse::new());
+            let mut meta = None;
+            self.stamp_ordered_current_actions_load(
+                &mut meta, current_actions_binding, publication_context, &load_guard.rx,
+            ).await?;
+            return Ok(acp::LoadSessionResponse::new().meta(meta));
         }
         if gateway_backed {
             if let Some(handle) = self.resident_handle(&session_id) {
@@ -1554,10 +1572,14 @@ impl MvpAgent {
             .await;
         xai_grok_telemetry::unified_log::info("session loaded", Some(session_id.0.as_ref()), None);
         let config_options = self.acp_config_options(Some(&session_id), &model_state);
+        let mut response_meta = response_meta.as_object().cloned();
+        self.stamp_ordered_current_actions_load(
+            &mut response_meta, current_actions_binding, publication_context, &load_guard.rx,
+        ).await?;
         let response = acp::LoadSessionResponse::new()
             .models(Some(model_state))
             .config_options(Some(config_options))
-            .meta(response_meta.as_object().cloned());
+            .meta(response_meta);
         if let Some(handle) = self.resident_handle(&session_id) {
             let _ = handle.cmd_tx.send(SessionCommand::AdvertiseCommands {
                 trigger: crate::session::AdvertiseTrigger::SessionLoad,
@@ -1679,6 +1701,7 @@ impl MvpAgent {
         let persist_data = routing.persist_data.cloned();
         let target_client_id = routing.target_client_id.cloned();
         let cursor = routing.cursor.map(str::to_string);
+        let binding = routing.binding;
         let (initial_total_tokens, delta_completions, unfinished_subagents) = if no_replay {
             tracing::info!(
                 session_id = %session_id.0,
@@ -1699,6 +1722,7 @@ impl MvpAgent {
                     target_client_id.as_ref(),
                     cursor.as_deref(),
                     skip_local_background_tasks_replay,
+                    binding,
                 )
                 .await?;
             let cursor_mark_replay = cursor.is_none();
@@ -1712,8 +1736,10 @@ impl MvpAgent {
                     target_client_id.as_ref(),
                     cursor_mark_replay,
                     skip_local_background_tasks_replay,
+                    binding,
                 ),
                 Err(reason) => {
+                    self.gateway.fail_publication();
                     tracing::warn!(
                         session_id = %session_id.0,
                         reason,
@@ -1730,14 +1756,18 @@ impl MvpAgent {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         for rx in delta_completions {
-            let _ = rx.await;
+            if !matches!(rx.await, Ok(Ok(()))) {
+                self.gateway.fail_publication();
+            }
         }
         let reconcile_completions = {
             let _timer = crate::instrumentation_timer!("session.reconcile_stale_tasks");
             self.reconcile_stale_background_tasks(&session_id, &updates_file_path)
         };
         for rx in reconcile_completions {
-            let _ = rx.await;
+            if !matches!(rx.await, Ok(Ok(()))) {
+                self.gateway.fail_publication();
+            }
         }
         Ok((initial_total_tokens, unfinished_subagents))
     }
@@ -1820,6 +1850,7 @@ impl MvpAgent {
         if handle
             .cmd_tx
             .send(SessionCommand::EmitBackgroundTasksSnapshot {
+                provenance: crate::session::acp_types::SessionActivityProvenance::Observation,
                 respond_to: Some(respond_to),
                 pending: None,
             })

@@ -1990,11 +1990,13 @@ impl FinalizedToolset {
                 .get::<crate::types::resources::SystemRemindersEnabled>()
                 .is_none_or(|e| e.0);
         }
+        let observations = crate::types::completion_observation::SubagentCompletionObservations::default();
+        observations.extend(completed_subagents);
         let reminders = if reminders_enabled {
             let mut r = Vec::new();
             for reminder in &self.reminders {
                 let extra = reminder
-                    .collect_reminders(self.resources.clone(), &output)
+                    .collect_reminders(self.resources.clone(), &output, &observations)
                     .await;
                 r.extend(extra);
             }
@@ -2013,7 +2015,7 @@ impl FinalizedToolset {
             self.resources_persistence.save(&res);
         }
         Ok(ToolRunResult {
-            completed_subagents,
+            completed_subagents: observations.take(),
             output,
             prompt_text,
             effective_tool_name,

@@ -1,5 +1,8 @@
+#[path = "parent_message_publication.rs"]
+mod parent_message_publication;
+pub use parent_message_publication::ParentMessagePublication;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+pub use xai_grok_tools::implementations::grok_build::task::native_recovery::{payload_digest, parent_message_delivery_id, parent_message_prompt_id};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -39,10 +42,6 @@ impl DeliveryRequest {
         }
         Ok(())
     }
-}
-
-pub fn payload_digest(payload: &str) -> String {
-    format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
 pub(crate) const RECOVERY_INTERRUPTION_REASON: &str =
@@ -217,13 +216,66 @@ pub struct ParentMessageAdmission {
     pub effective: ParentMessageOperation,
     pub prompt_id: String,
     pub text: String,
+    #[serde(default)]
+    pub custody: ParentMessageCustody,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParentMessageCustody {
+    #[default]
+    Legacy,
+    Live {
+        receiver: xai_grok_tools::implementations::grok_build::task::types::ActiveMessageReceiver,
+        operation: xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageOperation,
+        route: xai_grok_tools::implementations::grok_build::task::types::ActiveMessageRoute,
+    },
+    Initial { custody: Box<xai_grok_tools::implementations::grok_build::task::native_recovery::NativeWakeCustody>, publication: Box<ParentMessagePublication> },
 }
 
 #[derive(Debug)]
 pub enum ParentAdmissionAuthority {
     Coordinator(xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim),
+    Native(NativeParentAdmission),
     /// Receiver-local authority, never a fallback for a failed coordinator claim.
     DirectLocal,
+}
+
+pub struct NativeParentAdmission {
+    claim: xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim,
+    recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe,
+}
+
+impl std::fmt::Debug for NativeParentAdmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("NativeParentAdmission").finish_non_exhaustive()
+    }
+}
+
+impl ParentAdmissionAuthority {
+    pub(crate) fn native(claim: xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim, recipe: crate::agent::subagent::management_recipe::ChildManagementRecipe) -> Self {
+        Self::Native(NativeParentAdmission { claim, recipe })
+    }
+
+    pub(crate) fn claim(&self) -> Option<&xai_grok_tools::implementations::grok_build::task::types::ActiveAgentMessageClaim> {
+        match self {
+            Self::Coordinator(claim) => Some(claim),
+            Self::Native(native) => Some(&native.claim),
+            Self::DirectLocal => None,
+        }
+    }
+
+    pub(crate) fn native_recipe(&self) -> Option<&crate::agent::subagent::management_recipe::ChildManagementRecipe> {
+        match self { Self::Native(native) => Some(&native.recipe), Self::Coordinator(_) | Self::DirectLocal => None }
+    }
+
+    pub(crate) fn committed(self) -> ParentAdmissionAck {
+        match self {
+            Self::Coordinator(claim) => ParentAdmissionAck::Coordinator(claim.commit()),
+            Self::Native(native) => ParentAdmissionAck::Coordinator(native.claim.commit()),
+            Self::DirectLocal => ParentAdmissionAck::DirectLocal,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -235,10 +287,6 @@ pub enum ParentAdmissionAck {
 
 impl ParentMessageAdmission {
     pub(crate) fn delivery_id(&self) -> String { parent_message_delivery_id(&self.message_id) }
-}
-
-pub(crate) fn parent_message_delivery_id(message_id: &str) -> String {
-    format!("parent-message/{message_id}")
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -259,6 +307,20 @@ pub(crate) struct DeliveryRecord {
 }
 
 impl DeliveryRecord {
+    pub(crate) fn parent_recovery_ref(&self) -> Option<xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef> {
+        let DeliveryProvenance::ParentMessage { admission } = &self.provenance else { return None; };
+        let (receiver, operation) = match &admission.custody {
+            ParentMessageCustody::Legacy => return None,
+            ParentMessageCustody::Live { receiver, operation, .. } => (receiver, *operation),
+            ParentMessageCustody::Initial { custody, .. } => (&custody.receiver, custody.operation),
+        };
+        Some(xai_grok_tools::implementations::grok_build::task::native_recovery::MessageRecoveryRef {
+            delivery_id: admission.delivery_id(), message_id: admission.message_id.clone(),
+            prompt_id: admission.prompt_id.clone(), payload_digest: self.digest.clone(),
+            receiver: receiver.clone(), operation,
+        })
+    }
+
     pub(crate) fn record_projection(&mut self, binding: &xai_chat_state::DeliveryBinding) -> Result<(), &'static str> {
         if self.digest != binding.payload_digest {
             return Err("delivery history conflicts with durable admission");

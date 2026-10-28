@@ -269,7 +269,7 @@ async fn pace_early_wake_on_token_landing_returns_promptly() {
         waker.refresh_notifier().notify_waiters();
     });
     let delay = Duration::from_secs(15);
-    super::pace_uncharged_resubmit(super::RecoveredStore::SessionToken, Some(&am), delay).await;
+    super::pace_uncharged_resubmit(super::RecoveredStore::SessionToken, Some(&am), &xai_grok_sampler::retry_deadline::RetryDeadline::after(delay).unwrap()).await.unwrap();
     let elapsed = started.elapsed();
     if ActiveAuthBackend::default().is_xai_authority() {
         assert!(
@@ -303,9 +303,9 @@ async fn pace_release_matches_resolver_authority_predicate() {
     super::pace_uncharged_resubmit(
         super::RecoveredStore::SessionToken,
         Some(&am),
-        AuthRetrySchedule::UNCHARGED_PACE_CAP,
+        &xai_grok_sampler::retry_deadline::RetryDeadline::after(AuthRetrySchedule::UNCHARGED_PACE_CAP).unwrap(),
     )
-    .await;
+    .await.unwrap();
     let elapsed = started.elapsed();
     if ActiveAuthBackend::default().is_xai_authority() {
         assert!(
@@ -341,9 +341,9 @@ async fn pace_wakes_on_token_adopted_without_notify() {
     super::pace_uncharged_resubmit(
         super::RecoveredStore::SessionToken,
         Some(&am),
-        AuthRetrySchedule::UNCHARGED_PACE_CAP,
+        &xai_grok_sampler::retry_deadline::RetryDeadline::after(AuthRetrySchedule::UNCHARGED_PACE_CAP).unwrap(),
     )
-    .await;
+    .await.unwrap();
     let elapsed = started.elapsed();
     if ActiveAuthBackend::default().is_xai_authority() {
         assert!(
@@ -383,9 +383,9 @@ async fn pace_adopts_token_written_to_auth_json_mid_park() {
     super::pace_uncharged_resubmit(
         super::RecoveredStore::SessionToken,
         Some(&am),
-        AuthRetrySchedule::UNCHARGED_PACE_CAP,
+        &xai_grok_sampler::retry_deadline::RetryDeadline::after(AuthRetrySchedule::UNCHARGED_PACE_CAP).unwrap(),
     )
-    .await;
+    .await.unwrap();
     let elapsed = started.elapsed();
     if ActiveAuthBackend::default().is_xai_authority() {
         assert!(
@@ -418,7 +418,7 @@ async fn pace_spurious_notify_holds_the_full_delay() {
         waker.refresh_notifier().notify_waiters();
     });
     let delay = Duration::from_secs(4);
-    super::pace_uncharged_resubmit(super::RecoveredStore::SessionToken, Some(&am), delay).await;
+    super::pace_uncharged_resubmit(super::RecoveredStore::SessionToken, Some(&am), &xai_grok_sampler::retry_deadline::RetryDeadline::after(delay).unwrap()).await.unwrap();
     let elapsed = started.elapsed();
     assert!(
         elapsed >= delay,
@@ -432,10 +432,19 @@ async fn pace_provider_store_sleeps_the_delay() {
     let (_dir, am) = expired_manager_for_pace();
     let started = tokio::time::Instant::now();
     let delay = Duration::from_secs(2);
-    super::pace_uncharged_resubmit(super::RecoveredStore::AuthProvider, Some(&am), delay).await;
+    super::pace_uncharged_resubmit(super::RecoveredStore::AuthProvider, Some(&am), &xai_grok_sampler::retry_deadline::RetryDeadline::after(delay).unwrap()).await.unwrap();
     assert_eq!(
         started.elapsed(),
         delay,
         "provider store must sleep the delay exactly"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn auth_pace_keeps_its_original_deadline_after_sender_delay() {
+    let started = tokio::time::Instant::now();
+    let deadline = xai_grok_sampler::retry_deadline::RetryDeadline::after(Duration::from_secs(15)).unwrap();
+    tokio::time::advance(Duration::from_secs(4)).await;
+    super::pace_uncharged_resubmit(super::RecoveredStore::AuthProvider, None, &deadline).await.unwrap();
+    assert_eq!(started.elapsed(), Duration::from_secs(15));
 }

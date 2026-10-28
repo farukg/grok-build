@@ -14,13 +14,14 @@ use crate::session::storage::{ReplayToolCollapser, UnfinishedSubagent};
 /// Unbounded enqueue with sync pager apply peaks the pager at multi-GB on huge sessions; this keeps ACP apply roughly windowed.
 pub(super) const REPLAY_COMPLETION_WINDOW: usize = 64;
 
-type ReplayCompletionRx = tokio::sync::oneshot::Receiver<xai_acp_lib::AcpResult<()>>;
+type ReplayCompletionRx = xai_acp_lib::PublicationCompletion<()>;
 
 /// Sliding window of replay completion receivers.
 /// Awaits the oldest when full so at most [`REPLAY_COMPLETION_WINDOW`] notifications sit un-acked.
 pub(super) struct ReplayCompletionDrain {
     pending: VecDeque<ReplayCompletionRx>,
     forwarded: usize,
+    outcome: Result<(), ()>,
 }
 
 impl ReplayCompletionDrain {
@@ -28,6 +29,7 @@ impl ReplayCompletionDrain {
         Self {
             pending: VecDeque::with_capacity(REPLAY_COMPLETION_WINDOW),
             forwarded: 0,
+            outcome: Ok(()),
         }
     }
 
@@ -35,7 +37,7 @@ impl ReplayCompletionDrain {
         if self.pending.len() >= REPLAY_COMPLETION_WINDOW
             && let Some(oldest) = self.pending.pop_front()
         {
-            let _ = oldest.await;
+            self.outcome = self.outcome.and(oldest.await.map_err(|_| ()).and_then(|result| result.map_err(|_| ())));
         }
         self.pending.push_back(rx);
         self.forwarded += 1;
@@ -45,10 +47,11 @@ impl ReplayCompletionDrain {
         self.forwarded
     }
 
-    pub(super) async fn drain_all(mut self) {
+    pub(super) async fn drain_all(mut self) -> bool {
         while let Some(rx) = self.pending.pop_front() {
-            let _ = rx.await;
+            self.outcome = self.outcome.and(rx.await.map_err(|_| ()).and_then(|result| result.map_err(|_| ())));
         }
+        self.outcome.is_ok()
     }
 }
 
@@ -83,6 +86,7 @@ impl MvpAgent {
         target_client_id: Option<&serde_json::Value>,
         mark_replay: bool,
         collapser: &mut ReplayToolCollapser,
+        binding: Option<&crate::session::current_actions::SnapshotBinding>,
     ) -> Option<ReplayCompletionRx> {
         use crate::session::storage::RawLinePeek;
 
@@ -90,6 +94,7 @@ impl MvpAgent {
             Ok(e) => e,
             Err(e) => {
                 tracing::debug!(?e, "replay: skipping unparseable JSONL line");
+                self.gateway.fail_publication();
                 return None;
             }
         };
@@ -98,36 +103,36 @@ impl MvpAgent {
         let method = env.method.unwrap_or("session/update");
         let Some(raw_params) = env.params else {
             tracing::debug!("replay: skipping JSONL line with no params");
+            self.gateway.fail_publication();
             return None;
         };
         let is_xai = method == "_x.ai/session/update";
+        let role = match binding {
+            Some(binding) => crate::extensions::current_actions::DeliveryRole::Historical { binding: binding.clone() },
+            None => crate::extensions::current_actions::DeliveryRole::Unavailable,
+        };
 
         if is_xai {
-            // The fast-path forwards raw params with no `_meta` round-trip, so it can stamp nothing
-            // When a `target_client_id` is present we MUST take the injection path instead
-            // Otherwise the replay would lose the target and the leader would broadcast it to every subscriber
-            if target_client_id.is_none() && !mark_replay {
-                if let Ok(owned) =
-                    serde_json::value::RawValue::from_string(raw_params.get().to_owned())
-                    && let Some(owned) = Self::fitted_replay_params(owned)
-                {
-                    return Some(
-                        self.gateway
-                            .forward_with_completion(acp::ExtNotification::new(
-                                "x.ai/session/update",
-                                std::sync::Arc::from(owned),
-                            )),
-                    );
-                }
-                return None;
-            }
             let Ok(mut params) = serde_json::from_str::<serde_json::Value>(raw_params.get()) else {
                 tracing::debug!("replay: skipping xAI update with unparseable params");
+                self.gateway.fail_publication();
                 return None;
             };
+            if !params.is_object() {
+                self.gateway.fail_publication();
+                return None;
+            }
             if let Some(obj) = params.as_object_mut() {
                 let meta = obj.entry("_meta").or_insert_with(|| serde_json::json!({}));
+                if !meta.is_object() {
+                    self.gateway.fail_publication();
+                    return None;
+                }
                 if let Some(m) = meta.as_object_mut() {
+                    if crate::extensions::current_actions::stamp_delivery(m, &role).is_err() {
+                        self.gateway.fail_publication();
+                        return None;
+                    }
                     // `isReplay` only applies to historical replay events, not the post-cursor live deltas that reach this path when a target is set
                     if mark_replay {
                         m.insert("isReplay".to_string(), serde_json::json!(true));
@@ -151,12 +156,14 @@ impl MvpAgent {
                         )),
                 );
             }
+            self.gateway.fail_publication();
             return None;
         }
 
         let Ok(notification) = serde_json::from_str::<acp::SessionNotification>(raw_params.get())
         else {
             tracing::debug!("replay: skipping ACP update with unparseable params");
+            self.gateway.fail_publication();
             return None;
         };
         let acp::SessionNotification {
@@ -176,6 +183,10 @@ impl MvpAgent {
         if let Some(tid) = target_client_id {
             stamp_meta_value(&mut notification.meta, "x.ai/leaderClientId", tid);
         }
+        if crate::extensions::current_actions::stamp_delivery(notification.meta.get_or_insert_with(acp::Meta::new), &role).is_err() {
+            self.gateway.fail_publication();
+            return None;
+        }
         Some(self.gateway.forward_with_completion(notification))
     }
 
@@ -190,6 +201,7 @@ impl MvpAgent {
         target_client_id: Option<&serde_json::Value>,
         cursor: Option<&str>,
         skip_local_background_tasks: bool,
+        binding: Option<&crate::session::current_actions::SnapshotBinding>,
     ) -> Result<(u64, u64, Vec<UnfinishedSubagent>), acp::Error> {
         let mut replay_timer = crate::instrumentation_timer!("session.load_session_replay");
         replay_timer.with_field("session_id", session_id.0.as_ref());
@@ -240,7 +252,11 @@ impl MvpAgent {
             .entered();
             match std::fs::read_to_string(updates_path) {
                 Ok(s) if !s.is_empty() => s,
-                _ => return Ok((0, 0, Vec::new())),
+                Ok(_) => return Ok((0, 0, Vec::new())),
+                Err(_) => {
+                    self.gateway.fail_publication();
+                    return Ok((0, 0, Vec::new()));
+                }
             }
         };
         let end_offset = file_contents.len() as u64;
@@ -310,6 +326,7 @@ impl MvpAgent {
                         target_client_id,
                         mark_replay,
                         &mut collapser,
+                        binding,
                     ) {
                         drain.push(rx).await;
                     }
@@ -336,7 +353,9 @@ impl MvpAgent {
                 "startup.session_replay.drain_completions",
                 "session.replay.drain_completions"
             );
-            drain.drain_all().instrument(drain_span).await;
+            if !drain.drain_all().instrument(drain_span).await {
+                self.gateway.fail_publication();
+            }
         }
 
         tracing::info!(
@@ -364,6 +383,7 @@ impl MvpAgent {
         target_client_id: Option<&serde_json::Value>,
         mark_replay: bool,
         skip_local_background_tasks: bool,
+        binding: Option<&crate::session::current_actions::SnapshotBinding>,
     ) -> Vec<ReplayCompletionRx> {
         use std::io::{Read, Seek, SeekFrom};
 
@@ -373,13 +393,21 @@ impl MvpAgent {
 
         let mut file = match std::fs::File::open(updates_path) {
             Ok(f) => f,
-            Err(_) => return Vec::new(),
+            Err(_) => {
+                self.gateway.fail_publication();
+                return Vec::new();
+            }
         };
         if file.seek(SeekFrom::Start(from_offset)).is_err() {
+            self.gateway.fail_publication();
             return Vec::new();
         }
         let mut contents = String::new();
-        if file.read_to_string(&mut contents).is_err() || contents.is_empty() {
+        if file.read_to_string(&mut contents).is_err() {
+            self.gateway.fail_publication();
+            return Vec::new();
+        }
+        if contents.is_empty() {
             return Vec::new();
         }
 
@@ -398,6 +426,7 @@ impl MvpAgent {
                 target_client_id,
                 mark_replay,
                 &mut collapser,
+                binding,
             ) {
                 completions.push(rx);
             }
@@ -434,6 +463,7 @@ fn line_is_background_tasks_update(line: &str) -> bool {
 #[cfg(test)]
 mod drain_tests {
     use super::{REPLAY_COMPLETION_WINDOW, ReplayCompletionDrain};
+    use futures::FutureExt as _;
 
     #[tokio::test]
     async fn completion_window_drains_all_ready_receivers() {
@@ -442,7 +472,7 @@ mod drain_tests {
         for _ in 0..5 {
             let (tx, rx) = tokio::sync::oneshot::channel();
             tx.send(Ok(())).unwrap();
-            drain.push(rx).await;
+            drain.push(rx.boxed()).await;
         }
         assert_eq!(drain.forwarded(), 5);
         drain.drain_all().await;
@@ -455,12 +485,12 @@ mod drain_tests {
         for _ in 0..REPLAY_COMPLETION_WINDOW {
             let (tx, rx) = tokio::sync::oneshot::channel();
             early_txs.push(tx);
-            drain.push(rx).await;
+            drain.push(rx.boxed()).await;
         }
         let (overflow_tx, overflow_rx) =
             tokio::sync::oneshot::channel::<xai_acp_lib::AcpResult<()>>();
         {
-            let push = drain.push(overflow_rx);
+            let push = drain.push(overflow_rx.boxed());
             tokio::pin!(push);
             tokio::select! {
                 _ = &mut push => panic!("push must wait for the oldest completion when the window is full"),
@@ -485,9 +515,9 @@ mod drain_tests {
         let (tx0, rx0) = tokio::sync::oneshot::channel();
         let (tx1, rx1) = tokio::sync::oneshot::channel();
         let (tx2, rx2) = tokio::sync::oneshot::channel();
-        drain.push(rx0).await;
-        drain.push(rx1).await;
-        drain.push(rx2).await;
+        drain.push(rx0.boxed()).await;
+        drain.push(rx1.boxed()).await;
+        drain.push(rx2.boxed()).await;
         let drain_all = drain.drain_all();
         tokio::pin!(drain_all);
         tokio::select! {

@@ -2,6 +2,9 @@ use super::*;
 use xai_chat_state::completion::{CompletionIdentity, TerminalCompletionId};
 use crate::session::completion_delivery::{CompletionEventPolicy, CompletionObligation, CompletionOffer};
 
+#[path = "task_completion_publication.rs"]
+mod task_publication;
+
 impl SessionActor {
     pub(crate) async fn suppress_terminal_notifications(&self, ids: Vec<CompletionIdentity>) -> std::io::Result<()> {
         if ids.is_empty() { return Ok(()); }
@@ -26,6 +29,12 @@ impl SessionActor {
                 }
             }
         }
+        let consumed: Vec<_> = ids.iter().filter_map(|id| match id {
+            CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { task_id, .. }, .. } => Some(task_id.as_str()),
+            CompletionIdentity::Subagent(id) => Some(id.subagent_id.as_str()),
+            CompletionIdentity::V2 { terminal: TerminalCompletionId::Workflow { .. }, .. } => None,
+        }).collect();
+        self.drop_pending_items_for_consumed_completions(&consumed).await;
     }
 
     pub(crate) async fn project_terminal_input(
@@ -101,8 +110,13 @@ impl SessionActor {
                 if state.obligations.iter().any(|obligation| matches!(obligation, CompletionObligation::Suppressed { id: suppressed, .. } if suppressed == &id)) { continue; }
                 if fresh.contains(&id) || recovery.contains(&id) || settled.contains(&id) { continue; }
                 if state.receipts.iter().any(|receipt| receipt.completion == id) {
-                    if state.obligations.iter().any(|obligation| obligation.id() == id) { recovery.push(id); }
-                    else { settled.push(id); }
+                    match payload {
+                        super::notification_drain::NotificationBatchPayload::Rows { .. } => settled.push(id),
+                        super::notification_drain::NotificationBatchPayload::TerminalOnly => {
+                            if state.obligations.iter().any(|obligation| obligation.id() == id) { recovery.push(id); }
+                            else { settled.push(id); }
+                        }
+                    }
                 } else { fresh.push(id); }
             }
             self.acknowledge_terminal_receipts(&settled).await;

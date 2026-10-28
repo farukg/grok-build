@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "native_wake_fence.rs"]
+mod native_wake_fence;
+
 #[derive(Clone)]
 struct RunShellChildTestRunner {
     contexts: std::sync::Arc<parking_lot::Mutex<std::collections::VecDeque<SubagentSpawnContext>>>,
@@ -598,14 +601,14 @@ async fn unpublished_wake_completion_preserves_prior_durable_state_and_worktree(
             );
             while gateway_rx.try_recv().is_ok() {}
 
-            assert_eq!(
+            assert!(matches!(
                 backend
                     .send_active_message(
                         ActiveAgentMessageRequest::try_new(&id, "continue").expect("wake request")
                     )
                     .await,
                 ActiveAgentMessageOutcome::NotActiveOrFinalizing
-            );
+            ));
             let restored = backend
                 .query(&id, false, None, None)
                 .await
@@ -952,12 +955,14 @@ async fn unacked_wake_start_and_abort_fail_closed_without_parking_runner() {
                 std::fs::read(meta_dir.path().join("meta.json")).expect("prior metadata");
             while gateway_rx.try_recv().is_ok() {}
 
+            let prior_requests = server.request_count();
             let wake = backend
                 .send_active_message(
                     ActiveAgentMessageRequest::try_new(&id, "continue").expect("wake request"),
                 )
                 .await;
-            assert_eq!(wake, ActiveAgentMessageOutcome::NotActiveOrFinalizing);
+            assert!(matches!(wake, ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } if recovery_ref.receiver.session_id == id));
+            assert_eq!(server.request_count(), prior_requests);
             let restored = backend
                 .query(&id, true, Some(5_000), None)
                 .await
@@ -981,6 +986,7 @@ async fn unacked_wake_start_and_abort_fail_closed_without_parking_runner() {
                     .expect("summary after timeout"),
             )
             .expect("parse summary after timeout");
+            assert_aborted_wake_admission(&prior_summary, &restored_summary);
             assert_eq!(restored_summary.attempt_id, prior_summary.attempt_id);
             assert_eq!(
                 restored_summary.next_trace_turn,
@@ -1071,8 +1077,9 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
                 cwd: child_cwd,
             };
             let child_session_dir = crate::session::persistence::session_dir(&child_info);
-            let prior_summary =
-                std::fs::read(child_session_dir.join("summary.json")).expect("prior summary");
+            let prior_summary: crate::session::persistence::Summary = serde_json::from_slice(
+                &std::fs::read(child_session_dir.join("summary.json")).expect("prior summary"),
+            ).expect("parse prior summary");
             let prior_meta =
                 std::fs::read(meta_dir.path().join("meta.json")).expect("prior metadata");
             assert!(write_subagent_output(
@@ -1081,14 +1088,16 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
             ));
             while gateway_rx.try_recv().is_ok() {}
 
-            assert_eq!(
+            let prior_requests = server.request_count();
+            assert!(matches!(
                 backend
                     .send_active_message(
                         ActiveAgentMessageRequest::try_new(&id, "continue").expect("wake request")
                     )
                     .await,
-                ActiveAgentMessageOutcome::NotActiveOrFinalizing
-            );
+                ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } if recovery_ref.receiver.session_id == id
+            ));
+            assert_eq!(server.request_count(), prior_requests);
             let restored = backend
                 .query(&id, true, Some(5_000), None)
                 .await
@@ -1102,10 +1111,10 @@ async fn rejected_deferred_start_restores_prior_without_publication() {
                 std::fs::read(meta_dir.path().join("meta.json")).expect("restored metadata"),
                 prior_meta
             );
-            assert_eq!(
-                std::fs::read(child_session_dir.join("summary.json")).expect("restored summary"),
-                prior_summary
-            );
+            let restored_summary = serde_json::from_slice(
+                &std::fs::read(child_session_dir.join("summary.json")).expect("restored summary"),
+            ).expect("parse restored summary");
+            assert_aborted_wake_admission(&prior_summary, &restored_summary);
             assert_eq!(
                 read_subagent_output(meta_dir.path()).as_deref(),
                 Some("prior output sentinel")
@@ -1255,4 +1264,38 @@ async fn started_wake_with_failed_metadata_write_preserves_prior_durable_artifac
             usage_ack.abort();
         })
         .await;
+}
+
+fn assert_aborted_wake_admission(
+    prior: &crate::session::persistence::Summary,
+    restored: &crate::session::persistence::Summary,
+) {
+    use crate::session::delivery_receiver::{DeliveryExecution, DeliveryProvenance, ParentMessageSource};
+    let previous = &prior.completion_delivery.receiver.records;
+    let current = &restored.completion_delivery.receiver.records;
+    let added = current.iter().filter(|(id, _)| !previous.contains_key(*id)).collect::<Vec<_>>();
+    let [(id, record)] = added.as_slice() else { panic!("one aborted bootstrap retains one durable identity"); };
+    let DeliveryProvenance::ParentMessage { admission } = &record.provenance else {
+        panic!("aborted bootstrap must retain its authenticated provenance");
+    };
+    assert_eq!(id.as_str(), format!("parent-message/{}", admission.message_id));
+    assert_eq!(admission.prompt_id, format!("parent-message-{}", admission.message_id));
+    assert_eq!(admission.sender_session_id, "setup-parent");
+    assert_eq!(admission.source, ParentMessageSource::Agent);
+    assert_eq!(admission.text, "continue");
+    use sha2::{Digest, Sha256};
+    assert_eq!(record.digest, format!("{:x}", Sha256::digest(b"continue")));
+    assert!(matches!(record.execution, DeliveryExecution::Cancelled { .. }));
+    let mut expected = serde_json::to_value(prior).unwrap();
+    let mut actual = serde_json::to_value(restored).unwrap();
+    let expected = expected.as_object_mut().unwrap();
+    let actual = actual.as_object_mut().unwrap();
+    expected.remove("completion_delivery");
+    actual.remove("completion_delivery");
+    expected.remove("updated_at");
+    actual.remove("updated_at");
+    assert_eq!(actual, expected, "all prior non-delivery summary state is preserved");
+    let mut retained = restored.completion_delivery.clone();
+    retained.receiver.records.remove(id.as_str());
+    assert_eq!(serde_json::to_value(retained).unwrap(), serde_json::to_value(&prior.completion_delivery).unwrap());
 }

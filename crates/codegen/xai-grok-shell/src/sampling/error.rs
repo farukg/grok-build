@@ -144,6 +144,9 @@ pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
             _ => acp::Error::internal_error()
                 .data(error_data_with_status(message, Some(status.as_u16()))),
         },
+        SamplingError::RetrySchedule { .. } => {
+            map_retry_schedule_info_to_acp(xai_grok_sampler::SamplingErrorInfo::from(&err))
+        }
         SamplingError::EventStreamError(message) => acp::Error::internal_error().data(message),
         SamplingError::StreamError {
             error_type,
@@ -176,6 +179,14 @@ pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
             acp::Error::internal_error().data(err.to_string())
         }
     }
+}
+
+pub(crate) fn map_retry_schedule_info_to_acp(info: xai_grok_sampler::SamplingErrorInfo) -> acp::Error {
+    let mut data = terminal_error_data(info.message, None, info.kind);
+    if let Some(object) = data.as_object_mut() {
+        object.insert("retry_schedule".into(), serde_json::json!(info.retry_schedule));
+    }
+    acp::Error::internal_error().data(data)
 }
 
 pub(crate) fn error_data_with_status(
@@ -218,7 +229,7 @@ pub(crate) fn terminal_error_data(
 ) -> serde_json::Value {
     if !matches!(
         kind,
-        SamplingErrorKind::MaxTokensTruncation | SamplingErrorKind::IdleTimeout
+        SamplingErrorKind::MaxTokensTruncation | SamplingErrorKind::IdleTimeout | SamplingErrorKind::RetrySchedule
     ) {
         return error_data_with_status(message, http_status);
     }

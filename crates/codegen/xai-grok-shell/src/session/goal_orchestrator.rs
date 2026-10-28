@@ -77,6 +77,7 @@ impl GoalNotifySender {
     /// `persist == false` ships the update to the gateway only (no JSONL append) for recurring/transient ticks.
     /// See [`Self::emit_goal_updated_ephemeral`].
     fn dispatch_update(&self, update: XaiSessionUpdate, persist: bool) {
+        let _publication = self.gateway.begin_publication();
         // Stamped before the persist/broadcast fork; see `ensure_event_id_meta`
         let mut meta = None;
         crate::util::event_id::ensure_event_id_meta(&self.session_id.0, &mut meta);
@@ -99,6 +100,8 @@ impl GoalNotifySender {
                 raw.into(),
             );
             self.gateway.forward_fire_and_forget(ext);
+        } else {
+            self.gateway.fail_publication();
         }
     }
 }

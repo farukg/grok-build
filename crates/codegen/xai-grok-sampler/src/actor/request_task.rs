@@ -34,6 +34,8 @@ use crate::retry::{
 use crate::stream::responses::stream_responses_tracked;
 use crate::stream::{stream_chat_completions, stream_messages};
 use crate::types::RequestId;
+use crate::request_capture::RequestAttemptId;
+use crate::retry_deadline::RetryDeadline;
 
 /// Default per-chunk idle timeout when neither config nor caller supplies one.
 /// Matches the shell's session-level default of 5 minutes.
@@ -129,12 +131,13 @@ pub(crate) async fn run_request_task(
     let body_cache = Arc::new(crate::request_capture::RequestBodyCache::default());
 
     loop {
+        let attempt = RequestAttemptId(u64::from(retry_count) + u64::from(doom_retry_count) + 1);
         sampling_span.record(
             "total_attempts",
             (retry_count + doom_retry_count + 1) as i64,
         );
         if cancel_token.is_cancelled() {
-            handle_cancellation(&event_tx, &request_id, &mut completion);
+            handle_cancellation(&event_tx, &request_id, &mut completion, CancellationEvidence::Unobserved(attempt));
             return request_id;
         }
 
@@ -142,7 +145,7 @@ pub(crate) async fn run_request_task(
         let doom_check = doom_policy.filter(|_| doom_retry_count < doom_max_retries);
         let capture = crate::request_capture::CaptureAttempt {
             request_id: request_id.clone(),
-            attempt: crate::request_capture::RequestAttemptId(u64::from(retry_count) + u64::from(doom_retry_count) + 1),
+            attempt,
             backend: client.api_backend(),
             membership: request.projected_membership().into(),
             cache: Arc::clone(&body_cache),
@@ -245,7 +248,8 @@ pub(crate) async fn run_request_task(
                 );
                 let err = SamplingError::EmptyResponse { context };
                 if !apply_retry_decision(
-                    &err,
+                    err,
+                    capture.attempt,
                     &mut retry_count,
                     effective_max_retries,
                     &retry_policy,
@@ -304,23 +308,18 @@ pub(crate) async fn run_request_task(
                         outcome = "resampled_with_reminder",
                         "doom-loop recovery: retaining the failed response and retrying with guidance"
                     );
-                    emit_retrying(
-                        &event_tx,
-                        &request_id,
-                        doom_retry_count,
-                        doom_max_retries,
-                        &error,
-                    );
-                    if sleep_or_cancel(backoff, &cancel_token, doom_retry_count, &sampling_span)
-                        .await
-                    {
+                    if wait_for_retry(
+                        Arc::new(error), backoff, RequestAttemptId(capture.attempt.0 + 1),
+                        doom_retry_count, doom_max_retries, &event_tx, &request_id,
+                        &cancel_token, &mut completion, &sampling_span,
+                    ).await {
                         continue;
                     }
-                    handle_cancellation(&event_tx, &request_id, &mut completion);
                     return request_id;
                 }
                 if !apply_retry_decision(
-                    &error,
+                    error,
+                    capture.attempt,
                     &mut retry_count,
                     effective_max_retries,
                     &retry_policy,
@@ -339,12 +338,13 @@ pub(crate) async fn run_request_task(
                 }
             }
             AttemptOutcome::Cancelled => {
-                handle_cancellation(&event_tx, &request_id, &mut completion);
+                handle_cancellation(&event_tx, &request_id, &mut completion, CancellationEvidence::Observed);
                 return request_id;
             }
             AttemptOutcome::InitFailed { error } => {
                 if !apply_retry_decision(
-                    &error,
+                    error,
+                    capture.attempt,
                     &mut retry_count,
                     effective_max_retries,
                     &retry_policy,
@@ -370,7 +370,8 @@ pub(crate) async fn run_request_task(
 /// Performs the side-effects of the decision: sleeping, rebuilding the client, stripping images, emitting the `Retrying` event.
 #[allow(clippy::too_many_arguments)]
 async fn apply_retry_decision(
-    err: &SamplingError,
+    err: SamplingError,
+    current_attempt: RequestAttemptId,
     retry_count: &mut u32,
     max_retries: u32,
     retry_policy: &RetryPolicy,
@@ -383,6 +384,8 @@ async fn apply_retry_decision(
     completion: &mut CompletionState,
     parent: &tracing::Span,
 ) -> bool {
+    let original = Arc::new(err);
+    let err = original.as_ref();
     let rate_limit_threshold = config
         .rate_limit_retry_threshold
         .unwrap_or(retry_policy.rate_limit_retry_threshold);
@@ -415,25 +418,12 @@ async fn apply_retry_decision(
     }
 
     match decision {
-        RetryDecision::Retry { backoff } => {
+        RetryDecision::Retry { backoff } | RetryDecision::RetryWithBackoff { backoff, .. } => {
             *retry_count += 1;
-            emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
-            if sleep_or_cancel(backoff, cancel_token, *retry_count, parent).await {
-                true
-            } else {
-                handle_cancellation(event_tx, request_id, completion);
-                false
-            }
-        }
-        RetryDecision::RetryWithBackoff { backoff, .. } => {
-            *retry_count += 1;
-            emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
-            if sleep_or_cancel(backoff, cancel_token, *retry_count, parent).await {
-                true
-            } else {
-                handle_cancellation(event_tx, request_id, completion);
-                false
-            }
+            wait_for_retry(
+                Arc::clone(&original), backoff, RequestAttemptId(current_attempt.0 + 1),
+                *retry_count, max_retries, event_tx, request_id, cancel_token, completion, parent,
+            ).await
         }
         RetryDecision::RetryWithImageStrip => {
             let stripped_urls = request.strip_images();
@@ -453,14 +443,17 @@ async fn apply_retry_decision(
             );
             emit_images_stripped(event_tx, request_id, stripped_urls, reason);
             *retry_count += 1;
-            emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
-            true
+            wait_for_retry(
+                Arc::clone(&original), Duration::ZERO, RequestAttemptId(current_attempt.0 + 1),
+                *retry_count, max_retries, event_tx, request_id, cancel_token, completion, parent,
+            ).await
         }
         RetryDecision::RetryWithClientRebuild { backoff } => {
             *retry_count += 1;
-            emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
-            if !sleep_or_cancel(backoff, cancel_token, *retry_count, parent).await {
-                handle_cancellation(event_tx, request_id, completion);
+            if !wait_for_retry(
+                Arc::clone(&original), backoff, RequestAttemptId(current_attempt.0 + 1),
+                *retry_count, max_retries, event_tx, request_id, cancel_token, completion, parent,
+            ).await {
                 return false;
             }
 
@@ -522,23 +515,62 @@ async fn apply_retry_decision(
     }
 }
 
-async fn sleep_or_cancel(
-    duration: Duration,
-    cancel_token: &CancellationToken,
+#[allow(clippy::too_many_arguments)]
+async fn wait_for_retry(
+    original: Arc<SamplingError>,
+    backoff: Duration,
+    next_attempt: RequestAttemptId,
     attempt: u32,
+    max_retries: u32,
+    event_tx: &mpsc::UnboundedSender<SamplingEvent>,
+    request_id: &RequestId,
+    cancel_token: &CancellationToken,
+    completion: &mut CompletionState,
     parent: &tracing::Span,
 ) -> bool {
+    let deadline = match RetryDeadline::after(backoff) {
+        Ok(deadline) => deadline,
+        Err(cause) => {
+            fail_retry_schedule(original, backoff, cause, event_tx, request_id, completion);
+            return false;
+        }
+    };
+    emit_retrying(event_tx, request_id, &original, RetryNotice {
+        next_attempt, attempt, max_retries, backoff, deadline: &deadline,
+    });
     let _backoff = crate::span_timing::Region::from_span(tracing::info_span!(
         parent: parent,
         "sampling.retry_backoff",
         attempt = attempt as i64,
-        backoff_ms = duration.as_millis() as i64,
+        remaining_ms = ?deadline.remaining().as_millis(),
     ));
     tokio::select! {
         biased;
-        _ = cancel_token.cancelled() => false,
-        _ = tokio::time::sleep(duration) => true,
+        _ = cancel_token.cancelled() => {
+            handle_cancellation(event_tx, request_id, completion, CancellationEvidence::Unobserved(next_attempt));
+            false
+        }
+        result = deadline.wait() => match result {
+            Ok(()) => true,
+            Err(cause) => {
+                fail_retry_schedule(original, backoff, crate::retry_deadline::RetryScheduleCause::Wait(cause), event_tx, request_id, completion);
+                false
+            }
+        },
     }
+}
+
+fn fail_retry_schedule(
+    original: Arc<SamplingError>,
+    requested_backoff: Duration,
+    cause: crate::retry_deadline::RetryScheduleCause,
+    event_tx: &mpsc::UnboundedSender<SamplingEvent>,
+    request_id: &RequestId,
+    completion: &mut CompletionState,
+) {
+    let error = SamplingError::RetrySchedule { original, requested_backoff, cause };
+    let terminal_event_queued = emit_failed(event_tx, request_id, &error);
+    send_completion(completion, Err(error), terminal_event_queued);
 }
 
 /// Run a single attempt: build the raw stream, drive it through the matching L2 transform, and forward all non-terminal events to `event_tx`.
@@ -750,7 +782,7 @@ async fn drive_l2(
                         .lock()
                         .ok()
                         .and_then(|mut g| g.take());
-                    let error = raw.unwrap_or_else(|| synthesize_from_info(&info));
+                    let error = raw.unwrap_or_else(|| info.to_error());
                     let recovery_items = if matches!(error, SamplingError::DoomLoopDetected { .. }) {
                         failed_response.take_items()
                     } else {
@@ -807,55 +839,6 @@ fn retag(event: SamplingEvent, _request_id: &RequestId) -> SamplingEvent {
 
 /// Reconstruct a [`SamplingError`] from a [`SamplingErrorInfo`] when there is no captured raw error in the cell.
 /// The L2 transform fires synthesised Failed events for idle timeouts, `ResponseFailed`, and server error events.
-fn synthesize_from_info(info: &SamplingErrorInfo) -> SamplingError {
-    match info.kind {
-        SamplingErrorKind::IdleTimeout => SamplingError::IdleTimeout {
-            elapsed_secs: info
-                .message
-                .split_whitespace()
-                .find_map(|tok| tok.strip_suffix('s').and_then(|n| n.parse::<u64>().ok()))
-                .unwrap_or(0),
-        },
-        SamplingErrorKind::Auth => SamplingError::Auth {
-            message: info.message.clone(),
-            credential: info.credential,
-        },
-        // Must stay Serialization: EventStreamError is retryable, and a response-parse failure is deterministic on retry
-        // `info.message` is the variant's rendered Display, so rebuild via the constructor that owns the prefix-stripping
-        SamplingErrorKind::Serialization => {
-            SamplingError::serialization_from_rendered(&info.message)
-        }
-        SamplingErrorKind::Http => SamplingError::EventStreamError(info.message.clone()),
-        SamplingErrorKind::Api | SamplingErrorKind::RateLimited => {
-            let status = info
-                .status_code
-                .and_then(|c| reqwest::StatusCode::from_u16(c).ok())
-                .unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR);
-            SamplingError::Api {
-                status,
-                message: info.message.clone(),
-                model_metadata: info.model_metadata.clone(),
-                retry_after_secs: info.retry_after_secs,
-                should_retry: info.should_retry,
-                error_code: info.error_code.clone(),
-            }
-        }
-        SamplingErrorKind::EmptyResponse => {
-            if let Some(ctx) = &info.empty_response_context {
-                SamplingError::EmptyResponse {
-                    context: ctx.clone(),
-                }
-            } else {
-                SamplingError::EventStreamError(info.message.clone())
-            }
-        }
-        SamplingErrorKind::MaxTokensTruncation => SamplingError::MaxTokensTruncation,
-        SamplingErrorKind::DoomLoopDetected => SamplingError::DoomLoopDetected {
-            triggers: info.doom_loop_triggers.clone().unwrap_or_default(),
-            aborted_at_chunk: info.doom_loop_aborted_at_chunk,
-        },
-    }
-}
 
 /// Build an [`EmptyResponseContext`] from a completed-but-empty response.
 fn build_empty_context(
@@ -917,18 +900,29 @@ fn emit_failed(
         .is_ok()
 }
 
+struct RetryNotice<'a> {
+    next_attempt: RequestAttemptId,
+    attempt: u32,
+    max_retries: u32,
+    backoff: Duration,
+    deadline: &'a RetryDeadline,
+}
+
 fn emit_retrying(
     event_tx: &mpsc::UnboundedSender<SamplingEvent>,
     request_id: &RequestId,
-    attempt: u32,
-    max_retries: u32,
     err: &SamplingError,
+    notice: RetryNotice<'_>,
 ) {
+    let RetryNotice { next_attempt, attempt, max_retries, backoff, deadline } = notice;
     let info = SamplingErrorInfo::from(err);
     let _ = event_tx.send(SamplingEvent::Retrying {
         request_id: request_id.clone(),
         attempt,
         max_retries,
+        backoff_ms: u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+        deadline: deadline.clone(),
+        next_attempt,
         kind: info.kind,
         reason: err.detail_with_causes(),
         doom_loop_triggers: info.doom_loop_triggers,
@@ -960,7 +954,8 @@ fn strip_reason_for_image_error(err: &SamplingError) -> StripReason {
         | SamplingError::IdleTimeout { .. }
         | SamplingError::EmptyResponse { .. }
         | SamplingError::MaxTokensTruncation
-        | SamplingError::DoomLoopDetected { .. } => StripReason::PayloadHeuristic,
+        | SamplingError::DoomLoopDetected { .. }
+        | SamplingError::RetrySchedule { .. } => StripReason::PayloadHeuristic,
     }
 }
 
@@ -977,14 +972,32 @@ fn emit_images_stripped(
     });
 }
 
+enum CancellationEvidence {
+    Observed,
+    Unobserved(RequestAttemptId),
+}
+
 fn handle_cancellation(
     event_tx: &mpsc::UnboundedSender<SamplingEvent>,
     request_id: &RequestId,
     completion: &mut CompletionState,
+    evidence: CancellationEvidence,
 ) {
+    match evidence {
+        CancellationEvidence::Observed => {}
+        CancellationEvidence::Unobserved(attempt) => {
+            let _ = event_tx.send(SamplingEvent::LocalRequest {
+                request_id: request_id.clone(), attempt,
+                evidence: crate::request_capture::LocalRequestEvidence::Finished {
+                    outcome: crate::request_capture::LocalAttemptOutcome::Cancelled,
+                },
+            });
+        }
+    }
     // No status code, no upstream API error: this is a client-side termination
     // Use kind=Api so consumers that switch on kind have a sensible default; the message clearly identifies it
     let info = SamplingErrorInfo {
+        retry_schedule: None,
         kind: SamplingErrorKind::Api,
         status_code: None,
         message: "request cancelled".to_string(),
@@ -1074,6 +1087,44 @@ mod tests {
             strip_reason_for_image_error(&heuristic),
             StripReason::PayloadHeuristic
         );
+    }
+
+    #[tokio::test]
+    async fn emit_retrying_carries_scheduler_backoff_and_anchor() {
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let error = SamplingError::StreamError {
+            error_type: "overloaded_error".into(),
+            message: "The server is overloaded.".into(),
+            code: None,
+        };
+        let scheduler_deadline = RetryDeadline::after(Duration::from_millis(2500)).unwrap();
+        let before_ms = scheduler_deadline.projection().wall_deadline_ms.unwrap() - 2500;
+        emit_retrying(
+            &event_tx,
+            &RequestId::from("retry-deadline"),
+            &error,
+            RetryNotice {
+                next_attempt: RequestAttemptId(4), attempt: 2, max_retries: 5,
+                backoff: Duration::from_millis(2500), deadline: &scheduler_deadline,
+            },
+        );
+        let after_ms = chrono::Utc::now().timestamp_millis();
+        let event = event_rx.try_recv().expect("Retrying event queued");
+        let SamplingEvent::Retrying {
+            attempt,
+            backoff_ms,
+            deadline,
+            next_attempt,
+            ..
+        } = event
+        else {
+            panic!("expected Retrying event");
+        };
+        assert_eq!(attempt, 2);
+        assert_eq!(backoff_ms, 2500);
+        assert!((before_ms..=after_ms).contains(&(deadline.projection().wall_deadline_ms.unwrap() - 2500)));
+        assert_eq!(next_attempt, RequestAttemptId(4));
+        assert_eq!(deadline.projection(), scheduler_deadline.projection());
     }
 
     fn completed_response(
@@ -1339,6 +1390,7 @@ mod tests {
     #[test]
     fn synthesize_idle_timeout_extracts_elapsed_secs() {
         let info = SamplingErrorInfo {
+            retry_schedule: None,
             kind: SamplingErrorKind::IdleTimeout,
             status_code: None,
             message: "inference idle timeout after 240s with no chunks".to_string(),
@@ -1352,7 +1404,7 @@ mod tests {
             doom_loop_aborted_at_chunk: None,
             credential: SentCredential::Unknown,
         };
-        let err = synthesize_from_info(&info);
+        let err = info.to_error();
         match err {
             SamplingError::IdleTimeout { elapsed_secs } => assert_eq!(elapsed_secs, 240),
             other => panic!("expected IdleTimeout, got {other:?}"),
@@ -1362,6 +1414,7 @@ mod tests {
     #[test]
     fn synthesize_api_500_round_trips() {
         let info = SamplingErrorInfo {
+            retry_schedule: None,
             kind: SamplingErrorKind::Api,
             status_code: Some(500),
             message: "boom".to_string(),
@@ -1375,7 +1428,7 @@ mod tests {
             doom_loop_aborted_at_chunk: None,
             credential: SentCredential::Unknown,
         };
-        let err = synthesize_from_info(&info);
+        let err = info.to_error();
         match err {
             SamplingError::Api {
                 status,
@@ -1408,7 +1461,7 @@ mod tests {
         let info = SamplingErrorInfo::from(&original);
         assert_eq!(info.error_code, Some(ApiErrorCode::InvalidImage));
 
-        let round_tripped = synthesize_from_info(&info);
+        let round_tripped = info.to_error();
         assert!(
             round_tripped.is_image_processing_error(),
             "round-tripped error must still classify: {round_tripped:?}"
@@ -1430,7 +1483,7 @@ mod tests {
         let info = SamplingErrorInfo::from(&original);
         assert_eq!(info.status_code, None, "stream errors carry no status");
 
-        let round_tripped = synthesize_from_info(&info);
+        let round_tripped = info.to_error();
         assert!(
             round_tripped.is_image_processing_error(),
             "stream-sourced round trip must still classify: {round_tripped:?}"
@@ -1440,6 +1493,7 @@ mod tests {
     #[test]
     fn synthesize_rate_limited_preserves_retry_after() {
         let info = SamplingErrorInfo {
+            retry_schedule: None,
             kind: SamplingErrorKind::RateLimited,
             status_code: Some(429),
             message: "slow down".to_string(),
@@ -1453,7 +1507,7 @@ mod tests {
             doom_loop_aborted_at_chunk: None,
             credential: SentCredential::Unknown,
         };
-        let err = synthesize_from_info(&info);
+        let err = info.to_error();
         match err {
             SamplingError::Api {
                 status,
@@ -1474,7 +1528,7 @@ mod tests {
             serde_json::from_str::<i32>("missing field `delta`").unwrap_err(),
         );
         let info = SamplingErrorInfo::from(&original);
-        let err = synthesize_from_info(&info);
+        let err = info.to_error();
         assert!(
             matches!(err, SamplingError::Serialization(_)),
             "expected Serialization, got {err:?}"
@@ -1485,17 +1539,6 @@ mod tests {
             info.message,
             "rebuilt Display must round-trip without double-prefixing"
         );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn retry_sleep_returns_immediately_on_cancellation() {
-        let cancel_token = CancellationToken::new();
-        let parent = tracing::Span::none();
-        let sleeper = sleep_or_cancel(Duration::from_secs(120), &cancel_token, 1, &parent);
-        tokio::pin!(sleeper);
-
-        cancel_token.cancel();
-        assert!(!sleeper.await);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1516,7 +1559,8 @@ mod tests {
         let error = SamplingError::EventStreamError("retry me".into());
 
         let should_continue = apply_retry_decision(
-            &error,
+            error,
+            RequestAttemptId(1),
             &mut retry_count,
             2,
             &RetryPolicy::default(),
@@ -1535,6 +1579,15 @@ mod tests {
         assert!(matches!(
             event_rx.recv().await,
             Some(SamplingEvent::Retrying { .. })
+        ));
+        assert!(matches!(
+            event_rx.recv().await,
+            Some(SamplingEvent::LocalRequest {
+                attempt: RequestAttemptId(2),
+                evidence: crate::request_capture::LocalRequestEvidence::Finished {
+                    outcome: crate::request_capture::LocalAttemptOutcome::Cancelled,
+                }, ..
+            })
         ));
         assert!(matches!(
             event_rx.recv().await,
@@ -1566,3 +1619,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "retry_scheduler_tests.rs"]
+mod retry_scheduler_tests;

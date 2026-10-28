@@ -245,7 +245,7 @@ impl JsonlStorageAdapter {
                     }),
                     messages: newly_published
                         .then_some(super::super::summary_write::CounterOp::Increment(1)),
-                    record_activity: newly_published,
+                    activity: super::super::summary_write::SummaryActivity::from_recorded(newly_published),
                     ..Default::default()
                 },
             )?;

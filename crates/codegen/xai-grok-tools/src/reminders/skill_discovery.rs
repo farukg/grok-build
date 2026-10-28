@@ -93,6 +93,7 @@ impl Reminder for SkillDiscoveryReminder {
         &self,
         resources: SharedResources,
         tool_output: &ToolOutput,
+        _observations: &crate::types::completion_observation::SubagentCompletionObservations,
     ) -> Vec<String> {
         // 1. Activate `paths:`-gated skills matching any file the tool touched
         //    (includes multi-file `apply_patch` edits).

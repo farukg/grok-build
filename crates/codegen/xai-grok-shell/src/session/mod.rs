@@ -1,4 +1,5 @@
 pub mod acp_types;
+pub mod current_actions;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod admission_crash_tests_support;
 pub mod announcement_state;

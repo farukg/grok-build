@@ -73,6 +73,10 @@ pub(in crate::implementations::grok_build::task::coordinator) struct TestControl
 }
 
 impl ChildControl for TestControl {
+    fn has_initial_message_reservation(&self, delivery: &ActiveAgentMessageDelivery) -> bool {
+        delivery.admission_is_committed()
+    }
+
     type ProgressFuture = std::future::Ready<SubagentProgress>;
 
     fn progress(&self) -> Self::ProgressFuture {
@@ -108,7 +112,9 @@ impl ChildControl for TestControl {
         })
     }
 
-    fn cancel(&self) {}
+    fn cancel(&self, _: ChildCancellation) -> ChildCancelOutcome {
+        ChildCancelOutcome::Accepted
+    }
 }
 
 pub(in crate::implementations::grok_build::task::coordinator) struct TestRunner;
@@ -914,6 +920,7 @@ async fn claimed_deadline_race_remains_uncertain_and_finalization_unclean() {
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
+    let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
     let claim = held.late_delivery.clone().claim_admission().expect("claim wins");
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
@@ -922,7 +929,7 @@ async fn claimed_deadline_race_remains_uncertain_and_finalization_unclean() {
     finish_next_active_message(&mut coordinator).await;
 
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain,
+        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() },
         response_outcome(response).await
     );
     assert!(!finalization_outcome(finalize_rx).await);
@@ -943,13 +950,14 @@ async fn claimed_cancellation_keeps_owned_authority_after_observer_settlement() 
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
+    let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
     let claim = held.late_delivery.clone().claim_admission().expect("claim wins");
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
     coordinator.active.get("child").unwrap().cancellation.cancel();
 
     finish_next_active_message(&mut coordinator).await;
-    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain, response_outcome(response).await);
+    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }, response_outcome(response).await);
     assert!(!finalization_outcome(finalize_rx).await);
     assert!(held.late_delivery.claim_admission().is_none());
     assert!(held.release.send(ActiveMessageAdmission::Admitted).is_err());
@@ -973,6 +981,7 @@ async fn child_admitted_requires_completed_durable_proof_handoff() {
         insert_child(&mut coordinator, admission_tx, "child", "parent");
         let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
         let held = recv_with_timeout(&mut admissions).await;
+        let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let proof = held.late_delivery.clone().claim_admission().unwrap().commit();
         assert_eq!(held.message_id, proof.delivery().message().message_id);
         assert_eq!("parent", proof.delivery().message().sender_session_id);
@@ -990,7 +999,7 @@ async fn child_admitted_requires_completed_durable_proof_handoff() {
                 message_id: held.message_id,
             }
         } else {
-            ActiveAgentMessageOutcome::AdmissionUncertain
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
         };
         assert_eq!(expected, response_outcome(response).await, "{cut:?}");
         assert_eq!(completed, finalization_outcome(finalize_rx).await, "{cut:?}");
@@ -1010,13 +1019,14 @@ async fn dropped_claim_cannot_restore_definite_cancellation() {
     insert_child(&mut coordinator, admission_tx, "child", "parent");
     let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
     let held = recv_with_timeout(&mut admissions).await;
+    let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
     drop(held.late_delivery.clone().claim_admission().expect("claim wins"));
     assert!(held.late_delivery.claim_admission().is_none());
     let (finalize_tx, finalize_rx) = oneshot::channel();
     coordinator.handle_active_message_finalizing("child".to_owned(), finalize_tx);
     coordinator.active.get("child").unwrap().cancellation.cancel();
     finish_next_active_message(&mut coordinator).await;
-    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain, response_outcome(response).await);
+    assert_eq!(ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }, response_outcome(response).await);
     assert!(!finalization_outcome(finalize_rx).await);
 }
 
@@ -1035,7 +1045,7 @@ async fn unsettled_completion_before_runner_output_marks_terminal_result_failed(
         .cancel();
     finish_next_active_message(&mut coordinator).await;
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain,
+        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
         response_outcome(response).await
     );
     finish_child(&mut coordinator, "child");
@@ -1066,7 +1076,7 @@ async fn runner_output_parked_before_unsettled_completion_is_failed() {
         .cancel();
     finish_next_active_message(&mut coordinator).await;
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain,
+        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
         response_outcome(response).await
     );
     let result = &coordinator
@@ -1146,7 +1156,7 @@ async fn runner_panic_parks_until_uncertain_admission_terminalizes_failed() {
         .send(ActiveMessageAdmission::Rejected)
         .expect("selected admission future alive");
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain,
+        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
         await_with_timeout(response).await.unwrap()
     );
     let result = recv_with_timeout(&mut completions).await;
@@ -1223,7 +1233,7 @@ async fn stale_admission_and_completed_lookup_preserve_identity_authority() {
     let late_delivery = call.late_delivery.clone();
     release_admission(&mut coordinator, call, ActiveMessageAdmission::Admitted).await;
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain,
+        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: late_delivery.recovery_ref().unwrap() },
         response_outcome(response).await
     );
     assert!(late_delivery.claim_admission().is_none());
@@ -1243,18 +1253,19 @@ async fn stale_admission_and_completed_lookup_preserve_identity_authority() {
 
 #[tokio::test]
 async fn actor_drop_classifies_channel_closure_from_lease_proof() {
-    for (is_claimed, expected) in [
-        (false, ActiveAgentMessageOutcome::ChannelClosed),
-        (true, ActiveAgentMessageOutcome::AdmissionUncertain),
-    ] {
+    for is_claimed in [false, true] {
         let (mut coordinator, command_tx, admission_tx, mut admissions) = fixture();
         insert_child(&mut coordinator, admission_tx, "child", "parent");
         let response = begin_send(&mut coordinator, &command_tx, "child", "parent");
         let held = recv_with_timeout(&mut admissions).await;
+        let expected_recovery_ref = held.late_delivery.recovery_ref().unwrap();
         let claim = is_claimed.then(|| {
             held.late_delivery.clone().claim_admission().expect("claim wins")
         });
 
+        let expected = if is_claimed {
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: expected_recovery_ref.clone() }
+        } else { ActiveAgentMessageOutcome::ChannelClosed };
         drop(coordinator);
         assert_eq!(expected, response_outcome(response).await);
         assert!(held.late_delivery.claim_admission().is_none());
@@ -1301,7 +1312,7 @@ async fn dropped_admitted_completion_is_uncertain_and_finalization_unclean() {
     assert!(completion.is_settled);
     drop(completion);
     assert_eq!(
-        ActiveAgentMessageOutcome::AdmissionUncertain,
+        ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: call.late_delivery.recovery_ref().unwrap() },
         response_outcome(response).await
     );
     let (finalize_tx, mut finalize_rx) = oneshot::channel();
@@ -1400,7 +1411,7 @@ async fn parent_session_cancel_unblocks_parked_send() {
     assert!(response.try_recv().is_err());
 
     assert!(matches!(
-        coordinator.cancel_parent_session(Some("parent")),
+        coordinator.cancel_parent_session(Some("parent"), ChildCancellation::Authorized),
         crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled { .. }
     ));
     assert_eq!(
@@ -1608,11 +1619,12 @@ async fn cancel_workflow_run_rejects_parked_send() {
             sender_context: ActiveMessageSenderContext::RootSession {
                 session_id: Arc::from("parent"),
             },
-            route: ActiveMessageRoute::ParentToOwnedDescendant,
-            request: ActiveAgentMessageRequest::try_new("child", "hello").unwrap(),
+            input: super::SpawnReadyInput::Pending {
+                route: ActiveMessageRoute::ParentToOwnedDescendant,
+                request: ActiveAgentMessageRequest::try_new("child", "hello").unwrap(),
+                deadline: tokio::time::Instant::now() + ACTIVE_MESSAGE_SPAWN_READY_TIMEOUT,
+            },
             respond_to: Some(tx),
-            deadline: Some(tokio::time::Instant::now() + ACTIVE_MESSAGE_SPAWN_READY_TIMEOUT),
-            initial_message_id: None,
             quota_admission: None,
             // Cancel replies without admitting, so no ingress permit is held.
             permit: None,

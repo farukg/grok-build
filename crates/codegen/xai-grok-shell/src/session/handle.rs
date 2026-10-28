@@ -58,6 +58,7 @@ pub struct SessionHandle {
     pub current_prompt_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// Shared `Arc` with the actor (insert on issue, remove on resolve); never persisted.
     pub pending_interactions: crate::session::pending_interaction::PendingInteractions,
+    pub(crate) current_actions: Option<super::current_actions::Reader>,
     pub(crate) active_work: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub info: crate::session::info::Info,
     /// `None` means unlimited.
@@ -280,6 +281,18 @@ impl RegistryWriteOrder {
     }
 }
 impl SessionHandle {
+    pub fn current_actions(
+        &self,
+        binding: super::current_actions::SnapshotBinding,
+    ) -> super::current_actions::CurrentActionsSnapshot {
+        if self.cmd_tx.is_closed() {
+            return super::current_actions::CurrentActionsSnapshot::Unavailable;
+        }
+        match &self.current_actions {
+            Some(reader) => reader.snapshot(binding),
+            None => super::current_actions::CurrentActionsSnapshot::Unavailable,
+        }
+    }
     pub(crate) fn message_delivery(&self) -> super::message_delivery::MessageDeliveryHandle {
         super::message_delivery::MessageDeliveryHandle::new(
             self.cmd_tx.clone(),

@@ -252,7 +252,7 @@ impl SessionActor {
     pub(super) fn emit_laziness_abort(&self, reason: LazinessAbortReason) {
         self.events
             .emit(crate::session::events::Event::LazinessClassifierAborted {
-                reason: reason.as_const_str(),
+                reason: reason.as_const_str().into(),
             });
     }
 
@@ -588,7 +588,7 @@ impl SessionActor {
             self.events
                 .emit(crate::session::events::Event::LazinessClassifierFired {
                     model_id,
-                    category: category.as_const_str(),
+                    category: category.as_const_str().into(),
                     confidence,
                 });
             return;
@@ -597,7 +597,7 @@ impl SessionActor {
         self.events
             .emit(crate::session::events::Event::LazinessClassifierFired {
                 model_id: model_id.clone(),
-                category: category.as_const_str(),
+                category: category.as_const_str().into(),
                 confidence,
             });
 
@@ -637,7 +637,7 @@ impl SessionActor {
         self.events
             .emit(crate::session::events::Event::LazinessNudgeFired {
                 model_id,
-                category: category.as_const_str(),
+                category: category.as_const_str().into(),
                 nudges_remaining,
             });
     }

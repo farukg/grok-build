@@ -41,8 +41,8 @@ impl ChildControl for SnapshotProbeControl {
         admission
     }
 
-    fn cancel(&self) {
-        self.runtime.cancel();
+    fn cancel(&self, intent: ChildCancellation) -> ChildCancelOutcome {
+        self.runtime.cancel(intent)
     }
 }
 
@@ -86,6 +86,7 @@ impl ChildRunner for SnapshotProbeRunner {
                     definition_background: false,
                     control: SnapshotProbeControl {
                         runtime: ShellChildRuntime {
+                            initial_parent_reservation: None,
                             message_delivery:
                                 crate::session::message_delivery::MessageDeliveryHandle::new(
                                     child_cmd_tx.clone(),

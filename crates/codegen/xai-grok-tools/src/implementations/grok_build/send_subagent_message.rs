@@ -67,6 +67,38 @@ impl SendSubagentMessageInput {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AdmissionCorrelation {
+    Known(super::task::native_recovery::MessageRecoveryRef),
+    #[default]
+    HistoricalUnavailable,
+}
+
+impl AdmissionCorrelation {
+    fn is_historical(&self) -> bool {
+        match self { Self::Known(_) => false, Self::HistoricalUnavailable => true }
+    }
+}
+
+impl From<super::task::native_recovery::MessageRecoveryRef> for AdmissionCorrelation {
+    fn from(reference: super::task::native_recovery::MessageRecoveryRef) -> Self { Self::Known(reference) }
+}
+
+impl serde::Serialize for AdmissionCorrelation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Known(reference) => serde::Serialize::serialize(reference, serializer),
+            Self::HistoricalUnavailable => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AdmissionCorrelation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <super::task::native_recovery::MessageRecoveryRef as serde::Deserialize<'de>>::deserialize(deserializer).map(Self::Known)
+    }
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -85,7 +117,12 @@ pub enum SendSubagentMessageOutput {
         kind: ActiveAgentMessageQuotaKind,
         limit: usize,
     },
-    AdmissionUncertain,
+    AdmissionUncertain {
+        #[serde(default, rename = "recoveryRef", skip_serializing_if = "AdmissionCorrelation::is_historical")]
+        #[schemars(with = "super::task::native_recovery::MessageRecoveryRef")]
+        recovery_ref: AdmissionCorrelation,
+    },
+    RecoveryObserved { #[serde(rename = "recoveryRef")] recovery_ref: super::task::native_recovery::MessageRecoveryRef, state: super::task::native_recovery::MessageRecoveryState },
     NotAcceptedBeforeDeadline,
     Unsupported,
     Limit {
@@ -111,7 +148,7 @@ impl SendSubagentMessageOutput {
     pub fn disposition(&self) -> SendSubagentMessageDisposition {
         match self {
             Self::Accepted { .. } => SendSubagentMessageDisposition::Accepted,
-            Self::AdmissionUncertain => SendSubagentMessageDisposition::Unconfirmed,
+            Self::AdmissionUncertain { .. } | Self::RecoveryObserved { .. } => SendSubagentMessageDisposition::Unconfirmed,
             Self::NotFoundOrNotOwned
             | Self::NotActiveOrFinalizing
             | Self::Saturated { .. }
@@ -136,7 +173,8 @@ impl From<ActiveAgentMessageOutcome> for SendSubagentMessageOutput {
             ActiveAgentMessageOutcome::QuotaExceeded { kind, limit } => {
                 Self::QuotaExceeded { kind, limit }
             }
-            ActiveAgentMessageOutcome::AdmissionUncertain => Self::AdmissionUncertain,
+            ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref } => Self::AdmissionUncertain { recovery_ref: recovery_ref.into() },
+            ActiveAgentMessageOutcome::RecoveryObserved { recovery_ref, state } => Self::RecoveryObserved { recovery_ref, state },
             ActiveAgentMessageOutcome::NotAcceptedBeforeDeadline => Self::NotAcceptedBeforeDeadline,
             ActiveAgentMessageOutcome::Unsupported => Self::Unsupported,
             ActiveAgentMessageOutcome::Limit {
@@ -168,8 +206,14 @@ impl std::fmt::Display for SendSubagentMessageOutput {
             Self::QuotaExceeded { kind, limit } => {
                 write!(f, "Agent-message quota exceeded ({kind:?}, limit {limit}).")
             }
-            Self::AdmissionUncertain => f.write_str(
-                "Message admission could not be confirmed; the message may or may not have been accepted.",
+            Self::AdmissionUncertain { recovery_ref } => match recovery_ref {
+                AdmissionCorrelation::Known(reference) => write!(f,
+                    "Message admission could not be confirmed; the message may or may not have been accepted. Observe recoveryRef: {reference}"
+                ),
+                AdmissionCorrelation::HistoricalUnavailable => f.write_str("Historical message admission could not be confirmed; no recovery reference was recorded."),
+            },
+            Self::RecoveryObserved { recovery_ref, state } => write!(f,
+                "Message recovery {state:?}. recoveryRef: {recovery_ref}"
             ),
             Self::NotAcceptedBeforeDeadline => {
                 f.write_str("Message was not accepted before the delivery deadline.")

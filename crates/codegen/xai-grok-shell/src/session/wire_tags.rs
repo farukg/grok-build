@@ -73,6 +73,7 @@ pub(crate) static REWIND_MARKER: LazyLock<String> = LazyLock::new(|| {
 
 pub(crate) static TASK_BACKGROUNDED: LazyLock<String> = LazyLock::new(|| {
     tagged_discriminant(&XaiSessionUpdate::TaskBackgrounded {
+        start_time: None,
         tool_call_id: String::new(),
         task_id: String::new(),
         command: String::new(),

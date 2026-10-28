@@ -43,17 +43,16 @@ pub(crate) enum SamplerFailureRecovery {
     /// The turn loop should rebuild the request from the compacted conversation and resubmit.
     CompactAndResubmit,
     /// Resubmit through the auth-retry schedule: recovery succeeded, or the parked
-    /// credential-less case. `credential` is the rejected request's wire provenance;
+    /// credential-less case. `error.credential` is the rejected request's wire provenance;
     /// credential-less sends are never charged against the per-incident budget.
     RefreshAuthAndResubmit {
-        credential: xai_grok_sampling_types::SentCredential,
+        error: xai_grok_sampler::SamplingErrorInfo,
         store: RecoveredStore,
     },
     /// Transient failure: back off and resubmit instead of killing the turn.
     /// Retries are bounded.
     RetryTransient {
-        kind: xai_grok_sampler::SamplingErrorKind,
-        status_code: Option<u16>,
+        error: xai_grok_sampler::SamplingErrorInfo,
     },
 }
 
@@ -77,13 +76,12 @@ pub(crate) enum SamplerTurnOutcome {
     /// Retry through the auth-retry schedule. Mirrors
     /// [`SamplerFailureRecovery::RefreshAuthAndResubmit`].
     RefreshAuthAndResubmit {
-        credential: xai_grok_sampling_types::SentCredential,
+        error: xai_grok_sampler::SamplingErrorInfo,
         store: RecoveredStore,
     },
     /// Mirrors [`SamplerFailureRecovery::RetryTransient`].
     RetryTransient {
-        kind: xai_grok_sampler::SamplingErrorKind,
-        status_code: Option<u16>,
+        error: xai_grok_sampler::SamplingErrorInfo,
     },
 }
 

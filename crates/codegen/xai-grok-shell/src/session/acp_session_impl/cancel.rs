@@ -2,6 +2,7 @@
 
 use super::*;
 use super::parent_message::{ParentTeardownRequest, ParentTeardownStatus, parent_teardown_uncertain};
+use xai_grok_tools::implementations::grok_build::task::coordinator::ChildCancellation;
 
 /// Whether the post-cancel notification drain stays suppressed: rewind and non-stop cancels clear it, a stop gesture arms it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,13 +63,13 @@ impl SessionActor {
         self.cancel_subagents_for_prompt_id(parent_prompt_id);
     }
 
-    /// A user Stop with `cancel_subagents` cancels all of this session's non-workflow children.
+    /// Cancel this session's non-workflow children with the originating intent.
     /// Uses the session-bound backend API so the cancel cannot touch other sessions.
-    pub(super) fn cancel_all_session_subagents(&self) {
+    pub(super) fn cancel_all_session_subagents(&self, intent: ChildCancellation) {
         if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
             use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
             let backend = ChannelBackend::for_session(event_tx, self.session_id_string());
-            let _ = backend.request_cancel_parent_session(tokio::sync::oneshot::channel().0);
+            let _ = backend.request_cancel_parent_session(intent, tokio::sync::oneshot::channel().0);
         }
     }
 
@@ -509,12 +510,34 @@ impl SessionActor {
                 )
                 .await;
         }
+        let child_cancellation = match trigger.as_ref() {
+            Some(crate::session::CancelTrigger::Shutdown) => ChildCancellation::Shutdown,
+            Some(crate::session::CancelTrigger::Esc | crate::session::CancelTrigger::CtrlC
+                | crate::session::CancelTrigger::Coordinator | crate::session::CancelTrigger::SendNow | crate::session::CancelTrigger::SessionClose
+                | crate::session::CancelTrigger::SessionDelete | crate::session::CancelTrigger::Client(_)) | None => ChildCancellation::Authorized,
+        };
         let mut finalization = if rewind_requested {
             CancelFinalization::Rewind
         } else {
-            let Some(lease) = self.state.lock().await.claim_cancel_finalization() else {
+            let mut state = self.state.lock().await;
+            let Some(lease) = state.claim_cancel_finalization() else {
                 return CancelOutcome::noop();
             };
+            match child_cancellation {
+                ChildCancellation::Authorized => {
+                    if let Some(task) = state.running_task.as_ref()
+                        && lease.binding.epoch() == Some(task.epoch)
+                        && matches!(task.input_origin.as_prompt_origin(), PromptOrigin::ParentAgentMessage { .. } | PromptOrigin::ParentHumanMessage { .. })
+                        && let Some(reservation) = &task.initial_parent_reservation
+                    {
+                        reservation.authorize_turn_cancel(
+                            &task.prompt_id,
+                            &xai_chat_state::ParentTask::Instance { id: task.identity.as_ref().clone() },
+                        );
+                    }
+                }
+                ChildCancellation::Shutdown => {}
+            }
             CancelFinalization::Keep(lease)
         };
         let claimed_turn_epoch = match &finalization {
@@ -605,7 +628,7 @@ impl SessionActor {
 
         if cancel_subagents {
             // Then cancel every non-workflow session child (including prior turns) and close spawn admission until the next turn opens it
-            self.cancel_all_session_subagents();
+            self.cancel_all_session_subagents(child_cancellation);
         }
 
         // After the abort, so this chat-state round trip cannot keep the turn task alive, and before the teardown edits the text

@@ -35,6 +35,7 @@ pub(crate) fn spawn_elicitation_coordinator(
     gateway: GatewaySender,
     session_id: acp::SessionId,
     pending_interactions: PendingInteractions,
+    current_actions: super::current_actions::Source,
     non_interactive: Rc<Cell<bool>>,
 ) -> ElicitationCoordinatorGuard {
     let inbox = job_rx.clone();
@@ -45,6 +46,7 @@ pub(crate) fn spawn_elicitation_coordinator(
                 &gateway,
                 &session_id,
                 &pending_interactions,
+                &current_actions,
                 non_interactive.get(),
             )
             .await;
@@ -61,6 +63,7 @@ async fn handle_one_job(
     gateway: &GatewaySender,
     session_id: &acp::SessionId,
     pending_interactions: &PendingInteractions,
+    current_actions: &super::current_actions::Source,
     non_interactive: bool,
 ) {
     // `fields` was validated by `bridge_elicit` before the job was queued.
@@ -80,6 +83,7 @@ async fn handle_one_job(
     }
 
     let tool_call_id = format!("mcp-elicit-{}", uuid::Uuid::new_v4());
+    let started_at = xai_monotonic_clock::MonotonicPoint::at(tokio::time::Instant::now());
 
     let ext_req = McpElicitExtRequest {
         session_id: session_id.0.to_string(),
@@ -113,6 +117,7 @@ async fn handle_one_job(
         session_id.clone(),
         tool_call_id,
         PendingKind::McpElicitation,
+        Some((current_actions.clone(), super::current_actions::FrozenOwner::Unavailable, started_at)),
     );
 
     // Race the user's answer against the MCP side abandoning the job:
@@ -151,6 +156,10 @@ async fn handle_one_job(
 
     let _ = response_tx.send(result);
 }
+
+#[cfg(test)]
+#[path = "mcp_elicitation_current_actions_tests.rs"]
+mod current_actions_tests;
 
 #[cfg(test)]
 mod tests {

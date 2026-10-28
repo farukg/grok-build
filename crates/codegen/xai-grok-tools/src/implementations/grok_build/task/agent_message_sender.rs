@@ -48,6 +48,7 @@ impl std::fmt::Debug for AgentMessageHolder {
 
 #[derive(Clone)]
 pub struct AgentMessageSender {
+    recovery_tx: mpsc::WeakUnboundedSender<super::types::SubagentEvent>,
     active_message_tx: mpsc::UnboundedSender<ActiveMessageIngress>,
     active_message_permits: Arc<tokio::sync::Semaphore>,
     active_message_capacity: usize,
@@ -63,11 +64,19 @@ impl AgentMessageSender {
     ) -> MintedChildIdentity {
         let attempt_id = AttemptId::mint(uuid::Uuid::new_v4().as_u128());
         let generation = ActiveChildGeneration::new();
+        Self::for_identity(factory, child_id, enabled, attempt_id, generation)
+    }
+
+    pub(crate) fn for_identity(
+        factory: Option<&AgentMessageSenderFactory>, child_id: &str, enabled: bool,
+        attempt_id: AttemptId, generation: ActiveChildGeneration,
+    ) -> MintedChildIdentity {
         let sender = if enabled {
             AgentId::from_uuid_v7(child_id)
                 .zip(factory)
                 .and_then(|(agent_id, factory)| {
                     Some(AgentMessageSender {
+                        recovery_tx: factory.recovery_tx.clone(),
                         active_message_tx: factory.active_message_tx.upgrade()?,
                         active_message_permits: Arc::clone(&factory.active_message_permits),
                         active_message_capacity: factory.active_message_capacity,
@@ -98,6 +107,21 @@ impl AgentMessageSender {
     #[cfg(test)]
     pub(crate) fn available_permits(&self) -> usize {
         self.active_message_permits.available_permits()
+    }
+
+    pub async fn recover_message(
+        &self, reference: super::native_recovery::MessageRecoveryRef,
+        action: super::native_recovery::MessageRecoveryAction,
+    ) -> super::types::ActiveAgentMessageOutcome {
+        let permit = match Arc::clone(&self.active_message_permits).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => return super::types::ActiveAgentMessageOutcome::Saturated { max_in_flight: self.active_message_capacity },
+        };
+        let Some(tx) = self.recovery_tx.upgrade() else {
+            return super::types::ActiveAgentMessageOutcome::AdmissionUncertain { recovery_ref: reference };
+        };
+        super::native_recovery::dispatch_recovery(&tx, permit, reference, action,
+            super::types::ActiveMessageSenderContext::GrantedChild { holder: self.holder.clone() }).await
     }
 
     pub async fn send(
@@ -168,6 +192,7 @@ pub(crate) struct MintedChildIdentity {
 }
 
 pub(crate) struct AgentMessageSenderFactory {
+    recovery_tx: mpsc::WeakUnboundedSender<super::types::SubagentEvent>,
     active_message_tx: mpsc::WeakUnboundedSender<ActiveMessageIngress>,
     active_message_permits: Arc<tokio::sync::Semaphore>,
     active_message_capacity: usize,
@@ -175,11 +200,13 @@ pub(crate) struct AgentMessageSenderFactory {
 
 impl AgentMessageSenderFactory {
     pub(crate) fn new(
+        recovery_tx: mpsc::WeakUnboundedSender<super::types::SubagentEvent>,
         active_message_tx: mpsc::WeakUnboundedSender<ActiveMessageIngress>,
         active_message_permits: Arc<tokio::sync::Semaphore>,
         active_message_capacity: usize,
     ) -> Self {
         AgentMessageSenderFactory {
+            recovery_tx,
             active_message_tx,
             active_message_permits,
             active_message_capacity,
