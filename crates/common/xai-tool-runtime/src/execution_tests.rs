@@ -152,7 +152,46 @@ async fn actual_point_is_captured_once_and_survives_delayed_delivery() {
             latest_at,
         } = start.map_local()
         else {
-            panic!("same-domain Linux point");
+            // Do not print wire points: their boot/namespace identity is host evidence.
+            let native_now = std::time::Instant::now();
+            let tokio_now = Instant::now().into_std();
+            eprintln!(
+                "clock fixture: start_paused=true; delivery_advance_s=90; \
+                 tokio_ahead_of_native={:?}; native_ahead_of_tokio={:?}",
+                tokio_now.checked_duration_since(native_now),
+                native_now.checked_duration_since(tokio_now),
+            );
+            match start {
+                xai_monotonic_clock::MonotonicPoint::Unavailable { reason } => {
+                    panic!("same-domain Linux point: source unavailable: {reason:?}");
+                }
+                xai_monotonic_clock::MonotonicPoint::LinuxMonotonic { domain, .. } => {
+                    // This is diagnostic evidence only, not a replacement execution point.
+                    let receiver =
+                        xai_monotonic_clock::MonotonicPoint::at(Instant::from_std(native_now));
+                    match receiver {
+                        xai_monotonic_clock::MonotonicPoint::Unavailable { reason } => {
+                            panic!(
+                                "same-domain Linux point: source native; \
+                                 diagnostic receiver unavailable: {reason:?}"
+                            );
+                        }
+                        xai_monotonic_clock::MonotonicPoint::LinuxMonotonic {
+                            domain: receiver_domain,
+                            ..
+                        } => {
+                            if domain == &receiver_domain {
+                                panic!(
+                                    "same-domain Linux point: diagnostic native domains match; \
+                                     failed mapping sample or arithmetic remains unknown"
+                                );
+                            } else {
+                                panic!("same-domain Linux point: diagnostic native domains differ");
+                            }
+                        }
+                    }
+                }
+            }
         };
         assert!(earliest_at <= anchor && anchor <= latest_at);
         assert!(latest_at < Instant::now() - Duration::from_secs(90));
