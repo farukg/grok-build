@@ -72,13 +72,9 @@ impl TraceState {
     }
 
     fn parent(&self, explicit: Option<&Id>, contextual: bool) -> Option<u64> {
-        explicit.map(Id::into_u64).or_else(|| {
-            if contextual {
-                self.current()
-            } else {
-                None
-            }
-        })
+        explicit
+            .map(Id::into_u64)
+            .or_else(|| if contextual { self.current() } else { None })
     }
 
     fn sleep_resource(&self, mut parent: Option<u64>) -> Option<u64> {
@@ -192,12 +188,19 @@ impl Subscriber for Capture {
             }
             None => state.errors.push(format!("enter unknown span {id:?}")),
         }
-        state.active.entry(thread::current().id()).or_default().push(id.into_u64());
+        state
+            .active
+            .entry(thread::current().id())
+            .or_default()
+            .push(id.into_u64());
     }
 
     fn exit(&self, id: &Id) {
         let mut state = self.0.lock();
-        let actual = state.active.get_mut(&thread::current().id()).and_then(Vec::pop);
+        let actual = state
+            .active
+            .get_mut(&thread::current().id())
+            .and_then(Vec::pop);
         if actual != Some(id.into_u64()) {
             state.errors.push(format!("exit {id:?}, active={actual:?}"));
         }
@@ -288,9 +291,13 @@ fn collector_context_is_thread_local() {
     );
     let _resource = resource.enter();
     let dispatch = tracing::dispatcher::get_default(Clone::clone);
-    thread::spawn(move || tracing::dispatcher::with_default(&dispatch, || {
-        tracing::trace!(target: "runtime::resource::state_update", duration = 25_u64);
-    })).join().unwrap();
+    thread::spawn(move || {
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::trace!(target: "runtime::resource::state_update", duration = 25_u64);
+        })
+    })
+    .join()
+    .unwrap();
     tracing::trace!(target: "runtime::resource::state_update", duration = 15_u64);
     let (durations, errors) = {
         let state = observed.lock();
@@ -303,10 +310,7 @@ fn collector_context_is_thread_local() {
 
 #[test]
 fn checked_wait_trace_duration_rounds_at_the_driver_epoch() {
-    for (phase, expected) in [
-        (Duration::ZERO, 60_000),
-        (Duration::from_nanos(1), 60_001),
-    ] {
+    for (phase, expected) in [(Duration::ZERO, 60_000), (Duration::from_nanos(1), 60_001)] {
         let owner = runtime(Flavor::Traditional);
         owner.block_on(crate::time::advance(phase));
         let deadline = deadline(&owner, Duration::from_secs(60));
