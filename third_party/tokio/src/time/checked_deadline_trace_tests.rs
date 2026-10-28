@@ -268,6 +268,9 @@ fn collector_rejects_unbound_durations_without_panicking_in_callbacks() {
         assert!(error.contains(expected), "{error}");
     }
     let failure = std::panic::catch_unwind(|| {
+        let resource = tracing::trace_span!(
+            parent: None, "runtime.resource", concrete_type = "Sleep",
+        );
         let _resource = resource.enter();
         observed.durations();
     });
