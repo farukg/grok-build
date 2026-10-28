@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 /// made once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BashNotificationBase {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<SystemTime>,
     /// Tool call id, used to correlate with the originating tool call.
     pub tool_call_id: String,
 

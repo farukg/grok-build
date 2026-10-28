@@ -16,6 +16,7 @@ use xai_tool_runtime::{
 
 fn base() -> BashNotificationBase {
     BashNotificationBase {
+        start_time: None,
         tool_call_id: "call-1".into(),
         command: "echo hi".into(),
         output: b"hi\n".to_vec(),

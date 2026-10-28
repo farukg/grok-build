@@ -11,6 +11,7 @@
 pub mod context;
 pub mod dispatch;
 pub mod error;
+pub mod execution;
 pub mod mcp_structured_content;
 pub mod notification;
 pub mod render;

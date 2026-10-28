@@ -18,6 +18,7 @@ serde_json = { workspace = true }
 strum = { workspace = true }
 # Warn-once diagnostics when the log file cannot be opened or written.
 tracing = { workspace = true }
+xai-tool-protocol = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

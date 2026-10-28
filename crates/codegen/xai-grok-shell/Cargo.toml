@@ -33,6 +33,7 @@ default-bazel = [
 ]
 
 [dependencies]
+xai-monotonic-clock = { workspace = true, features = ["native"] }
 dunce = { workspace = true }
 agent-client-protocol = { workspace = true }
 anyhow = { workspace = true }

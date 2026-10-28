@@ -61,6 +61,19 @@ Commit:     4770e55af425a0cffb9ad8496599d2a1a4f5ed14
 Copyright:  Copyright (c) 2016 Martin Geisler
 
 --------------------------------------------------------------------------------
+tokio
+--------------------------------------------------------------------------------
+Path:       third_party/tokio/
+License:    MIT
+License file: third_party/tokio/LICENSE
+Upstream:   https://github.com/tokio-rs/tokio
+Version:    1.52.3
+crates.io:  https://crates.io/crates/tokio/1.52.3
+Commit:     d87569164fb61145e79e7ffe0b25783569cc8f93 (path tokio)
+Archive SHA-256: 8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe
+Copyright:  Copyright (c) Tokio Contributors
+
+--------------------------------------------------------------------------------
 ReScript.sublime-syntax (syntax grammar asset)
 --------------------------------------------------------------------------------
 Path:       crates/codegen/xai-grok-markdown/assets/ReScript.sublime-syntax

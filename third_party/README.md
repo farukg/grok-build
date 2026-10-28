@@ -6,8 +6,9 @@ This directory holds **upstream source** vendored into the repository. It is
 ## Why vendor
 
 This directory holds in-tree third-party Rust sources: the mermaid layout
-stack that renders **untrusted model output** and textwrap, whose FirstFit
-owner supports bounded line emission for the pager. Vendoring gives a full
+stack that renders **untrusted model output**, textwrap, whose FirstFit
+owner supports bounded line emission for the pager, and Tokio, whose timer
+owner supports checked driver-bound deadlines. Vendoring gives a full
 audit surface, pins exact source, and avoids crates.io yanks. Local patches
 and upgrade checklists live in each
 crate’s `Cargo.toml` header comments — treat those as the source of truth
@@ -22,6 +23,7 @@ when re-vendoring.
 | [`graphlib_rust`](./graphlib_rust/) | 0.0.2 | Apache-2.0 | [r3alst/graphlib-rust](https://github.com/r3alst/graphlib-rust) | [`LICENCE`](./graphlib_rust/LICENCE) |
 | [`ordered_hashmap`](./ordered_hashmap/) | 0.0.3 | Apache-2.0 | [r3alst/ordered-hashmap](https://github.com/r3alst/ordered-hashmap) | [`LICENCE`](./ordered_hashmap/LICENCE) |
 | [`textwrap`](./textwrap/) | 0.16.2 | MIT | [mgeisler/textwrap](https://github.com/mgeisler/textwrap) | [`LICENSE`](./textwrap/LICENSE) |
+| [`tokio`](./tokio/) | 1.52.3 | MIT | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | [`LICENSE`](./tokio/LICENSE) |
 
 Mermaid layout stack:
 
@@ -47,7 +49,7 @@ vendored); grepping only for `LICENSE` will miss them.
 
 ## crates.io dependencies
 
-Normal Cargo dependencies (tokio, serde, …) are **not** under `third_party/`.
+Other Cargo dependencies (serde, …) are **not** under `third_party/`.
 They resolve via `Cargo.lock` / crates.io. Full attribution and license texts
 for the Grok CLI dependency closure are maintained in
 [`THIRD-PARTY-NOTICES`](../THIRD-PARTY-NOTICES).

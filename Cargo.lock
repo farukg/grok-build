@@ -11012,8 +11012,6 @@ dependencies = [
 [[package]]
 name = "tokio"
 version = "1.52.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
  "bytes",
  "libc",
@@ -14572,6 +14570,7 @@ dependencies = [
  "xai-grok-secrets",
  "xai-grok-test-support",
  "xai-grok-version",
+ "xai-monotonic-clock",
  "zstd",
 ]
 
@@ -14589,6 +14588,7 @@ dependencies = [
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "xai-circuit-breaker",
  "xai-grok-compaction",
@@ -14643,6 +14643,7 @@ dependencies = [
  "strum 0.27.2",
  "tempfile",
  "tracing",
+ "xai-tool-protocol",
 ]
 
 [[package]]
@@ -14828,6 +14829,7 @@ dependencies = [
  "xai-hunk-tracker",
  "xai-interjection-core",
  "xai-message-delivery-core",
+ "xai-monotonic-clock",
  "xai-prompt-queue",
  "xai-test-utils",
  "xai-token-estimation",
@@ -15412,6 +15414,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-monotonic-clock"
+version = "0.1.0"
+dependencies = [
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "xai-prompt-queue"
 version = "0.1.0"
 dependencies = [
@@ -15510,6 +15523,7 @@ dependencies = [
  "thiserror 2.0.18",
  "typeshare",
  "uuid",
+ "xai-monotonic-clock",
  "xai-tool-types",
 ]
 
@@ -15526,6 +15540,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "xai-grok-tools-api",
+ "xai-monotonic-clock",
  "xai-tool-protocol",
  "xai-tool-types",
 ]

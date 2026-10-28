@@ -378,7 +378,7 @@ impl<T: Tool> ToolDyn for T {
         };
 
         let tool_id = Tool::id(self);
-        let typed_stream = Tool::execute(self, ctx, typed_args).await;
+        let typed_stream = crate::execution::execute_observed(self, ctx, typed_args).await;
 
         Box::pin(typed_stream.map(move |item| {
             match item {

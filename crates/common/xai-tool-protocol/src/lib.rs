@@ -24,6 +24,7 @@ pub mod output_wire;
 mod registration;
 mod registry_error;
 pub mod session_event;
+pub mod tool_execution;
 pub mod turn_hook;
 
 pub use bot_relay::{

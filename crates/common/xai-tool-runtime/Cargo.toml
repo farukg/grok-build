@@ -6,12 +6,14 @@ edition.workspace = true
 description = "Unified Tool trait, dispatch trait, error taxonomy, notifications, and search index for the xAI Computer Hub"
 
 [dependencies]
+xai-monotonic-clock = { workspace = true, features = ["native"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true }
 xai-grok-tools-api = { workspace = true }
 xai-tool-protocol = { workspace = true }
