@@ -281,7 +281,7 @@ fn f7_todo_rows_wrap_within_the_column_and_respect_the_row_budget() {
 }
 
 #[test]
-fn f7_todo_projection_computes_once_per_draw_and_serves_its_rows_from_it() {
+fn f7_todo_projection_reuses_unchanged_frames_including_folded_resize() {
     let _theme = crate::theme::cache::pin_theme();
     let root = tempfile::tempdir().unwrap();
     let mut agent = test_fixtures::make_agent();
@@ -302,13 +302,26 @@ fn f7_todo_projection_computes_once_per_draw_and_serves_its_rows_from_it() {
     let first = agent.todo.sidebar_projection_count();
     let buf = draw(&mut agent);
     let second = agent.todo.sidebar_projection_count();
-    assert_eq!(second - first, 1, "one bounded projection per draw, not one per painted row");
+    assert_eq!(second, first, "unchanged frames reuse the prepared projection");
     let _ = draw(&mut agent);
-    assert_eq!(agent.todo.sidebar_projection_count() - second, 1);
+    assert_eq!(agent.todo.sidebar_projection_count(), second);
     assert!(
         screen(&buf).lines().any(|line| line.contains("more") && line.contains("Ctrl+T")),
         "the bounded projection still paints its pointer"
     );
+    let _ = click_row(&mut agent, &buf, "\u{25BE} Todos");
+    let _ = draw(&mut agent);
+    let folded = agent.todo.sidebar_projection_count();
+    for _ in 0..8 {
+        let _ = draw_short(&mut agent);
+    }
+    assert_eq!(agent.todo.sidebar_projection_count(), folded);
+    let area = Rect::new(0, 0, 43, 20);
+    for _ in 0..2 {
+        let mut resized = Buffer::empty(area);
+        agent.draw_context_sidebar(area, &mut resized);
+    }
+    assert_eq!(agent.todo.sidebar_projection_count(), folded + 1, "only the changed width projects again");
 }
 
 #[test]

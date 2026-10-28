@@ -28,13 +28,43 @@ where
     lines
 }
 
+#[derive(Clone, Copy)]
+enum WrapExtent {
+    Full,
+    Prefix(std::num::NonZeroUsize),
+}
+
 fn content_wrap_ranges(
     text: &str,
     opts: Options<'_>,
     semantics: WrapSemantics,
+    extent: WrapExtent,
 ) -> Vec<Range<usize>> {
     let width = opts.width.max(1);
-    let ranges = wrap_ranges_trim(text, opts);
+    let ranges = match extent {
+        WrapExtent::Full => wrap_ranges_trim(text, opts),
+        WrapExtent::Prefix(row_limit) => {
+            let mut ranges = Vec::new();
+            let mut base = 0;
+            let mut nonempty = 0;
+            let ending = opts.line_ending.as_str();
+            'physical: for physical in text.split(ending) {
+                for range in wrap_ranges_trim(physical, opts.clone()) {
+                    if !range.is_empty() {
+                        nonempty += 1;
+                    }
+                    if !range.is_empty() || ranges.is_empty() {
+                        ranges.push((base + range.start)..(base + range.end));
+                    }
+                    if nonempty == row_limit.get() {
+                        break 'physical;
+                    }
+                }
+                base += physical.len() + ending.len();
+            }
+            ranges
+        }
+    };
     match semantics {
         WrapSemantics::MarkdownLayout => ranges,
         WrapSemantics::PlainContent => {
@@ -397,6 +427,17 @@ pub fn word_wrap_line_with_joiners<'a, O>(
 where
     O: Into<RtOptions<'a>>,
 {
+    word_wrap_line_with_joiners_bounded(line, width_or_options, WrapExtent::Full)
+}
+
+fn word_wrap_line_with_joiners_bounded<'a, O>(
+    line: &'a Line<'a>,
+    width_or_options: O,
+    extent: WrapExtent,
+) -> (Vec<Line<'a>>, Vec<Option<String>>)
+where
+    O: Into<RtOptions<'a>>,
+{
     let mut rt_opts: RtOptions<'a> = width_or_options.into();
 
     let table_layout = match rt_opts.semantics {
@@ -441,6 +482,7 @@ where
         &flat,
         opts.clone().width(initial_width_available),
         rt_opts.semantics,
+        extent,
     );
     let Some(first_line_range) = initial_wrapped.first() else {
         out.push(rt_opts.initial_indent.clone());
@@ -491,6 +533,7 @@ where
         remaining,
         opts.width(subsequent_width_available),
         rt_opts.semantics,
+        extent,
     );
 
     let mut prev_end = 0usize;
@@ -522,6 +565,48 @@ where
     }
 
     (out, joiners)
+}
+
+/// Wrap a prefix using the existing greedy layout, without laying out unseen rows.
+/// Textwrap still tokenizes the input; only its line-breaking output is bounded.
+pub fn word_wrap_line_prefix<const ROWS: usize>(
+    line: &Line<'_>,
+    width: usize,
+    initial_indent: Line<'_>,
+    subsequent_indent: Line<'_>,
+) -> Vec<Line<'static>> {
+    let Some(rows) = std::num::NonZeroUsize::new(ROWS) else {
+        return Vec::new();
+    };
+    let (wrapped, _) = word_wrap_line_with_joiners_bounded(
+        line,
+        RtOptions::new(width)
+            .initial_indent(initial_indent)
+            .subsequent_indent(subsequent_indent)
+            .wrap_algorithm(textwrap::WrapAlgorithm::Custom(bounded_first_fit::<ROWS>)),
+        WrapExtent::Prefix(rows),
+    );
+    wrapped.iter().take(ROWS).map(super::line_utils::line_to_static).collect()
+}
+
+fn bounded_first_fit<'a, 'b, const ROWS: usize>(
+    words: &'b [textwrap::core::Word<'a>],
+    widths: &'b [usize],
+) -> Vec<&'b [textwrap::core::Word<'a>]> {
+    if ROWS == 0 {
+        return Vec::new();
+    }
+    let line_widths: Vec<_> = widths.iter().map(|&width| width as f64).collect();
+    let mut lines = Vec::new();
+    textwrap::wrap_algorithms::wrap_first_fit_with(words, &line_widths, |line| {
+        lines.push(line);
+        if lines.len() == ROWS {
+            std::ops::ControlFlow::Break(())
+        } else {
+            std::ops::ControlFlow::Continue(())
+        }
+    });
+    lines
 }
 
 /// Wrap a sequence of lines, applying the initial indent only to the very first output line.
@@ -789,6 +874,74 @@ mod tests {
             panic!("expected line {i}, got {} lines", out.len());
         };
         line
+    }
+
+    #[test]
+    fn bounded_prefix_matches_the_existing_full_wrap() {
+        for source in [
+            "Release checklist with hyphen-separated-words and a final task ".repeat(200),
+            "界語のタスクと長い見出し".repeat(200),
+            "x".repeat(10_000),
+            "a\u{301}\u{301}   ".repeat(2_000),
+            format!("{}tail", " \n\n alpha beta\n".repeat(200)),
+            format!("{}after the spaces", " ".repeat(20_000)),
+            format!("│ {}", "quoted task with a continuation ".repeat(100)),
+            "│ task │ aligned table".to_owned(),
+        ] {
+            for width in [1, 3, 17, 53] {
+                let line = Line::from(vec![Span::styled(source.clone(), Color::Red)]);
+                let opts = RtOptions::new(width)
+                    .initial_indent(Line::from("▶ "))
+                    .subsequent_indent(Line::from("  "));
+                let expected = word_wrap_lines(std::iter::once(&line), opts);
+                let actual = word_wrap_line_prefix::<7>(
+                    &line, width, Line::from("▶ "), Line::from("  "),
+                );
+                let first = word_wrap_line_prefix::<1>(
+                    &line, width, Line::from("▶ "), Line::from("  "),
+                );
+                assert_eq!(first, expected.iter().take(1).cloned().collect::<Vec<_>>());
+                assert!(word_wrap_line_prefix::<0>(
+                    &line, width, Line::from("▶ "), Line::from("  "),
+                ).is_empty());
+                assert_eq!(actual, expected.into_iter().take(7).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_quote_prefix_matches_full_quote_layout() {
+        let source = format!("│ {}", "quoted 界 task-with-hyphens a\u{301} continuation ".repeat(100));
+        let line = Line::from(vec![Span::styled(source, Color::Red)]);
+        assert!(!is_table_line(&line));
+        for width in [1, 3, 17, 53] {
+            let expected = word_wrap_lines(std::iter::once(&line), width);
+            assert!(expected.len() > 7);
+            let actual = word_wrap_line_prefix::<7>(
+                &line, width, Line::default(), Line::default(),
+            );
+            assert_eq!(actual, expected.into_iter().take(7).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn bounded_wrap_never_builds_the_unseen_line_tail() {
+        for source in ["task ".repeat(10_000), "x\n".repeat(10_000)] {
+            let line = Line::from(source);
+            let opts = RtOptions::new(17)
+                .initial_indent(Line::from("□ "))
+                .subsequent_indent(Line::from("  "))
+                .wrap_algorithm(textwrap::WrapAlgorithm::Custom(bounded_first_fit::<7>));
+            let (lines, joiners) = word_wrap_line_with_joiners_bounded(
+                &line, opts, WrapExtent::Prefix(std::num::NonZeroUsize::new(7).unwrap()),
+            );
+            assert!(lines.len() <= 8, "seven continuation rows plus the initial row");
+            assert_eq!(lines.len(), joiners.len());
+        }
+        let words: Vec<_> = (0..10_000).map(|_| textwrap::core::Word::from("task ")).collect();
+        let prefix = bounded_first_fit::<7>(&words, &[15]);
+        assert_eq!(prefix.len(), 7);
+        assert!(prefix.iter().map(|row| row.len()).sum::<usize>() < words.len());
     }
 
     #[test]

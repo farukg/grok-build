@@ -169,6 +169,7 @@ pub struct TodoPane {
     /// Rebuilt only when data, filtering or status styles change.
     entries: Vec<TodoListEntry>,
     counts: TodoCounts,
+    sidebar_cache: std::cell::RefCell<Option<SidebarCache>>,
     #[cfg(test)]
     preparation_rebuilds: usize,
     #[cfg(test)]
@@ -213,6 +214,7 @@ impl TodoPane {
             todos: Vec::new(),
             entries: Vec::new(),
             counts: TodoCounts::default(),
+            sidebar_cache: std::cell::RefCell::new(None),
             #[cfg(test)]
             preparation_rebuilds: 0,
             #[cfg(test)]
@@ -236,9 +238,15 @@ impl TodoPane {
     ///
     /// Does NOT auto-show the todo pane. Users toggle it with Ctrl-T.
     pub fn update_todos(&mut self, items: Vec<TodoItem>) {
+        let changed = self.todos.len() != items.len()
+            || self.todos.iter().zip(&items).any(|(old, new)| {
+                old.content != new.content || old.status != new.status
+            });
         self.counts = Self::compute_counts(&items);
         self.todos = items;
-        self.rebuild_entries();
+        if changed {
+            self.rebuild_entries();
+        }
     }
 
     fn compute_counts(items: &[TodoItem]) -> TodoCounts {
@@ -319,6 +327,7 @@ impl TodoPane {
         {
             self.preparation_rebuilds += 1;
         }
+        *self.sidebar_cache.get_mut() = None;
         self.entries.clear();
         for (idx, item) in self.todos.iter().enumerate() {
             if !self.show_done
@@ -461,6 +470,12 @@ pub(crate) struct SidebarProjection {
     lines: Vec<Line<'static>>,
 }
 
+struct SidebarCache {
+    text_width: u16,
+    marker_style: Style,
+    projection: std::sync::Arc<SidebarProjection>,
+}
+
 impl SidebarProjection {
     pub(crate) fn row_count(&self) -> usize {
         self.lines.len()
@@ -485,18 +500,35 @@ impl TodoPane {
         }
         let prefix = entry.prefix_line();
         let indent = Line::from(" ".repeat(line_display_width(&prefix)));
-        crate::render::wrapping::word_wrap_lines(
-            std::iter::once(&entry.styled),
-            crate::render::wrapping::RtOptions::new(text_width as usize)
-                .initial_indent(prefix)
-                .subsequent_indent(indent),
+        crate::render::wrapping::word_wrap_line_prefix::<{ MAX_SIDEBAR_ROWS + 1 }>(
+            &entry.styled,
+            text_width as usize,
+            prefix,
+            indent,
         )
     }
 
     /// The Todos section at one text width, bounded to [`MAX_SIDEBAR_ROWS`]: whole entries while
     /// they fit, the first entry cut when it alone exceeds the budget, and a pointer that counts
     /// the wholly hidden entries and says when the last shown one continues.
-    pub(crate) fn sidebar_projection(&self, text_width: u16) -> SidebarProjection {
+    pub(crate) fn sidebar_projection(&self, text_width: u16) -> std::sync::Arc<SidebarProjection> {
+        let marker_style = Style::default().fg(crate::theme::Theme::current().gray_bright);
+        if let Some(cache) = self.sidebar_cache.borrow().as_ref()
+            && cache.text_width == text_width
+            && cache.marker_style == marker_style
+        {
+            return cache.projection.clone();
+        }
+        let projection = std::sync::Arc::new(self.build_sidebar_projection(text_width));
+        *self.sidebar_cache.borrow_mut() = Some(SidebarCache {
+            text_width,
+            marker_style,
+            projection: projection.clone(),
+        });
+        projection
+    }
+
+    fn build_sidebar_projection(&self, text_width: u16) -> SidebarProjection {
         #[cfg(test)]
         self.sidebar_projections.set(self.sidebar_projections.get() + 1);
         if self.entries.is_empty() {
@@ -569,7 +601,7 @@ impl TodoPane {
         lines
     }
 
-    /// A row of the F7 Todos section, from a fresh projection: a wrapped entry line, the clipped
+    /// A row of the F7 Todos section, from its cached projection: a wrapped entry line, the clipped
     /// tail of the last entry, or the pointer to the rest.
     pub(crate) fn sidebar_row(
         &self,
@@ -656,6 +688,67 @@ mod tests {
                 .collect(),
         );
         pane
+    }
+
+    #[test]
+    fn sidebar_cache_tracks_content_status_filter_width_and_style() {
+        let _theme = crate::theme::cache::pin_theme();
+        crate::theme::cache::set(crate::theme::ThemeKind::GrokNight);
+        let mut pane = pane_with(&[("Before", TodoStatus::Pending)]);
+        let width = 24;
+        assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "□ Before");
+        let prepared = pane.sidebar_projection_count();
+        for _ in 0..8 {
+            assert_eq!(pane.sidebar_row_count(width), 1);
+            assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "□ Before");
+        }
+        assert_eq!(pane.sidebar_projection_count(), prepared);
+        pane.update_todos(vec![TodoItem {
+            content: "Before".into(),
+            status: TodoStatus::Pending,
+            priority: Default::default(),
+            meta: None,
+        }]);
+        assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "□ Before");
+        assert_eq!(pane.sidebar_projection_count(), prepared, "identical data is not a new projection");
+        pane.update_todos(vec![TodoItem {
+            content: "Before".into(),
+            status: TodoStatus::InProgress,
+            priority: Default::default(),
+            meta: None,
+        }]);
+        assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "▶ Before");
+        assert_eq!(pane.sidebar_projection_count(), prepared + 1);
+        pane.update_todos(vec![TodoItem {
+            content: "After".into(),
+            status: TodoStatus::InProgress,
+            priority: Default::default(),
+            meta: None,
+        }]);
+        assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "▶ After");
+        assert_eq!(pane.sidebar_projection_count(), prepared + 2);
+        pane.set_show_done(false);
+        pane.update_todos(vec![TodoItem {
+            content: "Finished".into(),
+            status: TodoStatus::Completed,
+            priority: Default::default(),
+            meta: None,
+        }]);
+        assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "All done.");
+        let filtered = pane.sidebar_projection_count();
+        pane.set_show_done(true);
+        assert!(flat(&pane.sidebar_row(0, width).unwrap()).contains("Finished"));
+        assert_eq!(pane.sidebar_projection_count(), filtered + 1);
+        let wide = pane.sidebar_projection_count();
+        assert!(pane.sidebar_row_count(7) > 1);
+        assert_eq!(pane.sidebar_projection_count(), wide + 1);
+        assert!(pane.sidebar_row_count(7) > 1);
+        assert_eq!(pane.sidebar_projection_count(), wide + 1);
+        crate::theme::cache::set(crate::theme::ThemeKind::GrokDay);
+        pane.refresh_entries();
+        let row = pane.sidebar_row(0, 7).unwrap();
+        assert_eq!(row.left.spans[0].style.fg, Some(crate::theme::Theme::current().accent_success));
+        assert_eq!(pane.sidebar_projection_count(), wide + 2);
     }
 
     #[test]

@@ -49,23 +49,16 @@ Version:    0.0.3
 crates.io:  https://crates.io/crates/ordered_hashmap/0.0.3
 
 --------------------------------------------------------------------------------
-nfsserve
+textwrap
 --------------------------------------------------------------------------------
-Path:       third_party/nfsserve/
-License:    BSD 3-Clause
-License file: third_party/nfsserve/LICENSE
-Upstream:   https://github.com/huggingface/nfsserve (v0.11.0)
-Copyright:  Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face
-
---------------------------------------------------------------------------------
-fuser
---------------------------------------------------------------------------------
-Path:       third_party/fuser/
+Path:       third_party/textwrap/
 License:    MIT
-License file: third_party/fuser/LICENSE.md
-Upstream:   https://github.com/cberner/fuser (v0.18.0 @ 9c957f74efe715112049298cdf1d601781829c8d)
-Copyright:  Copyright (c) 2020-present Christopher Berner;
-            Copyright 2013-2019 Andreas Neuhaus (see LICENSE.md)
+License file: third_party/textwrap/LICENSE
+Upstream:   https://github.com/mgeisler/textwrap
+Version:    0.16.2
+crates.io:  https://crates.io/crates/textwrap/0.16.2
+Commit:     4770e55af425a0cffb9ad8496599d2a1a4f5ed14
+Copyright:  Copyright (c) 2016 Martin Geisler
 
 --------------------------------------------------------------------------------
 ReScript.sublime-syntax (syntax grammar asset)

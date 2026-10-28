@@ -7,7 +7,7 @@ use crate::views::todo_pane::{SidebarProjection, TodoPane};
 /// row count and every painted row of a draw.
 pub(super) struct SidebarTodos<'a> {
     pane: &'a TodoPane,
-    projection: SidebarProjection,
+    projection: std::sync::Arc<SidebarProjection>,
 }
 
 impl<'a> SidebarTodos<'a> {
