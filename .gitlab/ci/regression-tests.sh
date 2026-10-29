@@ -153,9 +153,9 @@ run_tests xai-grok-pager lib \
 run_tests xai-grok-pager lib --all-executed \
     'scrollback::scrollback_pane::tests::' \
     'scrollback::wrappers::entry_renderer::tests::' \
-    'app::session_inline_output::tests::' \
-    'app::session_inline_output::paint_tests::' \
-    'app::session_inline_output::completion_tests::' \
+    'app::session_views::inline_output::tests::' \
+    'app::session_views::inline_output::paint_tests::' \
+    'app::session_views::inline_output::completion_tests::' \
     'scrollback::blocks::markdown_content::source_tests::' \
     'scrollback::blocks::markdown_content::tests::' \
     'scrollback::blocks::agent::tests::' \
@@ -163,6 +163,7 @@ run_tests xai-grok-pager lib --all-executed \
     'views::block_viewer::tests::' \
     'acp::tracker::tests::whitespace_thought_chunk_is_preserved_until_a_blank_block_is_finished' \
     'acp::tracker::tests::runtime::' \
+    'app::acp_handler::tests::terminal_activity_integration::' \
     'app::acp_handler::tests::terminal_activity_integration::terminal_during_reload_cannot_cross_live_and_historical_legacy_owners' \
     'app::acp_handler::tests::terminal_activity_integration::registered_terminal_cannot_confirm_a_drained_legacy_entry_with_the_same_provider' \
     'app::acp_handler::tests::terminal_activity_integration::recycled_legacy_provider_cannot_confirm_either_drained_entry' \
