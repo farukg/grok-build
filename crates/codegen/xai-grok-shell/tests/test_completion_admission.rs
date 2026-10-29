@@ -2,7 +2,9 @@
 mod acp_harness;
 mod admission_support;
 
-use acp_harness::{connect_and_auth, ext_method, prompt_turn, run_agent_test_isolated as run_agent_test};
+use acp_harness::{
+    connect_and_auth, ext_method, prompt_turn, run_agent_test_isolated as run_agent_test,
+};
 use admission_support::*;
 use agent_client_protocol::{self as acp, Agent as _};
 use serde_json::json;
@@ -187,14 +189,16 @@ fn native_receiver_cancel_retains_its_parent_binding_after_task_teardown() {
                     REQUEST_SNAPSHOT_NOTIFICATION, RequestObservation, RequestSnapshotNotification,
                 };
                 event["method"] == REQUEST_SNAPSHOT_NOTIFICATION
-                    && serde_json::from_value::<RequestSnapshotNotification>(event["params"].clone())
-                        .is_ok_and(|notification| {
-                            notification.snapshot.session_id == sid.to_string()
-                                && matches!(
-                                    notification.evidence.observation,
-                                    RequestObservation::ResponseHeaders { status: 200 }
-                                )
-                        })
+                    && serde_json::from_value::<RequestSnapshotNotification>(
+                        event["params"].clone(),
+                    )
+                    .is_ok_and(|notification| {
+                        notification.snapshot.session_id == sid.to_string()
+                            && matches!(
+                                notification.evidence.observation,
+                                RequestObservation::ResponseHeaders { status: 200 }
+                            )
+                    })
             })
             .await;
         conn.cancel(acp::CancelNotification::new(sid.clone()))

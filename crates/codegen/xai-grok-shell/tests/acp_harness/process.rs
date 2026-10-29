@@ -78,7 +78,10 @@ pub(super) fn enter() -> TestProcess {
         );
         let (status, _, _) = output
             .unwrap_or_else(|_| {
-                panic!("isolated ACP deadline expired: {}", process.diagnostic_summary())
+                panic!(
+                    "isolated ACP deadline expired: {}",
+                    process.diagnostic_summary()
+                )
             })
             .unwrap_or_else(|error| {
                 panic!(

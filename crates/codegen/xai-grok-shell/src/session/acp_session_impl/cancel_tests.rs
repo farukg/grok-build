@@ -134,25 +134,37 @@ async fn stop_gesture_without_goal_only_arms_the_barrier() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn idle_stop_preserves_queued_workflow_obligation_without_a_fallback() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, _persistence_rx) = actor_with_channels().await;
-        let (wake, mut receipt) = super::super::support::input_with_origin_rx(
-            "workflow-completed-parked-0",
-            crate::session::PromptOrigin::WorkflowCompleted { completion_id: "parked-0".to_string() },
-        );
-        actor.state.lock().await.pending_inputs.push_back(wake);
-        let outcome = actor.cancel_running_task(crate::session::CancelOptions {
-            trigger: Some(crate::session::CancelTrigger::CtrlC),
-            user_initiated: true,
-            ..Default::default()
-        }).await;
-        assert_eq!(outcome.barrier, WakeBarrier::Armed);
-        let state = actor.state.lock().await;
-        assert!(state.running_task.is_none());
-        assert_eq!(state.pending_inputs.len(), 1);
-        assert_eq!(state.pending_inputs.front().unwrap().prompt_id, "workflow-completed-parked-0");
-        assert!(matches!(receipt.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, _persistence_rx) = actor_with_channels().await;
+            let (wake, mut receipt) = super::super::support::input_with_origin_rx(
+                "workflow-completed-parked-0",
+                crate::session::PromptOrigin::WorkflowCompleted {
+                    completion_id: "parked-0".to_string(),
+                },
+            );
+            actor.state.lock().await.pending_inputs.push_back(wake);
+            let outcome = actor
+                .cancel_running_task(crate::session::CancelOptions {
+                    trigger: Some(crate::session::CancelTrigger::CtrlC),
+                    user_initiated: true,
+                    ..Default::default()
+                })
+                .await;
+            assert_eq!(outcome.barrier, WakeBarrier::Armed);
+            let state = actor.state.lock().await;
+            assert!(state.running_task.is_none());
+            assert_eq!(state.pending_inputs.len(), 1);
+            assert_eq!(
+                state.pending_inputs.front().unwrap().prompt_id,
+                "workflow-completed-parked-0"
+            );
+            assert!(matches!(
+                receipt.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ));
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
