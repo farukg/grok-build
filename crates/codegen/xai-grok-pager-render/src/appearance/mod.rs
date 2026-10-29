@@ -53,9 +53,5 @@ pub fn set_tab_width(w: u8) {
 /// This sits beside the width because every caller that paints a tab has to agree on it.
 /// ratatui drops a cluster holding a control character, so a tab left in the text is deleted rather than drawn.
 pub fn expand_tabs(text: &str) -> std::borrow::Cow<'_, str> {
-    let width = tab_width();
-    if width == 0 || !text.contains('\t') {
-        return std::borrow::Cow::Borrowed(text);
-    }
-    std::borrow::Cow::Owned(text.replace('\t', &" ".repeat(usize::from(width))))
+    xai_grok_markdown::expand_tabs(text, tab_width())
 }

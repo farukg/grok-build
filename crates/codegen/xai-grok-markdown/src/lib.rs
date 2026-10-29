@@ -37,6 +37,7 @@ mod mermaid;
 mod open_code_highlighter;
 mod output;
 mod parse;
+mod projection;
 mod render;
 mod source_map;
 pub mod streaming;
@@ -57,6 +58,7 @@ pub use colors::{
 pub use latex_delimiters::{LatexDelimiterNormalizer, normalize_latex_delimiters};
 pub use output::{CodeBlockSpan, HyperlinkTarget, MarkdownRenderOutput, MarkdownRenderView};
 pub use parse::{MarkdownParser, ParsedMarkdown};
+pub use projection::expand_tabs;
 pub use source_map::SourceMap;
 pub use streaming::StreamingMarkdownRenderer;
 pub use style::{MarkdownStyle, TableBorders};
@@ -98,15 +100,33 @@ pub fn render_markdown_ratatui_with_buffers_width(
     syntect: Option<&Syntect>,
     max_table_width: Option<usize>,
 ) -> (MarkdownRenderOutput, Option<Checkpoint>) {
-    // Normalize `\(…\)`/`\[…\]`/`\begin{equation}` to `$`/`$$` before parsing, so the math handlers see one form, table cells included
-    // All offsets are in normalized space; `StreamingMarkdownRenderer` normalizes as input arrives, so its stored source matches
-    // Streaming tail renders (`render_markdown_ratatui_with_link_id`) do not re-normalize; they receive already-normalized source
-    let normalized = latex_delimiters::normalize_latex_delimiters(text);
+    let mut normalizer = LatexDelimiterNormalizer::new();
+    let normalized = if pretty {
+        let mut normalized = normalizer.push(text);
+        normalized.push_str(&normalizer.finish());
+        normalized
+    } else {
+        text.to_owned()
+    };
     let mut parsed = MarkdownParser::new(&normalized, ms, buffers, syntect)
         .max_table_width(max_table_width)
         .parse();
     let next_link_id = parsed.next_link_id;
-    let (mut output, checkpoint) = parsed.render_ratatui(pretty);
+    let (mut output, mut checkpoint) = parsed.render_ratatui(pretty);
+    let mut source_lines = projection::LineOffsets::default();
+    source_lines.append(text);
+    let mut normalized_lines = projection::LineOffsets::default();
+    normalized_lines.append(&normalized);
+    for line in &mut output.line_source_map {
+        *line = source_lines.line_at(normalizer.original_offset(normalized_lines.offset(*line)));
+    }
+    for block in &mut output.code_blocks {
+        block.source_byte_range.start = normalizer.original_offset(block.source_byte_range.start);
+        block.source_byte_range.end = normalizer.original_offset(block.source_byte_range.end);
+    }
+    if let Some(checkpoint) = &mut checkpoint {
+        checkpoint.source_bytes = normalizer.original_offset(checkpoint.source_bytes);
+    }
     // Mirror `StreamingMarkdownRenderer::finish()` so a one-shot render gets the same hyperlinks a `push_and_render` + `finish()` sequence would
     let (extra_links, _post_scan_next_id) =
         url_scan::detect_plain_urls(&output.lines, &output.hyperlinks, next_link_id);

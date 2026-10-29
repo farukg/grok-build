@@ -40,7 +40,7 @@ use crate::{
 pub(crate) struct FrozenState {
     /// Number of frozen lines (= number of frozen line_source_map entries).
     pub(crate) lines_len: usize,
-    /// Number of frozen source bytes.
+    /// Number of frozen parser-projection bytes, not original-source bytes.
     pub(crate) source_bytes: usize,
     /// Next link ID, advanced ONLY when a checkpoint advances the frozen boundary (i.e. when frozen lines and their hyperlinks become permanent).
     /// IDs assigned to url_scan hits in the unfrozen tail are regenerated on every `rerender_tail` call.
@@ -102,12 +102,27 @@ fn count_trailing_blank_lines(text: &str) -> usize {
     count
 }
 
+#[derive(Debug, Clone, Copy)]
+enum StreamState {
+    Open,
+    Finished,
+}
+
 /// Incremental markdown renderer that efficiently handles streaming input.
 ///
 /// Maintains frozen (stable) content and only re-renders the unfrozen tail, reducing render time for long streaming content.
 pub struct StreamingMarkdownRenderer {
-    /// Accumulated source text (all chunks concatenated).
+    /// Accumulated original bytes, including any suffix held by the normalizer.
     source: String,
+    /// Derived parser input; all internal frozen offsets address this buffer.
+    render_source: String,
+    source_lines: crate::projection::LineOffsets,
+    render_lines: crate::projection::LineOffsets,
+    /// Original line for each parser line, indexed once as projection bytes arrive.
+    render_line_sources: Vec<usize>,
+    tabs: crate::projection::TabProjection,
+    tab_width: u8,
+    stream_state: StreamState,
 
     /// Single output buffer: frozen content at start, tail appended after.
     output: MarkdownRenderOutput,
@@ -136,7 +151,7 @@ pub struct StreamingMarkdownRenderer {
     open_code: Option<OpenCodeHighlighter>,
 
     /// Streaming LaTeX delimiter normalizer.
-    /// Rewrites `\(…\)` / `\[…\]` / `\begin{equation}` into the canonical `$` / `$$` forms before text is appended to `source`.
+    /// Rewrites math delimiters only in the derived pretty-mode parser input.
     /// Held-back ambiguous bytes (a partial delimiter at a chunk boundary) are flushed by `finish()`.
     normalizer: LatexDelimiterNormalizer,
 }
@@ -161,12 +176,16 @@ impl Clone for StreamingMarkdownRenderer {
         let mut new = Self::new(self.style, self.pretty);
         new.set_max_table_width(self.max_table_width);
         new.set_collapse_soft_breaks(self.collapse_soft_breaks);
-        // `self.source` is already normalized, so append it verbatim rather than re-running the normalizer
-        // A re-run could hold back a trailing ambiguous suffix and make the clone's source diverge
-        // Copy the normalizer state separately so any held-back bytes survive the clone
-        new.push_normalized(&self.source);
-        new.render(None);
+        new.source = self.source.clone();
+        new.render_source = self.render_source.clone();
+        new.source_lines = self.source_lines.clone();
+        new.render_lines = self.render_lines.clone();
+        new.render_line_sources = self.render_line_sources.clone();
+        new.tabs = self.tabs.clone();
+        new.tab_width = self.tab_width;
+        new.stream_state = self.stream_state;
         new.normalizer = self.normalizer.clone();
+        new.render(None);
         new
     }
 }
@@ -176,6 +195,13 @@ impl StreamingMarkdownRenderer {
     pub fn new(style: MarkdownStyle, pretty: bool) -> Self {
         Self {
             source: String::new(),
+            render_source: String::new(),
+            source_lines: crate::projection::LineOffsets::default(),
+            render_lines: crate::projection::LineOffsets::default(),
+            render_line_sources: vec![0],
+            tabs: crate::projection::TabProjection::default(),
+            tab_width: 0,
+            stream_state: StreamState::Open,
             output: MarkdownRenderOutput::new(),
             frozen: FrozenState::default(),
             buffers: MarkdownBuffers::new(),
@@ -226,15 +252,101 @@ impl StreamingMarkdownRenderer {
     /// Push a new chunk of markdown text (no rendering).
     /// Call `render()` to process accumulated content, or use `push_and_render()` for convenience.
     pub fn push(&mut self, chunk: &str) {
-        let normalized = self.normalizer.push(chunk);
-        self.source.push_str(&normalized);
+        if chunk.is_empty() {
+            return;
+        }
+        self.source.push_str(chunk);
+        self.source_lines.append(chunk);
+        match self.stream_state {
+            StreamState::Open => self.push_projection(chunk),
+            StreamState::Finished => {
+                self.stream_state = StreamState::Open;
+                self.rebuild_projection();
+            }
+        }
     }
 
-    /// Append already-normalized source text, bypassing the delimiter normalizer.
-    /// Used by `clone()` to reproduce an existing (already normalized) `source` exactly.
-    /// The cloned normalizer state is copied separately so any held-back bytes are preserved.
-    fn push_normalized(&mut self, text: &str) {
-        self.source.push_str(text);
+    fn push_projection(&mut self, chunk: &str) {
+        let first_new_line = self.render_lines.line_count();
+        let expanded = self.tabs.push(chunk, self.tab_width);
+        if self.pretty {
+            let normalized = self.normalizer.push(&expanded);
+            self.render_source.push_str(&normalized);
+            self.render_lines.append(&normalized);
+        } else {
+            self.render_source.push_str(&expanded);
+            self.render_lines.append(&expanded);
+        }
+        self.index_original_lines(first_new_line);
+    }
+
+    fn flush_projection(&mut self) {
+        let first_new_line = self.render_lines.line_count();
+        let flushed = self.normalizer.finish();
+        self.render_source.push_str(&flushed);
+        self.render_lines.append(&flushed);
+        self.index_original_lines(first_new_line);
+    }
+
+    fn index_original_lines(&mut self, first_new_line: usize) {
+        for line in first_new_line..self.render_lines.line_count() {
+            let original = self
+                .source_lines
+                .line_at(self.original_offset(self.render_lines.offset(line)));
+            self.render_line_sources.push(original);
+        }
+    }
+
+    /// Whether an append must reopen a finalized parser projection.
+    pub fn is_finished(&self) -> bool {
+        match self.stream_state {
+            StreamState::Open => false,
+            StreamState::Finished => true,
+        }
+    }
+
+    /// Configure fixed-width tab painting; return whether the projection was reset.
+    pub fn set_tab_width(&mut self, width: u8) -> bool {
+        if self.tab_width == width {
+            return false;
+        }
+        self.tab_width = width;
+        self.rebuild_projection();
+        true
+    }
+
+    fn rebuild_projection(&mut self) {
+        self.render_source.clear();
+        self.render_lines = crate::projection::LineOffsets::default();
+        self.render_line_sources.clear();
+        self.render_line_sources.push(0);
+        self.tabs = crate::projection::TabProjection::default();
+        self.normalizer.reset();
+        let source = std::mem::take(&mut self.source);
+        self.push_projection(&source);
+        match self.stream_state {
+            StreamState::Open => {}
+            StreamState::Finished => self.flush_projection(),
+        }
+        self.source = source;
+        self.frozen = FrozenState::default();
+        self.output.clear();
+        self.open_code = None;
+    }
+
+    fn original_offset(&self, offset: usize) -> usize {
+        self.tabs
+            .original_offset(self.normalizer.original_offset(offset))
+    }
+
+    fn original_line(&self, projected_line: usize) -> usize {
+        self.render_line_sources
+            .get(projected_line)
+            .copied()
+            .unwrap_or_else(|| {
+                self.source_lines
+                    .line_at(self.original_offset(self.render_source.len()))
+            })
     }
 
     /// Render accumulated content.
@@ -248,8 +360,7 @@ impl StreamingMarkdownRenderer {
     /// Equivalent to `push(chunk)` followed by `render(syntect)`.
     /// Use this for real-time streaming where you want to display after each chunk.
     pub fn push_and_render(&mut self, chunk: &str, syntect: Option<&Syntect>) {
-        let normalized = self.normalizer.push(chunk);
-        self.source.push_str(&normalized);
+        self.push(chunk);
         self.rerender_tail(syntect);
     }
 
@@ -276,12 +387,12 @@ impl StreamingMarkdownRenderer {
         // That newline is the block-terminating newline the frozen block consumed; skip it to avoid a spurious blank line
         let mut tail_start = self.frozen.source_bytes;
         if tail_start > 0
-            && self.source.as_bytes().get(tail_start - 1) != Some(&b'\n')
-            && self.source.as_bytes().get(tail_start) == Some(&b'\n')
+            && self.render_source.as_bytes().get(tail_start - 1) != Some(&b'\n')
+            && self.render_source.as_bytes().get(tail_start) == Some(&b'\n')
         {
             tail_start += 1;
         }
-        let Some(tail) = self.source.get(tail_start..) else {
+        let Some(tail) = self.render_source.get(tail_start..) else {
             return;
         };
         // Lazily create the incremental open-code cache once syntect is present.
@@ -305,11 +416,23 @@ impl StreamingMarkdownRenderer {
             open_code,
         );
 
+        let first_tail_line = self.render_lines.line_at(tail_start);
+        let end_source_line = self.original_line(self.render_lines.line_count());
+        let render_line_sources = &self.render_line_sources;
+
         // Append tail to output
         self.output.lines.extend(tail_output.lines);
-        self.output
-            .line_source_map
-            .extend(tail_output.line_source_map);
+        self.output.line_source_map.extend(
+            tail_output
+                .line_source_map
+                .into_iter()
+                .map(|line| {
+                    render_line_sources
+                        .get(first_tail_line + line)
+                        .copied()
+                        .unwrap_or(end_source_line)
+                }),
+        );
 
         // Offset tail hyperlink line indices by frozen line count and append
         let frozen_lines = self.frozen.lines_len;
@@ -328,13 +451,19 @@ impl StreamingMarkdownRenderer {
 
         // Append tail code-block spans, rebasing their tail-relative ranges to document coordinates, mirroring the hyperlink offsetting
         // Output lines shift by the frozen line count, source bytes by the tail's start offset
+        let tabs = &self.tabs;
+        let normalizer = &self.normalizer;
         self.output
             .code_blocks
             .extend(tail_output.code_blocks.into_iter().map(|mut cb| {
                 cb.output_line_range.start += frozen_lines;
                 cb.output_line_range.end += frozen_lines;
-                cb.source_byte_range.start += tail_start;
-                cb.source_byte_range.end += tail_start;
+                cb.source_byte_range.start = tabs.original_offset(
+                    normalizer.original_offset(cb.source_byte_range.start + tail_start),
+                );
+                cb.source_byte_range.end = tabs.original_offset(
+                    normalizer.original_offset(cb.source_byte_range.end + tail_start),
+                );
                 cb
             }));
 
@@ -380,9 +509,15 @@ impl StreamingMarkdownRenderer {
         &self.source
     }
 
+    /// Borrow the derived parser input, excluding any normalizer holdback.
+    /// Display summaries may use this; raw copy and append offsets must use `source()`.
+    pub fn parser_source(&self) -> &str {
+        &self.render_source
+    }
+
     /// Get the number of frozen source bytes.
     pub fn frozen_bytes(&self) -> usize {
-        self.frozen.source_bytes
+        self.original_offset(self.frozen.source_bytes)
     }
 
     /// Get the number of frozen output lines.
@@ -395,6 +530,13 @@ impl StreamingMarkdownRenderer {
     /// Otherwise a later `set_max_table_width(Some(prev_width))` is silently a no-op (no state reset) because the equality check sees no change.
     pub fn clear(&mut self) {
         self.source.clear();
+        self.stream_state = StreamState::Open;
+        self.render_source.clear();
+        self.source_lines = crate::projection::LineOffsets::default();
+        self.render_lines = crate::projection::LineOffsets::default();
+        self.render_line_sources.clear();
+        self.render_line_sources.push(0);
+        self.tabs = crate::projection::TabProjection::default();
         self.output.clear();
         self.frozen = FrozenState::default();
         self.max_table_width = None;
@@ -408,10 +550,7 @@ impl StreamingMarkdownRenderer {
     pub fn set_pretty(&mut self, pretty: bool) {
         if self.pretty != pretty {
             self.pretty = pretty;
-            // Reset frozen state so everything re-renders with the new mode
-            self.frozen = FrozenState::default();
-            self.output.clear();
-            self.open_code = None;
+            self.rebuild_projection();
         }
     }
 
@@ -432,13 +571,13 @@ impl StreamingMarkdownRenderer {
     pub fn finish(&mut self, syntect: Option<&Syntect>) -> MarkdownRenderView<'_> {
         // Flush any bytes the normalizer held back at the last chunk boundary (e.g. a trailing partial delimiter).
         // The full re-render must see the complete, normalized source
-        let flushed = self.normalizer.finish();
-        self.source.push_str(&flushed);
+        self.flush_projection();
+        self.stream_state = StreamState::Finished;
 
         // Do a full re-render of the entire source, preserving max_table_width.
         let mut buffers = MarkdownBuffers::new();
-        let (full_output, _, full_next_link_id) = render_markdown_ratatui_with_link_id(
-            &self.source,
+        let (mut full_output, _, full_next_link_id) = render_markdown_ratatui_with_link_id(
+            &self.render_source,
             self.style,
             self.pretty,
             &mut buffers,
@@ -451,7 +590,18 @@ impl StreamingMarkdownRenderer {
             None,
         );
 
+        for line in &mut full_output.line_source_map {
+            *line = self.original_line(*line);
+        }
         self.output = full_output;
+        let tabs = &self.tabs;
+        let normalizer = &self.normalizer;
+        for block in &mut self.output.code_blocks {
+            block.source_byte_range.start =
+                tabs.original_offset(normalizer.original_offset(block.source_byte_range.start));
+            block.source_byte_range.end =
+                tabs.original_offset(normalizer.original_offset(block.source_byte_range.end));
+        }
 
         // Scan rendered lines for plain, non-md URLs that pulldown-cmark didn't emit as Tag::Link
         // Dedup against existing hyperlinks by (line_index, column_range) overlap to avoid double-linking
@@ -470,7 +620,7 @@ impl StreamingMarkdownRenderer {
         // Mark everything as frozen (streaming is complete)
         self.frozen = FrozenState {
             lines_len: self.output.lines.len(),
-            source_bytes: self.source.len(),
+            source_bytes: self.render_source.len(),
             next_link_id: post_scan_next_id,
         };
 
@@ -489,6 +639,10 @@ impl StreamingMarkdownRenderer {
         self.output
     }
 }
+
+#[cfg(test)]
+#[path = "streaming_source_tests.rs"]
+mod source_tests;
 
 #[cfg(test)]
 mod tests {
@@ -675,17 +829,10 @@ mod tests {
         renderer.push_and_render(msg, None);
 
         let pre = renderer.source().to_string();
+        assert_eq!(pre, msg, "source includes the held-back closer");
         assert!(
-            !pre.ends_with('`'),
-            "without finish(), trailing closer must still be held back; source ends {:?}",
-            pre.len()
-                .checked_sub(20)
-                .and_then(|i| pre.get(i..))
-                .unwrap_or(&pre)
-        );
-        assert!(
-            pre.contains('`') && pre.contains("report.html"),
-            "opener + path should be present before finish"
+            !renderer.render_source.ends_with('`'),
+            "the parser projection still holds back the trailing closer"
         );
 
         let lines_pre: Vec<String> = renderer
@@ -704,7 +851,7 @@ mod tests {
         let post = renderer.source().to_string();
         assert_eq!(
             post, msg,
-            "finish() flushes the held-back closer into source"
+            "finish() must not rewrite the original source"
         );
     }
 

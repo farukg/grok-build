@@ -178,14 +178,7 @@ impl ThinkingBlock {
     }
 
     pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
-        let Some(tail) = self.source_tail(offset) else {
-            return false;
-        };
-        self.content = historical.content.clone();
-        if !tail.is_empty() {
-            self.content.push_chunk_deferred(&tail);
-        }
-        true
+        self.content.merge_replayed_source(&historical.content, offset)
     }
 
     /// Set the elapsed time (in milliseconds).
@@ -554,6 +547,25 @@ mod tests {
             is_selected: false,
             cwd: None,
         }
+    }
+
+    #[test]
+    fn replayed_thinking_advances_past_history_without_a_suffix() {
+        let mut historical = ThinkingBlock::streaming();
+        historical.push_chunk("history");
+        historical.push_chunk_deferred("\t界");
+        historical.push_chunk_deferred(" tail");
+        let mut block = ThinkingBlock::new("é");
+        block.set_elapsed_time_ms(Some(1200));
+        assert!(!block.merge_replayed_source(&historical, 1));
+        assert_eq!(block.text(), "é");
+        assert_eq!(block.content().generation(), 1);
+        assert!(block.merge_replayed_source(&historical, 2));
+        assert_eq!(block.content().generation(), 4);
+        assert_eq!(historical.content().generation(), 3);
+        assert_eq!(block.copy_text(true), "history\t界 tail");
+        assert_eq!(block.copy_text(false), "history    界 tail");
+        assert_eq!(block.elapsed_time_ms(), Some(1200));
     }
 
     #[test]

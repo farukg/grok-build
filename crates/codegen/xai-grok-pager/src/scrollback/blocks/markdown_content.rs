@@ -82,9 +82,9 @@ impl MarkdownContent {
         let mut renderer = StreamingMarkdownRenderer::new(md_style::style(), true);
         renderer.set_max_table_width(max_table_width);
         renderer.set_collapse_soft_breaks(collapse_soft_breaks);
+        renderer.set_tab_width(xai_grok_pager_render::appearance::tab_width());
         let text = text.into();
-        let expanded = xai_grok_pager_render::appearance::expand_tabs(&text);
-        renderer.push(&expanded);
+        renderer.push(&text);
         // finish() (not render()) so the streaming LaTeX-delimiter normalizer flushes any trailing held-back delimiter bytes
         // This is a complete, one-shot document
         renderer.finish(Some(get_syntect()));
@@ -106,9 +106,11 @@ impl MarkdownContent {
 
     /// Create empty for streaming.
     pub fn streaming() -> Self {
+        let mut renderer = StreamingMarkdownRenderer::new(md_style::style(), true);
+        renderer.set_tab_width(xai_grok_pager_render::appearance::tab_width());
         Self {
             state: RefCell::new(RenderState {
-                renderer: StreamingMarkdownRenderer::new(md_style::style(), true),
+                renderer,
                 cache_width: 0,
                 cache_generation: 0,
                 cache_theme: theme_cache::current_kind(),
@@ -124,11 +126,15 @@ impl MarkdownContent {
 
     /// Append a streaming chunk and re-render.
     pub fn push_chunk(&mut self, chunk: &str) {
-        let expanded = xai_grok_pager_render::appearance::expand_tabs(chunk);
-        self.state
-            .get_mut()
+        let state = self.state.get_mut();
+        let width_changed = state
             .renderer
-            .push_and_render(&expanded, Some(get_syntect()));
+            .set_tab_width(xai_grok_pager_render::appearance::tab_width());
+        if width_changed || (state.renderer.is_finished() && !chunk.is_empty()) {
+            state.frozen_pre_wrap_count = 0;
+            state.frozen_wrapped_count = 0;
+        }
+        state.renderer.push_and_render(chunk, Some(get_syntect()));
         self.generation += 1;
     }
 
@@ -136,9 +142,35 @@ impl MarkdownContent {
     ///
     /// Used for historical replay during `session/load` so the pager can batch markdown work and render once after replay completes.
     pub fn push_chunk_deferred(&mut self, chunk: &str) {
-        let expanded = xai_grok_pager_render::appearance::expand_tabs(chunk);
-        self.state.get_mut().renderer.push(&expanded);
+        let state = self.state.get_mut();
+        let width_changed = state
+            .renderer
+            .set_tab_width(xai_grok_pager_render::appearance::tab_width());
+        if width_changed || (state.renderer.is_finished() && !chunk.is_empty()) {
+            state.frozen_pre_wrap_count = 0;
+            state.frozen_wrapped_count = 0;
+        }
+        state.renderer.push(chunk);
         self.generation += 1;
+    }
+
+    pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
+        let Some(tail) = self.with_source(|source| source.get(offset..).map(str::to_owned)) else {
+            return false;
+        };
+        let mut replacement = historical.clone();
+        if !tail.is_empty() {
+            replacement.push_chunk_deferred(&tail);
+        }
+        // Viewers read pre-wrap lines directly, without populating the wrap cache first.
+        replacement
+            .state
+            .get_mut()
+            .renderer
+            .render(Some(get_syntect()));
+        replacement.generation = self.generation.max(replacement.generation) + 1;
+        *self = replacement;
+        true
     }
 
     /// Finish streaming: full re-render for correctness.
@@ -162,9 +194,14 @@ impl MarkdownContent {
         f(self.state.borrow().renderer.source())
     }
 
-    /// Capped first non-empty source line, without cloning the whole source like `text()`.
+    /// Borrow the existing display projection without expanding or normalizing again.
+    pub(crate) fn with_parser_source<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        f(self.state.borrow().renderer.parser_source())
+    }
+
+    /// Capped first non-empty parser line, without cloning the whole source like `text()`.
     pub fn preview(&self) -> String {
-        crate::scrollback::state::prompt_preview(self.state.borrow().renderer.source())
+        self.with_parser_source(crate::scrollback::state::prompt_preview)
     }
 
     /// Whether the source markdown is empty (zero-alloc, unlike `text()`).
@@ -437,6 +474,10 @@ pub(super) fn compute_subsequent_indent_width(line: &Line<'_>) -> usize {
     }
     width
 }
+
+#[cfg(test)]
+#[path = "markdown_source_tests.rs"]
+mod source_tests;
 
 #[cfg(test)]
 mod tests {

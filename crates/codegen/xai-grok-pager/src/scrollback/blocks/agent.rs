@@ -71,13 +71,12 @@ impl AgentMessageBlock {
     }
 
     pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
-        let Some(tail) = self.source_tail(offset) else {
+        if !self.content.merge_replayed_source(&historical.content, offset) {
             return false;
-        };
-        *self = historical.clone();
-        if !tail.is_empty() {
-            self.push_chunk_deferred(&tail);
         }
+        self.image_refs.clone_from(&historical.image_refs);
+        self.video_refs.clone_from(&historical.video_refs);
+        self.mermaid.clone_from(&historical.mermaid);
         true
     }
 
@@ -171,9 +170,7 @@ impl BlockContent for AgentMessageBlock {
         // Raw mode stays orthogonal: the fold decides how much renders, raw only how the body is styled.
         if ctx.mode == DisplayMode::Collapsed {
             let theme = crate::theme::Theme::current();
-            let summary = self
-                .content
-                .with_source(crate::scrollback::state::prompt_preview);
+            let summary = self.content.preview();
             return BlockOutput {
                 lines: vec![
                     crate::scrollback::types::BlockLine::styled(Line::from(Span::styled(
@@ -233,7 +230,7 @@ impl BlockContent for AgentMessageBlock {
         // Content-driven, mirroring `UserPromptBlock`'s conservative visual-line estimate:
         // a body that fits one visual line is not foldable; anything longer is.
         const MIN_CONTENT_WIDTH: usize = 60;
-        self.content.with_source(|source| {
+        self.content.with_parser_source(|source| {
             let mut visual_lines = 0usize;
             for line in source.lines() {
                 let width = unicode_width::UnicodeWidthStr::width(line);
@@ -276,6 +273,32 @@ mod tests {
             is_selected: false,
             cwd: None,
         }
+    }
+
+    #[test]
+    fn collapsed_agent_summary_uses_projected_source() {
+        let source = "left\t\\( x \\)\n\nbody";
+        let block = AgentMessageBlock::new(source);
+        let mut collapsed = ctx(80, false);
+        collapsed.mode = DisplayMode::Collapsed;
+        let out = block.output(&collapsed);
+        assert_eq!(out.lines.len(), 1);
+        assert_eq!(out.lines[0].content.to_string(), "left    $x$");
+        assert_eq!(block.copy_text(true), source);
+    }
+
+    #[test]
+    fn agent_foldability_counts_projected_tab_cells() {
+        let source = format!("{}\tb", "a".repeat(59));
+        assert_eq!(unicode_width::UnicodeWidthStr::width(source.as_str()), 60);
+        let block = AgentMessageBlock::new(source.clone());
+        block.content().with_parser_source(|projected| {
+            assert_eq!(unicode_width::UnicodeWidthStr::width(projected), 64);
+        });
+        assert!(block.is_foldable());
+        assert!(block.is_foldable());
+        assert!(!AgentMessageBlock::new(format!("{}b", "a".repeat(59))).is_foldable());
+        assert_eq!(block.copy_text(true), source);
     }
 
     #[test]

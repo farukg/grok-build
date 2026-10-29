@@ -216,6 +216,71 @@ fn sticky_highlight_clears_on_raw_toggle() {
 }
 
 #[test]
+fn replayed_markdown_replacement_refreshes_equal_generation_viewer() {
+    for (mut live, historical) in [
+        (RenderBlock::agent_message_streaming(), RenderBlock::agent_message("history")),
+        (RenderBlock::thinking_streaming(), RenderBlock::thinking("history")),
+    ] {
+        match &mut live {
+            RenderBlock::AgentMessage(block) => {
+                block.push_chunk("live");
+                block.push_chunk("\t界 suffix");
+            }
+            RenderBlock::Thinking(block) => {
+                block.push_chunk("live");
+                block.push_chunk("\t界 suffix");
+                block.set_elapsed_time_ms(Some(1200));
+            }
+            _ => panic!("expected markdown"),
+        }
+        assert_eq!(BlockViewerPane::extract_generation(&live), Some(2));
+        assert_eq!(BlockViewerPane::extract_generation(&historical), Some(1));
+        let mut entry = ScrollbackEntry::running(live);
+        let entry_id = entry.id;
+        let mut pane = BlockViewerPane::for_markdown(entry.id, &entry).expect("markdown");
+        pane.prepare_for_test(area());
+        assert_eq!(pane.last_generation, 2);
+        assert_eq!(pane.items[0].plain_text, "live    界 suffix");
+
+        match (&mut entry.block, &historical) {
+            (RenderBlock::AgentMessage(block), RenderBlock::AgentMessage(history)) => {
+                let mut old_replacement = history.clone();
+                old_replacement.push_chunk_deferred("\t界 suffix");
+                assert_eq!(old_replacement.content().generation(), 2);
+                assert!(block.merge_replayed_source(history, 4));
+                assert_eq!(block.copy_text(true), "history\t界 suffix");
+                assert_eq!(history.copy_text(true), "history");
+            }
+            (RenderBlock::Thinking(block), RenderBlock::Thinking(history)) => {
+                let mut old_replacement = history.clone();
+                old_replacement.push_chunk_deferred("\t界 suffix");
+                assert_eq!(old_replacement.content().generation(), 2);
+                assert!(block.merge_replayed_source(history, 4));
+                assert_eq!(block.copy_text(true), "history\t界 suffix");
+                assert_eq!(history.copy_text(true), "history");
+                assert_eq!(block.elapsed_time_ms(), Some(1200));
+            }
+            _ => panic!("expected matching markdown blocks"),
+        }
+        assert_eq!(entry.id, entry_id);
+        assert_eq!(BlockViewerPane::extract_generation(&entry.block), Some(3));
+        assert!(pane.tick(&entry));
+        pane.prepare_for_test(area());
+        assert_eq!(pane.items[0].plain_text, "history    界 suffix");
+        assert_eq!(pane.selected_plain_text(), "history    界 suffix");
+        let mut buffer = Buffer::empty(area());
+        pane.render_content(area(), &mut buffer, &entry, true, &[]);
+        assert_eq!(buffer.cell((0, 0)).expect("history cell").symbol(), "h");
+        assert_eq!(buffer.cell((11, 0)).expect("wide cell").symbol(), "界");
+        let suffix: String = (14..20)
+            .map(|column| buffer.cell((column, 0)).expect("suffix cell").symbol())
+            .collect();
+        assert_eq!(suffix, "suffix");
+        assert!(!pane.tick(&entry));
+    }
+}
+
+#[test]
 fn content_rebuild_clears_sticky_and_visual() {
     let mut entry = ScrollbackEntry::running(RenderBlock::agent_message_streaming());
     entry

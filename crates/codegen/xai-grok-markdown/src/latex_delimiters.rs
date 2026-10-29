@@ -93,6 +93,7 @@ pub struct LatexDelimiterNormalizer {
     at_line_start: bool,
     /// Raw bytes held back from a previous `push` because they may be the prefix of a construct that needs more input to classify.
     pending: String,
+    offsets: crate::projection::OffsetMap,
 }
 
 impl Default for LatexDelimiterNormalizer {
@@ -107,6 +108,7 @@ impl LatexDelimiterNormalizer {
             state: State::Normal,
             at_line_start: true,
             pending: String::new(),
+            offsets: crate::projection::OffsetMap::default(),
         }
     }
 
@@ -115,6 +117,15 @@ impl LatexDelimiterNormalizer {
         self.state = State::Normal;
         self.at_line_start = true;
         self.pending.clear();
+        self.offsets = crate::projection::OffsetMap::default();
+    }
+
+    pub(crate) fn original_offset(&self, offset: usize) -> usize {
+        self.offsets.original_offset(offset)
+    }
+
+    fn record_projection(&mut self, from: (usize, usize), to: (usize, usize)) {
+        self.offsets.append(to.0 - from.0, to.1 - from.1);
     }
 
     /// Push a raw chunk; returns the finalized normalized prefix.
@@ -150,7 +161,10 @@ impl LatexDelimiterNormalizer {
         let n = bytes.len();
         let mut out = String::with_capacity(n + 8);
         let mut i = 0;
+        let mut recorded = (0, 0);
         while i < n {
+            self.record_projection(recorded, (i, out.len()));
+            recorded = (i, out.len());
             match self.state {
                 State::Normal => {
                     if self.at_line_start {
@@ -341,6 +355,7 @@ impl LatexDelimiterNormalizer {
                                     if let Some(s) = buf.get(start..i) {
                                         out.push_str(s);
                                     }
+                                    self.record_projection(recorded, (i, out.len()));
                                     return (out, i); // hold back the trailing run
                                 }
                                 if r == run {
@@ -397,6 +412,7 @@ impl LatexDelimiterNormalizer {
                 }
             }
         }
+        self.record_projection(recorded, (i, out.len()));
         (out, i)
     }
 }
