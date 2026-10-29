@@ -2,6 +2,8 @@ use super::*;
 use crate::scrollback::DisplayMode;
 use crate::scrollback::blocks::tool::VerbGroupKind;
 use std::sync::Arc;
+#[path = "tracker_runtime_tests.rs"]
+mod runtime;
 /// Default meta with no timestamps (simulates old grok-shell or tests that don't care about timing).
 fn meta() -> NotificationMeta {
     NotificationMeta::default()
@@ -239,7 +241,7 @@ fn replayed_thinking_uses_server_elapsed_not_local_zero() {
     );
 }
 #[test]
-fn live_thinking_keeps_local_elapsed_timer() {
+fn live_thinking_without_measurement_keeps_elapsed_unknown() {
     crate::appearance::cache::set_show_thinking_blocks(true);
     let mut sb = ScrollbackState::new();
     let mut tracker = AcpUpdateTracker::new();
@@ -252,10 +254,12 @@ fn live_thinking_keeps_local_elapsed_timer() {
             _ => None,
         })
         .expect("a live thinking block should exist");
-    assert!(
-        thinking.elapsed_time_ms().is_some(),
-        "live thinking must keep a local elapsed timer (started_at armed)"
-    );
+    assert_eq!(thinking.elapsed_time_ms(), None);
+    tracker.finish_turn(&mut sb);
+    let RenderBlock::Thinking(thinking) = &sb.get(0).unwrap().block else {
+        panic!("thinking must survive turn completion");
+    };
+    assert_eq!(thinking.elapsed_time_ms(), None);
 }
 #[test]
 fn tool_call_lifecycle() {
@@ -2052,9 +2056,8 @@ fn pinned_thinking_keeps_user_mode_across_finish_triggers() {
         &meta(),
         &mut sb,
     );
-    let entry = sb.get(0).unwrap();
-    assert!(entry.is_running, "tool call keeps the logical thought open");
-    assert_eq!(entry.display_mode, DisplayMode::Expanded);
+    assert_kept(&sb, "tool call");
+    assert!(tracker.current_thinking.is_none());
     tracker.finish_turn(&mut sb);
     assert_kept(&sb, "tool call then turn finish");
     let (mut tracker, mut sb) = setup();
@@ -2067,12 +2070,10 @@ fn pinned_thinking_keeps_user_mode_across_finish_triggers() {
     sb.set_selected(Some(0));
     sb.expand_selected();
     tracker.handle_update(thought_chunk("new stream"), &meta_stream(2000), &mut sb);
-    let entry = sb.get(0).unwrap();
-    assert!(
-        entry.is_running,
-        "stream restart keeps the logical thought open"
-    );
-    assert_eq!(entry.display_mode, DisplayMode::Expanded);
+    assert_kept(&sb, "stream restart");
+    assert_eq!(sb.len(), 2);
+    assert!(sb.get(1).unwrap().is_running);
+    assert_ne!(sb.get(0).unwrap().id, sb.get(1).unwrap().id);
     tracker.finish_turn(&mut sb);
     assert_kept(&sb, "stream restart then turn finish");
     let mut sb = scrollback_with_respect_manual_folds();
@@ -2143,19 +2144,21 @@ fn respect_manual_folds_off_bypasses_finish_pin_guard() {
     tracker.handle_update(thought_chunk("deep thought"), &meta(), &mut sb);
     sb.prepare_layout(80, 40);
     sb.set_selected(Some(0));
-    sb.expand_selected();
+    sb.collapse_selected();
+    sb.expand_all_thinking();
     sb.collapse_selected();
     let entry = sb.get(0).unwrap();
     assert!(entry.display_mode_pinned);
-    assert_eq!(entry.display_mode, DisplayMode::Truncated);
+    assert_eq!(entry.display_mode, DisplayMode::Collapsed);
     let mut appearance = AppearanceConfig::default();
     appearance.scrollback.scroll.respect_manual_folds = false;
     sb.set_appearance(appearance);
     tracker.handle_update(agent_chunk("answer"), &meta(), &mut sb);
+    assert!(!sb.get(0).unwrap().is_running);
     assert_eq!(
         sb.get(0).unwrap().display_mode,
-        DisplayMode::Collapsed,
-        "flag off: finish applies the sticky mode to a pinned non-Expanded entry"
+        DisplayMode::Expanded,
+        "flag off: finish applies the independently chosen sticky mode despite the pin"
     );
 }
 /// Helper: build a NotificationMeta with a specific stream_start_ms.

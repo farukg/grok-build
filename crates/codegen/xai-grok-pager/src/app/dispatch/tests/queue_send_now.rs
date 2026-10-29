@@ -341,6 +341,11 @@ fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row()
     );
     assert_unsent(&app);
     broadcast(&mut app, Vec::new(), Some("queued-input"));
+    assert_eq!(app.pending_running_adoptions[&AgentId(0)].prompt_id, "queued-input");
+    assert_eq!(
+        test_agent(&app, AgentId(0)).session.current_prompt_id.as_deref(),
+        Some("running-input")
+    );
     dispatch(
         Action::TaskComplete(TaskResult::PromptResponse {
             agent_id: AgentId(0),
@@ -349,6 +354,11 @@ fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row()
             prompt_id: Some("running-input".into()),
         }),
         &mut app,
+    );
+    assert!(!app.pending_running_adoptions.contains_key(&AgentId(0)));
+    assert_eq!(
+        test_agent(&app, AgentId(0)).session.current_prompt_id.as_deref(),
+        Some("queued-input")
     );
     broadcast(&mut app, Vec::new(), Some("queued-input"));
     answer(
@@ -457,7 +467,7 @@ async fn queue_effect_uses_correlated_rpc_and_decodes_owner_rejection() {
         .unwrap();
     dispatch(Action::TaskComplete(result), &mut app);
     let rendered = rendered_queue(&mut app);
-    assert!(rendered.contains("send now rejected: row belongs to another owner"));
+    assert!(rendered.contains("send now rejected: queue owner changed"));
     assert!(rendered.contains("held exact payload"));
     assert_unsent(&app);
 }

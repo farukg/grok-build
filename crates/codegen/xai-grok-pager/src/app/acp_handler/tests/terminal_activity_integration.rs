@@ -94,11 +94,9 @@ fn acp_ingress_keeps_completed_failed_cancelled_and_unconfirmed_distinct() {
                 ),
             ] {
                 let (mut app, prompt) = root_turn("terminal-integration");
-                app.agents
-                    .get_mut(&AgentId(0))
-                    .unwrap()
-                    .session
-                    .loading_replay = replay;
+                if replay {
+                    app.agents.get_mut(&AgentId(0)).unwrap().begin_session_reload(1);
+                }
                 let envelope = serde_json::json!({"promptId": prompt, "isReplay": replay});
                 let terminal = || {
                     acp::SessionUpdate::ToolCallUpdate(
@@ -237,11 +235,19 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                     acp::SessionUpdate::ToolCall(tool("old-tool", acp::ToolCallStatus::InProgress)),
                     serde_json::json!({"promptId": prompt}),
                 );
-                let old_entry = test_agent(&app, id)
+                let mut old_entry = test_agent(&app, id)
                     .session
                     .tracker
                     .pending_tool_entry_id("old-tool")
                     .unwrap();
+                acp_event(
+                    &mut app,
+                    sid,
+                    acp::SessionUpdate::ToolCall(tool("other-tool", acp::ToolCallStatus::InProgress)),
+                    serde_json::json!({"promptId": prompt}),
+                );
+                let mut other_entry = test_agent(&app, id)
+                    .session.tracker.pending_tool_entry_id("other-tool").unwrap();
                 crate::app::dispatch::dispatch(
                     Action::TaskComplete(TaskResult::PromptResponse {
                         agent_id: id,
@@ -259,6 +265,20 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                         .tool_completion(),
                     ToolCompletion::Unconfirmed
                 );
+                if replay {
+                    app.agents.get_mut(&id).unwrap().begin_session_reload(1);
+                    for provider in ["old-tool", "other-tool"] {
+                        acp_event(
+                            &mut app,
+                            sid,
+                            acp::SessionUpdate::ToolCall(tool(provider, acp::ToolCallStatus::InProgress)),
+                            serde_json::json!({"promptId": prompt, "isReplay": true}),
+                        );
+                    }
+                    let historical = &test_agent(&app, id).session.tracker;
+                    old_entry = historical.pending_tool_entry_id("old-tool").unwrap();
+                    other_entry = historical.pending_tool_entry_id("other-tool").unwrap();
+                }
                 crate::app::dispatch::dispatch(
                     Action::SendPrompt("next fixture turn".into()),
                     &mut app,
@@ -275,6 +295,13 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                     }),
                     serde_json::json!({}),
                 );
+                if replay {
+                    assert!(app.agents.get_mut(&id).unwrap().finish_session_reload(1, true));
+                    assert_eq!(
+                        test_agent(&app, id).scrollback.get_by_id(old_entry).unwrap().tool_completion(),
+                        ToolCompletion::Unconfirmed,
+                    );
+                }
                 let agent = test_agent(&app, id);
                 let retry = agent.session.tracker.retry_activity().cloned();
                 assert!(matches!(
@@ -300,8 +327,8 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                     .as_ref()
                     .map(|p| p.text.clone());
                 let entries = agent.scrollback.len();
-                app.agents.get_mut(&id).unwrap().session.loading_replay = replay;
-                for sequence in [1, 2] {
+                for sequence in [1, 2, 2] {
+                    let generation = test_agent(&app, id).scrollback.content_generation();
                     acp_event(
                         &mut app,
                         sid,
@@ -318,9 +345,18 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                     );
                     let agent = test_agent(&app, id);
                     let entry = agent.scrollback.get_by_id(old_entry).unwrap();
-                    assert_eq!(entry.tool_completion(), expected);
+                    assert_eq!(
+                        entry.tool_completion(), expected,
+                        "agent={id:?} replay={replay} sequence={sequence} status={status:?}"
+                    );
                     assert!(!entry.is_running);
+                    let unrelated = agent.scrollback.get_by_id(other_entry).unwrap();
+                    assert_eq!(unrelated.tool_completion(), ToolCompletion::Unconfirmed);
+                    assert!(!unrelated.is_running);
                     assert_eq!(agent.scrollback.len(), entries);
+                    if sequence == 2 {
+                        assert_eq!(agent.scrollback.content_generation(), generation);
+                    }
                     assert_eq!(agent.session.tracker.retry_activity(), retry.as_ref());
                     assert_eq!(agent.session.tracker.activity(), phase);
                     assert_eq!(agent.last_applied_event_seq, highwater);
@@ -354,6 +390,197 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                     color_support::set_level_for_test(color_support::ColorLevel::TrueColor);
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn recycled_legacy_provider_cannot_confirm_either_drained_entry() {
+    for id in [AgentId(0), AgentId(1)] {
+        let (mut app, sid, first_prompt) = target_turn(id);
+        let mut entries = Vec::new();
+        for turn in 0..2 {
+            if turn == 1 {
+                crate::app::dispatch::dispatch(Action::SendPrompt("reuse provider".into()), &mut app);
+            }
+            let prompt = test_agent(&app, id).session.current_prompt_id.clone().unwrap();
+            acp_event(
+                &mut app,
+                sid,
+                acp::SessionUpdate::ToolCall(tool("recycled", acp::ToolCallStatus::InProgress)),
+                serde_json::json!({"promptId": prompt}),
+            );
+            entries.push(test_agent(&app, id).session.tracker
+                .pending_tool_entry_id("recycled").unwrap());
+            crate::app::dispatch::dispatch(
+                Action::TaskComplete(TaskResult::PromptResponse {
+                    agent_id: id,
+                    prompt_id: Some(prompt),
+                    http_status: None,
+                    result: Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)),
+                }),
+                &mut app,
+            );
+        }
+        assert_ne!(entries[0], entries[1]);
+        crate::app::dispatch::dispatch(Action::SendPrompt("unrelated next turn".into()), &mut app);
+        let agent = test_agent(&app, id);
+        let current = agent.session.current_prompt_id.clone();
+        let ack = agent.prompt_ack.clone();
+        let activity = agent.last_active_at;
+        let highwater = agent.last_applied_event_seq;
+        acp_event(
+            &mut app,
+            sid,
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                "recycled",
+                acp::ToolCallUpdateFields::new().status(Some(acp::ToolCallStatus::Completed)),
+            )),
+            serde_json::json!({"promptId": first_prompt, "eventId": format!("{sid}-999")}),
+        );
+        let agent = test_agent(&app, id);
+        for entry in entries {
+            let entry = agent.scrollback.get_by_id(entry).unwrap();
+            assert_eq!(entry.tool_completion(), ToolCompletion::Unconfirmed);
+            assert!(!entry.is_running);
+        }
+        assert_eq!(agent.session.current_prompt_id, current);
+        assert_eq!(agent.prompt_ack, ack);
+        assert_eq!(agent.last_active_at, activity);
+        assert_eq!(agent.last_applied_event_seq, highwater);
+    }
+}
+
+#[test]
+fn registered_terminal_cannot_confirm_a_drained_legacy_entry_with_the_same_provider() {
+    use xai_grok_shell::extensions::tool_timing::{
+        ToolCallOwnership, ToolCallSource, stamp_ownership,
+    };
+    for id in [AgentId(0), AgentId(1)] {
+        let (mut app, sid, prompt) = target_turn(id);
+        acp_event(
+            &mut app,
+            sid,
+            acp::SessionUpdate::ToolCall(tool("legacy", acp::ToolCallStatus::InProgress)),
+            serde_json::json!({"promptId": prompt}),
+        );
+        let original = test_agent(&app, id).session.tracker
+            .pending_tool_entry_id("legacy").unwrap();
+        crate::app::dispatch::dispatch(
+            Action::TaskComplete(TaskResult::PromptResponse {
+                agent_id: id,
+                prompt_id: Some(prompt.clone()),
+                http_status: None,
+                result: Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)),
+            }),
+            &mut app,
+        );
+        crate::app::dispatch::dispatch(Action::SendPrompt("registered next turn".into()), &mut app);
+        let current = test_agent(&app, id).session.current_prompt_id.clone();
+        let ack = test_agent(&app, id).prompt_ack.clone();
+        let mut metadata = acp::Meta::new();
+        stamp_ownership(&mut metadata, &ToolCallOwnership::Registered {
+            invocation_id: uuid::Uuid::from_u128(10987).to_string(),
+            provider_call_id: "legacy".into(),
+            source: ToolCallSource::Unknown,
+        }).unwrap();
+        acp_event(
+            &mut app,
+            sid,
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                "legacy",
+                acp::ToolCallUpdateFields::new().status(Some(acp::ToolCallStatus::Completed)),
+            ).meta(Some(metadata))),
+            serde_json::json!({"promptId": prompt}),
+        );
+        let agent = test_agent(&app, id);
+        assert_eq!(agent.scrollback.get_by_id(original).unwrap().tool_completion(), ToolCompletion::Unconfirmed);
+        assert_eq!(agent.session.current_prompt_id, current);
+        assert_eq!(agent.prompt_ack, ack);
+    }
+}
+
+#[test]
+fn terminal_during_reload_cannot_cross_live_and_historical_legacy_owners() {
+    for id in [AgentId(0), AgentId(1)] {
+        for replay in [false, true] {
+            let (mut app, sid, prompt) = target_turn(id);
+            acp_event(
+                &mut app,
+                sid,
+                acp::SessionUpdate::ToolCall(tool("same-provider", acp::ToolCallStatus::InProgress)),
+                serde_json::json!({"promptId": prompt}),
+            );
+            let original = test_agent(&app, id).session.tracker
+                .pending_tool_entry_id("same-provider").unwrap();
+            crate::app::dispatch::dispatch(
+                Action::TaskComplete(TaskResult::PromptResponse {
+                    agent_id: id,
+                    prompt_id: Some(prompt.clone()),
+                    http_status: None,
+                    result: Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)),
+                }),
+                &mut app,
+            );
+            assert_eq!(
+                test_agent(&app, id).scrollback.get_by_id(original).unwrap().tool_completion(),
+                ToolCompletion::Unconfirmed,
+            );
+            crate::app::dispatch::dispatch(Action::SendPrompt("live next turn".into()), &mut app);
+            app.agents.get_mut(&id).unwrap().begin_session_reload(1);
+            acp_event(
+                &mut app,
+                sid,
+                acp::SessionUpdate::ToolCall(tool("same-provider", acp::ToolCallStatus::InProgress)),
+                serde_json::json!({"promptId": prompt, "isReplay": true}),
+            );
+            let historical = test_agent(&app, id).session.tracker
+                .pending_tool_entry_id("same-provider").unwrap();
+            assert_ne!(original, historical);
+            let agent = test_agent(&app, id);
+            let current = agent.session.current_prompt_id.clone();
+            let ack = agent.prompt_ack.clone();
+            let activity = agent.last_active_at;
+            let highwater = agent.last_applied_event_seq;
+            let clock = agent.turn_started_at;
+            let context = agent.context_state.as_ref().map(|state| state.used);
+            for sequence in [1, 2, 2] {
+                acp_event(
+                    &mut app,
+                    sid,
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        "same-provider",
+                        acp::ToolCallUpdateFields::new().status(Some(acp::ToolCallStatus::Completed)),
+                    )),
+                    serde_json::json!({
+                        "isReplay": replay, "promptId": prompt,
+                        "eventId": format!("{sid}-{sequence}"),
+                        "turnStartMs": 1, "totalTokens": 999_999,
+                    }),
+                );
+                let agent = test_agent(&app, id);
+                let entry = agent.scrollback.get_by_id(historical).unwrap();
+                assert_eq!(entry.tool_completion(), if replay {
+                    ToolCompletion::Completed
+                } else {
+                    ToolCompletion::Unconfirmed
+                }, "agent={id:?} replay={replay} sequence={sequence}");
+                assert_eq!(entry.is_running, !replay);
+                assert_eq!(agent.session.current_prompt_id, current);
+                assert_eq!(agent.prompt_ack, ack);
+                assert_eq!(agent.last_active_at, activity);
+                assert_eq!(agent.last_applied_event_seq, highwater);
+                assert_eq!(agent.turn_started_at, clock);
+                assert_eq!(agent.context_state.as_ref().map(|state| state.used), context);
+            }
+            assert!(app.agents.get_mut(&id).unwrap().finish_session_reload(1, false));
+            let original = test_agent(&app, id).scrollback.get_by_id(original).unwrap();
+            assert_eq!(original.tool_completion(), if replay {
+                ToolCompletion::Unconfirmed
+            } else {
+                ToolCompletion::Completed
+            });
+            assert!(!original.is_running);
         }
     }
 }

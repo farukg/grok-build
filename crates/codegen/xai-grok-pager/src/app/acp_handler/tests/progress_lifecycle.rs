@@ -659,8 +659,8 @@ fn live_auto_compaction_during_local_load_owns_the_live_state() {
     );
 }
 
-#[test]
-fn retry_countdown_rides_the_scheduler_deadline_and_replay_stays_history() {
+#[tokio::test]
+async fn retry_countdown_rides_the_scheduler_deadline_and_replay_stays_history() {
     let mut app = make_app_with_agent("retry-progress");
     crate::app::dispatch::dispatch(Action::SendPrompt("repair file".into()), &mut app);
     let prompt = test_agent(&app, AgentId(0))
@@ -668,21 +668,46 @@ fn retry_countdown_rides_the_scheduler_deadline_and_replay_stays_history() {
         .current_prompt_id
         .clone()
         .unwrap();
-    let retry = |attempt: u32, deadline_ms: i64| {
+    use xai_grok_shell::extensions::sampling_lifecycle::{
+        RequestAttemptId, RetryDeadlineProjection, SamplingLifecycle, SamplingOwner, SamplingPhase,
+    };
+    use xai_grok_shell::extensions::tool_timing::MonotonicPoint;
+    let retry = |attempt: u32, deadline: &RetryDeadlineProjection| {
         XaiSessionUpdate::RetryState(RetryState::Retrying {
             attempt,
             max_retries: 5,
             reason: "API error (status 503): overloaded".into(),
             error_type: Some("api".into()),
-            next_attempt_at_ms: Some(deadline_ms),
+            next_attempt_at_ms: deadline.wall_deadline_ms,
         })
     };
-    let soon = chrono::Utc::now().timestamp_millis() + 12_500;
+    let stamp = |attempt: u64, deadline: &RetryDeadlineProjection, replay: bool| {
+        let lifecycle = SamplingLifecycle {
+            owner: SamplingOwner {
+                prompt_id: prompt.clone(),
+                request_id: "retry-progress-request".into(),
+                attempt: RequestAttemptId(attempt),
+            },
+            phase: SamplingPhase::RetryScheduled {
+                deadline: deadline.clone(),
+            },
+        };
+        serde_json::json!({
+            "promptId": prompt, "samplingLifecycle": lifecycle, "isReplay": replay,
+        })
+    };
+    // Contradictory wall projections must not drive the countdown.
+    let soon = RetryDeadlineProjection {
+        clock: MonotonicPoint::at(
+            tokio::time::Instant::now() + std::time::Duration::from_millis(12_500),
+        ),
+        wall_deadline_ms: Some(0),
+    };
     lifecycle(
         &mut app,
         "retry-progress",
-        retry(2, soon),
-        serde_json::json!({}),
+        retry(2, &soon),
+        stamp(2, &soon, false),
     );
     assert!(matches!(
         test_agent(&app, AgentId(0)).resolve_turn_activity(),
@@ -694,12 +719,15 @@ fn retry_countdown_rides_the_scheduler_deadline_and_replay_stays_history() {
     ));
     assert!(screen(&mut app, AgentId(0)).contains("next try in 12s"));
     // Past deadline: due now, without claiming the attempt started.
-    let past = chrono::Utc::now().timestamp_millis() - 5_000;
+    let past = RetryDeadlineProjection {
+        clock: MonotonicPoint::at(tokio::time::Instant::now() - std::time::Duration::from_secs(5)),
+        wall_deadline_ms: Some(i64::MAX),
+    };
     lifecycle(
         &mut app,
         "retry-progress",
-        retry(3, past),
-        serde_json::json!({}),
+        retry(3, &past),
+        stamp(3, &past, false),
     );
     assert!(matches!(
         test_agent(&app, AgentId(0)).resolve_turn_activity(),
@@ -710,8 +738,8 @@ fn retry_countdown_rides_the_scheduler_deadline_and_replay_stays_history() {
     lifecycle(
         &mut app,
         "retry-progress",
-        retry(2, past),
-        serde_json::json!({}),
+        retry(2, &past),
+        stamp(2, &past, false),
     );
     assert!(matches!(
         test_agent(&app, AgentId(0)).resolve_turn_activity(),
@@ -725,8 +753,8 @@ fn retry_countdown_rides_the_scheduler_deadline_and_replay_stays_history() {
     lifecycle(
         &mut app,
         "retry-progress",
-        retry(4, soon),
-        serde_json::json!({ "isReplay": true }),
+        retry(4, &soon),
+        stamp(4, &soon, true),
     );
     assert!(matches!(
         test_agent(&app, AgentId(0)).resolve_turn_activity(),

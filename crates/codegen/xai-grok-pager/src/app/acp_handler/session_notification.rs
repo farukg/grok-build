@@ -2168,7 +2168,6 @@ fn apply_session_event_with_delivery(
             tracing::error!(error = %error, "Auto-compaction failed");
             if matches!(delivery, CompactionDelivery::Live) {
                 session.set_compaction_activity(None);
-                session.compact_held_prompt = None;
             }
             scrollback.push_block(RenderBlock::session_event(SessionEvent::CompactionFailed {
                 error: error.clone(),
@@ -2272,6 +2271,14 @@ pub(super) fn apply_retry_state(
     let mut is_credit_limit = false;
     let failure_is_current = !historical && !session.tracker.has_live_sampling_request();
     use xai_grok_shell::extensions::notification::RetryState;
+    let reauthable = match retry {
+        RetryState::Retrying { .. } => false,
+        RetryState::Exhausted { reason, .. } => is_reauthable_failure(None, reason),
+        RetryState::Failed {
+            error_type,
+            message,
+        } => is_reauthable_failure(Some(error_type.as_str()), message),
+    };
     match retry {
         RetryState::Retrying {
             attempt,
@@ -2325,7 +2332,7 @@ pub(super) fn apply_retry_state(
                 if failure_is_current {
                     session.free_usage_blocked = true;
                 }
-            } else if !*rate_limited && is_reauthable_failure(None, reason) {
+            } else if !*rate_limited && reauthable {
                 scrollback.push_block(RenderBlock::session_event(SessionEvent::ReAuthRequired));
             } else if *rate_limited {
                 let error = crate::app::effects::sanitize_user_error(
@@ -2360,7 +2367,7 @@ pub(super) fn apply_retry_state(
                 if failure_is_current {
                     session.credit_limit_blocked = true;
                 }
-            } else if is_reauthable_failure(Some(error_type.as_str()), message) {
+            } else if reauthable {
                 scrollback.push_block(RenderBlock::session_event(SessionEvent::ReAuthRequired));
             } else if wire == crate::app::error_display::WireErrorType::DiskFull {
                 if !crate::app::dispatch::scrollback_has_recent_disk_full(scrollback) {
@@ -2388,6 +2395,9 @@ pub(super) fn apply_retry_state(
     }
     if !failure_is_current {
         return;
+    }
+    if !is_credit_limit && !reauthable {
+        session.in_flight_prompt = None;
     }
     if is_credit_limit {
         xai_grok_telemetry::session_ctx::log_event(xai_grok_telemetry::events::CreditLimitHit {

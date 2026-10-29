@@ -3,7 +3,9 @@ use std::future::Future;
 use xai_grok_shell::extensions::current_actions::{
     self as wire, DeliveryRole, GenerationEnd, LoadCut,
 };
-use xai_grok_shell::session::current_actions::{CurrentActionsSnapshot, SnapshotBinding};
+use xai_grok_shell::session::current_actions::{
+    CurrentActionsSnapshot, CurrentSamplingPhase, SnapshotBinding,
+};
 
 async fn poll_once<F: Future>(mut future: std::pin::Pin<&mut F>) -> std::task::Poll<F::Output> {
     std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx))).await
@@ -178,8 +180,43 @@ fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
             assert_eq!(capture.binding, binding);
             assert!(capture.turn.is_some());
             assert!(!capture.sampling.is_empty());
-            assert_eq!(capture.turn, before.turn);
-            assert_eq!(capture.sampling, before.sampling);
+            let earlier_turn = before.turn.as_ref().unwrap();
+            let later_turn = capture.turn.as_ref().unwrap();
+            assert_eq!(later_turn.owner, earlier_turn.owner);
+            assert_eq!(later_turn.started_at, earlier_turn.started_at);
+            assert_eq!(before.binding, binding);
+            assert_eq!(capture.version.incarnation, before.version.incarnation);
+            assert!(capture.version.sequence >= before.version.sequence);
+            assert!(capture.event_frontier >= before.event_frontier);
+            assert_eq!(before.sampling.len(), 1);
+            assert_eq!(capture.sampling.len(), 1);
+            let earlier = &before.sampling[0];
+            let later = &capture.sampling[0];
+            assert_eq!(earlier.owner.prompt_id, original);
+            assert_eq!(later.owner, earlier.owner);
+            assert_eq!(later.turn, earlier.turn);
+            assert_eq!(Some(&later.turn), capture.turn.as_ref().map(|turn| &turn.owner));
+            match (&earlier.phase, &later.phase) {
+                (
+                    CurrentSamplingPhase::Reserved,
+                    CurrentSamplingPhase::Reserved | CurrentSamplingPhase::Submitted { .. },
+                ) => {}
+                (
+                    CurrentSamplingPhase::Submitted { started_at: before },
+                    CurrentSamplingPhase::Submitted { started_at: after },
+                ) => assert_eq!(after, before),
+                (CurrentSamplingPhase::Reserved, CurrentSamplingPhase::RetryScheduled { .. })
+                | (
+                    CurrentSamplingPhase::Submitted { .. },
+                    CurrentSamplingPhase::Reserved | CurrentSamplingPhase::RetryScheduled { .. },
+                )
+                | (
+                    CurrentSamplingPhase::RetryScheduled { .. },
+                    CurrentSamplingPhase::Reserved
+                    | CurrentSamplingPhase::RetryScheduled { .. }
+                    | CurrentSamplingPhase::Submitted { .. },
+                ) => panic!("blocked successful inference cannot retry or regress"),
+            }
             match settlement {
                 xai_acp_lib::ReceiverSettlement::AppliedOrDiscarded => {
                     let end = marker.expect("actual producer marker through productive pager handler");

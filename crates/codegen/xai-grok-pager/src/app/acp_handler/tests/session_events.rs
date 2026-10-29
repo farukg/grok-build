@@ -241,6 +241,55 @@
         }
     }
 
+    #[test]
+    fn compact_auth_failure_transfers_original_prompt_at_its_rpc_response() {
+        use crate::app::actions::{Action, TaskResult};
+
+        let mut app = make_app_with_agent("compact-auth-rpc");
+        crate::app::dispatch::dispatch(Action::SendPrompt("retry after login".into()), &mut app);
+        let agent = test_agent(&app, AgentId(0));
+        let prompt_id = agent.session.current_prompt_id.clone().unwrap();
+        let entry = agent.session.in_flight_prompt.as_ref().unwrap().scrollback_entry;
+        for update in [
+            XaiSessionUpdate::AutoCompactStarted {
+                phase: xai_grok_shell::extensions::notification::CompactPhase::Executing,
+                tokens_used: 90_000,
+                context_window: 100_000,
+                percentage: 90,
+                reason: "threshold".into(),
+            },
+            XaiSessionUpdate::AutoCompactFailed {
+                error: "authentication problem".into(),
+            },
+            XaiSessionUpdate::RetryState(RetryState::Failed {
+                error_type: "auth".into(),
+                message: "Unauthorized (401)".into(),
+            }),
+        ] {
+            handle(make_ext_session_notification("compact-auth-rpc", update), &mut app);
+        }
+        let agent = test_agent(&app, AgentId(0));
+        assert!(agent.session.in_flight_prompt.is_none());
+        assert_eq!(agent.session.compact_held_prompt.as_ref().unwrap().scrollback_entry, entry);
+        assert!(agent.reauth_stashed_prompt.is_none());
+        assert_eq!(agent.session.current_prompt_id.as_ref(), Some(&prompt_id));
+        crate::app::dispatch::dispatch(
+            Action::TaskComplete(TaskResult::PromptResponse {
+                agent_id: AgentId(0),
+                prompt_id: Some(prompt_id),
+                http_status: Some(401),
+                result: Err("Unauthorized (401)".into()),
+            }),
+            &mut app,
+        );
+        let agent = test_agent(&app, AgentId(0));
+        let stashed = agent.reauth_stashed_prompt.as_ref().unwrap();
+        assert_eq!(stashed.text, "retry after login");
+        assert_eq!(stashed.scrollback_entry, entry);
+        assert!(agent.session.compact_held_prompt.is_none());
+        assert!(agent.session.current_prompt_id.is_none());
+    }
+
     /// `ImageDropped` joins notes with `\n` and pushes a system block.
     /// Pin the `\n` separator so a `notes.join(" ")` regression is caught.
     #[test]
@@ -1227,19 +1276,11 @@
     #[test]
     fn tool_call_delta_chunk_clears_in_flight_prompt() {
         let mut app = make_app_with_agent("sess-1");
-        let started = Instant::now();
-        {
-            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-            agent.session.state = AgentState::TurnRunning;
-            agent.turn_started_at = Some(started);
-            agent.session.in_flight_prompt = Some(InFlightPrompt {
-                text: "hi".into(),
-                images: Vec::new(),
-                scrollback_entry: EntryId::new(1),
-                combined_scrollback_entries: Vec::new(),
-                chip_elements: Vec::new(),
-            });
-        }
+        crate::app::dispatch::dispatch(
+            crate::app::actions::Action::SendPrompt("hi".into()),
+            &mut app,
+        );
+        let started = test_agent(&app, AgentId(0)).turn_started_at.unwrap();
 
         let _ = handle(
             make_ext_session_notification(
@@ -1253,7 +1294,22 @@
             ),
             &mut app,
         );
-        let agent = app.agents.get(&AgentId(0)).unwrap();
+        let agent = test_agent(&app, AgentId(0));
+        assert_eq!(agent.session.in_flight_prompt.as_ref().unwrap().text, "hi");
+        assert_eq!(agent.first_activity_logged_for, None);
+        let _ = handle(
+            make_ext_session_notification(
+                "sess-1",
+                XaiSessionUpdate::ToolCallDeltaChunk {
+                    tool_call_id: Some("call_1".into()),
+                    tool_index: 0,
+                    name: None,
+                    arguments_delta: Some("{\"target_file\":".into()),
+                },
+            ),
+            &mut app,
+        );
+        let agent = test_agent(&app, AgentId(0));
         assert!(
             agent.session.in_flight_prompt.is_none(),
             "first activity on the delta rail must drop the rewind stash"

@@ -739,8 +739,12 @@ fn terminal_before_base_is_typed_idempotent_and_never_confirms_returned_as_succe
             let stats = crate::tool_usage::ToolUsageStats::from_scrollback(
                 &test_agent(&app, id).scrollback,
             );
+            assert!(matches!(
+                &last_entry(&app, id).block,
+                RenderBlock::ToolCall(crate::scrollback::blocks::tool::ToolCallBlock::Execute(_))
+            ));
             assert_eq!(
-                stats.categories[&crate::tool_usage::ToolCategory::Other].unconfirmed_count(),
+                stats.categories[&crate::tool_usage::ToolCategory::Execute].unconfirmed_count(),
                 1,
                 "returning and draining do not confirm success in the duration consumer"
             );
@@ -1167,6 +1171,11 @@ fn reconnect_admission_reads_the_genuine_stashed_invocation_before_the_first_con
         );
         assert_eq!(test_agent(&app, id).last_applied_event_seq, highwater);
         assert_eq!(test_agent(&app, id).last_active_at, active);
+        assert!(matches!(
+            test_agent(&app, id).load_reconstruction,
+            crate::app::agent_view::load_continuation::LoadReconstruction::Historical
+        ));
+        assert!(test_agent(&app, id).session.loading_replay);
     }
 }
 

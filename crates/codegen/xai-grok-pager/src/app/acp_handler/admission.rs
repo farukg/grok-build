@@ -3,7 +3,7 @@ use super::*;
 #[derive(Debug, Clone, Copy)]
 pub(super) enum UpdateScope {
     Turn,
-    DrainedTool,
+    ToolTerminal,
     BackgroundTool,
 }
 
@@ -36,7 +36,7 @@ pub(super) fn root_admission(
     if !admits_delivery(view, meta) {
         return RootAdmission::Drop;
     }
-    if meta.is_replay || matches!(scope, UpdateScope::DrainedTool) {
+    if meta.is_replay || matches!(scope, UpdateScope::ToolTerminal) {
         return RootAdmission::Apply;
     }
     let Some(pid) = meta.prompt_id.as_deref() else {
@@ -102,7 +102,11 @@ pub(super) fn commit_metadata(view: &mut AgentView, meta: &NotificationMeta) {
     }
 }
 
-pub(super) fn update_scope(view: &AgentView, update: &acp::SessionUpdate) -> UpdateScope {
+pub(super) fn update_scope(
+    view: &AgentView,
+    update: &acp::SessionUpdate,
+    meta: &NotificationMeta,
+) -> UpdateScope {
     if let acp::SessionUpdate::ToolCallUpdate(tool) = update {
         if view
             .session
@@ -111,13 +115,8 @@ pub(super) fn update_scope(view: &AgentView, update: &acp::SessionUpdate) -> Upd
         {
             return UpdateScope::BackgroundTool;
         }
-        if view
-            .session
-            .tracker
-            .drained_tool_entry(tool, &view.scrollback)
-            .is_some()
-        {
-            return UpdateScope::DrainedTool;
+        if view.terminal_tool_entry(tool, meta).is_some() {
+            return UpdateScope::ToolTerminal;
         }
     }
     UpdateScope::Turn

@@ -169,9 +169,19 @@ impl AgentView {
         if !self.has_stashed_tool_observation(&update, meta) {
             return false;
         }
-        self.open_live_load_delivery();
+        // Settling an existing entry does not start a live continuation.
+        self.swap_stashed_tool_projection();
         let prompt = self.session.current_prompt_id.clone();
-        self.handle_admitted_tool_observation(update, meta, prompt.as_deref())
+        let changed = self.handle_admitted_tool_observation(update, meta, prompt.as_deref());
+        self.swap_stashed_tool_projection();
+        changed
+    }
+
+    fn swap_stashed_tool_projection(&mut self) {
+        if let Some(reload) = &mut self.session_reload {
+            std::mem::swap(&mut self.scrollback, &mut reload.stash.transcript.scrollback);
+            std::mem::swap(&mut self.session.tracker, &mut reload.stash.transcript.tracker);
+        }
     }
 
     pub(crate) fn reconstructed_source_frontier(&self, incarnation: uuid::Uuid) -> Option<u64> {
@@ -187,6 +197,79 @@ impl AgentView {
             }
             LoadReconstruction::Closed => None,
         }
+    }
+
+    pub(crate) fn terminal_tool_entry(
+        &self,
+        update: &agent_client_protocol::ToolCallUpdate,
+        meta: &crate::acp::meta::NotificationMeta,
+    ) -> Option<crate::scrollback::entry::EntryId> {
+        if !matches!(
+            meta.tool,
+            crate::acp::tool_meta::ToolMetadata::Legacy
+                | crate::acp::tool_meta::ToolMetadata::NotTool
+        ) {
+            return None;
+        }
+        let scrollback = if meta.is_replay {
+            match &self.load_reconstruction {
+                LoadReconstruction::Continuing { historical, .. } => &historical.scrollback,
+                LoadReconstruction::Closed
+                | LoadReconstruction::Historical
+                | LoadReconstruction::Continued { .. } => &self.scrollback,
+            }
+        } else if matches!(self.load_reconstruction, LoadReconstruction::Historical)
+            && let Some(reload) = &self.session_reload
+            && reload.binding_epoch == self.session_binding_epoch
+        {
+            &reload.stash.transcript.scrollback
+        } else {
+            &self.scrollback
+        };
+        let tracker = self.admission_tracker(meta);
+        tracker.drained_tool_entry(update, scrollback).or_else(|| {
+            tracker.historical_pending_tool_entry(update, meta)
+                .filter(|entry| scrollback.get_by_id(*entry).is_some())
+        })
+    }
+
+    pub(crate) fn apply_terminal_tool_update(
+        &mut self,
+        update: &agent_client_protocol::ToolCallUpdate,
+        meta: &crate::acp::meta::NotificationMeta,
+    ) -> bool {
+        if self.terminal_tool_entry(update, meta).is_none() {
+            return false;
+        }
+        let apply = |tracker: &mut AcpUpdateTracker, scrollback: &mut ScrollbackState| {
+            tracker.settle_drained_tool_terminal(update, scrollback).unwrap_or_else(|| {
+                tracker.handle_update(
+                    agent_client_protocol::SessionUpdate::ToolCallUpdate(update.clone()),
+                    meta,
+                    scrollback,
+                )
+            })
+        };
+        if meta.is_replay {
+            match &mut self.load_reconstruction {
+                LoadReconstruction::Continuing { historical, .. } => {
+                    return apply(&mut historical.tracker, &mut historical.scrollback);
+                }
+                LoadReconstruction::Continued { historical_tracker } => {
+                    return apply(historical_tracker, &mut self.scrollback);
+                }
+                LoadReconstruction::Closed | LoadReconstruction::Historical => {}
+            }
+        } else if matches!(self.load_reconstruction, LoadReconstruction::Historical)
+            && let Some(reload) = &mut self.session_reload
+            && reload.binding_epoch == self.session_binding_epoch
+        {
+            return apply(
+                &mut reload.stash.transcript.tracker,
+                &mut reload.stash.transcript.scrollback,
+            );
+        }
+        apply(&mut self.session.tracker, &mut self.scrollback)
     }
 
     pub(crate) fn admission_tracker(

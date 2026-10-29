@@ -1033,6 +1033,13 @@ impl AcpUpdateTracker {
         if !self.accepts_tool_arguments_stream(&stream) {
             return false;
         }
+        let retry_cleared = match &self.retry_activity {
+            RetryActivity::Legacy(_) => {
+                self.retry_activity = RetryActivity::Inactive;
+                true
+            }
+            RetryActivity::Inactive | RetryActivity::Scheduled { .. } => false,
+        };
         if let WritingDeltaStream::Owned(owner) = &stream {
             self.note_sampling_output(owner);
         }
@@ -1079,7 +1086,7 @@ impl AcpUpdateTracker {
         let changed =
             expired || self.writing_tool_call.as_ref().map(|(writing, _)| writing) != Some(&next);
         self.writing_tool_call = Some((next, now));
-        changed
+        changed || retry_cleared
     }
     /// The in-flight write while its deltas are fresh; a stream silent past [`WRITING_DELTA_STALE_AFTER`] is treated as no longer writing.
     fn fresh_writing_tool_call(&self) -> Option<&WritingToolCall> {
@@ -1285,6 +1292,25 @@ impl AcpUpdateTracker {
             self.pending_edit_hl.push(survivor);
         }
     }
+    pub(crate) fn historical_pending_tool_entry(
+        &self,
+        update: &acp::ToolCallUpdate,
+        meta: &NotificationMeta,
+    ) -> Option<EntryId> {
+        if !meta.is_replay
+            || !self.legacy_background_tool_is_unambiguous(update.tool_call_id.0.as_ref(), meta)
+        {
+            return None;
+        }
+        match super::meta::tool_completion(update.fields.status?, update.meta.as_ref()) {
+            ToolCompletion::Unconfirmed => None,
+            ToolCompletion::Completed | ToolCompletion::Failed | ToolCompletion::Cancelled => self
+                .pending_tools
+                .get(&ToolKey::Legacy(update.tool_call_id.0.to_string()))
+                .and_then(|pending| pending.entry_id),
+        }
+    }
+
     pub(crate) fn drained_tool_entry(
         &self,
         update: &acp::ToolCallUpdate,
@@ -1305,17 +1331,17 @@ impl AcpUpdateTracker {
             ToolCompletion::Unconfirmed => return None,
             ToolCompletion::Completed | ToolCompletion::Failed | ToolCompletion::Cancelled => {}
         }
-        self.tool_context_ids
-            .iter()
-            .find_map(|(entry_id, context_id)| {
-                (context_id.as_str() == tool_id
-                    && scrollback
-                        .get_by_id(*entry_id)
-                        .is_some_and(|entry| matches!(entry.block, RenderBlock::ToolCall(_))))
-                .then_some(*entry_id)
-            })
+        let mut entries = self.tool_context_ids.iter().filter_map(|(entry_id, context_id)| {
+            (context_id.as_str() == tool_id
+                && scrollback
+                    .get_by_id(*entry_id)
+                    .is_some_and(|entry| matches!(entry.block, RenderBlock::ToolCall(_))))
+            .then_some(*entry_id)
+        });
+        let entry = entries.next()?;
+        entries.next().is_none().then_some(entry)
     }
-    fn settle_drained_tool_terminal(
+    pub(crate) fn settle_drained_tool_terminal(
         &mut self,
         update: &acp::ToolCallUpdate,
         scrollback: &mut ScrollbackState,
@@ -1445,7 +1471,7 @@ impl AcpUpdateTracker {
                     key,
                     Default::default(),
                     if meta.is_replay {
-                        ToolProjectionAdmission::Detached
+                        ToolProjectionAdmission::Historical
                     } else {
                         ToolProjectionAdmission::Current
                     },
@@ -1696,10 +1722,14 @@ impl AcpUpdateTracker {
         projection: ToolProjectionAdmission,
     ) -> bool {
         self.note_legacy_tool_registration(&key);
-        if matches!(projection, ToolProjectionAdmission::Current) {
-            self.finish_thinking(scrollback);
-            self.model_activity = ModelActivity::AwaitingOutput;
-            self.current_agent_msg = None;
+        match projection {
+            ToolProjectionAdmission::Current => {
+                self.finish_thinking(scrollback);
+                self.model_activity = ModelActivity::AwaitingOutput;
+                self.current_agent_msg = None;
+            }
+            ToolProjectionAdmission::Historical => self.finish_thinking(scrollback),
+            ToolProjectionAdmission::Detached => {}
         }
         if is_todo_tool(&tc)
             || is_bg_plumbing_tool(&tc)

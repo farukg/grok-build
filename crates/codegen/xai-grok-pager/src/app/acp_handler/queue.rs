@@ -345,7 +345,7 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
             if app
                 .agents
                 .get(&aid)
-                .is_some_and(|a| !a.should_adopt_running_prompt(&pid)) =>
+                .is_some_and(|a| !a.should_adopt_queued_prompt(&pid)) =>
         {
             tracing::debug!(
                 target: "qtrace",

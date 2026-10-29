@@ -306,7 +306,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     let Some(agent) = app.agents.get(&id) else {
                         return false;
                     };
-                    let scope = admission::update_scope(agent, &notif.request.update);
+                    let scope = admission::update_scope(agent, &notif.request.update, &meta);
                     let admission = admission::root_admission(
                         agent,
                         &meta,
@@ -339,12 +339,17 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         admission::RootAdmission::AdoptViewer | admission::RootAdmission::Apply => {
                         }
                     }
-                    if matches!(scope, admission::UpdateScope::DrainedTool) {
+                    if matches!(scope, admission::UpdateScope::ToolTerminal) {
                         let Some(agent) = app.agents.get_mut(&id) else {
                             notif.response_tx.send(Ok(())).ok();
                             return false;
                         };
-                        let changed = agent.handle_admitted_acp_update(notif.request.update, &meta);
+                        let changed = match &notif.request.update {
+                            acp::SessionUpdate::ToolCallUpdate(tool) => {
+                                agent.apply_terminal_tool_update(tool, &meta)
+                            }
+                            _ => false,
+                        };
                         notif.response_tx.send(Ok(())).ok();
                         return changed && is_active;
                     }
@@ -576,6 +581,7 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
 /// A child on a daemon backend sends no `SubagentProgress`.
 pub(super) fn note_first_turn_activity(agent: &mut AgentView) {
     agent.last_active_at = Some(std::time::Instant::now());
+    agent.remember_current_prompt_projection();
     agent.session.in_flight_prompt = None;
     if let Some(started) = agent.turn_started_at
         && agent.first_activity_logged_for != Some(started)

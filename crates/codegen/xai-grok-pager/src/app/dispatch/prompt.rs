@@ -1920,7 +1920,7 @@ pub(super) fn handle_prompt_response(
             && agent.session.current_prompt_id.is_none()
         {
             if response_pid.as_deref() != Some(p.prompt_id.as_str())
-                && agent.should_adopt_running_prompt(&p.prompt_id)
+                && agent.should_adopt_queued_prompt(&p.prompt_id)
             {
                 apply_turn_start_shim(agent, p.prompt_id, p.text, &p.kind, p.combined_texts)
             } else {

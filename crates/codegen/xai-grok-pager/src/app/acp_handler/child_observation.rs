@@ -155,8 +155,8 @@ pub(super) fn apply_child_acp_update(
     if !admission::admits_delivery(child_view, meta) {
         return false;
     }
-    let scope = admission::update_scope(child_view, &update);
-    let prompt_admission = if meta.is_replay || matches!(scope, admission::UpdateScope::DrainedTool)
+    let scope = admission::update_scope(child_view, &update, meta);
+    let prompt_admission = if meta.is_replay || matches!(scope, admission::UpdateScope::ToolTerminal)
     {
         prompt_origin::ChildPromptAdmission::Apply
     } else {
@@ -182,11 +182,16 @@ pub(super) fn apply_child_acp_update(
         }
         prompt_origin::ChildPromptAdmission::Apply => {}
     }
-    if matches!(scope, admission::UpdateScope::DrainedTool) {
+    if matches!(scope, admission::UpdateScope::ToolTerminal) {
         let Some(child_view) = app.agents.get_mut(&child) else {
             return false;
         };
-        let changed = child_view.handle_admitted_acp_update(update, meta);
+        let changed = match &update {
+            acp::SessionUpdate::ToolCallUpdate(tool) => {
+                child_view.apply_terminal_tool_update(tool, meta)
+            }
+            _ => false,
+        };
         return changed && affected;
     }
     let delivery = delivery::AcpDelivery::classify(&update, meta);

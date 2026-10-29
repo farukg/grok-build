@@ -51,7 +51,7 @@ use xai_grok_shell::extensions::interject::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum QueueTransport {
+pub enum QueueTransport {
     Encode,
     Disconnected,
     InvalidReply,
@@ -113,6 +113,16 @@ impl QueueSendNow {
 }
 
 impl AgentView {
+    pub(crate) fn should_adopt_queued_prompt(&self, prompt_id: &str) -> bool {
+        crate::app::acp_handler::should_adopt_running_prompt(prompt_id)
+            && !self.replayed_terminal_prompts.contains(prompt_id)
+            && !self.is_rewound_prompt(prompt_id)
+            && !self
+                .live_admission_tracker()
+                .has_admitted_live_prompt(prompt_id)
+            && !self.ended_child_prompt_ids.contains(prompt_id)
+    }
+
     pub(crate) fn refresh_queue_admission(&mut self) {
         let binding = self.current_actions_binding();
         self.queue.set_admission_labels(

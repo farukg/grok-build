@@ -958,14 +958,8 @@ impl AgentView {
             self.load_reconstruction,
             super::load_continuation::LoadReconstruction::Continuing { .. }
                 | super::load_continuation::LoadReconstruction::Continued { .. }
-        ) && crate::app::acp_handler::should_adopt_running_prompt(prompt_id)
-            && !self.replayed_terminal_prompts.contains(prompt_id)
-            && !self.is_rewound_prompt(prompt_id)
-            && !self.is_self_originated_prompt(prompt_id)
-            && !self
-                .live_admission_tracker()
-                .has_admitted_live_prompt(prompt_id)
-            && !self.ended_child_prompt_ids.contains(prompt_id)
+        ) && !self.is_self_originated_prompt(prompt_id)
+            && self.should_adopt_queued_prompt(prompt_id)
     }
     /// Whether a wake turn is in flight (streaming or cancelling) while the pane is idle.
     pub(crate) fn wake_turn_active(&self) -> bool {

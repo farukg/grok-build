@@ -45,6 +45,7 @@ pub(super) struct ToolInstances {
 
 pub(super) enum ToolProjectionAdmission {
     Current,
+    Historical,
     Detached,
 }
 
@@ -965,7 +966,9 @@ impl AcpUpdateTracker {
                     meta.is_replay,
                     key.clone(),
                     clock.clone(),
-                    if affects_turn {
+                    if meta.is_replay {
+                        ToolProjectionAdmission::Historical
+                    } else if affects_turn {
                         ToolProjectionAdmission::Current
                     } else {
                         ToolProjectionAdmission::Detached
@@ -1015,7 +1018,9 @@ impl AcpUpdateTracker {
             }
             _ => false,
         };
-        self.invalidate_tool_projection(&key, scrollback);
+        if changed || timing_changed {
+            self.invalidate_tool_projection(&key, scrollback);
+        }
         if changed
             && let Some(entry) = self.tool_projection(&key)
             && let Some(sequence) = meta.event_seq
@@ -1095,7 +1100,7 @@ impl AcpUpdateTracker {
 
     fn invalidate_tool_projection(&self, key: &ToolKey, scrollback: &mut ScrollbackState) {
         if let Some(id) = self.tool_projection(key) {
-            scrollback.mark_structurally_dirty(id);
+            scrollback.mark_height_dirty(id);
             if let Some(entry) = scrollback.get_by_id_mut(id) {
                 entry.invalidate_cache();
             }

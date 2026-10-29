@@ -121,6 +121,9 @@ fn first_new_live_callback_transfers_stash_and_full_replay_keeps_late_old_entry_
     for id in [AgentId(0), AgentId(1)] {
         for outcome in 0..3 {
             let (mut app, sid, prompt) = target(id, true);
+            let input = test_agent(&app, id).session.in_flight_prompt.clone().unwrap();
+            let input_entry = input.scrollback_entry;
+            let input_text = input.text;
             let sampling = owner(&prompt);
             let original = MonotonicPoint::at(tokio::time::Instant::from_std(
                 Instant::now() - Duration::from_secs(30),
@@ -154,19 +157,6 @@ fn first_new_live_callback_transfers_stash_and_full_replay_keeps_late_old_entry_
             );
             let entry = last_entry(&app, id).id;
             let retained = clock(&app, id, entry);
-            let input_entry = test_agent(&app, id)
-                .session
-                .in_flight_prompt
-                .as_ref()
-                .unwrap()
-                .scrollback_entry;
-            let input_text = test_agent(&app, id)
-                .session
-                .in_flight_prompt
-                .as_ref()
-                .unwrap()
-                .text
-                .clone();
             let mapping = retained.mapping(execution);
             assert!(mapping.is_some());
             app.agents.get_mut(&id).unwrap().begin_session_reload(41);
@@ -196,8 +186,16 @@ fn first_new_live_callback_transfers_stash_and_full_replay_keeps_late_old_entry_
                     true,
                 );
             }
+            assert!(matches!(
+                test_agent(&app, id).load_reconstruction,
+                crate::app::agent_view::load_continuation::LoadReconstruction::Historical
+            ));
             let next = call_owner(&prompt, 701);
             deliver(&mut app, sid, &prompt, 10, base(&next), false);
+            assert!(matches!(
+                test_agent(&app, id).load_reconstruction,
+                crate::app::agent_view::load_continuation::LoadReconstruction::Continuing { .. }
+            ));
             let next_entry = last_entry(&app, id).id;
             assert_ne!(entry, next_entry);
             assert_eq!(clock(&app, id, entry).mapping(execution), mapping);
@@ -894,11 +892,17 @@ fn queued_manual_source_does_not_end_foreground_and_persistence_wait_ends_only_a
         },
     );
     let foreground_clock = test_agent(&app, id).current_action_started_at();
+    let inactive_view = app.active_view;
+    app.active_view = ActiveView::Agent(id);
     let effects = crate::app::dispatch::dispatch(Action::SendPrompt("/compact".into()), &mut app);
+    app.active_view = inactive_view;
     let invocation = effects
         .iter()
         .find_map(|effect| match effect {
-            Effect::Compact { invocation_id, .. } => Some(*invocation_id),
+            Effect::Compact { agent_id, invocation_id, .. } => {
+                assert_eq!(*agent_id, id);
+                Some(*invocation_id)
+            }
             _ => None,
         })
         .expect("original compact RPC effect");
@@ -934,6 +938,8 @@ fn queued_manual_source_does_not_end_foreground_and_persistence_wait_ends_only_a
     );
     finish_turn(&mut app, id, &prompt);
     let manual = |app: &mut AppView, update| {
+        let mut meta = json!({"compactInvocationId":invocation});
+        stamp_fixture_delivery(app, sid, &mut meta);
         let (response_tx, _response) = tokio::sync::oneshot::channel();
         handle(
             AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
@@ -942,7 +948,7 @@ fn queued_manual_source_does_not_end_foreground_and_persistence_wait_ends_only_a
                     &SessionNotification {
                         session_id: acp::SessionId::new(sid),
                         update,
-                        meta: Some(json!({"compactInvocationId":invocation})),
+                        meta: Some(meta),
                     },
                 ),
                 response_tx,
@@ -1055,8 +1061,10 @@ fn queued_manual_source_does_not_end_foreground_and_persistence_wait_ends_only_a
         false,
     );
     assert_eq!(test_agent(&app, id).current_action_started_at(), None);
+    app.active_view = ActiveView::Agent(id);
     let next_effects =
         crate::app::dispatch::dispatch(Action::SendPrompt("/compact".into()), &mut app);
+    app.active_view = inactive_view;
     let next_invocation = next_effects
         .iter()
         .find_map(|effect| match effect {
