@@ -96,9 +96,28 @@ fn child_created_before_parent_goal_activation_delivers_success_and_error_to_the
                 .to_string();
             assert_eq!(body.matches(marker).count(), 1);
             assert!(body.contains(&format!("Exact durable result for completion {CHILD}/")));
+            let final_report = server.expect_response(
+                "later goal final report after actual goal acknowledgement",
+                InferenceRequestMatcher::foreground_containing(
+                    InferenceEndpoint::ChatCompletions,
+                    "Goal marked complete.",
+                )
+                .for_session(PARENT),
+                text_reply("later goal final report"),
+            );
             consumed.release();
             goal.await;
+            final_report.assert_satisfied();
             let items = history(&cwd, &sid).await;
+            assert_goal_final_report(&items, "later goal final report");
+            assert_completion_projection_once(
+                &cwd,
+                &sid,
+                CHILD,
+                &items,
+                marker,
+                CompletionHistoryKind::SubagentCompletion,
+            );
             assert_eq!(
                 items
                     .iter()

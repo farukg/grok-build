@@ -371,6 +371,9 @@ fn foreground_child_success_and_error_commit_the_observed_tool_result_once() {
             prompt_turn(&conn, &sid, "foreground-child-seed").await;
             recorder.child_finished(CHILD).await;
             let items = history(&cwd, &sid).await;
+            assert_completion_projection_once(
+                &cwd, &sid, CHILD, &items, marker, CompletionHistoryKind::ToolResult,
+            );
             assert_eq!(
                 items
                     .iter()
@@ -575,11 +578,37 @@ fn child_completion(boundary: CallerBoundary) {
             if matches!(boundary, CallerBoundary::Tool | CallerBoundary::GoalTool) {
                 assert!(body.find("caller-tool-done") < body.find(marker));
             }
-            woke.release();
-            if !matches!(boundary, CallerBoundary::Idle) {
+            if goal {
+                let final_report = server.expect_response(
+                    "caller final report after actual goal acknowledgement",
+                    InferenceRequestMatcher::foreground_containing(
+                        InferenceEndpoint::ChatCompletions,
+                        "Goal marked complete.",
+                    )
+                    .for_session(PARENT),
+                    text_reply("caller final report"),
+                );
+                woke.release();
                 human.await;
+                final_report.assert_satisfied();
+            } else {
+                woke.release();
+                if !matches!(boundary, CallerBoundary::Idle) {
+                    human.await;
+                }
             }
             let items = history(&cwd, &sid).await;
+            if goal {
+                assert_goal_final_report(&items, "caller final report");
+            }
+            assert_completion_projection_once(
+                &cwd,
+                &sid,
+                CHILD,
+                &items,
+                marker,
+                CompletionHistoryKind::SubagentCompletion,
+            );
             assert_eq!(
                 items
                     .iter()

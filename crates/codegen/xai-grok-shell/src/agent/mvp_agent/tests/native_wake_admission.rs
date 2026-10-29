@@ -14,6 +14,126 @@ use xai_grok_tools::implementations::grok_build::task::types::{
 
 const WAKE_TEXT: &str = "native-wake-exact-bootstrap-7f23";
 
+#[derive(Debug)]
+enum RequestOwner {
+    Parent,
+    Child,
+    Other,
+    Unbound,
+}
+
+fn request_projection(
+    server: &xai_grok_test_support::MockInferenceServer,
+    parent: &acp::SessionId,
+    child: &acp::SessionId,
+) -> impl std::fmt::Debug {
+    server
+        .requests()
+        .into_iter()
+        .map(|entry| {
+            let owner = match entry.header("x-grok-session-id") {
+                Some(id) if id == parent.0.as_ref() => RequestOwner::Parent,
+                Some(id) if id == child.0.as_ref() => RequestOwner::Child,
+                Some(_) => RequestOwner::Other,
+                None => RequestOwner::Unbound,
+            };
+            let tool_names = entry.offered_tool_names();
+            let wake_occurrences = entry
+                .body
+                .as_ref()
+                .map(|body| body.to_string().matches(WAKE_TEXT).count());
+            (
+                entry.method,
+                entry.path,
+                entry.endpoint,
+                entry.conversation,
+                owner,
+                tool_names,
+                wake_occurrences,
+                entry.finished,
+            )
+        })
+        .collect::<Vec<_>>()
+}
+
+fn history_projection(items: &[ConversationItem]) -> impl std::fmt::Debug {
+    use sha2::{Digest, Sha256};
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let payload = serde_json::to_value(item).unwrap();
+            let serialized = payload.to_string();
+            (
+                index,
+                payload["type"].as_str().unwrap().to_owned(),
+                item.role(),
+                item.synthetic_reason().cloned(),
+                item.source(),
+                format!("{:x}", Sha256::digest(serialized.as_bytes())),
+                item.text_content().matches(WAKE_TEXT).count(),
+                serialized.matches(WAKE_TEXT).count(),
+            )
+        })
+        .collect::<Vec<_>>()
+}
+
+fn delivery_bindings(
+    info: &crate::session::info::Info,
+    delivery_id: &str,
+) -> Vec<xai_chat_state::DeliveryBinding> {
+    std::fs::read_to_string(
+        crate::session::persistence::session_dir(info).join("chat_history.jsonl"),
+    )
+    .unwrap()
+    .lines()
+    .filter_map(|line| {
+        let row: serde_json::Value = serde_json::from_str(line).unwrap();
+        row.get("_session_delivery").map(|binding| {
+            serde_json::from_value::<xai_chat_state::DeliveryBinding>(binding.clone()).unwrap()
+        })
+    })
+    .filter(|binding| binding.delivery_id == delivery_id)
+    .collect()
+}
+
+fn assert_terminal_transcript(items: &[ConversationItem], reason: &SyntheticReason) {
+    let wake = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            matches!(item, ConversationItem::User(user) if &user.synthetic_reason == reason)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(wake.len(), 1, "one source-specific original input");
+    assert!(matches!(
+        wake[0].1,
+        ConversationItem::User(user)
+            if matches!(user.content.as_slice(), [xai_grok_sampling_types::ContentPart::Text { text }]
+                if text.as_ref() == WAKE_TEXT)
+    ), "original input retains its exact canonical text payload");
+    let outputs = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let ConversationItem::Assistant(assistant) = item else {
+                return None;
+            };
+            match assistant.content.as_ref() {
+                "original native result" => Some((index, "original native result")),
+                "resumed native result" => Some((index, "resumed native result")),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outputs.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+        ["original native result", "resumed native result"]
+    );
+    assert!(outputs[0].0 < wake[0].0);
+    assert!(wake[0].0 < outputs[1].0);
+}
+
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(std::time::Duration::from_secs(30), future)
         .await
@@ -158,12 +278,8 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
     assert_eq!(
         resumed.len(),
         1,
-        "one real model input, not Prompt plus ParentMessage; routes={:?}",
-        server
-            .requests()
-            .into_iter()
-            .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
-            .collect::<Vec<_>>()
+        "one real model input, not Prompt plus ParentMessage; requests={:?}",
+        request_projection(&server, &parent, &child)
     );
     assert_eq!(resumed[0].to_string().matches(WAKE_TEXT).count(), 1);
     let loaded = storage.load_session(&info).await.unwrap();
@@ -184,20 +300,7 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
         1,
         "the source-specific input is durable once"
     );
-    let history = std::fs::read_to_string(
-        crate::session::persistence::session_dir(&info).join("chat_history.jsonl"),
-    )
-    .unwrap();
-    let bindings = history
-        .lines()
-        .filter_map(|line| {
-            let row: serde_json::Value = serde_json::from_str(line).unwrap();
-            row.get("_session_delivery").map(|binding| {
-                serde_json::from_value::<xai_chat_state::DeliveryBinding>(binding.clone()).unwrap()
-            })
-        })
-        .filter(|binding| binding.delivery_id == delivery_id)
-        .collect::<Vec<_>>();
+    let bindings = delivery_bindings(&info, &delivery_id);
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].payload_digest, record.digest);
     assert_eq!(bindings[0].turn_id, admission.prompt_id);
@@ -219,9 +322,15 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
     ));
     assert!(terminal.next_trace_turn > before.next_trace_turn);
     next.assert_satisfied();
+    let terminal_history = storage.load_session(&info).await.unwrap().chat_history;
+    assert_terminal_transcript(&terminal_history, &expected_reason);
+    let terminal_record = Sha256::digest(
+        serde_json::to_vec(&terminal.completion_delivery.receiver.records[&delivery_id]).unwrap(),
+    );
     let sampled = server.request_count();
     let reopened = bounded(agent.management_session(&child)).await.unwrap();
     let conversation = reopened.handle.chat_state_handle.get_conversation().await;
+    assert_terminal_transcript(&conversation, &expected_reason);
     assert_eq!(
         serde_json::to_string(&conversation)
             .unwrap()
@@ -229,12 +338,26 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
             .count(),
         1
     );
+    let reopened_bindings = delivery_bindings(&info, &delivery_id);
+    assert_eq!(reopened_bindings.len(), 1);
+    assert_eq!(reopened_bindings, bindings);
+    let recovered = storage.load_summary(&info).await.unwrap();
+    assert_eq!(
+        Sha256::digest(
+            serde_json::to_vec(&recovered.completion_delivery.receiver.records[&delivery_id])
+                .unwrap(),
+        ),
+        terminal_record,
+        "management reopen must preserve the original terminal receipt"
+    );
     assert_eq!(
         server.request_count(),
         sampled,
-        "reopening a projected terminal input must not replay it"
+        "reopening a projected terminal input must not replay it; requests={:?}; terminal_history={:?}; reopened_history={:?}",
+        request_projection(&server, &parent, &child),
+        history_projection(&terminal_history),
+        history_projection(&conversation),
     );
-    let recovered = storage.load_summary(&info).await.unwrap();
     assert!(matches!(
         recovered.completion_delivery.receiver.records[&delivery_id].execution,
         DeliveryExecution::Succeeded
@@ -411,12 +534,8 @@ fn completed_native_worker_receiver_contention_is_unconfirmed_without_model_inpu
         assert_eq!(
             server.request_count(),
             requests_before,
-            "unconfirmed admission must not send requests; routes={:?}",
-            server
-                .requests()
-                .into_iter()
-                .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
-                .collect::<Vec<_>>()
+            "unconfirmed admission must not send requests; requests={:?}",
+            request_projection(&server, &parent, &info.id)
         );
         assert_eq!(resolve_snapshot(), original_snapshot);
         assert_eq!(

@@ -353,6 +353,8 @@ fn actual_local_cut_waits_for_background_application_despite_overtaking_transpor
 
 #[test]
 fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
+    // LocalRef's pointee must outlive the helper's LocalSet, including unwind.
+    let mut coordinator_owner = None;
     run_local_for_bridge_test(|| async {
         use xai_grok_test_support::{InferenceEndpoint, InferenceRequestMatcher, ScriptedResponse};
         let LocalFixture {
@@ -361,6 +363,8 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
             reached: _reached,
             release: _release,
         } = local_agent(xai_acp_lib::ReceiverSettlement::AppliedOrDiscarded);
+        let agent = Rc::new(agent);
+        coordinator_owner = Some(agent.clone());
         let server = xai_grok_test_support::MockInferenceServer::start()
             .await
             .unwrap();
@@ -374,6 +378,7 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
         agent.models_manager.insert_test_entry("test-model", entry);
         let cwd = tempfile::tempdir().unwrap();
         let sid = new_root_session(&agent, cwd.path()).await;
+        agent.start_subagent_coordinator();
         let handle = agent.resident_handle(&sid).unwrap();
         let binding = SnapshotBinding {
             session_id: sid.0.to_string(),
@@ -392,7 +397,7 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
             )),
         );
         let prompt = acp::Agent::prompt(
-            &agent,
+            agent.as_ref(),
             acp::PromptRequest::new(
                 sid.clone(),
                 vec![acp::ContentBlock::from("actual-ordered-cut-input")],
@@ -424,7 +429,7 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
         assert!(work > 0);
         assert!(before.turn.is_some());
         assert!(!before.sampling.is_empty());
-        let loaded = acp::Agent::load_session(&agent, request(&sid, cwd.path(), &binding, false))
+        let loaded = acp::Agent::load_session(agent.as_ref(), request(&sid, cwd.path(), &binding, false))
             .await
             .unwrap();
         assert!(matches!(
@@ -464,6 +469,7 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
         blocked.assert_satisfied();
         agent.remove_session(&sid);
     });
+    drop(coordinator_owner);
 }
 
 enum Replacement {
