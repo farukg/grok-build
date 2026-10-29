@@ -584,7 +584,7 @@ async fn parent_admission_distinguishes_child_history_hiding_from_explicit_retir
         prompt_id: "parent-message-child-wake".into(),
         text: "one authenticated child input".into(),
     };
-    storage
+    let ack = storage
         .admit_parent_message(
             &info,
             &admission,
@@ -593,6 +593,10 @@ async fn parent_admission_distinguishes_child_history_hiding_from_explicit_retir
         )
         .await
         .unwrap();
+    assert!(matches!(
+        ack,
+        crate::session::delivery_receiver::ParentAdmissionAck::DirectLocal
+    ));
     assert!(storage.load_summary(&info).await.unwrap().is_hidden());
     drop(lease);
     storage.delete_session(&info).await.unwrap();

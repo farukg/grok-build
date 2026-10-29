@@ -365,6 +365,7 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
             .await
             .unwrap();
         server.set_response("finished");
+        server.set_keep_requests(true);
         let mut entry =
             crate::agent::config::ModelEntry::fallback("test-model", &Default::default());
         entry.info.base_url = server.url();
@@ -400,7 +401,15 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
         tokio::pin!(prompt);
         tokio::select! {
             result = &mut prompt => panic!("original inference must remain held: {result:?}"),
-            reached = tokio::time::timeout(std::time::Duration::from_secs(30), blocked.wait_blocked()) => { reached.unwrap(); }
+            reached = tokio::time::timeout(std::time::Duration::from_secs(30), blocked.wait_blocked()) => {
+                reached.unwrap_or_else(|error| panic!(
+                    "original dispatch did not reach its barrier: {error}; {}; requests={}; active_work={}; snapshot={:?}",
+                    blocked.diagnostic(),
+                    server.request_bodies().len(),
+                    handle.active_work.load(std::sync::atomic::Ordering::Acquire),
+                    agent.current_actions_snapshot(binding.clone()),
+                ));
+            }
         }
         let before = agent.current_actions_snapshot(binding.clone());
         let CurrentActionsSnapshot::Current(before) = before else {

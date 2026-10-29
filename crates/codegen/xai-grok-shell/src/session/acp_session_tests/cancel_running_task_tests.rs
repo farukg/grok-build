@@ -2480,9 +2480,24 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
             let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel::<
                 xai_acp_lib::AcpClientMessage,
             >();
-            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel::<
-                PersistenceMsg,
-            >();
+            let directory = tempfile::tempdir().unwrap();
+            let info = crate::session::info::Info {
+                id: acp::SessionId::new("test-cancel-sampler"),
+                cwd: "/tmp".into(),
+            };
+            let storage = Arc::new(
+                crate::session::storage::JsonlStorageAdapter::with_explicit_session_dir(
+                    directory.path().to_path_buf(),
+                ),
+            );
+            storage
+                .init_session(&info, acp::ModelId::new("test-model"))
+                .await
+                .unwrap();
+            let persistence =
+                crate::session::persistence::durable_update_tests::test_actor(info, storage);
+            let persistence_tx = persistence.handle.tx.clone();
+            let _persistence_task = tokio_util::task::AbortOnDropHandle::new(persistence.task);
             let cwd = AbsPathBuf::new(std::path::PathBuf::from("/tmp")).unwrap();
             let fs = Arc::new(
                 xai_grok_workspace::file_system::MockFs::new(cwd.to_path_buf()),

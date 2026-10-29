@@ -14,6 +14,8 @@ use xai_acp_lib::{
 use xai_grok_shell::agent::config::Config as AgentConfig;
 use xai_grok_shell::agent::mvp_agent::MvpAgent;
 
+mod process;
+
 /// Matches production's `MAX_BUFFER_SIZE` in `agent::app`.
 pub const DUPLEX_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
@@ -365,6 +367,19 @@ where
         vec![xai_grok_test_support::MockModelEntry::new("test-model")],
         body,
     )
+}
+
+/// Isolates each scenario from the process-wide GROK_HOME cache, including restart workers.
+#[allow(dead_code)]
+pub fn run_agent_test_isolated<F, Fut>(body: F)
+where
+    F: FnOnce(std::path::PathBuf, std::rc::Rc<xai_grok_test_support::MockInferenceServer>) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    match process::enter() {
+        process::TestProcess::Driver => {}
+        process::TestProcess::Isolated => run_agent_test(body),
+    }
 }
 
 /// [`run_agent_test`] with a custom `/v1/models` catalog.

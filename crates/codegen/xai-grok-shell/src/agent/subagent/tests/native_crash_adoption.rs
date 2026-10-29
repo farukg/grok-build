@@ -125,7 +125,12 @@ async fn lost_owner_from(
     config.endpoints.managed_config_url = Some(format!("{}/deployment/config", server.url()));
     config.grok_com_config.grok_ws_origin = server.url();
     config.grok_com_config.grok_ws_url = format!("{}/ws", server.url().replacen("http", "ws", 1));
-    config.grok_com_config.oidc = None;
+    config.grok_com_config.oidc = Some(xai_grok_login::OidcAuthConfig {
+        issuer: server.origin(),
+        client_id: "native-adoption-fixture".into(),
+        scopes: Vec::new(),
+        audience: None,
+    });
     config.grok_com_config.oauth2 = None;
     let auth_manager = std::sync::Arc::new(crate::auth::AuthManager::new(
         auth_directory.path(),

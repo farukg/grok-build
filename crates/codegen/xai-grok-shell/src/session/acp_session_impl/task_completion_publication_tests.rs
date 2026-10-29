@@ -512,6 +512,9 @@ async fn human_stop_parks_the_whole_durable_batch_without_consuming_it() {
         .run_until(async {
             let tasks = [snapshot("parked-first"), snapshot("parked-second")];
             let fixture = Fixture::new(&tasks).await;
+            fixture.actor.state.lock().await.pending_inputs.push_front(
+                support::user_item("original-caller", "test-client"),
+            );
             let mut admissions = Vec::new();
             let mut receipts = Vec::new();
             for task in tasks {
@@ -537,7 +540,7 @@ async fn human_stop_parks_the_whole_durable_batch_without_consuming_it() {
             for receipt in receipts {
                 assert!(receipt.await.unwrap());
             }
-            bounded(
+            let outcome = bounded(
                 fixture
                     .actor
                     .cancel_running_task(crate::session::commands::CancelOptions {
@@ -547,6 +550,8 @@ async fn human_stop_parks_the_whole_durable_batch_without_consuming_it() {
                     }),
             )
             .await;
+            assert!(outcome.settled);
+            assert!(matches!(outcome.barrier, crate::session::acp_session::cancel::WakeBarrier::Armed));
             let (completion_tx, _) = mpsc::unbounded_channel();
             bounded(SessionActor::maybe_start_running_task(
                 fixture.actor.clone(),

@@ -2,7 +2,7 @@
 mod acp_harness;
 mod admission_support;
 
-use acp_harness::{connect_and_auth, prompt_turn, run_agent_test};
+use acp_harness::{connect_and_auth, prompt_turn, run_agent_test_isolated as run_agent_test};
 use admission_support::*;
 use serde_json::json;
 use xai_grok_test_support::{InferenceEndpoint, InferenceRequestMatcher, ScriptedResponse};

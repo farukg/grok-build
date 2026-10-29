@@ -161,13 +161,16 @@ async fn clear_wake_suppression_re_admits_wakes_and_persists_automatic() {
     local
         .run_until(async {
             let (actor, mut persistence_rx) = actor_with_channels().await;
-            actor
+            let outcome = actor
                 .cancel_running_task(crate::session::CancelOptions {
                     trigger: Some(crate::session::CancelTrigger::CtrlC),
                     user_initiated: true,
                     ..Default::default()
                 })
                 .await;
+            assert_eq!(outcome.barrier, WakeBarrier::Armed);
+            assert!(outcome.settled);
+            assert!(!outcome.turn_stopped);
             assert!(wake_barrier_armed(&actor));
 
             actor.clear_wake_suppression("goal_resume").await;

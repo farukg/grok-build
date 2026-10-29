@@ -155,15 +155,15 @@ pub fn assert_succeeded(receipt: &DeliveryReceipt) {
 use xai_grok_test_support::{ScriptedResponse, SseEvent};
 pub fn text_reply(text: &str) -> ScriptedResponse {
     ScriptedResponse::sse(vec![
-        SseEvent::data(json!({"id":"receiver-reply","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}).to_string()),
-        SseEvent::data(json!({"id":"receiver-reply","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}).to_string()),
+        SseEvent::data(json!({"id":"receiver-reply","object":"chat.completion.chunk","created":1234567890,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}).to_string()),
+        SseEvent::data(json!({"id":"receiver-reply","object":"chat.completion.chunk","created":1234567890,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}).to_string()),
         SseEvent::data("[DONE]"),
     ])
 }
 pub fn tool_reply(name: &str, arguments: serde_json::Value) -> ScriptedResponse {
     ScriptedResponse::sse(vec![
-        SseEvent::data(json!({"id":"receiver-tool","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"receiver-tool-call","type":"function","function":{"name":name,"arguments":arguments.to_string()}}]},"finish_reason":null}]}).to_string()),
-        SseEvent::data(json!({"id":"receiver-tool","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}).to_string()),
+        SseEvent::data(json!({"id":"receiver-tool","object":"chat.completion.chunk","created":1234567890,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"receiver-tool-call","type":"function","function":{"name":name,"arguments":arguments.to_string()}}]},"finish_reason":null}]}).to_string()),
+        SseEvent::data(json!({"id":"receiver-tool","object":"chat.completion.chunk","created":1234567890,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}).to_string()),
         SseEvent::data("[DONE]"),
     ])
 }

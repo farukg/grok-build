@@ -2,7 +2,7 @@
 mod acp_harness;
 mod admission_support;
 
-use acp_harness::{connect_and_auth, ext_method, prompt_turn, run_agent_test};
+use acp_harness::{connect_and_auth, ext_method, prompt_turn, run_agent_test_isolated as run_agent_test};
 use admission_support::*;
 use agent_client_protocol::{self as acp, Agent as _};
 use serde_json::json;
@@ -163,7 +163,7 @@ fn native_receiver_cancel_retains_its_parent_binding_after_task_teardown() {
             "receiver cancelled sample",
             InferenceRequestMatcher::foreground(InferenceEndpoint::ChatCompletions)
                 .for_session(PARENT),
-            text_reply("must not complete"),
+            ScriptedResponse::hang(),
         );
         admitted(
             delivery(
@@ -176,6 +176,27 @@ fn native_receiver_cancel_retains_its_parent_binding_after_task_teardown() {
             .await,
         );
         sampled.wait_blocked().await;
+        sampled.release();
+        tokio::time::timeout(acp_harness::RPC_TIMEOUT, sampled.wait_satisfied())
+            .await
+            .expect("hang response head released before cancellation");
+        sampled.assert_satisfied();
+        recorder
+            .wait(|event| {
+                use xai_grok_shell::session::request_capture::{
+                    REQUEST_SNAPSHOT_NOTIFICATION, RequestObservation, RequestSnapshotNotification,
+                };
+                event["method"] == REQUEST_SNAPSHOT_NOTIFICATION
+                    && serde_json::from_value::<RequestSnapshotNotification>(event["params"].clone())
+                        .is_ok_and(|notification| {
+                            notification.snapshot.session_id == sid.to_string()
+                                && matches!(
+                                    notification.evidence.observation,
+                                    RequestObservation::ResponseHeaders { status: 200 }
+                                )
+                        })
+            })
+            .await;
         conn.cancel(acp::CancelNotification::new(sid.clone()))
             .await
             .unwrap();
@@ -205,8 +226,6 @@ fn native_receiver_cancel_retains_its_parent_binding_after_task_teardown() {
                 .count(),
             1
         );
-        sampled.release();
-        sampled.assert_satisfied();
     });
 }
 
