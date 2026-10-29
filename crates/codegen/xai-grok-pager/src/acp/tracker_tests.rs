@@ -1,6 +1,6 @@
 use super::*;
-use crate::scrollback::blocks::tool::VerbGroupKind;
 use crate::scrollback::DisplayMode;
+use crate::scrollback::blocks::tool::VerbGroupKind;
 use std::sync::Arc;
 /// Default meta with no timestamps (simulates old grok-shell or tests that don't care about timing).
 fn meta() -> NotificationMeta {
@@ -689,19 +689,17 @@ fn orphan_tool_updates_preserve_canonical_name_ownership_and_output() {
         panic!("expected tool update");
     };
     output.meta = Some(original_meta.clone());
-    assert!(!tracker.handle_update(
-        acp::SessionUpdate::ToolCallUpdate(output),
-        &meta(),
-        &mut sb,
-    ));
-    assert!(!tracker.handle_update(
-        acp::SessionUpdate::ToolCallUpdate(
-            acp::ToolCallUpdate::new("tc-wire", acp::ToolCallUpdateFields::new())
-                .meta(Some(original_meta.clone())),
-        ),
-        &meta(),
-        &mut sb,
-    ));
+    assert!(!tracker.handle_update(acp::SessionUpdate::ToolCallUpdate(output), &meta(), &mut sb,));
+    assert!(
+        !tracker.handle_update(
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("tc-wire", acp::ToolCallUpdateFields::new())
+                    .meta(Some(original_meta.clone())),
+            ),
+            &meta(),
+            &mut sb,
+        )
+    );
     assert!(tracker.handle_update(
         acp::SessionUpdate::ToolCall(
             acp::ToolCall::new("tc-wire", "unrelated base title").meta(Some(original_meta)),

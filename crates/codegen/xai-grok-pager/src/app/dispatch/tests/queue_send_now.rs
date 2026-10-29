@@ -4,10 +4,10 @@ use crate::app::app_view::InputOutcome;
 use crate::app::prompt_queue::QueueEntryWire;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{buffer::Buffer, layout::Rect};
-use xai_grok_shell::session::current_actions::SnapshotBinding;
 use xai_grok_shell::extensions::interject::{
     QueueAction, QueueOperation, QueueRejection, QueueRequest, QueueResponse, QueueResult,
 };
+use xai_grok_shell::session::current_actions::SnapshotBinding;
 
 fn row(version: u64) -> QueueEntryWire {
     QueueEntryWire {
@@ -224,7 +224,12 @@ fn rejection_and_transport_are_visible_without_a_sent_bubble() {
 fn queued_acceptance_stays_visible_and_observes_the_same_operation() {
     let mut app = app_with_row(false);
     let (sent, context) = request(&enter(&mut app));
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     assert!(rendered_queue(&mut app).contains("queued, awaiting start"));
     assert_unsent(&app);
     answer(
@@ -252,7 +257,12 @@ fn late_results_cannot_replace_new_versions_operations_or_bindings() {
     let mut newer = row(4);
     newer.text = "new authoritative text".into();
     broadcast(&mut app, vec![newer.clone()], Some("running-input"));
-    answer(&mut app, &old, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &old,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue[0], newer);
     let (new, _) = request(&enter(&mut app));
     assert_ne!(new.operation.operation_id, old.operation.operation_id);
@@ -323,7 +333,12 @@ fn edited_pending_text_is_visible_before_and_after_rejection() {
 fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row() {
     let mut app = app_with_row(false);
     let (sent, context) = request(&enter(&mut app));
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     assert_unsent(&app);
     broadcast(&mut app, Vec::new(), Some("queued-input"));
     dispatch(
@@ -336,7 +351,12 @@ fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row()
         &mut app,
     );
     broadcast(&mut app, Vec::new(), Some("queued-input"));
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     let agent = app.agents.get(&AgentId(0)).unwrap();
     assert!(agent.shared_queue.is_empty());
     assert!(!agent.queue_operations.contains_key("queued-input"));
@@ -514,7 +534,12 @@ fn goal_acceptance_fences_delayed_snapshots_without_hiding_new_versions() {
 fn queued_row_disappearance_is_unconfirmed_not_started_or_lost() {
     let mut app = app_with_row(false);
     let (sent, context) = request(&enter(&mut app));
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     broadcast(&mut app, Vec::new(), Some("running-input"));
     let rendered = rendered_queue(&mut app);
     assert!(rendered.contains("send now: unconfirmed"), "{rendered}");
@@ -531,7 +556,12 @@ fn pending_and_queued_late_responses_cannot_regress_a_newer_snapshot() {
         let mut app = app_with_row(false);
         let (sent, context) = request(&enter(&mut app));
         if queued {
-            answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+            answer(
+                &mut app,
+                &sent,
+                &context,
+                QueueResult::Queued { row: row(3) },
+            );
             let (observe, _) = request(&enter(&mut app));
             assert_eq!(observe.action, QueueAction::Observe);
         }
@@ -647,11 +677,19 @@ fn queue_reply_requires_the_original_agent_and_lossless_snapshot_binding() {
                 prompt_id: "queued-input".into(),
             },
         );
-        assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(3)]);
+        assert_eq!(
+            app.agents.get(&AgentId(0)).unwrap().shared_queue,
+            vec![row(3)]
+        );
         assert!(rendered_queue(&mut app).contains("send now: pending"));
         assert_unsent(&app);
     }
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     assert!(rendered_queue(&mut app).contains("queued, awaiting start"));
     let (observe, observed_context) = request(&enter(&mut app));
     assert_eq!(observe.operation, sent.operation);
@@ -663,22 +701,36 @@ fn queue_reply_requires_the_original_agent_and_lossless_snapshot_binding() {
 fn reload_rejects_old_queue_peeks_and_resets_the_mirror_version_floor() {
     let mut app = app_with_row(false);
     let (sent, context) = request(&enter(&mut app));
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(4) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(4) },
+    );
     let (observe, observed_context) = request(&enter(&mut app));
     assert_eq!(observe.action, QueueAction::Observe);
     assert_eq!(observed_context, context);
     app.push_optimistic_prompt_echo("test-session", "old-echo", "old payload", "prompt");
-    app.agents.get_mut(&AgentId(0)).unwrap().begin_replay_window();
+    app.agents
+        .get_mut(&AgentId(0))
+        .unwrap()
+        .begin_replay_window();
     answer(
         &mut app,
         &observe,
         &observed_context,
         QueueResult::Queued { row: row(5) },
     );
-    assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(4)]);
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().shared_queue,
+        vec![row(4)]
+    );
     broadcast(&mut app, vec![row(1)], Some("running-input"));
     assert_eq!(app.shared_prompt_queue("test-session"), Some(&vec![row(1)]));
-    assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(1)]);
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().shared_queue,
+        vec![row(1)]
+    );
     assert!(!app.optimistic_prompt_echoes.contains_key("test-session"));
     let rendered = rendered_queue(&mut app);
     assert!(!rendered.contains("send now: pending"));
@@ -697,7 +749,10 @@ fn reload_rejects_old_queue_peeks_and_resets_the_mirror_version_floor() {
     assert_eq!(fresh_context.0, context.0);
     assert_eq!(fresh_context.1.session_id, context.1.session_id);
     assert_eq!(fresh_context.1.binding_epoch, context.1.binding_epoch);
-    assert_eq!(fresh_context.1.load_generation, context.1.load_generation + 1);
+    assert_eq!(
+        fresh_context.1.load_generation,
+        context.1.load_generation + 1
+    );
     assert_unsent(&app);
 }
 
@@ -705,7 +760,12 @@ fn reload_rejects_old_queue_peeks_and_resets_the_mirror_version_floor() {
 fn rebind_does_not_reuse_an_old_queue_observation_or_its_admission() {
     let mut app = app_with_row(false);
     let (sent, context) = request(&enter(&mut app));
-    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    answer(
+        &mut app,
+        &sent,
+        &context,
+        QueueResult::Queued { row: row(3) },
+    );
     let (observe, _) = request(&enter(&mut app));
     assert_eq!(observe.action, QueueAction::Observe);
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
@@ -720,7 +780,10 @@ fn rebind_does_not_reuse_an_old_queue_observation_or_its_admission() {
             prompt_id: "queued-input".into(),
         },
     );
-    assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(3)]);
+    assert_eq!(
+        app.agents.get(&AgentId(0)).unwrap().shared_queue,
+        vec![row(3)]
+    );
     assert!(!rendered_queue(&mut app).contains("send now: pending"));
     let (fresh, fresh_context) = request(&enter(&mut app));
     assert_ne!(fresh.operation.operation_id, sent.operation.operation_id);

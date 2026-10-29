@@ -90,8 +90,7 @@ impl InferenceRequestMatcher {
                 .get("x-grok-session-id")
                 .and_then(|value| value.to_str().ok())
                 == Some(session_id.0.as_ref())
-        })
-            && self.endpoint == request.endpoint()
+        }) && self.endpoint == request.endpoint()
             && self.kind == request.kind()
             && self.body_contains.is_none_or(|fragment| {
                 serde_json::to_string(request.body())

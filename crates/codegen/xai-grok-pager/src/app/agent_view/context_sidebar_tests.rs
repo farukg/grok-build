@@ -12,10 +12,19 @@ use crossterm::event::{
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use xai_grok_shell::extensions::context_policy::ContextPolicyReport;
-use xai_grok_shell::sampling::{CategoryTokens, ContextCategory, ContextPolicy, ContextSwitch, ContextPolicyMutation, ContextPolicySelection, ContextPolicyVersion, ContextScope};
+use xai_grok_shell::sampling::{
+    CategoryTokens, ContextCategory, ContextPolicy, ContextPolicyMutation, ContextPolicySelection,
+    ContextPolicyVersion, ContextScope, ContextSwitch,
+};
 
 fn selection(scope: ContextScope, revision: u64) -> Option<ContextPolicySelection> {
-    Some(ContextPolicySelection { version: ContextPolicyVersion { revision, incarnation: "actor".to_owned() }, scope })
+    Some(ContextPolicySelection {
+        version: ContextPolicyVersion {
+            revision,
+            incarnation: "actor".to_owned(),
+        },
+        scope,
+    })
 }
 
 fn draw(agent: &mut AgentView) -> Buffer {
@@ -95,9 +104,15 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
         panic!("space asks the shell for the change");
     };
     let first = xai_grok_shell::sampling::all_categories()[0];
-    assert_eq!(requested.mutation, ContextPolicyMutation::SetCategories {
-        categories: vec![first].try_into().unwrap(), value: ContextSwitch::Excluded, target: ContextScope::Session,
-    }, "only the selected category is changed");
+    assert_eq!(
+        requested.mutation,
+        ContextPolicyMutation::SetCategories {
+            categories: vec![first].try_into().unwrap(),
+            value: ContextSwitch::Excluded,
+            target: ContextScope::Session,
+        },
+        "only the selected category is changed"
+    );
     let mut confirmed = ContextPolicy::default();
     confirmed.set(first, ContextSwitch::Excluded);
     confirmed.set(ContextCategory::Reasoning, ContextSwitch::Excluded);
@@ -122,7 +137,8 @@ fn f7_shows_the_shells_policy_and_waits_for_its_answer_to_a_change() {
 fn focus_row(agent: &mut AgentView, label: &str) {
     let _ = press(agent, KeyCode::Home);
     for _ in 0..150 {
-        if matches!(&agent.context_sidebar, ContextSidebar::Open(open) if open.cursor_label() == Some(label)) {
+        if matches!(&agent.context_sidebar, ContextSidebar::Open(open) if open.cursor_label() == Some(label))
+        {
             return;
         }
         let _ = press(agent, KeyCode::Down);
@@ -199,11 +215,18 @@ fn ready_report() -> ContextPolicyReport {
 #[test]
 fn context_clicks_never_change_policy_even_with_bulk_modifiers() {
     let _theme = crate::theme::cache::pin_theme();
-    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT, KeyModifiers::CONTROL] {
+    for modifiers in [
+        KeyModifiers::NONE,
+        KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL,
+    ] {
         let mut agent = open_sidebar();
         let before = disclosure(&agent);
         let buf = draw(&mut agent);
-        assert!(matches!(click_row_with(&mut agent, &buf, "Core instructions", modifiers), InputOutcome::Changed));
+        assert!(matches!(
+            click_row_with(&mut agent, &buf, "Core instructions", modifiers),
+            InputOutcome::Changed
+        ));
         assert_eq!(disclosure(&agent), before);
         let after = draw(&mut agent);
         assert!(sidebar_row(&after, "Core instructions").contains("ON"));
@@ -323,9 +346,17 @@ fn f7_arrow_keys_walk_the_tree_like_a_tree_view() {
     let (context, display) = (SectionId::Context, SectionId::Display);
     assert_eq!(cursor(&agent), Some(context.row_line(1)));
     let _ = press(&mut agent, KeyCode::Left);
-    assert_eq!(cursor(&agent), Some(context.row_line(0)), "Left selects the semantic parent");
+    assert_eq!(
+        cursor(&agent),
+        Some(context.row_line(0)),
+        "Left selects the semantic parent"
+    );
     let _ = press(&mut agent, KeyCode::Left);
-    assert_eq!(cursor(&agent), Some(context.row_line(0)), "Left folds the semantic parent");
+    assert_eq!(
+        cursor(&agent),
+        Some(context.row_line(0)),
+        "Left folds the semantic parent"
+    );
     let _ = press(&mut agent, KeyCode::Left);
     assert_eq!(
         cursor(&agent),
@@ -412,7 +443,9 @@ fn f7_home_end_and_page_keys_move_over_visible_lines() {
     assert_ne!(cursor(&agent), Some(SectionId::Dock.title_line()));
     let _ = press(&mut agent, KeyCode::PageUp);
     assert_eq!(cursor(&agent), Some(SectionId::Dock.title_line()));
-    for _ in 0..4 { let _ = press(&mut agent, KeyCode::Down); }
+    for _ in 0..4 {
+        let _ = press(&mut agent, KeyCode::Down);
+    }
     assert_eq!(cursor(&agent), Some(context.title_line()));
 
     let _ = press(&mut agent, KeyCode::Char(' '));
@@ -456,7 +489,10 @@ fn f7_context_title_click_only_selects_and_keyboard_changes_disclosure() {
     ));
     assert!(!disclosure(&agent).is_expanded(SectionId::Context));
     assert_eq!(cursor(&agent), Some(SectionId::Context.title_line()));
-    assert!(matches!(press(&mut agent, KeyCode::Char(' ')), InputOutcome::Changed));
+    assert!(matches!(
+        press(&mut agent, KeyCode::Char(' ')),
+        InputOutcome::Changed
+    ));
     let buf = draw(&mut agent);
     assert!(screen(&buf).contains("Core instructions"));
     assert!(screen(&buf).contains("\u{25BE} Context"));
@@ -713,7 +749,10 @@ fn f7_ctrl_enter_leaves_the_cursor_row_alone_and_star_sweeps_everything() {
     assert!(never_bulk_toggled_stay(&agent, &before));
     assert!(!disclosure(&agent).is_expanded(SectionId::Context));
     assert!(disclosure(&agent).is_expanded(SectionId::Display));
-    assert!(matches!(&agent.context_sidebar, ContextSidebar::Open(open) if open.cursor_label() == Some("Memory captures")), "the cursor row stayed visible");
+    assert!(
+        matches!(&agent.context_sidebar, ContextSidebar::Open(open) if open.cursor_label() == Some("Memory captures")),
+        "the cursor row stayed visible"
+    );
 
     let _ = press(&mut agent, KeyCode::Char('*'));
     assert!(
@@ -810,7 +849,11 @@ fn f7_a_switch_that_cannot_be_sent_says_why() {
 
     let mut unavailable = test_fixtures::make_agent();
     let _ = press(&mut unavailable, KeyCode::F(7));
-    unavailable.context_policy_answered(Err(crate::app::actions::ContextPolicyTransportError::Rpc(agent_client_protocol::Error::internal_error())));
+    unavailable.context_policy_answered(Err(
+        crate::app::actions::ContextPolicyTransportError::Rpc(
+            agent_client_protocol::Error::internal_error(),
+        ),
+    ));
     let _ = draw(&mut unavailable);
     assert!(matches!(
         press(&mut unavailable, KeyCode::Char(' ')),
@@ -851,21 +894,36 @@ fn f7_footer_shows_only_its_own_sections_scope_and_no_standing_note() {
     let _ = draw(&mut agent);
 
     let on_context = screen(&draw(&mut agent));
-    assert!(on_context.contains("context: this session (c)"), "{on_context}");
-    assert!(!on_context.contains("display: "), "a Context row does not advertise the display scope");
+    assert!(
+        on_context.contains("context: this session (c)"),
+        "{on_context}"
+    );
+    assert!(
+        !on_context.contains("display: "),
+        "a Context row does not advertise the display scope"
+    );
 
     let _ = press(&mut agent, KeyCode::End);
     let on_display = screen(&draw(&mut agent));
     assert!(on_display.contains("display: global (g)"), "{on_display}");
-    assert!(!on_display.contains("context: "), "a Message display row does not advertise the context scope");
+    assert!(
+        !on_display.contains("context: "),
+        "a Message display row does not advertise the context scope"
+    );
 
     let _ = press(&mut agent, KeyCode::Home);
     let on_dock = screen(&draw(&mut agent));
     assert!(on_dock.contains("Space folds"), "{on_dock}");
-    assert!(!on_dock.contains("display: ") && !on_dock.contains("context: "), "the Dock title needs no scope line");
+    assert!(
+        !on_dock.contains("display: ") && !on_dock.contains("context: "),
+        "the Dock title needs no scope line"
+    );
 
     for buf in [on_context, on_display, on_dock] {
-        assert!(!buf.contains("always sent"), "the standing note is gone from every footer");
+        assert!(
+            !buf.contains("always sent"),
+            "the standing note is gone from every footer"
+        );
     }
 }
 
@@ -875,7 +933,9 @@ fn f7_footer_survives_a_short_column_next_to_the_todo_rows() {
     let root = tempfile::tempdir().unwrap();
     let mut agent = test_fixtures::make_agent();
     agent.open_panel_settings_in(root.path());
-    agent.todo.update_todos((0..8).map(item_for_budget).collect());
+    agent
+        .todo
+        .update_todos((0..8).map(item_for_budget).collect());
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
     let area = Rect::new(0, 0, 160, 12);
@@ -894,9 +954,17 @@ fn f7_footer_survives_a_short_column_next_to_the_todo_rows() {
     );
     let screen = screen(&buf);
     let lines: Vec<&str> = screen.lines().collect();
-    let shown = lines.iter().filter(|line| line.contains("Budget task")).count();
-    assert!(shown <= 6, "the Todos section stays inside its budget: {shown} of 8 items painted");
-    let hint = lines.iter().rposition(|line| line.contains("Esc ") || line.contains("Space "));
+    let shown = lines
+        .iter()
+        .filter(|line| line.contains("Budget task"))
+        .count();
+    assert!(
+        shown <= 6,
+        "the Todos section stays inside its budget: {shown} of 8 items painted"
+    );
+    let hint = lines
+        .iter()
+        .rposition(|line| line.contains("Esc ") || line.contains("Space "));
     let last_task = lines.iter().rposition(|line| line.contains("Budget task"));
     assert!(
         hint.unwrap_or(0) > last_task.unwrap_or(0),
@@ -1094,7 +1162,10 @@ fn f7_titles_summarise_their_section_while_folded() {
 
     let full = MessageKind::settings_kinds()
         .iter()
-        .filter(|&&kind| kind != MessageKind::Injected && agent.scrollback.display_defaults().shown(kind) == DisplayForm::Expanded)
+        .filter(|&&kind| {
+            kind != MessageKind::Injected
+                && agent.scrollback.display_defaults().shown(kind) == DisplayForm::Expanded
+        })
         .count();
     assert!(sidebar_row(&buf, "Message display").contains(&format!("{full}/{kinds} full")));
 }
@@ -1107,8 +1178,10 @@ fn f7_todos_are_permanent_independent_and_use_the_existing_pane_owner() {
     let mut agent = test_fixtures::make_agent();
     agent.open_panel_settings_in(root.path());
     agent.todo.update_todos(vec![TodoItem {
-        content: "Shared todo body".into(), status: TodoStatus::Pending,
-        priority: Default::default(), meta: None,
+        content: "Shared todo body".into(),
+        status: TodoStatus::Pending,
+        priority: Default::default(),
+        meta: None,
     }]);
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
@@ -1117,9 +1190,15 @@ fn f7_todos_are_permanent_independent_and_use_the_existing_pane_owner() {
     assert!(rendered.find("Dock").unwrap() < rendered.find("Todos").unwrap());
     assert!(rendered.find("Todos").unwrap() < rendered.find("Context").unwrap());
     assert!(rendered.contains("□ Shared todo body"));
-    let _ = agent.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)), &ActionRegistry::defaults());
+    let _ = agent.handle_input(
+        &Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+        &ActionRegistry::defaults(),
+    );
     assert!(screen(&draw(&mut agent)).contains("\u{25BE} Todos"));
-    let _ = agent.handle_input(&Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)), &ActionRegistry::defaults());
+    let _ = agent.handle_input(
+        &Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+        &ActionRegistry::defaults(),
+    );
     assert!(screen(&draw(&mut agent)).contains("Shared todo body"));
     let buf = draw(&mut agent);
     let _ = click_row(&mut agent, &buf, "\u{25BE} Todos");
@@ -1145,7 +1224,11 @@ fn dock_placement_render_input_matrix_keeps_f7_sections_disjoint() {
     agent.tasks.overlay.visible = true;
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
-    for placement in [DockPlacement::Off, DockPlacement::Top, DockPlacement::Bottom] {
+    for placement in [
+        DockPlacement::Off,
+        DockPlacement::Top,
+        DockPlacement::Bottom,
+    ] {
         agent.set_dock_placement(placement);
         let buf = draw(&mut agent);
         let rendered = screen(&buf);
@@ -1156,8 +1239,12 @@ fn dock_placement_render_input_matrix_keeps_f7_sections_disjoint() {
                 assert!(agent.context_dock_geometry().is_none());
                 assert_eq!(agent.pane_areas.dock.height, 0);
             }
-            DockPlacement::Top => assert!(agent.pane_areas.dock.bottom() <= agent.pane_areas.scrollback.y),
-            DockPlacement::Bottom => assert!(agent.pane_areas.dock.y >= agent.pane_areas.scrollback.bottom()),
+            DockPlacement::Top => {
+                assert!(agent.pane_areas.dock.bottom() <= agent.pane_areas.scrollback.y)
+            }
+            DockPlacement::Bottom => {
+                assert!(agent.pane_areas.dock.y >= agent.pane_areas.scrollback.bottom())
+            }
         }
         if let Some((rect, offset)) = agent.context_dock_geometry() {
             assert_eq!(offset, 0);
@@ -1168,11 +1255,15 @@ fn dock_placement_render_input_matrix_keeps_f7_sections_disjoint() {
         let _ = press(&mut agent, KeyCode::Tab);
         assert_eq!(agent.visible_focus(), super::VisibleFocus::Context);
         let _ = press(&mut agent, KeyCode::Home);
-        let ContextSidebar::Open(open) = &agent.context_sidebar else { panic!("F7 stays open"); };
+        let ContextSidebar::Open(open) = &agent.context_sidebar else {
+            panic!("F7 stays open");
+        };
         assert_eq!(open.cursor(), Some(SectionId::Dock.title_line()));
         assert!(sidebar_row(&draw(&mut agent), "Dock").contains("Dock"));
         let _ = press(&mut agent, KeyCode::Down);
-        let ContextSidebar::Open(open) = &agent.context_sidebar else { panic!("F7 stays open"); };
+        let ContextSidebar::Open(open) = &agent.context_sidebar else {
+            panic!("F7 stays open");
+        };
         assert_eq!(open.cursor(), Some(SectionId::Dock.row_line(0)));
         let _ = click_row(&mut agent, &buf, "Placement");
         assert_eq!(dock::placement(), placement.next());
@@ -1186,7 +1277,9 @@ fn focused_off_context_row_preserves_its_neighbor_rows() {
     let buf = draw(&mut agent);
     let _ = click_row(&mut agent, &buf, "Core instructions");
     let mut report = ready_report();
-    report.policy.set(ContextCategory::CoreInstructions, ContextSwitch::Excluded);
+    report
+        .policy
+        .set(ContextCategory::CoreInstructions, ContextSwitch::Excluded);
     agent.context_policy_answered(Ok(report));
     let rendered = screen(&draw(&mut agent));
     assert!(sidebar_row(&draw(&mut agent), "Core instructions").contains("OFF"));
@@ -1211,45 +1304,91 @@ fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal
     let first = draw(&mut agent);
     let selected = cursor(&agent);
     for _ in 0..12 {
-        let _ = agent.handle_input(&Event::Mouse(MouseEvent {
-            kind: MouseEventKind::ScrollDown,
-            column: first.area.right() - 10,
-            row: 15,
-            modifiers: KeyModifiers::NONE,
-        }), &ActionRegistry::defaults());
+        let _ = agent.handle_input(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: first.area.right() - 10,
+                row: 15,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &ActionRegistry::defaults(),
+        );
     }
     let before = draw(&mut agent);
-    assert!(!screen(&before).contains("Core instructions"), "the selected row is genuinely offscreen");
-    assert_ne!(screen(&first), screen(&before), "the wheel moved the viewport without moving selection");
+    assert!(
+        !screen(&before).contains("Core instructions"),
+        "the selected row is genuinely offscreen"
+    );
+    assert_ne!(
+        screen(&first),
+        screen(&before),
+        "the wheel moved the viewport without moving selection"
+    );
     assert_eq!(cursor(&agent), selected);
     let mut writer = PanelSettingsStore::open(dir.path(), None).store;
-    writer.set(Layer::Global, Setting::ShowCompleted { pane: CompletedItemsPane::Tasks, show: true }).unwrap();
+    writer
+        .set(
+            Layer::Global,
+            Setting::ShowCompleted {
+                pane: CompletedItemsPane::Tasks,
+                show: true,
+            },
+        )
+        .unwrap();
     assert!(agent.reload_global_panel_settings());
     let after = draw(&mut agent);
-    assert_eq!(screen(&after), screen(&before), "an external h edit must not reveal the offscreen cursor");
+    assert_eq!(
+        screen(&after),
+        screen(&before),
+        "an external h edit must not reveal the offscreen cursor"
+    );
     assert_eq!(cursor(&agent), selected);
 
     let _ = press(&mut agent, KeyCode::End);
-    writer.set(Layer::Global, Setting::ShowCompleted { pane: CompletedItemsPane::Tasks, show: false }).unwrap();
+    writer
+        .set(
+            Layer::Global,
+            Setting::ShowCompleted {
+                pane: CompletedItemsPane::Tasks,
+                show: false,
+            },
+        )
+        .unwrap();
     assert!(agent.reload_global_panel_settings());
-    assert!(screen(&draw(&mut agent)).contains("Memory captures"), "a legitimate pending End reveal survives reload");
+    assert!(
+        screen(&draw(&mut agent)).contains("Memory captures"),
+        "a legitimate pending End reveal survives reload"
+    );
 }
 
 #[test]
 fn external_group_fold_repairs_selected_leaf_to_its_semantic_parent() {
-    use crate::app::panel_settings::{DisclosureState, Layer, PanelSettingsStore, Setting, SidebarSection};
+    use crate::app::panel_settings::{
+        DisclosureState, Layer, PanelSettingsStore, Setting, SidebarSection,
+    };
     let _theme = crate::theme::cache::pin_theme();
     let dir = tempfile::tempdir().unwrap();
     let mut agent = open_sidebar();
     agent.open_panel_settings_in(dir.path());
     focus_row(&mut agent, "File reads");
     let mut writer = PanelSettingsStore::open(dir.path(), None).store;
-    writer.set(Layer::Global, Setting::Section { section: SidebarSection::DisplayFiles, state: DisclosureState::Collapsed }).unwrap();
+    writer
+        .set(
+            Layer::Global,
+            Setting::Section {
+                section: SidebarSection::DisplayFiles,
+                state: DisclosureState::Collapsed,
+            },
+        )
+        .unwrap();
     assert!(agent.reload_global_panel_settings());
     let selected_label = match &agent.context_sidebar {
         ContextSidebar::Open(open) => open.cursor_label(),
         ContextSidebar::Closed => None,
     };
-    assert_eq!(selected_label, Some(crate::scrollback::block::MessageGroup::Files.label()));
+    assert_eq!(
+        selected_label,
+        Some(crate::scrollback::block::MessageGroup::Files.label())
+    );
     let _ = draw(&mut agent);
 }

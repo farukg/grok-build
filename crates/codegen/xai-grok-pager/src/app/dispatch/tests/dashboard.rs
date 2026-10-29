@@ -2,8 +2,8 @@
 use super::*;
 use crate::app::actions::Direction;
 use crate::app::app_view::InputOutcome;
-use crate::app::dispatch::queue::maybe_drain_queue;
 use crate::app::dispatch::dashboard::{dashboard_focusables, workspace_rows};
+use crate::app::dispatch::queue::maybe_drain_queue;
 use crate::app::workspace_test_fixtures::{
     member, new_member, snapshot as workspace_snapshot, temp_store,
 };

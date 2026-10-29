@@ -3,8 +3,8 @@ use crate::session::source_binding::{
     SOURCE_BINDING_NOTIFICATION, SourceBindingObservation, StrictSourceOrigin,
 };
 use crate::session::storage::{JsonlStorageAdapter, SessionUpdate, StorageAdapter};
-use xai_chat_state::{CompletionProjection, SubagentCompletionId};
 use xai_chat_state::completion::CompletionIdentity;
+use xai_chat_state::{CompletionProjection, SubagentCompletionId};
 
 #[path = "request_source_binding_loss_tests.rs"]
 mod loss;

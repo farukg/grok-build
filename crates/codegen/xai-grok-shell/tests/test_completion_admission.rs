@@ -479,8 +479,10 @@ fn child_completion(boundary: CallerBoundary) {
             if matches!(boundary, CallerBoundary::Idle) {
                 let child_sid = acp::SessionId::new(CHILD);
                 for action in ["observe", "admit"] {
-                    assert!(matches!(delivery(&conn, &child_sid, "child-ingress", PAYLOAD, action).await,
-                        DeliveryResult::Rejected { reason } if reason == "receiver requires a root session; child ingress retains its own receipt and Held policy"));
+                    assert!(
+                        matches!(delivery(&conn, &child_sid, "child-ingress", PAYLOAD, action).await,
+                        DeliveryResult::Rejected { reason } if reason == "receiver requires a root session; child ingress retains its own receipt and Held policy")
+                    );
                 }
                 assert_eq!(main_requests(&server, CHILD).len(), 1);
             }

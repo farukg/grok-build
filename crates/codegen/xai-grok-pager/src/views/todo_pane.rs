@@ -124,7 +124,9 @@ use ratatui::widgets::StatefulWidget;
 use crate::appearance::LayoutConfig;
 use crate::theme::ThemeKind;
 
-use super::list_pane::{ListPane, ListPaneConfig, ListPaneState, ListPaneStyle, WrapMode, line_display_width};
+use super::list_pane::{
+    ListPane, ListPaneConfig, ListPaneState, ListPaneStyle, WrapMode, line_display_width,
+};
 use super::overlay::OverlayState;
 
 /// Feeds the placeholder message shown when the pane is empty.
@@ -239,9 +241,11 @@ impl TodoPane {
     /// Does NOT auto-show the todo pane. Users toggle it with Ctrl-T.
     pub fn update_todos(&mut self, items: Vec<TodoItem>) {
         let changed = self.todos.len() != items.len()
-            || self.todos.iter().zip(&items).any(|(old, new)| {
-                old.content != new.content || old.status != new.status
-            });
+            || self
+                .todos
+                .iter()
+                .zip(&items)
+                .any(|(old, new)| old.content != new.content || old.status != new.status);
         self.counts = Self::compute_counts(&items);
         self.todos = items;
         if changed {
@@ -349,7 +353,10 @@ impl TodoPane {
 
     #[cfg(test)]
     pub(crate) fn preparation_counts(&self) -> (usize, usize) {
-        (self.preparation_rebuilds, self.sidebar_materializations.get())
+        (
+            self.preparation_rebuilds,
+            self.sidebar_materializations.get(),
+        )
     }
 
     #[cfg(test)]
@@ -530,7 +537,8 @@ impl TodoPane {
 
     fn build_sidebar_projection(&self, text_width: u16) -> SidebarProjection {
         #[cfg(test)]
-        self.sidebar_projections.set(self.sidebar_projections.get() + 1);
+        self.sidebar_projections
+            .set(self.sidebar_projections.get() + 1);
         if self.entries.is_empty() {
             return SidebarProjection {
                 lines: vec![Line::from(empty_placeholder_message(
@@ -576,7 +584,9 @@ impl TodoPane {
         }
         // The entry the budget cuts into starts inside it: show its first rows and mark the cut.
         let mut continued = false;
-        if lines.len() < entry_budget && let Some(entry_lines) = wrapped.get(whole) {
+        if lines.len() < entry_budget
+            && let Some(entry_lines) = wrapped.get(whole)
+        {
             let take = entry_budget - lines.len();
             lines.extend(entry_lines.iter().take(take).cloned());
             continued = take < entry_lines.len();
@@ -584,7 +594,8 @@ impl TodoPane {
                 let marker = Style::default().fg(crate::theme::Theme::current().gray_bright);
                 // Two columns stay free so the marker survives the row renderer's width cut.
                 let marker_budget = text_width.saturating_sub(2).max(1) as usize;
-                *last = crate::render::line_utils::truncate_line(std::mem::take(last), marker_budget);
+                *last =
+                    crate::render::line_utils::truncate_line(std::mem::take(last), marker_budget);
                 last.spans.push(Span::styled(" …", marker));
             }
         }
@@ -619,7 +630,8 @@ impl TodoPane {
         index: usize,
     ) -> Option<super::sidebar::SidebarRow<'static>> {
         #[cfg(test)]
-        self.sidebar_materializations.set(self.sidebar_materializations.get() + 1);
+        self.sidebar_materializations
+            .set(self.sidebar_materializations.get() + 1);
         projection.row(index)
     }
 }
@@ -666,7 +678,11 @@ mod tests {
     }
 
     fn flat(row: &super::super::sidebar::SidebarRow<'_>) -> String {
-        row.left.spans.iter().map(|span| span.content.clone().into_owned()).collect()
+        row.left
+            .spans
+            .iter()
+            .map(|span| span.content.clone().into_owned())
+            .collect()
     }
 
     fn visible_width(line: &Line<'_>) -> usize {
@@ -710,7 +726,11 @@ mod tests {
             meta: None,
         }]);
         assert_eq!(flat(&pane.sidebar_row(0, width).unwrap()), "□ Before");
-        assert_eq!(pane.sidebar_projection_count(), prepared, "identical data is not a new projection");
+        assert_eq!(
+            pane.sidebar_projection_count(),
+            prepared,
+            "identical data is not a new projection"
+        );
         pane.update_todos(vec![TodoItem {
             content: "Before".into(),
             status: TodoStatus::InProgress,
@@ -747,7 +767,10 @@ mod tests {
         crate::theme::cache::set(crate::theme::ThemeKind::GrokDay);
         pane.refresh_entries();
         let row = pane.sidebar_row(0, 7).unwrap();
-        assert_eq!(row.left.spans[0].style.fg, Some(crate::theme::Theme::current().accent_success));
+        assert_eq!(
+            row.left.spans[0].style.fg,
+            Some(crate::theme::Theme::current().accent_success)
+        );
         assert_eq!(pane.sidebar_projection_count(), wide + 2);
     }
 
@@ -761,11 +784,17 @@ mod tests {
         for index in 0..pane.sidebar_row_count(width) {
             let row = pane.sidebar_row(index, width).expect("row exists");
             let text = flat(&row);
-            assert!(visible_width(&row.left) <= usize::from(width), "{index}: {text}");
+            assert!(
+                visible_width(&row.left) <= usize::from(width),
+                "{index}: {text}"
+            );
             if index == 0 {
                 assert!(text.starts_with("▶ "), "{text}");
             } else {
-                assert!(text.starts_with("  "), "continuation is indented under the text: {text}");
+                assert!(
+                    text.starts_with("  "),
+                    "continuation is indented under the text: {text}"
+                );
             }
         }
         let joined = (0..pane.sidebar_row_count(width))
@@ -779,12 +808,19 @@ mod tests {
     #[test]
     fn sidebar_rows_measure_wide_characters_by_display_width() {
         let _theme = crate::theme::cache::pin_theme();
-        let pane = pane_with(&[("日本語のタスク名が長い場合でも折り返しが正しく機能することを確認する", TodoStatus::Pending)]);
+        let pane = pane_with(&[(
+            "日本語のタスク名が長い場合でも折り返しが正しく機能することを確認する",
+            TodoStatus::Pending,
+        )]);
         let width = 20;
         assert!(pane.sidebar_row_count(width) > 1);
         for index in 0..pane.sidebar_row_count(width) {
             let row = pane.sidebar_row(index, width).expect("row exists");
-            assert!(visible_width(&row.left) <= usize::from(width), "{}", flat(&row));
+            assert!(
+                visible_width(&row.left) <= usize::from(width),
+                "{}",
+                flat(&row)
+            );
         }
     }
 
@@ -795,14 +831,23 @@ mod tests {
         let pane = pane_with(&[(label.as_str(), TodoStatus::InProgress)]);
         let width = 17;
         let count = pane.sidebar_row_count(width);
-        assert_eq!(count, MAX_SIDEBAR_ROWS, "a huge first entry gets the budget like any other");
+        assert_eq!(
+            count, MAX_SIDEBAR_ROWS,
+            "a huge first entry gets the budget like any other"
+        );
         let first = flat(&pane.sidebar_row(0, width).expect("first row"));
         assert!(first.starts_with("▶ "), "{first}");
         let cut = flat(&pane.sidebar_row(count - 2, width).expect("cut entry tail"));
-        assert!(cut.ends_with(" …"), "the clipped entry marks the cut on its last shown line: {cut}");
+        assert!(
+            cut.ends_with(" …"),
+            "the clipped entry marks the cut on its last shown line: {cut}"
+        );
         let pointer = flat(&pane.sidebar_row(count - 1, width).expect("pointer"));
         assert_eq!(pointer, "… continued · Ctrl+T");
-        assert!(pane.sidebar_row(count, width).is_none(), "nothing paints beyond the budget");
+        assert!(
+            pane.sidebar_row(count, width).is_none(),
+            "nothing paints beyond the budget"
+        );
     }
 
     #[test]
@@ -814,7 +859,10 @@ mod tests {
         let count = pane.sidebar_row_count(width);
         assert_eq!(count, MAX_SIDEBAR_ROWS);
         let cut = flat(&pane.sidebar_row(count - 2, width).expect("cut entry tail"));
-        assert!(cut.ends_with(" …"), "the clipped entry marks the cut: {cut}");
+        assert!(
+            cut.ends_with(" …"),
+            "the clipped entry marks the cut: {cut}"
+        );
         assert_eq!(
             flat(&pane.sidebar_row(count - 1, width).expect("pointer")),
             "… continued · Ctrl+T"
@@ -840,9 +888,16 @@ mod tests {
         pane.update_todos(short_items(6));
         let width = 30;
         assert_eq!(pane.sidebar_row_count(width), MAX_SIDEBAR_ROWS);
-        let last_entry = flat(&pane.sidebar_row(MAX_SIDEBAR_ROWS - 1, width).expect("sixth entry"));
+        let last_entry = flat(
+            &pane
+                .sidebar_row(MAX_SIDEBAR_ROWS - 1, width)
+                .expect("sixth entry"),
+        );
         assert!(last_entry.contains("Task 5"), "{last_entry}");
-        assert!(!last_entry.contains("more"), "six fitting entries claim nothing hidden");
+        assert!(
+            !last_entry.contains("more"),
+            "six fitting entries claim nothing hidden"
+        );
 
         pane.update_todos(short_items(7));
         let count = pane.sidebar_row_count(width);
@@ -877,17 +932,35 @@ mod tests {
     fn sidebar_rows_stay_under_the_budget_and_point_to_the_pane_for_the_rest() {
         let _theme = crate::theme::cache::pin_theme();
         let items: Vec<_> = (0..9)
-            .map(|index| (format!("Task {index} with a label"), if index % 2 == 0 { TodoStatus::Pending } else { TodoStatus::InProgress }))
+            .map(|index| {
+                (
+                    format!("Task {index} with a label"),
+                    if index % 2 == 0 {
+                        TodoStatus::Pending
+                    } else {
+                        TodoStatus::InProgress
+                    },
+                )
+            })
             .collect();
-        let references: Vec<(&str, TodoStatus)> = items.iter().map(|(content, status)| (content.as_str(), *status)).collect();
+        let references: Vec<(&str, TodoStatus)> = items
+            .iter()
+            .map(|(content, status)| (content.as_str(), *status))
+            .collect();
         let pane = pane_with(&references);
         let width = 60;
         let count = pane.sidebar_row_count(width);
-        assert!(count <= MAX_SIDEBAR_ROWS, "the pointer shares the budget: {count}");
+        assert!(
+            count <= MAX_SIDEBAR_ROWS,
+            "the pointer shares the budget: {count}"
+        );
         let last = flat(&pane.sidebar_row(count - 1, width).expect("last row"));
         assert!(last.contains("more"), "{last}");
         assert!(last.contains("Ctrl+T"), "{last}");
-        assert!(pane.sidebar_row(count, width).is_none(), "no rows beyond the count");
+        assert!(
+            pane.sidebar_row(count, width).is_none(),
+            "no rows beyond the count"
+        );
     }
 
     #[test]
@@ -900,11 +973,17 @@ mod tests {
         pane.set_show_done(false);
         let width = 40;
         assert_eq!(pane.sidebar_row_count(width), 1);
-        assert_eq!(flat(&pane.sidebar_row(0, width).expect("row")), "□ Pending work");
+        assert_eq!(
+            flat(&pane.sidebar_row(0, width).expect("row")),
+            "□ Pending work"
+        );
         assert!(pane.sidebar_row(1, width).is_none());
 
         pane.update_todos(Vec::new());
-        assert_eq!(flat(&pane.sidebar_row(0, width).expect("row")), "No todo items.");
+        assert_eq!(
+            flat(&pane.sidebar_row(0, width).expect("row")),
+            "No todo items."
+        );
         pane.update_todos(vec![TodoItem {
             content: "Only finished".to_owned(),
             status: TodoStatus::Completed,

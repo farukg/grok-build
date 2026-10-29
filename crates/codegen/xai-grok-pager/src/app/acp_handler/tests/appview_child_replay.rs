@@ -7,8 +7,8 @@ use crate::scrollback::blocks::ToolCallBlock;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use xai_grok_shell::session::info::Info;
-use xai_grok_shell::session::storage::{SessionUpdate as StoredUpdate, StorageAdapter};
 use xai_grok_shell::session::storage::jsonl::JsonlStorageAdapter;
+use xai_grok_shell::session::storage::{SessionUpdate as StoredUpdate, StorageAdapter};
 
 const PARENT: &str = "replay-oracle-parent";
 const CHILD: &str = "replay-oracle-child";
@@ -64,9 +64,9 @@ fn terminal_record() -> StoredUpdate {
 
 fn child_records() -> Vec<StoredUpdate> {
     let updates = [
-        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-            acp_fixtures::text_block(BEFORE),
-        )),
+        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp_fixtures::text_block(
+            BEFORE,
+        ))),
         acp::SessionUpdate::ToolCall(
             acp::ToolCall::new(acp::ToolCallId::new("read-evidence"), "Read evidence.txt")
                 .kind(acp::ToolKind::Read)
@@ -81,9 +81,9 @@ fn child_records() -> Vec<StoredUpdate> {
                     acp_fixtures::text_block(RESULT),
                 ))]),
         )),
-        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-            acp_fixtures::text_block(AFTER),
-        )),
+        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp_fixtures::text_block(
+            AFTER,
+        ))),
     ];
     updates
         .into_iter()
@@ -102,7 +102,9 @@ fn deliver(app: &mut AppView, record: StoredUpdate, replay: bool) -> bool {
     let message = match record {
         StoredUpdate::Acp(mut notification) => {
             if replay {
-                notification.meta.get_or_insert_default()
+                notification
+                    .meta
+                    .get_or_insert_default()
                     .insert("isReplay".into(), serde_json::Value::Bool(true));
             }
             AcpClientMessage::SessionNotification(xai_acp_lib::AcpArgs {
@@ -112,11 +114,19 @@ fn deliver(app: &mut AppView, record: StoredUpdate, replay: bool) -> bool {
         }
         StoredUpdate::Xai(mut notification) => {
             if replay {
-                notification.meta.as_mut().unwrap().as_object_mut().unwrap()
+                notification
+                    .meta
+                    .as_mut()
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
                     .insert("isReplay".into(), serde_json::Value::Bool(true));
             }
             AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
-                request: acp_fixtures::ext_notification("x.ai/session_notification", &*notification),
+                request: acp_fixtures::ext_notification(
+                    "x.ai/session_notification",
+                    &*notification,
+                ),
                 response_tx: tx,
             })
         }
@@ -141,7 +151,10 @@ fn navigate(app: &mut AppView, step: TreeStep) {
 }
 
 fn assert_transcript(app: &AppView) {
-    let child_id = app.agents.find_by_session_id(CHILD).expect("registered child session");
+    let child_id = app
+        .agents
+        .find_by_session_id(CHILD)
+        .expect("registered child session");
     assert_eq!(app.active_view, ActiveView::Agent(child_id));
     let child = app.agents.get(&child_id).unwrap();
     assert_eq!(child.session.session_id.as_ref().unwrap().0.as_ref(), CHILD);
@@ -152,12 +165,23 @@ fn assert_transcript(app: &AppView) {
     assert_eq!(link.parent_session_id.0.as_ref(), PARENT);
     assert_eq!(link.subagent_id, CHILD);
     assert!(child.session.state.is_idle());
-    assert_eq!(child.scrollback.len(), 4, "two messages, one read result, one completion");
-    assert!(child.scrollback.iter_entries().all(|(_, entry)| !entry.is_running));
+    assert_eq!(
+        child.scrollback.len(),
+        4,
+        "two messages, one read result, one completion"
+    );
+    assert!(
+        child
+            .scrollback
+            .iter_entries()
+            .all(|(_, entry)| !entry.is_running)
+    );
     let first = &child.scrollback.entry(0).unwrap().block;
     assert!(matches!(first, RenderBlock::AgentMessage(_)));
     assert_eq!(first.copy_text(true).as_deref(), Some(BEFORE));
-    let RenderBlock::ToolCall(ToolCallBlock::Read(read)) = &child.scrollback.entry(1).unwrap().block else {
+    let RenderBlock::ToolCall(ToolCallBlock::Read(read)) =
+        &child.scrollback.entry(1).unwrap().block
+    else {
         panic!("read result must remain between the two assistant messages");
     };
     assert_eq!(read.path, "evidence.txt");
@@ -173,17 +197,28 @@ fn assert_transcript(app: &AppView) {
                 if *elapsed == Some(std::time::Duration::from_millis(500)))
     ));
     let parent = test_agent(app, AgentId(0));
-    assert_eq!(parent.session.session_id.as_ref().unwrap().0.as_ref(), PARENT);
+    assert_eq!(
+        parent.session.session_id.as_ref().unwrap().0.as_ref(),
+        PARENT
+    );
     let info = parent.subagent_sessions.get(CHILD).unwrap();
     assert!(info.is_finished());
     assert_eq!(info.attempt.status.as_deref(), Some("completed"));
     assert_eq!(info.attempt.tool_calls, Some(1));
     assert_eq!(info.attempt.turns, Some(1));
-    assert_eq!(parent.scrollback.iter_entries().filter(|(_, entry)| matches!(
-        &entry.block, RenderBlock::Subagent(block)
-            if block.child_session_id == CHILD
-                && matches!(&block.kind, SubagentBlockKind::Completed { .. })
-    )).count(), 1, "terminal redelivery must not duplicate the parent's completion row");
+    assert_eq!(
+        parent
+            .scrollback
+            .iter_entries()
+            .filter(|(_, entry)| matches!(
+                &entry.block, RenderBlock::Subagent(block)
+                    if block.child_session_id == CHILD
+                        && matches!(&block.kind, SubagentBlockKind::Completed { .. })
+            ))
+            .count(),
+        1,
+        "terminal redelivery must not duplicate the parent's completion row"
+    );
 }
 
 fn normalized_frame(app: &mut AppView) -> Buffer {
@@ -211,8 +246,14 @@ fn normalized_frame(app: &mut AppView) -> Buffer {
         }
     }
     let text: String = frame.content.iter().map(|cell| cell.symbol()).collect();
-    assert!(text.contains(BEFORE), "the captured frame must paint the first message");
-    assert!(text.contains(AFTER), "the captured frame must paint the final message");
+    assert!(
+        text.contains(BEFORE),
+        "the captured frame must paint the first message"
+    );
+    assert!(
+        text.contains(AFTER),
+        "the captured frame must paint the final message"
+    );
     frame
 }
 
@@ -233,10 +274,19 @@ async fn appview_live_child_matches_fresh_disk_replay_and_reopen() {
     let live_frame = normalized_frame(&mut live);
 
     let storage = JsonlStorageAdapter::with_root(home.path().to_path_buf());
-    let parent_info = Info { id: acp::SessionId::new(PARENT), cwd: "/tmp".into() };
-    let child_info = Info { id: acp::SessionId::new(CHILD), cwd: "/tmp".into() };
+    let parent_info = Info {
+        id: acp::SessionId::new(PARENT),
+        cwd: "/tmp".into(),
+    };
+    let child_info = Info {
+        id: acp::SessionId::new(CHILD),
+        cwd: "/tmp".into(),
+    };
     for info in [&parent_info, &child_info] {
-        storage.init_session(info, acp::ModelId::new("test-model")).await.unwrap();
+        storage
+            .init_session(info, acp::ModelId::new("test-model"))
+            .await
+            .unwrap();
     }
     // Fresh records, not serialization of the already-mutated live view.
     for record in [spawn_record(), terminal_record()] {
@@ -249,27 +299,48 @@ async fn appview_live_child_matches_fresh_disk_replay_and_reopen() {
     assert_eq!(parent_records.len(), 2);
     let terminal = parent_records.last().unwrap().clone();
     let mut replayed = make_app_with_agent(PARENT);
-    replayed.agents.get_mut(&AgentId(0)).unwrap().session.loading_replay = true;
+    replayed
+        .agents
+        .get_mut(&AgentId(0))
+        .unwrap()
+        .session
+        .loading_replay = true;
     for record in parent_records {
         deliver(&mut replayed, record, true);
     }
-    replayed.agents.get_mut(&AgentId(0)).unwrap().session.loading_replay = false;
+    replayed
+        .agents
+        .get_mut(&AgentId(0))
+        .unwrap()
+        .session
+        .loading_replay = false;
     let reads = crate::app::subagent::test_support::transcript_reads();
     navigate(&mut replayed, TreeStep::LatestChild);
-    assert!(crate::app::subagent::test_support::transcript_reads() > reads,
-        "fresh AppView activation must actually read the persisted child");
+    assert!(
+        crate::app::subagent::test_support::transcript_reads() > reads,
+        "fresh AppView activation must actually read the persisted child"
+    );
     assert_transcript(&replayed);
     assert_eq!(normalized_frame(&mut replayed), live_frame);
 
     navigate(&mut replayed, TreeStep::Parent);
     assert_eq!(replayed.active_view, ActiveView::Agent(AgentId(0)));
     let child_id = replayed.agents.find_by_session_id(CHILD).unwrap();
-    assert!(replayed.agents.get(&child_id).unwrap().scrollback.is_empty(),
-        "leaving the disk-backed finished child must exercise eviction");
+    assert!(
+        replayed
+            .agents
+            .get(&child_id)
+            .unwrap()
+            .scrollback
+            .is_empty(),
+        "leaving the disk-backed finished child must exercise eviction"
+    );
     let reads = crate::app::subagent::test_support::transcript_reads();
     navigate(&mut replayed, TreeStep::LatestChild);
-    assert!(crate::app::subagent::test_support::transcript_reads() > reads,
-        "reopening must exercise replay, not a retained copy");
+    assert!(
+        crate::app::subagent::test_support::transcript_reads() > reads,
+        "reopening must exercise replay, not a retained copy"
+    );
     assert_transcript(&replayed);
     assert_eq!(normalized_frame(&mut replayed), live_frame);
     deliver(&mut replayed, terminal, false);

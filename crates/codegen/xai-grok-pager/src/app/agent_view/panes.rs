@@ -541,7 +541,10 @@ impl AgentView {
     }
 
     pub(crate) fn work_dock_at(&self, col: u16, row: u16) -> ratatui::layout::Rect {
-        let sidebar = self.context_dock_geometry().map(|(rect, _)| rect).unwrap_or_default();
+        let sidebar = self
+            .context_dock_geometry()
+            .map(|(rect, _)| rect)
+            .unwrap_or_default();
         if sidebar.contains((col, row).into()) {
             sidebar
         } else {
@@ -568,7 +571,8 @@ impl AgentView {
         if let Some((sidebar, offset)) = self.context_dock_geometry()
             && sidebar == dock
         {
-            return self.dock_layout_for(self.dock_rows_in_sidebar)
+            return self
+                .dock_layout_for(self.dock_rows_in_sidebar)
                 .item_at(relative.saturating_add(offset));
         }
         self.dock_layout_for(dock.height).item_at(relative)
@@ -775,15 +779,23 @@ impl AgentView {
         area: ratatui::layout::Rect,
         data: &crate::views::dock::DockData,
     ) {
-        let (offset, full_height) = self.context_dock_geometry()
+        let (offset, full_height) = self
+            .context_dock_geometry()
             .filter(|(rect, _)| *rect == area)
-            .map_or((0, area.height), |(_, offset)| (offset, self.dock_rows_in_sidebar));
-        self.dock_stop_button =
-            crate::views::dock::hovered_stop_button_rect_with_offset(area, offset, full_height, data).and_then(|hit| {
-                self.dock_stop_action(hit.item)
-                    .and_then(|action| super::DockKillId::from_action(&action))
-                    .map(|id| super::CachedDockStop { rect: hit.rect, id })
+            .map_or((0, area.height), |(_, offset)| {
+                (offset, self.dock_rows_in_sidebar)
             });
+        self.dock_stop_button = crate::views::dock::hovered_stop_button_rect_with_offset(
+            area,
+            offset,
+            full_height,
+            data,
+        )
+        .and_then(|hit| {
+            self.dock_stop_action(hit.item)
+                .and_then(|action| super::DockKillId::from_action(&action))
+                .map(|id| super::CachedDockStop { rect: hit.rect, id })
+        });
     }
     pub(crate) fn cache_dock_stop_button(&mut self) {
         let snapshot = self.dock_snapshot();

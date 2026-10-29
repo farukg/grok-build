@@ -2370,13 +2370,15 @@ fn select_next_continues_from_a_selection_clamped_by_removal() {
     state.select_next();
 
     let sel = state.selected().expect("Down keeps a selection");
-    assert!(sel >= clamped, "Down continues from the clamped tail position");
+    assert!(
+        sel >= clamped,
+        "Down continues from the clamped tail position"
+    );
     assert!(
         state.scroll_offset() > 0,
         "the viewport must stay near the remembered tail"
     );
 }
-
 
 #[test]
 fn absent_selection_crosses_a_nonselectable_window_directionally() {
@@ -2414,7 +2416,6 @@ fn absent_selection_without_layout_up_uses_the_last_selectable_entry() {
     assert_eq!(state.selected(), Some(1));
     assert_eq!(state.scroll_offset(), 0);
 }
-
 
 #[test]
 fn absent_selection_skips_hidden_group_members_near_the_viewport() {

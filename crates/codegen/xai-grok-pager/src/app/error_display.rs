@@ -696,7 +696,10 @@ mod tests {
 
     #[test]
     fn retry_schedule_has_known_generic_wire_classification() {
-        assert_eq!(wire_error_kind(Some("retry_schedule")), Some(WireErrorType::Other));
+        assert_eq!(
+            wire_error_kind(Some("retry_schedule")),
+            Some(WireErrorType::Other)
+        );
     }
 
     #[test]

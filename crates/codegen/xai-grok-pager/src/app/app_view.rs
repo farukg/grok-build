@@ -644,7 +644,10 @@ pub struct AppView {
         std::collections::HashMap<String, Vec<crate::app::prompt_queue::QueueEntryWire>>,
     pub(crate) queue_mirror_bindings: std::collections::HashMap<
         String,
-        Option<(AgentId, xai_grok_shell::session::current_actions::SnapshotBinding)>,
+        Option<(
+            AgentId,
+            xai_grok_shell::session::current_actions::SnapshotBinding,
+        )>,
     >,
     /// Optimistic echo rows for prompts the pager sent server-authoritatively (plain prompt typed while a turn is running).
     /// Pinned into `shared_prompt_queues` on reconcile so the row doesn't flicker.

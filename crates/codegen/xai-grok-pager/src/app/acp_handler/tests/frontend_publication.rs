@@ -5,9 +5,7 @@ use xai_grok_shell::extensions::current_actions::{
 };
 use xai_grok_shell::session::current_actions::{CurrentActionsSnapshot, SnapshotBinding};
 
-async fn poll_once<F: Future>(
-    mut future: std::pin::Pin<&mut F>,
-) -> std::task::Poll<F::Output> {
+async fn poll_once<F: Future>(mut future: std::pin::Pin<&mut F>) -> std::task::Poll<F::Output> {
     std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx))).await
 }
 
