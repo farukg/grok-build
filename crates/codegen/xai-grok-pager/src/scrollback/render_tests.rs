@@ -1286,16 +1286,18 @@ fn test_selected_entry_output_divergence_uses_selected_branch() {
 /// `effective_output` at the wrong width.
 #[test]
 fn message_block_content_width_subtracts_timestamp_reservation() {
-    // Picked so the message wraps to a different line count at `content_width - 10` than at `content_width`
-    // With a 30-wide viewport and 4 columns of chrome, pane_content_width is 26 and per-block content_width is 16
+    // Forty columns leave at least twenty content cells plus the timestamp gutter.
+    // The text wraps differently with and without that ten-cell reservation.
     let entries = vec![make_markdown_entry(
         "hello world foo bar baz qux quux corge grault garply waldo",
     )];
-    let viewport = Rect::new(0, 0, 30, 20);
+    let viewport = Rect::new(0, 0, 40, 20);
     let result = render_with_scratch(&entries, viewport, 0, None);
 
     let pane_content_width = result.selection_model.content_area.width;
     let block = &at(&result.selection_model.visible_blocks, 0);
+    assert_eq!(pane_content_width, 35);
+    assert_eq!(block.content_width, 25);
     assert_eq!(
         block.content_width,
         pane_content_width.saturating_sub(10),
@@ -1326,6 +1328,46 @@ fn message_block_content_width_subtracts_timestamp_reservation() {
         "wider width must wrap differently — proves passing content_area.width \
          to effective_output would break block_line_idx alignment"
     );
+}
+
+#[test]
+fn message_timestamp_width_matrix_preserves_paint_and_selection() {
+    let timestamp = "2026-10-29T12:30:00+00:00"
+        .parse::<chrono::DateTime<chrono::FixedOffset>>()
+        .unwrap()
+        .with_timezone(&chrono::Local);
+    for (width, dated_width, undated_width) in
+        [(30, 25, 25), (34, 29, 29), (35, 20, 30), (40, 25, 35)]
+    {
+        for (created_at, expected_width, timestamp_visible) in [
+            (Some(timestamp), dated_width, width >= 35),
+            (None, undated_width, false),
+        ] {
+            for selected in [None, Some(0)] {
+                let mut entry = make_markdown_entry("abcdefghijklmnopqr");
+                entry.created_at = created_at;
+                let (result, buf) = render_with_scratch_and_buffer(
+                    std::slice::from_ref(&entry),
+                    Rect::new(0, 0, width, 8),
+                    0,
+                    selected,
+                );
+                assert_eq!(
+                    at(&result.selection_model.visible_blocks, 0).content_width,
+                    expected_width,
+                );
+                assert_eq!(at(&result.selection_model.ranges, 0).lines.len(), 1);
+                let rows = (0..8)
+                    .map(|row| buffer_row_text(&buf, row))
+                    .collect::<Vec<_>>();
+                assert!(rows.iter().any(|row| row.contains("abcdefghijklmnopqr")));
+                assert_eq!(
+                    rows.iter().any(|row| row.contains(" AM") || row.contains(" PM")),
+                    timestamp_visible,
+                );
+            }
+        }
+    }
 }
 
 // ── map_hyperlinks_to_overlay ──
@@ -2767,7 +2809,7 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
             (
                 DisplayMode::Collapsed,
                 16,
-                "\u{2026}",
+                "\u{2026}/main.rs",
                 LinkPresentation::Opaque,
             ),
             (
@@ -2804,6 +2846,13 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
             );
             assert!(!path_links.is_empty(), "{name} {mode:?} width={width}");
             if width == 16 {
+                assert_eq!(path_links.len(), 1);
+                let link = at(&path_links, 0);
+                assert_eq!(link.col_end - link.col_start, 9);
+                let linked_paint = (link.col_start..link.col_end)
+                    .map(|col| buf.cell((col, link.screen_row)).unwrap().symbol())
+                    .collect::<String>();
+                assert_eq!(linked_paint, "\u{2026}/main.rs");
                 assert!(painted_rows.iter().any(|row| row.contains("main.rs")));
                 assert!(
                     painted_rows

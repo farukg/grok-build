@@ -11,8 +11,8 @@ use super::line_utils::truncate_str;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolPathSurface {
     /// Path from the session cwd, fitted to the header budget: front
-    /// directories shrink to one letter, then the bounded final `…`
-    /// truncation. Without a cwd the stored path is shown, never a relativized
+    /// directories shrink to one letter, then an ellipsis-prefixed tail keeps
+    /// the basename when it fits. Without a cwd the stored path is shown, never a relativized
     /// guess; outside the cwd the truthful anchored path.
     Collapsed,
     /// Relative to session cwd when lexically contained; else normalized.
@@ -216,7 +216,15 @@ pub fn path_for_tool_surface(
         ToolPathSurface::Collapsed => {
             let budget = width.unwrap_or(usize::MAX).saturating_sub(reserved);
             let from_cwd = path_for_expanded_header(path, cwd);
-            crate::location_path::fit_location_path(&from_cwd, budget).into_owned()
+            if from_cwd.width() <= budget {
+                return from_cwd;
+            }
+            let shortened = crate::location_path::shorten_location_path(&from_cwd);
+            if shortened.width() <= budget {
+                shortened.into_owned()
+            } else {
+                shorten_path(&from_cwd, budget)
+            }
         }
         ToolPathSurface::Expanded => path_for_expanded_header(path, cwd),
         ToolPathSurface::Fullscreen => path_for_fullscreen_header(path, cwd),
@@ -307,6 +315,28 @@ mod tests {
     }
 
     #[test]
+    fn collapsed_surface_preserves_basename_within_display_cell_budget() {
+        let cwd = Path::new("/worktree");
+        for (path, budget, expected) in [
+            ("/worktree/src/nested/main.rs", 9, "\u{2026}/main.rs"),
+            ("/worktree/src/nested/main.rs", 11, "s/n/main.rs"),
+            ("/worktree/src/nested/main.rs", 18, "src/nested/main.rs"),
+            ("/worktree/src/界/main.rs", 9, "\u{2026}/main.rs"),
+        ] {
+            let painted = path_for_tool_surface(
+                path,
+                ToolPathSurface::Collapsed,
+                Some(cwd),
+                Some(budget),
+                0,
+            );
+            assert_eq!(painted, expected);
+            assert!(painted.width() <= budget);
+            assert!(painted.ends_with("main.rs"));
+        }
+    }
+
+    #[test]
     fn collapsed_surface_budget_subtracts_the_reserved_suffix() {
         let cwd = Path::new("/Users/me/project");
         assert_eq!(
@@ -342,7 +372,7 @@ mod tests {
                 Some(12),
                 0
             ),
-            "/o/s/d/dir/\u{2026}"
+            "\u{2026}/main.rs"
         );
     }
 

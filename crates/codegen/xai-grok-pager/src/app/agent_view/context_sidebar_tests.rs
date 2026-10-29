@@ -1307,16 +1307,15 @@ fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal
     agent.open_panel_settings_in(dir.path());
     let first = draw_height(&mut agent, 20);
     let selected = cursor(&agent);
+    assert_eq!(selected, Some(SectionId::Context.row_line(1)));
+    let body = agent.f7_body;
+    assert_eq!(body, Rect::new(105, 2, 54, 15));
+    let selected_y = row_of(&first, "Core instructions").0;
+    assert_eq!(selected_y - body.y, 5);
+    assert!(body.contains((body.x, selected_y).into()));
+    // AppView dispatches accumulated wheel deltas to handle_scroll, not handle_input.
     for _ in 0..12 {
-        let _ = agent.handle_input(
-            &Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollDown,
-                column: first.area.right() - 10,
-                row: 15,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &ActionRegistry::defaults(),
-        );
+        agent.handle_scroll(1, body.x, body.y);
     }
     let before = draw_height(&mut agent, 20);
     assert!(
