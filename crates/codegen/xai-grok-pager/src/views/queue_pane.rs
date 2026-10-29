@@ -1130,10 +1130,19 @@ mod tests {
             .join("\n")
     }
 
-    /// The two ways a row ends up protected: the wire kind on the session's own queue, and any row on a mirror.
-    fn protected_panes() -> [(QueuePane, &'static str); 2] {
+    fn protected_panes() -> [(QueuePane, &'static str); 3] {
         let mut parent_message = wire("parent-message-msg-1", "status update", 1);
         parent_message.kind = String::from("parent_agent_message");
+        let mut delivery = parent_message.clone();
+        delivery.kind = String::from("delivery");
+        let mut delivery_pane = QueuePane::new();
+        delivery_pane.sync_from_merged(
+            &Default::default(),
+            &[delivery],
+            None,
+            None,
+            &Default::default(),
+        );
         let mut per_row_kind = QueuePane::new();
         per_row_kind.sync_from_merged(
             &Default::default(),
@@ -1154,6 +1163,7 @@ mod tests {
         [
             (per_row_kind, "parent_agent_message"),
             (read_only, "ReadOnly"),
+            (delivery_pane, "delivery"),
         ]
     }
 

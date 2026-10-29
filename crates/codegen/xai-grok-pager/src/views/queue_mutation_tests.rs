@@ -1,11 +1,15 @@
 use super::{QueueMutation, ServerRowCapabilities};
 
-/// The whole policy: only `parent_agent_message` is protected on the session's own queue; everything is on a mirror.
 #[test]
 fn capabilities_truth_table() {
     let cases = [
         (
             "parent_agent_message",
+            QueueMutation::PerRowKind,
+            ServerRowCapabilities::PROTECTED,
+        ),
+        (
+            "delivery",
             QueueMutation::PerRowKind,
             ServerRowCapabilities::PROTECTED,
         ),
