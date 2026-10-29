@@ -29,9 +29,9 @@ impl crate::types::tool_metadata::ToolMetadata for MonitorTool {
     fn description_template(&self) -> &str {
         r#"Start a background monitor that streams events from a long-running script. Each stdout line is an event${%- if system_reminders_enabled %} - you can keep working and notifications arrive in the chat${%- endif %}. Exit ends the watch.
 
-**Output volume**: Every stdout line is a main-agent wake. Print only `DONE`/`FAILED`/`CANCELLED`. No progress or CHANGE lines. Use `grep --line-buffered` in pipes (plain `grep` buffers and delays events by minutes).
+**Event content and volume**: Every stdout line is a main-agent wake. Emit concise, complete lines for actionable status changes, including the subject, outcome, and relevant details or diagnostic; avoid repetitive progress noise. Use `grep --line-buffered` in pipes (plain `grep` buffers and delays events by minutes).
 
-**Responsiveness**: Emit `FAILED` to notify immediately when any required item fails; never wait for unrelated work to finish. Include every tracked failure signal in this immediate failure condition.
+**Responsiveness**: Notify immediately with the relevant failure details when any required item fails; never wait for unrelated work to finish. Include every tracked failure signal in this immediate failure condition.
 
 Set `persistent: true` for session-length watches (PR monitoring, log tails) -- the monitor runs${%- if tools.by_kind.kill_task_action %} until you call ${{ tools.by_kind.kill_task_action }} or${%- endif %} until the session ends. Otherwise it stops at `timeout_ms` (default 10h)."#
     }
