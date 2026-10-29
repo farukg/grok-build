@@ -402,6 +402,10 @@ pub struct CurrentModel {
     pub id: String,
     pub reasoning_effort: Option<xai_grok_sampling_types::ReasoningEffort>,
 }
+/// Shell-owned readiness sender; publication gates and reservations stay crate-private.
+pub struct InitialChildReadinessSender(
+    pub(crate) oneshot::Sender<super::message_delivery::InitialChildPublication>,
+);
 pub enum SessionCommand {
     Initialize {
         system_prompt: String,
@@ -459,8 +463,7 @@ pub enum SessionCommand {
         respond_to: oneshot::Sender<PromptTurnResult>,
         /// Optional initial-child readiness signal.
         /// Carried onto the queued item and resolved only when that exact row is promoted, or closed on removal.
-        prompt_admitted:
-            Option<oneshot::Sender<crate::session::message_delivery::InitialChildPublication>>,
+        prompt_admitted: Option<InitialChildReadinessSender>,
         /// Optional oneshot fired once the prompt's persistence is settled, before LLM inference begins.
         /// When a `UserPromptSubmit` hook blocked the prompt it fires immediately: nothing was stored, so there is nothing to flush.
         /// Used by callers that need `chat_history.jsonl` settled before trace snapshots or `session/load`; a blocked prompt never appears there.

@@ -62,7 +62,7 @@ async fn delivery_and_notification_sources_use_distinct_receipt_identities_on_on
         let SourceBindingObservation::Strict { identity: StrictSourceOrigin::CompletionToolResult { session_id, completions, tool_call_id }, binding } = observed(&mut events).await else { panic!("actual tool-call and completion identity"); };
         assert_eq!(session_id, "test-actor");
         assert_eq!(tool_call_id, "actual-read-call");
-        assert_eq!(completions, vec![event.id.into()]);
+        assert_eq!(completions, vec![CompletionIdentity::from(event.id)]);
         flush(&persistence.handle.tx).await;
         let persisted = reopened.load_session(&info).await.unwrap();
         let result = persisted.chat_history.iter().find(|item| matches!(item, ConversationItem::ToolResult(result) if result.tool_call_id == "actual-read-call")).unwrap();

@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use agent_client_protocol::SessionId;
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -23,14 +24,14 @@ use crate::inference_request::{
 use crate::scripted::{BodyHold, BoxWait, ScriptedResponse, TerminalWait};
 
 /// Typed match criteria for one named inference response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferenceRequestMatcher {
     endpoint: InferenceEndpoint,
     kind: InferenceRequestKind,
     /// When set, the request body must contain this text. A compaction summary is an auxiliary
     /// request like any side query, so the hold has to name it.
     body_contains: Option<&'static str>,
-    session_id: Option<&'static str>,
+    session_id: Option<SessionId>,
 }
 
 impl InferenceRequestMatcher {
@@ -73,13 +74,23 @@ impl InferenceRequestMatcher {
         }
     }
 
-    pub fn for_session(mut self, session_id: &'static str) -> Self {
+    pub fn for_session(self, session_id: &'static str) -> Self {
+        self.for_session_id(SessionId::new(session_id))
+    }
+
+    pub fn for_session_id(mut self, session_id: SessionId) -> Self {
         self.session_id = Some(session_id);
         self
     }
 
-    fn matches(self, request: &InferenceRequest<'_>) -> bool {
-        self.session_id.is_none_or(|session_id| request.headers().get("x-grok-session-id").and_then(|value| value.to_str().ok()) == Some(session_id))
+    fn matches(&self, request: &InferenceRequest<'_>) -> bool {
+        self.session_id.as_ref().is_none_or(|session_id| {
+            request
+                .headers()
+                .get("x-grok-session-id")
+                .and_then(|value| value.to_str().ok())
+                == Some(session_id.0.as_ref())
+        })
             && self.endpoint == request.endpoint()
             && self.kind == request.kind()
             && self.body_contains.is_none_or(|fragment| {
@@ -1158,6 +1169,134 @@ mod tests {
     use std::task::{Context, Poll};
 
     use super::*;
+
+    #[test]
+    fn session_matcher_owns_a_dynamic_nominal_session() {
+        let (matcher, mut headers) = {
+            let session_id = SessionId::new(format!("owned-session-{}", std::process::id()));
+            let mut headers = HeaderMap::new();
+            headers.insert("x-grok-session-id", session_id.0.parse().unwrap());
+            headers.insert("x-grok-turn-idx", "1".parse().unwrap());
+            let matcher = InferenceRequestMatcher::foreground(InferenceEndpoint::ChatCompletions)
+                .for_session_id(session_id.clone());
+            (matcher, headers)
+        };
+        let conversations = crate::conversation::ConversationTracker::default();
+        let body = json!({"model": "test-model", "messages": []});
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &body,
+        );
+        assert!(matcher.matches(&request));
+        assert!(matcher.matches(&request));
+        let cloned = matcher.clone();
+        assert!(cloned.matches(&request));
+
+        let other_session = SessionId::new("other-session");
+        headers.insert("x-grok-session-id", other_session.0.parse().unwrap());
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &body,
+        );
+        assert!(!matcher.matches(&request));
+        headers.remove("x-grok-session-id");
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &body,
+        );
+        assert!(!matcher.matches(&request));
+    }
+
+    #[test]
+    fn session_matcher_preserves_endpoint_kind_and_body_conditions() {
+        let session_id = SessionId::new(format!("condition-session-{}", std::process::id()));
+        let matcher = InferenceRequestMatcher::foreground_containing(
+            InferenceEndpoint::ChatCompletions,
+            "required prompt",
+        )
+        .for_session_id(session_id.clone());
+        let mut headers = HeaderMap::new();
+        headers.insert("x-grok-session-id", session_id.0.parse().unwrap());
+        headers.insert("x-grok-turn-idx", "1".parse().unwrap());
+        let conversations = crate::conversation::ConversationTracker::default();
+        let body = json!({"model": "test-model", "messages": [{"role": "user", "content": "required prompt"}]});
+        for (endpoint, expected) in [
+            (InferenceEndpoint::ChatCompletions, true),
+            (InferenceEndpoint::Responses, false),
+            (InferenceEndpoint::Messages, false),
+        ] {
+            let request = InferenceRequest::new(&conversations, endpoint, &headers, &body);
+            assert_eq!(matcher.matches(&request), expected);
+        }
+        let other_body = json!({"model": "test-model", "messages": [{"role": "user", "content": "different prompt"}]});
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &other_body,
+        );
+        assert!(!matcher.matches(&request));
+        let other_model = json!({"model": "other-model", "messages": [{"role": "user", "content": "required prompt"}]});
+        headers.insert("x-grok-req-id", "auxiliary-request".parse().unwrap());
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &other_model,
+        );
+        assert!(matcher.matches(&request));
+        headers.remove("x-grok-turn-idx");
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &body,
+        );
+        assert!(!matcher.matches(&request));
+        assert!(
+            InferenceRequestMatcher::auxiliary_containing(
+                InferenceEndpoint::ChatCompletions,
+                "required prompt",
+            )
+            .for_session_id(session_id)
+            .matches(&request)
+        );
+    }
+
+    #[test]
+    fn session_matcher_preserves_static_and_unfiltered_builders() {
+        let conversations = crate::conversation::ConversationTracker::default();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-grok-session-id", "static-session".parse().unwrap());
+        headers.insert("x-grok-turn-idx", "1".parse().unwrap());
+        let body = json!({"messages": []});
+        let request = InferenceRequest::new(
+            &conversations,
+            InferenceEndpoint::ChatCompletions,
+            &headers,
+            &body,
+        );
+        assert!(
+            InferenceRequestMatcher::foreground(InferenceEndpoint::ChatCompletions)
+                .for_session("static-session")
+                .matches(&request)
+        );
+        assert!(
+            InferenceRequestMatcher::foreground(InferenceEndpoint::ChatCompletions)
+                .matches(&request)
+        );
+        assert!(
+            !InferenceRequestMatcher::auxiliary(InferenceEndpoint::ChatCompletions)
+                .for_session("static-session")
+                .matches(&request)
+        );
+    }
 
     #[tokio::test]
     async fn reply_hold_blocks_until_cancel_releases_it() {

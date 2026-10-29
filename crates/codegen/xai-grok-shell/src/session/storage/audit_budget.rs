@@ -75,7 +75,7 @@ pub(super) struct Budget {
 }
 
 impl Budget {
-    pub fn new(limits: AuditLimits, build: &str) -> Self {
+    pub(super) fn new(limits: AuditLimits, build: &str) -> Self {
         Self {
             limits: limits.bounded(),
             observed_files: 0,
@@ -84,7 +84,7 @@ impl Budget {
         }
     }
 
-    pub fn exceeded(&self, budget: BudgetKind) -> BudgetExceeded {
+    pub(super) fn exceeded(&self, budget: BudgetKind) -> BudgetExceeded {
         BudgetExceeded {
             budget,
             observed_files: self.observed_files,
@@ -92,7 +92,7 @@ impl Budget {
         }
     }
 
-    pub fn response(&mut self, bytes: usize) -> Result<(), BudgetExceeded> {
+    pub(super) fn response(&mut self, bytes: usize) -> Result<(), BudgetExceeded> {
         self.response_bytes = self.response_bytes.saturating_add(bytes);
         if self.response_bytes > self.limits.response_bytes {
             return Err(self.exceeded(BudgetKind::ResponseBytes));
@@ -100,14 +100,14 @@ impl Budget {
         Ok(())
     }
 
-    pub fn issue_capacity(&self, path: &str) -> usize {
+    pub(super) fn issue_capacity(&self, path: &str) -> usize {
         self.limits
             .response_bytes
             .saturating_sub(self.response_bytes)
             / issue_bytes(path)
     }
 
-    pub fn issue(&mut self, path: &str) -> Result<(), BudgetExceeded> {
+    pub(super) fn issue(&mut self, path: &str) -> Result<(), BudgetExceeded> {
         self.observed_issues += 1;
         if self.observed_issues > self.limits.issues {
             return Err(self.exceeded(BudgetKind::Issues));
@@ -131,7 +131,7 @@ pub(super) struct InventoryBudget {
 }
 
 impl InventoryBudget {
-    pub fn new(limits: AuditLimits) -> Self {
+    pub(super) fn new(limits: AuditLimits) -> Self {
         Self {
             entries: 0,
             path_bytes: 0,
@@ -139,7 +139,7 @@ impl InventoryBudget {
         }
     }
 
-    pub fn entry(&mut self, bytes: usize) -> Result<(), BudgetKind> {
+    pub(super) fn entry(&mut self, bytes: usize) -> Result<(), BudgetKind> {
         if self.entries >= self.limits.inventory_entries {
             return Err(BudgetKind::InventoryEntries);
         }

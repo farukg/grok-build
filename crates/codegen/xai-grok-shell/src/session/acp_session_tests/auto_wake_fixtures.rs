@@ -1,22 +1,5 @@
 use super::*;
 
-pub(super) fn task_output_result(task_id: &str, status: &str) -> TaskOutputResult {
-    TaskOutputResult {
-        task_id: task_id.to_string(),
-        command: "echo test".into(),
-        status: status.to_string(),
-        exit_code: Some(0),
-        started: "2026-01-01T00:00:00Z".into(),
-        ended: Some("2026-01-01T00:00:01Z".into()),
-        duration_secs: 1.0,
-        output: "test".into(),
-        output_file: "/tmp/out.log".into(),
-        truncated: false,
-        truncation_hint: String::new(),
-        raw_output_bytes: 4,
-    }
-}
-
 pub(super) fn bash_completed_notification(task_id: &str) -> PendingNotification {
     PendingNotification {
         prompt_id: format!("bash-completed-{task_id}"),

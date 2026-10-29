@@ -6,13 +6,13 @@ mod fixtures;
 use super::*;
 use fixtures::{
     bash_completed_notification, monitor_completed_notification, monitor_event_notification,
-    task_output_result, task_wake_admission,
+    task_wake_admission,
 };
 use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
 use xai_grok_tools::types::output::{BashOutput, TextOutput, ToolOutput};
 use xai_tool_types::{
     KillTaskOutput, KillTaskResult, MultiTaskOutputResult, SubagentCompletedOutput,
-    TaskOutputOutput, TaskOutputResult,
+    TaskOutputOutput,
 };
 fn input_with_origin(prompt_id: &str, origin: crate::session::PromptOrigin) -> InputItem {
     input_with_origin_rx(prompt_id, origin).0
@@ -330,10 +330,12 @@ async fn closed_admission_ack_stores_fallback_before_prompt_rejection() {
             let origin = crate::session::PromptOrigin::TaskCompleted {
                 task_id: "mon-timeout".to_string(),
             };
-            let (admission, response_rx) =
-                task_wake_admission(NotificationSource::MonitorCompleted {
+            let (admission, response_rx) = task_wake_admission(
+                "mon-timeout",
+                NotificationSource::MonitorCompleted {
                     task_id: "mon-timeout".to_string(),
-                });
+                },
+            );
             drop(response_rx);
             assert!(
                 actor
@@ -361,10 +363,12 @@ async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
             let actor = create_completion_test_actor(0, 256_000, 85, gateway_tx).await;
             actor.state.lock().await.notifications_suppressed = true;
-            let (admission, response_rx) =
-                task_wake_admission(NotificationSource::BashTaskCompleted {
+            let (admission, response_rx) = task_wake_admission(
+                "sub-1",
+                NotificationSource::BashTaskCompleted {
                     task_id: "sub-1".to_string(),
-                });
+                },
+            );
             assert!(
                 actor
                     .admit_task_completion_wake(
@@ -399,10 +403,12 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
                 .as_ref()
                 .expect("completion reservations")
                 .reserve("bg-normal".to_string());
-            let (admission, response_rx) =
-                task_wake_admission(NotificationSource::BashTaskCompleted {
+            let (admission, response_rx) = task_wake_admission(
+                "bg-normal",
+                NotificationSource::BashTaskCompleted {
                     task_id: "bg-normal".to_string(),
-                });
+                },
+            );
             let fallback = actor
                 .admit_task_completion_wake(&origin, admission)
                 .await

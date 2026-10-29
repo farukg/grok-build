@@ -894,7 +894,7 @@ async fn changed_restore_cause_reannounces_while_identical_cause_stays_suppresse
             actor.push_system_reminder("restore cause visibility");
             *actor.notifications.source_publications.lock() =
                 crate::session::request_capture::SourcePublications::restored();
-            let restore = |cause| async {
+            let mut restore = async |cause| {
                 let PersistenceMsg::ReadPublishedRequestSources { respond_to } =
                     rx.recv().await.unwrap()
                 else {

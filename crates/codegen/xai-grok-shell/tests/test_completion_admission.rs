@@ -26,7 +26,7 @@ fn native_receiver_accepts_a_live_new_root_with_an_actor_thread() {
         let mut sampled = server.expect_response_blocked(
             "witnessed root receives delivery",
             InferenceRequestMatcher::foreground(InferenceEndpoint::ChatCompletions)
-                .for_session(sid.0.as_ref()),
+                .for_session_id(sid.clone()),
             text_reply("witnessed root finished"),
         );
         admitted(delivery(&conn, &sid, "live-root", PAYLOAD, "admit").await);

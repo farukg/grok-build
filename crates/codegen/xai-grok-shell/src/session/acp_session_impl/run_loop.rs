@@ -903,7 +903,7 @@ pub(super) async fn run_session(
                                     respond_to,
                                     persist_ack,
                                     parsed_prompt_tx,
-                                    initial_child_prompt_ready: prompt_admitted,
+                                    initial_child_prompt_ready: prompt_admitted.map(|ready| ready.0),
                                     traceparent,
                                 })
                                 .await;

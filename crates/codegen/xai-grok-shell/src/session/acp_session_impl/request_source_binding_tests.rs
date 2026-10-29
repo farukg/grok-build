@@ -4,6 +4,7 @@ use crate::session::source_binding::{
 };
 use crate::session::storage::{JsonlStorageAdapter, SessionUpdate, StorageAdapter};
 use xai_chat_state::{CompletionProjection, SubagentCompletionId};
+use xai_chat_state::completion::CompletionIdentity;
 
 #[path = "request_source_binding_loss_tests.rs"]
 mod loss;
@@ -85,7 +86,7 @@ async fn strict_sources_follow_exact_persisted_receipts_and_replay_without_echo_
             let observation = observed(&mut events).await;
             let SourceBindingObservation::Strict { identity: StrictSourceOrigin::Completion { session_id, completions }, binding } = &observation else { panic!("completion identity required"); };
             assert_eq!(session_id, "test-actor");
-            assert_eq!(completions, &vec![event.id.clone().into()]);
+            assert_eq!(completions, &vec![CompletionIdentity::from(event.id.clone())]);
             originals.push((event, source(binding)));
             observations.push(observation);
         }
@@ -97,7 +98,7 @@ async fn strict_sources_follow_exact_persisted_receipts_and_replay_without_echo_
         assert!(!actor.commit_subagent_projection(combined, "same-prompt").await.unwrap());
         for (event, expected_source) in &originals {
             let SourceBindingObservation::Strict { identity: StrictSourceOrigin::Completion { completions, .. }, binding } = observed(&mut events).await else { panic!("each retained projection keeps its own receipt origin"); };
-            assert_eq!(completions, vec![event.id.clone().into()]);
+            assert_eq!(completions, vec![CompletionIdentity::from(event.id.clone())]);
             assert_eq!(source(&binding), *expected_source);
         }
         let before = actor.chat_state_handle.get_conversation().await;

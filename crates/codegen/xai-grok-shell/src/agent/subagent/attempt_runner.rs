@@ -192,7 +192,9 @@ pub(super) async fn run_one_turn_attempt(
                 admission: None,
                 tool_overrides_update: None,
                 respond_to: prompt_tx,
-                prompt_admitted: Some(input.prompt_admitted),
+                prompt_admitted: Some(crate::session::commands::InitialChildReadinessSender(
+                    input.prompt_admitted,
+                )),
                 persist_ack: None,
                 parsed_prompt_tx: None,
             })

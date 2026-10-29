@@ -523,13 +523,6 @@ pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_be
     finish_child_at(coordinator, id, PublicationCheckpoint::Prepared);
 }
 
-pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_with_result_before_visibility(
-    coordinator: &mut TestCoordinator,
-    id: &str,
-    result: SubagentResult,
-) {
-    finish_child_with_result_at(coordinator, id, result, PublicationCheckpoint::Prepared);
-}
 pub(in crate::implementations::grok_build::task::coordinator) fn finish_child_with_result_before_commit(
     coordinator: &mut TestCoordinator,
     id: &str,
