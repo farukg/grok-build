@@ -275,6 +275,9 @@ pub struct SessionContext {
     /// Defaults to [`crate::reminders::DEFAULT_REMINDER_TAG`] (hyphen).
     /// Hosts that expect a different tag name may override this.
     pub system_reminder_tag: &'static str,
+    /// Leader restart policy fact for this process. `Stale` makes the restored
+    /// scheduler state drain its persisted tasks instead of re-firing them.
+    pub restart_stop_age: crate::types::restart_stop_age::RestartStopAge,
 }
 /// Default metadata for dynamically registered tools (e.g., MCP tools)
 /// that don't implement `ToolMetadata`.
@@ -1335,6 +1338,7 @@ impl ToolRegistryBuilder {
         }
         let renderer_arc = Arc::new(renderer.clone());
         resources.insert(renderer);
+        resources.insert(ctx.restart_stop_age);
         let (scheduler_cmd_rx, scheduler_cancel_token) =
             if let Some(parent_handle) = ctx.parent_scheduler_handle {
                 resources.insert(parent_handle);
@@ -2438,6 +2442,7 @@ mod tests {
             auth_provider: None,
             attribution_callback: None,
             system_reminder_tag: crate::reminders::DEFAULT_REMINDER_TAG,
+            restart_stop_age: Default::default(),
         }
     }
     /// Built-in half of the `lock_path_param` guard (a pack that lives in its own crate runs the

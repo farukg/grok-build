@@ -1531,56 +1531,119 @@ impl MvpAgent {
                 .send(SessionCommand::RestoreCompletionWakePolicy(
                     summary.completion_delivery.wake_policy,
                 ));
-            let deliveries = summary.completion_delivery.receiver.recoverable_ids();
-            if !deliveries.is_empty() {
-                let _ = handle
-                    .cmd_tx
-                    .send(SessionCommand::ResumeDeliveries { deliveries });
-            }
-            for obligation in &summary.completion_delivery.obligations {
-                use crate::session::completion_delivery::{
-                    CompletionEventPolicy, CompletionObligation,
-                };
-                let (id, text, policy) = match obligation {
-                    CompletionObligation::Preparing { .. }
-                    | CompletionObligation::Suppressed { .. } => continue,
-                    CompletionObligation::Pending { id, payload } => {
-                        (id, payload.model_text(id), payload.policy)
-                    }
-                    CompletionObligation::Projected { receipt, payload } => (
-                        &receipt.completion,
-                        payload.model_text(&receipt.completion),
-                        payload.policy,
-                    ),
-                };
-                let kind = match policy {
-                    CompletionEventPolicy::Silent => continue,
-                    CompletionEventPolicy::Automatic => {
-                        crate::session::CompletionWakeKind::Recovery
-                    }
-                    CompletionEventPolicy::BoundaryOnly => {
-                        crate::session::CompletionWakeKind::BoundaryRecovery
-                    }
-                };
-                match id {
-                    xai_chat_state::completion::CompletionIdentity::Subagent(id) => {
-                        crate::agent::subagent::enqueue_completion_wake(
-                            &handle.cmd_tx,
-                            id,
-                            kind,
-                            text,
-                            session_id.0.as_ref(),
-                            &None,
-                        );
-                    }
-                    xai_chat_state::completion::CompletionIdentity::V2 { .. } => {
+            // Restart policy fact, decided once at leader startup: a fresh stop
+            // resumes prior running work exactly as before; a stale stop cancels
+            // the recoverable obligations and leaves the session quiescent until
+            // the user sends a new message.
+            let stop_age = self.cfg.borrow().leader_restart_stop_age;
+            match stop_age {
+                xai_grok_tools::types::restart_stop_age::RestartStopAge::Fresh => {
+                    let deliveries =
+                        summary.completion_delivery.receiver.recoverable_ids();
+                    if !deliveries.is_empty() {
                         let _ = handle
                             .cmd_tx
-                            .send(SessionCommand::ResumeTerminalCompletion {
-                                id: id.clone(),
-                                text,
-                                policy,
+                            .send(SessionCommand::ResumeDeliveries { deliveries });
+                    }
+                    for obligation in &summary.completion_delivery.obligations {
+                        use crate::session::completion_delivery::{
+                            CompletionEventPolicy, CompletionObligation,
+                        };
+                        let (id, text, policy) = match obligation {
+                            CompletionObligation::Preparing { .. }
+                            | CompletionObligation::Suppressed { .. } => continue,
+                            CompletionObligation::Pending { id, payload } => {
+                                (id, payload.model_text(id), payload.policy)
+                            }
+                            CompletionObligation::Projected { receipt, payload } => (
+                                &receipt.completion,
+                                payload.model_text(&receipt.completion),
+                                payload.policy,
+                            ),
+                        };
+                        let kind = match policy {
+                            CompletionEventPolicy::Silent => continue,
+                            CompletionEventPolicy::Automatic => {
+                                crate::session::CompletionWakeKind::Recovery
+                            }
+                            CompletionEventPolicy::BoundaryOnly => {
+                                crate::session::CompletionWakeKind::BoundaryRecovery
+                            }
+                        };
+                        match id {
+                            xai_chat_state::completion::CompletionIdentity::Subagent(id) => {
+                                crate::agent::subagent::enqueue_completion_wake(
+                                    &handle.cmd_tx,
+                                    id,
+                                    kind,
+                                    text,
+                                    session_id.0.as_ref(),
+                                    &None,
+                                );
+                            }
+                            xai_chat_state::completion::CompletionIdentity::V2 { .. } => {
+                                let _ = handle
+                                    .cmd_tx
+                                    .send(SessionCommand::ResumeTerminalCompletion {
+                                        id: id.clone(),
+                                        text,
+                                        policy,
+                                    });
+                            }
+                        }
+                    }
+                }
+                xai_grok_tools::types::restart_stop_age::RestartStopAge::Stale => {
+                    use crate::session::completion_delivery::{
+                        CompletionObligation, CompletionSuppression,
+                    };
+                    use xai_chat_state::completion::CompletionIdentity;
+                    let ids: Vec<CompletionIdentity> = summary
+                        .completion_delivery
+                        .obligations
+                        .iter()
+                        .filter_map(|obligation| match obligation {
+                            CompletionObligation::Preparing { .. }
+                            | CompletionObligation::Suppressed { .. } => None,
+                            CompletionObligation::Pending { id, .. } => Some(id.clone()),
+                            CompletionObligation::Projected { receipt, .. } => {
+                                Some(receipt.completion.clone())
+                            }
+                        })
+                        .collect();
+                    let cancelled = ids.len();
+                    if !ids.is_empty() {
+                        let (respond_to, response) = tokio::sync::oneshot::channel();
+                        let sent = handle
+                            .persistence_tx
+                            .send(crate::session::persistence::PersistenceMsg::SuppressTerminalCompletions {
+                                ids,
+                                reason: CompletionSuppression::StaleRestart,
+                                respond_to,
                             });
+                        if sent.is_err() {
+                            tracing::error!(
+                                session_id = %session_id.0,
+                                "stale-restart completion cancel lost its persistence owner"
+                            );
+                        } else {
+                            match response.await {
+                                Ok(Ok(())) => tracing::info!(
+                                    session_id = %session_id.0,
+                                    cancelled,
+                                    "cancelled recoverable completions after stale leader restart"
+                                ),
+                                Ok(Err(error)) => tracing::error!(
+                                    session_id = %session_id.0,
+                                    %error,
+                                    "stale-restart completion cancel failed; obligations stay pending for the next load"
+                                ),
+                                Err(_) => tracing::error!(
+                                    session_id = %session_id.0,
+                                    "stale-restart completion cancel acknowledgement lost"
+                                ),
+                            }
+                        }
                     }
                 }
             }

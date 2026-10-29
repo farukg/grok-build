@@ -48,6 +48,7 @@ enum LeaderServerPoll {
     Accept(std::io::Result<LeaderStream>),
     Event(ServerEvent),
     Response(String),
+    RestartHeartbeat,
 }
 /// A live notification buffered during an in-flight `session/load`: the shared payload plus its `event_seq`.
 /// The `event_seq` is computed at buffer time, when the message is already parsed, so the post-load flush never re-parses.
@@ -196,11 +197,16 @@ pub struct LeaderServerControlState {
     pub cpu_profile: Arc<Mutex<CpuProfileManager>>,
     pub workspace: Arc<WorkspaceControl>,
     pub(crate) cursor_worker: Arc<CursorWorkerControl>,
+    /// Heartbeat file for the leader restart policy; refreshed on a slow interval
+    /// and once more on orderly shutdown (see [`super::restart_policy`]).
+    pub(crate) restart_heartbeat: std::path::PathBuf,
     #[cfg(target_os = "linux")]
     terminal_orphan_startup: TerminalOrphanStartup,
 }
 impl LeaderServerControlState {
     pub fn new(metadata: LeaderServerMetadata) -> Self {
+        let restart_heartbeat =
+            super::restart_policy::heartbeat_path(&metadata.lock_path.clone());
         Self {
             metadata,
             cpu_profile: Arc::new(Mutex::new(CpuProfileManager::new())),
@@ -211,6 +217,7 @@ impl LeaderServerControlState {
                 crate::util::grok_home::grok_home(),
                 ExternalRoster::new(),
             )),
+            restart_heartbeat,
             #[cfg(target_os = "linux")]
             terminal_orphan_startup: TerminalOrphanStartup {
                 #[cfg(not(test))]
@@ -1575,6 +1582,8 @@ pub async fn run_leader_server(
     let mut last_active_client: Option<ClientId> = None;
     let mut had_clients = false;
     let mut pending_requests: usize = 0;
+    let mut restart_heartbeat = tokio::time::interval(super::restart_policy::HEARTBEAT_INTERVAL);
+    restart_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let relaunching = Arc::new(AtomicBool::new(false));
     loop {
         let poll = tokio::select! {
@@ -1585,11 +1594,19 @@ pub async fn run_leader_server(
             }
             Some(event) = event_rx.recv() => LeaderServerPoll::Event(event),
             Some(payload) = response_rx.recv() => LeaderServerPoll::Response(payload),
+            _ = restart_heartbeat.tick() => LeaderServerPoll::RestartHeartbeat,
         };
         match poll {
             LeaderServerPoll::Cancelled => {
                 let reason = shutdown_reason_rx.borrow().clone();
                 info!(?reason, "Leader server shutting down (cancelled)");
+                // Orderly shutdown: leave a fresh stop stamp behind (see `restart_policy`).
+                if let Err(error) = super::restart_policy::write_heartbeat(
+                    &control_state.restart_heartbeat,
+                    chrono::Utc::now(),
+                ) {
+                    warn!(error = %error, "leader heartbeat refresh on shutdown failed");
+                }
                 if pending_requests > 0 {
                     debug!(pending_requests, "Resetting agent_busy on shutdown");
                     agent_busy.store(false, Ordering::Relaxed);
@@ -2330,6 +2347,14 @@ pub async fn run_leader_server(
                     }
                 } else {
                     debug!("No client available for notification routing, message dropped");
+                }
+            }
+            LeaderServerPoll::RestartHeartbeat => {
+                if let Err(error) = super::restart_policy::write_heartbeat(
+                    &control_state.restart_heartbeat,
+                    chrono::Utc::now(),
+                ) {
+                    warn!(error = %error, "leader heartbeat refresh failed");
                 }
             }
         }

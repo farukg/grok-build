@@ -768,6 +768,22 @@ pub async fn run_leader(
     }
     lock.cleanup_socket()?;
     info!("Leader server starting");
+    // Restart policy: decide once, before any server or agent exists, whether the
+    // previous leader run stopped within the resume window. The fact rides in the
+    // agent config; nothing later in this process re-evaluates it.
+    let restart_heartbeat =
+        crate::leader::restart_policy::heartbeat_path(lock.lock_path());
+    let recorded_stop = crate::leader::restart_policy::read_stop_age(
+        &restart_heartbeat,
+        chrono::Utc::now(),
+    );
+    info!(?recorded_stop, "leader restart policy decision");
+    agent_config.leader_restart_stop_age = recorded_stop.stop_age();
+    if let Err(e) =
+        crate::leader::restart_policy::write_heartbeat(&restart_heartbeat, chrono::Utc::now())
+    {
+        warn!(error = %e, "leader heartbeat write failed");
+    }
     tokio::task::spawn_blocking(|| {
         xai_file_utils::queue::cleanup_orphaned_uploads(
             &grok_home::grok_home(),

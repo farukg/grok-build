@@ -57,6 +57,7 @@ pub(crate) mod cursor_worker;
 pub mod in_process;
 mod lock;
 pub mod protocol;
+pub(crate) mod restart_policy;
 pub(crate) mod roster_merge;
 mod server;
 #[cfg(test)]

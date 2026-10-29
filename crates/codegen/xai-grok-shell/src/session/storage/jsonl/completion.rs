@@ -22,7 +22,15 @@ impl JsonlStorageAdapter {
         reason: crate::session::completion_delivery::CompletionSuppression,
     ) -> io::Result<()> {
         use xai_chat_state::completion::{CompletionIdentity, TerminalCompletionId};
-        if ids.iter().any(|id| !matches!(id, CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { owner_session_id, .. }, .. } if owner_session_id == &info.id.to_string())) {
+        // Goal suppression is driven by notification policy over arbitrary ids, so it
+        // must stay restricted to task identities this session owns. Stale-restart
+        // cancellation passes the session's own persisted obligation ids (both
+        // identity kinds), which are owned by construction.
+        if matches!(
+            reason,
+            crate::session::completion_delivery::CompletionSuppression::GoalNotificationPolicy
+        ) && ids.iter().any(|id| !matches!(id, CompletionIdentity::V2 { terminal: TerminalCompletionId::Task { owner_session_id, .. }, .. } if owner_session_id == &info.id.to_string()))
+        {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "goal suppression requires owned task identities"));
         }
         let storage = self.clone();

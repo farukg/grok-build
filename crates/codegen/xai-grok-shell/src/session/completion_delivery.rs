@@ -161,7 +161,13 @@ pub(crate) enum CompletionAdmission {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompletionSuppression { GoalNotificationPolicy }
+pub enum CompletionSuppression {
+    GoalNotificationPolicy,
+    /// Leader restart policy: the previous leader stopped beyond the resume
+    /// window, so recoverable obligations are cancelled at startup instead of
+    /// being woken by the next session load.
+    StaleRestart,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(tag = "state", content = "payload", rename_all = "snake_case")]

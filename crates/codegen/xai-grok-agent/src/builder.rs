@@ -101,6 +101,8 @@ pub struct AgentBuilder {
     preloaded_skills: Option<Vec<xai_grok_tools::implementations::skills::types::SkillInfo>>,
     /// Startup folder-trust verdict; hosts without this gate must opt in explicitly.
     project_trusted: bool,
+    /// Leader restart policy fact; `Stale` drains restored persisted scheduler tasks.
+    restart_stop_age: xai_grok_tools::types::restart_stop_age::RestartStopAge,
 }
 fn ensure_plan_mode_tools(tool_config: &mut xai_grok_tools::registry::types::ToolServerConfig) {
     use xai_grok_tools::implementations::grok_build;
@@ -362,7 +364,15 @@ impl AgentBuilder {
             persisted_announced_skill_names: None,
             preloaded_skills: None,
             project_trusted: false,
+            restart_stop_age: Default::default(),
         }
+    }
+    pub fn with_restart_stop_age(
+        mut self,
+        restart_stop_age: xai_grok_tools::types::restart_stop_age::RestartStopAge,
+    ) -> Self {
+        self.restart_stop_age = restart_stop_age;
+        self
     }
     pub fn with_project_trusted(mut self, project_trusted: bool) -> Self {
         self.project_trusted = project_trusted;
@@ -1201,6 +1211,7 @@ impl AgentBuilder {
                 auth_provider: None,
                 attribution_callback: self.attribution_callback,
                 system_reminder_tag: self.system_reminder_tag,
+                restart_stop_age: self.restart_stop_age,
             },
         )
         .instrument(tool_registry_span)

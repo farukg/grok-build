@@ -196,6 +196,7 @@ impl SchedulerActor {
 
     pub async fn run(mut self) {
         self.await_subagent_wiring_for_due_tasks().await;
+        self.cancel_restored_tasks_after_stale_restart().await;
         self.announce_existing_tasks().await;
 
         loop {
@@ -845,6 +846,55 @@ impl SchedulerActor {
         });
 
         LoopFireOutcome::Spawned(subagent_id)
+    }
+
+    /// Leader restart policy: after a stale stop (> grace window), persisted
+    /// tasks are cancelled once at startup through the same durable-removal path
+    /// as an explicit delete, instead of re-firing against a dead chain.
+    /// A failed durable removal leaves the remaining tasks running (today's
+    /// behavior) rather than discarding them without acknowledgement.
+    async fn cancel_restored_tasks_after_stale_restart(&mut self) {
+        let stale = {
+            let res = self.resources.lock().await;
+            res.get::<crate::types::restart_stop_age::RestartStopAge>()
+                .is_some_and(|age| *age == crate::types::restart_stop_age::RestartStopAge::Stale)
+        };
+        if !stale {
+            return;
+        }
+        loop {
+            let next_id = {
+                let res = self.resources.lock().await;
+                res.get::<State<SchedulerState>>()
+                    .and_then(|state| state.tasks.first().map(|task| task.id.clone()))
+            };
+            let Some(task_id) = next_id else {
+                return;
+            };
+            let (reply, response) = tokio::sync::oneshot::channel();
+            self.handle_command(SchedulerCommand::Delete {
+                id: task_id.clone(),
+                reply,
+            })
+            .await;
+            match response.await {
+                Ok(Ok(true)) => tracing::info!(
+                    task_id = %task_id,
+                    "cancelled persisted scheduled task after stale leader restart"
+                ),
+                Ok(Ok(false)) => return,
+                Ok(Err(error)) => {
+                    tracing::error!(
+                        task_id = %task_id,
+                        %error,
+                        "durable cancellation of a persisted scheduled task failed; \
+                         leaving remaining tasks running"
+                    );
+                    return;
+                }
+                Err(_) => return,
+            }
+        }
     }
 
     async fn announce_existing_tasks(&self) {
