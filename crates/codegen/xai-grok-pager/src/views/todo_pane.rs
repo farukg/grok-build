@@ -40,16 +40,25 @@ impl Default for TodoPaneStyle {
             },
             completed: TodoStatusStyle {
                 icon_fg: theme.accent_success,
-                text_style: Style::default().fg(theme.gray_bright),
+                text_style: dimmed_text(&theme),
             },
             cancelled: TodoStatusStyle {
                 icon_fg: theme.accent_error,
-                text_style: Style::default()
-                    .fg(theme.gray_bright)
-                    .add_modifier(Modifier::CROSSED_OUT),
+                text_style: dimmed_text(&theme).add_modifier(Modifier::CROSSED_OUT),
             },
         }
     }
+}
+
+/// Inactive (completed/cancelled) rows keep the active row text's hue, dimmed toward the
+/// background instead of neutral gray. Unblendable palettes degrade to the DIM attribute.
+fn dimmed_text(theme: &crate::theme::Theme) -> Style {
+    theme
+        .dimmed_color(theme.text_primary)
+        .map_or_else(
+            || Style::default().add_modifier(Modifier::DIM),
+            |c| Style::default().fg(c),
+        )
 }
 
 /// A `TodoItem` wrapped for display in a `ListPane`.
@@ -657,6 +666,31 @@ mod tests {
             empty_placeholder_message(true, TodoCounts::default()),
             "No todo items."
         );
+    }
+
+    /// Inactive rows keep the active text hue, dimmed toward the background — never neutral gray.
+    #[test]
+    fn completed_and_cancelled_rows_carry_dimmed_primary_text() {
+        let _guard = crate::theme::cache::pin_theme();
+        let theme = crate::theme::Theme::current();
+        let style = TodoPaneStyle::default();
+        let pending_fg = style.pending.text_style.fg;
+        for inactive in [style.completed.text_style, style.cancelled.text_style] {
+            assert_ne!(
+                inactive.fg,
+                Some(theme.gray_bright),
+                "inactive rows must not paint neutral gray"
+            );
+            if let Some(dim) = theme.dimmed_color(theme.text_primary) {
+                assert_eq!(inactive.fg, Some(dim));
+            }
+            assert_ne!(inactive.fg, pending_fg);
+        }
+        assert!(style
+            .cancelled
+            .text_style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT));
     }
 
     #[test]

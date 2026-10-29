@@ -19,7 +19,24 @@ workflow:
         - .gitlab/ci/**/*
     - if: '$CI_COMMIT_BRANCH && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
 
-stages: [validate, build]
+stages: [cleanup, validate, build]
+
+# Runs first in every pipeline: drops runner-side build state the next build
+# does not need (leftover buildah containers, dangling layers, cache and dist
+# entries untouched for CLEANUP_OLDER_THAN_DAYS, default 14 days). Shares the
+# build resource group so it never prunes under a running build.
+linux-cache-cleanup:
+  stage: cleanup
+  needs: []
+  when: always
+  tags: [nspawn]
+  resource_group: grok-linux-release
+  timeout: 30 minutes
+  variables:
+    GIT_DEPTH: "1"
+  cache: []
+  script:
+    - bash .gitlab/ci/cleanup.sh
 
 linux-lockfile:
   stage: validate

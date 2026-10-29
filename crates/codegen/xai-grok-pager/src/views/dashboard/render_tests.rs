@@ -1149,9 +1149,9 @@ fn render_rows_hit_rects_leave_no_dead_zones() {
     );
 }
 
-/// Terminal theme: dim metadata renders via `Theme::dim()` — the DIM attribute, never a `gray_dim`
-/// fg, which equals the hover/selection band. (both bright black) and would vanish. RGB themes keep
-/// the plain `gray_dim` fg.
+/// Terminal theme: dim metadata renders via the DIM attribute — never a `gray_dim`
+/// fg, which equals the hover/selection band (both bright black) and would vanish. RGB themes
+/// carry the dimmed secondary hue.
 #[test]
 fn hovered_row_secondary_text_stays_visible_on_terminal_theme() {
     let mut state = DashboardState::new();
@@ -1182,11 +1182,15 @@ fn hovered_row_secondary_text_stays_visible_on_terminal_theme() {
         "falls back to the muted() DIM treatment"
     );
 
-    // RGB theme: unchanged gray_dim metadata on hover.
+    // RGB theme: dimmed-hue metadata on hover, never flat gray.
     let theme = Theme::groknight();
     let mut buf = Buffer::empty(Rect::new(0, 0, 40, 3));
     render_row(&mut buf, Rect::new(0, 0, 40, 3), &theme, &row, &mut state);
-    assert_eq!(buf_cell(&buf, 4, 1).style().fg, Some(theme.gray_dim));
+    assert_ne!(
+        buf_cell(&buf, 4, 1).style().fg,
+        Some(theme.gray_dim),
+        "dim metadata must keep the dimmed secondary hue, not gray_dim"
+    );
 }
 
 /// Terminal theme: the selected row inverts uniformly — colored glyphs. (state symbol, the Pending
@@ -2939,15 +2943,16 @@ fn render_row_two_line_layout_paints_title_and_secondary() {
     );
 }
 
-/// The SELECTED row brightens its secondary text from `gray_dim` to `text_secondary`. The user can
-/// then read what the agent is doing without leaving the dashboard. The unselected baseline stays
-/// dim: the row's metadata tail shouldn't compete with the title for attention.
+/// The SELECTED row brightens its secondary text to `text_secondary`; unselected rows carry the
+/// same hue dimmed toward the background (never flat gray). The user can then read what the agent
+/// is doing without leaving the dashboard, while the unselected metadata tail doesn't compete with
+/// the title.
 #[test]
 fn render_row_selected_brightens_secondary_text() {
     use std::path::PathBuf;
     use std::time::SystemTime;
-    // A fixed RGB palette: dim metadata carries a gray_dim fg there (on the
-    // terminal theme it is the DIM attribute instead, covered by
+    // A fixed RGB palette: dim metadata is a blend there (on the terminal theme
+    // it is the DIM attribute instead, covered by
     // `hovered_row_secondary_text_stays_visible_on_terminal_theme`).
     let theme = Theme::groknight();
     let id = DashboardRowId::TopLevel(crate::app::agent::AgentId(7));
@@ -2978,10 +2983,22 @@ fn render_row_selected_brightens_secondary_text() {
         &row,
         &mut state_unselected,
     );
-    assert_eq!(
-        buf_cell(&buf, 4, 1).fg,
-        theme.gray_dim,
-        "unselected row's secondary must paint in `gray_dim`",
+    let dim_fg = buf_cell(&buf, 4, 1).fg;
+    assert_ne!(
+        dim_fg, theme.gray_dim,
+        "unselected row's secondary must not paint flat gray",
+    );
+    assert_ne!(
+        dim_fg, theme.text_secondary,
+        "unselected row's secondary must stay dimmer than the selected one",
+    );
+    let luma = |c: ratatui::style::Color| match c {
+        ratatui::style::Color::Rgb(r, g, b) => u32::from(r) + u32::from(g) + u32::from(b),
+        other => panic!("expected RGB, got {other:?}"),
+    };
+    assert!(
+        luma(theme.bg_base) < luma(dim_fg) && luma(dim_fg) < luma(theme.text_secondary),
+        "unselected secondary must sit between background and `text_secondary`"
     );
 
     // Selected: brighter secondary

@@ -3178,6 +3178,30 @@ fn upload_trace_request_without_intent_keeps_legacy_wire_shape() {
             r#"{"sessionId":"sess-1"}"#
         );
 }
+/// `_meta.promptId` has exactly one writer per cancel kind: the rewind path owns it under the
+/// rewind flags, the wake-target path writes it bare so the shell can bind the cancel to the
+/// wake turn. A bare target must never imply a rewind.
+#[test]
+fn cancel_meta_names_the_target_only_on_its_own_path() {
+    let target = cancel_notification_meta(&CancelMeta {
+        target_prompt_id: Some("task-completed-bg1"),
+        ..CancelMeta::default()
+    });
+    assert_eq!(target.get("promptId").and_then(|v| v.as_str()), Some("task-completed-bg1"));
+    assert!(target.get("rewindIfNoOutput").is_none());
+    assert!(target.get("rewindIfPristine").is_none());
+
+    let rewind = cancel_notification_meta(&CancelMeta {
+        rewind_prompt_id: Some("user-1"),
+        target_prompt_id: Some("task-completed-bg1"),
+        ..CancelMeta::default()
+    });
+    assert_eq!(rewind.get("promptId").and_then(|v| v.as_str()), Some("user-1"));
+    assert_eq!(rewind.get("rewindIfNoOutput").and_then(|v| v.as_bool()), Some(true));
+
+    let anonymous = cancel_notification_meta(&CancelMeta::default());
+    assert!(anonymous.get("promptId").is_none());
+}
 /// Every answer the shell can give, plus a dead channel and a broken peer, comes back as `TeamCapabilityHydrated` for the identity that asked.
 /// The serialization arm is not in the table: `HydrateTeamCapabilityRequest` is two `Option<String>`s, whose `Serialize` cannot fail, so no input reaches it.
 #[tokio::test]

@@ -262,9 +262,27 @@ impl ThinkingBlock {
         }
     }
 
-    /// Render the collapsed view: header line only, truncated to fit.
+    /// One-line content preview of the collapsed row, in the parser's display projection
+    /// (tabs/math concealed like every other preview consumer) — never a re-expanded source read.
+    fn preview_spans(&self, theme: &Theme) -> Vec<Span<'static>> {
+        let preview = self.content.preview();
+        if preview.is_empty() {
+            return Vec::new();
+        }
+        let muted = theme.muted();
+        vec![
+            Span::styled(" \u{2014} ".to_string(), muted),
+            Span::styled(preview, muted),
+        ]
+    }
+
+    /// Render the collapsed view: header plus first-line preview, truncated to fit.
     fn render_collapsed(&self, ctx: &BlockContext) -> BlockOutput {
-        let line = self.header_line(ctx);
+        let theme = Theme::current();
+        let mut line = self.header_line(ctx);
+        if !ctx.is_running {
+            line.spans.extend(self.preview_spans(&theme));
+        }
         let line = append_expand_hint(line, ctx);
         let line = crate::render::line_utils::truncate_line(line, ctx.content_width());
         BlockOutput {
@@ -567,6 +585,71 @@ mod tests {
         assert_eq!(block.copy_text(true), "history\t界 tail");
         assert_eq!(block.copy_text(false), "history    界 tail");
         assert_eq!(block.elapsed_time_ms(), Some(1200));
+    }
+
+    fn collapsed_text(out: &BlockOutput) -> String {
+        out.lines
+            .iter()
+            .map(|l| crate::scrollback::types::line_plain_text(&l.content))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn collapsed_thinking_shows_projected_one_line_preview() {
+        let mut block = ThinkingBlock::new("left\t\\( x \\)\nsecond line never shows");
+        block.set_elapsed_time_ms(Some(1200));
+        let text = collapsed_text(&block.output(&ctx(DisplayMode::Collapsed, 80)));
+        assert!(
+            text.starts_with("Thought for 1.2s \u{2014} left    $x$"),
+            "got {text:?}"
+        );
+        assert!(!text.contains("second line"), "got {text:?}");
+    }
+
+    #[test]
+    fn collapsed_thinking_preview_truncates_with_ellipsis_at_narrow_width() {
+        let block = ThinkingBlock::new("a long line of reasoning that cannot fit a narrow pane");
+        let out = block.output(&ctx(DisplayMode::Collapsed, 20));
+        assert_eq!(out.lines.len(), 1);
+        let line = out.lines.first().expect("header line");
+        let text = crate::scrollback::types::line_plain_text(&line.content);
+        assert!(text.starts_with("Thought"), "got {text:?}");
+        assert!(text.ends_with('\u{2026}'), "got {text:?}");
+        assert!(
+            unicode_width::UnicodeWidthStr::width(text.as_str()) <= 20,
+            "got {text:?}"
+        );
+    }
+
+    #[test]
+    fn collapsed_thinking_empty_body_keeps_marker_only() {
+        let block = ThinkingBlock::new("");
+        let text = collapsed_text(&block.output(&ctx(DisplayMode::Collapsed, 40)));
+        assert_eq!(text, "Thought", "got {text:?}");
+        assert!(!text.contains('\u{2014}'), "got {text:?}");
+    }
+
+    /// The preview rides the parser projection like every other preview consumer: a fenced code
+    /// body previews its own fence line, not the code inside and not raw expanded source.
+    #[test]
+    fn collapsed_thinking_previews_code_bodies_as_their_fence_line() {
+        let block = ThinkingBlock::new("```rust\nlet x = 1;\n```");
+        let text = collapsed_text(&block.output(&ctx(DisplayMode::Collapsed, 80)));
+        assert!(text.contains("\u{2014} ```rust"), "got {text:?}");
+        assert!(!text.contains("let x"), "got {text:?}");
+    }
+
+    #[test]
+    fn collapsed_thinking_running_has_no_preview() {
+        let mut block = ThinkingBlock::streaming();
+        block.push_chunk("partial reasoning");
+        let running_ctx = BlockContext {
+            is_running: true,
+            ..ctx(DisplayMode::Collapsed, 40)
+        };
+        let text = collapsed_text(&block.output(&running_ctx));
+        assert_eq!(text, "Thinking…", "got {text:?}");
     }
 
     #[test]

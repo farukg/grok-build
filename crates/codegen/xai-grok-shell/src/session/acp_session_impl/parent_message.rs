@@ -999,6 +999,7 @@ impl SessionActor {
                     history: crate::session::CancelHistoryDisposition::Keep,
                     trigger: Some(crate::session::CancelTrigger::Shutdown),
                     user_initiated: false,
+                    target_prompt_id: None,
                 },
                 ParentTeardownRequest::ActorDrop,
             )

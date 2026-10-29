@@ -659,6 +659,27 @@ mod tests {
         assert!(style.add_modifier.contains(Modifier::DIM));
     }
 
+    /// `dimmed_color` is the inactive-row form of an active color: same hue direction, strictly
+    /// dimmer, never the neutral `gray_dim`. The bandless palette cannot blend and yields `None`.
+    #[test]
+    fn dimmed_color_keeps_hue_between_background_and_active() {
+        let luma = |c: ratatui::style::Color| match c {
+            ratatui::style::Color::Rgb(r, g, b) => u32::from(r) + u32::from(g) + u32::from(b),
+            other => panic!("expected RGB, got {other:?}"),
+        };
+        let night = Theme::groknight();
+        for active in [night.text_primary, night.text_secondary, night.accent_running] {
+            let dim = night.dimmed_color(active).expect("RGB theme blends");
+            assert_ne!(dim, night.gray_dim);
+            assert_ne!(dim, active);
+            assert!(
+                luma(night.bg_base) < luma(dim) && luma(dim) < luma(active),
+                "active {active:?} -> dim {dim:?}"
+            );
+        }
+        assert_eq!(Theme::terminal_default().dimmed_color(ratatui::style::Color::Reset), None);
+    }
+
     #[test]
     fn from_name_auto() {
         assert_eq!(ThemeKind::from_name("auto"), Some(ThemeKind::Auto));

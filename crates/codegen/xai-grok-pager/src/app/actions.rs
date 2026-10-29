@@ -1673,6 +1673,10 @@ pub enum Effect {
         /// `_meta.rewindIfNoOutput` and `_meta.promptId` of the locally rewound turn.
         /// Set only when the pager restored the prompt into the composer.
         rewind_prompt_id: Option<String>,
+        /// `_meta.promptId` of the turn this cancel targets without rewinding it (a streaming
+        /// wake turn). Lets the shell bind the cancel to that turn; `rewind_prompt_id` owns
+        /// `promptId` on the rewind path, so the two are mutually exclusive.
+        target_prompt_id: Option<String>,
     },
     /// Run a manual `/compact` command.
     Compact {

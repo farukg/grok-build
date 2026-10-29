@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
 
 use super::block::BlockContent;
 use super::entry::ScrollbackEntry;
@@ -30,6 +29,9 @@ use crate::theme::Theme;
 /// Synthetic header `range_id`, reserved above block `selection_range` ids (which count up from 0).
 /// Expanded verb slot maps member 0's line 0 beside the header; a shared id would merge both rows into one selectable range.
 pub(crate) const GROUP_HEADER_RANGE_ID: usize = usize::MAX;
+
+/// How far the rewind dimmed tail blends each painted fg toward the row background.
+const DIM_TAIL_BLEND: f32 = 0.55;
 
 /// Label for the inline-media native-open text button (terminals without inline graphics).
 /// Graphics terminals use a shorter overlay `[Open]` instead.
@@ -373,24 +375,10 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         renderer.render(entry_content_area, buf);
 
         if dim_from_entry.is_some_and(|d| logical_idx >= d) {
-            // On the terminal-native theme `dim()` carries no fg (gray_dim is
-            // the same bright black as the user-message band, which would
-            // erase that text); de-emphasize with the DIM attribute instead.
-            let dim_style = theme.dim();
-            for cy in entry_content_area.y..entry_content_area.y + entry_content_area.height {
-                for cx in entry_content_area.x..entry_content_area.x + entry_content_area.width {
-                    if let Some(cell) = buf.cell_mut((cx, cy)) {
-                        match dim_style.fg {
-                            Some(fg) => cell.fg = fg,
-                            None => {
-                                cell.modifier.insert(Modifier::DIM);
-                                // Bold defeats faint on many terminals.
-                                cell.modifier.remove(Modifier::BOLD);
-                            }
-                        }
-                    }
-                }
-            }
+            // Hue-preserving dim: every painted color moves toward the background instead of
+            // being repainted flat gray, so inactive rows keep their active color identity.
+            // The bandless terminal palette cannot blend and degrades to the DIM attribute.
+            crate::render::color::dim_area(buf, entry_content_area, theme.bg_base, DIM_TAIL_BLEND);
         }
 
         // Use cached output for selection model building. Must use the same effective width as the renderer (reduced by

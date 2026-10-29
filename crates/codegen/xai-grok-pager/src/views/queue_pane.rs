@@ -4,7 +4,7 @@
 //! Shows `#1`, `#2`, … prefixes (positional, 1-based) with the first line of each prompt's text.
 //! Multiline prompts show a `(+N lines)` indicator.
 
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -179,9 +179,16 @@ impl QueuedPromptEntry {
         );
     }
 
+    /// Inactive queue chrome (the `#N` marker, the `(+N lines)` suffix) keeps its row's
+    /// active hue, dimmed toward the background instead of neutral gray. Unblendable
+    /// palettes keep the gray they had.
+    fn dimmed_fg(theme: &Theme, color: Color) -> Color {
+        theme.dimmed_color(color).unwrap_or(theme.gray)
+    }
+
     /// Build the styled `Line` for display.
     ///
-    /// If `max_width` is provided, the first line is truncated so the gray suffix fits: `(+N lines)` for a
+    /// If `max_width` is provided, the first line is truncated so the dimmed suffix fits: `(+N lines)` for a
     /// multiline entry, then the protected marker, which is dropped when the text, after the `(+N lines)`
     /// suffix is reserved, would keep less than the marker's own width.
     fn build_styled(
@@ -229,7 +236,10 @@ impl QueuedPromptEntry {
                 )];
 
                 if !suffix.is_empty() {
-                    spans.push(Span::styled(suffix, Style::default().fg(theme.gray)));
+                    spans.push(Span::styled(
+                        suffix,
+                        Style::default().fg(Self::dimmed_fg(&theme, theme.accent_user)),
+                    ));
                 }
 
                 Line::from(spans)
@@ -259,7 +269,10 @@ impl QueuedPromptEntry {
                 };
 
                 if !suffix.is_empty() {
-                    spans.push(Span::styled(suffix, Style::default().fg(theme.gray)));
+                    spans.push(Span::styled(
+                        suffix,
+                        Style::default().fg(Self::dimmed_fg(&theme, theme.accent_assistant)),
+                    ));
                 }
 
                 Line::from(spans)
@@ -279,7 +292,10 @@ impl QueuedPromptEntry {
                 ];
 
                 if !suffix.is_empty() {
-                    spans.push(Span::styled(suffix, Style::default().fg(theme.gray)));
+                    spans.push(Span::styled(
+                        suffix,
+                        Style::default().fg(Self::dimmed_fg(&theme, theme.command)),
+                    ));
                 }
 
                 Line::from(spans)
@@ -298,7 +314,7 @@ impl ListItem for QueuedPromptEntry {
         Some(Line::from(vec![
             Span::styled(
                 format!("#{}", self.position),
-                Style::default().fg(theme.gray),
+                Style::default().fg(QueuedPromptEntry::dimmed_fg(&theme, theme.accent_user)),
             ),
             Span::raw(" "),
         ]))
@@ -1774,6 +1790,40 @@ mod tests {
         );
         let copied = clip.lock().unwrap().clone();
         assert_eq!(copied.as_deref(), Some(full));
+    }
+
+    /// Inactive queue chrome keeps the row's active hue dimmed, never neutral gray.
+    #[test]
+    fn prefix_and_suffix_carry_dimmed_row_hue() {
+        let _guard = crate::theme::cache::pin_theme();
+        let theme = Theme::current();
+        let styled = QueuedPromptEntry::build_styled(
+            "first line",
+            2,
+            QueueEntryKind::Prompt,
+            None,
+            editable(),
+        );
+        let body_fg = styled.spans.first().and_then(|s| s.style.fg);
+        let suffix_fg = styled.spans.last().and_then(|s| s.style.fg);
+        assert_eq!(body_fg, Some(theme.accent_user));
+        assert_ne!(suffix_fg, Some(theme.gray), "suffix must not paint gray");
+        if let Some(dim) = theme.dimmed_color(theme.accent_user) {
+            assert_eq!(suffix_fg, Some(dim));
+        }
+
+        let entry = QueuedPromptEntry::from_server(
+            &wire("p9", "text", 9),
+            9,
+            QueueMutation::ReadOnly,
+        );
+        let prefix_fg = entry
+            .prefix()
+            .and_then(|line| line.spans.first().and_then(|s| s.style.fg));
+        assert_ne!(prefix_fg, Some(theme.gray), "prefix must not paint gray");
+        if let Some(dim) = theme.dimmed_color(theme.accent_user) {
+            assert_eq!(prefix_fg, Some(dim));
+        }
     }
 
     #[test]

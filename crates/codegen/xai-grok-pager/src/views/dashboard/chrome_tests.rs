@@ -500,6 +500,19 @@ fn render_header_paints_every_state_chip_in_its_colour() {
         .map(|x| buf_cell(&buf, x, 0).symbol())
         .collect();
     let filled = crate::glyphs::diamond_filled();
+    // Idle keeps the working accent's hue, dimmed toward the background (never flat gray).
+    let idle_dim = theme.dimmed_color(theme.accent_running);
+    if let Some(dim) = idle_dim {
+        let luma = |c: ratatui::style::Color| match c {
+            ratatui::style::Color::Rgb(r, g, b) => u32::from(r) + u32::from(g) + u32::from(b),
+            other => panic!("expected RGB, got {other:?}"),
+        };
+        assert_ne!(dim, theme.gray_dim);
+        assert!(
+            luma(theme.bg_base) < luma(dim) && luma(dim) < luma(theme.accent_running),
+            "idle chip must sit between background and the working accent"
+        );
+    }
     let expected = [
         ("1 awaiting", filled, theme.warning),
         (
@@ -510,7 +523,11 @@ fn render_header_paints_every_state_chip_in_its_colour() {
                 .unwrap_or(""),
             theme.accent_running,
         ),
-        ("1 idle", crate::glyphs::diamond_hollow(), theme.gray_dim),
+        (
+            "1 idle",
+            crate::glyphs::diamond_hollow(),
+            idle_dim.unwrap_or(theme.gray_dim),
+        ),
         ("1 done", filled, theme.accent_success),
         ("1 failed", filled, theme.accent_error),
     ];

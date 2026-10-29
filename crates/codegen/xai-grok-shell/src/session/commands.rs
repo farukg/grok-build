@@ -328,6 +328,11 @@ pub struct CancelOptions {
     pub trigger: Option<CancelTrigger>,
     /// Drives the cancel-rate metric, and marks an untriggered cancel as the user's.
     pub user_initiated: bool,
+    /// The turn a non-rewind cancel names via `_meta.promptId` (a streaming wake turn).
+    /// Lets the cancel resolve a target the anonymous path cannot bind: a queued wake row
+    /// (removed instead of running later) or an already-finished wake whose client is stuck
+    /// on a lost terminal receipt. `None` for legacy/anonymous cancels.
+    pub target_prompt_id: Option<String>,
 }
 /// Why the catalog is being (re-)advertised; labels the `slash.advertise` unified-log line.
 #[derive(Debug, Clone, Copy)]

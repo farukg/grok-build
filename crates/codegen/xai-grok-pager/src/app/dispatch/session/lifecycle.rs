@@ -619,6 +619,7 @@ pub(in crate::app::dispatch) fn dispatch_delete_current_session_answered(
         cancel_subagents: true,
         trigger: None,
         rewind_prompt_id: None,
+        target_prompt_id: None,
     }];
     effects.extend(
         running_bg_tasks

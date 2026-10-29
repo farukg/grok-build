@@ -1536,10 +1536,15 @@ fn row_bg(theme: &Theme, state: &DashboardState, row: &DashboardRow) -> Color {
     }
 }
 
-/// Dim metadata (subtitle, secondary line) over the row background, via `Theme::dim()`.
-/// That is a `gray_dim` fg on RGB themes, and the polarity-safe DIM attribute on the terminal theme — where `gray_dim` is the same bright black as the hover/selection band and would render the text invisible.
+/// Dim metadata (subtitle, secondary line) over the row background: the selected row's
+/// `text_secondary` hue, dimmed toward the background. Unblendable palettes (the terminal
+/// theme, where `gray_dim` is the same bright black as the hover/selection band) keep the
+/// polarity-safe DIM attribute.
 fn row_dim_style(theme: &Theme, bg: Color) -> Style {
-    theme.dim().bg(bg)
+    theme
+        .dimmed_color(theme.text_secondary)
+        .map_or_else(|| theme.dim(), |c| Style::default().fg(c))
+        .bg(bg)
 }
 
 /// A title-only row in a 3-cell rect renders as padding, title, padding.
@@ -1744,7 +1749,7 @@ fn render_row(
 
     // Secondary row
     // The selected row brightens its secondary line so the user can read what the agent is doing right now without leaving the dashboard
-    // Unselected rows keep the dimmer `gray_dim` so they read as the row's metadata tail rather than competing with the title
+    // Unselected rows keep the dimmed secondary hue so they read as the row's metadata tail rather than competing with the title
     if rect.height >= 2
         && let Some(secondary) = row.secondary_line.as_deref()
         && !secondary.is_empty()
@@ -3060,7 +3065,11 @@ fn state_color(state: RowState, theme: &Theme) -> Color {
     match state {
         RowState::Working => theme.accent_running,
         RowState::NeedsInput => theme.warning,
-        RowState::Idle | RowState::Inactive => theme.gray_dim,
+        // Inactive rows keep the working accent's hue, dimmed toward the background;
+        // unblendable palettes keep the neutral gray they had.
+        RowState::Idle | RowState::Inactive => {
+            theme.dimmed_color(theme.accent_running).unwrap_or(theme.gray_dim)
+        }
         RowState::Completed => theme.accent_success,
         RowState::Failed => theme.accent_error,
     }

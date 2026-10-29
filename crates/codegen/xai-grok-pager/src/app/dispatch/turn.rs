@@ -423,6 +423,13 @@ pub(super) fn emit_cancel_turn(
             .as_ref()
             .is_some_and(|pid| pid != &wake.prompt_id)
     });
+    // The wire target names only a wake turn: an anonymous cancel already binds to the running
+    // task, and naming a user prompt would route the shell's named-id guards against it
+    let wire_target_prompt_id = if rewind_if_no_output {
+        None
+    } else {
+        agent.running_wake_turn.as_ref().map(|wake| wake.prompt_id.clone())
+    };
     // Resend recovery is for user gestures; programmatic cancels (no trigger, e.g. login flows) own their retries.
     // A rewind leaves no cancelling state to key recovery on, so it never arms one either
     if let Some(trigger) = trigger
@@ -451,13 +458,15 @@ pub(super) fn emit_cancel_turn(
         cancel_subagents,
         trigger,
         rewind_prompt_id,
+        target_prompt_id: wire_target_prompt_id,
     }
 }
 
 /// Grace before a still-cancelling pane re-sends its (fire-and-forget, loss-prone) `session/cancel`.
 pub(crate) const CANCEL_RESEND_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// Resend cap; past it a fresh gesture owns recovery.
+/// Resend cap; past it a fresh gesture owns recovery. A wake turn whose resends all went
+/// unacknowledged is instead close-finished by [`finish_unresolved_wake_cancel`].
 pub(crate) const CANCEL_RESEND_MAX_ATTEMPTS: u8 = 3;
 
 /// Re-send the (shell-idempotent) cancel for panes still in a cancelling state past [`CANCEL_RESEND_GRACE`].
@@ -489,11 +498,11 @@ fn overdue_cancel_for_agent(agent: &mut AgentView) -> Option<Effect> {
         return None;
     }
     let pending = agent.pending_cancel_resend.as_mut()?;
-    if pending.confirmed
-        || pending.attempts >= CANCEL_RESEND_MAX_ATTEMPTS
-        || pending.sent_at.elapsed() < CANCEL_RESEND_GRACE
-    {
+    if pending.confirmed || pending.sent_at.elapsed() < CANCEL_RESEND_GRACE {
         return None;
+    }
+    if pending.attempts >= CANCEL_RESEND_MAX_ATTEMPTS {
+        return finish_unresolved_wake_cancel(agent, &session_id);
     }
     pending.attempts += 1;
     pending.sent_at = Instant::now();
@@ -510,7 +519,55 @@ fn overdue_cancel_for_agent(agent: &mut AgentView) -> Option<Effect> {
         cancel_subagents: pending.cancel_subagents,
         trigger: Some(pending.trigger),
         rewind_prompt_id: None,
+        target_prompt_id: agent
+            .running_wake_turn
+            .as_ref()
+            .map(|wake| wake.prompt_id.clone()),
     })
+}
+
+/// Close a wake turn whose cancel was delivered [`CANCEL_RESEND_MAX_ATTEMPTS`] times yet never resolved.
+/// A wake turn's durable `TurnCompleted` broadcast is its only non-RPC exit, so when that receipt is
+/// lost the pane latches on the waiting timer with no event left to end it. Finish the wake through
+/// the same close rail its `TurnCompleted` would have used (mirrors [`reconcile_overdue_turn_ends`],
+/// which finishes a driver turn from broadcast evidence when its RPC receipt is lost). A later real
+/// terminal for the same prompt is dropped by the `finished_wake_prompts` admission.
+fn finish_unresolved_wake_cancel(
+    agent: &mut AgentView,
+    session_id: &agent_client_protocol::SessionId,
+) -> Option<Effect> {
+    let pending = agent.pending_cancel_resend.take()?;
+    let prompt_id = pending.prompt_id.clone()?;
+    // Only a still-live wake cancel on an idle pane reconciles; a resolved or superseded target
+    // just retires its stale record
+    let still_wake = agent.session.state.is_idle()
+        && agent
+            .running_wake_turn
+            .as_ref()
+            .is_some_and(|wake| wake.prompt_id == prompt_id && wake.cancel_sent);
+    if !still_wake {
+        return None;
+    }
+    crate::unified_log::warn(
+        "wake.turn_end_reconciled",
+        Some(&session_id.0),
+        Some(serde_json::json!({
+            "prompt_id": prompt_id.as_str(),
+            "attempts": pending.attempts,
+            "grace_ms": CANCEL_RESEND_GRACE.as_millis() as u64,
+        })),
+    );
+    crate::app::acp_handler::close_wake_turn_from_terminal(
+        agent,
+        &prompt_id,
+        crate::app::acp_handler::WakeTerminal {
+            stop_reason: "cancelled",
+            agent_result: None,
+            cancel_trigger: Some(pending.trigger.as_wire_str()),
+            cancellation_category: None,
+        },
+    );
+    None
 }
 
 /// Grace window between a driver-side `x.ai/session/prompt_complete` broadcast and that turn's `session/prompt` RPC response.

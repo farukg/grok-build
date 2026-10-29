@@ -1499,6 +1499,7 @@ pub(crate) fn execute(
             cancel_subagents,
             trigger,
             rewind_prompt_id,
+            target_prompt_id,
         } => {
             let tx = acp_tx.clone();
             let trigger_str = trigger.map(|t| t.as_wire_str());
@@ -1511,6 +1512,7 @@ pub(crate) fn execute(
                                 cancel_subagents,
                                 trigger: trigger_str,
                                 rewind_prompt_id: rewind_prompt_id.as_deref(),
+                                target_prompt_id: target_prompt_id.as_deref(),
                             },
                         )
                         .await;
@@ -5594,7 +5596,7 @@ async fn send_cancel(
     session_id: &acp::SessionId,
     meta: CancelMeta<'_>,
 ) {
-    let CancelMeta { cancel_subagents, trigger, rewind_prompt_id } = meta;
+    let CancelMeta { cancel_subagents, trigger, rewind_prompt_id, target_prompt_id } = meta;
     ulog::info(
         "cancel.acp_send.start",
         Some(&session_id.0),
@@ -5604,6 +5606,7 @@ async fn send_cancel(
             "trigger": trigger,
             "rewind_if_no_output": rewind_prompt_id.is_some(),
             "rewind_prompt_id": rewind_prompt_id,
+            "target_prompt_id": target_prompt_id,
         }),
         ),
     );
@@ -5630,6 +5633,9 @@ pub(crate) struct CancelMeta<'a> {
     pub(crate) cancel_subagents: bool,
     pub(crate) trigger: Option<&'a str>,
     pub(crate) rewind_prompt_id: Option<&'a str>,
+    /// The turn this cancel names without rewinding it (a streaming wake turn), sent as
+    /// `_meta.promptId`. Ignored when `rewind_prompt_id` is set; that path owns `promptId`.
+    pub(crate) target_prompt_id: Option<&'a str>,
 }
 /// Build the `session/cancel` `_meta`, shared by the TUI cancel effect and the headless fail-safe so the wire shape has one owner.
 /// The rewind is a request, not a command: the shell re-checks rewindable and prompt identity.
@@ -5645,6 +5651,8 @@ pub(crate) fn cancel_notification_meta(cancel: &CancelMeta<'_>) -> acp::Meta {
     if let Some(pid) = cancel.rewind_prompt_id {
         meta.insert("rewindIfNoOutput".into(), true.into());
         meta.insert("rewindIfPristine".into(), true.into());
+        meta.insert("promptId".into(), pid.into());
+    } else if let Some(pid) = cancel.target_prompt_id {
         meta.insert("promptId".into(), pid.into());
     }
     meta

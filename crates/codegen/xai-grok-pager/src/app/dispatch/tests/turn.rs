@@ -784,6 +784,149 @@ fn stop_click_cancels_running_wake_turn() {
     assert!(reconcile_overdue_cancels(&mut app).is_some());
 }
 
+/// The wake cancel must name its turn on the wire, so the shell can bind the cancel to the wake
+/// (an anonymous cancel on an idle session has no running task to bind to). A driver-turn cancel
+/// stays anonymous: the running task already owns it, and naming a user prompt would aim the
+/// shell's named-id guards at it.
+#[test]
+fn wake_cancel_names_target_prompt_id_but_driver_cancel_stays_anonymous() {
+    use crate::app::agent_view::RunningWakeTurn;
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    app.agents.get_mut(&id).unwrap().running_wake_turn = Some(RunningWakeTurn {
+        prompt_id: "task-completed-bg1".into(),
+        cancel_sent: false,
+    });
+    let effects = dispatch(Action::CancelTurn, &mut app);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::CancelTurn {
+                target_prompt_id: Some(target),
+                rewind_prompt_id: None,
+                ..
+            }] if target == "task-completed-bg1"
+        ),
+        "the wake cancel must carry the wake prompt id, got {effects:?}"
+    );
+
+    let mut app = test_app_with_agent();
+    {
+        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+        agent.start_turn_boundary(Some("user-1"));
+        agent.session.current_prompt_id = Some("user-1".into());
+    }
+    let effects = dispatch(Action::CancelTurn, &mut app);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::CancelTurn {
+                target_prompt_id: None,
+                ..
+            }]
+        ),
+        "a driver-turn cancel must stay anonymous, got {effects:?}"
+    );
+}
+
+/// A wake turn's durable `TurnCompleted` broadcast is its only non-RPC exit. When that receipt is
+/// lost, the delivered cancel resends are the last evidence: past the final attempt the reconcile
+/// must close the wake through the same finish rail the terminal would have used, ending the
+/// waiting timer deterministically instead of latching the pane on "Cancelling…" forever.
+#[test]
+fn exhausted_wake_cancel_reconcile_finishes_the_waiting_turn() {
+    use crate::app::actions::CancelTrigger;
+    use crate::app::agent_view::RunningWakeTurn;
+    use crate::app::dispatch::reconcile_overdue_cancels;
+    use crate::app::dispatch::turn::CANCEL_RESEND_MAX_ATTEMPTS;
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.state = AgentState::Idle;
+        agent.running_wake_turn = Some(RunningWakeTurn {
+            prompt_id: "task-completed-bg1".into(),
+            cancel_sent: true,
+        });
+        agent.pending_cancel_resend = Some(crate::app::agent_view::PendingCancelResend {
+            prompt_id: Some("task-completed-bg1".into()),
+            sent_at: std::time::Instant::now() - CANCEL_RESEND_GRACE,
+            attempts: CANCEL_RESEND_MAX_ATTEMPTS,
+            confirmed: false,
+            cancel_subagents: false,
+            trigger: CancelTrigger::CtrlC,
+        });
+    }
+    assert!(
+        reconcile_overdue_cancels(&mut app).is_none(),
+        "the reconcile close pushes no further cancel; every delivery was already proven lost"
+    );
+    let agent = &get_agent(&app, id);
+    assert!(
+        agent.running_wake_turn.is_none(),
+        "the waiting wake must close, not keep cancelling forever"
+    );
+    assert!(
+        agent.finished_wake_prompts.contains("task-completed-bg1"),
+        "the closed wake must be recorded finished so a late real terminal is dropped"
+    );
+    assert!(agent.pending_cancel_resend.is_none());
+    assert!(agent.wake_display_state().is_none());
+    // A late delta for the closed wake must not revive the waiting marker
+    let agent = {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.note_streaming_wake_turn("task-completed-bg1");
+        agent
+    };
+    assert!(
+        agent.running_wake_turn.is_none(),
+        "a finished wake must stay closed against stragglers"
+    );
+}
+
+/// Only the still-live wake reconcile-closes. An exhausted record whose target was superseded
+/// (another wake took over, or the terminal landed and cleared the marker) just retires, never
+/// finishing a turn it cannot prove is the pending one.
+#[test]
+fn exhausted_cancel_of_superseded_wake_only_retires_the_record() {
+    use crate::app::actions::CancelTrigger;
+    use crate::app::agent_view::RunningWakeTurn;
+    use crate::app::dispatch::reconcile_overdue_cancels;
+    use crate::app::dispatch::turn::CANCEL_RESEND_MAX_ATTEMPTS;
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.state = AgentState::Idle;
+        agent.running_wake_turn = Some(RunningWakeTurn {
+            prompt_id: "task-completed-bg2".into(),
+            cancel_sent: true,
+        });
+        agent.pending_cancel_resend = Some(crate::app::agent_view::PendingCancelResend {
+            prompt_id: Some("task-completed-bg1".into()),
+            sent_at: std::time::Instant::now() - CANCEL_RESEND_GRACE,
+            attempts: CANCEL_RESEND_MAX_ATTEMPTS,
+            confirmed: false,
+            cancel_subagents: false,
+            trigger: CancelTrigger::CtrlC,
+        });
+    }
+    assert!(reconcile_overdue_cancels(&mut app).is_none());
+    let agent = &get_agent(&app, id);
+    assert!(
+        agent.pending_cancel_resend.is_none(),
+        "the stale record must retire"
+    );
+    assert!(
+        agent.running_wake_turn.is_some(),
+        "the live successor wake must keep its marker"
+    );
+    assert!(!agent.finished_wake_prompts.contains("task-completed-bg2"));
+}
+
 #[test]
 fn cancel_turn_leaves_shared_queue_for_agent_to_drain() {
     use crate::app::prompt_queue::QueueEntryWire;

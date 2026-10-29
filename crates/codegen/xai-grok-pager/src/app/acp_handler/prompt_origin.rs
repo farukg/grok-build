@@ -196,7 +196,7 @@ pub(super) fn viewer_turn_anchor(turn_start_ms: Option<i64>) -> std::time::Insta
 /// Wire fields of the wake turn's terminal signal.
 /// `cancel_trigger` is `_meta.cancelTrigger`: `"send_now"` marks an internal cancel-and-send, so the `TurnCancelled` marker is suppressed.
 /// The wire trigger wins; `expect_send_now_cancel` is the fallback for older shells.
-pub(super) struct WakeTerminal<'a> {
+pub(crate) struct WakeTerminal<'a> {
     pub stop_reason: &'a str,
     pub agent_result: Option<&'a str>,
     pub cancel_trigger: Option<&'a str>,
@@ -293,6 +293,27 @@ pub(super) fn finish_wake_turn(
         None,
     );
     notify
+}
+
+/// Apply a wake turn's terminal on an idle pane: retire the running marker, record the prompt
+/// finished, and close the turn through [`finish_wake_turn`]. The single owner of the live wake
+/// close, shared by the `TurnCompleted` arm and the cancel-receipt reconcile
+/// (`app::dispatch::turn::finish_unresolved_wake_cancel`). A duplicate terminal for the same
+/// prompt is dropped by the `finished_wake_prompts` admission.
+pub(crate) fn close_wake_turn_from_terminal(
+    agent: &mut AgentView,
+    prompt_id: &str,
+    terminal: WakeTerminal<'_>,
+) -> bool {
+    if agent
+        .running_wake_turn
+        .as_ref()
+        .is_some_and(|wake| wake.prompt_id == prompt_id)
+    {
+        agent.running_wake_turn = None;
+    }
+    agent.finished_wake_prompts.insert(prompt_id.to_string());
+    finish_wake_turn(agent, prompt_id, terminal)
 }
 
 #[cfg(test)]

@@ -70,7 +70,9 @@ pub(super) fn render_header(
         (
             "idle",
             crate::glyphs::diamond_hollow(),
-            theme.gray_dim,
+            theme
+                .dimmed_color(theme.accent_running)
+                .unwrap_or(theme.gray_dim),
             idle,
         ),
         (

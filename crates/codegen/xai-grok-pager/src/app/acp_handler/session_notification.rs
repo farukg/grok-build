@@ -445,15 +445,15 @@ fn handle_admitted_session_notification(
                 }
                 false
             } else if is_wake_prompt(&prompt_id) {
-                if agent
-                    .running_wake_turn
-                    .as_ref()
-                    .is_some_and(|wake| wake.prompt_id == prompt_id)
-                {
-                    agent.running_wake_turn = None;
-                }
-                agent.finished_wake_prompts.insert(prompt_id.to_string());
                 if agent.session.state.is_busy() {
+                    if agent
+                        .running_wake_turn
+                        .as_ref()
+                        .is_some_and(|wake| wake.prompt_id == prompt_id)
+                    {
+                        agent.running_wake_turn = None;
+                    }
+                    agent.finished_wake_prompts.insert(prompt_id.to_string());
                     if agent.session.state.command_in_flight().is_some() {
                         agent.session.tracker.snapshot_output_epoch();
                     }
@@ -484,7 +484,7 @@ fn handle_admitted_session_notification(
                         false
                     }
                 } else {
-                    queue_wake_turn_complete = finish_wake_turn(
+                    queue_wake_turn_complete = super::prompt_origin::close_wake_turn_from_terminal(
                         agent,
                         &prompt_id,
                         super::prompt_origin::WakeTerminal {

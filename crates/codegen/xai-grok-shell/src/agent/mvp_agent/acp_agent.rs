@@ -1978,6 +1978,11 @@ impl acp::Agent for MvpAgent {
                 serde_json::json!({
                 "session_found": handle.is_some(),
                 "trigger": cancel_trigger.as_ref().map(crate::session::CancelTrigger::as_str),
+                "target_prompt_id": args
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("promptId"))
+                    .and_then(|v| v.as_str()),
             }),
             ),
         );
@@ -1996,18 +2001,24 @@ impl acp::Agent for MvpAgent {
                 })
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let rewind_prompt_id = args
-                .meta
-                .as_ref()
-                .and_then(|m| m.get("promptId"))
-                .and_then(|v| v.as_str())
-                .map(str::to_owned);
-            let history = if rewind_if_no_output {
-                crate::session::CancelHistoryDisposition::RewindIfNoOutput {
-                    prompt_id: rewind_prompt_id,
-                }
+            // `promptId` names the rewind target only under the rewind flags; a bare id names
+            // the turn the cancel targets (a streaming wake turn) without rewinding it
+            let named_prompt_id = || {
+                args.meta
+                    .as_ref()
+                    .and_then(|m| m.get("promptId"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            };
+            let (history, target_prompt_id) = if rewind_if_no_output {
+                (
+                    crate::session::CancelHistoryDisposition::RewindIfNoOutput {
+                        prompt_id: named_prompt_id(),
+                    },
+                    None,
+                )
             } else {
-                crate::session::CancelHistoryDisposition::Keep
+                (crate::session::CancelHistoryDisposition::Keep, named_prompt_id())
             };
             let dispatch_lock = self.dispatch_lock(&args.session_id);
             let _dispatch_guard = dispatch_lock.lock().await;
@@ -2022,6 +2033,7 @@ impl acp::Agent for MvpAgent {
                         history,
                         trigger: cancel_trigger,
                         user_initiated,
+                        target_prompt_id,
                         ..Default::default()
                     }),
                 );

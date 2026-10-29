@@ -398,6 +398,7 @@ impl SessionActor {
             history,
             trigger,
             user_initiated,
+            target_prompt_id,
         } = options;
         let rewind_requested = matches!(
             history,
@@ -529,6 +530,32 @@ impl SessionActor {
                     cancel_reason.is_some(),
                 )
                 .await;
+        }
+        // A non-rewind cancel names the turn it targets (a streaming wake turn). A named target
+        // that is queued but not running — admitted behind the running turn, or waiting at the
+        // front for the slot — would otherwise survive every cancel path and run later against a
+        // client that shows Idle; remove it like the rewind rail's queued rows. A named target
+        // that is neither queued nor running belongs to a turn that already ended: the StopGesture
+        // barrier below is its resolution, never a second terminal for an already-terminal turn.
+        if !rewind_requested
+            && let Some(target) = target_prompt_id.as_deref()
+        {
+            let mut state = self.state.lock().await;
+            if !Self::is_running_prompt(&state, target)
+                && let Some(pos) = state
+                    .pending_inputs
+                    .iter()
+                    .position(|item| item.prompt_id == target)
+            {
+                Self::remove_pending_row(&mut state, pos);
+                self.broadcast_queue_changed(&state);
+                drop(state);
+                xai_grok_telemetry::unified_log::info(
+                    "shell.cancel.named_target_removed",
+                    Some(self.session_info.id.0.as_ref()),
+                    Some(serde_json::json!({ "prompt_id": target })),
+                );
+            }
         }
         let child_cancellation = match trigger.as_ref() {
             Some(crate::session::CancelTrigger::Shutdown) => ChildCancellation::Shutdown,

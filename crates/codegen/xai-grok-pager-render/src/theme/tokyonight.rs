@@ -279,6 +279,15 @@ impl Theme {
             .map_or(self.dim(), |c| Style::new().fg(c))
     }
 
+    /// Inactive-row form of an active/highlighted `color`: the same hue, blended toward
+    /// `bg_base` so the row reads dimmed instead of neutral gray. `None` on palettes that
+    /// cannot blend (Reset / named ANSI); callers keep their polarity-safe attribute
+    /// fallback there.
+    pub fn dimmed_color(&self, color: Color) -> Option<Color> {
+        const BLEND: f32 = 0.55;
+        crate::render::color::blend_color(self.bg_base, color, BLEND)
+    }
+
     pub const fn primary(&self) -> Style {
         Style::new().fg(self.text_primary)
     }

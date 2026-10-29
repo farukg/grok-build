@@ -88,9 +88,8 @@ use permissions::{
 #[cfg(test)]
 #[allow(unused_imports)]
 use prompt_origin::*;
-use prompt_origin::{
-    backdate_child_turn_clock, finish_wake_turn, note_child_live_prompt, viewer_turn_anchor,
-};
+use prompt_origin::{backdate_child_turn_clock, note_child_live_prompt, viewer_turn_anchor};
+pub(crate) use prompt_origin::{close_wake_turn_from_terminal, WakeTerminal};
 pub(crate) use prompt_origin::{
     is_scheduler_fired_prompt, is_server_initiated_prompt, is_wake_prompt,
     should_adopt_running_prompt,

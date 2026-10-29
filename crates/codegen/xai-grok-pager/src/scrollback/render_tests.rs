@@ -3889,8 +3889,9 @@ fn tool_media_overlay_exposes_filepath_click_rect() {
     );
 }
 
-/// Rewind dimming (`dim_from_entry`) must not erase text on the terminal theme: there `gray_dim` is
-/// the same bright black as the user-message band, so the pass applies the DIM attribute and leaves the fg alone.
+/// Rewind dimming (`dim_from_entry`) must not erase text on the terminal theme: the pass cannot
+/// blend there and applies the DIM attribute, leaving the fg alone. RGB themes dim hue-preserving
+/// toward the background instead of repainting rows flat gray.
 #[test]
 fn dim_from_entry_stays_visible_on_terminal_theme() {
     use ratatui::style::Modifier;
@@ -3899,7 +3900,7 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
     let entries = make_entries(2);
     let viewport = Rect::new(0, 0, 40, 10);
 
-    let render_dimmed = || {
+    let render_dimmed = |dim_from: Option<usize>| {
         let theme = Theme::current();
         let appearance = AppearanceConfig::default();
         let layouts = compute_layouts(&entries, viewport.width, &appearance);
@@ -3916,7 +3917,7 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
             &layouts,
             0,
             None,
-            Some(0), // dim everything from the first entry
+            dim_from,
             None,
             0,
             0,
@@ -3935,7 +3936,7 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
     };
 
     crate::theme::cache::set(crate::theme::ThemeKind::Terminal);
-    let cell = render_dimmed();
+    let cell = render_dimmed(Some(0));
     assert!(
         cell.modifier.contains(Modifier::DIM),
         "terminal theme: dimmed entries use the DIM attribute, got {cell:?}"
@@ -3948,11 +3949,29 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
     );
 
     crate::theme::cache::set(crate::theme::ThemeKind::GrokNight);
-    let cell = render_dimmed();
-    assert_eq!(
+    let active = render_dimmed(None);
+    let cell = render_dimmed(Some(0));
+    assert_ne!(
         cell.fg,
         Theme::current().gray_dim,
-        "RGB themes keep the gray_dim fg overwrite"
+        "the dimmed tail must not repaint rows flat gray"
     );
-    assert!(!cell.modifier.contains(Modifier::DIM));
+    assert_ne!(cell.fg, active.fg, "the dimmed tail must change the fg");
+    let luma = |c: ratatui::style::Color| match c {
+        ratatui::style::Color::Rgb(r, g, b) => u32::from(r) + u32::from(g) + u32::from(b),
+        ratatui::style::Color::Indexed(n) => {
+            let (r, g, b) = crate::render::color::indexed_to_rgb(n);
+            u32::from(r) + u32::from(g) + u32::from(b)
+        }
+        other => panic!("expected a blendable color, got {other:?}"),
+    };
+    let theme = Theme::current();
+    assert!(
+        luma(theme.bg_base) < luma(cell.fg) && luma(cell.fg) < luma(active.fg),
+        "dimmed fg must sit between the background and the active fg: \
+         bg={} dimmed={} active={}",
+        luma(theme.bg_base),
+        luma(cell.fg),
+        luma(active.fg)
+    );
 }

@@ -2378,6 +2378,7 @@ pub(super) async fn run_session(
                                         history: crate::session::CancelHistoryDisposition::Keep,
                                         trigger: Some(crate::session::CancelTrigger::Shutdown),
                                         user_initiated: false,
+                                        target_prompt_id: None,
                                     })
                                     .await;
                                 if !outcome.settled {

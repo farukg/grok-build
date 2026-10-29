@@ -558,13 +558,16 @@ pub fn render_peek_panel(
         } else {
             inner.width as usize
         };
-        // While Working, the status label is secondary (a touch brighter than dim chrome)
+        // While Working, the status label is secondary; inactive statuses keep that hue dimmed
+        // toward the background instead of flat dim chrome
         // Live-tail keeps painting the middle regardless
         let working = panel.response_type == "Working";
         let label_style = if working {
             Style::default().fg(theme.text_secondary)
         } else {
-            theme.dim()
+            theme
+                .dimmed_color(theme.text_secondary)
+                .map_or_else(|| theme.dim(), |c| Style::default().fg(c))
         }
         .bg(theme.bg_base);
         let label_trunc = truncate_str(&panel.response_type, label_avail);
@@ -982,13 +985,14 @@ mod tests {
         );
     }
 
-    /// While the agent is working the "Working" status label renders in the secondary colour; other status labels stay dim chrome.
+    /// While the agent is working the "Working" status label renders in the secondary colour; other
+    /// status labels keep that hue dimmed toward the background.
     #[test]
     fn render_peek_working_status_uses_secondary_colour() {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
-        // Fixed RGB palette: dim metadata carries a gray_dim fg there (the
-        // DIM attribute on the terminal theme).
+        // Fixed RGB palette: inactive statuses blend there (the DIM
+        // attribute on the terminal theme).
         let theme = Theme::groknight();
         let render = |response_type: &str| {
             let mut buf = Buffer::empty(Rect::new(0, 0, 80, 6));
@@ -1029,11 +1033,18 @@ mod tests {
             Some("R"),
             "status label is `Response`"
         );
-        assert_eq!(
+        assert_ne!(
             idle.cell((2, 1)).map(|c| c.fg),
             Some(theme.gray_dim),
-            "a non-working status stays dim chrome",
+            "a non-working status keeps the dimmed secondary hue, not flat gray",
         );
+        if let Some(dim) = theme.dimmed_color(theme.text_secondary) {
+            assert_eq!(
+                idle.cell((2, 1)).map(|c| c.fg),
+                Some(dim),
+                "a non-working status is the dimmed secondary hue",
+            );
+        }
     }
 
     /// The peeked agent's model and always-approve flag render on the box's bottom border (the same config-badge slot the dispatch box uses).
