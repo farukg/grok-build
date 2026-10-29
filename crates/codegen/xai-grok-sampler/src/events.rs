@@ -656,6 +656,7 @@ mod tests {
             EmptyResponse,
             MaxTokensTruncation,
             DoomLoopDetected,
+            RetrySchedule,
         ];
         for kind in all {
             // Exhaustive match, no `_` arm: a new variant refuses to compile this test until an arm is added
@@ -663,7 +664,7 @@ mod tests {
             // Only variants listed in `all` are round-trip-checked; the compiler cannot force those two edits
             match kind {
                 Auth | Http | Api | Serialization | IdleTimeout | RateLimited | EmptyResponse
-                | MaxTokensTruncation | DoomLoopDetected => {}
+                | MaxTokensTruncation | DoomLoopDetected | RetrySchedule => {}
             }
             assert_eq!(kind.as_ref().parse(), Ok(kind));
         }

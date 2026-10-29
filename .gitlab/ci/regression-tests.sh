@@ -31,7 +31,7 @@ run_tests() {
         xai-grok-pager | xai-grok-shell)
             command+=(-p "$package" --locked --features test-support)
             ;;
-        xai-acp-lib | xai-grok-pager-render | xai-grok-session-events | xai-grok-sampler | xai-tool-runtime | xai-grok-pager-bin | xai-grok-sampling-types | xai-grok-tools)
+        xai-acp-lib | xai-grok-pager-render | xai-grok-session-events | xai-grok-sampler | xai-tool-runtime | xai-grok-pager-bin | xai-grok-sampling-types | xai-grok-tools | xai-grok-test-support)
             command+=(-p "$package" --locked)
             ;;
         *)
@@ -55,6 +55,8 @@ run_tests() {
     printf 'target=%s package=%s target_name=%s exit=%s command=%s.command result=%s.result\n' \
         "$sequence" "$package" "$target" "$result" "$evidence" "$evidence" >> dist/regression/summary.txt
     if (( result != 0 )); then
+        printf 'Regression target %s/%s failed: invocation=%s exit=%s; outcome=%s.result; command=%s.command; diagnostic prefix=%s\n' \
+            "$package" "$target" "$sequence" "$result" "$evidence" "$evidence" "$evidence" >&2
         return "$result"
     fi
     if [[ $package == xai-grok-pager-bin ]]; then
@@ -74,6 +76,7 @@ run_tests xai-grok-pager-render lib \
     'render::osc8::tests::' || status=$?
 
 run_tests xai-grok-pager lib \
+    'app::error_display::tests::retry_schedule_has_known_generic_wire_classification' \
     'views::todo_pane::tests::' \
     'sidebar_cache_tracks_content_status_filter_width_and_style' \
     'app::agent_view::context_sidebar_tests::' \
@@ -233,6 +236,7 @@ run_tests xai-grok-sampling-types lib --all-executed \
     -- --exact || status=$?
 
 run_tests xai-grok-sampler lib \
+    'events::tests::error_kind_wire_string_round_trips_for_every_variant' \
     'retry::tests::' \
     'retry_deadline::tests::' \
     'retry_deadline::tests::delayed_delivery_uses_the_original_twenty_minute_deadline' \
@@ -260,10 +264,21 @@ run_tests textwrap lib \
     'fill::tests::' \
     'fill::tests::preserve_line_breaks' || status=$?
 
+run_tests xai-grok-test-support lib --all-executed \
+    'inference_override::tests::session_matcher_owns_a_dynamic_nominal_session' \
+    'inference_override::tests::session_matcher_preserves_endpoint_kind_and_body_conditions' \
+    'inference_override::tests::session_matcher_preserves_static_and_unfiltered_builders' \
+    -- --exact || status=$?
+
 # These Cargo integration targets own their in-process ACP/mock-inference fixtures.
 run_tests xai-grok-shell test_completion_admission || status=$?
 run_tests xai-grok-shell test_admission_process_recovery || status=$?
 run_tests xai-grok-shell test_completion_goal_activation || status=$?
+
+future_report_exit=0
+cargo --color never report future-incompatibilities > dist/regression/future-incompatibilities.log 2>&1 || future_report_exit=$?
+printf 'Future-incompatibility diagnostics: exit=%s; full context: dist/regression/future-incompatibilities.log\n' "$future_report_exit"
+printf 'future_report_exit=%s\nfuture_report_log=dist/regression/future-incompatibilities.log\n' "$future_report_exit" >> dist/regression/summary.txt
 
 printf 'attempted_targets=%s\nexecution_exit=%s\n' "$sequence" "$status" >> dist/regression/summary.txt
 exit "$status"

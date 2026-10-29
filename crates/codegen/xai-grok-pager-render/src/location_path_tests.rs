@@ -231,6 +231,7 @@ fn shorten_location_path_unc_host_without_share_unchanged() {
 fn fit_location_path_keeps_the_full_spelling_when_it_fits() {
     assert_eq!(fit_location_path("", 0).as_ref(), "");
     assert_eq!(fit_location_path("src/main.rs", 20).as_ref(), "src/main.rs");
+    assert_eq!(fit_location_path("~/.config/nvim/lua/init.lua", 27).as_ref(), "~/.config/nvim/lua/init.lua");
     assert_eq!(
         fit_location_path("alpha/beta/gamma/delta/file.rs", 30).as_ref(),
         "alpha/beta/gamma/delta/file.rs"
@@ -249,7 +250,7 @@ fn fit_location_path_shortens_front_dirs_before_touching_the_tail() {
     );
     assert_eq!(
         fit_location_path("~/.config/nvim/lua/init.lua", 26).as_ref(),
-        "~/.c/nvim/lua/init.lua"
+        "~/.c/n/lua/init.lua"
     );
 }
 
