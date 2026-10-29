@@ -215,6 +215,12 @@ fn automatic_compaction_outcomes_do_not_hide_edits_or_cross_session_owners() {
             .current_prompt_id
             .clone()
             .unwrap();
+        let original_entry = test_agent(&app, AgentId(0))
+            .session
+            .in_flight_prompt
+            .as_ref()
+            .unwrap()
+            .scrollback_entry;
         let invocation = AutomaticCompactInvocation {
             id: CompactInvocationId(uuid::Uuid::from_u128(71)),
             prompt_id: Some(prompt.clone()),
@@ -244,19 +250,47 @@ fn automatic_compaction_outcomes_do_not_hide_edits_or_cross_session_owners() {
         lifecycle(
             &mut app,
             "progress-root",
-            terminal,
+            terminal.clone(),
             automatic(&invocation, "progress-root", 12),
         );
         assert!(matches!(
             test_agent(&app, AgentId(0)).resolve_turn_activity(),
             Some(TurnActivity::ToolRunning { .. })
         ));
-        assert!(
-            test_agent(&app, AgentId(0))
-                .session
-                .compact_held_prompt
-                .is_none()
+        let agent = test_agent(&app, AgentId(0));
+        let rpc_result = match terminal {
+            XaiSessionUpdate::AutoCompactFailed { error } => {
+                let held = agent.session.compact_held_prompt.as_ref().unwrap();
+                assert_eq!(held.text, "repair file");
+                assert_eq!(held.scrollback_entry, original_entry);
+                Err(error)
+            }
+            XaiSessionUpdate::AutoCompactCompleted { .. } => {
+                assert!(agent.session.compact_held_prompt.is_none());
+                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+            }
+            XaiSessionUpdate::AutoCompactCancelled { .. } => {
+                assert!(agent.session.compact_held_prompt.is_none());
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+            }
+            other => panic!("unexpected compact fixture: {other:?}"),
+        };
+        assert!(agent.reauth_stashed_prompt.is_none());
+        assert_eq!(agent.session.current_prompt_id.as_ref(), Some(&prompt));
+        crate::app::dispatch::dispatch(
+            Action::TaskComplete(TaskResult::PromptResponse {
+                agent_id: AgentId(0),
+                prompt_id: Some(prompt),
+                http_status: None,
+                result: rpc_result,
+            }),
+            &mut app,
         );
+        let agent = test_agent(&app, AgentId(0));
+        assert!(agent.session.compact_held_prompt.is_none());
+        assert!(agent.reauth_stashed_prompt.is_none());
+        assert!(agent.session.current_prompt_id.is_none());
+        assert!(agent.session.state.is_idle());
         assert!(test_agent(&app, AgentId(1)).session.state.is_idle());
         assert_eq!(app.active_view, ActiveView::Agent(AgentId(1)));
     }

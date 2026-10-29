@@ -274,6 +274,23 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                         .tool_completion(),
                     ToolCompletion::Unconfirmed
                 );
+                for (entry, provider) in [(old_entry, "old-tool"), (other_entry, "other-tool")] {
+                    let agent = test_agent(&app, id);
+                    assert!(
+                        !agent.scrollback.get_by_id(entry).unwrap().is_running,
+                        "agent={id:?} replay={replay} provider={provider}: original RPC drain",
+                    );
+                    assert_eq!(
+                        agent
+                            .session
+                            .tracker
+                            .context_tool_call_id_for_entry(entry)
+                            .as_ref()
+                            .map(|id| id.as_str()),
+                        Some(provider),
+                        "agent={id:?} replay={replay}: original context identity",
+                    );
+                }
                 if replay {
                     app.agents.get_mut(&id).unwrap().begin_session_reload(1);
                     for provider in ["old-tool", "other-tool"] {
@@ -350,6 +367,13 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                 let entries = agent.scrollback.len();
                 for sequence in [1, 2, 2] {
                     let generation = test_agent(&app, id).scrollback.content_generation();
+                    let mut stamp = serde_json::json!({
+                        "isReplay": replay, "eventId": format!("{sid}-{sequence}"),
+                        "turnStartMs": 1, "totalTokens": 999_999,
+                    });
+                    if sequence == 2 {
+                        json_set(&mut stamp, "promptId", prompt.as_str().into());
+                    }
                     acp_event(
                         &mut app,
                         sid,
@@ -360,9 +384,7 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                             )
                             .meta(terminal_meta.as_object().cloned()),
                         ),
-                        serde_json::json!({"isReplay": replay, "eventId": format!("{sid}-{sequence}"),
-                        "promptId": (sequence == 2).then_some(prompt.as_str()),
-                        "turnStartMs": 1, "totalTokens": 999_999}),
+                        stamp,
                     );
                     let agent = test_agent(&app, id);
                     let entry = agent.scrollback.get_by_id(old_entry).unwrap();
@@ -413,6 +435,80 @@ fn native_terminal_after_turn_drain_confirms_only_the_tool_it_names() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn null_prompt_terminal_cannot_settle_a_drained_legacy_tool_or_poison_valid_delivery() {
+    for id in [AgentId(0), AgentId(1)] {
+        let (mut app, sid, prompt) = target_turn(id);
+        acp_event(
+            &mut app,
+            sid,
+            acp::SessionUpdate::ToolCall(tool("null-prompt-tool", acp::ToolCallStatus::InProgress)),
+            serde_json::json!({"promptId": prompt}),
+        );
+        let entry = test_agent(&app, id)
+            .session
+            .tracker
+            .pending_tool_entry_id("null-prompt-tool")
+            .unwrap();
+        crate::app::dispatch::dispatch(
+            Action::TaskComplete(TaskResult::PromptResponse {
+                agent_id: id,
+                prompt_id: Some(prompt),
+                http_status: None,
+                result: Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)),
+            }),
+            &mut app,
+        );
+        crate::app::dispatch::dispatch(Action::SendPrompt("new unrelated turn".into()), &mut app);
+        let view = test_agent(&app, id);
+        let current = view.session.current_prompt_id.clone();
+        let ack = view.prompt_ack.clone();
+        let activity = view.last_active_at;
+        let highwater = view.last_applied_event_seq;
+        let clock = view.turn_started_at;
+        let generation = view.scrollback.content_generation();
+        let entries = view.scrollback.len();
+        assert!(!view.scrollback.get_by_id(entry).unwrap().is_running);
+        let terminal = || {
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                "null-prompt-tool",
+                acp::ToolCallUpdateFields::new().status(Some(acp::ToolCallStatus::Completed)),
+            ))
+        };
+        acp_event(
+            &mut app,
+            sid,
+            terminal(),
+            serde_json::json!({"promptId": null, "eventId": format!("{sid}-99")}),
+        );
+        let view = test_agent(&app, id);
+        assert_eq!(
+            view.scrollback.get_by_id(entry).unwrap().tool_completion(),
+            ToolCompletion::Unconfirmed,
+        );
+        assert_eq!(view.scrollback.content_generation(), generation);
+        assert_eq!(view.last_applied_event_seq, highwater);
+        acp_event(
+            &mut app,
+            sid,
+            terminal(),
+            serde_json::json!({"eventId": format!("{sid}-1")}),
+        );
+        let view = test_agent(&app, id);
+        assert_eq!(
+            view.scrollback.get_by_id(entry).unwrap().tool_completion(),
+            ToolCompletion::Completed,
+        );
+        assert!(!view.scrollback.get_by_id(entry).unwrap().is_running);
+        assert_eq!(view.scrollback.len(), entries);
+        assert_eq!(view.session.current_prompt_id, current);
+        assert_eq!(view.prompt_ack, ack);
+        assert_eq!(view.last_active_at, activity);
+        assert_eq!(view.last_applied_event_seq, highwater);
+        assert_eq!(view.turn_started_at, clock);
     }
 }
 
@@ -1337,16 +1433,33 @@ fn late_completed_edit_does_not_coalesce_across_a_new_prompt() {
                 edit("old-edit", 5, acp::ToolCallStatus::InProgress),
                 serde_json::json!({"promptId": prompt}),
             );
-            let old = last_tool(&app).id;
+            let mut old = last_tool(&app).id;
             crate::app::dispatch::dispatch(
                 Action::TaskComplete(TaskResult::PromptResponse {
                     agent_id: AgentId(0),
-                    prompt_id: Some(prompt),
+                    prompt_id: Some(prompt.clone()),
                     http_status: None,
                     result: Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)),
                 }),
                 &mut app,
             );
+            assert!(
+                !test_agent(&app, AgentId(0))
+                    .scrollback
+                    .get_by_id(old)
+                    .unwrap()
+                    .is_running
+            );
+            if replay {
+                app.agents.get_mut(&AgentId(0)).unwrap().begin_session_reload(1);
+                acp_event(
+                    &mut app,
+                    "late-edit",
+                    edit("old-edit", 5, acp::ToolCallStatus::InProgress),
+                    serde_json::json!({"promptId": prompt, "isReplay": true}),
+                );
+                old = last_tool(&app).id;
+            }
             crate::app::dispatch::dispatch(Action::SendPrompt("new edit turn".into()), &mut app);
             let current = test_agent(&app, AgentId(0))
                 .session
@@ -1360,12 +1473,22 @@ fn late_completed_edit_does_not_coalesce_across_a_new_prompt() {
             );
             let new = last_tool(&app).id;
             assert_ne!(old, new);
-            let entries = test_agent(&app, AgentId(0)).scrollback.len();
-            app.agents
-                .get_mut(&AgentId(0))
-                .unwrap()
-                .session
-                .loading_replay = replay;
+            if replay {
+                assert!(
+                    app.agents
+                        .get_mut(&AgentId(0))
+                        .unwrap()
+                        .finish_session_reload(1, true)
+                );
+            }
+            let view = test_agent(&app, AgentId(0));
+            assert_eq!(
+                view.scrollback.get_by_id(old).unwrap().tool_completion(),
+                ToolCompletion::Unconfirmed,
+                "replay={replay}: drain is not completion",
+            );
+            assert!(!view.scrollback.get_by_id(old).unwrap().is_running);
+            let entries = view.scrollback.len();
             for status in [
                 acp::ToolCallStatus::Completed,
                 acp::ToolCallStatus::Completed,
@@ -1384,7 +1507,8 @@ fn late_completed_edit_does_not_coalesce_across_a_new_prompt() {
                 assert_eq!(view.scrollback.len(), entries);
                 assert_eq!(
                     view.scrollback.get_by_id(old).unwrap().tool_completion(),
-                    ToolCompletion::Completed
+                    ToolCompletion::Completed,
+                    "replay={replay} status={status:?} old={old:?} new={new:?}",
                 );
                 assert_eq!(
                     view.scrollback.get_by_id(new).unwrap().tool_completion(),
@@ -1396,6 +1520,62 @@ fn late_completed_edit_does_not_coalesce_across_a_new_prompt() {
     })
     .join()
     .unwrap();
+}
+
+#[test]
+fn replay_terminal_without_a_historical_base_cannot_confirm_a_live_legacy_tool() {
+    let (mut app, prompt) = root_turn("missing-history");
+    acp_event(
+        &mut app,
+        "missing-history",
+        acp::SessionUpdate::ToolCall(tool("live-only", acp::ToolCallStatus::InProgress)),
+        serde_json::json!({"promptId": prompt}),
+    );
+    let entry = last_tool(&app).id;
+    crate::app::dispatch::dispatch(
+        Action::TaskComplete(TaskResult::PromptResponse {
+            agent_id: AgentId(0),
+            prompt_id: Some(prompt),
+            http_status: None,
+            result: Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)),
+        }),
+        &mut app,
+    );
+    crate::app::dispatch::dispatch(Action::SendPrompt("next live turn".into()), &mut app);
+    app.agents.get_mut(&AgentId(0)).unwrap().arm_late_replay_grace();
+    let view = test_agent(&app, AgentId(0));
+    let entries = view.scrollback.len();
+    let current = view.session.current_prompt_id.clone();
+    let ack = view.prompt_ack.clone();
+    let activity = view.last_active_at;
+    let terminal = || {
+        acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+            "live-only",
+            acp::ToolCallUpdateFields::new().status(Some(acp::ToolCallStatus::Completed)),
+        ))
+    };
+    for replay in [true, false] {
+        acp_event(
+            &mut app,
+            "missing-history",
+            terminal(),
+            serde_json::json!({"isReplay": replay}),
+        );
+        let view = test_agent(&app, AgentId(0));
+        assert_eq!(
+            view.scrollback.get_by_id(entry).unwrap().tool_completion(),
+            if replay {
+                ToolCompletion::Unconfirmed
+            } else {
+                ToolCompletion::Completed
+            },
+        );
+        assert!(!view.scrollback.get_by_id(entry).unwrap().is_running);
+        assert_eq!(view.scrollback.len(), entries);
+        assert_eq!(view.session.current_prompt_id, current);
+        assert_eq!(view.prompt_ack, ack);
+        assert_eq!(view.last_active_at, activity);
+    }
 }
 
 #[test]

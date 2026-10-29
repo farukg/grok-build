@@ -581,7 +581,8 @@ fn queued_compact_notification_preserves_prompt_images_chips_for_hook_denial() {
             staged_temp_path: None,
             session_image_path: None,
             preview: crate::prompt_images::PromptImagePreview::default(),
-        });
+        })
+        .unwrap();
     let text = format!(
         "{} inspect attached image",
         app.agents.get(&id).unwrap().prompt.text()
