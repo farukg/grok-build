@@ -5018,7 +5018,12 @@ fn dashboard_overlay_cycle_order_matches_visible_rows() {
         vec![AgentId(2), AgentId(1), AgentId(0)],
         "pinning preserves activity order in the visible list and cycle",
     );
-    assert!(d.pinned.contains(&crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0))));
+    assert!(
+        d.pinned
+            .contains(&crate::views::dashboard::DashboardRowId::TopLevel(AgentId(
+                0
+            )))
+    );
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 /// Regression: the cycle anchors on the viewed agent, not a stale

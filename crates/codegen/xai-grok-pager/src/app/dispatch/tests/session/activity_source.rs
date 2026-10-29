@@ -76,14 +76,35 @@ fn viewing_and_reloading_preserve_persisted_activity_per_session() {
         .finish_session_reload(7, true);
     assert_eq!(expect_agent(&app, id).last_active_at, Some(old));
     loaded(&mut app, id, "different-session");
-    assert_eq!(expect_agent(&app, id).session.session_id.as_ref().unwrap().0.as_ref(), "older");
+    assert_eq!(
+        expect_agent(&app, id)
+            .session
+            .session_id
+            .as_ref()
+            .unwrap()
+            .0
+            .as_ref(),
+        "older"
+    );
     assert_eq!(expect_agent(&app, id).last_active_at, Some(old));
-    dispatch(Action::LoadSession("different-session".into(), None, false), &mut app);
+    dispatch(
+        Action::LoadSession("different-session".into(), None, false),
+        &mut app,
+    );
     let different = app.agents.find_by_session_id("different-session").unwrap();
     assert_ne!(different, id);
     assert_eq!(expect_agent(&app, different).last_active_at, None);
     loaded(&mut app, different, "older");
-    assert_eq!(expect_agent(&app, different).session.session_id.as_ref().unwrap().0.as_ref(), "different-session");
+    assert_eq!(
+        expect_agent(&app, different)
+            .session
+            .session_id
+            .as_ref()
+            .unwrap()
+            .0
+            .as_ref(),
+        "different-session"
+    );
     loaded(&mut app, different, "different-session");
     hydrate(&mut app, different, "older", old_ms);
     assert_eq!(

@@ -178,7 +178,8 @@ impl ThinkingBlock {
     }
 
     pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
-        self.content.merge_replayed_source(&historical.content, offset)
+        self.content
+            .merge_replayed_source(&historical.content, offset)
     }
 
     /// Set the elapsed time (in milliseconds).

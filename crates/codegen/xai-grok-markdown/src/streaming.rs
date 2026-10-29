@@ -422,17 +422,14 @@ impl StreamingMarkdownRenderer {
 
         // Append tail to output
         self.output.lines.extend(tail_output.lines);
-        self.output.line_source_map.extend(
-            tail_output
-                .line_source_map
-                .into_iter()
-                .map(|line| {
-                    render_line_sources
-                        .get(first_tail_line + line)
-                        .copied()
-                        .unwrap_or(end_source_line)
-                }),
-        );
+        self.output
+            .line_source_map
+            .extend(tail_output.line_source_map.into_iter().map(|line| {
+                render_line_sources
+                    .get(first_tail_line + line)
+                    .copied()
+                    .unwrap_or(end_source_line)
+            }));
 
         // Offset tail hyperlink line indices by frozen line count and append
         let frozen_lines = self.frozen.lines_len;
@@ -849,10 +846,7 @@ mod tests {
 
         renderer.finish(None);
         let post = renderer.source().to_string();
-        assert_eq!(
-            post, msg,
-            "finish() must not rewrite the original source"
-        );
+        assert_eq!(post, msg, "finish() must not rewrite the original source");
     }
 
     // Correctness Tests: Streaming vs Full Render

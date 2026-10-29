@@ -2,15 +2,27 @@ use super::*;
 use xai_grok_shell::tools::{TodoItem, TodoStatus};
 
 fn item(content: &str, status: TodoStatus) -> TodoItem {
-    TodoItem { content: content.into(), status, priority: Default::default(), meta: None }
+    TodoItem {
+        content: content.into(),
+        status,
+        priority: Default::default(),
+        meta: None,
+    }
 }
 
 fn draw_short(agent: &mut AgentView) -> Buffer {
     let area = Rect::new(0, 0, 160, 20);
     let mut buf = Buffer::empty(area);
     agent.draw(
-        area, &mut buf, &ActionRegistry::defaults(), &mut ScratchBuffer::new(),
-        None, false, BannerSlotParams::none(), false, &mut Vec::new(),
+        area,
+        &mut buf,
+        &ActionRegistry::defaults(),
+        &mut ScratchBuffer::new(),
+        None,
+        false,
+        BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
         AppRenderParams::default(),
     );
     buf
@@ -49,12 +61,18 @@ fn f7_hidden_todos_reuse_preparation_and_materialize_only_painted_rows() {
     let mut agent = test_fixtures::make_agent();
     agent.open_panel_settings_in(root.path());
     agent.todo.overlay.visible = false;
-    agent.todo.update_todos((0..64).flat_map(|_| [
-        item("Literal pending work", TodoStatus::Pending),
-        item("Literal active work", TodoStatus::InProgress),
-        item("Literal finished work", TodoStatus::Completed),
-        item("Literal cancelled work", TodoStatus::Cancelled),
-    ]).collect());
+    agent.todo.update_todos(
+        (0..64)
+            .flat_map(|_| {
+                [
+                    item("Literal pending work", TodoStatus::Pending),
+                    item("Literal active work", TodoStatus::InProgress),
+                    item("Literal finished work", TodoStatus::Completed),
+                    item("Literal cancelled work", TodoStatus::Cancelled),
+                ]
+            })
+            .collect(),
+    );
     assert_eq!(agent.todo.todos().len(), 256);
     let prepared = agent.todo.preparation_counts().0;
     let _ = press(&mut agent, KeyCode::F(7));
@@ -126,7 +144,9 @@ fn f7_hidden_todos_reuse_preparation_and_materialize_only_painted_rows() {
     let updated = agent.todo.preparation_counts();
     assert_eq!(updated.0, before_update.0 + 1);
     assert_eq!(updated.1, before_update.1);
-    for _ in 0..8 { let _ = draw(&mut agent); }
+    for _ in 0..8 {
+        let _ = draw(&mut agent);
+    }
     assert_eq!(agent.todo.preparation_counts(), updated);
     let buf = draw(&mut agent);
     let _ = click_row(&mut agent, &buf, "\u{25B8} Todos");
@@ -174,7 +194,9 @@ fn f7_hidden_todos_reuse_preparation_and_materialize_only_painted_rows() {
     assert!(filtered.contains("▶ New active"));
     assert!(!filtered.contains("New finished"));
     assert!(!filtered.contains("New cancelled"));
-    agent.todo.update_todos(vec![item("Only finished", TodoStatus::Completed)]);
+    agent
+        .todo
+        .update_todos(vec![item("Only finished", TodoStatus::Completed)]);
     assert!(screen(&draw(&mut agent)).contains("All done."));
     agent.todo.update_todos(Vec::new());
     assert!(screen(&draw(&mut agent)).contains("No todo items."));
@@ -188,7 +210,9 @@ fn f7_todo_theme_changes_restyle_once_without_materializing_collapsed_rows() {
     let mut agent = test_fixtures::make_agent();
     agent.open_panel_settings_in(root.path());
     agent.todo.overlay.visible = false;
-    agent.todo.update_todos(vec![item("Theme active", TodoStatus::InProgress)]);
+    agent
+        .todo
+        .update_todos(vec![item("Theme active", TodoStatus::InProgress)]);
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
     let buf = draw(&mut agent);
@@ -208,7 +232,10 @@ fn f7_todo_theme_changes_restyle_once_without_materializing_collapsed_rows() {
     let theme = crate::theme::Theme::current();
     let style = text_style(&sidebar, "▶ Theme active");
     assert_eq!(style[0].0, theme.warning);
-    assert_eq!(style[1], (theme.text_primary, ratatui::style::Modifier::empty()));
+    assert_eq!(
+        style[1],
+        (theme.text_primary, ratatui::style::Modifier::empty())
+    );
     assert!(style[2..].iter().all(|(fg, modifier)| {
         *fg == theme.text_primary && modifier.contains(ratatui::style::Modifier::BOLD)
     }));
@@ -269,16 +296,33 @@ fn f7_todo_rows_wrap_within_the_column_and_respect_the_row_budget() {
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
     let rendered = screen(&draw(&mut agent));
-    let first = rendered.lines().find(|line| line.contains("□ Wrapcheck")).expect("the todo starts on its own row");
-    let continuation = rendered.lines().find(|line| line.contains("zzfinalwrap")).expect("the label wraps instead of truncating");
-    assert!(!continuation.contains('□') && !continuation.contains('▶'), "a continuation line carries no status glyph: {continuation:?}");
+    let first = rendered
+        .lines()
+        .find(|line| line.contains("□ Wrapcheck"))
+        .expect("the todo starts on its own row");
+    let continuation = rendered
+        .lines()
+        .find(|line| line.contains("zzfinalwrap"))
+        .expect("the label wraps instead of truncating");
+    assert!(
+        !continuation.contains('□') && !continuation.contains('▶'),
+        "a continuation line carries no status glyph: {continuation:?}"
+    );
     assert_ne!(first, continuation);
     assert!(
-        rendered.lines().any(|line| line.contains("more") && line.contains("Ctrl+T")),
+        rendered
+            .lines()
+            .any(|line| line.contains("more") && line.contains("Ctrl+T")),
         "the budget ends with a pointer to the todo pane"
     );
-    assert!(rendered.contains("Context"), "the bounded Todos section keeps the later sections reachable");
-    assert!(!rendered.contains("Short task 5"), "entries beyond the budget stay in the pane");
+    assert!(
+        rendered.contains("Context"),
+        "the bounded Todos section keeps the later sections reachable"
+    );
+    assert!(
+        !rendered.contains("Short task 5"),
+        "entries beyond the budget stay in the pane"
+    );
 }
 
 #[test]
@@ -303,11 +347,16 @@ fn f7_todo_projection_reuses_unchanged_frames_including_folded_resize() {
     let first = agent.todo.sidebar_projection_count();
     let buf = draw(&mut agent);
     let second = agent.todo.sidebar_projection_count();
-    assert_eq!(second, first, "unchanged frames reuse the prepared projection");
+    assert_eq!(
+        second, first,
+        "unchanged frames reuse the prepared projection"
+    );
     let _ = draw(&mut agent);
     assert_eq!(agent.todo.sidebar_projection_count(), second);
     assert!(
-        screen(&buf).lines().any(|line| line.contains("more") && line.contains("Ctrl+T")),
+        screen(&buf)
+            .lines()
+            .any(|line| line.contains("more") && line.contains("Ctrl+T")),
         "the bounded projection still paints its pointer"
     );
     let _ = click_row(&mut agent, &buf, "\u{25BE} Todos");
@@ -322,7 +371,11 @@ fn f7_todo_projection_reuses_unchanged_frames_including_folded_resize() {
         let mut resized = Buffer::empty(area);
         agent.draw_context_sidebar(area, &mut resized);
     }
-    assert_eq!(agent.todo.sidebar_projection_count(), folded + 1, "only the changed width projects again");
+    assert_eq!(
+        agent.todo.sidebar_projection_count(),
+        folded + 1,
+        "only the changed width projects again"
+    );
 }
 
 #[test]
@@ -332,14 +385,25 @@ fn f7_todo_wrapped_rows_focus_and_fold_without_touching_the_pane() {
     let mut agent = test_fixtures::make_agent();
     agent.open_panel_settings_in(root.path());
     let long = "Foldcheck label that wraps onto a second row of the sidebar column zz-foldcheck";
-    agent.todo.update_todos(vec![item(long, TodoStatus::InProgress)]);
+    agent
+        .todo
+        .update_todos(vec![item(long, TodoStatus::InProgress)]);
     let _ = press(&mut agent, KeyCode::F(7));
     agent.context_policy_answered(Ok(ready_report()));
     let buf = draw(&mut agent);
     let outcome = click_row(&mut agent, &buf, "zz-foldcheck");
-    assert!(matches!(outcome, InputOutcome::Unchanged), "a wrapped row takes focus and changes nothing: {outcome:?}");
-    assert!(agent.f7_sidebar_focused(), "a wrapped continuation row takes the focus");
-    assert!(!agent.todo.overlay.visible, "the sidebar never opens the Ctrl+T pane");
+    assert!(
+        matches!(outcome, InputOutcome::Unchanged),
+        "a wrapped row takes focus and changes nothing: {outcome:?}"
+    );
+    assert!(
+        agent.f7_sidebar_focused(),
+        "a wrapped continuation row takes the focus"
+    );
+    assert!(
+        !agent.todo.overlay.visible,
+        "the sidebar never opens the Ctrl+T pane"
+    );
 
     let buf = draw(&mut agent);
     let _ = click_row(&mut agent, &buf, "\u{25BE} Todos");

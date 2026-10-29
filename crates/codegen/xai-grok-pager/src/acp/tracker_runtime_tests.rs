@@ -40,7 +40,10 @@ fn registered_replay_tool_closes_the_historical_thought_without_live_authority()
     tracker.handle_update(thought_chunk("after"), &replay, &mut sb);
     assert_eq!(sb.len(), 3);
     assert!(matches!(&sb.get(0).unwrap().block, RenderBlock::Thinking(t) if t.text() == "before"));
-    assert!(matches!(&sb.get(1).unwrap().block, RenderBlock::ToolCall(_)));
+    assert!(matches!(
+        &sb.get(1).unwrap().block,
+        RenderBlock::ToolCall(_)
+    ));
     assert!(matches!(&sb.get(2).unwrap().block, RenderBlock::Thinking(t) if t.text() == "after"));
 }
 
@@ -67,19 +70,36 @@ fn drained_legacy_terminal_settles_only_the_named_entry_without_changing_activit
     crate::appearance::cache::set_show_thinking_blocks(true);
     for is_replay in [false, true] {
         for (status, terminal_meta, completion) in [
-            (acp::ToolCallStatus::Completed, None, ToolCompletion::Completed),
+            (
+                acp::ToolCallStatus::Completed,
+                None,
+                ToolCompletion::Completed,
+            ),
             (acp::ToolCallStatus::Failed, None, ToolCompletion::Failed),
             (
                 acp::ToolCallStatus::Failed,
-                Some(serde_json::json!({"toolTerminalStatus": "cancelled"}).as_object().unwrap().clone()),
+                Some(
+                    serde_json::json!({"toolTerminalStatus": "cancelled"})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
                 ToolCompletion::Cancelled,
             ),
         ] {
             let mut tracker = AcpUpdateTracker::new();
             let mut sb = ScrollbackState::new();
-            tracker.handle_update(tool_call("old", acp::ToolKind::Read, "old.rs"), &meta(), &mut sb);
+            tracker.handle_update(
+                tool_call("old", acp::ToolKind::Read, "old.rs"),
+                &meta(),
+                &mut sb,
+            );
             let old = sb.get(0).unwrap().id;
-            tracker.handle_update(tool_call("other", acp::ToolKind::Read, "other.rs"), &meta(), &mut sb);
+            tracker.handle_update(
+                tool_call("other", acp::ToolKind::Read, "other.rs"),
+                &meta(),
+                &mut sb,
+            );
             let other = sb.get(1).unwrap().id;
             tracker.finish_turn(&mut sb);
             tracker.handle_update(thought_chunk("next turn"), &meta(), &mut sb);
@@ -87,15 +107,24 @@ fn drained_legacy_terminal_settles_only_the_named_entry_without_changing_activit
             let activity = tracker.activity();
             let epoch = tracker.agent_output_epoch;
             let terminal = acp::SessionUpdate::ToolCallUpdate(
-                acp::ToolCallUpdate::new("old", acp::ToolCallUpdateFields::new().status(Some(status)))
-                    .meta(terminal_meta),
+                acp::ToolCallUpdate::new(
+                    "old",
+                    acp::ToolCallUpdateFields::new().status(Some(status)),
+                )
+                .meta(terminal_meta),
             );
-            let metadata = NotificationMeta { is_replay, ..Default::default() };
+            let metadata = NotificationMeta {
+                is_replay,
+                ..Default::default()
+            };
             assert!(tracker.handle_update(terminal.clone(), &metadata, &mut sb));
             assert!(!tracker.handle_update(terminal, &metadata, &mut sb));
             assert_eq!(sb.get_by_id(old).unwrap().tool_completion(), completion);
             assert!(!sb.get_by_id(old).unwrap().is_running);
-            assert_eq!(sb.get_by_id(other).unwrap().tool_completion(), ToolCompletion::Unconfirmed);
+            assert_eq!(
+                sb.get_by_id(other).unwrap().tool_completion(),
+                ToolCompletion::Unconfirmed
+            );
             assert!(!sb.get_by_id(other).unwrap().is_running);
             assert_eq!(tracker.current_thinking, thought);
             assert!(sb.get_by_id(thought.unwrap()).unwrap().is_running);

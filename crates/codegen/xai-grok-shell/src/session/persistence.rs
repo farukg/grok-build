@@ -3763,13 +3763,12 @@ pub(crate) async fn new_with_explicit_dir(
 
     let (handle, rx, summary_tx, disk_full_tx) = actor_channel();
 
-    let mut summary_gen = crate::session::summary::SummaryGenerator::new(
-        crate::session::summary::SummaryConfig {
+    let mut summary_gen =
+        crate::session::summary::SummaryGenerator::new(crate::session::summary::SummaryConfig {
             sampling_client,
             model: session_summary_model,
             persistence_tx: summary_tx,
-        },
-    );
+        });
     if is_wake && !summary.display_title().is_empty() {
         summary_gen.mark_done();
     }

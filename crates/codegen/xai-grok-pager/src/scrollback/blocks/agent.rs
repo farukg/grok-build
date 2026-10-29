@@ -71,7 +71,10 @@ impl AgentMessageBlock {
     }
 
     pub(crate) fn merge_replayed_source(&mut self, historical: &Self, offset: usize) -> bool {
-        if !self.content.merge_replayed_source(&historical.content, offset) {
+        if !self
+            .content
+            .merge_replayed_source(&historical.content, offset)
+        {
             return false;
         }
         self.image_refs.clone_from(&historical.image_refs);

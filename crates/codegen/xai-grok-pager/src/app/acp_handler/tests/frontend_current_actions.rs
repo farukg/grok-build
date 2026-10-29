@@ -121,7 +121,11 @@ fn first_new_live_callback_transfers_stash_and_full_replay_keeps_late_old_entry_
     for id in [AgentId(0), AgentId(1)] {
         for outcome in 0..3 {
             let (mut app, sid, prompt) = target(id, true);
-            let input = test_agent(&app, id).session.in_flight_prompt.clone().unwrap();
+            let input = test_agent(&app, id)
+                .session
+                .in_flight_prompt
+                .clone()
+                .unwrap();
             let input_entry = input.scrollback_entry;
             let input_text = input.text;
             let sampling = owner(&prompt);
@@ -899,7 +903,11 @@ fn queued_manual_source_does_not_end_foreground_and_persistence_wait_ends_only_a
     let invocation = effects
         .iter()
         .find_map(|effect| match effect {
-            Effect::Compact { agent_id, invocation_id, .. } => {
+            Effect::Compact {
+                agent_id,
+                invocation_id,
+                ..
+            } => {
                 assert_eq!(*agent_id, id);
                 Some(*invocation_id)
             }

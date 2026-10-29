@@ -1331,13 +1331,16 @@ impl AcpUpdateTracker {
             ToolCompletion::Unconfirmed => return None,
             ToolCompletion::Completed | ToolCompletion::Failed | ToolCompletion::Cancelled => {}
         }
-        let mut entries = self.tool_context_ids.iter().filter_map(|(entry_id, context_id)| {
-            (context_id.as_str() == tool_id
-                && scrollback
-                    .get_by_id(*entry_id)
-                    .is_some_and(|entry| matches!(entry.block, RenderBlock::ToolCall(_))))
-            .then_some(*entry_id)
-        });
+        let mut entries = self
+            .tool_context_ids
+            .iter()
+            .filter_map(|(entry_id, context_id)| {
+                (context_id.as_str() == tool_id
+                    && scrollback
+                        .get_by_id(*entry_id)
+                        .is_some_and(|entry| matches!(entry.block, RenderBlock::ToolCall(_))))
+                .then_some(*entry_id)
+            });
         let entry = entries.next()?;
         entries.next().is_none().then_some(entry)
     }

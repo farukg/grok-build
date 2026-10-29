@@ -409,7 +409,8 @@ fn completed_native_worker_receiver_contention_is_unconfirmed_without_model_inpu
             if output.as_str() == prior.output.as_ref())
         );
         assert_eq!(
-            server.request_count(), requests_before,
+            server.request_count(),
+            requests_before,
             "unconfirmed admission must not send requests; routes={:?}",
             server
                 .requests()

@@ -1,6 +1,6 @@
 use super::*;
-use crate::views::dashboard::{DashboardRowId, PersistedRowId};
 use crate::views::dashboard::state::load_persisted_from_path;
+use crate::views::dashboard::{DashboardRowId, PersistedRowId};
 use std::path::Path;
 
 fn fresh_main(config: &Path) -> AppView {
@@ -21,52 +21,93 @@ fn fresh_main(config: &Path) -> AppView {
 }
 
 fn persist_action(app: &mut AppView, config: &Path, id: AgentId, action: Action) {
-    app.dashboard.as_mut().unwrap().focus_row(DashboardRowId::TopLevel(id));
+    app.dashboard
+        .as_mut()
+        .unwrap()
+        .focus_row(DashboardRowId::TopLevel(id));
     let effects = dispatch(action, app);
     let [Effect::PersistDashboard(saved)] = effects.as_slice() else {
         panic!("Main v1 must emit its maintained snapshot: {effects:?}");
     };
-    crate::views::dashboard::persistence::with_test_writer(config.to_path_buf(), |_| {}, || {
-        crate::views::dashboard::persistence::enqueue(
-            crate::views::dashboard::persistence::DashboardWrite::Full(saved.clone()),
-        ).unwrap().blocking_recv().unwrap().unwrap();
-    }).unwrap();
-    assert_eq!(load_persisted_from_path(config).unwrap().pinned, saved.pinned);
+    crate::views::dashboard::persistence::with_test_writer(
+        config.to_path_buf(),
+        |_| {},
+        || {
+            crate::views::dashboard::persistence::enqueue(
+                crate::views::dashboard::persistence::DashboardWrite::Full(saved.clone()),
+            )
+            .unwrap()
+            .blocking_recv()
+            .unwrap()
+            .unwrap();
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        load_persisted_from_path(config).unwrap().pinned,
+        saved.pinned
+    );
 }
 
 fn reject_reorder(app: &mut AppView, config: &Path, id: AgentId) {
-    app.dashboard.as_mut().unwrap().focus_row(DashboardRowId::TopLevel(id));
+    app.dashboard
+        .as_mut()
+        .unwrap()
+        .focus_row(DashboardRowId::TopLevel(id));
     let disk = std::fs::read_to_string(config).unwrap();
     let order = app.dashboard.as_ref().unwrap().reorder.clone();
     assert!(dispatch(Action::DashboardReorderUp, app).is_empty());
     let dashboard = app.dashboard.as_ref().unwrap();
-    assert_eq!(dashboard.error_toast.as_deref(), Some("Sessions are ordered by running state and last activity"));
+    assert_eq!(
+        dashboard.error_toast.as_deref(),
+        Some("Sessions are ordered by running state and last activity")
+    );
     assert_eq!(dashboard.reorder, order);
     assert_eq!(std::fs::read_to_string(config).unwrap(), disk);
 }
 
 fn discover_children(app: &mut AppView) {
-    let sessions = ["unseen-a", "unseen-b"].map(|id| {
-        let mut child = idle_roster_entry(id, id);
-        child.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
-        child.parent_session_id = Some("detached-parent".into());
-        child
-    }).into();
-    let _ = dispatch(Action::TaskComplete(TaskResult::RosterLoaded { sessions }), app);
+    let sessions = ["unseen-a", "unseen-b"]
+        .map(|id| {
+            let mut child = idle_roster_entry(id, id);
+            child.session_kind = Some(crate::app::roster::SESSION_KIND_SUBAGENT.into());
+            child.parent_session_id = Some("detached-parent".into());
+            child
+        })
+        .into();
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::RosterLoaded { sessions }),
+        app,
+    );
     let dashboard = app.dashboard.as_ref().unwrap();
-    assert!(dashboard.pinned.contains(&DashboardRowId::Roster { session_id: "unseen-a".into() }));
-    assert!(dashboard.pinned.contains(&DashboardRowId::Roster { session_id: "unseen-b".into() }));
-    assert_eq!(dashboard.reorder.iter().filter_map(|id| match id {
-        DashboardRowId::Roster { session_id } => Some(session_id.as_str()),
-        DashboardRowId::TopLevel(_) | DashboardRowId::Workspace { .. } => None,
-    }).collect::<Vec<_>>(), vec!["unseen-b", "unseen-a"]);
+    assert!(dashboard.pinned.contains(&DashboardRowId::Roster {
+        session_id: "unseen-a".into()
+    }));
+    assert!(dashboard.pinned.contains(&DashboardRowId::Roster {
+        session_id: "unseen-b".into()
+    }));
+    assert_eq!(
+        dashboard
+            .reorder
+            .iter()
+            .filter_map(|id| match id {
+                DashboardRowId::Roster { session_id } => Some(session_id.as_str()),
+                DashboardRowId::TopLevel(_) | DashboardRowId::Workspace { .. } => None,
+            })
+            .collect::<Vec<_>>(),
+        vec!["unseen-b", "unseen-a"]
+    );
 }
 
 fn layout(config: &Path, field: &str) -> Vec<String> {
     let doc: toml_edit::DocumentMut = std::fs::read_to_string(config).unwrap().parse().unwrap();
     assert_eq!(doc["preferences"]["keep"].as_str(), Some("untouched"));
-    doc["dashboard"][field].as_array().unwrap().iter()
-        .map(|value| value.as_str().unwrap().to_owned()).collect()
+    doc["dashboard"][field]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect()
 }
 
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
@@ -79,21 +120,50 @@ fn main_pin_and_reorder_preserve_undiscovered_and_later_omitted_child_layout() {
     assert!(app.leader_roster.is_empty());
     persist_action(&mut app, &config, AgentId(0), Action::DashboardTogglePin);
     reject_reorder(&mut app, &config, AgentId(0));
-    assert_eq!(layout(&config, "pinned"), vec!["top:root-a", "top:unseen-a", "top:unseen-b"]);
-    assert_eq!(layout(&config, "reorder"), vec!["top:unseen-b", "top:root-b", "top:unseen-a", "top:root-a"]);
+    assert_eq!(
+        layout(&config, "pinned"),
+        vec!["top:root-a", "top:unseen-a", "top:unseen-b"]
+    );
+    assert_eq!(
+        layout(&config, "reorder"),
+        vec!["top:unseen-b", "top:root-b", "top:unseen-a", "top:root-a"]
+    );
     let saved = app.dashboard_persisted.as_ref().unwrap();
-    assert!(saved.pinned.contains(&PersistedRowId::TopLevel { session_id: "unseen-a".into() }));
-    assert!(saved.pinned.contains(&PersistedRowId::TopLevel { session_id: "unseen-b".into() }));
+    assert!(saved.pinned.contains(&PersistedRowId::TopLevel {
+        session_id: "unseen-a".into()
+    }));
+    assert!(saved.pinned.contains(&PersistedRowId::TopLevel {
+        session_id: "unseen-b".into()
+    }));
     drop(app);
     let mut reopened = fresh_main(&config);
     discover_children(&mut reopened);
-    let _ = dispatch(Action::TaskComplete(TaskResult::RosterLoaded { sessions: vec![] }), &mut reopened);
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::RosterLoaded { sessions: vec![] }),
+        &mut reopened,
+    );
     assert!(reopened.dashboard.as_ref().unwrap().child_rows.is_empty());
-    persist_action(&mut reopened, &config, AgentId(1), Action::DashboardTogglePin);
-    persist_action(&mut reopened, &config, AgentId(0), Action::DashboardTogglePin);
+    persist_action(
+        &mut reopened,
+        &config,
+        AgentId(1),
+        Action::DashboardTogglePin,
+    );
+    persist_action(
+        &mut reopened,
+        &config,
+        AgentId(0),
+        Action::DashboardTogglePin,
+    );
     reject_reorder(&mut reopened, &config, AgentId(1));
-    assert_eq!(layout(&config, "pinned"), vec!["top:root-b", "top:unseen-a", "top:unseen-b"]);
-    assert_eq!(layout(&config, "reorder"), vec!["top:unseen-b", "top:root-b", "top:unseen-a", "top:root-a"]);
+    assert_eq!(
+        layout(&config, "pinned"),
+        vec!["top:root-b", "top:unseen-a", "top:unseen-b"]
+    );
+    assert_eq!(
+        layout(&config, "reorder"),
+        vec!["top:unseen-b", "top:root-b", "top:unseen-a", "top:root-a"]
+    );
     drop(reopened);
     let mut reopened = fresh_main(&config);
     discover_children(&mut reopened);

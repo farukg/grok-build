@@ -244,7 +244,10 @@ fn streamed_code_lines_keep_original_indices_after_multiline_math() {
     markdown.push_and_render("```\n", None);
     markdown.finish(None);
     let cloned = markdown.clone();
-    assert_eq!(cloned.view().line_source_map, markdown.view().line_source_map);
+    assert_eq!(
+        cloned.view().line_source_map,
+        markdown.view().line_source_map
+    );
     assert_eq!(cloned.source(), markdown.source());
     markdown.clear();
     markdown.push_and_render("# Fresh\n", None);

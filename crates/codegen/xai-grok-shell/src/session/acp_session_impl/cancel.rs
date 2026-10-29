@@ -644,8 +644,9 @@ impl SessionActor {
                 FinalizationBinding::NoTask(Some(id)) if pinned_prompt_id.as_ref() == Some(id) => {
                     Some(id.clone())
                 }
-                FinalizationBinding::NoTask(Some(_) | None)
-                | FinalizationBinding::Task { .. } => None,
+                FinalizationBinding::NoTask(Some(_) | None) | FinalizationBinding::Task { .. } => {
+                    None
+                }
             },
             CancelFinalization::Rewind => None,
         };

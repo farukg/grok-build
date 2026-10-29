@@ -41,7 +41,9 @@ enum TestArtifacts {
 }
 
 #[track_caller]
-fn bounded<T>(future: impl std::future::Future<Output = T>) -> impl std::future::Future<Output = T> {
+fn bounded<T>(
+    future: impl std::future::Future<Output = T>,
+) -> impl std::future::Future<Output = T> {
     let caller = std::panic::Location::caller();
     async move {
         tokio::time::timeout(std::time::Duration::from_secs(45), future)

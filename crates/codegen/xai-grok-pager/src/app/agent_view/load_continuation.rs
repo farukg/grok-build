@@ -179,8 +179,14 @@ impl AgentView {
 
     fn swap_stashed_tool_projection(&mut self) {
         if let Some(reload) = &mut self.session_reload {
-            std::mem::swap(&mut self.scrollback, &mut reload.stash.transcript.scrollback);
-            std::mem::swap(&mut self.session.tracker, &mut reload.stash.transcript.tracker);
+            std::mem::swap(
+                &mut self.scrollback,
+                &mut reload.stash.transcript.scrollback,
+            );
+            std::mem::swap(
+                &mut self.session.tracker,
+                &mut reload.stash.transcript.tracker,
+            );
         }
     }
 
@@ -228,7 +234,8 @@ impl AgentView {
         };
         let tracker = self.admission_tracker(meta);
         tracker.drained_tool_entry(update, scrollback).or_else(|| {
-            tracker.historical_pending_tool_entry(update, meta)
+            tracker
+                .historical_pending_tool_entry(update, meta)
                 .filter(|entry| scrollback.get_by_id(*entry).is_some())
         })
     }
@@ -242,13 +249,15 @@ impl AgentView {
             return false;
         }
         let apply = |tracker: &mut AcpUpdateTracker, scrollback: &mut ScrollbackState| {
-            tracker.settle_drained_tool_terminal(update, scrollback).unwrap_or_else(|| {
-                tracker.handle_update(
-                    agent_client_protocol::SessionUpdate::ToolCallUpdate(update.clone()),
-                    meta,
-                    scrollback,
-                )
-            })
+            tracker
+                .settle_drained_tool_terminal(update, scrollback)
+                .unwrap_or_else(|| {
+                    tracker.handle_update(
+                        agent_client_protocol::SessionUpdate::ToolCallUpdate(update.clone()),
+                        meta,
+                        scrollback,
+                    )
+                })
         };
         if meta.is_replay {
             match &mut self.load_reconstruction {

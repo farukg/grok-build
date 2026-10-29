@@ -156,16 +156,16 @@ pub(super) fn apply_child_acp_update(
         return false;
     }
     let scope = admission::update_scope(child_view, &update, meta);
-    let prompt_admission = if meta.is_replay || matches!(scope, admission::UpdateScope::ToolTerminal)
-    {
-        prompt_origin::ChildPromptAdmission::Apply
-    } else {
-        prompt_origin::child_prompt_admission(
-            child_view,
-            meta.prompt_id.as_deref(),
-            meta.turn_start_ms,
-        )
-    };
+    let prompt_admission =
+        if meta.is_replay || matches!(scope, admission::UpdateScope::ToolTerminal) {
+            prompt_origin::ChildPromptAdmission::Apply
+        } else {
+            prompt_origin::child_prompt_admission(
+                child_view,
+                meta.prompt_id.as_deref(),
+                meta.turn_start_ms,
+            )
+        };
     match prompt_admission {
         prompt_origin::ChildPromptAdmission::Drop => return false,
         prompt_origin::ChildPromptAdmission::Closed(pid) => {

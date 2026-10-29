@@ -186,13 +186,24 @@ impl AgentViewLayout {
                 let top = self.scrollback.y;
                 let old_y = self.dock.y;
                 let height = self.dock.height;
-                if height == 0 { return; }
+                if height == 0 {
+                    return;
+                }
                 for rect in [
-                    &mut self.tasks, &mut self.scrollback, &mut self.scrollback_content,
-                    &mut self.todo, &mut self.queue, &mut self.btw, &mut self.turn_status,
-                    &mut self.banner, &mut self.plugin_cta, &mut self.follow_ups,
+                    &mut self.tasks,
+                    &mut self.scrollback,
+                    &mut self.scrollback_content,
+                    &mut self.todo,
+                    &mut self.queue,
+                    &mut self.btw,
+                    &mut self.turn_status,
+                    &mut self.banner,
+                    &mut self.plugin_cta,
+                    &mut self.follow_ups,
                 ] {
-                    if rect.y >= top && rect.y < old_y { rect.y = rect.y.saturating_add(height); }
+                    if rect.y >= top && rect.y < old_y {
+                        rect.y = rect.y.saturating_add(height);
+                    }
                 }
                 self.dock.y = top;
             }

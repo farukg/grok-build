@@ -218,8 +218,14 @@ fn sticky_highlight_clears_on_raw_toggle() {
 #[test]
 fn replayed_markdown_replacement_refreshes_equal_generation_viewer() {
     for (mut live, historical) in [
-        (RenderBlock::agent_message_streaming(), RenderBlock::agent_message("history")),
-        (RenderBlock::thinking_streaming(), RenderBlock::thinking("history")),
+        (
+            RenderBlock::agent_message_streaming(),
+            RenderBlock::agent_message("history"),
+        ),
+        (
+            RenderBlock::thinking_streaming(),
+            RenderBlock::thinking("history"),
+        ),
     ] {
         match &mut live {
             RenderBlock::AgentMessage(block) => {

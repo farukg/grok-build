@@ -788,11 +788,15 @@ impl ScrollbackPane {
             let byte_start = if let Some(range) = line.selection_range {
                 let seen = source_offsets.contains_key(&range);
                 let offset = source_offsets.entry(range).or_default();
-                if seen { *offset += line.joiner.as_deref().unwrap_or("\n").len(); }
+                if seen {
+                    *offset += line.joiner.as_deref().unwrap_or("\n").len();
+                }
                 let start = *offset;
                 *offset += derive_selection_text(line).len();
                 start
-            } else { 0 };
+            } else {
+                0
+            };
             // Render line in the content area (not overlapping with accent).
             // Bidi: content paint only; selection maps visual columns back
             buf.set_line_safe_bidi(content_area.x, y, &line.content, content_area.width);
@@ -803,8 +807,11 @@ impl ScrollbackPane {
                 selection_lines.push(ResolvedSelectableLine {
                     byte_start,
                     entry_idx: selection_entry_idx,
-                    range_id: super::selection_identity::RangeIdentity::new(entry.selection_identity(),
-                        super::selection_identity::SelectablePart::Block, range_id),
+                    range_id: super::selection_identity::RangeIdentity::new(
+                        entry.selection_identity(),
+                        super::selection_identity::SelectablePart::Block,
+                        range_id,
+                    ),
                     block_line_idx,
                     screen_y: y,
                     screen_x: content_area.x,
@@ -1333,7 +1340,17 @@ mod tests {
             let theme = Theme::current();
             let header = ScrollbackPane::new()
                 .render_sticky_header(
-                    &mut buf, area, &state, 0, 0, &theme, 1, 0, &mut scratch, false, None,
+                    &mut buf,
+                    area,
+                    &state,
+                    0,
+                    0,
+                    &theme,
+                    1,
+                    0,
+                    &mut scratch,
+                    false,
+                    None,
                 )
                 .unwrap();
             assert_eq!(header.block.content_width, content_width);

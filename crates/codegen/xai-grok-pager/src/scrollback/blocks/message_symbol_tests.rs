@@ -780,10 +780,20 @@ fn markdown_links_follow_the_symbol_gutter_on_first_and_continuation_rows() {
         .iter()
         .map(|link| (link.screen_row, link.col_start, link.col_end))
         .collect();
-    assert_eq!(positions, [
-        (0, 2, 5), (1, 2, 4), (2, 3, 5), (3, 2, 5), (4, 2, 5),
-        (5, 2, 5), (6, 2, 5), (7, 2, 5), (8, 2, 5),
-    ]);
+    assert_eq!(
+        positions,
+        [
+            (0, 2, 5),
+            (1, 2, 4),
+            (2, 3, 5),
+            (3, 2, 5),
+            (4, 2, 5),
+            (5, 2, 5),
+            (6, 2, 5),
+            (7, 2, 5),
+            (8, 2, 5),
+        ]
+    );
     assert!(overlay.links().iter().all(|link| link.target
         == crate::render::osc8::LinkTarget::Url(std::sync::Arc::from("https://example.test"))));
     assert_eq!(

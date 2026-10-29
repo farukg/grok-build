@@ -2805,7 +2805,11 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
             assert!(!path_links.is_empty(), "{name} {mode:?} width={width}");
             if width == 16 {
                 assert!(painted_rows.iter().any(|row| row.contains("main.rs")));
-                assert!(painted_rows.iter().all(|row| !row.contains(" AM") && !row.contains(" PM")));
+                assert!(
+                    painted_rows
+                        .iter()
+                        .all(|row| !row.contains(" AM") && !row.contains(" PM"))
+                );
             }
             assert!(
                 path_links

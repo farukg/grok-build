@@ -65,7 +65,14 @@ fn blank_chunks_remain_original_source_until_and_after_finish() {
 
 #[test]
 fn source_bytes_survive_complete_streamed_and_deferred_markdown() {
-    let chunks = [" \t\n", "界", "\t", "[é](https://x.test)", "\n\n\\", "( x \\)"];
+    let chunks = [
+        " \t\n",
+        "界",
+        "\t",
+        "[é](https://x.test)",
+        "\n\n\\",
+        "( x \\)",
+    ];
     let source = " \t\n界\t[é](https://x.test)\n\n\\( x \\)";
     let complete = MarkdownContent::new(source);
     let faithful = MarkdownContent::new_source_faithful(source, None);
@@ -86,7 +93,10 @@ fn source_bytes_survive_complete_streamed_and_deferred_markdown() {
         }
         markdown.finish();
         assert_eq!(markdown.text(), source);
-        assert_eq!(markdown.rendered_plain_text(), complete.rendered_plain_text());
+        assert_eq!(
+            markdown.rendered_plain_text(),
+            complete.rendered_plain_text()
+        );
         for width in [4, 12, 80] {
             assert_eq!(
                 markdown
@@ -124,7 +134,12 @@ fn raw_and_pretty_copy_keep_distinct_source_and_display_oracles() {
         assert_eq!(agent.copy_text(false), painted);
         assert_eq!(thinking.copy_text(false), painted);
         assert_eq!(
-            agent.content().pre_wrap_lines().first().unwrap().to_string(),
+            agent
+                .content()
+                .pre_wrap_lines()
+                .first()
+                .unwrap()
+                .to_string(),
             painted
         );
     }
@@ -161,8 +176,17 @@ fn append_to_cached_completed_markdown_reopens_the_original_delimiter() {
     markdown.push_chunk("( x \\)\tend");
     let output = markdown.output(8);
     let last = output.lines.len() - 1;
-    let last_col = output.lines.get(last).unwrap().content.width().saturating_sub(1) as u16;
-    assert_eq!(select(&output.lines, (0, 0), (last, last_col)), "界    x    end");
+    let last_col = output
+        .lines
+        .get(last)
+        .unwrap()
+        .content
+        .width()
+        .saturating_sub(1) as u16;
+    assert_eq!(
+        select(&output.lines, (0, 0), (last, last_col)),
+        "界    x    end"
+    );
     assert_eq!(markdown.text(), "界\t\\( x \\)\tend");
     markdown.finish();
     assert_eq!(markdown.rendered_plain_text(), "界    x    end");
@@ -201,18 +225,41 @@ fn tab_paint_selection_and_wrapped_link_hitboxes_share_display_cells() {
         let label_column = if raw { 7 } else { 6 };
         assert_eq!(buffer.cell((label_column, 0)).unwrap().symbol(), "é");
         assert_eq!(select(&wide.lines, (0, 2), (0, 5)), "    ");
-        assert_eq!(select(&wide.lines, (0, label_column), (0, label_column)), "é");
+        assert_eq!(
+            select(&wide.lines, (0, label_column), (0, label_column)),
+            "é"
+        );
         assert_eq!(select(&wide.lines, (0, 1), (0, 1)), "界");
         for width in [4, 12, 80] {
             let output = markdown.output(width);
-            assert!(output.lines.iter().all(|line| line.content.width() <= width));
+            assert!(
+                output
+                    .lines
+                    .iter()
+                    .all(|line| line.content.width() <= width)
+            );
             let last = output.lines.len() - 1;
-            let last_col = output.lines.get(last).unwrap().content.width().saturating_sub(1) as u16;
+            let last_col = output
+                .lines
+                .get(last)
+                .unwrap()
+                .content
+                .width()
+                .saturating_sub(1) as u16;
             assert_eq!(select(&output.lines, (0, 0), (last, last_col)), expected);
             let mut overlay = LinkOverlay::new();
             markdown.with_hyperlinks(|links| {
                 crate::scrollback::render::map_hyperlinks_to_overlay(
-                    links, &output, 0, 0, 100, 0, 0, &[], None, &mut overlay,
+                    links,
+                    &output,
+                    0,
+                    0,
+                    100,
+                    0,
+                    0,
+                    &[],
+                    None,
+                    &mut overlay,
                 );
             });
             let mut labels = String::new();
