@@ -964,6 +964,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
         doom_loop_triggers: None,
         doom_loop_aborted_at_chunk: None,
         credential: xai_grok_sampling_types::SentCredential::Unknown,
+        retry_schedule: None,
     }
 }
 /// Primary scenario: remote settings shrinks the context window mid-session.
@@ -1018,6 +1019,7 @@ async fn test_compact_on_error_kimi_token_limit_without_model_metadata() {
                 doom_loop_triggers: None,
                 doom_loop_aborted_at_chunk: None,
                 credential: xai_grok_sampling_types::SentCredential::Unknown,
+                retry_schedule: None,
             };
             assert!(actor.should_compact_on_error(&err).await);
             assert_eq!(
@@ -1040,6 +1042,7 @@ async fn test_compact_on_error_kimi_token_limit_without_model_metadata() {
                 doom_loop_triggers: None,
                 doom_loop_aborted_at_chunk: None,
                 credential: xai_grok_sampling_types::SentCredential::Unknown,
+                retry_schedule: None,
             };
             assert!(!actor.should_compact_on_error(&unrelated).await);
         })

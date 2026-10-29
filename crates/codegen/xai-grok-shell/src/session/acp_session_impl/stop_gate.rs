@@ -720,6 +720,3 @@ mod stop_gate_snapshot_tests {
     }
 }
 
-#[cfg(test)]
-#[path = "stop_gate_tests.rs"]
-mod tests;

@@ -23,6 +23,7 @@ fn error_of_kind(
         doom_loop_triggers: None,
         doom_loop_aborted_at_chunk: None,
         credential: xai_grok_sampling_types::SentCredential::Unknown,
+        retry_schedule: None,
     }
 }
 
@@ -165,8 +166,8 @@ async fn idle_timeout_first_failure_requests_resubmit() {
                 )
                 .await;
             match result {
-                Ok(SamplerFailureRecovery::RetryTransient { kind, .. }) => {
-                    assert_eq!(kind, xai_grok_sampler::SamplingErrorKind::IdleTimeout);
+                Ok(SamplerFailureRecovery::RetryTransient { error }) => {
+                    assert_eq!(error.kind, xai_grok_sampler::SamplingErrorKind::IdleTimeout);
                 }
                 Ok(_) => panic!("expected RetryTransient, got another recovery"),
                 Err(e) => panic!("first idle timeout must not be terminal: {e:?}"),
@@ -192,8 +193,8 @@ async fn server_error_first_failure_requests_resubmit() {
                 )
                 .await;
             match result {
-                Ok(SamplerFailureRecovery::RetryTransient { status_code, .. }) => {
-                    assert_eq!(status_code, Some(503));
+                Ok(SamplerFailureRecovery::RetryTransient { error }) => {
+                    assert_eq!(error.status_code, Some(503));
                 }
                 Ok(_) => panic!("expected RetryTransient, got another recovery"),
                 Err(e) => panic!("first 503 must not be terminal: {e:?}"),

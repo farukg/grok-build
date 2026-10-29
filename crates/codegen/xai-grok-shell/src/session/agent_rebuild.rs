@@ -522,6 +522,12 @@ impl AgentRebuildSpec {
 /// Every field is set to a minimal default suitable for test `SessionActor` literals and focused `build_agent` tests.
 #[cfg(test)]
 pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
+    test_rebuild_spec_with_media_gen_batch_limits(Default::default())
+}
+#[cfg(test)]
+pub(crate) fn test_rebuild_spec_with_media_gen_batch_limits(
+    media_gen_batch_limits: xai_grok_tools::media_gen_limits::MediaGenBatchLimits,
+) -> Arc<AgentRebuildSpec> {
     let (uq_tx, _uq_rx) = tokio::sync::mpsc::unbounded_channel();
     Arc::new(AgentRebuildSpec {
         working_directory: std::env::temp_dir(),
@@ -560,7 +566,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         image_gen_config: ImageGenConfig::default(),
         video_gen_config: VideoGenConfig::default(),
         app_builder_deployer_config: AppBuilderDeployerConfig::default(),
-        media_gen_batch_limits: xai_grok_tools::media_gen_limits::MediaGenBatchLimits::default(),
+        media_gen_batch_limits,
         write_file_enabled: true,
         active_agent_messages_enabled: false,
         subagents_enabled: false,

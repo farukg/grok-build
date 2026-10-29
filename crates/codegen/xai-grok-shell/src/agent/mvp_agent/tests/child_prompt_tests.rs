@@ -374,7 +374,7 @@ fn compact_finished_saved_child_reloads_same_identity_and_is_cancellable_during_
                 &xai_grok_sampling_types::ContextPolicyEdit {
                     expected,
                     mutation: xai_grok_sampling_types::ContextPolicyMutation::ReplaceSession {
-                        policy,
+                        policy: policy.clone(),
                     },
                 },
             )

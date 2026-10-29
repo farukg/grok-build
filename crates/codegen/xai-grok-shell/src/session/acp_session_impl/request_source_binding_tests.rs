@@ -47,7 +47,7 @@ fn completion(id: &str) -> crate::session::SubagentCompletionEvent {
 async fn strict_sources_follow_exact_persisted_receipts_and_replay_without_echo_or_readmission() {
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_owned()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
@@ -116,7 +116,7 @@ async fn strict_sources_follow_exact_persisted_receipts_and_replay_without_echo_
 async fn output_receipts_keep_distinct_item_ids_and_honest_multi_source_channel_aggregates() {
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_owned()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage);

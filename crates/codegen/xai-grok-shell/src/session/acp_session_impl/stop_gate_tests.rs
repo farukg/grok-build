@@ -1,4 +1,5 @@
 use super::*;
+use super::super::stop_gate::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use xai_grok_tools::implementations::grok_build::task::types::{
@@ -122,7 +123,7 @@ async fn subagent_wait_target_resolves_liveness_through_the_coordinator() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
-            let (actor, _gateway_rx, _persistence_rx) = actor_with_channels().await;
+            let (mut actor, _gateway_rx, _persistence_rx) = actor_with_channels().await;
             let subagent_listed = Arc::new(std::sync::atomic::AtomicBool::new(true));
             let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SubagentEvent>();
             actor.tool_context.subagent_event_tx = Some(event_tx);
@@ -385,7 +386,7 @@ async fn subagent_sessions_never_declare_a_wait() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
-            let (actor, _gateway_rx, _persistence_rx) = actor_with_channels().await;
+            let (mut actor, _gateway_rx, _persistence_rx) = actor_with_channels().await;
             seed_active_workflow_run(&actor, "wf-child-1").await;
             actor.startup_hints.is_subagent = true;
             let wait = actor.snapshot_turn_wait().await;

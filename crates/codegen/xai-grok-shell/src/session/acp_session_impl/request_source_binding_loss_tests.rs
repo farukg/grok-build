@@ -4,7 +4,7 @@ use super::*;
 async fn lost_strict_reply_after_real_commit_is_unknown_until_receipt_reconciliation() {
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_owned()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let event = completion("lost-reply-child");

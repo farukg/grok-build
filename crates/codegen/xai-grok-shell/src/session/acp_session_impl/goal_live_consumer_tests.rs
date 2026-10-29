@@ -110,7 +110,8 @@ async fn live_goal_fixture() -> LiveGoalFixture {
                 SubagentEvent::AcknowledgeCompletions { .. }
                 | SubagentEvent::OpenSpawnAdmission { .. }
                 | SubagentEvent::ClearUsageNotApplied(_) => {}
-                SubagentEvent::ValidateType(_)
+                SubagentEvent::RecoverMessage(_)
+                | SubagentEvent::ValidateType(_)
                 | SubagentEvent::DescribeType(_) | SubagentEvent::LoopUnitActive(_)
                 | SubagentEvent::ResolveResume(_) => panic!("unexpected coordinator operation in live goal fixture"),
             }

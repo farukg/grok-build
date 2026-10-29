@@ -17,7 +17,7 @@ async fn actual_bash_and_monitor_producer_bridge_actor_admission_replays_once_af
     tokio::task::LocalSet::new().run_until(async {
         for kind in [TaskKind::Bash, TaskKind::Monitor] {
             let directory = tempfile::tempdir().unwrap();
-            let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+            let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
             let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
             storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
             let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
@@ -147,7 +147,7 @@ async fn actual_goal_active_bash_and_monitor_bridge_commits_policy_before_public
     tokio::task::LocalSet::new().run_until(async {
         for kind in [TaskKind::Bash, TaskKind::Monitor] {
             let directory = tempfile::tempdir().unwrap();
-            let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+            let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
             let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
             storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
             let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
@@ -227,7 +227,7 @@ async fn actual_producer_enrollment_before_goal_admission_restarts_under_the_com
     tokio::task::LocalSet::new().run_until(async {
         for kind in [TaskKind::Bash, TaskKind::Monitor] {
             let directory = tempfile::tempdir().unwrap();
-            let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+            let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
             let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
             storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
             let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());

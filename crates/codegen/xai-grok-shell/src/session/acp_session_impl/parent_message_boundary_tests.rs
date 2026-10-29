@@ -507,7 +507,7 @@ async fn replacement(
     let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
         directory.to_path_buf(),
     ));
-    let info = crate::session::SessionInfo {
+    let info = crate::session::info::Info {
         id: acp::SessionId::new("test-actor"),
         cwd: "/tmp".into(),
     };

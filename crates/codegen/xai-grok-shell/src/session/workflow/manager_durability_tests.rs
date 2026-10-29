@@ -1,7 +1,8 @@
 use super::*;
 use crate::session::persistence::PersistenceMsg;
 use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
-use crate::session::{SessionCommand, SessionInfo};
+use crate::session::SessionCommand;
+use crate::session::info::Info as SessionInfo;
 
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(std::time::Duration::from_secs(15), future).await.expect("workflow durability rendezvous timed out")

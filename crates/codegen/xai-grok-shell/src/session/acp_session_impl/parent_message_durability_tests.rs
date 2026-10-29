@@ -284,7 +284,7 @@ async fn receiver_with_exit_cuts(
     mut projection_ack: ReceiverBarrier,
 ) -> ReceiverFixture {
     use crate::session::chat_persistence::ChannelChatPersistence;
-    let info = crate::session::SessionInfo {
+    let info = crate::session::info::Info {
         id: acp::SessionId::new("test-actor"),
         cwd: "/tmp".into(),
     };
@@ -675,7 +675,7 @@ async fn real_claim_storage_refuses_altered_admission_without_positive_settlemen
                 let directory = tempfile::tempdir().unwrap();
                 let storage =
                     JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf());
-                let info = crate::session::SessionInfo {
+                let info = crate::session::info::Info {
                     id: acp::SessionId::new("test-actor"),
                     cwd: "/tmp".into(),
                 };

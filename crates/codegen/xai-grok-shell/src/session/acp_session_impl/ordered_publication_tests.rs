@@ -253,7 +253,7 @@ async fn cancelled_native_tool_terminal_after_source_change_keeps_publication_de
                 };
                 assert_eq!(
                     record.request.method.as_ref(),
-                    crate::extensions::current_actions::TRANSITION_METHOD
+                    crate::session::current_actions::TRANSITION_METHOD
                 );
                 record.response_tx.send(Ok(())).unwrap();
             }

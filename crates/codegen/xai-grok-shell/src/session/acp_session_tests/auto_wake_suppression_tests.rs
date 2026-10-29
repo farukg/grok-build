@@ -4,7 +4,10 @@ use super::support::*;
 #[path = "auto_wake_fixtures.rs"]
 mod fixtures;
 use super::*;
-use fixtures::*;
+use fixtures::{
+    task_output_result, bash_completed_notification, monitor_completed_notification,
+    task_wake_admission, monitor_event_notification,
+};
 use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
 use xai_grok_tools::types::output::{BashOutput, TextOutput, ToolOutput};
 use xai_tool_types::{
@@ -1095,11 +1098,13 @@ async fn subagent_completed_drops_matching_pending_input() {
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 actor.commit_observed_subagent_tool_result(
                     ConversationItem::tool_result("child-result", "done"),
-                    vec![xai_grok_tools::types::completion_observation::ObservedSubagentCompletion {
-                        subagent_id: completion.id.subagent_id.clone(),
-                        attempt_id: completion.id.attempt_id.clone(),
-                        text: "done".into(),
-                    }],
+                    vec![xai_grok_tools::types::completion_observation::ObservedCompletion::Subagent(
+                        xai_grok_tools::types::completion_observation::ObservedSubagentCompletion {
+                            subagent_id: completion.id.subagent_id.clone(),
+                            attempt_id: completion.id.attempt_id.clone(),
+                            text: "done".into(),
+                        },
+                    )],
                 ).await.expect("actual tool-result commit must bind the observed attempt");
                 assert!(!actor.drain_admitted_messages_at_safe_point().await,
                     "the queued wake is already consumed by the committed tool result");

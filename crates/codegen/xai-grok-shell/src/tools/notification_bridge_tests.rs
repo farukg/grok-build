@@ -182,7 +182,7 @@ async fn acknowledged_terminal_transport_waits_for_the_completion_owner_before_p
     tokio::task::LocalSet::new()
         .run_until(async {
             let (config, mut gateway, mut persistence, mut commands) = make_test_config_full_raw();
-            let info = crate::session::SessionInfo {
+            let info = crate::session::info::Info {
                 id: config.session_id.clone(),
                 cwd: "/tmp".into(),
             };
@@ -2331,7 +2331,7 @@ async fn task_completed_notification_is_frame_bounded() {
     }
     let params = params.expect("expected an x.ai/task_completed notification");
     assert!(
-        params.len() <= task_completed_frame::FRAME_MAX_BYTES,
+        params.len() <= crate::tools::task_completed_frame::FRAME_MAX_BYTES,
         "params is {} bytes",
         params.len()
     );

@@ -98,18 +98,19 @@ async fn exact_private_capture_and_public_redaction_survive_reopen_without_histo
 async fn attempts_share_one_blob_and_partial_cancelled_http_failures_are_independent_facts() {
     let directory = tempfile::tempdir().unwrap();
     let (id, events, _) = captured("shared retry body").await;
+    let dispatch = events.iter().find_map(|(_, evidence)| matches!(evidence, LocalRequestEvidence::DispatchStarted { .. }).then_some(evidence.clone())).unwrap();
     let prepared = events.into_iter().find_map(|(_, evidence)| matches!(evidence, LocalRequestEvidence::Prepared { .. }).then_some(evidence)).unwrap();
     begin(directory.path(), &origin(id)).unwrap();
     let mut expected_events = Vec::new();
     for (attempt, observations) in [
         (1, vec![prepared.clone(), LocalRequestEvidence::Finished { outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::InitializationFailed }]),
-        (2, vec![prepared.clone(), LocalRequestEvidence::DispatchStarted, LocalRequestEvidence::ResponseHeaders { status: 503 }, LocalRequestEvidence::Finished { outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Failed }]),
-        (3, vec![prepared.clone(), LocalRequestEvidence::DispatchStarted, LocalRequestEvidence::Finished { outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Cancelled }]),
+        (2, vec![prepared.clone(), dispatch.clone(), LocalRequestEvidence::ResponseHeaders { status: 503 }, LocalRequestEvidence::Finished { outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Failed }]),
+        (3, vec![prepared.clone(), dispatch, LocalRequestEvidence::Finished { outcome: xai_grok_sampler::request_capture::LocalAttemptOutcome::Cancelled }]),
         (4, vec![prepared]),
     ] {
         for evidence in observations {
             expected_events.push((attempt, match &evidence {
-                LocalRequestEvidence::Prepared { .. } => "prepared", LocalRequestEvidence::DispatchStarted => "dispatch",
+                LocalRequestEvidence::Prepared { .. } => "prepared", LocalRequestEvidence::DispatchStarted { .. } => "dispatch",
                 LocalRequestEvidence::ResponseHeaders { .. } => "headers", LocalRequestEvidence::Finished { .. } => "finished",
             }));
             assert!(matches!(record(directory.path(), "stored-session", id, RequestAttemptId(attempt), evidence).receipt, CaptureReceipt::Confirmed { .. }));
@@ -163,6 +164,7 @@ async fn recent_raw_eviction_keeps_all_request_source_outcome_references_and_use
 async fn oversize_storage_failure_and_lookup_tampering_never_fabricate_capture_success() {
     let directory = tempfile::tempdir().unwrap();
     let (id, events, wire) = captured("independent lookup input").await;
+    let dispatch = events.iter().find_map(|(_, evidence)| matches!(evidence, LocalRequestEvidence::DispatchStarted { .. }).then_some(evidence.clone())).unwrap();
     let prepared = events.into_iter().find_map(|(_, evidence)| matches!(evidence, LocalRequestEvidence::Prepared { .. }).then_some(evidence)).unwrap();
     begin(directory.path(), &origin(id)).unwrap();
     let _scope = super::super::AtomicWriteFaultScope::enter();
@@ -173,7 +175,7 @@ async fn oversize_storage_failure_and_lookup_tampering_never_fabricate_capture_s
         digest, byte_len, availability: BodyAvailability::Failed { .. },
     }, .. } if digest == blake3::hash(&wire).as_bytes() && *byte_len == wire.len() as u64));
     super::super::fail_next_atomic_write(super::super::AtomicWriteFault::Write);
-    let failed = record(directory.path(), "stored-session", id, RequestAttemptId(1), LocalRequestEvidence::DispatchStarted);
+    let failed = record(directory.path(), "stored-session", id, RequestAttemptId(1), dispatch);
     assert!(matches!(failed.receipt, CaptureReceipt::Unconfirmed { .. }));
     assert!(read(directory.path(), "another-session", SnapshotRead::Get { request: id }).is_err());
     assert!(serde_json::from_value::<SnapshotRead>(serde_json::json!({"action":"get","request":"../../outside"})).is_err());

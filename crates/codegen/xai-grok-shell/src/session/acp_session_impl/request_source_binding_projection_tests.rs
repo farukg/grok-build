@@ -6,7 +6,7 @@ async fn delivery_and_notification_sources_use_distinct_receipt_identities_on_on
     use super::super::super::notification_drain::{NotificationBatchPayload, NotificationBatchRow};
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_owned()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage);

@@ -1,4 +1,6 @@
 use super::*;
+use tokio::sync::oneshot;
+use crate::session::SessionHandle;
 use crate::session::persistence::{
     PersistenceMsg, native_wake_tests_support::NativeAdoptionFaultProbe,
 };

@@ -466,7 +466,7 @@ async fn copied_owner_and_operation_do_not_delegate_session_control() {
                 state.arm_hook_block_hold();
                 state.notifications_suppressed = true;
             }
-            let before = actor.build_queue_wire(&actor.state.lock().await);
+            let before = actor.build_queue_wire(&*actor.state.lock().await);
             let mut spoof = request("owned", 0, Some("A"));
             spoof.action = QueueAction::Prioritize {
                 new_text: Some("forged payload".into()),
@@ -630,7 +630,7 @@ async fn byte_capacity_is_reserved_before_atomic_edit_and_keeps_last_receipt() {
                 "UTF-8 bytes, not character count, consume the byte budget"
             );
             let (accepted, receipt) = last.unwrap();
-            let before = actor.build_queue_wire(&actor.state.lock().await);
+            let before = actor.build_queue_wire(&*actor.state.lock().await);
             assert_eq!(submit(&sender, accepted.clone()).await, receipt);
             let mut observe = accepted.clone();
             observe.action = QueueAction::Observe;

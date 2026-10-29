@@ -79,6 +79,7 @@ fn auth_error() -> xai_grok_sampler::SamplingErrorInfo {
         doom_loop_triggers: None,
         doom_loop_aborted_at_chunk: None,
         credential: xai_grok_sampling_types::SentCredential::Unknown,
+        retry_schedule: None,
     }
 }
 
@@ -314,7 +315,9 @@ async fn credential_less_401_with_deferred_refresh_parks_on_uncharged_resubmit()
                 matches!(
                     result,
                     Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
-                        credential: xai_grok_sampling_types::SentCredential::Missing,
+                        error: xai_grok_sampler::SamplingErrorInfo {
+                            credential: xai_grok_sampling_types::SentCredential::Missing, ..
+                        },
                         store: RecoveredStore::SessionToken,
                     })
                 ),
@@ -354,7 +357,9 @@ async fn parked_credential_less_401_reparks_without_recovery_dispatch() {
                 matches!(
                     result,
                     Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
-                        credential: xai_grok_sampling_types::SentCredential::Missing,
+                        error: xai_grok_sampler::SamplingErrorInfo {
+                            credential: xai_grok_sampling_types::SentCredential::Missing, ..
+                        },
                         store: RecoveredStore::SessionToken,
                     })
                 ),
@@ -403,7 +408,9 @@ async fn mid_salvage_credential_less_401_still_parks() {
                     matches!(
                         result,
                         Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
-                            credential: xai_grok_sampling_types::SentCredential::Missing,
+                            error: xai_grok_sampler::SamplingErrorInfo {
+                                credential: xai_grok_sampling_types::SentCredential::Missing, ..
+                            },
                             store: RecoveredStore::SessionToken,
                         })
                     ),
@@ -892,6 +899,7 @@ fn model_not_found_error() -> xai_grok_sampler::SamplingErrorInfo {
             doom_loop_triggers: None,
             doom_loop_aborted_at_chunk: None,
             credential: xai_grok_sampling_types::SentCredential::Unknown,
+            retry_schedule: None,
         }
 }
 
@@ -972,6 +980,7 @@ fn unauthorized_401_error() -> xai_grok_sampler::SamplingErrorInfo {
             doom_loop_triggers: None,
             doom_loop_aborted_at_chunk: None,
             credential: xai_grok_sampling_types::SentCredential::Unknown,
+            retry_schedule: None,
         }
 }
 

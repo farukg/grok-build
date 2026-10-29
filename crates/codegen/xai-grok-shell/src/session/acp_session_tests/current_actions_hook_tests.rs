@@ -51,7 +51,7 @@ async fn real_awaited_hook_keeps_its_original_point_and_observation_never_answer
                 assert!(response.is_closed());
             } else {
                 response.send(Ok(acp::ExtResponse::new(serde_json::value::to_raw_value(
-                    &crate::extensions::hooks::ClientHookResponse::default(),
+                    &serde_json::json!({}),
                 ).unwrap().into()))).unwrap();
                 run.await;
             }

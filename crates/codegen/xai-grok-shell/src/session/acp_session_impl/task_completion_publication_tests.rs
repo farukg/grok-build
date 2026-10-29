@@ -1,6 +1,7 @@
 use super::*;
 use crate::session::acp_session::support;
 use crate::session::commands::TaskCompletionBatch;
+use crate::session::acp_session::stop_gate::{TurnWaitDeclaration, WaitOnTarget};
 use crate::session::completion_delivery::{CompletionEventPolicy, CompletionPayloadSource};
 use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
 use xai_grok_tools::computer::types::{TaskKind, TaskSnapshot};
@@ -36,7 +37,7 @@ fn snapshot(id: &str) -> TaskSnapshot {
 struct Fixture {
     actor: Arc<SessionActor>,
     storage: Arc<JsonlStorageAdapter>,
-    info: crate::session::SessionInfo,
+    info: crate::session::info::Info,
     bridge: xai_grok_tools::notification::types::ToolNotificationHandle,
     gateway: mpsc::UnboundedReceiver<xai_acp_lib::AcpClientMessage>,
     _directory: tempfile::TempDir,
@@ -53,7 +54,7 @@ async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
 impl Fixture {
     async fn new(tasks: &[TaskSnapshot]) -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo {
+        let info = crate::session::info::Info {
             id: acp::SessionId::new("test-actor"),
             cwd: "/tmp".into(),
         };
@@ -146,7 +147,7 @@ impl Fixture {
     async fn consume(&self, task: &TaskSnapshot) {
         self.actor
             .chat_state_handle
-            .push(ConversationItem::assistant_tool_calls(vec![
+            .push_assistant_response_and_ack(ConversationItem::assistant_tool_calls(vec![
                 xai_grok_sampling_types::ToolCall {
                     id: format!("read-{}", task.task_id).into(),
                     name: "get_task_output".into(),

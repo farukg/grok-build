@@ -597,7 +597,7 @@ async fn changed_restore_cause_reannounces_while_identical_cause_stays_suppresse
         assert!(request.items.iter().any(|item| item.text_content() == "restore cause visibility"));
         let xai_acp_lib::AcpClientMessage::ExtNotification(first) = live.try_recv().unwrap() else { panic!("first restore failure warning"); };
         let first: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(first.request.params.get()).unwrap();
-        assert!(matches!(first.cause, CaptureFailure::Io { kind: crate::session::extensions::context_policy::ContextIoKind::StorageFull, .. }));
+        assert!(matches!(first.cause, CaptureFailure::Io { kind: crate::extensions::context_policy::ContextIoKind::StorageFull, .. }));
         let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "identical-failure".into()).await.unwrap();
         let (_, ()) = tokio::join!(actor.prepare_request_for_sampling(built, None), restore(std::io::ErrorKind::StorageFull));
         assert!(live.try_recv().is_err(), "identical cause stays suppressed");
@@ -606,7 +606,7 @@ async fn changed_restore_cause_reannounces_while_identical_cause_stays_suppresse
         assert!(request.items.iter().any(|item| item.text_content() == "restore cause visibility"));
         let xai_acp_lib::AcpClientMessage::ExtNotification(changed) = live.try_recv().unwrap() else { panic!("changed cause is reannounced"); };
         let changed: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(changed.request.params.get()).unwrap();
-        assert!(matches!(changed.cause, CaptureFailure::Io { kind: crate::session::extensions::context_policy::ContextIoKind::PermissionDenied, .. }));
+        assert!(matches!(changed.cause, CaptureFailure::Io { kind: crate::extensions::context_policy::ContextIoKind::PermissionDenied, .. }));
         let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "recovered".into()).await.unwrap();
         let prepare = actor.prepare_request_for_sampling(built, None);
         let recover = async {

@@ -1,4 +1,6 @@
-use super::super::replay_buffer_send_update_tests::make_replay_send_update_fixture;
+use super::super::replay_buffer_send_update_tests::{
+    make_replay_send_update_fixture, make_replay_send_update_fixture_with_media_gen_batch_limits,
+};
 use super::*;
 use crate::extensions::tool_timing::{
     ToolExecutionTermination, ToolExecutionTiming, timing_from_meta,
@@ -306,13 +308,18 @@ async fn deny_cancel_and_cap_rejection_never_publish_execution() {
                     ));
                 }
             }
-            let mut fixture = make_replay_send_update_fixture().await;
+            let mut fixture = make_replay_send_update_fixture_with_media_gen_batch_limits(
+                xai_grok_tools::media_gen_limits::MediaGenBatchLimits {
+                    max_image: 0,
+                    ..Default::default()
+                },
+            )
+            .await;
             install_fixture_tool(
                 &fixture.actor,
                 ToolKind::ImageGen,
                 TimingFixtureSchedule::Immediate,
             );
-            fixture.actor.rebuild_spec.media_gen_batch_limits.max_image = 0;
             assert!(matches!(
                 fixture
                     .actor

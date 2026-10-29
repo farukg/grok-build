@@ -2452,3 +2452,6 @@ mod live_consumer_tests;
 #[cfg(test)]
 #[path = "goal_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "stop_gate_tests.rs"]
+mod stop_gate_tests;

@@ -37,6 +37,11 @@ pub(super) struct ReplaySendUpdateFixture {
     pub(super) persistence_rx: mpsc::UnboundedReceiver<PersistenceMsg>,
 }
 pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture {
+    make_replay_send_update_fixture_with_media_gen_batch_limits(Default::default()).await
+}
+pub(super) async fn make_replay_send_update_fixture_with_media_gen_batch_limits(
+    media_gen_batch_limits: xai_grok_tools::media_gen_limits::MediaGenBatchLimits,
+) -> ReplaySendUpdateFixture {
     let (gateway_tx, mut gateway_rx) = mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
     let gateway = GatewaySender::new(gateway_tx);
     let sent = Arc::new(tokio::sync::Mutex::new(
@@ -305,7 +310,9 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         image_strip_rewrite_barrier: ImageStripRewriteBarrier::new(),
         sampler_handle: xai_grok_sampler::SamplerHandle::noop(),
         sampling_gate: None,
-        rebuild_spec: crate::session::agent_rebuild::test_rebuild_spec_default(),
+        rebuild_spec: crate::session::agent_rebuild::test_rebuild_spec_with_media_gen_batch_limits(
+            media_gen_batch_limits,
+        ),
         image_description_model: crate::test_support::TEST_MODEL.to_owned(),
         image_describe_cache: Arc::new(crate::session::image_describe::ImageDescribeCache::new()),
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),

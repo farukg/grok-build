@@ -2104,6 +2104,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
         doom_loop_triggers: None,
         doom_loop_aborted_at_chunk: None,
         credential: xai_grok_sampling_types::SentCredential::Unknown,
+        retry_schedule: None,
     }
 }
 /// Pre-sampling check uses estimated tokens (includes tool-result delta).

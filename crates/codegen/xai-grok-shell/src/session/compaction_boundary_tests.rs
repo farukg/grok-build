@@ -1,5 +1,6 @@
 use super::*;
 use crate::session::acp_session::support;
+use crate::session::CancelHistoryDisposition;
 use crate::session::completion_delivery::{CompletionArtifacts, CompletionEventPolicy, SubagentCompletionEvent};
 
 async fn completion_fixture() -> support::CompletionWakeReceiverFixture {
@@ -60,7 +61,7 @@ async fn publish_completion(
     let published = response.await.unwrap().unwrap();
     let (respond_to, response) = oneshot::channel();
     sender.send(SessionCommand::SubagentCompletionWake {
-        prompt_id: crate::session::completion_delivery::completion_wake_prompt_id(&completion),
+        prompt_id: crate::session::completion_delivery::completion_prompt_id(&completion.id, completion.kind),
         completion: completion.clone(),
         text: published.text,
         respond_to,

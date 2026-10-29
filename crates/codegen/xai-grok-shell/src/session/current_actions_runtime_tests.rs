@@ -66,8 +66,8 @@ async fn readonly_snapshot_during_delayed_real_inference_neither_waits_for_actor
             tokio::select! {
                 result = &mut prompt => break result.unwrap(),
                 record = fixture.persistence.recv() => match record.unwrap() {
-                    PersistenceMsg::FlushAndAck { respond_to } | PersistenceMsg::ProbeWritable { respond_to }
-                    | PersistenceMsg::AppendUpdateDurablyAndAck { respond_to, .. } => { respond_to.send(Ok(())).unwrap(); }
+                    PersistenceMsg::FlushAndAck { respond_to } | PersistenceMsg::ProbeWritable { respond_to } => { respond_to.send(Ok(())).unwrap(); }
+                    PersistenceMsg::AppendUpdateDurablyAndAck { respond_to, .. } => { respond_to.send(Ok(())).unwrap(); }
                     _ => {}
                 }
             }

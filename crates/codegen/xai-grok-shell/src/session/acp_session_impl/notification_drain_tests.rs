@@ -142,7 +142,7 @@ async fn a_queued_human_row_jumps_a_parked_completion_wake() {
                     state
                         .pending_inputs
                         .iter()
-                        .map(|item| item.prompt_id.as_str())
+                        .map(|item| item.prompt_id.clone())
                         .collect::<Vec<_>>(),
                 )
             };

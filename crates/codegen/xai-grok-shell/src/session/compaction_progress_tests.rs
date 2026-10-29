@@ -175,11 +175,11 @@ async fn automatic_compaction_publishes_one_correlated_terminal_for_each_started
                 }
                 let result = worker.await.unwrap();
                 assert_eq!(result.is_ok(), matches!(outcome, Outcome::Completed));
-                actor.send_xai_notification(SessionUpdate::MemoryFlushCompleted { result: "fixture-barrier".into() }).await;
+                actor.send_xai_notification(SessionUpdate::MemoryFlushCompleted { result: "fixture-barrier".into(), path: None }).await;
                 let mut lifecycle = Vec::new();
                 loop {
                     let notification = received.recv().await.unwrap();
-                    if matches!(&notification.update, SessionUpdate::MemoryFlushCompleted { result } if result == "fixture-barrier") {
+                    if matches!(&notification.update, SessionUpdate::MemoryFlushCompleted { result, path: None } if result == "fixture-barrier") {
                         break;
                     }
                     if matches!(notification.update, SessionUpdate::AutoCompactStarted { .. }

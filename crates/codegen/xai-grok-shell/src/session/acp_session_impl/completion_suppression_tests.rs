@@ -13,7 +13,7 @@ async fn batch_refreshes_a_racing_disposition_without_losing_automatic_peers() {
     use crate::session::completion_delivery::{CompletionPayloadSource, CompletionEventPolicy};
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         for (id, kind, text) in [("suppressed", TaskKind::Bash, "must stay silent"), ("automatic", TaskKind::Monitor, "automatic peer evidence")] {
@@ -153,7 +153,7 @@ async fn real_goal_producer_retains_suppression_errors_and_recovers_postcommit_l
         for kind in [TaskKind::Bash, TaskKind::Monitor] {
             for failure in [Failure::Refused, Failure::CommittedAckLost] {
                 let directory = tempfile::tempdir().unwrap();
-                let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+                let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
                 let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
                 storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
                 let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());

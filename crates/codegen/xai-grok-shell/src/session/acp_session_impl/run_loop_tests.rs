@@ -115,7 +115,7 @@ async fn workflow_completion_wake_delivers_when_unsuppressed() {
             let actor = Arc::new(actor);
             let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
 
-            actor.handle_workflow_completion_turn(completion_tx, "run2".to_string(), 0).await;
+            actor.clone().handle_workflow_completion_turn(completion_tx, "run2".to_string(), 0).await;
             let running = {
                 let state = actor.state.lock().await;
                 state.running_task.as_ref().map(|task| task.prompt_id.clone())
@@ -190,7 +190,7 @@ async fn reported_workflow_completions_queue_no_wake() {
             let actor = Arc::new(actor);
             let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
 
-            actor
+            actor.clone()
                 .handle_workflow_completion_turn(completion_tx, "run3".to_string(), 0)
                 .await;
             let state = actor.state.lock().await;

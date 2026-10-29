@@ -7,7 +7,7 @@ use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, Termina
 use xai_grok_tools::computer::types::{TaskKind, TaskSnapshot};
 
 fn terminal(
-    info: &crate::session::SessionInfo,
+    info: &crate::session::info::Info,
     task_id: &str,
     kind: TaskKind,
     text: &str,
@@ -57,7 +57,7 @@ async fn actual_drain_projection_preserves_unrelated_observations_with_exact_ter
         .run_until(async {
             for suppress in [false, true] {
                 let directory = tempfile::tempdir().unwrap();
-                let info = crate::session::SessionInfo {
+                let info = crate::session::info::Info {
                     id: acp::SessionId::new("test-actor"),
                     cwd: "/tmp".into(),
                 };
@@ -280,7 +280,7 @@ async fn bridge_enrollment_preserves_selected_wait_then_projects_an_ordinary_aut
     };
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
@@ -347,7 +347,7 @@ async fn preexisting_tool_receipt_does_not_consume_a_new_unrelated_observation()
     tokio::task::LocalSet::new().run_until(async {
         for settled in [false, true] {
             let directory = tempfile::tempdir().unwrap();
-            let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+            let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
             let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
             storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
             let id: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: "test-actor".into(), task_id: "observed-monitor".into(), task_kind: CompletionTaskKind::Monitor }.into();
@@ -427,7 +427,7 @@ async fn event_only_and_all_suppressed_batches_have_their_own_acknowledged_ident
         .run_until(async {
             for suppress in [false, true] {
                 let directory = tempfile::tempdir().unwrap();
-                let info = crate::session::SessionInfo {
+                let info = crate::session::info::Info {
                     id: acp::SessionId::new("test-actor"),
                     cwd: "/tmp".into(),
                 };
@@ -575,7 +575,7 @@ async fn event_only_and_all_suppressed_batches_have_their_own_acknowledged_ident
 async fn mixed_batch_retains_ownership_on_error_then_refreshes_a_real_storage_refusal() {
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         for (task_id, kind, text) in [("racing-bash", TaskKind::Bash, "racing original output"), ("eligible-peer", TaskKind::Monitor, "eligible peer literal")] {
@@ -660,7 +660,7 @@ async fn committed_batch_lost_ack_reopens_once_and_finishes_the_replacement_call
     use crate::session::completion_delivery::CompletionObligation;
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let id: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: "test-actor".into(), task_id: "lost-ack-monitor".into(), task_kind: CompletionTaskKind::Monitor }.into();
@@ -787,7 +787,7 @@ async fn committed_batch_lost_ack_reopens_once_and_finishes_the_replacement_call
 async fn deferred_completion_consumption_retains_unrelated_transient_ownership() {
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::SessionInfo { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
+        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
         let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
         storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
         let eligible: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: info.id.to_string(), task_id: "deferred-monitor".into(), task_kind: CompletionTaskKind::Monitor }.into();

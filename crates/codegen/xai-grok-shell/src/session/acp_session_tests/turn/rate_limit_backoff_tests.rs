@@ -175,6 +175,7 @@ pub(super) async fn conversation_request(actor: &Arc<SessionActor>) -> Conversat
         )
         .await
         .expect("chat state actor should be alive")
+        .request
 }
 
 pub(super) async fn pump_local_tasks() {

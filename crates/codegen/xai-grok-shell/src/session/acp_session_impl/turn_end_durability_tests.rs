@@ -51,7 +51,7 @@ async fn caller_completion_waits_for_replayable_terminal_commit() {
         let lines = std::fs::read_to_string(path).unwrap();
         assert_eq!(lines.lines().filter(|line| {
             let update = crate::session::storage::SessionUpdateEnvelope::from_str(line).unwrap();
-            matches!(update, SessionUpdate::Xai(notification) if matches!(notification.update, XaiSessionUpdate::TurnCompleted { prompt_id, .. } if prompt_id == "durable-caller"))
+            matches!(update, SessionUpdate::Xai(notification) if matches!(&notification.update, XaiSessionUpdate::TurnCompleted { prompt_id, .. } if prompt_id == "durable-caller"))
         }).count(), 1);
     }).await;
 }
