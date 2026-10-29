@@ -21,6 +21,7 @@ use crate::scrollback::text_selection::{
     VisibleBlockGeometry,
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
+use crate::scrollback::wrappers::EntryRenderer;
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -599,15 +600,9 @@ impl ScrollbackPane {
 
         // When timestamps are shown on message blocks, reserve right margin in the block's content width
         // Wrapped text then doesn't collide with the overlaid timestamp (matches EntryRenderer for normal content)
-        let ts_reserved = if appearance.show_timestamps
-            && matches!(
-                &entry.block,
-                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-            ) {
-            10
-        } else {
-            0
-        };
+        let ts_reserved = EntryRenderer::new(entry, theme)
+            .with_appearance_ref(appearance)
+            .timestamp_reserved(area.width);
         let content_width_for_block = layout.content_width().saturating_sub(ts_reserved);
 
         let ctx = entry.context_with_mode_and_budget(
@@ -827,18 +822,17 @@ impl ScrollbackPane {
         // Overlay timestamp on the first content line for message blocks in sticky headers (pinned/pushed user prompts, agent messages, etc.)
         // Mirrors the overlay in EntryRenderer but adapted for the header render path and the clip (scratch buffer) case
         // Hover expansion works for pinned (absolute coords); pushed headers always get the short format
-        if ctx.appearance.show_timestamps
+        let ts_reserved = EntryRenderer::new(entry, theme)
+            .with_appearance_ref(&ctx.appearance)
+            .timestamp_reserved(area.width);
+        if ts_reserved > 0
             && !output.lines.is_empty()
-            && matches!(
-                &entry.block,
-                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-            )
             && let Some(ts) = entry.created_at
         {
             let first_content_y = content_area.y + if use_vpad { 1 } else { 0 };
             let ts_hovered = mouse_pos.is_some_and(|(mx, my)| {
                 my == first_content_y
-                    && mx >= content_area.x + content_area.width.saturating_sub(10)
+                    && mx >= content_area.x + content_area.width.saturating_sub(ts_reserved)
                     && mx < content_area.x + content_area.width
             });
             let ts_str = if ts_hovered {
@@ -1313,6 +1307,44 @@ mod tests {
             "a top-clipped header published no selectable line, so every \
              rebase assertion was skipped\n{trace}"
         );
+    }
+
+    #[test]
+    fn sticky_prompt_timestamp_budget_preserves_narrow_and_undated_text() {
+        let text = "abcdefghijklmnopqrst";
+        for (width, dated, content_width, timestamp) in [
+            (24, true, 20, false),
+            (80, false, 76, false),
+            (80, true, 66, true),
+        ] {
+            let mut state = ScrollbackState::new();
+            let mut appearance = AppearanceConfig::default();
+            appearance.show_timestamps = true;
+            appearance.scrollback.layout.block_pad_left = 2;
+            appearance.scrollback.layout.block_pad_right = 1;
+            appearance.scrollback.blocks.prompt.vpad = false;
+            appearance.scrollback.blocks.prompt.show_prefix = false;
+            state.set_appearance(appearance);
+            let id = state.push_block(RenderBlock::user_prompt(text));
+            state.get_by_id_mut(id).unwrap().created_at = dated.then(chrono::Local::now);
+            let area = Rect::new(0, 0, width, 1);
+            let mut buf = Buffer::empty(area);
+            let mut scratch = ScratchBuffer::default();
+            let theme = Theme::current();
+            let header = ScrollbackPane::new()
+                .render_sticky_header(
+                    &mut buf, area, &state, 0, 0, &theme, 1, 0, &mut scratch, false, None,
+                )
+                .unwrap();
+            assert_eq!(header.block.content_width, content_width);
+            assert_eq!(header.lines.len(), 1);
+            assert_eq!(header.lines[0].text, text);
+            let painted: String = (0..width)
+                .map(|x| buf.cell((x, 0)).unwrap().symbol())
+                .collect();
+            assert!(painted.contains(text), "{painted:?}");
+            assert_eq!(painted.contains("AM") || painted.contains("PM"), timestamp);
+        }
     }
 
     // Pins the "caret offset ignores clipping" fix: the member caret sits one row below the slot top only while the header row is visible

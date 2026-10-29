@@ -34,6 +34,17 @@ fn persist_action(app: &mut AppView, config: &Path, id: AgentId, action: Action)
     assert_eq!(load_persisted_from_path(config).unwrap().pinned, saved.pinned);
 }
 
+fn reject_reorder(app: &mut AppView, config: &Path, id: AgentId) {
+    app.dashboard.as_mut().unwrap().focus_row(DashboardRowId::TopLevel(id));
+    let disk = std::fs::read_to_string(config).unwrap();
+    let order = app.dashboard.as_ref().unwrap().reorder.clone();
+    assert!(dispatch(Action::DashboardReorderUp, app).is_empty());
+    let dashboard = app.dashboard.as_ref().unwrap();
+    assert_eq!(dashboard.error_toast.as_deref(), Some("Sessions are ordered by running state and last activity"));
+    assert_eq!(dashboard.reorder, order);
+    assert_eq!(std::fs::read_to_string(config).unwrap(), disk);
+}
+
 fn discover_children(app: &mut AppView) {
     let sessions = ["unseen-a", "unseen-b"].map(|id| {
         let mut child = idle_roster_entry(id, id);
@@ -67,9 +78,9 @@ fn main_pin_and_reorder_preserve_undiscovered_and_later_omitted_child_layout() {
     let mut app = fresh_main(&config);
     assert!(app.leader_roster.is_empty());
     persist_action(&mut app, &config, AgentId(0), Action::DashboardTogglePin);
-    persist_action(&mut app, &config, AgentId(0), Action::DashboardReorderUp);
+    reject_reorder(&mut app, &config, AgentId(0));
     assert_eq!(layout(&config, "pinned"), vec!["top:root-a", "top:unseen-a", "top:unseen-b"]);
-    assert_eq!(layout(&config, "reorder"), vec!["top:unseen-b", "top:root-a", "top:unseen-a", "top:root-b"]);
+    assert_eq!(layout(&config, "reorder"), vec!["top:unseen-b", "top:root-b", "top:unseen-a", "top:root-a"]);
     let saved = app.dashboard_persisted.as_ref().unwrap();
     assert!(saved.pinned.contains(&PersistedRowId::TopLevel { session_id: "unseen-a".into() }));
     assert!(saved.pinned.contains(&PersistedRowId::TopLevel { session_id: "unseen-b".into() }));
@@ -80,7 +91,7 @@ fn main_pin_and_reorder_preserve_undiscovered_and_later_omitted_child_layout() {
     assert!(reopened.dashboard.as_ref().unwrap().child_rows.is_empty());
     persist_action(&mut reopened, &config, AgentId(1), Action::DashboardTogglePin);
     persist_action(&mut reopened, &config, AgentId(0), Action::DashboardTogglePin);
-    persist_action(&mut reopened, &config, AgentId(1), Action::DashboardReorderUp);
+    reject_reorder(&mut reopened, &config, AgentId(1));
     assert_eq!(layout(&config, "pinned"), vec!["top:root-b", "top:unseen-a", "top:unseen-b"]);
     assert_eq!(layout(&config, "reorder"), vec!["top:unseen-b", "top:root-b", "top:unseen-a", "top:root-a"]);
     drop(reopened);

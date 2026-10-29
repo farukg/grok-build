@@ -229,13 +229,15 @@ fn reversed_cols_on_row(buf: &Buffer, y: u16) -> Vec<u16> {
         .collect()
 }
 
-/// Columns covered by every occurrence of `needle` in `row` (ASCII only).
+/// Display columns covered by every occurrence of `needle` in `row`.
 fn expected_match_cols(row: &str, needle: &str) -> Vec<u16> {
     let mut cols = Vec::new();
     let mut from = 0;
     while let Some(rel) = row.get(from..).and_then(|s| s.find(needle)) {
         let start = from + rel;
-        cols.extend((start as u16)..(start + needle.len()) as u16);
+        let column = unicode_width::UnicodeWidthStr::width(&row[..start]) as u16;
+        let width = unicode_width::UnicodeWidthStr::width(needle) as u16;
+        cols.extend(column..column + width);
         from = start + needle.len();
     }
     cols
@@ -854,7 +856,7 @@ fn rendered_verb_group_folds_subagent_row_and_expansion_keeps_activity() {
     assert!(
         member_rows
             .iter()
-            .any(|r| r.contains("Subagent") && r.contains("\u{00b7} Thinking")),
+            .any(|r| r.contains("⋈ running: “task” · Thinking")),
         "expanded member row must keep the activity suffix: {member_rows:?}"
     );
 }
@@ -2801,6 +2803,10 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
                 "{name} {mode:?} width={width}: {painted_rows:?}"
             );
             assert!(!path_links.is_empty(), "{name} {mode:?} width={width}");
+            if width == 16 {
+                assert!(painted_rows.iter().any(|row| row.contains("main.rs")));
+                assert!(painted_rows.iter().all(|row| !row.contains(" AM") && !row.contains(" PM")));
+            }
             assert!(
                 path_links
                     .iter()

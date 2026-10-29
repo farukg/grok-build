@@ -1140,7 +1140,7 @@ impl AgentView {
         if layout.todo.height == 0 && self.active_pane == ActivePane::Todo {
             self.set_active_pane(AgentPane::Scrollback, false);
         }
-        if upper_dock_rows == 0 {
+        if upper_dock_rows == 0 && dock_rect.height > 0 {
             layout.dock = dock_rect;
         }
         let search_active =
@@ -1204,7 +1204,7 @@ impl AgentView {
                         ..layout_params
                     });
                     layout.apply_dock_placement(crate::views::dock::placement());
-                    if upper_dock_rows == 0 {
+                    if upper_dock_rows == 0 && dock_rect.height > 0 {
                         layout.dock = dock_rect;
                     }
                     if search_reserved_rows > 0 {
@@ -1230,7 +1230,7 @@ impl AgentView {
         } else {
             Rect::default()
         };
-        if upper_dock_rect.height == 0 {
+        if upper_dock_rect.height == 0 && dock_rect.height > 0 {
             layout.dock = dock_rect;
         }
         if let Some(data) = &mut dock_data {

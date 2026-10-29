@@ -176,7 +176,12 @@ pub struct AgentViewLayout {
 impl AgentViewLayout {
     pub fn apply_dock_placement(&mut self, placement: crate::views::dock::DockPlacement) {
         match placement {
-            crate::views::dock::DockPlacement::Off | crate::views::dock::DockPlacement::Bottom => {}
+            crate::views::dock::DockPlacement::Off => {}
+            crate::views::dock::DockPlacement::Bottom => {
+                if self.dock.height == 0 {
+                    self.dock.y = self.scrollback.bottom();
+                }
+            }
             crate::views::dock::DockPlacement::Top => {
                 let top = self.scrollback.y;
                 let old_y = self.dock.y;

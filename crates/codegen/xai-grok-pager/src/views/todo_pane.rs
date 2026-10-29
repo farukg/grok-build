@@ -84,7 +84,10 @@ impl TodoListEntry {
     fn prefix_line(&self) -> Line<'static> {
         Line::from(vec![
             Span::styled(self.icon(), Style::default().fg(self.status_style.icon_fg)),
-            Span::raw(" "),
+            Span::styled(
+                " ",
+                Style::default().fg(crate::theme::Theme::current().text_primary),
+            ),
         ])
     }
 

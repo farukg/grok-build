@@ -208,6 +208,7 @@ fn f7_todo_theme_changes_restyle_once_without_materializing_collapsed_rows() {
     let theme = crate::theme::Theme::current();
     let style = text_style(&sidebar, "▶ Theme active");
     assert_eq!(style[0].0, theme.warning);
+    assert_eq!(style[1], (theme.text_primary, ratatui::style::Modifier::empty()));
     assert!(style[2..].iter().all(|(fg, modifier)| {
         *fg == theme.text_primary && modifier.contains(ratatui::style::Modifier::BOLD)
     }));
@@ -259,7 +260,7 @@ fn f7_todo_rows_wrap_within_the_column_and_respect_the_row_budget() {
     let root = tempfile::tempdir().unwrap();
     let mut agent = test_fixtures::make_agent();
     agent.open_panel_settings_in(root.path());
-    let long = "Wrapcheck label that is far longer than the sidebar column so it must wrap instead of truncating zz-finalwrap";
+    let long = "Wrapcheck label that is far longer than the sidebar column so it must wrap instead of truncating zzfinalwrap";
     agent.todo.update_todos(
         std::iter::once(item(long, TodoStatus::Pending))
             .chain((0..6).map(|index| item(&format!("Short task {index}"), TodoStatus::InProgress)))
@@ -269,7 +270,7 @@ fn f7_todo_rows_wrap_within_the_column_and_respect_the_row_budget() {
     agent.context_policy_answered(Ok(ready_report()));
     let rendered = screen(&draw(&mut agent));
     let first = rendered.lines().find(|line| line.contains("□ Wrapcheck")).expect("the todo starts on its own row");
-    let continuation = rendered.lines().find(|line| line.contains("zz-finalwrap")).expect("the label wraps instead of truncating");
+    let continuation = rendered.lines().find(|line| line.contains("zzfinalwrap")).expect("the label wraps instead of truncating");
     assert!(!continuation.contains('□') && !continuation.contains('▶'), "a continuation line carries no status glyph: {continuation:?}");
     assert_ne!(first, continuation);
     assert!(

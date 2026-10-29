@@ -425,7 +425,7 @@ impl SessionViews {
                 if entry.is_hidden_thinking(show_thinking) { continue; }
                 let theme = crate::theme::Theme::current();
                 let content_width = width.saturating_sub(crate::scrollback::wrappers::EntryRenderer::new(entry, &theme)
-                    .with_appearance_ref(view.scrollback.appearance()).chrome_width_for_inline());
+                    .with_appearance_ref(view.scrollback.appearance()).chrome_width_for_inline(width));
                 entry.ensure_cached(content_width, view.scrollback.appearance(), false, view.scrollback.cwd());
                 self.project_inline_entry(child, entry, content_width, local, path, dirty);
                 let renderer = crate::scrollback::wrappers::EntryRenderer::new(entry, &theme)

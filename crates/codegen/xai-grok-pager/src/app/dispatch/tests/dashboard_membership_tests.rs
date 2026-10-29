@@ -54,6 +54,16 @@ fn acp_roster_batch_reconciles_workspace_lanes_saved_layout_and_prompt_identity(
         restore_degree: None,
         running_prompt_id: None,
     }), &mut app);
+    let _ = dispatch(Action::TaskComplete(TaskResult::SessionMetaFromDisk {
+        agent_id: generic,
+        activity: Some(crate::app::roster::SessionActivitySnapshot {
+            session_id: acp::SessionId::new("generic-child"),
+            last_change_unix_ms: 1_725_000_001_000,
+        }),
+        title: None,
+        last_turn_summary: None,
+        last_turn_summary_gen: 0,
+    }), &mut app);
     app.agents.get_mut(&generic).unwrap().display_name = Some("Generic child".into());
     assert!(matches!(app.agents.get(&generic).unwrap().role, AgentRole::Root));
     app.active_view = ActiveView::AgentDashboard;
@@ -61,9 +71,11 @@ fn acp_roster_batch_reconciles_workspace_lanes_saved_layout_and_prompt_identity(
     broadcast(&mut app, serde_json::json!({
         "upserted": [
             {"sessionId": "broadcast-child", "title": "Broadcast child", "cwd": "/repo",
-             "sessionKind": "subagent", "parentSessionId": "absent-parent", "activity": "idle"},
+             "sessionKind": "subagent", "parentSessionId": "absent-parent", "activity": "idle",
+             "lastChangeUnixMs": 1_725_000_000_000_i64},
             {"sessionId": "generic-child", "title": "Generic child", "cwd": "/repo",
-             "sessionKind": "subagent", "parentSessionId": "absent-parent", "activity": "idle"}
+             "sessionKind": "subagent", "parentSessionId": "absent-parent", "activity": "idle",
+             "lastChangeUnixMs": 1_725_000_001_000_i64}
         ]
     }));
     let dashboard = app.dashboard.as_ref().unwrap();

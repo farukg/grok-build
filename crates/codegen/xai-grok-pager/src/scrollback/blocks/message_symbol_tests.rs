@@ -780,10 +780,15 @@ fn markdown_links_follow_the_symbol_gutter_on_first_and_continuation_rows() {
         .iter()
         .map(|link| (link.screen_row, link.col_start, link.col_end))
         .collect();
-    assert_eq!(positions, [(0, 2, 5), (1, 2, 4)]);
+    assert_eq!(positions, [
+        (0, 2, 5), (1, 2, 4), (2, 3, 5), (3, 2, 5), (4, 2, 5),
+        (5, 2, 5), (6, 2, 5), (7, 2, 5), (8, 2, 5),
+    ]);
+    assert!(overlay.links().iter().all(|link| link.target
+        == crate::render::osc8::LinkTarget::Url(std::sync::Arc::from("https://example.test"))));
     assert_eq!(
         block.copy_visible_text_in_state(&ctx).as_deref(),
-        Some("abcde")
+        Some("abcde (https://example.test)")
     );
 }
 
@@ -864,7 +869,7 @@ fn unicode_path_link_selection_and_styled_markdown_copy_exclude_chrome() {
     let expanded = context(DisplayMode::Expanded, 80);
     assert_eq!(
         assistant.copy_visible_text_in_state(&expanded).as_deref(),
-        Some("bold and link")
+        Some("bold and link (https://example.test)")
     );
     let edit = RenderBlock::edit("   源.rs   ", None);
     assert_eq!(

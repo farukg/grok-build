@@ -86,8 +86,8 @@ impl<'a> EntryRenderer<'a> {
         self
     }
 
-    pub(crate) fn chrome_width_for_inline(&self) -> u16 {
-        self.chrome_width() + self.timestamp_reserved()
+    pub(crate) fn chrome_width_for_inline(&self, width: u16) -> u16 {
+        self.chrome_width() + self.timestamp_reserved(width)
     }
 
     pub fn with_cwd(mut self, cwd: Option<&'a Path>) -> Self {
@@ -332,8 +332,13 @@ impl<'a> EntryRenderer<'a> {
     /// Width reserved for the timestamp on the right side of content lines.
     ///
     /// When non-zero, content is wrapped at `content_width - reserved` so text never collides with the timestamp overlay.
-    pub(crate) fn timestamp_reserved(&self) -> u16 {
-        if self.appearance().show_timestamps && self.should_show_timestamp() {
+    pub(crate) fn timestamp_reserved(&self, width: u16) -> u16 {
+        // Keep twenty content columns before adding the ten-column timestamp gutter.
+        if self.appearance().show_timestamps
+            && self.should_show_timestamp()
+            && self.entry.created_at.is_some()
+            && width.saturating_sub(self.chrome_width()) >= 20 + 10
+        {
             10 // max short format: "  12:30 PM"
         } else {
             0
@@ -354,7 +359,7 @@ impl<'a> EntryRenderer<'a> {
         }
         let content_width = width
             .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+            .saturating_sub(self.timestamp_reserved(width));
         self.entry
             .ensure_truncated_height_cached(content_width, self.appearance(), self.cwd)
     }
@@ -385,7 +390,7 @@ impl<'a> EntryRenderer<'a> {
         }
         let content_width = width
             .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+            .saturating_sub(self.timestamp_reserved(width));
         let content_lines = self.estimate_content_lines(content_width);
         // `inline_media_rows` (in `assemble_height`) covers trailing tool media.
         // `estimate_extra_rows` adds the Mermaid treatment rows (one affordance row or fallback caption per diagram)
@@ -431,7 +436,7 @@ impl<'a> EntryRenderer<'a> {
     pub(crate) fn logical_line_start_rows(&self, width: u16) -> (Vec<usize>, usize) {
         let content_width = width
             .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+            .saturating_sub(self.timestamp_reserved(width));
         // Compute vpad and populate the cache before borrowing the cached output
         // `ensure_cached` takes the RefCell mutably on a miss, so the `Ref` from `cached_output_ref` must come after it
         let ctx = self
@@ -550,7 +555,7 @@ impl Renderable for EntryRenderer<'_> {
         }
         let content_width = width
             .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+            .saturating_sub(self.timestamp_reserved(width));
         // Use cached output for height calculation
         // The is_selected flag only affects styling (e.g., UserPrompt prefix color), not line count
         // The non-selected cached output therefore gives the correct height
@@ -749,7 +754,7 @@ impl Renderable for EntryRenderer<'_> {
 
         // Render content using cache (keyed on is_selected for blocks like UserPrompt that adjust styling based on selection state)
         // When timestamps are enabled, wrap content at a narrower width so text never collides with the right-aligned timestamp
-        let ts_reserved = self.timestamp_reserved();
+        let ts_reserved = self.timestamp_reserved(area.width);
         let text_width = content_area.width.saturating_sub(ts_reserved);
         self.entry
             .ensure_cached(text_width, self.appearance(), self.is_selected, self.cwd);
@@ -867,17 +872,16 @@ impl Renderable for EntryRenderer<'_> {
         // Overlay timestamp on the first content line for message blocks.
         // Short format (h:mm AM/PM) by default; expands to full format (HH:mm:ss | MMM DD) when the mouse hovers over the timestamp area
         // Gated on appearance.show_timestamps (toggled via /timestamps).
-        if self.appearance().show_timestamps
+        if ts_reserved > 0
             && content_skip == 0
             && !output.is_empty()
-            && self.should_show_timestamp()
             && let Some(ts) = self.entry.created_at
         {
             let first_content_y = content_area.y + if vpad_top_visible { 1 } else { 0 };
             // Check if mouse is hovering the timestamp zone (rightmost 10 cols of the first content row)
             let ts_hovered = self.mouse_pos.is_some_and(|(mx, my)| {
                 my == first_content_y
-                    && mx >= content_area.x + content_area.width.saturating_sub(10)
+                    && mx >= content_area.x + content_area.width.saturating_sub(ts_reserved)
                     && mx < content_area.x + content_area.width
             });
             let ts_str = if ts_hovered {
@@ -1156,7 +1160,7 @@ mod tests {
     /// Derived from the renderer geometry so tests self-adjust to the default layout padding instead of hard-coding column numbers.
     fn gutter_band(renderer: &EntryRenderer, width: u16) -> std::ops::Range<u16> {
         let content_right = width - renderer.appearance().scrollback.layout.block_pad_right;
-        (content_right - renderer.timestamp_reserved())..content_right
+        (content_right - renderer.timestamp_reserved(width))..content_right
     }
 
     /// Check that a right-aligned timestamp ending with "AM" or "PM" exists on a row.
@@ -1332,8 +1336,8 @@ mod tests {
             let mut appearance = AppearanceConfig::default();
             appearance.show_timestamps = true;
             let renderer = EntryRenderer::new(&entry, &theme).with_appearance(appearance.clone());
-            assert_eq!(renderer.timestamp_reserved(), 10);
             let width = 100;
+            assert_eq!(renderer.timestamp_reserved(width), 10);
             let height = u16::try_from(renderer.desired_height(width)).unwrap();
             let area = Rect::new(0, 0, width, height);
             let mut buf = Buffer::empty(area);

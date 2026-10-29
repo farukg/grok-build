@@ -4973,8 +4973,7 @@ fn dashboard_overlay_cycle_respects_filter() {
     );
 }
 /// `overlay_cycle_order` returns top-level agents in the same order `render_dashboard` paints them, NOT the agent map's insertion order. The cycle dispatcher reads from this helper, so the `‹` / `›` chips walk the user through what they actually see.
-/// `AgentView::new` stamps `last_active_at = Instant::now()`, so freshly-created agents sort DESCENDING by creation
-/// (most-recent first), matching the dashboard's "Idle" group ordering.
+/// Persisted activity, not view creation, determines the idle-session order.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn dashboard_overlay_cycle_order_matches_visible_rows() {
@@ -4984,11 +4983,19 @@ fn dashboard_overlay_cycle_order_matches_visible_rows() {
     let session2 = make_test_agent_session(&app, id2, "agent2");
     let mut agent2 = AgentView::new(session2, ScrollbackState::new());
     agent2.generated_session_title = Some("Agent 2".into());
+    agent2.restore_session_activity(&crate::app::roster::SessionActivitySnapshot {
+        session_id: acp::SessionId::new("agent2"),
+        last_change_unix_ms: 1_725_000_000_000,
+    });
     app.agents.insert(id2, agent2);
     let id3 = AgentId(2);
     let session3 = make_test_agent_session(&app, id3, "agent3");
     let mut agent3 = AgentView::new(session3, ScrollbackState::new());
     agent3.generated_session_title = Some("Agent 3".into());
+    agent3.restore_session_activity(&crate::app::roster::SessionActivitySnapshot {
+        session_id: acp::SessionId::new("agent3"),
+        last_change_unix_ms: 1_725_000_001_000,
+    });
     app.agents.insert(id3, agent3);
     open_dashboard(&mut app);
     let d = app.dashboard.as_ref().unwrap();
@@ -5008,9 +5015,10 @@ fn dashboard_overlay_cycle_order_matches_visible_rows() {
     let order = crate::views::dashboard::overlay_cycle_order(d, &app.agents);
     assert_eq!(
         order,
-        vec![AgentId(0), AgentId(2), AgentId(1)],
-        "pinned rows must lead the cycle order, just like the visible list",
+        vec![AgentId(2), AgentId(1), AgentId(0)],
+        "pinning preserves activity order in the visible list and cycle",
     );
+    assert!(d.pinned.contains(&crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0))));
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 /// Regression: the cycle anchors on the viewed agent, not a stale
@@ -5023,11 +5031,19 @@ fn dashboard_overlay_cycle_anchors_on_visible_agent_not_stale_attach() {
     let session2 = make_test_agent_session(&app, id2, "agent2");
     let mut agent2 = AgentView::new(session2, ScrollbackState::new());
     agent2.generated_session_title = Some("Agent 2".into());
+    agent2.restore_session_activity(&crate::app::roster::SessionActivitySnapshot {
+        session_id: acp::SessionId::new("agent2"),
+        last_change_unix_ms: 1_725_000_000_000,
+    });
     app.agents.insert(id2, agent2);
     let id3 = AgentId(2);
     let session3 = make_test_agent_session(&app, id3, "agent3");
     let mut agent3 = AgentView::new(session3, ScrollbackState::new());
     agent3.generated_session_title = Some("Agent 3".into());
+    agent3.restore_session_activity(&crate::app::roster::SessionActivitySnapshot {
+        session_id: acp::SessionId::new("agent3"),
+        last_change_unix_ms: 1_725_000_001_000,
+    });
     app.agents.insert(id3, agent3);
     open_dashboard(&mut app);
     let d = app.dashboard.as_ref().unwrap();
@@ -5334,11 +5350,19 @@ fn dashboard_overlay_cycle_non_overlay_noop_when_current_agent_hidden() {
     let session1 = make_test_agent_session(&app, id1, "first");
     let mut agent1 = AgentView::new(session1, ScrollbackState::new());
     agent1.generated_session_title = Some("First".into());
+    agent1.restore_session_activity(&crate::app::roster::SessionActivitySnapshot {
+        session_id: acp::SessionId::new("first"),
+        last_change_unix_ms: 1_725_000_000_000,
+    });
     app.agents.insert(id1, agent1);
     let id2 = AgentId(2);
     let session2 = make_test_agent_session(&app, id2, "second");
     let mut agent2 = AgentView::new(session2, ScrollbackState::new());
     agent2.generated_session_title = Some("Second".into());
+    agent2.restore_session_activity(&crate::app::roster::SessionActivitySnapshot {
+        session_id: acp::SessionId::new("second"),
+        last_change_unix_ms: 1_725_000_001_000,
+    });
     app.agents.insert(id2, agent2);
     app.active_view = ActiveView::Agent(current);
     ensure_dashboard_state(&mut app);

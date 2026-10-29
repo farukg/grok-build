@@ -28,7 +28,11 @@ fn selection(scope: ContextScope, revision: u64) -> Option<ContextPolicySelectio
 }
 
 fn draw(agent: &mut AgentView) -> Buffer {
-    let area = Rect::new(0, 0, 160, 45);
+    draw_height(agent, 45)
+}
+
+fn draw_height(agent: &mut AgentView, height: u16) -> Buffer {
+    let area = Rect::new(0, 0, 160, height);
     let mut buf = Buffer::empty(area);
     agent.draw(
         area,
@@ -1301,7 +1305,7 @@ fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal
     let dir = tempfile::tempdir().unwrap();
     let mut agent = open_sidebar();
     agent.open_panel_settings_in(dir.path());
-    let first = draw(&mut agent);
+    let first = draw_height(&mut agent, 20);
     let selected = cursor(&agent);
     for _ in 0..12 {
         let _ = agent.handle_input(
@@ -1314,7 +1318,7 @@ fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal
             &ActionRegistry::defaults(),
         );
     }
-    let before = draw(&mut agent);
+    let before = draw_height(&mut agent, 20);
     assert!(
         !screen(&before).contains("Core instructions"),
         "the selected row is genuinely offscreen"
@@ -1336,7 +1340,7 @@ fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal
         )
         .unwrap();
     assert!(agent.reload_global_panel_settings());
-    let after = draw(&mut agent);
+    let after = draw_height(&mut agent, 20);
     assert_eq!(
         screen(&after),
         screen(&before),
@@ -1356,7 +1360,7 @@ fn external_completed_filter_edit_preserves_scrolled_f7_and_pending_local_reveal
         .unwrap();
     assert!(agent.reload_global_panel_settings());
     assert!(
-        screen(&draw(&mut agent)).contains("Memory captures"),
+        screen(&draw_height(&mut agent, 20)).contains("Memory captures"),
         "a legitimate pending End reveal survives reload"
     );
 }
