@@ -200,7 +200,7 @@ impl SessionActor {
     /// Persistence half of `persist_synthetic_user_message`, synchronous (model id.
     /// pre-fetched) so the interjection drain can keep the batch submit and its.
     /// persisted user chunks on the same side of any cancellation point.
-    fn persist_synthetic_user_message_with_model(
+    pub(super) fn persist_synthetic_user_message_with_model(
         &self,
         text: &str,
         interjection_display_text: Option<&str>,

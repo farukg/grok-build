@@ -1596,11 +1596,14 @@ mod queue_edit_routing_tests {
         agent
     }
 
-    /// The two ways the top server row ends up protected, with that row's server id.
-    fn protected_agents() -> [(AgentView, &'static str); 2] {
+    fn protected_agents() -> [(AgentView, &'static str); 3] {
+        let mut delivery = protected_parent_agent();
+        delivery.shared_queue[0].kind = "delivery".into();
+        delivery.sync_queue_pane();
         [
             (protected_parent_agent(), "parent-message-msg-1"),
             (read_only_agent(), "p1"),
+            (delivery, "parent-message-msg-1"),
         ]
     }
 

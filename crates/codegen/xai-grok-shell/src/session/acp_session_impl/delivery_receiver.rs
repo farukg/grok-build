@@ -296,11 +296,23 @@ impl SessionActor {
                     return changed;
                 }
             };
+            let model_id = self.current_model_id().await;
             match self
-                .project_durable_delivery(&delivery_id, &digest, &turn_id, payload)
+                .project_durable_delivery(&delivery_id, &digest, &turn_id, payload.clone())
                 .await
             {
-                Ok(projected) => changed |= projected,
+                Ok(projected) => {
+                    if projected {
+                        self.persist_synthetic_user_message_with_model(
+                            &payload,
+                            Some(&payload),
+                            &[],
+                            &model_id,
+                        );
+                        self.broadcast_interjection(&payload, Some(&queued_id));
+                    }
+                    changed |= projected;
+                }
                 Err(error) => {
                     tracing::error!(%error, "receiver safe-point projection failed");
                     return changed;
@@ -311,6 +323,9 @@ impl SessionActor {
                 return changed;
             }
             let removed = state.sweep_pending_inputs(|item| item.prompt_id == queued_id);
+            if !removed.is_empty() {
+                self.broadcast_queue_changed(&state);
+            }
             drop(state);
             for item in removed {
                 let _ = item.respond_to.send(ok_end_turn(0, None));
@@ -345,3 +360,7 @@ impl SessionActor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "delivery_receiver_tests.rs"]
+mod tests;

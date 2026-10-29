@@ -26,7 +26,9 @@ impl ServerRowCapabilities {
     pub(crate) fn for_pane(kind: &str, mutation: QueueMutation) -> Self {
         match mutation {
             QueueMutation::ReadOnly => Self::PROTECTED,
-            QueueMutation::PerRowKind if kind == "parent_agent_message" => Self::PROTECTED,
+            QueueMutation::PerRowKind if matches!(kind, "parent_agent_message" | "delivery") => {
+                Self::PROTECTED
+            }
             QueueMutation::PerRowKind => Self::EDITABLE,
         }
     }
