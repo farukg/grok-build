@@ -106,12 +106,15 @@ fn assert_terminal_transcript(items: &[ConversationItem], reason: &SyntheticReas
         })
         .collect::<Vec<_>>();
     assert_eq!(wake.len(), 1, "one source-specific original input");
-    assert!(matches!(
-        wake[0].1,
-        ConversationItem::User(user)
-            if matches!(user.content.as_slice(), [xai_grok_sampling_types::ContentPart::Text { text }]
-                if text.as_ref() == WAKE_TEXT)
-    ), "original input retains its exact canonical text payload");
+    assert!(
+        matches!(
+            wake[0].1,
+            ConversationItem::User(user)
+                if matches!(user.content.as_slice(), [xai_grok_sampling_types::ContentPart::Text { text }]
+                    if text.as_ref() == WAKE_TEXT)
+        ),
+        "original input retains its exact canonical text payload"
+    );
     let outputs = items
         .iter()
         .enumerate()

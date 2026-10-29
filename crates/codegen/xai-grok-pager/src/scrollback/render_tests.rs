@@ -1362,7 +1362,8 @@ fn message_timestamp_width_matrix_preserves_paint_and_selection() {
                     .collect::<Vec<_>>();
                 assert!(rows.iter().any(|row| row.contains("abcdefghijklmnopqr")));
                 assert_eq!(
-                    rows.iter().any(|row| row.contains(" AM") || row.contains(" PM")),
+                    rows.iter()
+                        .any(|row| row.contains(" AM") || row.contains(" PM")),
                     timestamp_visible,
                 );
             }

@@ -323,13 +323,8 @@ mod tests {
             ("/worktree/src/nested/main.rs", 18, "src/nested/main.rs"),
             ("/worktree/src/界/main.rs", 9, "\u{2026}/main.rs"),
         ] {
-            let painted = path_for_tool_surface(
-                path,
-                ToolPathSurface::Collapsed,
-                Some(cwd),
-                Some(budget),
-                0,
-            );
+            let painted =
+                path_for_tool_surface(path, ToolPathSurface::Collapsed, Some(cwd), Some(budget), 0);
             assert_eq!(painted, expected);
             assert!(painted.width() <= budget);
             assert!(painted.ends_with("main.rs"));

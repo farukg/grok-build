@@ -372,7 +372,12 @@ fn foreground_child_success_and_error_commit_the_observed_tool_result_once() {
             recorder.child_finished(CHILD).await;
             let items = history(&cwd, &sid).await;
             assert_completion_projection_once(
-                &cwd, &sid, CHILD, &items, marker, CompletionHistoryKind::ToolResult,
+                &cwd,
+                &sid,
+                CHILD,
+                &items,
+                marker,
+                CompletionHistoryKind::ToolResult,
             );
             assert_eq!(
                 items

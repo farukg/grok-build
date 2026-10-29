@@ -1451,7 +1451,10 @@ fn late_completed_edit_does_not_coalesce_across_a_new_prompt() {
                     .is_running
             );
             if replay {
-                app.agents.get_mut(&AgentId(0)).unwrap().begin_session_reload(1);
+                app.agents
+                    .get_mut(&AgentId(0))
+                    .unwrap()
+                    .begin_session_reload(1);
                 acp_event(
                     &mut app,
                     "late-edit",
@@ -1542,7 +1545,10 @@ fn replay_terminal_without_a_historical_base_cannot_confirm_a_live_legacy_tool()
         &mut app,
     );
     crate::app::dispatch::dispatch(Action::SendPrompt("next live turn".into()), &mut app);
-    app.agents.get_mut(&AgentId(0)).unwrap().arm_late_replay_grace();
+    app.agents
+        .get_mut(&AgentId(0))
+        .unwrap()
+        .arm_late_replay_grace();
     let view = test_agent(&app, AgentId(0));
     let entries = view.scrollback.len();
     let current = view.session.current_prompt_id.clone();

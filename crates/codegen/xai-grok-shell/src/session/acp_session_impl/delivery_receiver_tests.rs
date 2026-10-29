@@ -42,8 +42,10 @@ async fn safe_point_publishes_delivery_once_and_reconciles_queue_without_losing_
                 .init_session(&info, acp::ModelId::new("test"))
                 .await
                 .unwrap();
-            let persistence =
-                crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage);
+            let persistence = crate::session::persistence::durable_update_tests::test_actor(
+                info.clone(),
+                storage,
+            );
             let mut persistence_task = tokio_util::task::AbortOnDropHandle::new(persistence.task);
             let (gateway, mut events) = mpsc::unbounded_channel();
             let (actor, _) = create_test_actor_with_chat_persistence(
@@ -52,9 +54,11 @@ async fn safe_point_publishes_delivery_once_and_reconciles_queue_without_losing_
                 85,
                 gateway,
                 persistence.handle.tx.clone(),
-                Box::new(crate::session::chat_persistence::ChannelChatPersistence::new(
-                    persistence.handle.tx.clone(),
-                )),
+                Box::new(
+                    crate::session::chat_persistence::ChannelChatPersistence::new(
+                        persistence.handle.tx.clone(),
+                    ),
+                ),
             )
             .await;
             actor.state.lock().await.running_task = Some(running_task_stub("running"));
@@ -64,7 +68,9 @@ async fn safe_point_publishes_delivery_once_and_reconciles_queue_without_losing_
             assert!(
                 !actor
                     .queue_input(QueueInputRequest::from_legacy_prompt_id(
-                        vec![acp::ContentBlock::Text(acp::TextContent::new("keep my draft"))],
+                        vec![acp::ContentBlock::Text(acp::TextContent::new(
+                            "keep my draft"
+                        ))],
                         "human-follow-up".into(),
                         PromptMode::Agent,
                         respond_to,
@@ -129,10 +135,11 @@ async fn safe_point_publishes_delivery_once_and_reconciles_queue_without_losing_
                 .send(PersistenceMsg::FlushAndAck { respond_to })
                 .unwrap();
             response.await.unwrap().unwrap();
-            let restored = JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_owned())
-                .load_session(&info)
-                .await
-                .unwrap();
+            let restored =
+                JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_owned())
+                    .load_session(&info)
+                    .await
+                    .unwrap();
             let echoes: Vec<_> = restored
                 .updates
                 .iter()

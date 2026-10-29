@@ -156,7 +156,10 @@ pub fn matching_history_metadata(
             let text = item.text_content();
             Some((
                 index,
-                payload["type"].as_str().expect("canonical history variant").to_owned(),
+                payload["type"]
+                    .as_str()
+                    .expect("canonical history variant")
+                    .to_owned(),
                 item.role(),
                 item.synthetic_reason().cloned(),
                 item.source(),
@@ -201,7 +204,10 @@ pub fn assert_completion_projection_once(
             let projection: CompletionProjection =
                 serde_json::from_value(payload).expect("canonical completion projection");
             let original = projection.receipts().any(|receipt| {
-                receipt.completion.subagent().is_some_and(|id| id.subagent_id == child)
+                receipt
+                    .completion
+                    .subagent()
+                    .is_some_and(|id| id.subagent_id == child)
             });
             original.then_some(projection)
         })
@@ -214,24 +220,42 @@ pub fn assert_completion_projection_once(
     );
     let projection = &projections[0];
     assert_eq!(
-        projection.receipts().filter(|receipt| {
-            receipt.completion.subagent().is_some_and(|id| id.subagent_id == child)
-        }).count(),
+        projection
+            .receipts()
+            .filter(|receipt| {
+                receipt
+                    .completion
+                    .subagent()
+                    .is_some_and(|id| id.subagent_id == child)
+            })
+            .count(),
         1,
         "one receipt for the original child"
     );
     let expected_kind = match kind {
-        CompletionHistoryKind::ToolResult => matches!(&projection.item, ConversationItem::ToolResult(_)),
+        CompletionHistoryKind::ToolResult => {
+            matches!(&projection.item, ConversationItem::ToolResult(_))
+        }
         CompletionHistoryKind::SubagentCompletion => matches!(
             &projection.item,
             ConversationItem::User(user)
                 if user.synthetic_reason == SyntheticReason::SubagentCompleted
         ),
     };
-    assert!(expected_kind, "original completion retains its canonical variant");
+    assert!(
+        expected_kind,
+        "original completion retains its canonical variant"
+    );
     assert!(!projection.item.source().is_unadmitted());
-    let retained = items.iter().filter(|item| item.source() == projection.item.source()).collect::<Vec<_>>();
-    assert_eq!(retained.len(), 1, "original completion source survives history loading");
+    let retained = items
+        .iter()
+        .filter(|item| item.source() == projection.item.source())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        retained.len(),
+        1,
+        "original completion source survives history loading"
+    );
     assert!(
         serde_json::to_value(retained[0]).expect("loaded completion payload")
             == serde_json::to_value(&projection.item).expect("persisted completion payload"),
@@ -255,8 +279,11 @@ pub fn assert_goal_final_report(
         .enumerate()
         .filter_map(|(index, item)| match item {
             ConversationItem::Assistant(assistant) => Some((index, &assistant.tool_calls)),
-            ConversationItem::System(_) | ConversationItem::User(_) | ConversationItem::ToolResult(_)
-            | ConversationItem::BackendToolCall(_) | ConversationItem::Reasoning(_) => None,
+            ConversationItem::System(_)
+            | ConversationItem::User(_)
+            | ConversationItem::ToolResult(_)
+            | ConversationItem::BackendToolCall(_)
+            | ConversationItem::Reasoning(_) => None,
         })
         .flat_map(|(index, calls)| calls.iter().map(move |call| (index, call)))
         .filter(|(_, call)| call.name == "update_goal")
@@ -264,7 +291,10 @@ pub fn assert_goal_final_report(
     assert_eq!(goal_calls.len(), 1, "one actual update_goal call");
     let (goal_index, goal_call) = goal_calls[0];
     let arguments: Value = serde_json::from_str(&goal_call.arguments).expect("goal tool arguments");
-    assert!(arguments["completed"] == true, "the actual goal call completes the goal");
+    assert!(
+        arguments["completed"] == true,
+        "the actual goal call completes the goal"
+    );
     let acknowledgements = items
         .iter()
         .enumerate()
@@ -283,13 +313,20 @@ pub fn assert_goal_final_report(
         })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    assert_eq!(acknowledgements.len(), 1, "one actual goal tool acknowledgement");
+    assert_eq!(
+        acknowledgements.len(),
+        1,
+        "one actual goal tool acknowledgement"
+    );
     assert_eq!(reports.len(), 1, "one exact final assistant report");
     assert!(goal_index < acknowledgements[0]);
-    assert!(matches!(
-        &items[acknowledgements[0]],
-        ConversationItem::ToolResult(result) if result.tool_call_id == goal_call.id.as_ref()
-    ), "goal acknowledgement belongs to the actual update_goal call");
+    assert!(
+        matches!(
+            &items[acknowledgements[0]],
+            ConversationItem::ToolResult(result) if result.tool_call_id == goal_call.id.as_ref()
+        ),
+        "goal acknowledgement belongs to the actual update_goal call"
+    );
     assert!(acknowledgements[0] < reports[0]);
 }
 
@@ -299,7 +336,11 @@ pub fn main_requests(server: &xai_grok_test_support::MockInferenceServer, id: &s
         .into_iter()
         .filter(|request| request.header("x-grok-session-id") == Some(id))
         .filter(|request| request.header("x-grok-turn-idx").is_some())
-        .map(|request| request.body.expect("foreground request must retain its JSON payload"))
+        .map(|request| {
+            request
+                .body
+                .expect("foreground request must retain its JSON payload")
+        })
         .collect()
 }
 pub fn assert_succeeded(receipt: &DeliveryReceipt) {

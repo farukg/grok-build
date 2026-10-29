@@ -429,9 +429,10 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
         assert!(work > 0);
         assert!(before.turn.is_some());
         assert!(!before.sampling.is_empty());
-        let loaded = acp::Agent::load_session(agent.as_ref(), request(&sid, cwd.path(), &binding, false))
-            .await
-            .unwrap();
+        let loaded =
+            acp::Agent::load_session(agent.as_ref(), request(&sid, cwd.path(), &binding, false))
+                .await
+                .unwrap();
         assert!(matches!(
             crate::extensions::current_actions::load_cut(loaded.meta.as_ref()).unwrap(),
             LoadCut::Settled
