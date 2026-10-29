@@ -257,7 +257,7 @@ impl ActiveAgentMessageDelivery {
         self.route
     }
 
-    pub(crate) fn admission_is_committed(&self) -> bool {
+    pub fn admission_is_committed(&self) -> bool {
         self.admission_lease
             .settle(ActiveMessageAdmission::Admitted)
     }

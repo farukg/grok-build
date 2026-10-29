@@ -459,6 +459,10 @@ impl SessionActor {
                     let _ = respond_to.send(ActiveMessageAdmission::Rejected);
                     return;
                 }
+                let Some(initial_delivery) = delivery.clone() else {
+                    let _ = respond_to.send(ActiveMessageAdmission::Rejected);
+                    return;
+                };
                 let InitialParentMessageAdmission {
                     custody,
                     recipe,
@@ -470,10 +474,6 @@ impl SessionActor {
                     json_schema,
                     traceparent,
                 } = initial;
-                let Some(initial_delivery) = delivery.clone() else {
-                    let _ = respond_to.send(ActiveMessageAdmission::Rejected);
-                    return;
-                };
                 (
                     respond_to,
                     ReservedParentMessageHandoff::Initial {

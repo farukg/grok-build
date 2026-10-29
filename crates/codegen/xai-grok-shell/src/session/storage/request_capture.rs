@@ -347,7 +347,7 @@ pub(crate) fn observation(evidence: &LocalRequestEvidence) -> RequestObservation
             },
             source_durability: SourceDurability::UnconfirmedIndependentHistoryChannel,
         },
-        LocalRequestEvidence::DispatchStarted => RequestObservation::DispatchStarted,
+        LocalRequestEvidence::DispatchStarted { started_at: _ } => RequestObservation::DispatchStarted,
         LocalRequestEvidence::ResponseHeaders { status } => RequestObservation::ResponseHeaders { status: *status },
         LocalRequestEvidence::Finished { outcome } => RequestObservation::Finished { outcome: (*outcome).into() },
     }

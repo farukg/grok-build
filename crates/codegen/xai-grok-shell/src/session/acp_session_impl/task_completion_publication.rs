@@ -81,7 +81,10 @@ impl SessionActor {
                 continue;
             }
             if !automatic {
-                Self::push_task_wake_fallback(&mut self.state.lock().await, admission.fallback);
+                {
+                    let mut state = self.state.lock().await;
+                    Self::push_task_wake_fallback(&mut state, admission.fallback);
+                }
                 let _ = admission.respond_to.send(false);
                 continue;
             }
