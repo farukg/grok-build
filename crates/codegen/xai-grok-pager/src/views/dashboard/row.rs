@@ -2336,7 +2336,7 @@ mod tests {
             rows.iter()
                 .map(|row| row.session_id.as_deref())
                 .collect::<std::collections::HashSet<_>>(),
-            ["root", "child-1"].into_iter().collect(),
+            [Some("root"), Some("child-1")].into_iter().collect(),
             "every session id appears exactly once"
         );
     }

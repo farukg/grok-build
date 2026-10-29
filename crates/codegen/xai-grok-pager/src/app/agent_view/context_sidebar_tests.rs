@@ -892,7 +892,8 @@ fn f7_footer_survives_a_short_column_next_to_the_todo_rows() {
         &mut Vec::new(),
         AppRenderParams::default(),
     );
-    let lines: Vec<&str> = screen(&buf).lines().collect();
+    let screen = screen(&buf);
+    let lines: Vec<&str> = screen.lines().collect();
     let shown = lines.iter().filter(|line| line.contains("Budget task")).count();
     assert!(shown <= 6, "the Todos section stays inside its budget: {shown} of 8 items painted");
     let hint = lines.iter().rposition(|line| line.contains("Esc ") || line.contains("Space "));

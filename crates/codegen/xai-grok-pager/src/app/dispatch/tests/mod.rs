@@ -402,7 +402,7 @@ pub(super) fn test_agent_mut(app: &mut AppView, id: AgentId) -> &mut AgentView {
     };
     agent
 }
-pub(super) fn test_app_with_agent() -> AppView {
+pub(in crate::app) fn test_app_with_agent() -> AppView {
     let mut app = test_app();
     let id = AgentId(0);
     let session = make_test_agent_session(&app, id, "test-session");

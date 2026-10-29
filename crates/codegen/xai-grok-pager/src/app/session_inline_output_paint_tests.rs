@@ -35,12 +35,12 @@ fn replay_task(app: &mut AppView, id: &str, output: &str) {
     replay(app, SessionUpdate::TaskBackgrounded {
         tool_call_id: format!("call-{id}"), task_id: id.into(), command: "printf fixture".into(),
         cwd: "/tmp".into(), output_file: format!("/tmp/paint-{id}.log"),
-        monitor_description: None, description: None,
+        monitor_description: None, description: None, start_time: None,
     });
     replay(app, SessionUpdate::TaskCompleted {
         task_snapshot: xai_grok_tools::types::TaskSnapshot {
             task_id: id.into(), command: "printf fixture".into(), display_command: None,
-            cwd: "/tmp".into(), start_time: std::time::SystemTime::UNIX_EPOCH,
+            cwd: "/tmp".into(), start_time: Some(std::time::SystemTime::UNIX_EPOCH),
             end_time: Some(std::time::SystemTime::UNIX_EPOCH), output: output.into(),
             output_file: format!("/tmp/paint-{id}.log"), truncated: false, exit_code: Some(0),
             signal: None, completed: true, kind: Default::default(), block_waited: false,

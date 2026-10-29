@@ -1,6 +1,7 @@
 //! Tests for the block viewer and transcript dispatchers.
 
 use super::*;
+use crate::scrollback::block::BlockContent;
 
 fn make_test_png(width: u32, height: u32) -> Vec<u8> {
     use image::{ImageBuffer, Rgba};

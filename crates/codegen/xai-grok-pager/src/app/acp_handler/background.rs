@@ -145,27 +145,37 @@ pub(super) fn apply_task_backgrounded(
     meta: &NotificationMeta,
     app: &mut AppView,
 ) -> bool {
-    let (tool_call_id, task_id, command, cwd, output_file, monitor_description, notif_description) =
-        match session_notif.update {
-            XaiSessionUpdate::TaskBackgrounded {
-                tool_call_id,
-                task_id,
-                command,
-                cwd,
-                output_file,
-                monitor_description,
-                description,
-            } => (
-                tool_call_id,
-                task_id,
-                command,
-                cwd,
-                output_file,
-                monitor_description,
-                description,
-            ),
-            _ => return false,
-        };
+    let (
+        tool_call_id,
+        task_id,
+        command,
+        cwd,
+        output_file,
+        monitor_description,
+        notif_description,
+        start_time,
+    ) = match session_notif.update {
+        XaiSessionUpdate::TaskBackgrounded {
+            tool_call_id,
+            task_id,
+            command,
+            cwd,
+            output_file,
+            monitor_description,
+            description,
+            start_time,
+        } => (
+            tool_call_id,
+            task_id,
+            command,
+            cwd,
+            output_file,
+            monitor_description,
+            description,
+            start_time,
+        ),
+        _ => return false,
+    };
 
     // Replayed (`session/load`) restores are historical context, not new activity: mark them so the tasks pane doesn't auto-open on resume
     let restored_from_replay = meta.is_replay;
@@ -242,7 +252,7 @@ pub(super) fn apply_task_backgrounded(
         cwd,
         output_file,
         status: BgTaskStatus::Running,
-        start_time: None,
+        start_time,
         end_time: None,
         exit_code: None,
         signal: None,

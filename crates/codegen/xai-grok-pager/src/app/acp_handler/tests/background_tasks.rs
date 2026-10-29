@@ -11,6 +11,7 @@
         assert!(test_agent(&app, id).session.bg_tasks.is_empty());
 
         let update = XaiSessionUpdate::TaskBackgrounded {
+            start_time: None,
             tool_call_id: "tc-mon".into(),
             task_id: "mon-1".into(),
             command: "tail -f deploy.log".into(),
@@ -157,6 +158,7 @@
         let notif = SessionNotification {
             session_id: acp::SessionId::new("sess-1"),
             update: XaiSessionUpdate::TaskBackgrounded {
+                start_time: None,
                 tool_call_id: tc_id.into(),
                 task_id: "task-late-desc".into(),
                 command: "sleep 9999".into(),
@@ -209,6 +211,7 @@
         let notif = SessionNotification {
             session_id: acp::SessionId::new("sess-1"),
             update: XaiSessionUpdate::TaskBackgrounded {
+                start_time: None,
                 tool_call_id: tc_id.into(),
                 task_id: "task-blank-wire".into(),
                 command: "sleep 9999".into(),
@@ -683,6 +686,7 @@
         // TaskCompleted first, for a task the pager has never seen.
         let mut snapshot = race_snapshot("task-race", "echo done", Some(0));
         snapshot.output = "task output line".into();
+        let snapshot_start = snapshot.start_time;
         let done = completed_notif_from_snapshot("sess-1", snapshot, false);
         assert!(handle_task_completed(&done, &mut app));
         {
@@ -705,6 +709,7 @@
         let notif = SessionNotification {
             session_id: acp::SessionId::new("sess-1"),
             update: XaiSessionUpdate::TaskBackgrounded {
+                start_time: Some(snapshot_start - std::time::Duration::from_secs(30)),
                 tool_call_id: "tc-race".into(),
                 task_id: "task-race".into(),
                 command: "echo done".into(),
@@ -728,6 +733,7 @@
             BgTaskStatus::Done,
             "late TaskBackgrounded must not overwrite a terminal status with Running"
         );
+        assert_eq!(task.start_time, Some(snapshot_start), "snapshot timing kept");
         assert_eq!(task.tool_call_id, "tc-race", "tool_call_id backfilled");
         assert_eq!(
             task.description.as_deref(),
@@ -1051,6 +1057,112 @@
         );
         assert!(handle_ext_notification(&fresh, &mut app));
         assert!(app.agents.get(&AgentId(0)).unwrap().session.bg_tasks.contains_key("snap-2"));
+    }
+
+    #[test]
+    fn backgrounded_original_start_reaches_both_dock_consumers_without_current_work() {
+        use std::time::{Duration, SystemTime};
+
+        let now = SystemTime::now();
+        for (start_time, expected) in [
+            (Some(now - Duration::from_secs(7200)), "2h00m"),
+            (None, "unknown"),
+            (Some(now + Duration::from_secs(86400)), "unknown"),
+        ] {
+            for is_replay in [false, true] {
+                for is_monitor in [false, true] {
+                    let mut app = make_app_with_agent("sess-1");
+                    let update = XaiSessionUpdate::TaskBackgrounded {
+                        start_time,
+                        tool_call_id: "original-call".into(),
+                        task_id: "original-task".into(),
+                        command: "sleep 9999".into(),
+                        cwd: "/tmp".into(),
+                        output_file: "/tmp/original-task.log".into(),
+                        monitor_description: is_monitor.then(|| "watch output".into()),
+                        description: None,
+                    };
+                    let notification = if is_replay {
+                        subagent_ext_replay(
+                            "sess-1",
+                            serde_json::to_value(update).unwrap(),
+                            "sess-1-70",
+                        )
+                    } else {
+                        ext_with_event_id("x.ai/task_backgrounded", "sess-1", update, Some("sess-1-70"))
+                    };
+                    assert!(handle_ext_notification(&notification, &mut app));
+                    let agent = test_agent(&app, AgentId(0));
+                    let task = agent.session.bg_tasks.get("original-task").unwrap();
+                    assert_eq!(task.start_time, start_time);
+                    assert_eq!(task.restored_from_replay, is_replay);
+                    let tasks = agent.dock_task_rows();
+                    let watchers = agent.dock_watcher_rows();
+                    if is_monitor {
+                        assert!(tasks.is_empty());
+                        assert_eq!(watchers.len(), 1);
+                        assert_eq!(watchers[0].1.meta, expected);
+                    } else {
+                        assert!(watchers.is_empty());
+                        assert_eq!(tasks.len(), 1);
+                        assert_eq!(tasks[0].1.meta, expected);
+                    }
+                    assert!(agent.session.tracker.activity().is_none());
+                    assert!(agent.current_action_started_at().is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn late_backgrounded_backfills_unknown_snapshot_start() {
+        use std::time::{Duration, SystemTime};
+
+        let mut app = make_app_with_agent("sess-1");
+        let mut row = wire_row("task-1", WireTaskStatus::Running, Default::default());
+        row.started_at = "invalid timestamp".into();
+        assert!(handle_ext_notification(
+            &background_tasks_notif("sess-1", vec![row], false, Some("sess-1-71")),
+            &mut app,
+        ));
+        assert_eq!(test_agent(&app, AgentId(0)).session.bg_tasks["task-1"].start_time, None);
+        let start = SystemTime::now() - Duration::from_secs(7200);
+        let mut update = task_backgrounded_update("call-1", "task-1", "sleep 9999");
+        if let XaiSessionUpdate::TaskBackgrounded { start_time, .. } = &mut update {
+            *start_time = Some(start);
+        }
+        assert!(handle_ext_notification(
+            &ext_with_event_id("x.ai/task_backgrounded", "sess-1", update, Some("sess-1-72")),
+            &mut app,
+        ));
+        let agent = test_agent(&app, AgentId(0));
+        assert_eq!(agent.session.bg_tasks["task-1"].start_time, Some(start));
+        assert_eq!(agent.dock_task_rows()[0].1.meta, "2h00m");
+    }
+
+    #[test]
+    fn background_completion_uses_backend_interval_not_delivery_age() {
+        use std::time::{Duration, SystemTime};
+
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        for (end, expected) in [
+            (start + Duration::from_secs(7), Some(Duration::from_secs(7))),
+            (start - Duration::from_secs(1), None),
+        ] {
+            let mut app = make_app_with_agent("sess-1");
+            let mut snapshot = race_snapshot("timed-task", "echo done", Some(0));
+            snapshot.start_time = start;
+            snapshot.end_time = Some(end);
+            assert!(handle_task_completed(
+                &completed_notif_from_snapshot("sess-1", snapshot, false),
+                &mut app,
+            ));
+            let agent = test_agent(&app, AgentId(0));
+            let task = agent.session.bg_tasks.get("timed-task").unwrap();
+            assert_eq!(task.elapsed(), expected);
+            assert!(agent.dock_task_rows().is_empty());
+            assert!(agent.dock_watcher_rows().is_empty());
+        }
     }
 
     // --- eventId dedup across replay + live ---

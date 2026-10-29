@@ -408,7 +408,6 @@ impl AgentView {
                     .clone()
                     .filter(|d| !d.is_empty())
                     .unwrap_or_else(|| t.command.clone());
-                let elapsed = t.start_time.elapsed().unwrap_or_default().as_secs();
                 (
                     t.task_id.clone(),
                     crate::views::dock::DockRow {
@@ -416,7 +415,7 @@ impl AgentView {
                         kind: "Run".into(),
                         description,
                         activity: None,
-                        meta: crate::views::dock::fmt_elapsed(elapsed),
+                        meta: t.dock_elapsed_label(),
                         killable: !t.pending_kill,
                         openable: true,
                         spinning: true,
@@ -442,7 +441,6 @@ impl AgentView {
                     .clone()
                     .filter(|d| !d.is_empty())
                     .unwrap_or_else(|| t.command.clone());
-                let elapsed = t.start_time.elapsed().unwrap_or_default().as_secs();
                 (
                     DockWatcherId::Monitor(t.task_id.clone()),
                     crate::views::dock::DockRow {
@@ -450,7 +448,7 @@ impl AgentView {
                         kind: t.display_kind().into(),
                         description,
                         activity: None,
-                        meta: crate::views::dock::fmt_elapsed(elapsed),
+                        meta: t.dock_elapsed_label(),
                         killable: !t.pending_kill,
                         openable: true,
                         spinning: true,

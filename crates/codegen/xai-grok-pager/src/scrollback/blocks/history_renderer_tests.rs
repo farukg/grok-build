@@ -1,5 +1,5 @@
 use super::tool::memory_search::MemoryResult;
-use super::tool::{WebFetchToolCallBlock, WebSearchToolCallBlock};
+use super::tool::{WebFetchToolCallBlock, WebSearchToolCallBlock, MemorySearchToolCallBlock};
 use super::*;
 use crate::scrollback::block::{BlockContent, RenderBlock};
 use crate::scrollback::types::{

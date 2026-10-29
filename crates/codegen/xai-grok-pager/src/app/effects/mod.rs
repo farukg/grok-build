@@ -1657,7 +1657,7 @@ pub(crate) fn execute(
                     TaskResult::CancelComplete
                 });
         }
-        Effect::QueueInterject { request, binding_epoch } => {
+        Effect::QueueInterject { request, agent_id, binding } => {
             let tx = acp_tx.clone();
             tasks.spawn(async move {
                 use crate::app::agent_view::queue::QueueTransport;
@@ -1676,7 +1676,7 @@ pub(crate) fn execute(
                     }
                     Err(_) => Err(QueueTransport::Encode),
                 };
-                TaskResult::QueueInterjectComplete { operation, binding_epoch, result }
+                TaskResult::QueueInterjectComplete { operation, agent_id, binding, result }
             });
         }
         Effect::SetSessionMode { session_id, mode_id } => {

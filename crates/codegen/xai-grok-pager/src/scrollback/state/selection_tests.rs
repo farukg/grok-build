@@ -378,7 +378,7 @@ fn collapsed_turn_marker_breaks_dense_run_walks() {
     assert_eq!(state.group_range_of(before_idx, true).end, marker_idx);
     assert_eq!(state.group_range_of(after_idx, true).start, marker_idx + 1);
 
-    let tool_and_marker_heights = |state: &ScrollbackState| -> Vec<u16> {
+    let tool_and_marker_heights = |state: &ScrollbackState| -> Vec<usize> {
         (before_idx..=after_idx + 3)
             .map(|i| cached_height_at(state, i))
             .collect()
@@ -597,7 +597,8 @@ fn expand_scrolls_revealed_body_into_view_keeping_header_visible() {
     let screen_span = |h: &ScrollTestHarness, idx: usize| -> (i64, i64) {
         let cache = h.state.layout_cache.as_ref().expect("layout cache");
         let top = at(&cache.virtual_y, idx) as i64 - h.scroll_offset() as i64;
-        let height = i64::from(cache.entries.get(idx).expect("entry layout").height);
+        let height = i64::try_from(cache.entries.get(idx).expect("entry layout").height)
+            .expect("fixture height fits i64");
         (top, height)
     };
     let header_on_last_row = |output_lines: usize| -> (ScrollTestHarness, usize) {

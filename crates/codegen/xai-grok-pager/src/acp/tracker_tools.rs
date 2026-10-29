@@ -916,7 +916,6 @@ impl AcpUpdateTracker {
             && call.fields.kind.is_none()
             && call.fields.status.is_none()
             && call.fields.title.is_none()
-            && call.fields.name.is_none()
             && call.fields.content.is_none()
             && call.fields.locations.is_none()
             && call.fields.raw_input.is_none()

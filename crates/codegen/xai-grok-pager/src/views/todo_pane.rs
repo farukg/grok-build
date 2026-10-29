@@ -761,7 +761,7 @@ mod tests {
         for index in 0..pane.sidebar_row_count(width) {
             let row = pane.sidebar_row(index, width).expect("row exists");
             let text = flat(&row);
-            assert!(visible_width(&row.left) <= width, "{index}: {text}");
+            assert!(visible_width(&row.left) <= usize::from(width), "{index}: {text}");
             if index == 0 {
                 assert!(text.starts_with("▶ "), "{text}");
             } else {
@@ -784,7 +784,7 @@ mod tests {
         assert!(pane.sidebar_row_count(width) > 1);
         for index in 0..pane.sidebar_row_count(width) {
             let row = pane.sidebar_row(index, width).expect("row exists");
-            assert!(visible_width(&row.left) <= width, "{}", flat(&row));
+            assert!(visible_width(&row.left) <= usize::from(width), "{}", flat(&row));
         }
     }
 

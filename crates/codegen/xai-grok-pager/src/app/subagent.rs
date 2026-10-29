@@ -754,7 +754,7 @@ fn restore_or_finalize_after_replay(
         Ok(ReplayEmission::Emitted) => false,
         Ok(ReplayEmission::Empty) => detached_state
             .as_ref()
-            .is_some_and(|t| !scrollback_is_footer_only(&t.scrollback)),
+            .is_some_and(|t| !scrollback_is_footer_only(&t.transcript.scrollback)),
         Err(_) => true,
     };
     let restored = match detached_state {

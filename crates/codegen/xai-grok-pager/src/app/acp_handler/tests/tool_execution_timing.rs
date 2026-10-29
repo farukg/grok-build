@@ -64,11 +64,11 @@ fn inner(owner: &ToolCallOwnership, timing: ToolExecutionTiming) -> acp::Meta {
     meta
 }
 
-fn provider_id(owner: &ToolCallOwnership) -> &str {
+fn provider_id(owner: &ToolCallOwnership) -> acp::ToolCallId {
     match owner {
         ToolCallOwnership::Registered {
             provider_call_id, ..
-        } => provider_call_id,
+        } => acp::ToolCallId::new(provider_call_id.clone()),
         ToolCallOwnership::Unknown => panic!("registered fixture owner required"),
     }
 }

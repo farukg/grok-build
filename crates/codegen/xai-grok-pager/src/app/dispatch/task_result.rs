@@ -626,10 +626,11 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
     match result {
         TaskResult::QueueInterjectComplete {
             operation,
-            binding_epoch,
+            agent_id,
+            binding,
             result,
         } => {
-            app.apply_queue_send_now_reply(operation, binding_epoch, result);
+            app.apply_queue_send_now_reply(agent_id, operation, binding, result);
             Vec::new()
         }
         TaskResult::WithCurrentActions { .. }

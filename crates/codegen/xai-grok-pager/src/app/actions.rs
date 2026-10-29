@@ -1873,7 +1873,8 @@ pub enum Effect {
     /// Acceptance is not turn start; subsequent requests observe the same operation.
     QueueInterject {
         request: xai_grok_shell::extensions::interject::QueueRequest,
-        binding_epoch: u64,
+        agent_id: AgentId,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
     },
     /// Set the session mode via ACP `session/set_mode`.
     SetSessionMode {
@@ -2541,7 +2542,8 @@ pub enum WorkspaceWriteCompletion {
 pub enum TaskResult {
     QueueInterjectComplete {
         operation: xai_grok_shell::extensions::interject::QueueOperation,
-        binding_epoch: u64,
+        agent_id: AgentId,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
         result: Result<
             xai_grok_shell::extensions::interject::QueueResponse,
             super::agent_view::queue::QueueTransport,

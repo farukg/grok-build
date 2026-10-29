@@ -8,6 +8,7 @@ use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crate::views::queue_mutation::ServerRowCapabilities;
 use crossterm::event::KeyEvent;
+use xai_grok_shell::session::current_actions::SnapshotBinding;
 
 /// What Send now does with one queue row while a turn runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +75,7 @@ pub(crate) enum QueueAdmission {
 
 pub(crate) struct QueueSendNow {
     pub(crate) request: QueueRequest,
-    pub(crate) binding_epoch: u64,
+    pub(crate) binding: SnapshotBinding,
     pub(crate) row: crate::app::prompt_queue::QueueEntryWire,
     pub(crate) admission: QueueAdmission,
 }
@@ -113,13 +114,16 @@ impl QueueSendNow {
 
 impl AgentView {
     pub(crate) fn refresh_queue_admission(&mut self) {
+        let binding = self.current_actions_binding();
         self.queue.set_admission_labels(
             self.queue_operations
                 .iter()
                 .filter(|(id, operation)| {
-                    self.shared_queue
-                        .iter()
-                        .any(|row| row.id == **id && row.version == operation.row.version)
+                    binding.as_ref() == Some(&operation.binding)
+                        && self
+                            .shared_queue
+                            .iter()
+                            .any(|row| row.id == **id && row.version == operation.row.version)
                 })
                 .map(|(id, operation)| {
                     let edited_text = match &operation.request.action {
@@ -144,10 +148,11 @@ impl AgentView {
         expected_version: u64,
         new_text: Option<String>,
     ) -> Option<crate::app::actions::Effect> {
-        let session_id = self.session.session_id.as_ref()?.0.to_string();
+        let binding = self.current_actions_binding()?;
+        let session_id = binding.session_id.clone();
         let new_text = new_text.filter(|text| !text.trim().is_empty());
         if let Some(pending) = self.queue_operations.get_mut(&id)
-            && pending.binding_epoch == self.session_binding_epoch
+            && pending.binding == binding
             && pending.target_version() == expected_version
         {
             match &pending.admission {
@@ -169,7 +174,8 @@ impl AgentView {
                     self.sync_queue_pane();
                     return Some(crate::app::actions::Effect::QueueInterject {
                         request,
-                        binding_epoch: self.session_binding_epoch,
+                        agent_id: self.session.id,
+                        binding,
                     });
                 }
             }
@@ -193,7 +199,7 @@ impl AgentView {
             id,
             QueueSendNow {
                 request: request.clone(),
-                binding_epoch: self.session_binding_epoch,
+                binding: binding.clone(),
                 row,
                 admission: QueueAdmission::Awaiting,
             },
@@ -202,17 +208,18 @@ impl AgentView {
         self.sync_queue_pane();
         Some(crate::app::actions::Effect::QueueInterject {
             request,
-            binding_epoch: self.session_binding_epoch,
+            agent_id: self.session.id,
+            binding,
         })
     }
 
     pub(crate) fn apply_queue_send_now_result(
         &mut self,
         operation: QueueOperation,
-        binding_epoch: u64,
+        binding: SnapshotBinding,
         result: Result<QueueResponse, QueueTransport>,
     ) -> Option<crate::app::prompt_queue::QueueEntryWire> {
-        if self.session_binding_epoch != binding_epoch
+        if self.current_actions_binding().as_ref() != Some(&binding)
             || self.session.session_id.as_ref().map(|id| id.0.as_ref())
                 != Some(operation.session_id.as_str())
         {
@@ -221,7 +228,7 @@ impl AgentView {
         let Some(pending) = self.queue_operations.get_mut(&operation.id) else {
             return None;
         };
-        if pending.request.operation != operation || pending.binding_epoch != binding_epoch {
+        if pending.request.operation != operation || pending.binding != binding {
             return None;
         }
         // A duplicate reply cannot regress a settled admission or a later queue version.

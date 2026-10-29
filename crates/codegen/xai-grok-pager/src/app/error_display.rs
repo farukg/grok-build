@@ -67,7 +67,7 @@ impl From<xai_grok_shell::sampling::error::SamplingErrorKind> for WireErrorType 
             K::RateLimited => Self::RateLimited,
             K::EmptyResponse => Self::EmptyResponse,
             K::MaxTokensTruncation => Self::MaxTokensTruncation,
-            K::DoomLoopDetected => Self::Other,
+            K::DoomLoopDetected | K::RetrySchedule => Self::Other,
         }
     }
 }
@@ -693,6 +693,11 @@ fn is_noise_detail(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_schedule_has_known_generic_wire_classification() {
+        assert_eq!(wire_error_kind(Some("retry_schedule")), Some(WireErrorType::Other));
+    }
 
     #[test]
     fn formats_500_json_dump() {

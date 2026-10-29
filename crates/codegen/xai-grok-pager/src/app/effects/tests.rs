@@ -1639,6 +1639,7 @@ async fn check_marketplace_updates_dispatches_update_and_skips_failed_notificati
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     let result = tasks
         .join_next()
@@ -1685,6 +1686,7 @@ async fn refused_interjection_shows_the_refusal_sentence() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     let result = tasks
         .join_next()
@@ -1719,6 +1721,7 @@ async fn foreign_scan_task_echoes_sequence_without_enabled_sources() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     match tasks.join_next().await.expect("task").expect("no panic") {
         TaskResult::ForeignSessionsScanned { entries, seq } => {
@@ -1744,6 +1747,7 @@ async fn foreign_resume_detection_runs_as_task_result() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     assert!(!quit);
     match tasks.join_next().await.expect("task").expect("no panic") {
@@ -1771,6 +1775,7 @@ async fn foreign_resume_detection_runs_as_task_result() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     assert!(!quit);
     match tasks.join_next().await.expect("task").expect("no panic") {
@@ -1835,6 +1840,7 @@ async fn fetch_session_list_pushes_query_and_echoes_seq() {
             Path::new("."),
             &SessionFlags::default(),
             &progress_tx,
+            None,
         );
         tasks
     };
@@ -1998,6 +2004,7 @@ async fn fetch_dashboard_sessions_uses_roster_owner_and_preserves_child_metadata
             Path::new("."),
             &SessionFlags::default(),
             &progress_tx,
+            None,
         );
         match tasks.join_next().await.expect("task").expect("no panic") {
             TaskResult::DashboardSessionsLoaded { sessions } => {
@@ -2054,6 +2061,7 @@ async fn fetch_session_list_sends_kind_facet_filter() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     let _ = tasks.join_next().await;
     let captured = captured.lock().unwrap();
@@ -2099,6 +2107,7 @@ async fn fetch_workflows_list_sends_session_id() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     match tasks.join_next().await.expect("task").expect("no panic") {
         TaskResult::WorkflowsListLoaded {
@@ -2137,6 +2146,7 @@ async fn debounce_session_search_echoes_query_and_seq() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     match tasks.join_next().await.expect("task").expect("no panic") {
         TaskResult::SessionSearchDebounceExpired { host, generation, query, seq } => {
@@ -2190,6 +2200,7 @@ async fn deep_search_sessions_echoes_routing_and_policy() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     match tasks.join_next().await.expect("task").expect("no panic") {
         TaskResult::DeepSearchResults { host, generation, results, seq } => {
@@ -2226,6 +2237,7 @@ async fn load_card_detail_echoes_identity_and_zeroes_missing_session() {
         Path::new("."),
         &SessionFlags::default(),
         &progress_tx,
+        None,
     );
     match tasks.join_next().await.expect("task").expect("no panic") {
         TaskResult::CardDetailLoaded {

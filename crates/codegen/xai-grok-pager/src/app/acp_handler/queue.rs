@@ -178,10 +178,11 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
             .get(&aid)
             .map(|p| p.prompt_id.clone());
         if let Some(agent) = app.agents.get_mut(&aid) {
+            let binding = agent.current_actions_binding();
             agent.shared_queue = snapshot;
             agent.shared_queue.retain(|row| {
                 !agent.queue_operations.get(&row.id).is_some_and(|operation| {
-                    operation.binding_epoch == agent.session_binding_epoch
+                    binding.as_ref() == Some(&operation.binding)
                         && operation.row.version == row.version
                         && matches!(operation.admission, crate::app::agent_view::queue::QueueAdmission::Answered(
                             xai_grok_shell::extensions::interject::QueueResult::GoalInterjection { .. }
@@ -193,7 +194,7 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
                 agent.queue_operations.remove(running);
             }
             for (id, operation) in &mut agent.queue_operations {
-                if operation.binding_epoch == agent.session_binding_epoch
+                if binding.as_ref() == Some(&operation.binding)
                     && matches!(
                         operation.admission,
                         crate::app::agent_view::queue::QueueAdmission::Answered(
@@ -206,7 +207,7 @@ pub(super) fn handle_queue_changed(notif: &acp::ExtNotification, app: &mut AppVi
                         xai_grok_shell::extensions::interject::QueueResult::Unconfirmed,
                     );
                 }
-                if operation.binding_epoch == agent.session_binding_epoch
+                if binding.as_ref() == Some(&operation.binding)
                     && !matches!(
                         operation.admission,
                         crate::app::agent_view::queue::QueueAdmission::Answered(

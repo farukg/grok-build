@@ -7,6 +7,7 @@ use crate::render::Renderable;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::blocks::tool::{
     SentMessageInput, SentMessageTarget, WebFetchToolCallBlock, WebSearchToolCallBlock,
+    MemorySearchToolCallBlock,
 };
 use crate::scrollback::blocks::*;
 use crate::scrollback::entry::ScrollbackEntry;

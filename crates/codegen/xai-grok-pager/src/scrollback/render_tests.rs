@@ -2997,9 +2997,8 @@ fn collapsed_tool_headers_compose_one_glyph_with_the_fitted_path() {
         assert!(
             matches!(
                 header.link_target.as_ref(),
-                Some(
-                    crate::render::osc8::LinkTarget::File(path) if path.as_ref() == std::path::Path::new("/repo/src/a/main.rs"),
-                )
+                Some(crate::render::osc8::LinkTarget::File(path))
+                    if path.as_ref() == std::path::Path::new("/repo/src/a/main.rs")
             ),
             "identity stays the anchored absolute path"
         );

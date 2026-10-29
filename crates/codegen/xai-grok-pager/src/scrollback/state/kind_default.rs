@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn an_unrelated_global_display_change_preserves_a_manual_fold() {
         let mut state = ScrollbackState::default();
-        let id = state.push(ScrollbackEntry::new(RenderBlock::tool_call("custom_tool", "args")));
+        let id = state.push(ScrollbackEntry::new(RenderBlock::tool_call("custom_tool", "args", true)));
         let entry = state.get_by_id_mut(id).unwrap();
         entry.display_mode = DisplayMode::Collapsed;
         entry.display_mode_pinned = true;
@@ -139,11 +139,11 @@ mod tests {
     fn f7_edit_choice_survives_refinement_finish_and_legacy_default_changes() {
         let mut state = ScrollbackState::default();
         state.choose_kind_default(MessageKind::Edit, DisplayForm::Collapsed);
-        let mut pending = ScrollbackEntry::new(RenderBlock::tool_call("edit_file", "args"));
+        let mut pending = ScrollbackEntry::new(RenderBlock::tool_call("edit_file", "args", true));
         pending.is_running = true;
         let id = state.push(pending);
         let edit = EditToolCallBlock::new("src/main.rs", vec![]).with_untrusted_summary();
-        assert!(state.replace_tool_block(id, ToolCallBlock::Edit(edit)));
+        assert!(state.replace_tool_block(id, RenderBlock::ToolCall(ToolCallBlock::Edit(edit)), None));
         state.finish_running(id);
         state.apply_collapsed_edit_blocks_flip(false, true);
         state.apply_collapsed_edit_blocks_flip(true, false);

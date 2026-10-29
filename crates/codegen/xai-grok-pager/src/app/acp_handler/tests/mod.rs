@@ -418,6 +418,7 @@ pub(super) fn task_backgrounded_update(
     command: &str,
 ) -> XaiSessionUpdate {
     XaiSessionUpdate::TaskBackgrounded {
+        start_time: None,
         tool_call_id: tool_call_id.into(),
         task_id: task_id.into(),
         command: command.into(),
@@ -1929,6 +1930,7 @@ pub(super) fn make_task_backgrounded_notif(
     let notif = SessionNotification {
         session_id: acp_fixtures::session_id(session_id),
         update: XaiSessionUpdate::TaskBackgrounded {
+            start_time: None,
             tool_call_id: tool_call_id.into(),
             task_id: task_id.into(),
             command: command.into(),
@@ -1952,6 +1954,7 @@ pub(super) fn make_replayed_task_backgrounded_notif(
     let notif = SessionNotification {
         session_id: acp_fixtures::session_id(session_id),
         update: XaiSessionUpdate::TaskBackgrounded {
+            start_time: None,
             tool_call_id: tool_call_id.into(),
             task_id: task_id.into(),
             command: command.into(),

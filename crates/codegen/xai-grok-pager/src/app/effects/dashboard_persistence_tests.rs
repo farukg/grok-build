@@ -29,7 +29,7 @@ async fn dashboard_effects_enqueue_full_and_scoped_writes_before_receipt_tasks_a
             reorder: vec![key("child-b")],
         };
         for effect in [Effect::PersistDashboard(full), Effect::PersistDashboardChildLayout(scoped)] {
-            execute(effect, &mut tasks, &tx, Path::new("."), &SessionFlags::default(), &progress);
+            execute(effect, &mut tasks, &tx, Path::new("."), &SessionFlags::default(), &progress, None);
         }
         // The current-thread runtime cannot poll spawned receipt tasks before the first await.
         assert_eq!(observed.recv_timeout(Duration::from_secs(5)).unwrap(),

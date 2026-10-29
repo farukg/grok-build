@@ -1,5 +1,6 @@
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
+use unicode_width::UnicodeWidthStr;
 
 use super::TOOL_HEADER_RANGE;
 use crate::appearance::AppearanceConfig;

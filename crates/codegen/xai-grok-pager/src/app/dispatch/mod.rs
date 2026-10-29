@@ -69,4 +69,4 @@ pub(crate) use status::commit_minimal_update_notice;
 pub(crate) use turn::{CANCEL_RESEND_GRACE, TURN_END_RECONCILE_GRACE};
 pub(crate) use turn::{reconcile_overdue_cancels, reconcile_overdue_turn_ends};
 #[cfg(test)]
-mod tests;
+pub(in crate::app) mod tests;

@@ -2390,9 +2390,6 @@ fn merge_tool_call_update_fields(
     if newer.title.is_some() {
         base.title = newer.title;
     }
-    if newer.name.is_some() {
-        base.name = newer.name;
-    }
     if newer.content.is_some() {
         base.content = newer.content;
     }

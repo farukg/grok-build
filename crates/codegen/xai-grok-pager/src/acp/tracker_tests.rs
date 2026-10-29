@@ -1,5 +1,6 @@
 use super::*;
 use crate::scrollback::blocks::tool::VerbGroupKind;
+use crate::scrollback::DisplayMode;
 use std::sync::Arc;
 /// Default meta with no timestamps (simulates old grok-shell or tests that don't care about timing).
 fn meta() -> NotificationMeta {
@@ -637,6 +638,106 @@ fn tool_update_before_tool_call_preserves_kind() {
         RenderBlock::ToolCall(ToolCallBlock::Execute(_)) => {}
         other => panic!("Expected Execute block, got {:?}", other),
     }
+}
+#[test]
+fn orphan_tool_updates_preserve_canonical_name_ownership_and_output() {
+    use xai_grok_shell::extensions::tool_timing::{
+        ToolCallOwnership, ToolCallSource, ownership_from_meta, stamp_ownership,
+    };
+    let mut sb = ScrollbackState::new();
+    let mut tracker = AcpUpdateTracker::new();
+    let owner = ToolCallOwnership::Registered {
+        invocation_id: uuid::Uuid::from_u128(73).to_string(),
+        provider_call_id: "tc-wire".into(),
+        source: ToolCallSource::Unknown,
+    };
+    let mut original_meta = acp::Meta::new();
+    stamp_ownership(&mut original_meta, &owner).unwrap();
+    original_meta.insert("original-key".into(), serde_json::json!("original"));
+    let mut named_meta = original_meta.clone();
+    let canonical = xai_grok_tools::tool_taxonomy::CanonicalToolMeta::new(
+        "run_terminal_command",
+        &xai_grok_tools::tool_taxonomy::ToolIdentity {
+            tool_kind: xai_grok_tools::types::tool::ToolKind::Execute,
+            namespace: xai_grok_tools::types::tool::ToolNamespace::GrokBuild,
+            presentation_name: "Run Command",
+            read_only: false,
+        },
+        None,
+    );
+    named_meta.insert(
+        xai_grok_tools::tool_taxonomy::TOOL_META_KEY.into(),
+        serde_json::to_value(canonical).unwrap(),
+    );
+    let leading = acp::ToolCallUpdate::new(
+        "tc-wire",
+        acp::ToolCallUpdateFields::new()
+            .kind(acp::ToolKind::Execute)
+            .status(acp::ToolCallStatus::InProgress)
+            .title("Display title, not identity")
+            .raw_input(serde_json::json!({"command": "printf first"})),
+    )
+    .meta(Some(named_meta));
+    assert!(!tracker.handle_update(
+        acp::SessionUpdate::ToolCallUpdate(leading),
+        &meta(),
+        &mut sb,
+    ));
+    let acp::SessionUpdate::ToolCallUpdate(mut output) =
+        tool_update_in_progress("tc-wire", b"first\nsecond\n")
+    else {
+        panic!("expected tool update");
+    };
+    output.meta = Some(original_meta.clone());
+    assert!(!tracker.handle_update(
+        acp::SessionUpdate::ToolCallUpdate(output),
+        &meta(),
+        &mut sb,
+    ));
+    assert!(!tracker.handle_update(
+        acp::SessionUpdate::ToolCallUpdate(
+            acp::ToolCallUpdate::new("tc-wire", acp::ToolCallUpdateFields::new())
+                .meta(Some(original_meta.clone())),
+        ),
+        &meta(),
+        &mut sb,
+    ));
+    assert!(tracker.handle_update(
+        acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tc-wire", "unrelated base title").meta(Some(original_meta)),
+        ),
+        &meta(),
+        &mut sb,
+    ));
+    let pending = tracker.pending_tools.values().next().unwrap();
+    assert_eq!(pending.base.tool_call_id.0.as_ref(), "tc-wire");
+    assert_eq!(pending.base.title, "Display title, not identity");
+    assert_eq!(
+        canonical_tool_name(&pending.base),
+        Some("run_terminal_command"),
+    );
+    assert_eq!(
+        ownership_from_meta(pending.base.meta.as_ref()).unwrap(),
+        owner,
+    );
+    assert_eq!(
+        pending.base.meta.as_ref().unwrap().get("original-key"),
+        Some(&serde_json::json!("original")),
+    );
+    assert!(tracker.orphan_updates.is_empty());
+    assert_eq!(sb.len(), 1);
+    let RenderBlock::ToolCall(ToolCallBlock::Execute(execute)) = &sb.get(0).unwrap().block else {
+        panic!("expected execute block");
+    };
+    assert_eq!(execute.command, "printf first");
+    assert_eq!(execute.output.as_deref(), Some("first\nsecond\n"));
+    assert!(tracker.handle_update(tool_update_completed("tc-wire"), &meta(), &mut sb));
+    assert!(tracker.pending_tools.is_empty());
+    assert_eq!(sb.len(), 1);
+    let RenderBlock::ToolCall(ToolCallBlock::Execute(execute)) = &sb.get(0).unwrap().block else {
+        panic!("expected completed execute block");
+    };
+    assert_eq!(execute.output.as_deref(), Some("first\nsecond\n"));
 }
 #[test]
 fn tool_normal_order_still_works() {

@@ -5,6 +5,12 @@ use xai_grok_shell::extensions::current_actions::{
 };
 use xai_grok_shell::session::current_actions::{CurrentActionsSnapshot, SnapshotBinding};
 
+async fn poll_once<F: Future>(
+    mut future: std::pin::Pin<&mut F>,
+) -> std::task::Poll<F::Output> {
+    std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx))).await
+}
+
 async fn pump<T>(
     future: impl Future<Output = T>,
     rx: &mut xai_acp_lib::AcpClientRx,
@@ -148,7 +154,7 @@ fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
                         later = rx.recv() => later.unwrap(),
                     };
                     handle(later, &mut app);
-                    assert!(futures::poll!(&mut load).is_pending(), "later completion cannot settle the earlier handler");
+                    assert!(poll_once(load.as_mut()).await.is_pending(), "later completion cannot settle the earlier handler");
                 }
                 handle(message, &mut app);
             }
@@ -161,7 +167,7 @@ fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
                         let message = message.unwrap();
                         if let AcpClientMessage::ExtNotification(args) = &message
                             && args.request.method.as_ref() == wire::GENERATION_END_METHOD {
-                            assert!(futures::poll!(&mut load).is_pending(), "marker handler must finish before the load reply");
+                            assert!(poll_once(load.as_mut()).await.is_pending(), "marker handler must finish before the load reply");
                             marker = Some(serde_json::from_str::<GenerationEnd>(args.request.params.get()).unwrap());
                         }
                         handle(message, &mut app);
@@ -213,7 +219,7 @@ fn resident_prompt_load(settlement: xai_acp_lib::ReceiverSettlement) {
                 assert!(view.late_replay_until.is_some());
             }
             assert_eq!(view.session.current_prompt_id.as_deref(), Some(original.as_str()));
-            assert!(futures::poll!(&mut prompt).is_pending());
+            assert!(poll_once(prompt.as_mut()).await.is_pending());
         }
         blocked.release();
         let response = pump(&mut prompt, &mut rx, &mut app).await.unwrap();

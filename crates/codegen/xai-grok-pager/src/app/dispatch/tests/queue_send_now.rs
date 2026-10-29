@@ -4,6 +4,7 @@ use crate::app::app_view::InputOutcome;
 use crate::app::prompt_queue::QueueEntryWire;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{buffer::Buffer, layout::Rect};
+use xai_grok_shell::session::current_actions::SnapshotBinding;
 use xai_grok_shell::extensions::interject::{
     QueueAction, QueueOperation, QueueRejection, QueueRequest, QueueResponse, QueueResult,
 };
@@ -50,7 +51,7 @@ fn app_with_row(wake: bool) -> AppView {
         agent.session.current_prompt_id = None;
         agent.running_wake_turn = Some(crate::app::agent_view::RunningWakeTurn {
             prompt_id: "task-completed-running".into(),
-            cancelling: false,
+            cancel_sent: false,
         });
     }
     broadcast(
@@ -81,14 +82,15 @@ fn enter(app: &mut AppView) -> Vec<Effect> {
     }
 }
 
-fn request(effects: &[Effect]) -> (QueueRequest, u64) {
+fn request(effects: &[Effect]) -> (QueueRequest, (AgentId, SnapshotBinding)) {
     match effects {
         [
             Effect::QueueInterject {
                 request,
-                binding_epoch,
+                agent_id,
+                binding,
             },
-        ] => (request.clone(), *binding_epoch),
+        ] => (request.clone(), (*agent_id, binding.clone())),
         other => panic!("expected correlated admission: {other:?}"),
     }
 }
@@ -96,24 +98,30 @@ fn request(effects: &[Effect]) -> (QueueRequest, u64) {
 fn complete(
     app: &mut AppView,
     operation: QueueOperation,
-    epoch: u64,
+    context: &(AgentId, SnapshotBinding),
     result: Result<QueueResponse, QueueTransport>,
 ) {
     dispatch(
         Action::TaskComplete(TaskResult::QueueInterjectComplete {
             operation,
-            binding_epoch: epoch,
+            agent_id: context.0,
+            binding: context.1.clone(),
             result,
         }),
         app,
     );
 }
 
-fn answer(app: &mut AppView, request: &QueueRequest, epoch: u64, result: QueueResult) {
+fn answer(
+    app: &mut AppView,
+    request: &QueueRequest,
+    context: &(AgentId, SnapshotBinding),
+    result: QueueResult,
+) {
     complete(
         app,
         request.operation.clone(),
-        epoch,
+        context,
         Ok(QueueResponse {
             operation: request.operation.clone(),
             result,
@@ -180,11 +188,11 @@ fn rejection_and_transport_are_visible_without_a_sent_bubble() {
         QueueRejection::PayloadTooLarge,
     ] {
         let mut app = app_with_row(false);
-        let (sent, epoch) = request(&enter(&mut app));
+        let (sent, context) = request(&enter(&mut app));
         answer(
             &mut app,
             &sent,
-            epoch,
+            &context,
             QueueResult::Rejected {
                 reason: reason.clone(),
                 row: Some(row(3)),
@@ -201,8 +209,8 @@ fn rejection_and_transport_are_visible_without_a_sent_bubble() {
         QueueTransport::Encode,
     ] {
         let mut app = app_with_row(false);
-        let (sent, epoch) = request(&enter(&mut app));
-        complete(&mut app, sent.operation.clone(), epoch, Err(failure));
+        let (sent, context) = request(&enter(&mut app));
+        complete(&mut app, sent.operation.clone(), &context, Err(failure));
         assert!(rendered_queue(&mut app).contains("unconfirmed"));
         assert_unsent(&app);
         let (observe, _) = request(&enter(&mut app));
@@ -215,14 +223,14 @@ fn rejection_and_transport_are_visible_without_a_sent_bubble() {
 #[test]
 fn queued_acceptance_stays_visible_and_observes_the_same_operation() {
     let mut app = app_with_row(false);
-    let (sent, epoch) = request(&enter(&mut app));
-    answer(&mut app, &sent, epoch, QueueResult::Queued { row: row(3) });
+    let (sent, context) = request(&enter(&mut app));
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
     assert!(rendered_queue(&mut app).contains("queued, awaiting start"));
     assert_unsent(&app);
     answer(
         &mut app,
         &sent,
-        epoch,
+        &context,
         QueueResult::Rejected {
             reason: QueueRejection::Missing,
             row: None,
@@ -240,18 +248,18 @@ fn queued_acceptance_stays_visible_and_observes_the_same_operation() {
 #[test]
 fn late_results_cannot_replace_new_versions_operations_or_bindings() {
     let mut app = app_with_row(false);
-    let (old, epoch) = request(&enter(&mut app));
+    let (old, context) = request(&enter(&mut app));
     let mut newer = row(4);
     newer.text = "new authoritative text".into();
     broadcast(&mut app, vec![newer.clone()], Some("running-input"));
-    answer(&mut app, &old, epoch, QueueResult::Queued { row: row(3) });
+    answer(&mut app, &old, &context, QueueResult::Queued { row: row(3) });
     assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue[0], newer);
     let (new, _) = request(&enter(&mut app));
     assert_ne!(new.operation.operation_id, old.operation.operation_id);
     answer(
         &mut app,
         &old,
-        epoch,
+        &context,
         QueueResult::GoalInterjection {
             running_prompt_id: "running-input".into(),
         },
@@ -264,7 +272,7 @@ fn late_results_cannot_replace_new_versions_operations_or_bindings() {
     answer(
         &mut app,
         &new,
-        epoch,
+        &context,
         QueueResult::Started {
             prompt_id: "queued-input".into(),
         },
@@ -272,10 +280,12 @@ fn late_results_cannot_replace_new_versions_operations_or_bindings() {
     assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue[0], newer);
     app.agents.get_mut(&AgentId(0)).unwrap().session.session_id =
         Some(acp::SessionId::new("another-session"));
+    let mut rebound = context.clone();
+    rebound.1.binding_epoch += 1;
     answer(
         &mut app,
         &new,
-        epoch + 1,
+        &rebound,
         QueueResult::Started {
             prompt_id: "queued-input".into(),
         },
@@ -294,12 +304,12 @@ fn edited_pending_text_is_visible_before_and_after_rejection() {
         },
         &mut app,
     );
-    let (sent, epoch) = request(&effects);
+    let (sent, context) = request(&effects);
     assert!(rendered_queue(&mut app).contains("edited exact payload"));
     answer(
         &mut app,
         &sent,
-        epoch,
+        &context,
         QueueResult::Rejected {
             reason: QueueRejection::Stale,
             row: Some(row(3)),
@@ -312,8 +322,8 @@ fn edited_pending_text_is_visible_before_and_after_rejection() {
 #[test]
 fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row() {
     let mut app = app_with_row(false);
-    let (sent, epoch) = request(&enter(&mut app));
-    answer(&mut app, &sent, epoch, QueueResult::Queued { row: row(3) });
+    let (sent, context) = request(&enter(&mut app));
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
     assert_unsent(&app);
     broadcast(&mut app, Vec::new(), Some("queued-input"));
     dispatch(
@@ -326,7 +336,7 @@ fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row()
         &mut app,
     );
     broadcast(&mut app, Vec::new(), Some("queued-input"));
-    answer(&mut app, &sent, epoch, QueueResult::Queued { row: row(3) });
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
     let agent = app.agents.get(&AgentId(0)).unwrap();
     assert!(agent.shared_queue.is_empty());
     assert!(!agent.queue_operations.contains_key("queued-input"));
@@ -343,7 +353,7 @@ fn authoritative_start_adopts_once_and_late_admission_cannot_resurrect_the_row()
 async fn closed_rpc_transport_returns_a_visible_unconfirmed_result() {
     let mut app = app_with_row(false);
     let effects = enter(&mut app);
-    let (sent, epoch) = request(&effects);
+    let (sent, context) = request(&effects);
     let effect = effects.into_iter().next().unwrap();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     drop(rx);
@@ -364,8 +374,8 @@ async fn closed_rpc_transport_returns_a_visible_unconfirmed_result() {
         .unwrap()
         .unwrap();
     assert!(matches!(&result, TaskResult::QueueInterjectComplete {
-        operation, binding_epoch, result: Err(QueueTransport::Disconnected),
-    } if operation == &sent.operation && *binding_epoch == epoch));
+        operation, agent_id, binding, result: Err(QueueTransport::Disconnected),
+    } if operation == &sent.operation && (*agent_id, binding.clone()) == context));
     dispatch(Action::TaskComplete(result), &mut app);
     let rendered = rendered_queue(&mut app);
     assert!(rendered.contains("transport failed"));
@@ -435,11 +445,11 @@ async fn queue_effect_uses_correlated_rpc_and_decodes_owner_rejection() {
 #[test]
 fn mismatched_started_identity_preserves_the_pending_payload() {
     let mut app = app_with_row(false);
-    let (sent, epoch) = request(&enter(&mut app));
+    let (sent, context) = request(&enter(&mut app));
     answer(
         &mut app,
         &sent,
-        epoch,
+        &context,
         QueueResult::Started {
             prompt_id: "unrelated-input".into(),
         },
@@ -456,8 +466,8 @@ fn mismatched_started_identity_preserves_the_pending_payload() {
 #[test]
 fn unconfirmed_reply_preserves_text_and_observes_without_resending() {
     let mut app = app_with_row(false);
-    let (sent, epoch) = request(&enter(&mut app));
-    answer(&mut app, &sent, epoch, QueueResult::Unconfirmed);
+    let (sent, context) = request(&enter(&mut app));
+    answer(&mut app, &sent, &context, QueueResult::Unconfirmed);
     let rendered = rendered_queue(&mut app);
     assert!(rendered.contains("send now: unconfirmed"), "{rendered}");
     assert!(rendered.contains("held exact payload"));
@@ -470,11 +480,11 @@ fn unconfirmed_reply_preserves_text_and_observes_without_resending() {
 #[test]
 fn goal_acceptance_fences_delayed_snapshots_without_hiding_new_versions() {
     let mut app = app_with_row(false);
-    let (sent, epoch) = request(&enter(&mut app));
+    let (sent, context) = request(&enter(&mut app));
     answer(
         &mut app,
         &sent,
-        epoch,
+        &context,
         QueueResult::GoalInterjection {
             running_prompt_id: "running-input".into(),
         },
@@ -503,8 +513,8 @@ fn goal_acceptance_fences_delayed_snapshots_without_hiding_new_versions() {
 #[test]
 fn queued_row_disappearance_is_unconfirmed_not_started_or_lost() {
     let mut app = app_with_row(false);
-    let (sent, epoch) = request(&enter(&mut app));
-    answer(&mut app, &sent, epoch, QueueResult::Queued { row: row(3) });
+    let (sent, context) = request(&enter(&mut app));
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
     broadcast(&mut app, Vec::new(), Some("running-input"));
     let rendered = rendered_queue(&mut app);
     assert!(rendered.contains("send now: unconfirmed"), "{rendered}");
@@ -519,9 +529,9 @@ fn queued_row_disappearance_is_unconfirmed_not_started_or_lost() {
 fn pending_and_queued_late_responses_cannot_regress_a_newer_snapshot() {
     for queued in [false, true] {
         let mut app = app_with_row(false);
-        let (sent, epoch) = request(&enter(&mut app));
+        let (sent, context) = request(&enter(&mut app));
         if queued {
-            answer(&mut app, &sent, epoch, QueueResult::Queued { row: row(3) });
+            answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
             let (observe, _) = request(&enter(&mut app));
             assert_eq!(observe.action, QueueAction::Observe);
         }
@@ -532,7 +542,7 @@ fn pending_and_queued_late_responses_cannot_regress_a_newer_snapshot() {
         answer(
             &mut app,
             &sent,
-            epoch,
+            &context,
             QueueResult::GoalInterjection {
                 running_prompt_id: "running-input".into(),
             },
@@ -583,13 +593,13 @@ fn accepted_atomic_edit_advances_the_existing_snapshot_mirror() {
         },
         &mut app,
     );
-    let (sent, epoch) = request(&effects);
+    let (sent, context) = request(&effects);
     let mut edited = row(4);
     edited.text = "accepted exact edit".into();
     answer(
         &mut app,
         &sent,
-        epoch,
+        &context,
         QueueResult::Queued {
             row: edited.clone(),
         },
@@ -605,5 +615,116 @@ fn accepted_atomic_edit_advances_the_existing_snapshot_mirror() {
     );
     assert_eq!(app.shared_prompt_queue("test-session"), Some(&vec![edited]));
     assert!(rendered_queue(&mut app).contains("accepted exact edit"));
+    assert_unsent(&app);
+}
+
+#[test]
+fn queue_reply_requires_the_original_agent_and_lossless_snapshot_binding() {
+    let mut app = app_with_row(false);
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+    agent.session_binding_epoch = u32::MAX;
+    agent.current_actions_generation = u64::from(u32::MAX) + 7;
+    let (sent, context) = request(&enter(&mut app));
+    assert_eq!(context.0, AgentId(0));
+    assert_eq!(context.1.session_id, "test-session");
+    assert_eq!(context.1.binding_epoch, u64::from(u32::MAX));
+    assert_eq!(context.1.load_generation, u64::from(u32::MAX) + 7);
+
+    let mut wrong_agent = context.clone();
+    wrong_agent.0 = AgentId(1);
+    let mut wrong_epoch = context.clone();
+    wrong_epoch.1.binding_epoch += 1_u64 << 32;
+    let mut wrong_generation = context.clone();
+    wrong_generation.1.load_generation += 1;
+    let mut wrong_session = context.clone();
+    wrong_session.1.session_id = "another-session".into();
+    for stale in [wrong_agent, wrong_epoch, wrong_generation, wrong_session] {
+        answer(
+            &mut app,
+            &sent,
+            &stale,
+            QueueResult::Started {
+                prompt_id: "queued-input".into(),
+            },
+        );
+        assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(3)]);
+        assert!(rendered_queue(&mut app).contains("send now: pending"));
+        assert_unsent(&app);
+    }
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    assert!(rendered_queue(&mut app).contains("queued, awaiting start"));
+    let (observe, observed_context) = request(&enter(&mut app));
+    assert_eq!(observe.operation, sent.operation);
+    assert_eq!(observe.action, QueueAction::Observe);
+    assert_eq!(observed_context, context);
+}
+
+#[test]
+fn reload_rejects_old_queue_peeks_and_resets_the_mirror_version_floor() {
+    let mut app = app_with_row(false);
+    let (sent, context) = request(&enter(&mut app));
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(4) });
+    let (observe, observed_context) = request(&enter(&mut app));
+    assert_eq!(observe.action, QueueAction::Observe);
+    assert_eq!(observed_context, context);
+    app.push_optimistic_prompt_echo("test-session", "old-echo", "old payload", "prompt");
+    app.agents.get_mut(&AgentId(0)).unwrap().begin_replay_window();
+    answer(
+        &mut app,
+        &observe,
+        &observed_context,
+        QueueResult::Queued { row: row(5) },
+    );
+    assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(4)]);
+    broadcast(&mut app, vec![row(1)], Some("running-input"));
+    assert_eq!(app.shared_prompt_queue("test-session"), Some(&vec![row(1)]));
+    assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(1)]);
+    assert!(!app.optimistic_prompt_echoes.contains_key("test-session"));
+    let rendered = rendered_queue(&mut app);
+    assert!(!rendered.contains("send now: pending"));
+    assert!(!rendered.contains("old payload"));
+    let effects = dispatch(
+        Action::QueueInterjectShared {
+            id: "queued-input".into(),
+            expected_version: 1,
+            new_text: None,
+        },
+        &mut app,
+    );
+    let (fresh, fresh_context) = request(&effects);
+    assert_ne!(fresh.operation.operation_id, sent.operation.operation_id);
+    assert!(matches!(fresh.action, QueueAction::Prioritize { .. }));
+    assert_eq!(fresh_context.0, context.0);
+    assert_eq!(fresh_context.1.session_id, context.1.session_id);
+    assert_eq!(fresh_context.1.binding_epoch, context.1.binding_epoch);
+    assert_eq!(fresh_context.1.load_generation, context.1.load_generation + 1);
+    assert_unsent(&app);
+}
+
+#[test]
+fn rebind_does_not_reuse_an_old_queue_observation_or_its_admission() {
+    let mut app = app_with_row(false);
+    let (sent, context) = request(&enter(&mut app));
+    answer(&mut app, &sent, &context, QueueResult::Queued { row: row(3) });
+    let (observe, _) = request(&enter(&mut app));
+    assert_eq!(observe.action, QueueAction::Observe);
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+    agent.bind_session_id(acp::SessionId::new("another-session"));
+    agent.bind_session_id(acp::SessionId::new("test-session"));
+    broadcast(&mut app, vec![row(3)], Some("running-input"));
+    answer(
+        &mut app,
+        &observe,
+        &context,
+        QueueResult::Started {
+            prompt_id: "queued-input".into(),
+        },
+    );
+    assert_eq!(app.agents.get(&AgentId(0)).unwrap().shared_queue, vec![row(3)]);
+    assert!(!rendered_queue(&mut app).contains("send now: pending"));
+    let (fresh, fresh_context) = request(&enter(&mut app));
+    assert_ne!(fresh.operation.operation_id, sent.operation.operation_id);
+    assert!(matches!(fresh.action, QueueAction::Prioritize { .. }));
+    assert_eq!(fresh_context.1.binding_epoch, context.1.binding_epoch + 2);
     assert_unsent(&app);
 }

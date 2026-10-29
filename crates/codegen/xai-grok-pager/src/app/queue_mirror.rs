@@ -5,15 +5,14 @@ use xai_grok_shell::extensions::interject::{QueueOperation, QueueResponse};
 impl AppView {
     pub(crate) fn apply_queue_send_now_reply(
         &mut self,
+        agent_id: super::agent::AgentId,
         operation: QueueOperation,
-        binding_epoch: u64,
+        binding: xai_grok_shell::session::current_actions::SnapshotBinding,
         result: Result<QueueResponse, QueueTransport>,
     ) {
-        if let Some(agent_id) = self.agents.find_by_session_id(&operation.session_id)
-            && let Some(agent) = self.agents.get_mut(&agent_id)
-        {
+        if let Some(agent) = self.agents.get_mut(&agent_id) {
             let session_id = operation.session_id.clone();
-            if let Some(row) = agent.apply_queue_send_now_result(operation, binding_epoch, result) {
+            if let Some(row) = agent.apply_queue_send_now_result(operation, binding, result) {
                 self.prepare_queue_mirror_binding(&session_id);
                 let queue = self.shared_prompt_queues.entry(session_id).or_default();
                 match queue.iter_mut().find(|current| current.id == row.id) {
@@ -111,7 +110,7 @@ impl AppView {
         let binding = self.agents.find_by_session_id(session_id).and_then(|id| {
             self.agents
                 .get(&id)
-                .map(|agent| (id, agent.session_binding_epoch))
+                .and_then(|agent| agent.current_actions_binding().map(|binding| (id, binding)))
         });
         if self
             .queue_mirror_bindings

@@ -202,7 +202,7 @@ pub struct BgTaskState {
     pub cwd: String,
     pub output_file: String,
     pub status: BgTaskStatus,
-    /// Actual backend start, absent until a snapshot supplies it.
+    /// Actual backend start, unknown when neither notification nor snapshot supplies it.
     pub start_time: Option<SystemTime>,
     pub end_time: Option<SystemTime>,
     pub exit_code: Option<i32>,
@@ -246,6 +246,12 @@ impl BgTaskState {
 
     pub fn elapsed_label(&self) -> String {
         crate::scrollback::blocks::BgTaskBlock::format_elapsed(self.elapsed())
+    }
+
+    pub(crate) fn dock_elapsed_label(&self) -> String {
+        self.elapsed()
+            .map(|elapsed| crate::views::dock::fmt_elapsed(elapsed.as_secs()))
+            .unwrap_or_else(|| "unknown".into())
     }
 
     pub fn apply_snapshot_timing(&mut self, snapshot: &xai_grok_tools::types::TaskSnapshot) {
@@ -354,6 +360,9 @@ impl BgTaskState {
     /// Backfill blank fields, demoted-Execute stdout, and the scrollback entry.
     pub fn absorb_late_backgrounded(&mut self, fresh: BgTaskState, entry_id: Option<EntryId>) {
         self.tool_call_id = fresh.tool_call_id;
+        if self.start_time.is_none() {
+            self.start_time = fresh.start_time;
+        }
         if self.command.trim().is_empty() {
             self.command = fresh.command;
         }

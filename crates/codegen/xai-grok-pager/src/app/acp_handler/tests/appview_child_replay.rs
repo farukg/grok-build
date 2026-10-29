@@ -45,7 +45,7 @@ fn lifecycle(update: XaiSessionUpdate, sequence: u64) -> StoredUpdate {
     StoredUpdate::Xai(Box::new(SessionNotification {
         session_id: acp::SessionId::new(PARENT),
         update,
-        meta: Some(event_meta(PARENT, sequence)),
+        meta: Some(serde_json::Value::Object(event_meta(PARENT, sequence))),
     }))
 }
 
@@ -112,7 +112,7 @@ fn deliver(app: &mut AppView, record: StoredUpdate, replay: bool) -> bool {
         }
         StoredUpdate::Xai(mut notification) => {
             if replay {
-                notification.meta.get_or_insert_default()
+                notification.meta.as_mut().unwrap().as_object_mut().unwrap()
                     .insert("isReplay".into(), serde_json::Value::Bool(true));
             }
             AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
