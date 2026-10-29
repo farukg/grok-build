@@ -163,10 +163,10 @@ impl SendSubagentMessageOutput {
     /// Classify this output without collapsing uncertainty into failure.
     pub fn disposition(&self) -> SendSubagentMessageDisposition {
         match self {
-            Self::Accepted { .. } => SendSubagentMessageDisposition::Accepted,
-            Self::AdmissionUncertain { .. } | Self::RecoveryObserved { .. } => {
-                SendSubagentMessageDisposition::Unconfirmed
+            Self::Accepted { .. } | Self::RecoveryObserved { .. } => {
+                SendSubagentMessageDisposition::Accepted
             }
+            Self::AdmissionUncertain { .. } => SendSubagentMessageDisposition::Unconfirmed,
             Self::NotFoundOrNotOwned
             | Self::NotActiveOrFinalizing
             | Self::Saturated { .. }

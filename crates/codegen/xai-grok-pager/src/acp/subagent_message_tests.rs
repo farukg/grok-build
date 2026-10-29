@@ -410,6 +410,39 @@ fn typed_outcomes_map_exhaustively_to_delivery_presentations() {
 }
 
 #[test]
+fn observed_recovery_confirms_admission_for_every_receiver_execution_state() {
+    use xai_grok_tools::implementations::grok_build::{
+        send_subagent_message::AdmissionCorrelation,
+        task::native_recovery::MessageRecoveryState,
+    };
+
+    let SendSubagentMessageOutput::AdmissionUncertain {
+        recovery_ref: AdmissionCorrelation::Known(reference),
+    } = uncertain_output()
+    else {
+        panic!("expected an exact recovery reference");
+    };
+    for state in [
+        MessageRecoveryState::Queued,
+        MessageRecoveryState::Processing,
+        MessageRecoveryState::Interrupted,
+        MessageRecoveryState::Succeeded,
+        MessageRecoveryState::Failed,
+        MessageRecoveryState::Cancelled,
+    ] {
+        let block = block(&call(
+            acp::ToolCallStatus::Completed,
+            Some(input("sub-123", "follow up")),
+            Some(SendSubagentMessageOutput::RecoveryObserved {
+                recovery_ref: reference.clone(),
+                state,
+            }),
+        ));
+        assert_eq!(block.header_text(), "Message sent to subagent sub-123");
+    }
+}
+
+#[test]
 fn pending_and_terminal_without_typed_output_use_conservative_fallbacks() {
     for output in [
         None,

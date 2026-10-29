@@ -170,7 +170,8 @@ fn emit_immediate_events<S: ActiveAgentMessageEventSink + ?Sized>(
     };
     let mut quota_hit = None;
     let (outcome, limit_hit) = match output {
-        SendSubagentMessageOutput::Accepted { .. } => (Outcome::Accepted, None),
+        SendSubagentMessageOutput::Accepted { .. }
+        | SendSubagentMessageOutput::RecoveryObserved { .. } => (Outcome::Accepted, None),
         SendSubagentMessageOutput::NotFoundOrNotOwned => (Outcome::NotFoundOrNotOwned, None),
         SendSubagentMessageOutput::NotActiveOrFinalizing => (Outcome::NotActiveOrFinalizing, None),
         SendSubagentMessageOutput::Saturated { .. } => (Outcome::Saturated, None),
