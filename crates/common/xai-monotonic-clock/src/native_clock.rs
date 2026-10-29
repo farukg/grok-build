@@ -16,7 +16,7 @@ pub(super) struct ClockSample {
 impl ClockSample {
     #[cfg(target_os = "linux")]
     pub(super) fn read() -> Result<Self, ClockUnavailable> {
-        let domain = LinuxClockDomain::read()?;
+        let evidence = LinuxClockEvidence::read()?;
         // Linux std::Instant and CLOCK_MONOTONIC exclude suspend and share clock adjustments.
         let before_ns = monotonic_ns()?;
         let local = StdInstant::now();
@@ -24,8 +24,9 @@ impl ClockSample {
         if before_ns > after_ns {
             return Err(ClockUnavailable::ClockUnavailable);
         }
+        evidence.validate()?;
         Ok(Self {
-            domain,
+            domain: evidence.domain,
             local,
             before_ns,
             after_ns,
@@ -50,10 +51,87 @@ impl ClockSample {
 }
 
 #[cfg(target_os = "linux")]
-impl LinuxClockDomain {
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct NamespaceIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct NamespaceObservation {
+    active_thread: NamespaceIdentity,
+    thread_children: NamespaceIdentity,
+    offset_owner: NamespaceIdentity,
+}
+
+#[cfg(target_os = "linux")]
+impl NamespaceObservation {
+    fn namespace(self) -> Result<NamespaceIdentity, ClockUnavailable> {
+        if self.active_thread != self.thread_children || self.active_thread != self.offset_owner {
+            return Err(ClockUnavailable::DomainUnavailable);
+        }
+        Ok(self.active_thread)
+    }
+
+    fn validate_against(self, later: Self) -> Result<(), ClockUnavailable> {
+        self.namespace()?;
+        later.namespace()?;
+        if self != later {
+            return Err(ClockUnavailable::DomainUnavailable);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct NamespaceHandles {
+    active_thread: std::fs::File,
+    thread_children: std::fs::File,
+    offset_owner: std::fs::File,
+}
+
+#[cfg(target_os = "linux")]
+impl NamespaceHandles {
     fn read() -> Result<Self, ClockUnavailable> {
+        let open = |path| std::fs::File::open(path).map_err(|_| ClockUnavailable::DomainUnavailable);
+        Ok(Self {
+            active_thread: open("/proc/thread-self/ns/time")?,
+            thread_children: open("/proc/thread-self/ns/time_for_children")?,
+            // The process-only timens_offsets entry uses the thread-group leader's children domain.
+            offset_owner: open("/proc/self/ns/time_for_children")?,
+        })
+    }
+
+    fn observe(&self) -> Result<NamespaceObservation, ClockUnavailable> {
         use std::os::unix::fs::MetadataExt;
 
+        let identity = |file: &std::fs::File| -> Result<NamespaceIdentity, ClockUnavailable> {
+            let metadata = file
+                .metadata()
+                .map_err(|_| ClockUnavailable::DomainUnavailable)?;
+            Ok(NamespaceIdentity {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        };
+        Ok(NamespaceObservation {
+            active_thread: identity(&self.active_thread)?,
+            thread_children: identity(&self.thread_children)?,
+            offset_owner: identity(&self.offset_owner)?,
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxClockEvidence {
+    domain: LinuxClockDomain,
+    namespaces: NamespaceHandles,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxClockEvidence {
+    fn read() -> Result<Self, ClockUnavailable> {
         let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
             .map_err(|_| ClockUnavailable::DomainUnavailable)?;
         let boot_id =
@@ -61,24 +139,36 @@ impl LinuxClockDomain {
         if boot_id.is_nil() {
             return Err(ClockUnavailable::DomainUnavailable);
         }
-        let namespace = std::fs::metadata("/proc/thread-self/ns/time")
-            .map_err(|_| ClockUnavailable::DomainUnavailable)?;
-        let children = std::fs::metadata("/proc/thread-self/ns/time_for_children")
-            .map_err(|_| ClockUnavailable::DomainUnavailable)?;
-        // timens_offsets describes time_for_children, which may differ after unshare/setns.
-        if namespace.dev() != children.dev() || namespace.ino() != children.ino() {
-            return Err(ClockUnavailable::DomainUnavailable);
-        }
-        let offsets = std::fs::read_to_string("/proc/thread-self/timens_offsets")
+        let namespaces = NamespaceHandles::read()?;
+        let namespace = namespaces.observe()?.namespace()?;
+        let offsets = std::fs::read_to_string("/proc/self/timens_offsets")
             .map_err(|_| ClockUnavailable::DomainUnavailable)?;
         // Offsets also distinguish namespace-inode reuse within one boot.
         let monotonic_offset_ns = monotonic_offset_ns(&offsets)?;
         Ok(Self {
-            boot_id,
-            namespace_device: namespace.dev(),
-            namespace_inode: namespace.ino(),
-            monotonic_offset_ns,
+            domain: LinuxClockDomain {
+                boot_id,
+                namespace_device: namespace.device,
+                namespace_inode: namespace.inode,
+                monotonic_offset_ns,
+            },
+            namespaces,
         })
+    }
+
+    fn validate(&self) -> Result<(), ClockUnavailable> {
+        // Keep the original namespace handles open through sampling to prevent inode reuse.
+        let original = self.namespaces.observe()?;
+        let before = NamespaceHandles::read()?;
+        original.validate_against(before.observe()?)?;
+        let offsets = std::fs::read_to_string("/proc/self/timens_offsets")
+            .map_err(|_| ClockUnavailable::DomainUnavailable)?;
+        let after = NamespaceHandles::read()?;
+        original.validate_against(after.observe()?)?;
+        if monotonic_offset_ns(&offsets)? != self.domain.monotonic_offset_ns {
+            return Err(ClockUnavailable::DomainUnavailable);
+        }
+        Ok(())
     }
 }
 

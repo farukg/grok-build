@@ -21,6 +21,9 @@ run_tests() {
     fi
     local -a command=(cargo "+$toolchain" -Z checksum-freshness test)
     case "$package" in
+        xai-monotonic-clock)
+            command+=(-p "$package" --locked --features native)
+            ;;
         textwrap)
             # Excluded workspace: CI resolves its own lock, not the CLI lock.
             command+=(--manifest-path third_party/textwrap/Cargo.toml)
@@ -190,6 +193,13 @@ run_tests xai-grok-tools lib --all-executed \
     'ctrl_c_gate_suppresses_visible_completion_without_reporting_it' \
     'goal_loop_suppresses_ordinary_background_tasks_without_repeating_them' \
     'task_completion_reservations_suppress_reminders' || status=$?
+
+run_tests xai-monotonic-clock lib --all-executed \
+    '' \
+    'native_clock::tests::matching_process_offset_owner_and_active_thread_prove_one_namespace' \
+    'native_clock::tests::contradictory_process_or_thread_namespace_evidence_is_unavailable' \
+    'native_clock::tests::coherent_namespace_switches_during_sampling_are_unavailable' \
+    'native_clock::tests::actual_linux_worker_thread_uses_the_process_offset_owner' || status=$?
 
 run_tests xai-tool-runtime lib \
     'execution::tests::' || status=$?
