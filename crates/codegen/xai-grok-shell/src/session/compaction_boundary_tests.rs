@@ -1,19 +1,25 @@
 use super::*;
-use crate::session::acp_session::support;
 use crate::session::CancelHistoryDisposition;
-use crate::session::completion_delivery::{CompletionArtifacts, CompletionEventPolicy, SubagentCompletionEvent};
+use crate::session::acp_session::support;
+use crate::session::completion_delivery::{
+    CompletionArtifacts, CompletionEventPolicy, SubagentCompletionEvent,
+};
 
 async fn completion_fixture() -> support::CompletionWakeReceiverFixture {
     let (gateway, gateway_events) = mpsc::unbounded_channel();
     support::drain_gateway(gateway_events);
-    let (mut actor, events, writes) = support::create_observed_completion_test_actor(
-        50_000, 200_000, 85, gateway,
-    ).await;
+    let (mut actor, events, writes) =
+        support::create_observed_completion_test_actor(50_000, 200_000, 85, gateway).await;
     let sampling_events = wire_sampler(&mut actor).await;
     let actor = Arc::new(actor);
     seed_conversation(&actor);
     let (sender, task) = start_fixture_actor(actor.clone(), events, sampling_events);
-    support::CompletionWakeReceiverFixture { actor, sender, writes, task }
+    support::CompletionWakeReceiverFixture {
+        actor,
+        sender,
+        writes,
+        task,
+    }
 }
 
 async fn publish_completion(
@@ -22,7 +28,10 @@ async fn publish_completion(
     kind: crate::session::CompletionWakeKind,
     policy: CompletionEventPolicy,
     id: &str,
-) -> (crate::session::CompletionWake, oneshot::Receiver<PromptTurnResult>) {
+) -> (
+    crate::session::CompletionWake,
+    oneshot::Receiver<PromptTurnResult>,
+) {
     let completion = crate::session::CompletionWake {
         id: xai_chat_state::SubagentCompletionId {
             subagent_id: id.into(),
@@ -47,27 +56,37 @@ async fn publish_completion(
         artifacts: CompletionArtifacts::None,
     };
     let (respond_to, response) = oneshot::channel();
-    actor.notifications.persistence_tx.send(PersistenceMsg::PrepareSubagentCompletion {
-        event,
-        respond_to,
-    }).unwrap();
+    actor
+        .notifications
+        .persistence_tx
+        .send(PersistenceMsg::PrepareSubagentCompletion { event, respond_to })
+        .unwrap();
     let committed = response.await.unwrap().unwrap();
     let (respond_to, response) = oneshot::channel();
-    sender.send(SessionCommand::PublishSubagentCompletion {
-        event: committed.event,
-        will_wake: true,
-        respond_to,
-    }).unwrap();
+    sender
+        .send(SessionCommand::PublishSubagentCompletion {
+            event: committed.event,
+            will_wake: true,
+            respond_to,
+        })
+        .unwrap();
     let published = response.await.unwrap().unwrap();
     let (respond_to, response) = oneshot::channel();
-    sender.send(SessionCommand::SubagentCompletionWake {
-        prompt_id: crate::session::completion_delivery::completion_prompt_id(&completion.id, completion.kind),
-        completion: completion.clone(),
-        text: published.text,
-        respond_to,
-    }).unwrap();
+    sender
+        .send(SessionCommand::SubagentCompletionWake {
+            prompt_id: crate::session::completion_delivery::completion_prompt_id(
+                &completion.id,
+                completion.kind,
+            ),
+            completion: completion.clone(),
+            text: published.text,
+            respond_to,
+        })
+        .unwrap();
     let (respond_to, boundary) = oneshot::channel();
-    sender.send(SessionCommand::GetToolOverrides { respond_to }).unwrap();
+    sender
+        .send(SessionCommand::GetToolOverrides { respond_to })
+        .unwrap();
     boundary.await.unwrap();
     (completion, response)
 }
@@ -290,129 +309,221 @@ enum NamedRewindTarget {
 
 #[tokio::test(flavor = "current_thread")]
 async fn named_rewind_during_manual_maintenance_preserves_original_request_and_own_ack() {
-    tokio::task::LocalSet::new().run_until(async {
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            for phase in [ManualStopPhase::Reserved, ManualStopPhase::Generating] {
-                for target in [NamedRewindTarget::Stale, NamedRewindTarget::Queued] {
-                    let (gateway, gateway_events) = mpsc::unbounded_channel();
-                    support::drain_gateway(gateway_events);
-                    let (mut actor, events, _writes) = support::create_observed_completion_test_actor(
-                        50_000, 200_000, 85, gateway,
-                    ).await;
-                    let sampling_events = wire_sampler(&mut actor).await;
-                    let persistence = actor.notifications.persistence_tx.clone();
-                    let (relay, mut relayed) = mpsc::unbounded_channel();
-                    let (held_ack, mut acks) = mpsc::unbounded_channel();
-                    let disk = persistence.clone();
-                    let relay_task = tokio::task::spawn_local(async move {
-                        while let Some(message) = relayed.recv().await {
-                            match message {
-                                message @ PersistenceMsg::FlushAndAck { .. } => held_ack.send(message).unwrap(),
-                                message => disk.send(message).unwrap(),
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                for phase in [ManualStopPhase::Reserved, ManualStopPhase::Generating] {
+                    for target in [NamedRewindTarget::Stale, NamedRewindTarget::Queued] {
+                        let (gateway, gateway_events) = mpsc::unbounded_channel();
+                        support::drain_gateway(gateway_events);
+                        let (mut actor, events, _writes) =
+                            support::create_observed_completion_test_actor(
+                                50_000, 200_000, 85, gateway,
+                            )
+                            .await;
+                        let sampling_events = wire_sampler(&mut actor).await;
+                        let persistence = actor.notifications.persistence_tx.clone();
+                        let (relay, mut relayed) = mpsc::unbounded_channel();
+                        let (held_ack, mut acks) = mpsc::unbounded_channel();
+                        let disk = persistence.clone();
+                        let relay_task = tokio::task::spawn_local(async move {
+                            while let Some(message) = relayed.recv().await {
+                                match message {
+                                    message @ PersistenceMsg::FlushAndAck { .. } => {
+                                        held_ack.send(message).unwrap()
+                                    }
+                                    message => disk.send(message).unwrap(),
+                                }
                             }
+                        });
+                        actor.notifications.persistence_tx = relay;
+                        let actor = Arc::new(actor);
+                        seed_conversation(&actor);
+                        actor.goal_tracker.lock().create_goal(
+                            "named-rewind-goal".into(),
+                            "retained objective".into(),
+                            None,
+                            0,
+                            chrono::Utc::now().to_rfc3339(),
+                            None,
+                        );
+                        let goal_status = actor.goal_tracker.lock().status();
+                        let (sender, _task) =
+                            start_fixture_actor(actor.clone(), events, sampling_events);
+                        let server = route_to_mock(&actor).await;
+                        let reservation = match phase {
+                            ManualStopPhase::Reserved => {
+                                let (reached, reached_rx) = oneshot::channel();
+                                let (release, released) = oneshot::channel();
+                                actor
+                                    .compaction
+                                    .cancel
+                                    .manual_reservation_pause
+                                    .replace(Some((reached, released)));
+                                Some((reached_rx, release))
+                            }
+                            ManualStopPhase::Generating => {
+                                server.set_auxiliary_hold();
+                                None
+                            }
+                            ManualStopPhase::OwnAck => unreachable!(),
+                        };
+                        let cancellation = tokio_util::sync::CancellationToken::new();
+                        let (respond_to, mut compact) = oneshot::channel();
+                        sender
+                            .send(SessionCommand::CompactSession {
+                                invocation_id: None,
+                                cancellation: cancellation.clone(),
+                                respond_to,
+                            })
+                            .unwrap();
+                        let reservation_release = if let Some((reached, release)) = reservation {
+                            reached.await.unwrap();
+                            Some(release)
+                        } else {
+                            server.wait_until_parked_replies(1).await;
+                            None
+                        };
+                        let pending_id = actor
+                            .compaction
+                            .cancel
+                            .pending_manual
+                            .borrow()
+                            .front()
+                            .map(|row| row.id);
+                        match phase {
+                            ManualStopPhase::Reserved => assert!(pending_id.is_some()),
+                            ManualStopPhase::Generating => {
+                                assert!(pending_id.is_none());
+                                assert!(actor.compaction.cancel.is_active());
+                            }
+                            ManualStopPhase::OwnAck => unreachable!(),
                         }
-                    });
-                    actor.notifications.persistence_tx = relay;
-                    let actor = Arc::new(actor);
-                    seed_conversation(&actor);
-                    actor.goal_tracker.lock().create_goal(
-                        "named-rewind-goal".into(), "retained objective".into(), None, 0,
-                        chrono::Utc::now().to_rfc3339(), None,
-                    );
-                    let goal_status = actor.goal_tracker.lock().status();
-                    let (sender, _task) = start_fixture_actor(actor.clone(), events, sampling_events);
-                    let server = route_to_mock(&actor).await;
-                    let reservation = match phase {
-                        ManualStopPhase::Reserved => {
-                            let (reached, reached_rx) = oneshot::channel();
-                            let (release, released) = oneshot::channel();
-                            actor.compaction.cancel.manual_reservation_pause.replace(Some((reached, released)));
-                            Some((reached_rx, release))
+                        let queued = match target {
+                            NamedRewindTarget::Stale => None,
+                            NamedRewindTarget::Queued => {
+                                Some(send_named_input(&sender, "named-rewind-target", false))
+                            }
+                        };
+                        let (respond_to, queued_boundary) = oneshot::channel();
+                        sender
+                            .send(SessionCommand::GetToolOverrides { respond_to })
+                            .unwrap();
+                        queued_boundary.await.unwrap();
+                        if matches!(target, NamedRewindTarget::Queued) {
+                            assert!(
+                                actor
+                                    .state
+                                    .lock()
+                                    .await
+                                    .pending_inputs
+                                    .iter()
+                                    .any(|row| row.prompt_id == "named-rewind-target")
+                            );
                         }
-                        ManualStopPhase::Generating => { server.set_auxiliary_hold(); None }
-                        ManualStopPhase::OwnAck => unreachable!(),
-                    };
-                    let cancellation = tokio_util::sync::CancellationToken::new();
-                    let (respond_to, mut compact) = oneshot::channel();
-                    sender.send(SessionCommand::CompactSession {
-                        invocation_id: None,
-                        cancellation: cancellation.clone(), respond_to,
-                    }).unwrap();
-                    let reservation_release = if let Some((reached, release)) = reservation {
-                        reached.await.unwrap();
-                        Some(release)
-                    } else {
-                        server.wait_until_parked_replies(1).await;
-                        None
-                    };
-                    let pending_id = actor.compaction.cancel.pending_manual.borrow().front().map(|row| row.id);
-                    match phase {
-                        ManualStopPhase::Reserved => assert!(pending_id.is_some()),
-                        ManualStopPhase::Generating => {
-                            assert!(pending_id.is_none());
-                            assert!(actor.compaction.cancel.is_active());
+                        sender
+                            .send(SessionCommand::Cancel(CancelOptions {
+                                trigger: Some(CancelTrigger::CtrlC),
+                                user_initiated: true,
+                                history: CancelHistoryDisposition::RewindIfNoOutput {
+                                    prompt_id: Some("named-rewind-target".into()),
+                                },
+                                ..Default::default()
+                            }))
+                            .unwrap();
+                        let (respond_to, cancelled_boundary) = oneshot::channel();
+                        sender
+                            .send(SessionCommand::GetToolOverrides { respond_to })
+                            .unwrap();
+                        cancelled_boundary.await.unwrap();
+                        assert_eq!(
+                            actor
+                                .compaction
+                                .cancel
+                                .pending_manual
+                                .borrow()
+                                .front()
+                                .map(|row| row.id),
+                            pending_id
+                        );
+                        assert!(matches!(
+                            &*actor.compaction.cancel.manual_worker.borrow(),
+                            crate::session::compaction_config::ManualCompactWorker::Running(_)
+                        ));
+                        assert!(!actor.compaction.cancel.is_cancelled());
+                        assert!(!cancellation.is_cancelled());
+                        assert!(matches!(
+                            compact.try_recv(),
+                            Err(oneshot::error::TryRecvError::Empty)
+                        ));
+                        let state = actor.state.lock().await;
+                        assert!(state.finalization_gate.is_active());
+                        assert!(!state.notifications_suppressed);
+                        assert!(
+                            !state
+                                .pending_inputs
+                                .iter()
+                                .any(|row| row.prompt_id == "named-rewind-target")
+                        );
+                        drop(state);
+                        if let Some(queued) = queued {
+                            assert_eq!(
+                                queued.await.unwrap().unwrap().stop_reason,
+                                acp::StopReason::Cancelled
+                            );
                         }
-                        ManualStopPhase::OwnAck => unreachable!(),
+                        assert_eq!(actor.goal_tracker.lock().status(), goal_status);
+                        assert_eq!(
+                            actor
+                                .persisted_completion_state()
+                                .await
+                                .unwrap()
+                                .wake_policy,
+                            crate::session::completion_delivery::CompletionWakePolicy::Automatic
+                        );
+                        if let Some(release) = reservation_release {
+                            release.send(()).unwrap();
+                        }
+                        server.release_parked_replies();
+                        let own_ack = acks.recv().await.unwrap();
+                        assert!(actor.compaction.cancel.is_active());
+                        assert!(actor.compaction.cancel.is_committing());
+                        assert!(!actor.compaction.cancel.is_cancelled());
+                        assert!(actor.state.lock().await.finalization_gate.is_active());
+                        assert!(matches!(
+                            compact.try_recv(),
+                            Err(oneshot::error::TryRecvError::Empty)
+                        ));
+                        persistence.send(own_ack).unwrap();
+                        compact.await.unwrap().expect(
+                            "named rewind must preserve the original compact's durable success",
+                        );
+                        assert_eq!(actor.goal_tracker.lock().status(), goal_status);
+                        assert!(!actor.state.lock().await.notifications_suppressed);
+                        assert_eq!(
+                            actor
+                                .persisted_completion_state()
+                                .await
+                                .unwrap()
+                                .wake_policy,
+                            crate::session::completion_delivery::CompletionWakePolicy::Automatic
+                        );
+                        assert_eq!(
+                            server
+                                .requests()
+                                .iter()
+                                .filter(|request| request.conversation.is_some())
+                                .count(),
+                            0
+                        );
+                        relay_task.abort();
                     }
-                    let queued = match target {
-                        NamedRewindTarget::Stale => None,
-                        NamedRewindTarget::Queued => Some(send_named_input(&sender, "named-rewind-target", false)),
-                    };
-                    let (respond_to, queued_boundary) = oneshot::channel();
-                    sender.send(SessionCommand::GetToolOverrides { respond_to }).unwrap();
-                    queued_boundary.await.unwrap();
-                    if matches!(target, NamedRewindTarget::Queued) {
-                        assert!(actor.state.lock().await.pending_inputs.iter()
-                            .any(|row| row.prompt_id == "named-rewind-target"));
-                    }
-                    sender.send(SessionCommand::Cancel(CancelOptions {
-                        trigger: Some(CancelTrigger::CtrlC),
-                        user_initiated: true,
-                        history: CancelHistoryDisposition::RewindIfNoOutput {
-                            prompt_id: Some("named-rewind-target".into()),
-                        },
-                        ..Default::default()
-                    })).unwrap();
-                    let (respond_to, cancelled_boundary) = oneshot::channel();
-                    sender.send(SessionCommand::GetToolOverrides { respond_to }).unwrap();
-                    cancelled_boundary.await.unwrap();
-                    assert_eq!(actor.compaction.cancel.pending_manual.borrow().front().map(|row| row.id), pending_id);
-                    assert!(matches!(&*actor.compaction.cancel.manual_worker.borrow(),
-                        crate::session::compaction_config::ManualCompactWorker::Running(_)));
-                    assert!(!actor.compaction.cancel.is_cancelled());
-                    assert!(!cancellation.is_cancelled());
-                    assert!(matches!(compact.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
-                    let state = actor.state.lock().await;
-                    assert!(state.finalization_gate.is_active());
-                    assert!(!state.notifications_suppressed);
-                    assert!(!state.pending_inputs.iter().any(|row| row.prompt_id == "named-rewind-target"));
-                    drop(state);
-                    if let Some(queued) = queued {
-                        assert_eq!(queued.await.unwrap().unwrap().stop_reason, acp::StopReason::Cancelled);
-                    }
-                    assert_eq!(actor.goal_tracker.lock().status(), goal_status);
-                    assert_eq!(actor.persisted_completion_state().await.unwrap().wake_policy,
-                        crate::session::completion_delivery::CompletionWakePolicy::Automatic);
-                    if let Some(release) = reservation_release { release.send(()).unwrap(); }
-                    server.release_parked_replies();
-                    let own_ack = acks.recv().await.unwrap();
-                    assert!(actor.compaction.cancel.is_active());
-                    assert!(actor.compaction.cancel.is_committing());
-                    assert!(!actor.compaction.cancel.is_cancelled());
-                    assert!(actor.state.lock().await.finalization_gate.is_active());
-                    assert!(matches!(compact.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
-                    persistence.send(own_ack).unwrap();
-                    compact.await.unwrap().expect("named rewind must preserve the original compact's durable success");
-                    assert_eq!(actor.goal_tracker.lock().status(), goal_status);
-                    assert!(!actor.state.lock().await.notifications_suppressed);
-                    assert_eq!(actor.persisted_completion_state().await.unwrap().wake_policy,
-                        crate::session::completion_delivery::CompletionWakePolicy::Automatic);
-                    assert_eq!(server.requests().iter().filter(|request| request.conversation.is_some()).count(), 0);
-                    relay_task.abort();
                 }
-            }
-        }).await.expect("named rewinds must not cancel unrelated reserved or generating maintenance");
-    }).await;
+            })
+            .await
+            .expect("named rewinds must not cancel unrelated reserved or generating maintenance");
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

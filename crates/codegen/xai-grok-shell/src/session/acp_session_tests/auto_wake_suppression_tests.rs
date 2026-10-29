@@ -5,8 +5,8 @@ use super::support::*;
 mod fixtures;
 use super::*;
 use fixtures::{
-    task_output_result, bash_completed_notification, monitor_completed_notification,
-    task_wake_admission, monitor_event_notification,
+    bash_completed_notification, monitor_completed_notification, monitor_event_notification,
+    task_output_result, task_wake_admission,
 };
 use xai_grok_tools::reminders::task_completion::consumed_completion_ids;
 use xai_grok_tools::types::output::{BashOutput, TextOutput, ToolOutput};

@@ -1,5 +1,7 @@
+use super::super::support::{
+    create_test_actor_with_chat_persistence, input_with_origin_rx, running_task_stub,
+};
 use super::*;
-use super::super::support::{create_test_actor_with_chat_persistence, input_with_origin_rx, running_task_stub};
 use crate::session::storage::{SessionUpdate, StorageAdapter};
 
 #[tokio::test]
@@ -58,43 +60,75 @@ async fn caller_completion_waits_for_replayable_terminal_commit() {
 
 #[tokio::test]
 async fn failed_or_lost_terminal_ack_never_returns_caller_success() {
-    tokio::task::LocalSet::new().run_until(async {
-        for lose_ack in [false, true] {
-            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
-            let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
-            let (actor, _) = create_test_actor_with_chat_persistence(0, 256_000, 85, gateway_tx, persistence_tx, Box::new(xai_chat_state::NullChatPersistence)).await;
-            let (input, mut response) = input_with_origin_rx("failed-caller", crate::session::PromptOrigin::User);
-            let task = running_task_stub("failed-caller");
-            let epoch = task.epoch;
-            let identity = task.identity.clone();
-            {
-                let mut state = actor.state.lock().await;
-                state.pending_inputs.push_back(input);
-                state.running_task = Some(task);
-            }
-            let complete = actor.handle_completion("failed-caller".into(), epoch, &identity, ok_end_turn(0, None), None);
-            let reject = async {
-                loop {
-                    if let PersistenceMsg::AppendUpdateDurablyAndAck { respond_to, .. } = persistence_rx.recv().await.unwrap() {
-                        assert!(matches!(response.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
-                        if lose_ack {
-                            drop(respond_to);
-                        } else {
-                            respond_to.send(Err(crate::session::storage::AppendUpdateError::NotCommitted(
-                                std::io::Error::new(std::io::ErrorKind::StorageFull, "terminal storage full"),
-                            ))).unwrap();
-                        }
-                        break;
-                    }
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for lose_ack in [false, true] {
+                let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (actor, _) = create_test_actor_with_chat_persistence(
+                    0,
+                    256_000,
+                    85,
+                    gateway_tx,
+                    persistence_tx,
+                    Box::new(xai_chat_state::NullChatPersistence),
+                )
+                .await;
+                let (input, mut response) =
+                    input_with_origin_rx("failed-caller", crate::session::PromptOrigin::User);
+                let task = running_task_stub("failed-caller");
+                let epoch = task.epoch;
+                let identity = task.identity.clone();
+                {
+                    let mut state = actor.state.lock().await;
+                    state.pending_inputs.push_back(input);
+                    state.running_task = Some(task);
                 }
-            };
-            let (owned, ()) = tokio::join!(complete, reject);
-            assert!(owned);
-            assert!(response.await.unwrap().is_err());
-            assert!(actor.state.lock().await.running_task.is_none());
-            while let Ok(message) = persistence_rx.try_recv() {
-                assert!(!matches!(message, PersistenceMsg::FinishDeliveryTurn { .. }), "failed terminal must retain completion ownership");
+                let complete = actor.handle_completion(
+                    "failed-caller".into(),
+                    epoch,
+                    &identity,
+                    ok_end_turn(0, None),
+                    None,
+                );
+                let reject = async {
+                    loop {
+                        if let PersistenceMsg::AppendUpdateDurablyAndAck { respond_to, .. } =
+                            persistence_rx.recv().await.unwrap()
+                        {
+                            assert!(matches!(
+                                response.try_recv(),
+                                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+                            ));
+                            if lose_ack {
+                                drop(respond_to);
+                            } else {
+                                respond_to
+                                    .send(Err(
+                                        crate::session::storage::AppendUpdateError::NotCommitted(
+                                            std::io::Error::new(
+                                                std::io::ErrorKind::StorageFull,
+                                                "terminal storage full",
+                                            ),
+                                        ),
+                                    ))
+                                    .unwrap();
+                            }
+                            break;
+                        }
+                    }
+                };
+                let (owned, ()) = tokio::join!(complete, reject);
+                assert!(owned);
+                assert!(response.await.unwrap().is_err());
+                assert!(actor.state.lock().await.running_task.is_none());
+                while let Ok(message) = persistence_rx.try_recv() {
+                    assert!(
+                        !matches!(message, PersistenceMsg::FinishDeliveryTurn { .. }),
+                        "failed terminal must retain completion ownership"
+                    );
+                }
             }
-        }
-    }).await;
+        })
+        .await;
 }

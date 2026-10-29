@@ -1,9 +1,9 @@
 use super::*;
-use tokio::sync::oneshot;
 use crate::session::SessionHandle;
 use crate::session::persistence::{
     PersistenceMsg, native_wake_tests_support::NativeAdoptionFaultProbe,
 };
+use tokio::sync::oneshot;
 
 #[derive(Clone, Copy)]
 enum FailedAdoption {

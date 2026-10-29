@@ -316,7 +316,8 @@ async fn credential_less_401_with_deferred_refresh_parks_on_uncharged_resubmit()
                     result,
                     Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
                         error: xai_grok_sampler::SamplingErrorInfo {
-                            credential: xai_grok_sampling_types::SentCredential::Missing, ..
+                            credential: xai_grok_sampling_types::SentCredential::Missing,
+                            ..
                         },
                         store: RecoveredStore::SessionToken,
                     })
@@ -358,7 +359,8 @@ async fn parked_credential_less_401_reparks_without_recovery_dispatch() {
                     result,
                     Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
                         error: xai_grok_sampler::SamplingErrorInfo {
-                            credential: xai_grok_sampling_types::SentCredential::Missing, ..
+                            credential: xai_grok_sampling_types::SentCredential::Missing,
+                            ..
                         },
                         store: RecoveredStore::SessionToken,
                     })
@@ -409,7 +411,8 @@ async fn mid_salvage_credential_less_401_still_parks() {
                         result,
                         Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
                             error: xai_grok_sampler::SamplingErrorInfo {
-                                credential: xai_grok_sampling_types::SentCredential::Missing, ..
+                                credential: xai_grok_sampling_types::SentCredential::Missing,
+                                ..
                             },
                             store: RecoveredStore::SessionToken,
                         })

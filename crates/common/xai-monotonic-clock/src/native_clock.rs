@@ -94,7 +94,8 @@ struct NamespaceHandles {
 #[cfg(target_os = "linux")]
 impl NamespaceHandles {
     fn read() -> Result<Self, ClockUnavailable> {
-        let open = |path| std::fs::File::open(path).map_err(|_| ClockUnavailable::DomainUnavailable);
+        let open =
+            |path| std::fs::File::open(path).map_err(|_| ClockUnavailable::DomainUnavailable);
         Ok(Self {
             active_thread: open("/proc/thread-self/ns/time")?,
             thread_children: open("/proc/thread-self/ns/time_for_children")?,

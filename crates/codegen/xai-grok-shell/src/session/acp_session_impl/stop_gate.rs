@@ -195,14 +195,22 @@ impl SessionActor {
         }
         if calls.len() != 1 {
             for call in calls.iter().filter(|call| call.name == DECLARE_WAIT_TOOL) {
-                self.chat_state_handle.push_tool_result(ConversationItem::tool_result(
-                    call.id.as_ref().to_owned(), "Call DeclareWait alone after other tools finish.",
-                ));
+                self.chat_state_handle
+                    .push_tool_result(ConversationItem::tool_result(
+                        call.id.as_ref().to_owned(),
+                        "Call DeclareWait alone after other tools finish.",
+                    ));
             }
             calls.retain(|call| call.name != DECLARE_WAIT_TOOL);
-            return if calls.is_empty() { WaitToolStep::Retry } else { WaitToolStep::Proceed };
+            return if calls.is_empty() {
+                WaitToolStep::Retry
+            } else {
+                WaitToolStep::Proceed
+            };
         }
-        let Some(call) = calls.first() else { return WaitToolStep::Proceed };
+        let Some(call) = calls.first() else {
+            return WaitToolStep::Proceed;
+        };
         let result = match serde_json::from_str::<TurnWaitDeclaration>(&call.arguments) {
             Ok(wait) => self.declare_turn_wait(wait).await,
             Err(error) => Err(format!("Invalid wait declaration: {error}")),
@@ -211,13 +219,17 @@ impl SessionActor {
             Ok(()) => WaitToolStep::Declared,
             Err(_) => WaitToolStep::Retry,
         };
-        self.chat_state_handle.push_tool_result(ConversationItem::tool_result(
-            call.id.as_ref().to_owned(),
-            match result {
-                Ok(()) => "Wait declared. Any selected completion or new input resumes the session.".to_string(),
-                Err(error) => error,
-            },
-        ));
+        self.chat_state_handle
+            .push_tool_result(ConversationItem::tool_result(
+                call.id.as_ref().to_owned(),
+                match result {
+                    Ok(()) => {
+                        "Wait declared. Any selected completion or new input resumes the session."
+                            .to_string()
+                    }
+                    Err(error) => error,
+                },
+            ));
         step
     }
 
@@ -230,10 +242,15 @@ impl SessionActor {
         if self.has_runnable_queued_user_row().await
             || input_epoch != self.turn_wait_declaration.borrow().input_epoch
         {
-            return Err("New input arrived while validating the wait; handle it before declaring a wait.".to_string());
+            return Err(
+                "New input arrived while validating the wait; handle it before declaring a wait."
+                    .to_string(),
+            );
         }
         if let Some(target) = wait.targets.iter().find(|target| !live.contains(target)) {
-            return Err(format!("Wait target is stale or not owned by this session: {target:?}"));
+            return Err(format!(
+                "Wait target is stale or not owned by this session: {target:?}"
+            ));
         }
         self.record_turn_wait(wait);
         self.set_goal_loop_active_resource(false).await;
@@ -242,11 +259,16 @@ impl SessionActor {
 
     pub(super) fn observe_wait_input(&self, origin: &PromptOrigin) {
         let breaks_wait = match origin {
-            PromptOrigin::User | PromptOrigin::Delivery { .. }
-            | PromptOrigin::ParentAgentMessage { .. } | PromptOrigin::ParentHumanMessage { .. }
-            | PromptOrigin::SchedulerFired | PromptOrigin::PlanResume
-            | PromptOrigin::SubagentCompleted { .. } | PromptOrigin::TaskCompleted { .. }
-            | PromptOrigin::WorkflowCompleted { .. } | PromptOrigin::NotificationDrain => true,
+            PromptOrigin::User
+            | PromptOrigin::Delivery { .. }
+            | PromptOrigin::ParentAgentMessage { .. }
+            | PromptOrigin::ParentHumanMessage { .. }
+            | PromptOrigin::SchedulerFired
+            | PromptOrigin::PlanResume
+            | PromptOrigin::SubagentCompleted { .. }
+            | PromptOrigin::TaskCompleted { .. }
+            | PromptOrigin::WorkflowCompleted { .. }
+            | PromptOrigin::NotificationDrain => true,
             PromptOrigin::GoalSummary | PromptOrigin::GoalClassifierNudge => false,
         };
         if breaks_wait {
@@ -409,7 +431,11 @@ impl SessionActor {
             return false;
         }
         let live = self.snapshot_turn_wait().await;
-        if declaration.targets.iter().all(|target| live.contains(target)) {
+        if declaration
+            .targets
+            .iter()
+            .all(|target| live.contains(target))
+        {
             true
         } else {
             self.break_declared_wait();
@@ -719,4 +745,3 @@ mod stop_gate_snapshot_tests {
         assert!(matches!(skipped, HookRunResult::Skipped { .. }));
     }
 }
-

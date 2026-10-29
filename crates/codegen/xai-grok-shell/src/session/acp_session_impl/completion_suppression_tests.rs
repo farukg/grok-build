@@ -1,63 +1,165 @@
 use super::*;
-use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
 use crate::session::completion_delivery::{CompletionObligation, CompletionSuppression};
+use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
 
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(10), future).await.expect("suppression barrier timed out")
+    tokio::time::timeout(std::time::Duration::from_secs(10), future)
+        .await
+        .expect("suppression barrier timed out")
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn batch_refreshes_a_racing_disposition_without_losing_automatic_peers() {
+    use crate::session::completion_delivery::{CompletionEventPolicy, CompletionPayloadSource};
+    use xai_chat_state::completion::{
+        CompletionIdentity, CompletionTaskKind, TerminalCompletionId,
+    };
     use xai_grok_tools::computer::types::{TaskKind, TaskSnapshot};
-    use xai_chat_state::completion::{CompletionIdentity, CompletionTaskKind, TerminalCompletionId};
-    use crate::session::completion_delivery::{CompletionPayloadSource, CompletionEventPolicy};
-    tokio::task::LocalSet::new().run_until(async {
-        let directory = tempfile::tempdir().unwrap();
-        let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };
-        let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(directory.path().to_path_buf()));
-        storage.init_session(&info, acp::ModelId::new("test")).await.unwrap();
-        for (id, kind, text) in [("suppressed", TaskKind::Bash, "must stay silent"), ("automatic", TaskKind::Monitor, "automatic peer evidence")] {
-            let snapshot = TaskSnapshot { task_id: id.into(), command: "finished".into(), display_command: None, cwd: "/tmp".into(), start_time: std::time::SystemTime::UNIX_EPOCH, end_time: Some(std::time::SystemTime::UNIX_EPOCH), output: text.into(), output_file: Default::default(), truncated: false, exit_code: Some(0), signal: None, completed: true, kind, block_waited: false, explicitly_killed: false, kill_result_delivered: false, owner_session_id: Some(info.id.to_string()), description: None, is_backgrounded: true, output_total_bytes: text.len() };
-            storage.enroll_terminal_completion(&info, CompletionPayloadSource::Task(Box::new(snapshot)), text.into(), CompletionEventPolicy::Automatic).await.unwrap();
-        }
-        let suppressed: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: info.id.to_string(), task_id: "suppressed".into(), task_kind: CompletionTaskKind::Bash }.into();
-        let automatic: CompletionIdentity = TerminalCompletionId::Task { owner_session_id: info.id.to_string(), task_id: "automatic".into(), task_kind: CompletionTaskKind::Monitor }.into();
-        let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage.clone());
-        let _owner = tokio_util::task::AbortOnDropHandle::new(persistence.task);
-        let (proxy, mut requests) = mpsc::unbounded_channel();
-        let real = persistence.handle.tx.clone();
-        let _proxy = tokio_util::task::AbortOnDropHandle::new(tokio::task::spawn_local({
-            let storage = storage.clone();
-            let suppressed = suppressed.clone();
-            async move {
-                let mut inject_race = true;
-                while let Some(request) = requests.recv().await {
-                    match request {
-                        PersistenceMsg::GetCompletionState { respond_to } if inject_race => {
-                            let stale = storage.read_completion_state(&info).await.unwrap();
-                            storage.suppress_terminal_completions(&info, vec![suppressed.clone()], CompletionSuppression::GoalNotificationPolicy).await.unwrap();
-                            inject_race = false;
-                            respond_to.send(Ok(stale)).unwrap();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let directory = tempfile::tempdir().unwrap();
+            let info = crate::session::info::Info {
+                id: acp::SessionId::new("test-actor"),
+                cwd: "/tmp".into(),
+            };
+            let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+                directory.path().to_path_buf(),
+            ));
+            storage
+                .init_session(&info, acp::ModelId::new("test"))
+                .await
+                .unwrap();
+            for (id, kind, text) in [
+                ("suppressed", TaskKind::Bash, "must stay silent"),
+                ("automatic", TaskKind::Monitor, "automatic peer evidence"),
+            ] {
+                let snapshot = TaskSnapshot {
+                    task_id: id.into(),
+                    command: "finished".into(),
+                    display_command: None,
+                    cwd: "/tmp".into(),
+                    start_time: std::time::SystemTime::UNIX_EPOCH,
+                    end_time: Some(std::time::SystemTime::UNIX_EPOCH),
+                    output: text.into(),
+                    output_file: Default::default(),
+                    truncated: false,
+                    exit_code: Some(0),
+                    signal: None,
+                    completed: true,
+                    kind,
+                    block_waited: false,
+                    explicitly_killed: false,
+                    kill_result_delivered: false,
+                    owner_session_id: Some(info.id.to_string()),
+                    description: None,
+                    is_backgrounded: true,
+                    output_total_bytes: text.len(),
+                };
+                storage
+                    .enroll_terminal_completion(
+                        &info,
+                        CompletionPayloadSource::Task(Box::new(snapshot)),
+                        text.into(),
+                        CompletionEventPolicy::Automatic,
+                    )
+                    .await
+                    .unwrap();
+            }
+            let suppressed: CompletionIdentity = TerminalCompletionId::Task {
+                owner_session_id: info.id.to_string(),
+                task_id: "suppressed".into(),
+                task_kind: CompletionTaskKind::Bash,
+            }
+            .into();
+            let automatic: CompletionIdentity = TerminalCompletionId::Task {
+                owner_session_id: info.id.to_string(),
+                task_id: "automatic".into(),
+                task_kind: CompletionTaskKind::Monitor,
+            }
+            .into();
+            let persistence = crate::session::persistence::durable_update_tests::test_actor(
+                info.clone(),
+                storage.clone(),
+            );
+            let _owner = tokio_util::task::AbortOnDropHandle::new(persistence.task);
+            let (proxy, mut requests) = mpsc::unbounded_channel();
+            let real = persistence.handle.tx.clone();
+            let _proxy = tokio_util::task::AbortOnDropHandle::new(tokio::task::spawn_local({
+                let storage = storage.clone();
+                let suppressed = suppressed.clone();
+                async move {
+                    let mut inject_race = true;
+                    while let Some(request) = requests.recv().await {
+                        match request {
+                            PersistenceMsg::GetCompletionState { respond_to } if inject_race => {
+                                let stale = storage.read_completion_state(&info).await.unwrap();
+                                storage
+                                    .suppress_terminal_completions(
+                                        &info,
+                                        vec![suppressed.clone()],
+                                        CompletionSuppression::GoalNotificationPolicy,
+                                    )
+                                    .await
+                                    .unwrap();
+                                inject_race = false;
+                                respond_to.send(Ok(stale)).unwrap();
+                            }
+                            other => {
+                                real.send(other).unwrap();
+                            }
                         }
-                        other => { real.send(other).unwrap(); }
                     }
                 }
-            }
-        }));
-        let (gateway, gateway_rx) = mpsc::unbounded_channel();
-        super::super::super::support::drain_gateway(gateway_rx);
-        let (actor, _) = super::super::super::support::create_test_actor_with_chat_persistence(0, 256_000, 85,
-            gateway, proxy.clone(), Box::new(crate::session::chat_persistence::ChannelChatPersistence::new(proxy))).await;
-        actor.state.lock().await.running_task = Some(super::super::super::support::running_task_stub("actual-caller"));
-        assert!(bounded(actor.project_terminal_batch(vec![suppressed, automatic], "actual-caller", "stale batch must not leak".into())).await.unwrap());
-        let history = actor.chat_state_handle.snapshot().await.unwrap().conversation;
-        assert!(history.iter().all(|item| !item.text_content().contains("must stay silent") && !item.text_content().contains("stale batch must not leak")));
-        assert_eq!(history.iter().filter(|item| item.text_content() == "automatic peer evidence").count(), 1);
-    }).await;
+            }));
+            let (gateway, gateway_rx) = mpsc::unbounded_channel();
+            super::super::super::support::drain_gateway(gateway_rx);
+            let (actor, _) = super::super::super::support::create_test_actor_with_chat_persistence(
+                0,
+                256_000,
+                85,
+                gateway,
+                proxy.clone(),
+                Box::new(crate::session::chat_persistence::ChannelChatPersistence::new(proxy)),
+            )
+            .await;
+            actor.state.lock().await.running_task = Some(
+                super::super::super::support::running_task_stub("actual-caller"),
+            );
+            assert!(
+                bounded(actor.project_terminal_batch(
+                    vec![suppressed, automatic],
+                    "actual-caller",
+                    "stale batch must not leak".into()
+                ))
+                .await
+                .unwrap()
+            );
+            let history = actor
+                .chat_state_handle
+                .snapshot()
+                .await
+                .unwrap()
+                .conversation;
+            assert!(
+                history
+                    .iter()
+                    .all(|item| !item.text_content().contains("must stay silent")
+                        && !item.text_content().contains("stale batch must not leak"))
+            );
+            assert_eq!(
+                history
+                    .iter()
+                    .filter(|item| item.text_content() == "automatic peer evidence")
+                    .count(),
+                1
+            );
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn actual_notification_actor_commits_suppression_before_reported_cache_and_restores_failed_ack() {
+async fn actual_notification_actor_commits_suppression_before_reported_cache_and_restores_failed_ack()
+ {
     tokio::task::LocalSet::new().run_until(async {
         #[derive(Clone, Copy)]
         enum SuppressionAck { Success, Error, LostBeforeCommit, LostAfterCommit }
@@ -141,13 +243,18 @@ async fn actual_notification_actor_commits_suppression_before_reported_cache_and
 
 #[tokio::test(flavor = "current_thread")]
 async fn real_goal_producer_retains_suppression_errors_and_recovers_postcommit_lost_ack() {
-    use crate::tools::notification_bridge::{spawn_notification_bridge, tests::make_test_config_full_raw};
+    use crate::session::completion_delivery::CompletionEventPolicy;
+    use crate::tools::notification_bridge::{
+        spawn_notification_bridge, tests::make_test_config_full_raw,
+    };
     use xai_grok_tools::computer::local::terminal::LocalTerminalBackend;
     use xai_grok_tools::computer::types::{TaskKind, TerminalBackend, TerminalRunRequest};
-    use crate::session::completion_delivery::CompletionEventPolicy;
 
     #[derive(Clone, Copy)]
-    enum Failure { Refused, CommittedAckLost }
+    enum Failure {
+        Refused,
+        CommittedAckLost,
+    }
 
     tokio::task::LocalSet::new().run_until(async {
         for kind in [TaskKind::Bash, TaskKind::Monitor] {

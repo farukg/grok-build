@@ -2450,8 +2450,8 @@ mod role_tool_names_tests {
 #[path = "goal_live_consumer_tests.rs"]
 mod live_consumer_tests;
 #[cfg(test)]
-#[path = "goal_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "stop_gate_tests.rs"]
 mod stop_gate_tests;
+#[cfg(test)]
+#[path = "goal_tests.rs"]
+mod tests;

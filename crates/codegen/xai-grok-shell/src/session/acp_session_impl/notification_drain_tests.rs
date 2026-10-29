@@ -1,8 +1,8 @@
 use super::*;
-#[path = "completion_suppression_tests.rs"]
-mod suppression;
 #[path = "notification_batch_payload_tests.rs"]
 mod batch_payload;
+#[path = "completion_suppression_tests.rs"]
+mod suppression;
 use super::super::stop_gate::{TurnWaitDeclaration, WaitOnTarget};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -71,7 +71,8 @@ async fn completion_wake_parks_under_barrier_and_promotes_a_caller_turn_on_clear
             spawn_completion_state_responder(persistence_rx);
             arm_wake_barrier(&actor).await;
             let actor = Arc::new(actor);
-            let (wake_item, _wake_rx) = subagent_completed_row("subagent-completed-parked", "sub-1");
+            let (wake_item, _wake_rx) =
+                subagent_completed_row("subagent-completed-parked", "sub-1");
             {
                 let mut state = actor.state.lock().await;
                 state.pending_inputs.push_back(wake_item);
@@ -93,17 +94,24 @@ async fn completion_wake_parks_under_barrier_and_promotes_a_caller_turn_on_clear
             }
 
             let (respond_to, _response) = oneshot::channel();
-            assert!(!actor.queue_input(QueueInputRequest::from_input_origin(
-                Vec::new(),
-                "human-resume".to_string(),
-                InputOrigin::new(crate::session::PromptOrigin::User),
-                PromptMode::Agent,
-                respond_to,
-            )).await);
+            assert!(
+                !actor
+                    .queue_input(QueueInputRequest::from_input_origin(
+                        Vec::new(),
+                        "human-resume".to_string(),
+                        InputOrigin::new(crate::session::PromptOrigin::User),
+                        PromptMode::Agent,
+                        respond_to,
+                    ))
+                    .await
+            );
             try_promote(&actor).await;
             let promoted = {
                 let state = actor.state.lock().await;
-                state.running_task.as_ref().map(|task| task.prompt_id.clone())
+                state
+                    .running_task
+                    .as_ref()
+                    .map(|task| task.prompt_id.clone())
             };
             assert_eq!(
                 promoted.as_deref(),
@@ -123,7 +131,8 @@ async fn a_queued_human_row_jumps_a_parked_completion_wake() {
             spawn_completion_state_responder(persistence_rx);
             arm_wake_barrier(&actor).await;
             let actor = Arc::new(actor);
-            let (wake_item, _wake_rx) = subagent_completed_row("subagent-completed-parked", "sub-2");
+            let (wake_item, _wake_rx) =
+                subagent_completed_row("subagent-completed-parked", "sub-2");
             let (human_item, _human_rx) = super::super::support::input_with_origin_rx(
                 "user-next",
                 crate::session::PromptOrigin::User,
@@ -162,46 +171,81 @@ async fn a_queued_human_row_jumps_a_parked_completion_wake() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn transient_notification_overflow_cannot_evict_parked_completions() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, _persistence_rx) = actor_with_channels().await;
-        arm_wake_barrier(&actor).await;
-        let mut state = actor.state.lock().await;
-        for index in 0..MAX_PENDING_NOTIFICATIONS + 5 {
-            for source in [
-                NotificationSource::BashTaskCompleted { task_id: format!("bash-{index}") },
-                NotificationSource::MonitorCompleted { task_id: format!("monitor-{index}") },
-                NotificationSource::MonitorEvent { task_id: format!("event-{index}") },
-            ] {
-                SessionActor::push_pending_notification(&mut state, PendingNotification {
-                    prompt_id: format!("notification-{index}"),
-                    prompt_blocks: Vec::new(),
-                    priority: NotificationPriority::Later,
-                    source,
-                });
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, _persistence_rx) = actor_with_channels().await;
+            arm_wake_barrier(&actor).await;
+            let mut state = actor.state.lock().await;
+            for index in 0..MAX_PENDING_NOTIFICATIONS + 5 {
+                for source in [
+                    NotificationSource::BashTaskCompleted {
+                        task_id: format!("bash-{index}"),
+                    },
+                    NotificationSource::MonitorCompleted {
+                        task_id: format!("monitor-{index}"),
+                    },
+                    NotificationSource::MonitorEvent {
+                        task_id: format!("event-{index}"),
+                    },
+                ] {
+                    SessionActor::push_pending_notification(
+                        &mut state,
+                        PendingNotification {
+                            prompt_id: format!("notification-{index}"),
+                            prompt_blocks: Vec::new(),
+                            priority: NotificationPriority::Later,
+                            source,
+                        },
+                    );
+                }
             }
-        }
-        assert_eq!(state.pending_notifications.iter().filter(|n| matches!(n.source, NotificationSource::BashTaskCompleted { .. })).count(), MAX_PENDING_NOTIFICATIONS + 5);
-        assert_eq!(state.pending_notifications.iter().filter(|n| matches!(n.source, NotificationSource::MonitorCompleted { .. })).count(), MAX_PENDING_NOTIFICATIONS + 5);
-        assert_eq!(state.pending_notifications.iter().filter(|n| matches!(n.source, NotificationSource::MonitorEvent { .. })).count(), MAX_PENDING_NOTIFICATIONS);
-    }).await;
+            assert_eq!(
+                state
+                    .pending_notifications
+                    .iter()
+                    .filter(|n| matches!(n.source, NotificationSource::BashTaskCompleted { .. }))
+                    .count(),
+                MAX_PENDING_NOTIFICATIONS + 5
+            );
+            assert_eq!(
+                state
+                    .pending_notifications
+                    .iter()
+                    .filter(|n| matches!(n.source, NotificationSource::MonitorCompleted { .. }))
+                    .count(),
+                MAX_PENDING_NOTIFICATIONS + 5
+            );
+            assert_eq!(
+                state
+                    .pending_notifications
+                    .iter()
+                    .filter(|n| matches!(n.source, NotificationSource::MonitorEvent { .. }))
+                    .count(),
+                MAX_PENDING_NOTIFICATIONS
+            );
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn state_only_suppression_parks_subagent_wakes() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, _persistence_rx) = actor_with_channels().await;
-        let (wake, _response) = subagent_completed_row("subagent-completed-state-only", "state-only");
-        {
-            let mut state = actor.state.lock().await;
-            state.notifications_suppressed = true;
-            state.pending_inputs.push_back(wake);
-        }
-        let actor = Arc::new(actor);
-        try_promote(&actor).await;
-        let state = actor.state.lock().await;
-        assert!(state.running_task.is_none());
-        assert_eq!(state.pending_inputs.len(), 1);
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, _persistence_rx) = actor_with_channels().await;
+            let (wake, _response) =
+                subagent_completed_row("subagent-completed-state-only", "state-only");
+            {
+                let mut state = actor.state.lock().await;
+                state.notifications_suppressed = true;
+                state.pending_inputs.push_back(wake);
+            }
+            let actor = Arc::new(actor);
+            try_promote(&actor).await;
+            let state = actor.state.lock().await;
+            assert!(state.running_task.is_none());
+            assert_eq!(state.pending_inputs.len(), 1);
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -210,7 +254,8 @@ async fn a_waited_task_completion_wakes_even_under_the_active_goal_gate() {
     local
         .run_until(async {
             let (actor, _persistence_rx) = actor_with_channels().await;
-            actor.goal_harness_enabled
+            actor
+                .goal_harness_enabled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             actor.goal_tracker.lock().create_goal(
                 "goal-wait".to_string(),
@@ -220,11 +265,9 @@ async fn a_waited_task_completion_wakes_even_under_the_active_goal_gate() {
                 chrono::Utc::now().to_rfc3339(),
                 None,
             );
-            actor.record_turn_wait(TurnWaitDeclaration::of([
-                WaitOnTarget::BashTask {
-                    task_id: "bash-wait-9".to_string(),
-                },
-            ]));
+            actor.record_turn_wait(TurnWaitDeclaration::of([WaitOnTarget::BashTask {
+                task_id: "bash-wait-9".to_string(),
+            }]));
             {
                 let mut state = actor.state.lock().await;
                 for task_id in ["bash-wait-9", "bash-other"] {
@@ -256,7 +299,9 @@ async fn a_waited_task_completion_wakes_even_under_the_active_goal_gate() {
                 )
             };
             assert!(
-                running.as_deref().is_some_and(|id| id.starts_with("notifications-")),
+                running
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("notifications-")),
                 "the waited completion must wake the session into a drain turn, got {running:?}"
             );
             assert_eq!(

@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test(flavor = "current_thread")]
 async fn delivery_and_notification_sources_use_distinct_receipt_identities_on_one_prompt() {
-    use crate::session::delivery_receiver::{DeliveryAction, DeliveryRequest, DeliveryResult};
     use super::super::super::notification_drain::{NotificationBatchPayload, NotificationBatchRow};
+    use crate::session::delivery_receiver::{DeliveryAction, DeliveryRequest, DeliveryResult};
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().unwrap();
         let info = crate::session::info::Info { id: acp::SessionId::new("test-actor"), cwd: "/tmp".into() };

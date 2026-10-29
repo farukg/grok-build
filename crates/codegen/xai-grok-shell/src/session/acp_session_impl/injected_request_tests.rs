@@ -1,72 +1,128 @@
 use super::super::support::create_test_actor;
 use super::*;
-use crate::session::storage::{StorageAdapter, SessionUpdate, SessionUpdateEnvelope};
+use crate::session::storage::{SessionUpdate, SessionUpdateEnvelope, StorageAdapter};
 use xai_chat_state::InjectedRequestRecord;
 
 #[tokio::test]
 async fn injected_record_is_durable_before_live_delivery_and_replays_losslessly() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
-        let root = tempfile::tempdir().unwrap();
-        actor.session_info.cwd = root.path().to_string_lossy().into_owned();
-        let persistence = crate::session::persistence::new_with_explicit_dir(
-            &actor.session_info, root.path().to_path_buf(), acp::ModelId::new("test-model"),
-            super::super::updates_tests::test_persistence_sampling_client(), "test-model".into(),
-            crate::session::persistence::ExplicitSessionOpen::New {
-                identity: None, next_trace_turn: None, parent_session_id: None,
-            },
-        ).await.unwrap();
-        let records: Vec<_> = (0..32).map(|index| InjectedRequestRecord::MemoryReminder {
-            source: Default::default(),
-            text: format!("{index}:{}\nVISIBLE_TAIL_{index}", "ä".repeat(5000)),
-        }).collect();
-        let refs: Vec<_> = records.iter().collect();
-        let publish = actor.send_injected_request_records(&refs);
-        let persist = async {
-            let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = persistence_rx.recv().await.unwrap() else {
-                panic!("one acknowledged request batch is required");
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let root = tempfile::tempdir().unwrap();
+            actor.session_info.cwd = root.path().to_string_lossy().into_owned();
+            let persistence = crate::session::persistence::new_with_explicit_dir(
+                &actor.session_info,
+                root.path().to_path_buf(),
+                acp::ModelId::new("test-model"),
+                super::super::updates_tests::test_persistence_sampling_client(),
+                "test-model".into(),
+                crate::session::persistence::ExplicitSessionOpen::New {
+                    identity: None,
+                    next_trace_turn: None,
+                    parent_session_id: None,
+                },
+            )
+            .await
+            .unwrap();
+            let records: Vec<_> = (0..32)
+                .map(|index| InjectedRequestRecord::MemoryReminder {
+                    source: Default::default(),
+                    text: format!("{index}:{}\nVISIBLE_TAIL_{index}", "ä".repeat(5000)),
+                })
+                .collect();
+            let refs: Vec<_> = records.iter().collect();
+            let publish = actor.send_injected_request_records(&refs);
+            let persist = async {
+                let PersistenceMsg::AppendUpdatesAndAck {
+                    updates,
+                    respond_to,
+                } = persistence_rx.recv().await.unwrap()
+                else {
+                    panic!("one acknowledged request batch is required");
+                };
+                assert_eq!(updates.len(), records.len());
+                assert!(
+                    persistence_rx.try_recv().is_err(),
+                    "no per-record persistence operations"
+                );
+                assert!(
+                    gateway_rx.try_recv().is_err(),
+                    "live publication must wait for durability"
+                );
+                let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                persistence
+                    .tx
+                    .send(PersistenceMsg::AppendUpdatesAndAck {
+                        updates,
+                        respond_to: ack_tx,
+                    })
+                    .unwrap();
+                let result = ack_rx.await.unwrap();
+                assert!(result.is_ok());
+                assert!(
+                    gateway_rx.try_recv().is_err(),
+                    "withholding the batch ack must withhold every live record"
+                );
+                respond_to.send(result).unwrap();
             };
-            assert_eq!(updates.len(), records.len());
-            assert!(persistence_rx.try_recv().is_err(), "no per-record persistence operations");
-            assert!(gateway_rx.try_recv().is_err(), "live publication must wait for durability");
-            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-            persistence.tx.send(PersistenceMsg::AppendUpdatesAndAck { updates, respond_to: ack_tx }).unwrap();
-            let result = ack_rx.await.unwrap();
-            assert!(result.is_ok());
-            assert!(gateway_rx.try_recv().is_err(), "withholding the batch ack must withhold every live record");
-            respond_to.send(result).unwrap();
-        };
-        let (result, ()) = tokio::join!(publish, persist);
-        result.unwrap();
-        let mut delivered = Vec::new();
-        while let Ok(message) = gateway_rx.try_recv() {
-            let xai_acp_lib::AcpClientMessage::ExtNotification(args) = message else {
-                panic!("request records use individual extension notifications");
-            };
-            assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
-            delivered.push(serde_json::from_str::<serde_json::Value>(args.request.params.get()).unwrap());
-        }
-        assert_eq!(delivered.len(), records.len());
-        let reopened = crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(root.path().to_path_buf());
-        let path = reopened.updates_file_path(&actor.session_info).unwrap();
-        let lines = std::fs::read_to_string(path).unwrap();
-        let mut replayed = Vec::new();
-        let mut persisted_notifications = Vec::new();
-        let mut event_ids = std::collections::HashSet::new();
-        for line in lines.lines() {
-            let SessionUpdate::Xai(notification) = SessionUpdateEnvelope::from_str(line).unwrap() else { continue; };
-            if let XaiSessionUpdate::InjectedContextRecord { kind, text } = &notification.update {
-                persisted_notifications.push(serde_json::to_value(&*notification).unwrap());
-                assert_eq!(kind, "memory_reminder");
-                replayed.push(text.clone());
-                assert!(event_ids.insert(notification.meta.as_ref().unwrap()["eventId"].as_str().unwrap().to_owned()));
+            let (result, ()) = tokio::join!(publish, persist);
+            result.unwrap();
+            let mut delivered = Vec::new();
+            while let Ok(message) = gateway_rx.try_recv() {
+                let xai_acp_lib::AcpClientMessage::ExtNotification(args) = message else {
+                    panic!("request records use individual extension notifications");
+                };
+                assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
+                delivered.push(
+                    serde_json::from_str::<serde_json::Value>(args.request.params.get()).unwrap(),
+                );
             }
-        }
-        assert_eq!(replayed, records.iter().map(|record| record.text().to_owned()).collect::<Vec<_>>());
-        assert_eq!(delivered, persisted_notifications, "batch acknowledgement must not restamp or reorder individual live records");
-    }).await;
+            assert_eq!(delivered.len(), records.len());
+            let reopened =
+                crate::session::storage::jsonl::JsonlStorageAdapter::with_explicit_session_dir(
+                    root.path().to_path_buf(),
+                );
+            let path = reopened.updates_file_path(&actor.session_info).unwrap();
+            let lines = std::fs::read_to_string(path).unwrap();
+            let mut replayed = Vec::new();
+            let mut persisted_notifications = Vec::new();
+            let mut event_ids = std::collections::HashSet::new();
+            for line in lines.lines() {
+                let SessionUpdate::Xai(notification) =
+                    SessionUpdateEnvelope::from_str(line).unwrap()
+                else {
+                    continue;
+                };
+                if let XaiSessionUpdate::InjectedContextRecord { kind, text } = &notification.update
+                {
+                    persisted_notifications.push(serde_json::to_value(&*notification).unwrap());
+                    assert_eq!(kind, "memory_reminder");
+                    replayed.push(text.clone());
+                    assert!(
+                        event_ids.insert(
+                            notification.meta.as_ref().unwrap()["eventId"]
+                                .as_str()
+                                .unwrap()
+                                .to_owned()
+                        )
+                    );
+                }
+            }
+            assert_eq!(
+                replayed,
+                records
+                    .iter()
+                    .map(|record| record.text().to_owned())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                delivered, persisted_notifications,
+                "batch acknowledgement must not restamp or reorder individual live records"
+            );
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -350,154 +406,358 @@ async fn durable_source_claims_survive_compaction_restart_and_old_checkpoint_rei
 #[tokio::test]
 async fn transient_publication_restore_retries_on_next_operation_without_repeating_warning() {
     use crate::session::request_capture::SourcePublications;
-    tokio::task::LocalSet::new().run_until(async {
-        let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        actor.push_system_reminder("recoverable publication");
-        *actor.notifications.source_publications.lock() = SourcePublications::restored();
-        for operation in 0..3 {
-            let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), format!("recovery-{operation}")).await.unwrap();
-            let prepare = actor.prepare_request_for_sampling(built, None);
-            let store = async {
-                let PersistenceMsg::ReadPublishedRequestSources { respond_to } = rx.recv().await.unwrap() else { panic!("one event-driven recovery read"); };
-                if operation < 2 {
-                    respond_to.send(Err(std::io::Error::from(std::io::ErrorKind::Interrupted))).unwrap();
-                } else {
-                    respond_to.send(Ok(Vec::new())).unwrap();
-                    let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = rx.recv().await.unwrap() else { panic!("recovery publishes still-unapplied source"); };
-                    assert_eq!(updates.len(), 1);
-                    respond_to.send(Ok(())).unwrap();
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            actor.push_system_reminder("recoverable publication");
+            *actor.notifications.source_publications.lock() = SourcePublications::restored();
+            for operation in 0..3 {
+                let built = actor
+                    .chat_state_handle
+                    .build_request(
+                        vec![],
+                        None,
+                        false,
+                        None,
+                        "c".into(),
+                        format!("recovery-{operation}"),
+                    )
+                    .await
+                    .unwrap();
+                let prepare = actor.prepare_request_for_sampling(built, None);
+                let store = async {
+                    let PersistenceMsg::ReadPublishedRequestSources { respond_to } =
+                        rx.recv().await.unwrap()
+                    else {
+                        panic!("one event-driven recovery read");
+                    };
+                    if operation < 2 {
+                        respond_to
+                            .send(Err(std::io::Error::from(std::io::ErrorKind::Interrupted)))
+                            .unwrap();
+                    } else {
+                        respond_to.send(Ok(Vec::new())).unwrap();
+                        let PersistenceMsg::AppendUpdatesAndAck {
+                            updates,
+                            respond_to,
+                        } = rx.recv().await.unwrap()
+                        else {
+                            panic!("recovery publishes still-unapplied source");
+                        };
+                        assert_eq!(updates.len(), 1);
+                        respond_to.send(Ok(())).unwrap();
+                    }
+                };
+                let (request, ()) = tokio::join!(prepare, store);
+                assert_eq!(
+                    request
+                        .items
+                        .iter()
+                        .filter(|item| item.text_content() == "recoverable publication")
+                        .count(),
+                    1
+                );
+                match operation {
+                    0 => {
+                        let xai_acp_lib::AcpClientMessage::ExtNotification(args) =
+                            live.try_recv().unwrap()
+                        else {
+                            panic!("recovery warning");
+                        };
+                        assert_eq!(
+                            args.request.method.as_ref(),
+                            "x.ai/session/request_sources/unconfirmed"
+                        );
+                    }
+                    1 => assert!(
+                        live.try_recv().is_err(),
+                        "unchanged unavailable evidence must not spam warnings"
+                    ),
+                    2 => {
+                        let xai_acp_lib::AcpClientMessage::ExtNotification(args) =
+                            live.try_recv().unwrap()
+                        else {
+                            panic!("recovered publication");
+                        };
+                        assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
+                    }
+                    _ => unreachable!(),
                 }
-            };
-            let (request, ()) = tokio::join!(prepare, store);
-            assert_eq!(request.items.iter().filter(|item| item.text_content() == "recoverable publication").count(), 1);
-            match operation {
-                0 => {
-                    let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap() else { panic!("recovery warning"); };
-                    assert_eq!(args.request.method.as_ref(), "x.ai/session/request_sources/unconfirmed");
-                }
-                1 => assert!(live.try_recv().is_err(), "unchanged unavailable evidence must not spam warnings"),
-                2 => {
-                    let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap() else { panic!("recovered publication"); };
-                    assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
-                }
-                _ => unreachable!(),
+                assert!(
+                    rx.try_recv().is_err(),
+                    "no timer, polling or background restore requests"
+                );
             }
-            assert!(rx.try_recv().is_err(), "no timer, polling or background restore requests");
-        }
-    }).await;
+        })
+        .await;
 }
 
 #[tokio::test]
-async fn lost_publication_reply_reconciles_actual_journal_without_republishing_or_model_duplication() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        let directory = tempfile::tempdir().unwrap();
-        let persistence = crate::session::persistence::new_with_explicit_dir(
-            &actor.session_info, directory.path().to_owned(), acp::ModelId::new("test"),
-            super::super::updates_tests::test_persistence_sampling_client(), "test".into(),
-            crate::session::persistence::ExplicitSessionOpen::New { identity: None, next_trace_turn: None, parent_session_id: None },
-        ).await.unwrap();
-        actor.push_system_reminder("committed before reply loss");
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "lost-reply".into()).await.unwrap();
-        let publish = actor.prepare_request_for_sampling(built, None);
-        let commit_then_lose = async {
-            let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = rx.recv().await.unwrap() else { panic!("publication"); };
-            let (ack, reply) = tokio::sync::oneshot::channel();
-            persistence.tx.send(PersistenceMsg::AppendUpdatesAndAck { updates, respond_to: ack }).unwrap();
-            reply.await.unwrap().unwrap();
-            drop(respond_to);
-        };
-        let (request, ()) = tokio::join!(publish, commit_then_lose);
-        assert_eq!(request.items.iter().filter(|item| item.text_content() == "committed before reply loss").count(), 1);
-        let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap() else { panic!("ambiguous receipt"); };
-        assert_eq!(args.request.method.as_ref(), "x.ai/session/request_sources/unconfirmed");
-        actor.chat_state_handle.push_user_message(ConversationItem::user("next actual turn"));
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "reconcile".into()).await.unwrap();
-        let prepare = actor.prepare_request_for_sampling(built, None);
-        let reconcile = async {
-            let message @ PersistenceMsg::ReadPublishedRequestSources { .. } = rx.recv().await.unwrap() else { panic!("ambiguity requires authoritative journal reconciliation"); };
-            persistence.tx.send(message).unwrap();
-        };
-        let (request, ()) = tokio::join!(prepare, reconcile);
-        assert_eq!(request.items.iter().filter(|item| item.text_content() == "committed before reply loss").count(), 1);
-        assert!(request.items.iter().any(|item| item.text_content() == "next actual turn"));
-        assert!(rx.try_recv().is_err(), "no second publication append for the same occurrence");
-        assert!(live.try_recv().is_err());
-        let journal = std::fs::read_to_string(directory.path().join(crate::session::storage::UPDATES_FILE)).unwrap();
-        assert_eq!(journal.lines().filter(|line| line.contains("committed before reply loss")).count(), 1);
-    }).await;
+async fn lost_publication_reply_reconciles_actual_journal_without_republishing_or_model_duplication()
+ {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            let directory = tempfile::tempdir().unwrap();
+            let persistence = crate::session::persistence::new_with_explicit_dir(
+                &actor.session_info,
+                directory.path().to_owned(),
+                acp::ModelId::new("test"),
+                super::super::updates_tests::test_persistence_sampling_client(),
+                "test".into(),
+                crate::session::persistence::ExplicitSessionOpen::New {
+                    identity: None,
+                    next_trace_turn: None,
+                    parent_session_id: None,
+                },
+            )
+            .await
+            .unwrap();
+            actor.push_system_reminder("committed before reply loss");
+            let built = actor
+                .chat_state_handle
+                .build_request(vec![], None, false, None, "c".into(), "lost-reply".into())
+                .await
+                .unwrap();
+            let publish = actor.prepare_request_for_sampling(built, None);
+            let commit_then_lose = async {
+                let PersistenceMsg::AppendUpdatesAndAck {
+                    updates,
+                    respond_to,
+                } = rx.recv().await.unwrap()
+                else {
+                    panic!("publication");
+                };
+                let (ack, reply) = tokio::sync::oneshot::channel();
+                persistence
+                    .tx
+                    .send(PersistenceMsg::AppendUpdatesAndAck {
+                        updates,
+                        respond_to: ack,
+                    })
+                    .unwrap();
+                reply.await.unwrap().unwrap();
+                drop(respond_to);
+            };
+            let (request, ()) = tokio::join!(publish, commit_then_lose);
+            assert_eq!(
+                request
+                    .items
+                    .iter()
+                    .filter(|item| item.text_content() == "committed before reply loss")
+                    .count(),
+                1
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap()
+            else {
+                panic!("ambiguous receipt");
+            };
+            assert_eq!(
+                args.request.method.as_ref(),
+                "x.ai/session/request_sources/unconfirmed"
+            );
+            actor
+                .chat_state_handle
+                .push_user_message(ConversationItem::user("next actual turn"));
+            let built = actor
+                .chat_state_handle
+                .build_request(vec![], None, false, None, "c".into(), "reconcile".into())
+                .await
+                .unwrap();
+            let prepare = actor.prepare_request_for_sampling(built, None);
+            let reconcile = async {
+                let message @ PersistenceMsg::ReadPublishedRequestSources { .. } =
+                    rx.recv().await.unwrap()
+                else {
+                    panic!("ambiguity requires authoritative journal reconciliation");
+                };
+                persistence.tx.send(message).unwrap();
+            };
+            let (request, ()) = tokio::join!(prepare, reconcile);
+            assert_eq!(
+                request
+                    .items
+                    .iter()
+                    .filter(|item| item.text_content() == "committed before reply loss")
+                    .count(),
+                1
+            );
+            assert!(
+                request
+                    .items
+                    .iter()
+                    .any(|item| item.text_content() == "next actual turn")
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "no second publication append for the same occurrence"
+            );
+            assert!(live.try_recv().is_err());
+            let journal = std::fs::read_to_string(
+                directory.path().join(crate::session::storage::UPDATES_FILE),
+            )
+            .unwrap();
+            assert_eq!(
+                journal
+                    .lines()
+                    .filter(|line| line.contains("committed before reply loss"))
+                    .count(),
+                1
+            );
+        })
+        .await;
 }
 
 #[tokio::test]
 async fn definite_append_failure_then_restart_publishes_original_source_once() {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
     use crate::session::request_capture::SourcePublications;
-    tokio::task::LocalSet::new().run_until(async {
-        let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        let directory = tempfile::tempdir().unwrap();
-        let calls = AtomicUsize::new(0);
-        let storage = Arc::new(crate::session::storage::jsonl::JsonlStorageAdapter::with_update_append_probe(
-            directory.path().to_owned(), move |_| {
-                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                    Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
-                } else { Ok(()) }
-            },
-        ));
-        storage.init_session(&actor.session_info, acp::ModelId::new("test")).await.unwrap();
-        let info = actor.session_info.clone();
-        let persistence = crate::session::persistence::durable_update_tests::test_actor(info.clone(), storage);
-        actor.notifications.persistence_tx = persistence.handle.tx.clone();
-        actor.push_system_reminder("survives definite failure and restart");
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "before-crash".into()).await.unwrap();
-        let failed_request = actor.prepare_request_for_sampling(built, None).await;
-        assert_eq!(failed_request.items.iter().filter(|item| item.text_content() == "survives definite failure and restart").count(), 1);
-        let xai_acp_lib::AcpClientMessage::ExtNotification(failure) = live.try_recv().unwrap() else { panic!("definite failure diagnostic"); };
-        let failure: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(failure.request.params.get()).unwrap();
-        assert!(matches!(failure.progress, crate::session::request_capture::PublicationProgress::NotCommitted));
-        let source = failure.sources[0];
-        assert!(crate::session::storage::request_capture::published_sources(directory.path()).unwrap().is_empty());
-        let (respond_to, response) = tokio::sync::oneshot::channel();
-        persistence.handle.tx.send(PersistenceMsg::AppendUpdateDurablyAndAck {
-            update: SessionUpdate::Acp(Box::new(acp::SessionNotification::new(
-                info.id.clone(), acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                    acp::ContentBlock::Text(acp::TextContent::new("primary persistence remains available")),
-                )),
-            ))), respond_to,
-        }).unwrap();
-        response.await.unwrap().unwrap();
-        let checkpoint = actor.chat_state_handle.snapshot().await.unwrap();
-        drop(actor);
-        let (gateway, mut restarted_live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut restarted = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        restarted.session_info = info;
-        restarted.notifications.persistence_tx = persistence.handle.tx.clone();
-        *restarted.notifications.source_publications.lock() = SourcePublications::restored();
-        restarted.chat_state_handle.restore_snapshot(checkpoint);
-        restarted.chat_state_handle.push_user_message(ConversationItem::user("new human turn after restart"));
-        let built = restarted.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "after-crash".into()).await.unwrap();
-        let request = restarted.prepare_request_for_sampling(built, None).await;
-        assert_eq!(request.items.iter().filter(|item| item.text_content() == "survives definite failure and restart").count(), 1);
-        assert!(request.items.iter().any(|item| item.text_content() == "new human turn after restart"));
-        let xai_acp_lib::AcpClientMessage::ExtNotification(applied) = restarted_live.try_recv().unwrap() else { panic!("original source must finally publish"); };
-        let applied: XaiSessionNotification = serde_json::from_str(applied.request.params.get()).unwrap();
-        let applied: crate::session::request_capture::SourcePublication = serde_json::from_value(applied.meta.unwrap()[crate::session::request_capture::SOURCE_PUBLICATION_META].clone()).unwrap();
-        assert_eq!(applied.source, source);
-        assert_eq!(crate::session::storage::request_capture::published_sources(directory.path()).unwrap(), vec![source.id().unwrap()]);
-        assert!(restarted_live.try_recv().is_err());
-        persistence.task.abort();
-    }).await;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            let directory = tempfile::tempdir().unwrap();
+            let calls = AtomicUsize::new(0);
+            let storage = Arc::new(
+                crate::session::storage::jsonl::JsonlStorageAdapter::with_update_append_probe(
+                    directory.path().to_owned(),
+                    move |_| {
+                        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+                        } else {
+                            Ok(())
+                        }
+                    },
+                ),
+            );
+            storage
+                .init_session(&actor.session_info, acp::ModelId::new("test"))
+                .await
+                .unwrap();
+            let info = actor.session_info.clone();
+            let persistence = crate::session::persistence::durable_update_tests::test_actor(
+                info.clone(),
+                storage,
+            );
+            actor.notifications.persistence_tx = persistence.handle.tx.clone();
+            actor.push_system_reminder("survives definite failure and restart");
+            let built = actor
+                .chat_state_handle
+                .build_request(vec![], None, false, None, "c".into(), "before-crash".into())
+                .await
+                .unwrap();
+            let failed_request = actor.prepare_request_for_sampling(built, None).await;
+            assert_eq!(
+                failed_request
+                    .items
+                    .iter()
+                    .filter(|item| item.text_content() == "survives definite failure and restart")
+                    .count(),
+                1
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(failure) = live.try_recv().unwrap()
+            else {
+                panic!("definite failure diagnostic");
+            };
+            let failure: crate::session::request_capture::SourcePublicationFailure =
+                serde_json::from_str(failure.request.params.get()).unwrap();
+            assert!(matches!(
+                failure.progress,
+                crate::session::request_capture::PublicationProgress::NotCommitted
+            ));
+            let source = failure.sources[0];
+            assert!(
+                crate::session::storage::request_capture::published_sources(directory.path())
+                    .unwrap()
+                    .is_empty()
+            );
+            let (respond_to, response) = tokio::sync::oneshot::channel();
+            persistence
+                .handle
+                .tx
+                .send(PersistenceMsg::AppendUpdateDurablyAndAck {
+                    update: SessionUpdate::Acp(Box::new(acp::SessionNotification::new(
+                        info.id.clone(),
+                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(
+                                "primary persistence remains available",
+                            )),
+                        )),
+                    ))),
+                    respond_to,
+                })
+                .unwrap();
+            response.await.unwrap().unwrap();
+            let checkpoint = actor.chat_state_handle.snapshot().await.unwrap();
+            drop(actor);
+            let (gateway, mut restarted_live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut restarted = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            restarted.session_info = info;
+            restarted.notifications.persistence_tx = persistence.handle.tx.clone();
+            *restarted.notifications.source_publications.lock() = SourcePublications::restored();
+            restarted.chat_state_handle.restore_snapshot(checkpoint);
+            restarted
+                .chat_state_handle
+                .push_user_message(ConversationItem::user("new human turn after restart"));
+            let built = restarted
+                .chat_state_handle
+                .build_request(vec![], None, false, None, "c".into(), "after-crash".into())
+                .await
+                .unwrap();
+            let request = restarted.prepare_request_for_sampling(built, None).await;
+            assert_eq!(
+                request
+                    .items
+                    .iter()
+                    .filter(|item| item.text_content() == "survives definite failure and restart")
+                    .count(),
+                1
+            );
+            assert!(
+                request
+                    .items
+                    .iter()
+                    .any(|item| item.text_content() == "new human turn after restart")
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(applied) =
+                restarted_live.try_recv().unwrap()
+            else {
+                panic!("original source must finally publish");
+            };
+            let applied: XaiSessionNotification =
+                serde_json::from_str(applied.request.params.get()).unwrap();
+            let applied: crate::session::request_capture::SourcePublication =
+                serde_json::from_value(
+                    applied.meta.unwrap()[crate::session::request_capture::SOURCE_PUBLICATION_META]
+                        .clone(),
+                )
+                .unwrap();
+            assert_eq!(applied.source, source);
+            assert_eq!(
+                crate::session::storage::request_capture::published_sources(directory.path())
+                    .unwrap(),
+                vec![source.id().unwrap()]
+            );
+            assert!(restarted_live.try_recv().is_err());
+            persistence.task.abort();
+        })
+        .await;
 }
 
 #[tokio::test]
 async fn partial_publication_delivers_only_synced_prefix_then_retries_only_unapplied_suffix() {
-    use crate::session::request_capture::{PublicationFailure, PublicationProgress, PublicationDurability, CaptureFailure};
+    use crate::session::request_capture::{
+        CaptureFailure, PublicationDurability, PublicationFailure, PublicationProgress,
+    };
     tokio::task::LocalSet::new().run_until(async {
         let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -553,106 +813,297 @@ async fn partial_publication_delivers_only_synced_prefix_then_retries_only_unapp
 
 #[tokio::test]
 async fn corrupt_publication_ledger_is_not_silently_defaulted_or_repeatedly_announced() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        actor.push_system_reminder("corrupt ledger leaves model input intact");
-        *actor.notifications.source_publications.lock() = crate::session::request_capture::SourcePublications::restored();
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "corrupt-ledger".into()).await.unwrap();
-        let prepare = actor.prepare_request_for_sampling(built, None);
-        let corrupt = async {
-            let PersistenceMsg::ReadPublishedRequestSources { respond_to } = rx.recv().await.unwrap() else { panic!("lazy ledger restore"); };
-            respond_to.send(Err(std::io::Error::from(std::io::ErrorKind::InvalidData))).unwrap();
-        };
-        let (request, ()) = tokio::join!(prepare, corrupt);
-        let expected = serde_json::to_value(&request.items).unwrap();
-        let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap() else { panic!("typed corruption warning"); };
-        let failure: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(args.request.params.get()).unwrap();
-        assert!(matches!(failure.cause, crate::session::request_capture::CaptureFailure::InvalidEvidence));
-        assert_eq!(failure.sources.len(), 1);
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "corruption-still-present".into()).await.unwrap();
-        let request = actor.prepare_request_for_sampling(built, None).await;
-        assert_eq!(serde_json::to_value(&request.items).unwrap(), expected);
-        assert!(rx.try_recv().is_err(), "corruption is not retried as transient I/O or converted to an empty ledger");
-        assert!(live.try_recv().is_err(), "unchanged corrupt evidence emits one warning");
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            actor.push_system_reminder("corrupt ledger leaves model input intact");
+            *actor.notifications.source_publications.lock() =
+                crate::session::request_capture::SourcePublications::restored();
+            let built = actor
+                .chat_state_handle
+                .build_request(
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    "c".into(),
+                    "corrupt-ledger".into(),
+                )
+                .await
+                .unwrap();
+            let prepare = actor.prepare_request_for_sampling(built, None);
+            let corrupt = async {
+                let PersistenceMsg::ReadPublishedRequestSources { respond_to } =
+                    rx.recv().await.unwrap()
+                else {
+                    panic!("lazy ledger restore");
+                };
+                respond_to
+                    .send(Err(std::io::Error::from(std::io::ErrorKind::InvalidData)))
+                    .unwrap();
+            };
+            let (request, ()) = tokio::join!(prepare, corrupt);
+            let expected = serde_json::to_value(&request.items).unwrap();
+            let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap()
+            else {
+                panic!("typed corruption warning");
+            };
+            let failure: crate::session::request_capture::SourcePublicationFailure =
+                serde_json::from_str(args.request.params.get()).unwrap();
+            assert!(matches!(
+                failure.cause,
+                crate::session::request_capture::CaptureFailure::InvalidEvidence
+            ));
+            assert_eq!(failure.sources.len(), 1);
+            let built = actor
+                .chat_state_handle
+                .build_request(
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    "c".into(),
+                    "corruption-still-present".into(),
+                )
+                .await
+                .unwrap();
+            let request = actor.prepare_request_for_sampling(built, None).await;
+            assert_eq!(serde_json::to_value(&request.items).unwrap(), expected);
+            assert!(
+                rx.try_recv().is_err(),
+                "corruption is not retried as transient I/O or converted to an empty ledger"
+            );
+            assert!(
+                live.try_recv().is_err(),
+                "unchanged corrupt evidence emits one warning"
+            );
+        })
+        .await;
 }
 
 #[tokio::test]
 async fn changed_restore_cause_reannounces_while_identical_cause_stays_suppressed() {
-    tokio::task::LocalSet::new().run_until(async {
-        use crate::session::request_capture::CaptureFailure;
-        let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        actor.push_system_reminder("restore cause visibility");
-        *actor.notifications.source_publications.lock() = crate::session::request_capture::SourcePublications::restored();
-        let restore = |cause| async {
-            let PersistenceMsg::ReadPublishedRequestSources { respond_to } = rx.recv().await.unwrap() else { panic!("transient restore retry"); };
-            respond_to.send(Err(std::io::Error::from(cause))).unwrap();
-        };
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "first-failure".into()).await.unwrap();
-        let (request, ()) = tokio::join!(actor.prepare_request_for_sampling(built, None), restore(std::io::ErrorKind::StorageFull));
-        assert!(request.items.iter().any(|item| item.text_content() == "restore cause visibility"));
-        let xai_acp_lib::AcpClientMessage::ExtNotification(first) = live.try_recv().unwrap() else { panic!("first restore failure warning"); };
-        let first: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(first.request.params.get()).unwrap();
-        assert!(matches!(first.cause, CaptureFailure::Io { kind: crate::extensions::context_policy::ContextIoKind::StorageFull, .. }));
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "identical-failure".into()).await.unwrap();
-        let (_, ()) = tokio::join!(actor.prepare_request_for_sampling(built, None), restore(std::io::ErrorKind::StorageFull));
-        assert!(live.try_recv().is_err(), "identical cause stays suppressed");
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "changed-failure".into()).await.unwrap();
-        let (request, ()) = tokio::join!(actor.prepare_request_for_sampling(built, None), restore(std::io::ErrorKind::PermissionDenied));
-        assert!(request.items.iter().any(|item| item.text_content() == "restore cause visibility"));
-        let xai_acp_lib::AcpClientMessage::ExtNotification(changed) = live.try_recv().unwrap() else { panic!("changed cause is reannounced"); };
-        let changed: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(changed.request.params.get()).unwrap();
-        assert!(matches!(changed.cause, CaptureFailure::Io { kind: crate::extensions::context_policy::ContextIoKind::PermissionDenied, .. }));
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "recovered".into()).await.unwrap();
-        let prepare = actor.prepare_request_for_sampling(built, None);
-        let recover = async {
-            let PersistenceMsg::ReadPublishedRequestSources { respond_to } = rx.recv().await.unwrap() else { panic!("final restore retry"); };
-            respond_to.send(Ok(vec![])).unwrap();
-            let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = rx.recv().await.unwrap() else { panic!("recovered publication"); };
-            assert_eq!(updates.len(), 1);
-            respond_to.send(Ok(())).unwrap();
-        };
-        let (request, ()) = tokio::join!(prepare, recover);
-        assert_eq!(request.items.iter().filter(|item| item.text_content() == "restore cause visibility").count(), 1);
-        let xai_acp_lib::AcpClientMessage::ExtNotification(applied) = live.try_recv().unwrap() else { panic!("publication after recovery"); };
-        assert_eq!(applied.request.method.as_ref(), "x.ai/session_notification");
-        assert!(live.try_recv().is_err());
-        assert!(rx.try_recv().is_err());
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            use crate::session::request_capture::CaptureFailure;
+            let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            actor.push_system_reminder("restore cause visibility");
+            *actor.notifications.source_publications.lock() =
+                crate::session::request_capture::SourcePublications::restored();
+            let restore = |cause| async {
+                let PersistenceMsg::ReadPublishedRequestSources { respond_to } =
+                    rx.recv().await.unwrap()
+                else {
+                    panic!("transient restore retry");
+                };
+                respond_to.send(Err(std::io::Error::from(cause))).unwrap();
+            };
+            let built = actor
+                .chat_state_handle
+                .build_request(
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    "c".into(),
+                    "first-failure".into(),
+                )
+                .await
+                .unwrap();
+            let (request, ()) = tokio::join!(
+                actor.prepare_request_for_sampling(built, None),
+                restore(std::io::ErrorKind::StorageFull)
+            );
+            assert!(
+                request
+                    .items
+                    .iter()
+                    .any(|item| item.text_content() == "restore cause visibility")
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(first) = live.try_recv().unwrap()
+            else {
+                panic!("first restore failure warning");
+            };
+            let first: crate::session::request_capture::SourcePublicationFailure =
+                serde_json::from_str(first.request.params.get()).unwrap();
+            assert!(matches!(
+                first.cause,
+                CaptureFailure::Io {
+                    kind: crate::extensions::context_policy::ContextIoKind::StorageFull,
+                    ..
+                }
+            ));
+            let built = actor
+                .chat_state_handle
+                .build_request(
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    "c".into(),
+                    "identical-failure".into(),
+                )
+                .await
+                .unwrap();
+            let (_, ()) = tokio::join!(
+                actor.prepare_request_for_sampling(built, None),
+                restore(std::io::ErrorKind::StorageFull)
+            );
+            assert!(live.try_recv().is_err(), "identical cause stays suppressed");
+            let built = actor
+                .chat_state_handle
+                .build_request(
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    "c".into(),
+                    "changed-failure".into(),
+                )
+                .await
+                .unwrap();
+            let (request, ()) = tokio::join!(
+                actor.prepare_request_for_sampling(built, None),
+                restore(std::io::ErrorKind::PermissionDenied)
+            );
+            assert!(
+                request
+                    .items
+                    .iter()
+                    .any(|item| item.text_content() == "restore cause visibility")
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(changed) = live.try_recv().unwrap()
+            else {
+                panic!("changed cause is reannounced");
+            };
+            let changed: crate::session::request_capture::SourcePublicationFailure =
+                serde_json::from_str(changed.request.params.get()).unwrap();
+            assert!(matches!(
+                changed.cause,
+                CaptureFailure::Io {
+                    kind: crate::extensions::context_policy::ContextIoKind::PermissionDenied,
+                    ..
+                }
+            ));
+            let built = actor
+                .chat_state_handle
+                .build_request(vec![], None, false, None, "c".into(), "recovered".into())
+                .await
+                .unwrap();
+            let prepare = actor.prepare_request_for_sampling(built, None);
+            let recover = async {
+                let PersistenceMsg::ReadPublishedRequestSources { respond_to } =
+                    rx.recv().await.unwrap()
+                else {
+                    panic!("final restore retry");
+                };
+                respond_to.send(Ok(vec![])).unwrap();
+                let PersistenceMsg::AppendUpdatesAndAck {
+                    updates,
+                    respond_to,
+                } = rx.recv().await.unwrap()
+                else {
+                    panic!("recovered publication");
+                };
+                assert_eq!(updates.len(), 1);
+                respond_to.send(Ok(())).unwrap();
+            };
+            let (request, ()) = tokio::join!(prepare, recover);
+            assert_eq!(
+                request
+                    .items
+                    .iter()
+                    .filter(|item| item.text_content() == "restore cause visibility")
+                    .count(),
+                1
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(applied) = live.try_recv().unwrap()
+            else {
+                panic!("publication after recovery");
+            };
+            assert_eq!(applied.request.method.as_ref(), "x.ai/session_notification");
+            assert!(live.try_recv().is_err());
+            assert!(rx.try_recv().is_err());
+        })
+        .await;
 }
 
 #[tokio::test]
-async fn closed_publication_mailbox_is_not_submission_and_reopened_resource_retries_without_reconciliation() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
-        drop(rx);
-        actor.push_system_reminder("not submitted to closed mailbox");
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "closed".into()).await.unwrap();
-        actor.prepare_request_for_sampling(built, None).await;
-        let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap() else { panic!("non-submission diagnostic"); };
-        let failure: crate::session::request_capture::SourcePublicationFailure = serde_json::from_str(args.request.params.get()).unwrap();
-        assert!(matches!(failure.cause, crate::session::request_capture::CaptureFailure::MailboxClosed));
-        assert!(matches!(failure.progress, crate::session::request_capture::PublicationProgress::NotSubmitted));
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        actor.notifications.persistence_tx = tx;
-        let built = actor.chat_state_handle.build_request(vec![], None, false, None, "c".into(), "resource-reopened".into()).await.unwrap();
-        let prepare = actor.prepare_request_for_sampling(built, None);
-        let retry = async {
-            let PersistenceMsg::AppendUpdatesAndAck { updates, respond_to } = rx.recv().await.unwrap() else { panic!("failed send did not apply; direct retry is safe"); };
-            assert_eq!(updates.len(), 1);
-            respond_to.send(Ok(())).unwrap();
-        };
-        let (request, ()) = tokio::join!(prepare, retry);
-        assert_eq!(request.items.iter().filter(|item| item.text_content() == "not submitted to closed mailbox").count(), 1);
-        let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap() else { panic!("retried publication"); };
-        assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
-        assert!(rx.try_recv().is_err());
-        assert!(live.try_recv().is_err());
-    }).await;
+async fn closed_publication_mailbox_is_not_submission_and_reopened_resource_retries_without_reconciliation()
+ {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway, mut live) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway, tx).await;
+            drop(rx);
+            actor.push_system_reminder("not submitted to closed mailbox");
+            let built = actor
+                .chat_state_handle
+                .build_request(vec![], None, false, None, "c".into(), "closed".into())
+                .await
+                .unwrap();
+            actor.prepare_request_for_sampling(built, None).await;
+            let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap()
+            else {
+                panic!("non-submission diagnostic");
+            };
+            let failure: crate::session::request_capture::SourcePublicationFailure =
+                serde_json::from_str(args.request.params.get()).unwrap();
+            assert!(matches!(
+                failure.cause,
+                crate::session::request_capture::CaptureFailure::MailboxClosed
+            ));
+            assert!(matches!(
+                failure.progress,
+                crate::session::request_capture::PublicationProgress::NotSubmitted
+            ));
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            actor.notifications.persistence_tx = tx;
+            let built = actor
+                .chat_state_handle
+                .build_request(
+                    vec![],
+                    None,
+                    false,
+                    None,
+                    "c".into(),
+                    "resource-reopened".into(),
+                )
+                .await
+                .unwrap();
+            let prepare = actor.prepare_request_for_sampling(built, None);
+            let retry = async {
+                let PersistenceMsg::AppendUpdatesAndAck {
+                    updates,
+                    respond_to,
+                } = rx.recv().await.unwrap()
+                else {
+                    panic!("failed send did not apply; direct retry is safe");
+                };
+                assert_eq!(updates.len(), 1);
+                respond_to.send(Ok(())).unwrap();
+            };
+            let (request, ()) = tokio::join!(prepare, retry);
+            assert_eq!(
+                request
+                    .items
+                    .iter()
+                    .filter(|item| item.text_content() == "not submitted to closed mailbox")
+                    .count(),
+                1
+            );
+            let xai_acp_lib::AcpClientMessage::ExtNotification(args) = live.try_recv().unwrap()
+            else {
+                panic!("retried publication");
+            };
+            assert_eq!(args.request.method.as_ref(), "x.ai/session_notification");
+            assert!(rx.try_recv().is_err());
+            assert!(live.try_recv().is_err());
+        })
+        .await;
 }

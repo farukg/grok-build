@@ -443,10 +443,12 @@ fn open_block_viewer_opens_text_with_images_without_terminal_graphics() {
     let image_path = dir.path().join("referenced.png");
     std::fs::write(&image_path, make_test_png(20, 10)).unwrap();
     let agent = app.agents.get_mut(&id).unwrap();
-    agent.scrollback.push_block(RenderBlock::agent_message(format!(
-        "Image details: ![example]({})",
-        image_path.display()
-    )));
+    agent
+        .scrollback
+        .push_block(RenderBlock::agent_message(format!(
+            "Image details: ![example]({})",
+            image_path.display()
+        )));
     agent.scrollback.set_selected(Some(0));
     assert!(
         !agent

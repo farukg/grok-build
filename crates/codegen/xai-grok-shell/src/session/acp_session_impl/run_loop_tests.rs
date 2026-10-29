@@ -94,7 +94,10 @@ async fn workflow_completion_wake_parks_under_suppression_instead_of_dropping() 
             try_promote(&actor).await;
             let promoted = {
                 let state = actor.state.lock().await;
-                state.running_task.as_ref().map(|task| task.prompt_id.clone())
+                state
+                    .running_task
+                    .as_ref()
+                    .map(|task| task.prompt_id.clone())
             };
             assert_eq!(
                 promoted.as_deref(),
@@ -115,10 +118,16 @@ async fn workflow_completion_wake_delivers_when_unsuppressed() {
             let actor = Arc::new(actor);
             let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
 
-            actor.clone().handle_workflow_completion_turn(completion_tx, "run2".to_string(), 0).await;
+            actor
+                .clone()
+                .handle_workflow_completion_turn(completion_tx, "run2".to_string(), 0)
+                .await;
             let running = {
                 let state = actor.state.lock().await;
-                state.running_task.as_ref().map(|task| task.prompt_id.clone())
+                state
+                    .running_task
+                    .as_ref()
+                    .map(|task| task.prompt_id.clone())
             };
             assert_eq!(
                 running.as_deref(),
@@ -131,20 +140,28 @@ async fn workflow_completion_wake_delivers_when_unsuppressed() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn distinct_parked_workflow_completions_each_keep_their_wake() {
-    tokio::task::LocalSet::new().run_until(async {
-        let (actor, _persistence_rx) = actor_with_channels().await;
-        arm_wake_barrier(&actor).await;
-        seed_unreported_workflow_run(&actor, "first").await;
-        seed_unreported_workflow_run(&actor, "second").await;
-        let actor = Arc::new(actor);
-        let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
-        for run in ["first", "second", "first"] {
-            actor.clone().handle_workflow_completion_turn(completion_tx.clone(), run.to_string(), 0).await;
-        }
-        let state = actor.state.lock().await;
-        assert_eq!(queued_prompt_ids(&state), ["workflow-completed-first-0", "workflow-completed-second-0"]);
-        assert!(state.running_task.is_none());
-    }).await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (actor, _persistence_rx) = actor_with_channels().await;
+            arm_wake_barrier(&actor).await;
+            seed_unreported_workflow_run(&actor, "first").await;
+            seed_unreported_workflow_run(&actor, "second").await;
+            let actor = Arc::new(actor);
+            let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
+            for run in ["first", "second", "first"] {
+                actor
+                    .clone()
+                    .handle_workflow_completion_turn(completion_tx.clone(), run.to_string(), 0)
+                    .await;
+            }
+            let state = actor.state.lock().await;
+            assert_eq!(
+                queued_prompt_ids(&state),
+                ["workflow-completed-first-0", "workflow-completed-second-0"]
+            );
+            assert!(state.running_task.is_none());
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -190,7 +207,8 @@ async fn reported_workflow_completions_queue_no_wake() {
             let actor = Arc::new(actor);
             let (completion_tx, _completion_rx) = mpsc::unbounded_channel();
 
-            actor.clone()
+            actor
+                .clone()
                 .handle_workflow_completion_turn(completion_tx, "run3".to_string(), 0)
                 .await;
             let state = actor.state.lock().await;
