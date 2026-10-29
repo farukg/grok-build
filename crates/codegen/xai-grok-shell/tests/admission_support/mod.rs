@@ -139,6 +139,18 @@ pub async fn history(
         .expect("authoritative history")
         .chat_history
 }
+pub fn matching_history_metadata(
+    items: &[xai_grok_shell::sampling::ConversationItem],
+    marker: &str,
+) -> impl std::fmt::Debug {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.text_content().contains(marker))
+        .map(|(index, item)| (index, item.role(), item.synthetic_reason().cloned()))
+        .collect::<Vec<_>>()
+}
+
 pub fn main_requests(server: &xai_grok_test_support::MockInferenceServer, id: &str) -> Vec<Value> {
     server
         .requests()

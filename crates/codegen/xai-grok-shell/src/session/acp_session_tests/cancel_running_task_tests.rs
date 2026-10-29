@@ -919,9 +919,24 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
             let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel::<
                 xai_acp_lib::AcpClientMessage,
             >();
-            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel::<
-                PersistenceMsg,
-            >();
+            let directory = tempfile::tempdir().unwrap();
+            let info = crate::session::info::Info {
+                id: acp::SessionId::new("test-cancel"),
+                cwd: "/tmp".into(),
+            };
+            let storage = Arc::new(
+                crate::session::storage::JsonlStorageAdapter::with_explicit_session_dir(
+                    directory.path().to_path_buf(),
+                ),
+            );
+            storage
+                .init_session(&info, acp::ModelId::new("test-model"))
+                .await
+                .unwrap();
+            let persistence =
+                crate::session::persistence::durable_update_tests::test_actor(info, storage);
+            let persistence_tx = persistence.handle.tx.clone();
+            let _persistence_task = tokio_util::task::AbortOnDropHandle::new(persistence.task);
             let cwd = AbsPathBuf::new(std::path::PathBuf::from("/tmp")).unwrap();
             let fs = Arc::new(
                 xai_grok_workspace::file_system::MockFs::new(cwd.to_path_buf()),
@@ -1269,7 +1284,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                         traceparent: None,
                     });
             }
-            let _ = actor
+            let outcome = actor
                 .cancel_running_task(crate::session::CancelOptions {
                     cancel_subagents: true,
                     kill_background_tasks: true,
@@ -1277,6 +1292,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                     ..Default::default()
                 })
                 .await;
+            assert!(outcome.settled);
             let scoped_prompt_id = bridge
                 .read_resource::<
                     xai_grok_tools::implementations::grok_build::task::types::CurrentPromptIdResource,
@@ -2381,13 +2397,15 @@ async fn cancel_resolves_front_when_running_task_is_none() {
                 state.pending_inputs.push_back(running_item);
                 state.pending_inputs.push_back(q2_item);
             }
-            let _ = actor
+            let outcome = actor
                 .cancel_running_task(crate::session::CancelOptions {
                     cancel_subagents: true,
                     user_initiated: true,
                     ..Default::default()
                 })
                 .await;
+            assert!(outcome.settled);
+            assert!(!outcome.turn_stopped, "no task grants no turn authority");
             assert!(
                 matches!(
                     running_rx.try_recv(),

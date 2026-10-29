@@ -376,7 +376,9 @@ fn foreground_child_success_and_error_commit_the_observed_tool_result_once() {
                     .iter()
                     .filter(|item| item.text_content().contains(marker))
                     .count(),
-                1
+                1,
+                "original outcome must occur once in durable history; matches={:?}",
+                matching_history_metadata(&items, marker)
             );
             assert!(items.iter().any(|item| matches!(
                 item,
@@ -583,7 +585,9 @@ fn child_completion(boundary: CallerBoundary) {
                     .iter()
                     .filter(|item| item.text_content().contains(marker))
                     .count(),
-                1
+                1,
+                "original outcome must occur once in durable history; matches={:?}",
+                matching_history_metadata(&items, marker)
             );
             initial.assert_satisfied();
             child.assert_satisfied();

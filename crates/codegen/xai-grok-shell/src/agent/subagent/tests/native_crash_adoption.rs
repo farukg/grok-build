@@ -40,10 +40,14 @@ enum TestArtifacts {
     AuthenticatedProxy,
 }
 
-async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(45), future)
-        .await
-        .unwrap()
+#[track_caller]
+fn bounded<T>(future: impl std::future::Future<Output = T>) -> impl std::future::Future<Output = T> {
+    let caller = std::panic::Location::caller();
+    async move {
+        tokio::time::timeout(std::time::Duration::from_secs(45), future)
+            .await
+            .unwrap_or_else(|_| panic!("native adoption boundary timed out at {caller}"))
+    }
 }
 
 fn coordinator(
@@ -352,7 +356,16 @@ async fn lost_owner_from(
             );
         }
     }
-    assert_eq!(sampled, server.request_count());
+    assert_eq!(
+        sampled,
+        server.request_count(),
+        "native owner loss must not dispatch; routes={:?}",
+        server
+            .requests()
+            .into_iter()
+            .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(
         std::fs::read(artifacts.join("output.json")).unwrap(),
         prior_output

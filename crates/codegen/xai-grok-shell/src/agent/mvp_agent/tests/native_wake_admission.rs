@@ -158,7 +158,12 @@ async fn successful_wake(source: ActiveAgentMessageSource) {
     assert_eq!(
         resumed.len(),
         1,
-        "one real model input, not Prompt plus ParentMessage"
+        "one real model input, not Prompt plus ParentMessage; routes={:?}",
+        server
+            .requests()
+            .into_iter()
+            .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
+            .collect::<Vec<_>>()
     );
     assert_eq!(resumed[0].to_string().matches(WAKE_TEXT).count(), 1);
     let loaded = storage.load_session(&info).await.unwrap();
@@ -403,7 +408,15 @@ fn completed_native_worker_receiver_contention_is_unconfirmed_without_model_inpu
             matches!(restored.status, SubagentSnapshotStatus::Completed { ref output, .. }
             if output.as_str() == prior.output.as_ref())
         );
-        assert_eq!(server.request_count(), requests_before);
+        assert_eq!(
+            server.request_count(), requests_before,
+            "unconfirmed admission must not send requests; routes={:?}",
+            server
+                .requests()
+                .into_iter()
+                .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(resolve_snapshot(), original_snapshot);
         assert_eq!(
             std::fs::read(artifacts.join("meta.json")).unwrap(),

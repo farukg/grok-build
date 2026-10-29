@@ -639,6 +639,16 @@ impl SessionActor {
             );
         }
 
+        let no_task_pinned_prompt_id = match &finalization {
+            CancelFinalization::Keep(lease) => match &lease.binding {
+                FinalizationBinding::NoTask(Some(id)) if pinned_prompt_id.as_ref() == Some(id) => {
+                    Some(id.clone())
+                }
+                FinalizationBinding::NoTask(Some(_) | None)
+                | FinalizationBinding::Task { .. } => None,
+            },
+            CancelFinalization::Rewind => None,
+        };
         let binding_prompt = self
             .state
             .lock()
@@ -891,12 +901,20 @@ impl SessionActor {
             } else if kill_background_tasks {
                 std::mem::take(&mut state.pending_inputs)
             } else {
+                let cancelled_front_prompt_id = match &finalization {
+                    CancelFinalization::Keep(lease) => match &lease.binding {
+                        FinalizationBinding::Task { prompt_id, .. }
+                        | FinalizationBinding::NoTask(Some(prompt_id)) => Some(prompt_id),
+                        FinalizationBinding::NoTask(None) => None,
+                    },
+                    CancelFinalization::Rewind => cancelled_prompt_id.as_ref(),
+                };
                 let mut kept = VecDeque::with_capacity(state.pending_inputs.len());
                 let mut cancelled = VecDeque::new();
                 for item in std::mem::take(&mut state.pending_inputs) {
-                    let is_running_turn =
-                        cancelled_prompt_id.as_deref() == Some(item.prompt_id.as_str());
-                    if is_running_turn
+                    let is_cancelled_front =
+                        cancelled_front_prompt_id.is_some_and(|id| id == &item.prompt_id);
+                    if is_cancelled_front
                         || (parent_teardown == ParentTeardownStatus::Unsettled
                             && matches!(
                                 item.input_origin.as_prompt_origin(),
@@ -1086,15 +1104,6 @@ impl SessionActor {
         }
         // A no-task cancel of a pinned front (turn started / pin set, task not yet or no longer in the slot) still needs a durable terminal so resume can tell unknown duration from a 0ms turn.
         // A queued front that never started has no pin and must not emit.
-        let no_task_pinned_prompt_id = match &finalization {
-            CancelFinalization::Keep(lease) => match &lease.binding {
-                FinalizationBinding::NoTask(Some(id)) if pinned_prompt_id.as_ref() == Some(id) => {
-                    Some(id.clone())
-                }
-                _ => None,
-            },
-            CancelFinalization::Rewind => None,
-        };
         let parent_turn_unsettled = parent_teardown == ParentTeardownStatus::Unsettled
             && matches!(
                 &cancelled_input_binding.receiver_origin,
@@ -1107,7 +1116,10 @@ impl SessionActor {
         };
         if rewound_input.is_none()
             && !parent_turn_unsettled
-            && let Some(prompt_id) = cancelled_prompt_id.or(no_task_pinned_prompt_id)
+            && let Some(prompt_id) = cancelled_prompt_id
+                .as_ref()
+                .or(no_task_pinned_prompt_id.as_ref())
+                .cloned()
         {
             // Only a cancel that ends a turn counts, and before the terminal's snapshot so it lands
             // on this turn's row. An idle Esc has no turn; a rewind replaces the turn, not stops it.
@@ -1191,7 +1203,9 @@ impl SessionActor {
             let _ = input
                 .respond_to
                 .send(
-                    (if is_running_turn {
+                    (if is_running_turn
+                        || no_task_pinned_prompt_id.as_deref() == Some(input.prompt_id.as_str())
+                    {
                         terminal_result.clone()
                     } else {
                         Ok(())

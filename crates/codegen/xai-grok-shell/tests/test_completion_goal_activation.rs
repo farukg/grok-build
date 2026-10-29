@@ -14,6 +14,7 @@ const CHILD: &str = "019e0000-0000-7000-8000-0000000000d1";
 fn child_created_before_parent_goal_activation_delivers_success_and_error_to_the_later_goal() {
     for failed in [false, true] {
         run_agent_test(move |cwd, server| async move {
+            let _planner = xai_grok_test_support::EnvGuard::set("GROK_GOAL_PLANNER", "0");
             let _classifier = xai_grok_test_support::EnvGuard::set("GROK_GOAL_CLASSIFIER", "0");
             let _summary = xai_grok_test_support::EnvGuard::set("GROK_GOAL_SUMMARY", "0");
             let _workflows = xai_grok_test_support::EnvGuard::set("GROK_WORKFLOWS", "0");
@@ -74,7 +75,16 @@ fn child_created_before_parent_goal_activation_delivers_success_and_error_to_the
             );
             let goal = prompt_turn(&conn, &sid, "/goal later-goal-seed");
             tokio::pin!(goal);
-            tokio::select! { _ = goal_sample.wait_blocked() => {}, _ = &mut goal => panic!("later goal ended before its active sampling boundary") }
+            tokio::select! {
+                _ = goal_sample.wait_blocked() => {},
+                _ = &mut goal => panic!(
+                    "later goal ended before its active sampling boundary; {}; routes={:?}",
+                    goal_sample.diagnostic(),
+                    server.requests().into_iter()
+                        .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
+                        .collect::<Vec<_>>()
+                ),
+            }
             child.release();
             tokio::select! { _ = recorder.child_finished(CHILD) => {}, _ = &mut goal => panic!("later goal ended before the earlier child terminal") }
             goal_sample.release();
@@ -88,13 +98,15 @@ fn child_created_before_parent_goal_activation_delivers_success_and_error_to_the
             assert!(body.contains(&format!("Exact durable result for completion {CHILD}/")));
             consumed.release();
             goal.await;
+            let items = history(&cwd, &sid).await;
             assert_eq!(
-                history(&cwd, &sid)
-                    .await
+                items
                     .iter()
                     .filter(|item| item.text_content().contains(marker))
                     .count(),
-                1
+                1,
+                "original outcome must occur once in durable history; matches={:?}",
+                matching_history_metadata(&items, marker)
             );
             spawn.assert_satisfied();
             child.assert_satisfied();

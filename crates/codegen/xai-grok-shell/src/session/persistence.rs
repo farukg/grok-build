@@ -3763,6 +3763,16 @@ pub(crate) async fn new_with_explicit_dir(
 
     let (handle, rx, summary_tx, disk_full_tx) = actor_channel();
 
+    let mut summary_gen = crate::session::summary::SummaryGenerator::new(
+        crate::session::summary::SummaryConfig {
+            sampling_client,
+            model: session_summary_model,
+            persistence_tx: summary_tx,
+        },
+    );
+    if is_wake && !summary.display_title().is_empty() {
+        summary_gen.mark_done();
+    }
     let info_clone = info.clone();
     let storage: Arc<dyn StorageAdapter> = Arc::new(storage);
     tokio::task::spawn(async move {
@@ -3775,13 +3785,7 @@ pub(crate) async fn new_with_explicit_dir(
             remote_sync: None,
             created_fresh: false,
             relay_sync: None,
-            summary: crate::session::summary::SummaryGenerator::new(
-                crate::session::summary::SummaryConfig {
-                    sampling_client,
-                    model: session_summary_model,
-                    persistence_tx: summary_tx,
-                },
-            ),
+            summary: summary_gen,
             registry_title_sync: None,
             gateway: None,
             // A bootstrap never sees a subagent session: `list_sessions_sync` drops hidden summaries, and a subagent kind is hidden

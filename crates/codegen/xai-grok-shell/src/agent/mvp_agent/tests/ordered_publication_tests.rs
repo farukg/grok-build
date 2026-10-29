@@ -403,9 +403,11 @@ fn actual_working_resident_cut_keeps_original_task_and_prompt_rpc() {
             result = &mut prompt => panic!("original inference must remain held: {result:?}"),
             reached = tokio::time::timeout(std::time::Duration::from_secs(30), blocked.wait_blocked()) => {
                 reached.unwrap_or_else(|error| panic!(
-                    "original dispatch did not reach its barrier: {error}; {}; requests={}; active_work={}; snapshot={:?}",
+                    "original dispatch did not reach its barrier: {error}; {}; routes={:?}; active_work={}; snapshot={:?}",
                     blocked.diagnostic(),
-                    server.request_bodies().len(),
+                    server.requests().into_iter()
+                        .map(|entry| (entry.method, entry.path, entry.endpoint, entry.conversation))
+                        .collect::<Vec<_>>(),
                     handle.active_work.load(std::sync::atomic::Ordering::Acquire),
                     agent.current_actions_snapshot(binding.clone()),
                 ));

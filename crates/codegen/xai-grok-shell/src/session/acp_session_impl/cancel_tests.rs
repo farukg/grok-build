@@ -192,15 +192,19 @@ async fn clear_wake_suppression_re_admits_wakes_and_persists_automatic() {
                 !actor.state.lock().await.notifications_suppressed,
                 "notification suppression must clear"
             );
-            let mut saw_automatic = false;
-            while let Ok(msg) = persistence_rx.try_recv() {
-                if let PersistenceMsg::CompletionWakePolicy(
-                    crate::session::completion_delivery::CompletionWakePolicy::Automatic,
-                ) = msg
-                {
-                    saw_automatic = true;
+            let saw_automatic = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                while let Some(msg) = persistence_rx.recv().await {
+                    if let PersistenceMsg::CompletionWakePolicy(
+                        crate::session::completion_delivery::CompletionWakePolicy::Automatic,
+                    ) = msg
+                    {
+                        return true;
+                    }
                 }
-            }
+                false
+            })
+            .await
+            .expect("wake policy must reach the persistence observer");
             assert!(
                 saw_automatic,
                 "the clear must persist the Automatic policy so the barrier cannot survive a restart"
