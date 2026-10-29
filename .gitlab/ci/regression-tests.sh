@@ -8,6 +8,48 @@ sequence=0
 : > dist/regression/summary.txt
 source .gitlab/ci/test-target.sh
 
+declare -A archived_future_reports=()
+archive_future_reports() {
+    local evidence=$1 log report_id report_exit report
+    local -a logs=()
+    for log in "$evidence.compile.log" "$evidence.run.log"; do
+        if [[ -f $log ]]; then
+            logs+=("$log")
+        fi
+    done
+    if (( ${#logs[@]} == 0 )); then
+        return 0
+    fi
+    awk '
+        {
+            line = $0
+            while (match(line, /cargo report future-incompatibilities --id [0-9]+/)) {
+                command = substr(line, RSTART, RLENGTH)
+                sub(/^.*--id /, "", command)
+                printf "%s\t%s\t%s\n", command, FILENAME, FNR
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+    ' "${logs[@]}" > "$evidence.future-report-sources.tsv"
+    cut -f1 "$evidence.future-report-sources.tsv" | sort -u > "$evidence.future-report-ids"
+    printf 'future_report_ids=%s.future-report-ids future_report_sources=%s.future-report-sources.tsv\n' \
+        "$evidence" "$evidence" >> dist/regression/summary.txt
+    while IFS= read -r report_id; do
+        if [[ -n ${archived_future_reports[$report_id]+present} ]]; then
+            continue
+        fi
+        report="dist/regression/future-incompatibilities-id-$report_id"
+        report_exit=0
+        printf 'cargo --color never report future-incompatibilities --id %s\n' "$report_id" > "$report.command"
+        cargo --color never report future-incompatibilities --id "$report_id" > "$report.log" 2>&1 || report_exit=$?
+        printf 'exit=%s\n' "$report_exit" > "$report.result"
+        printf 'future_report_kind=explicit-id future_report_id=%s future_report_exit=%s future_report_log=%s.log future_report_command=%s.command future_report_result=%s.result\n' \
+            "$report_id" "$report_exit" "$report" "$report" "$report" >> dist/regression/summary.txt
+        printf 'Future-incompatibility diagnostics: id=%s exit=%s; full context: %s.log\n' "$report_id" "$report_exit" "$report"
+        archived_future_reports[$report_id]=$report
+    done < "$evidence.future-report-ids"
+}
+
 run_tests() {
     local package=$1 target=$2 filter
     shift 2
@@ -52,6 +94,7 @@ run_tests() {
     fi
     local result=0
     run_test_target "$evidence" "$policy" command "$@" || result=$?
+    archive_future_reports "$evidence"
     printf 'target=%s package=%s target_name=%s exit=%s command=%s.command result=%s.result\n' \
         "$sequence" "$package" "$target" "$result" "$evidence" "$evidence" >> dist/regression/summary.txt
     if (( result != 0 )); then
@@ -119,6 +162,32 @@ run_tests xai-grok-pager lib --all-executed \
 run_tests xai-grok-pager lib --all-executed \
     'app::acp_handler::tests::tool_execution_timing::frontend_publication::actual_transport_only_resident_load_never_claims_pager_settlement' \
     -- --exact --ignored || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'session::acp_session::cancel::tests::clear_wake_suppression_re_admits_wakes_and_persists_automatic' \
+    'session::storage::jsonl::completion::tests::terminal_restart::parent_admission_distinguishes_child_history_hiding_from_explicit_retirement' \
+    -- --exact || status=$?
+
+# Preserve complete failures before the broader shell invocation can time out.
+run_tests xai-grok-shell lib --all-executed \
+    'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::completed_native_worker_admits_agent_bootstrap_once' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::completed_native_worker_admits_human_bootstrap_once' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::completed_native_worker_receiver_contention_is_unconfirmed_without_model_input' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'session::acp_session::cancel_running_task_tests::cancel_propagates_to_sampler_handle_so_no_further_emission' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'agent::mvp_agent::tests::ordered_publication_tests::actual_working_resident_cut_keeps_original_task_and_prompt_rpc' \
+    -- --exact || status=$?
 
 run_tests xai-grok-shell lib \
     'agent::update_chunk_merge::progress_tests::' \
@@ -279,6 +348,7 @@ future_report_exit=0
 cargo --color never report future-incompatibilities > dist/regression/future-incompatibilities.log 2>&1 || future_report_exit=$?
 printf 'Future-incompatibility diagnostics: exit=%s; full context: dist/regression/future-incompatibilities.log\n' "$future_report_exit"
 printf 'future_report_exit=%s\nfuture_report_log=dist/regression/future-incompatibilities.log\n' "$future_report_exit" >> dist/regression/summary.txt
+printf 'future_report_kind=default\n' >> dist/regression/summary.txt
 
 printf 'attempted_targets=%s\nexecution_exit=%s\n' "$sequence" "$status" >> dist/regression/summary.txt
 exit "$status"
