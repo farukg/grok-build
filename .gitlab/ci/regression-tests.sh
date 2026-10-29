@@ -73,7 +73,7 @@ run_tests() {
         xai-grok-pager | xai-grok-shell)
             command+=(-p "$package" --locked --features test-support)
             ;;
-        xai-acp-lib | xai-grok-pager-render | xai-grok-session-events | xai-grok-sampler | xai-tool-runtime | xai-grok-pager-bin | xai-grok-sampling-types | xai-grok-tools | xai-grok-test-support)
+        xai-acp-lib | xai-grok-markdown | xai-grok-pager-render | xai-grok-session-events | xai-grok-sampler | xai-tool-runtime | xai-grok-pager-bin | xai-grok-sampling-types | xai-grok-tools | xai-grok-test-support)
             command+=(-p "$package" --locked)
             ;;
         *)
@@ -109,6 +109,14 @@ run_tests() {
 
 # Keep independent targets diagnostic even when an earlier target fails.
 status=0
+run_tests xai-grok-markdown lib --all-executed \
+    'streaming::source_tests::' \
+    'streaming::tests::' \
+    'latex_delimiters::tests::' \
+    'hyperlinks::hyperlink_tests::' \
+    'url_scan::tests::' \
+    'output::code_block_span_tests::' || status=$?
+
 run_tests xai-grok-pager-render lib \
     'render::wrapping::tests::' \
     'bounded_prefix_matches_the_existing_full_wrap' \
@@ -143,6 +151,25 @@ run_tests xai-grok-pager lib \
     'views::dashboard::render::tests::' || status=$?
 
 run_tests xai-grok-pager lib --all-executed \
+    'scrollback::scrollback_pane::tests::' \
+    'scrollback::wrappers::entry_renderer::tests::' \
+    'app::session_inline_output::tests::' \
+    'app::session_inline_output::paint_tests::' \
+    'app::session_inline_output::completion_tests::' \
+    'scrollback::blocks::markdown_content::source_tests::' \
+    'scrollback::blocks::markdown_content::tests::' \
+    'scrollback::blocks::agent::tests::' \
+    'scrollback::blocks::thinking::tests::' \
+    'views::block_viewer::tests::' \
+    'acp::tracker::tests::whitespace_thought_chunk_is_preserved_until_a_blank_block_is_finished' \
+    'acp::tracker::tests::runtime::' \
+    'app::acp_handler::tests::terminal_activity_integration::terminal_during_reload_cannot_cross_live_and_historical_legacy_owners' \
+    'app::acp_handler::tests::terminal_activity_integration::registered_terminal_cannot_confirm_a_drained_legacy_entry_with_the_same_provider' \
+    'app::acp_handler::tests::terminal_activity_integration::recycled_legacy_provider_cannot_confirm_either_drained_entry' \
+    'app::acp_handler::tests::session_events::compact_auth_failure_transfers_original_prompt_at_its_rpc_response' \
+    'app::acp_handler::tests::sampling_lifecycle::' \
+    'app::dispatch::tests::auth::' \
+    'app::dispatch::tests::session::load::' \
     'app::acp_handler::tests::tool_execution_timing::' \
     'app::acp_handler::tests::tool_execution_timing::frontend_current_actions::' \
     'app::acp_handler::tests::tool_execution_timing::frontend_publication::stale_generation_reply_and_marker_cannot_take_current_load_custody' \
@@ -169,6 +196,33 @@ run_tests xai-grok-shell lib --all-executed \
     -- --exact || status=$?
 
 # Preserve complete failures before the broader shell invocation can time out.
+run_tests xai-grok-shell lib --all-executed \
+    'session::acp_session::cancel_running_task_tests::cancel_resolves_front_when_running_task_is_none' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'session::acp_session::cancel_running_task_tests::cancel_running_task_teardown_clears_running_and_pending_work' \
+    -- --exact || status=$?
+
+run_tests xai-grok-shell lib --all-executed \
+    'session::acp_session::turn_end::durability_tests::pinned_no_task_cancel_waits_for_real_commit_and_rejects_late_completion' \
+    'session::acp_session::turn_end::durability_tests::pinned_no_task_cancel_returns_original_write_error_and_preserves_next_rpc' \
+    'session::acp_session::turn_end::durability_tests::pinned_no_task_cancel_returns_lost_ack_error_and_preserves_next_rpc' \
+    'session::acp_session::turn_end::durability_tests::caller_completion_waits_for_replayable_terminal_commit' \
+    'session::acp_session::turn_end::durability_tests::failed_or_lost_terminal_ack_never_returns_caller_success' \
+    'session::acp_session::prompt_queue_actor_tests::no_task_cancel_and_promoter_choose_one_owner' \
+    'session::acp_session::prompt_queue_actor_tests::dropped_finalization_lease_blocks_production_promotion' \
+    'session::acp_session::prompt_queue_actor_tests::stale_rewind_prompt_id_does_not_cancel_promoted_front' \
+    'session::acp_session::prompt_queue_actor_tests::claimed_rewind_leaves_queued_next_prompt_untouched' \
+    'session::acp_session::prompt_queue_actor_tests::stale_completion_does_not_clear_promoted_turns_running_task' \
+    'session::acp_session::turn_completion_emit_tests::cancel_without_running_task_persists_none_elapsed' \
+    'session::acp_session::turn_completion_emit_tests::send_now_cancel_in_completion_race_window_still_persists_turn_completed' \
+    'session::acp_session::turn_end_reporting_tests::stale_completion_does_not_post_process_the_successor_turn' \
+    'session::acp_session::turn_end_reporting_tests::a_completion_arriving_after_its_cancel_reports_nothing' \
+    'session::acp_session::cancel_running_task_tests::cancel_running_task_interactive_preserves_queued_work' \
+    'session::acp_session::cancel_running_task_tests::cancel_after_own_completion_sweep_preserves_queued_user_prompt' \
+    -- --exact || status=$?
+
 run_tests xai-grok-shell lib --all-executed \
     'agent::mvp_agent::tests::child_prompt_tests::native_wake_admission::completed_native_worker_admits_agent_bootstrap_once' \
     -- --exact || status=$?
