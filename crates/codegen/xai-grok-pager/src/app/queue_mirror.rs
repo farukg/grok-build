@@ -5,7 +5,7 @@ use xai_grok_shell::extensions::interject::{QueueOperation, QueueResponse};
 impl AppView {
     pub(crate) fn apply_queue_send_now_reply(
         &mut self,
-        agent_id: super::agent::AgentId,
+        agent_id: crate::app::agent::AgentId,
         operation: QueueOperation,
         binding: xai_grok_shell::session::current_actions::SnapshotBinding,
         result: Result<QueueResponse, QueueTransport>,

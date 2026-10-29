@@ -20,7 +20,7 @@ fn replay(app: &mut AppView, update: SessionUpdate) {
         update,
         meta: Some(crate::acp::meta::ReplayMetaStamp::replayed()),
     };
-    let (response_tx, _response) = std::sync::mpsc::channel();
+    let (response_tx, _response) = tokio::sync::oneshot::channel();
     crate::app::acp_handler::handle(
         xai_acp_lib::AcpClientMessage::ExtNotification(xai_acp_lib::AcpArgs {
             request: xai_grok_test_support::acp_fixtures::ext_notification(
@@ -55,10 +55,10 @@ fn replay_task(app: &mut AppView, id: &str, output: &str) {
                 command: "printf fixture".into(),
                 display_command: None,
                 cwd: "/tmp".into(),
-                start_time: Some(std::time::SystemTime::UNIX_EPOCH),
+                start_time: std::time::SystemTime::UNIX_EPOCH,
                 end_time: Some(std::time::SystemTime::UNIX_EPOCH),
                 output: output.into(),
-                output_file: format!("/tmp/paint-{id}.log"),
+                output_file: format!("/tmp/paint-{id}.log").into(),
                 truncated: false,
                 exit_code: Some(0),
                 signal: None,
@@ -70,7 +70,7 @@ fn replay_task(app: &mut AppView, id: &str, output: &str) {
                 owner_session_id: None,
                 description: None,
                 is_backgrounded: true,
-                output_total_bytes: output.len() as u64,
+                output_total_bytes: output.len(),
             },
             will_wake: false,
         },
@@ -326,7 +326,7 @@ fn replayed_task_width_stays_settled_across_sidebar_resize_and_scroll_edges() {
 fn deferred_child_windows_keep_collapsed_task_width_and_do_not_load_inactive_children() {
     let _theme = crate::theme::cache::pin_theme();
     let mut app = replayed_app();
-    let (_, mut child) = app.agents.remove_tree(AgentId(0)).pop().unwrap();
+    let mut child = app.agents.remove_tree(AgentId(0)).pop().unwrap();
     for index in 0..160 {
         child
             .scrollback
