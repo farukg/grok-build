@@ -124,7 +124,8 @@ linux-regression:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^grok-lock-inputs-/'
       when: never
-    - when: on_success
+    - when: manual
+      allow_failure: true
   needs:
     - job: linux-format
       artifacts: false

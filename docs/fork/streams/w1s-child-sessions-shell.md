@@ -45,21 +45,38 @@ Implemented (shell only):
    child like `x.ai/subagent/resume` (M4): a new child starting from the finished one's history,
    response `_meta.childResume = {kind: resumed | queued | refused}`; the pager sees it as a new
    subagent. No error any more.
-2. Decided (Faruk): ContinuedAs after a restart is the pager's job in W3 via
-   `x.ai/subagent/resume` on "unknown session id".
+2. ContinuedAs after a restart uses the W3 pager route via `x.ai/subagent/resume` on
+   "unknown session id". This is not proof that every ordinary or workflow-owned child
+   can be found and continued after restart; see the acceptance matrix below.
 3. Decided (Faruk): subagent behavior stays as it is; the `is_subagent` gates for hooks and the ↑
    prompt history are not switched to authority. ↑ history in child views is a low-priority
    follow-up (see `streams/w1h-hold-deliver.md`).
-4. By-id handlers other than prompt/cancel (set_model, compact, mode, …) still resolve only root
-   sessions.
+4. By-id handlers including set_model, compact and mode can reach a running addressed child.
+   Finished-child management remains limited: compact and session-info have an authored,
+   unverified reload patch; set_model refuses an actorless child, and mode can hang without
+   an actor. See [W3](w3-pager-child-sessions.md) for the separate handler limitations.
 
 Verified: `cargo test -p xai-grok-shell --lib` 7074 passed, the same 10 environment failures as
 `main`; `cargo check -p xai-grok-pager-bin`; clippy on the touched crates clean.
 
+## Routing and acceptance gap
+
+The native coordinator's message target excludes resident workflow-owned active,
+pending and completed children; its list and wake paths also exclude workflow
+ownership. A running target's refused queue is an error, not a successful resume;
+a finished non-wakeable target may instead spawn a new child from its source. Disk
+resolution after restart is a distinct path. Workflow-run resume reloads the run,
+not proof that an individual child's transcript resumed. Source paths are
+`T/task/coordinator/{agent_targets,list_owned,wake}.rs`, `T/task/resume.rs` and
+`S/session/workflow/request_service.rs`. Acceptance for ordinary and individually
+workflow-created children is specified in [GRB-001](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-001-tui-parity-milestones.plan.md#individual-child-resume); it remains open.
+
 ## Next steps
-1. Done: after a shell restart the child id is unknown. The pager stamps `_meta.childOf = <parent session id>`
-   on prompts sent from a child view (`PromptTarget::ChildOf`, text prompts, send-now and skill blocks;
-   not bash or execute-plan), and the shell continues the child through the M4 resume route
-   (`continue_child_with_prompt`). Without `childOf` an unknown id is still `InvalidParams`.
+1. Implemented path: after a shell restart the child id can be unknown. The pager stamps `_meta.childOf = <parent session id>`
+   on prompts sent from a child view (`PromptTarget::ChildOf`), including text, send-now, skill
+   blocks, bash, execute-plan and set-mode-then-prompt. The shell continues the child through the
+   M4 resume route (`continue_child_with_prompt`). The preceding mode request is separate from
+   the prompt and remains subject to the actorless mode limitation above. Without `childOf` an
+   unknown id is still `InvalidParams`.
 2. Pager W3: consume `childSessions: "firstClass"` (prompt child sids, handle `childWake`,
    resume via `x.ai/subagent/resume` on "unknown session id").

@@ -204,7 +204,7 @@ its present local availability has not been checked.
 | M10 goal planner: queue instead of abort, visible fork failure, forks keep summary | f3 |
 | M9 real thinking levels and served model (requested → served) | f5, f6 |
 | M1/M3 session switcher everywhere, deterministic subagent tree navigation, one row-to-child open path | f3, f4 |
-| M4 subagent resume in every state | f3, f4 |
+| M4 subagent resume | f3, f4 · implemented routes; ordinary and workflow-child state, restart, replay and model/cost acceptance remain open below |
 | M2 timeline outline over every entry, expandable F6 panel with scroll sync and item actions | f4 |
 | Feedback tool gated by `features.feedback` | f6 |
 | `/compact` "Send now" runs a queued agent command | f3 |
@@ -216,15 +216,15 @@ its present local availability has not been checked.
 | M11 typed subagent interruption state (types only) | f2, f6 · `streams/m11-subagent-control.md` |
 | M5 remove turns / tool exchanges from the model context via the timeline, persisted across replay | f3, f4 |
 | W2 subagent view = normal session view (child sessions are top-level views, takeover modal removed) | f3, f4 · `streams/w2-subagent-session-view.md` |
-| W1-S human prompts reach child sessions by id, cancel by child id, `childSessions: "firstClass"` | f3 · `streams/w1s-child-sessions-shell.md` |
+| W1-S human prompts reach addressable child sessions by id, cancel by child id, `childSessions: "firstClass"` | f3 · `streams/w1s-child-sessions-shell.md`; workflow-owned children have routing exclusions |
 | W1-H automatic completion by default; explicit child header / F5 manual toggle and caller dock warning (current author-only update awaits CI) | f3, f4 · `streams/w1h-hold-deliver.md` |
-| W1-S/W3 a finished or restart-lost child continues like a resume (`_meta.childResume`, pager stamps `_meta.childOf`) | f3, f4 |
+| W1-S/W3 child continuation routes (`_meta.childResume`, pager stamps `_meta.childOf`) | f3, f4 · not universal restart/workflow-child acceptance |
 | Fix: by-id handlers (set_model, compact, mode …) resolve a running child session | f3 |
 | F1-core A1/A2/B1: typed origins, request projection under `ContextPolicy`, `x.ai/session/context_policy` get/set persisted, compaction summarizes what the policy sends | f2, f3 · `streams/f1-context-provenance.md` |
 | W3 (part): pager knows `ShellChildSupport`, prompts from child views name their parent, a resumed finished child opens in place | f3, f4 · `streams/w3-pager-child-sessions.md` |
 | F2/F3 (part): F7 sidebar with context switches, F6 timeline column, three-column layout, dock, Message Display rows | f4 · `streams/f2-f3-sidebars.md` |
 | M11 B1: `SubagentResult.state` (typed `SubagentState`), interruption causes with actor, pause keeps a child wakeable, `x.ai/subagent/cancel` `mode: stop\|pause` | f2, f6 · `streams/m11-subagent-control.md` |
-| Fix: resuming a finished subagent wakes it under its own id instead of starting a new one | f3 |
+| Finished subagent resume can wake under the same id | f3 · a non-wakeable finished source can instead spawn a new continuation |
 | M12 F6 outline and F7 sidebar as trees: arrows open/close/walk, Shift/Ctrl+Enter, Shift/Ctrl+click, `+ - *` bulk gestures | f4 · `design/f6-f7.md`, `views/tree_nav.rs` |
 | M13 every F6/F7 action works or names the reason: removal verdict, `Removed { removed, skipped }`, `PersistFailed { removed }`, one removal in flight | f3, f4 · `app/agent_view/removal_verdict.rs`, shell `session/remove_items.rs` |
 | M14 row colour and structure per kind, state and context presence | f4 · `views/row_style.rs` |
@@ -293,6 +293,27 @@ unchanged. No new feature implementation or repeat old-session-paint test is req
 
 Historical stream references and `plan/grb-001.md` remain useful capability/design
 owners, not authority to restart obsolete branch or local-verification workflows.
+
+## Individual child resume: open acceptance
+
+Native message/list/wake routing excludes workflow-owned children in relevant resident
+states; an active workflow child can therefore be refused rather than queued. A
+finished non-wakeable child can instead spawn a continuation with a new ID; a wake
+retains the original ID. Resuming a workflow run is a separate operation from
+resuming one child. See [W1-S](streams/w1s-child-sessions-shell.md) and
+[W3](streams/w3-pager-child-sessions.md).
+
+One observed completed workflow child was resumed by native spawn after restart;
+metadata recorded `resumed_from` and `effective_context_source=resumed`. This is
+one case, not general acceptance. The user reported an empty child history view;
+its cause and the actual next request are unknown. Both original and successor
+observed usage reported `gpt-6-luna`; both ended with 404, whose cause is unknown.
+Whether resumed usage aggregates are cumulative or represent new usage is unknown;
+copied or rehydrated aggregates are not per-request cost evidence. A route alias is not a served-model guarantee;
+cache reads, writes, TTL and incremental price require independently correlated
+provider evidence, and missing data must be shown as unknown. The native resume
+contract ignores a supplied model override rather than forcing a different model.
+The [milestone acceptance matrix](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-001-tui-parity-milestones.plan.md#individual-child-resume) owns the remaining proof.
 
 ## Context reporting and tool-call diagnosis
 

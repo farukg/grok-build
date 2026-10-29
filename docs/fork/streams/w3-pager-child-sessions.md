@@ -7,7 +7,8 @@ Branch: `grb/w3`. Shell side is W1-S/W1-H (on `main`).
   (`P/acp/mod.rs`), kept as `AppView::shell_child_support`. A prompt from a subagent view on a
   legacy shell is refused with a toast (`P/app/dispatch/prompt.rs`), the composer keeps its text.
 - Prompts from a child view carry `_meta.childOf` (`PromptTarget::ChildOf`) so a restarted shell
-  continues the child through the resume route (`S/agent/mvp_agent/child_prompt.rs`).
+  can continue an unknown child through the resume route (`S/agent/mvp_agent/child_prompt.rs`);
+  this route alone does not establish all restart or workflow-child cases.
 - `_meta.childResume = resumed{sourceId}` on a prompt response marks `AppView::follow_resumed_child`;
   the spawn that names that source (`resumed_from`) opens in place of the finished view
   (`P/app/acp_handler/session_notification.rs`, `apply_child_view_follow_up`). A continuation nobody
@@ -15,6 +16,15 @@ Branch: `grb/w3`. Shell side is W1-S/W1-H (on `main`).
 - By-id shell handlers (set_model, compact, mode, …) reach a running child (`8ea9759`).
 
 ## Open
+
+A user observed a resumed workflow child with an empty history view and about 300K
+context; the cause is unknown. Resume metadata, loaded model context and pager
+replay are separate evidence. Verify replay and continuation independently for
+ordinary and workflow-created children, including same-ID wake, new-ID spawn and
+restart, against the [GRB-001 acceptance matrix](/home/fg/projects/org/governance/sigma/context-modules.d/500_work.d/areas.d/grok-build-fork.d/plans.d/grb-001-tui-parity-milestones.plan.md#individual-child-resume).
+The existing follow-path tests below are partial source evidence, not end-to-end
+acceptance.
+
 1. Finished-child management has an authored, unverified shell patch: compact and session-info
    reload the saved actor under its existing session/agent/attempt identity without a prompt.
    Preparation is bounded (60 s); cancellation reaches the queued/running actor operation.
