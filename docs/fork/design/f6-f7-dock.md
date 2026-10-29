@@ -8,10 +8,9 @@ The screenshot shows the dock above the prompt (`P/views/dock/mod.rs`, rows from
 - one row per subagent: `· Subagent <description> · <activity>`, with the right-aligned meta `resumed <model> <elapsed> · <tokens>/<window> [↗][X]`.
 
 ## Requirements
-- **Same component, new place.** The dock, with its sections (Workflows, Subagents, Tasks, Watchers, Queued), moves into the F7 sidebar.
-  - Unchanged: content, sections, collapse chevrons, show-N-more, spinner, `[↗]` open, `[X]`/stop, click and keyboard behavior, and the confirmation for stop.
-  - One implementation: the sidebar hosts the existing dock renderer and hit areas, with no second copy.
-  - Verify in code whether the Queued section belongs to the same component. If it does, it moves along. If moving it would break composer-adjacent queue editing (Send now / edit / cancel), say so with evidence and propose the least surprising option.
+- **Shared work display.** The dock contains Workflows, Subagents, Tasks and Watchers. Todos and the composer queue are independent areas and must not belong to the dock. The current `Queued` dock section is an implementation gap; preserve queue editing and actions when separating it.
+  - Use the richer `dock off` task presentation, including its colors, status information, controls and output-line badge, for top, bottom and F7 work displays as well.
+  - Preserve section navigation, collapse, show-N-more, open and stop actions, keyboard and mouse behavior, and stop confirmation. Share presentation logic and source state across views.
 - **The only intended difference is less width.** Faruk decided how to handle that:
   - One line per row. Two-line rows are rejected.
   - Information must not be lost: no shortening, no dropping of fields.
@@ -27,8 +26,7 @@ The screenshot shows the dock above the prompt (`P/views/dock/mod.rs`, rows from
     - keyboard equivalent: the selected row shows the same detail.
   - Icons come from the existing glyph owner (`crate::glyphs`), including its ASCII fallback behavior. Invent no second glyph table.
   - The width-driven layout decision is made once per resize and cached, O(visible rows) per frame. Hover detail is rendered only for the hovered row.
-- **F7 closed means closed.** Then the dock is not visible anywhere, and it does not stay above the prompt. The dock renders only inside the F7 sidebar. Remove the above-prompt placement; there is no fallback and no double placement.
-  - Say what this means for the Queued section and composer-adjacent queue actions, with evidence. If Queued is part of the dock component, decide whether it moves into F7 too or stays with the composer as the prompt's own queue. Faruk's rule "geschlossen ist geschlossen" applies to what moves.
+- **Independent placements.** F7 hosts its own work display while open; top, bottom and off select the main-session work placement. Closing F7 closes its sidebar display. The independent queue remains available at the composer according to its own visibility and interaction rules.
 - **Performance:** no new per-frame work beyond today's dock and no extra allocations per frame. The dock row cache and layout stay shared.
 - Works identically in main and subagent session views.
 
