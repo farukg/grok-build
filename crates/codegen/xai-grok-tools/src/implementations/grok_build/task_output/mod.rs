@@ -308,23 +308,6 @@ impl TaskOutputTool {
         }
     }
 
-    pub(crate) async fn run_multi_tasks(
-        task_ids: &[String],
-        timeout_ms: Option<u64>,
-        resources: SharedResources,
-        tool_name_for_truncation: &str,
-    ) -> Result<TaskOutputOutput, xai_tool_runtime::ToolError> {
-        Self::run_multi_tasks_limited(
-            task_ids,
-            timeout_ms,
-            resources,
-            tool_name_for_truncation,
-            None,
-            None,
-        )
-        .await
-    }
-
     pub(crate) async fn run_multi_tasks_limited(
         task_ids: &[String],
         timeout_ms: Option<u64>,
@@ -384,10 +367,7 @@ impl TaskOutputTool {
         } else {
             initial
         };
-        if let Some(observer) = observations {
-            observer.extend(resolved.observations.snapshot());
-        }
-        let results = resolved.results;
+        let results = resolved.into_delivered_results(observations);
 
         let completed_count = results.iter().filter(|r| r.is_terminal()).count();
         let total = results.len();
@@ -427,6 +407,18 @@ pub(crate) struct ResolveResult {
     pub(crate) pending_bash_ids: Vec<String>,
     pub(crate) pending_subagent_ids: Vec<String>,
     pub(crate) observations: crate::types::completion_observation::SubagentCompletionObservations,
+}
+
+impl ResolveResult {
+    fn into_delivered_results(
+        self,
+        observations: Option<crate::types::completion_observation::SubagentCompletionObservations>,
+    ) -> Vec<TaskOutputResult> {
+        if let Some(observer) = observations {
+            observer.extend(self.observations.snapshot());
+        }
+        self.results
+    }
 }
 
 pub(crate) async fn resolve_tasks(
@@ -1956,11 +1948,13 @@ mod tests {
         let snapshot = make_snapshot("task-done", true, Some(0));
         let (resources, waited, _) = resources_with_stamp_wait(snapshot);
         let started = std::time::Instant::now();
-        let result = TaskOutputTool::run_multi_tasks(
+        let result = TaskOutputTool::run_multi_tasks_limited(
             &["task-done".into()],
             Some(600_000),
             resources.into_shared(),
             "get_command_or_subagent_output",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1989,11 +1983,13 @@ mod tests {
         let snapshot = make_snapshot("task-run", false, None);
         let (resources, waited, _) = resources_with_stamp_wait(snapshot);
         let started = std::time::Instant::now();
-        let result = TaskOutputTool::run_multi_tasks(
+        let result = TaskOutputTool::run_multi_tasks_limited(
             &["task-run".into()],
             Some(200),
             resources.into_shared(),
             "get_command_or_subagent_output",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -2835,11 +2831,13 @@ mod tests {
             }
         });
         let started = std::time::Instant::now();
-        let result = TaskOutputTool::run_multi_tasks(
+        let result = TaskOutputTool::run_multi_tasks_limited(
             &["sub-done".into()],
             Some(600_000),
             shared,
             "get_command_or_subagent_output",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -2864,3 +2862,6 @@ mod tests {
 #[cfg(test)]
 #[path = "query_transport_tests.rs"]
 mod query_transport_tests;
+
+#[cfg(test)]
+mod wait_observation_tests;

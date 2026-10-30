@@ -292,6 +292,7 @@ run_tests xai-grok-shell lib --all-executed \
 run_tests xai-grok-tools lib --all-executed \
     'implementations::grok_build::task::backend::tests::' \
     'implementations::grok_build::task_output::query_transport_tests::' \
+    'implementations::grok_build::task_output::wait_observation_tests::' \
     'implementations::grok_build::list_subagents::tests::' \
     'implementations::grok_build::control_subagent::tests::' \
     'implementations::grok_build::task::coordinator::cancel_f3_tests::' || status=$?

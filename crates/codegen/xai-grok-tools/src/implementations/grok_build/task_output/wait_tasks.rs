@@ -140,6 +140,10 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
         use crate::types::tool_metadata::shared_resources;
 
         let resources = shared_resources(&ctx)?;
+        let observations = ctx
+            .extensions
+            .get::<crate::types::completion_observation::SubagentCompletionObservations>()
+            .map(|observer| (*observer).clone());
 
         if input.task_ids.is_empty() {
             return Err(xai_tool_runtime::ToolError::invalid_arguments(
@@ -160,11 +164,13 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
                 .timeout_ms
                 .filter(|ms| *ms > 0)
                 .unwrap_or(DEFAULT_WAIT_TIMEOUT.as_millis() as u64);
-            return TaskOutputTool::run_multi_tasks(
+            return TaskOutputTool::run_multi_tasks_limited(
                 &input.task_ids,
                 Some(ms),
                 resources,
                 "wait_commands_or_subagents",
+                None,
+                observations,
             )
             .await;
         }
@@ -212,7 +218,7 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
         let has_pending =
             !initial.pending_bash_ids.is_empty() || !initial.pending_subagent_ids.is_empty();
 
-        let results = if has_pending {
+        let resolved = if has_pending {
             let deadline = tokio::time::Instant::now() + timeout;
             let wait_hint = wait_any_event_driven(
                 &terminal,
@@ -232,10 +238,10 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
                 wait_hint,
             )
             .await?
-            .results
         } else {
-            initial.results
+            initial
         };
+        let results = resolved.into_delivered_results(observations);
 
         let completed_count = results.iter().filter(|r| r.is_terminal()).count();
         let total = results.len();
