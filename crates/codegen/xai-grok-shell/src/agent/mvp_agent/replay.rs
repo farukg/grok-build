@@ -183,7 +183,7 @@ impl MvpAgent {
             meta,
             ..
         } = notification;
-        let update = collapser.push(update)?;
+        let update = collapser.push(update, meta.as_ref())?;
         let mut notification = acp::SessionNotification::new(session_id, update);
         notification.meta = meta;
         if mark_replay {

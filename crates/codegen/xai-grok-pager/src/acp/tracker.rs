@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use tracing::debug;
 use xai_grok_shell::extensions::sampling_lifecycle::{RequestId, SamplingOwner};
+use xai_grok_shell::extensions::tool_timing::merge_tool_meta;
 use xai_grok_shell::session::storage::chunk_meta_flag;
 use xai_grok_tools::types::output::{BashOutput, ToolOutput};
 use xai_grok_tools::types::output::{ReadFileOutput, SearchToolOutput, WebFetchOutput};
@@ -48,12 +49,23 @@ use tools::{ToolInstances, ToolKey, ToolProjection, ToolProjectionAdmission};
 mod transcript;
 use transcript::{LiveStreamReconstruction, TranscriptUpdate, UserProjection};
 /// Convert a UTC millisecond timestamp to local time.
-fn utc_ms_to_local(ms: i64) -> DateTime<Local> {
+fn utc_ms_to_local(ms: i64) -> Option<DateTime<Local>> {
     chrono::Utc
         .timestamp_millis_opt(ms)
         .single()
         .map(|utc| utc.with_timezone(&Local))
-        .unwrap_or_else(Local::now)
+}
+
+fn row_created_at(meta: &NotificationMeta) -> Option<DateTime<Local>> {
+    match meta.agent_timestamp_ms {
+        Some(ms) => utc_ms_to_local(ms),
+        None if meta.is_replay => None,
+        None => Some(Local::now()),
+    }
+}
+
+fn tool_created_at(call: &acp::ToolCall) -> Option<DateTime<Local>> {
+    super::meta::tool_registration_timestamp_ms(call).and_then(utc_ms_to_local)
 }
 /// What the agent is currently doing within a turn. Note: `Idle` here means "the tracker has no in-flight work".
 /// The turn-status line uses this to name what the agent is blocked on instead of one generic "Waiting…". The view
@@ -1152,13 +1164,19 @@ impl AcpUpdateTracker {
     fn finish_completed_tool(
         &mut self,
         block: RenderBlock,
-        completion: ToolCompletion,
+        call: &acp::ToolCall,
         scrollback: &mut ScrollbackState,
         is_replay: bool,
     ) -> EntryId {
         let wants_hl = Self::edit_wants_file_hl(&block);
         let id = scrollback.push_block(block);
-        scrollback.set_tool_completion(id, completion);
+        if let Some(entry) = scrollback.get_by_id_mut(id) {
+            entry.created_at = tool_created_at(call);
+        }
+        scrollback.set_tool_completion(
+            id,
+            super::meta::tool_completion(call.status, call.meta.as_ref()),
+        );
         if !is_replay && wants_hl {
             self.pending_edit_hl.push(id);
         }
@@ -1368,10 +1386,18 @@ impl AcpUpdateTracker {
     /// Returns true if the scrollback was modified (needs redraw).
     pub fn handle_update(
         &mut self,
-        update: acp::SessionUpdate,
+        mut update: acp::SessionUpdate,
         meta: &NotificationMeta,
         scrollback: &mut ScrollbackState,
     ) -> bool {
+        if let acp::SessionUpdate::ToolCall(call) = &mut update {
+            xai_grok_shell::extensions::tool_timing::stamp_registration_timestamp(
+                call,
+                || row_created_at(meta)
+                    .map(|time| serde_json::Value::from(time.timestamp_millis()))
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
         let parsed;
         let meta = if matches!(meta.tool, super::tool_meta::ToolMetadata::NotTool)
             && matches!(
@@ -1632,11 +1658,8 @@ impl AcpUpdateTracker {
             scrollback.set_last_running(true);
             entry_id
         });
-        if is_new
-            && let Some(ts_ms) = meta.agent_timestamp_ms
-            && let Some(entry) = scrollback.get_by_id_mut(id)
-        {
-            entry.created_at = Some(utc_ms_to_local(ts_ms));
+        if is_new && let Some(entry) = scrollback.get_by_id_mut(id) {
+            entry.created_at = row_created_at(meta);
         }
         let offset = scrollback.stream_source_len(id);
         let changed = if meta.is_replay {
@@ -1672,12 +1695,16 @@ impl AcpUpdateTracker {
         if !crate::appearance::cache::load_show_thinking_blocks() {
             return false;
         }
+        let is_new = self.current_thinking.is_none();
         let id = *self.current_thinking.get_or_insert_with(|| {
             let block = RenderBlock::thinking_streaming();
             let entry_id = scrollback.push_block(block);
             scrollback.set_last_running(true);
             entry_id
         });
+        if is_new && let Some(entry) = scrollback.get_by_id_mut(id) {
+            entry.created_at = row_created_at(meta);
+        }
         if let (Some(agent_ts), Some(stream_start)) =
             (meta.agent_timestamp_ms, meta.stream_start_ms)
         {
@@ -1801,7 +1828,7 @@ impl AcpUpdateTracker {
             );
             let entry_id = self.finish_completed_tool(
                 block,
-                super::meta::tool_completion(tc.status, tc.meta.as_ref()),
+                &tc,
                 scrollback,
                 is_replay,
             );
@@ -1817,6 +1844,9 @@ impl AcpUpdateTracker {
                 &execution_clock,
             );
             let id = scrollback.push_block(block);
+            if let Some(entry) = scrollback.get_by_id_mut(id) {
+                entry.created_at = tool_created_at(&tc);
+            }
             scrollback.set_last_running(true);
             self.note_tool_projection(&key, ToolProjection::Entry(id));
             self.tool_context_ids
@@ -1900,7 +1930,7 @@ impl AcpUpdateTracker {
                         );
                         let entry_id = self.finish_completed_tool(
                             block,
-                            super::meta::tool_completion(base.status, base.meta.as_ref()),
+                            &base,
                             scrollback,
                             is_replay,
                         );
@@ -2058,7 +2088,7 @@ impl AcpUpdateTracker {
             } else {
                 let entry_id = self.finish_completed_tool(
                     block,
-                    super::meta::tool_completion(merged.status, merged.meta.as_ref()),
+                    &merged,
                     scrollback,
                     is_replay,
                 );
@@ -2130,7 +2160,7 @@ impl AcpUpdateTracker {
             let entry_id = scrollback.push_block(RenderBlock::Injected(block));
             let ts_ms = meta.turn_start_ms.or(meta.agent_timestamp_ms);
             if let Some(entry) = scrollback.get_by_id_mut(entry_id) {
-                entry.created_at = ts_ms.map(utc_ms_to_local);
+                entry.created_at = ts_ms.and_then(utc_ms_to_local);
             }
             return true;
         }
@@ -2165,7 +2195,7 @@ impl AcpUpdateTracker {
                             block.prompt_index = Some(pi);
                         }
                         if let Some(ms) = replay_ts {
-                            entry.created_at = Some(utc_ms_to_local(ms));
+                            entry.created_at = utc_ms_to_local(ms);
                         }
                         break;
                     }
@@ -2266,10 +2296,10 @@ impl AcpUpdateTracker {
         block.prompt_index = prompt_index;
         let entry_id = scrollback.push_block(RenderBlock::UserPrompt(block));
         let ts_ms = meta.turn_start_ms.or(meta.agent_timestamp_ms);
-        if let Some(ms) = ts_ms
+        if (ts_ms.is_some() || meta.is_replay)
             && let Some(entry) = scrollback.get_by_id_mut(entry_id)
         {
-            entry.created_at = Some(utc_ms_to_local(ms));
+            entry.created_at = ts_ms.and_then(utc_ms_to_local);
         }
         true
     }
@@ -2378,12 +2408,6 @@ fn merged_tool_status(
             acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress,
         ) => current,
         (_, incoming) => incoming,
-    }
-}
-
-fn merge_tool_meta(base: &mut Option<acp::Meta>, newer: Option<acp::Meta>) {
-    if let Some(newer) = newer {
-        base.get_or_insert_with(Default::default).extend(newer);
     }
 }
 

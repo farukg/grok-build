@@ -27,6 +27,28 @@ pub fn timing_from_meta(
     }
 }
 
+/// Registration event time on a ToolCall, independent of terminal notification time.
+/// Explicit null preserves unknown legacy origins through replay collapse.
+pub const TOOL_REGISTRATION_TIMESTAMP_META_KEY: &str = "toolRegistrationTimestampMs";
+
+pub fn stamp_registration_timestamp(
+    call: &mut acp::ToolCall,
+    timestamp: impl FnOnce() -> serde_json::Value,
+) {
+    call.meta
+        .get_or_insert_with(acp::Meta::new)
+        .entry(TOOL_REGISTRATION_TIMESTAMP_META_KEY.to_owned())
+        .or_insert_with(timestamp);
+}
+
+pub fn merge_tool_meta(base: &mut Option<acp::Meta>, newer: Option<acp::Meta>) {
+    if let Some(newer) = newer {
+        base.get_or_insert_with(acp::Meta::new).extend(
+            newer.into_iter().filter(|(key, _)| key != TOOL_REGISTRATION_TIMESTAMP_META_KEY),
+        );
+    }
+}
+
 pub const TOOL_CALL_OWNERSHIP_META_KEY: &str = "toolCallOwnership";
 
 pub fn stamp_ownership(

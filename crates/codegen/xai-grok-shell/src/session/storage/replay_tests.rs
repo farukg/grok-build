@@ -16,6 +16,9 @@ use super::{
 };
 use crate::session::wire_tags::AVAILABLE_COMMANDS_UPDATE;
 
+#[path = "replay_row_timestamp_tests.rs"]
+mod row_timestamps;
+
 fn acp_envelope(session_update_json: &str) -> String {
     format!(
         r#"{{"timestamp":1,"method":"session/update","params":{{"sessionId":"s","update":{session_update_json}}}}}"#
@@ -1345,7 +1348,7 @@ fn replay_tool_collapser_keeps_precompleted_tool_call() {
         acp::ToolCall::new(acp::ToolCallId::new("t"), "done")
             .status(acp::ToolCallStatus::Completed),
     );
-    let out = collapser.push(tc);
+    let out = collapser.push(tc, None);
     assert!(matches!(out, Some(acp::SessionUpdate::ToolCall(_))));
 }
 
@@ -1547,7 +1550,7 @@ fn passive_cursor_exact_survivors_reused_indices_tombstones_tools_meta_and_catal
             None,
         ),
         (
-            serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"kept","title":"renamed","status":"completed","rawOutput":{"exact":"✓"}}),
+            serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"kept","title":"renamed","status":"completed","rawOutput":{"exact":"✓"},"_meta":{"toolRegistrationTimestampMs":null}}),
             Some(
                 serde_json::json!({"agentTimestampMs":7,"turnStartMs":3,"future":{"retained":true}}),
             ),
@@ -1557,7 +1560,7 @@ fn passive_cursor_exact_survivors_reused_indices_tombstones_tools_meta_and_catal
             None,
         ),
         (
-            serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"pending","title":"unfinished"}),
+            serde_json::json!({"sessionUpdate":"tool_call","toolCallId":"pending","title":"unfinished","_meta":{"toolRegistrationTimestampMs":null}}),
             None,
         ),
     ];

@@ -808,10 +808,9 @@ fn agent_message_uses_server_timestamp() {
     tracker.handle_update(agent_chunk("Hello"), &replay_meta, &mut sb);
     let entry = sb.get(0).unwrap();
     let created = entry.created_at.expect("entry should have created_at");
-    let expected = utc_ms_to_local(ts_ms);
     assert_eq!(
-        created.timestamp(),
-        expected.timestamp(),
+        created.timestamp_millis(),
+        1_700_000_000_000,
         "Agent message should use server timestamp, not Local::now()"
     );
 }
@@ -828,10 +827,9 @@ fn user_message_uses_server_timestamp() {
     tracker.handle_update(user_message("Hello user"), &replay_meta, &mut sb);
     let entry = sb.get(0).unwrap();
     let created = entry.created_at.expect("entry should have created_at");
-    let expected = utc_ms_to_local(ts_ms);
     assert_eq!(
-        created.timestamp(),
-        expected.timestamp(),
+        created.timestamp_millis(),
+        1_700_000_000_000,
         "User message should use server turn_start_ms timestamp"
     );
 }

@@ -87,7 +87,8 @@ pub enum ReplayEmission {
 pub enum ReplayedUpdate {
     /// The second field is the persisted line's `_meta` (original `agentTimestampMs`/`turnStartMs`).
     /// That is how rebuilt entries keep their run-time timestamps.
-    /// For a collapsed ToolCall it is the completing line's meta; `None` for start-only tools flushed at EOF.
+    /// Collapsed tools keep terminal metadata here and registration time in the ToolCall's metadata.
+    /// Start-only EOF tools have no terminal metadata.
     Acp(acp::SessionUpdate, Option<acp::Meta>),
     Xai(XaiUpdate, Option<serde_json::Value>),
 }
@@ -116,10 +117,20 @@ impl ReplayToolCollapser {
     }
 
     /// Ingest one ACP update. `None` means hold or drop (do not forward yet).
-    pub(crate) fn push(&mut self, update: acp::SessionUpdate) -> Option<acp::SessionUpdate> {
+    pub(crate) fn push(
+        &mut self,
+        update: acp::SessionUpdate,
+        meta: Option<&acp::Meta>,
+    ) -> Option<acp::SessionUpdate> {
         match update {
             acp::SessionUpdate::AvailableCommandsUpdate(_) => None,
-            acp::SessionUpdate::ToolCall(tc) => {
+            acp::SessionUpdate::ToolCall(mut tc) => {
+                crate::extensions::tool_timing::stamp_registration_timestamp(
+                    &mut tc,
+                    || meta.and_then(|meta| meta.get("agentTimestampMs"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                );
                 if matches!(
                     tc.status,
                     acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed
@@ -132,13 +143,15 @@ impl ReplayToolCollapser {
             acp::SessionUpdate::ToolCallUpdate(mut u) => match u.fields.status {
                 Some(acp::ToolCallStatus::Completed) | Some(acp::ToolCallStatus::Failed) => {
                     if let Some(mut base) = self.pending.remove(&u.tool_call_id.0) {
+                        crate::extensions::tool_timing::merge_tool_meta(&mut base.meta, u.meta.take());
                         base.update(std::mem::take(&mut u.fields));
                         return Some(acp::SessionUpdate::ToolCall(base));
                     }
                     Some(acp::SessionUpdate::ToolCallUpdate(u))
                 }
-                None => {
+                None | Some(acp::ToolCallStatus::Pending) => {
                     if let Some(base) = self.pending.get_mut(&u.tool_call_id.0) {
+                        crate::extensions::tool_timing::merge_tool_meta(&mut base.meta, u.meta.take());
                         base.update(std::mem::take(&mut u.fields));
                     }
                     None
@@ -459,7 +472,7 @@ fn replay_line(
     match SessionUpdateEnvelope::from_str(line) {
         Ok(SessionUpdate::Acp(notif)) => {
             let notif = *notif;
-            Ok(tools.push(strip_context_wrappers(notif.update))
+            Ok(tools.push(strip_context_wrappers(notif.update), notif.meta.as_ref())
                 .map(|update| ReplayedUpdate::Acp(update, notif.meta)))
         }
         Ok(SessionUpdate::Xai(notif)) => Ok(Some(ReplayedUpdate::Xai(notif.update, notif.meta))),

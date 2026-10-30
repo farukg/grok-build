@@ -1,5 +1,7 @@
 #[path = "compact_replay_oracle_tests.rs"]
 mod compact_replay_oracles;
+#[path = "row_timestamp_replay_tests.rs"]
+mod row_timestamp_replay;
 
 use super::test_support::make_info;
 use super::*;

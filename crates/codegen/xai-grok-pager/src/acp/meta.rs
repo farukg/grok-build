@@ -131,6 +131,13 @@ pub struct NotificationMeta {
     pub(crate) tool: super::tool_meta::ToolMetadata,
 }
 
+pub(crate) fn tool_registration_timestamp_ms(call: &acp::ToolCall) -> Option<i64> {
+    call.meta
+        .as_ref()?
+        .get(xai_grok_shell::extensions::tool_timing::TOOL_REGISTRATION_TIMESTAMP_META_KEY)?
+        .as_i64()
+}
+
 pub(crate) fn tool_completion(
     status: acp::ToolCallStatus,
     meta: Option<&acp::Meta>,
